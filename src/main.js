@@ -121,6 +121,11 @@ await mainWindow.onDragDropEvent(async (event) => {
   }
 });
 
-elements.dropZone.after(elements.selectionCard);
+const header = document.querySelector("header");
+const downloadCard = document.querySelector(".download-card");
+const environmentCard = document.querySelector(".environment-card");
+header.after(downloadCard);
+elements.dropZone.after(environmentCard);
+environmentCard.after(elements.selectionCard);
 elements.selectionCard.after(elements.buildCard);
 await checkEnvironment();

@@ -84,6 +84,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Add Valve recovery-image download-page access.
 * [x] Add selected-image summary card.
 * [x] Show immediate image-validation feedback and bring the selected image/build action into view.
+* [x] Order the main workflow as download, image selection, readiness, and build action.
 * [x] Add build button and prototype progress state.
 * [x] Move build status, live logs, and cancellation into a dedicated progress window.
 * [x] Start and stop the builder appliance automatically as part of the build workflow.
@@ -644,6 +645,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Show appliance startup separately from prototype output creation.
 * [ ] Show NVIDIA/Gamescope integration steps separately.
 * [x] Preserve and display the current session's QEMU/serial log through completion.
+* [x] Normalize terminal control sequences before displaying QEMU/serial logs.
 * [ ] Add a “Copy diagnostics” action.
 * [x] Keep normal prototype success UX concise.
 

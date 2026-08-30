@@ -13,6 +13,15 @@ let cancelling = false;
 let stageLog = [];
 let lastApplianceLog = "";
 
+function cleanTerminalText(text) {
+  return text
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+}
+
 function setStatus(state, title, message, progress) {
   elements.statusTitle.textContent = title;
   elements.statusMessage.textContent = message;
@@ -27,7 +36,8 @@ function addStageLog(message) {
 }
 
 function renderLogs(applianceLog) {
-  if (applianceLog.trim()) lastApplianceLog = applianceLog.trim();
+  const cleanLog = cleanTerminalText(applianceLog).trim();
+  if (cleanLog) lastApplianceLog = cleanLog;
   elements.buildLog.textContent = [...stageLog, lastApplianceLog].filter(Boolean).join("\n");
   elements.buildLog.scrollTop = elements.buildLog.scrollHeight;
 }
