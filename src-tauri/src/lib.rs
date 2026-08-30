@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{BufReader, Read, Seek, SeekFrom, Write},
+    io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -41,6 +41,16 @@ struct ApplianceStatus {
     message: String,
     ssh_port: Option<u16>,
     runtime_path: Option<String>,
+    input: Option<InputPreparation>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InputPreparation {
+    source_format: String,
+    normalized: bool,
+    source_bytes: u64,
+    image_bytes: u64,
 }
 
 #[derive(Serialize)]
@@ -118,6 +128,10 @@ struct UserImageInspection {
     source_sha256_before: String,
     source_sha256_after: String,
     source_unchanged: bool,
+    image_sha256_before: String,
+    image_sha256_after: String,
+    image_unchanged: bool,
+    input: InputPreparation,
 }
 
 #[derive(Deserialize)]
@@ -152,6 +166,28 @@ struct ApplianceSession {
     message: String,
     input_image: PathBuf,
     input_sha256_before: String,
+    attached_image: PathBuf,
+    attached_sha256_before: String,
+    input_preparation: InputPreparation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InputFormat {
+    Raw,
+    Bzip2,
+    Gzip,
+    Xz,
+}
+
+impl InputFormat {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Raw => "raw",
+            Self::Bzip2 => "bzip2",
+            Self::Gzip => "gzip",
+            Self::Xz => "xz",
+        }
+    }
 }
 
 struct RuntimeGuard {
@@ -425,6 +461,72 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+fn detect_input_format(path: &Path) -> Result<InputFormat, String> {
+    let mut file = File::open(path).map_err(|e| {
+        format!(
+            "Could not open {} for format detection: {e}",
+            path.display()
+        )
+    })?;
+    let mut signature = [0_u8; 6];
+    let count = file
+        .read(&mut signature)
+        .map_err(|e| format!("Could not inspect {}: {e}", path.display()))?;
+    let signature = &signature[..count];
+    Ok(if signature.starts_with(b"BZh") {
+        InputFormat::Bzip2
+    } else if signature.starts_with(&[0x1f, 0x8b]) {
+        InputFormat::Gzip
+    } else if signature.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
+        InputFormat::Xz
+    } else {
+        InputFormat::Raw
+    })
+}
+
+fn normalize_input(
+    source: &Path,
+    runtime_dir: &Path,
+    format: InputFormat,
+) -> Result<PathBuf, String> {
+    if format == InputFormat::Raw {
+        return Ok(source.to_path_buf());
+    }
+    let destination = runtime_dir.join("normalized-input.img");
+    let source_file =
+        File::open(source).map_err(|e| format!("Could not open the compressed input: {e}"))?;
+    let output_file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&destination)
+        .map_err(|e| format!("Could not create the normalized image: {e}"))?;
+    let mut writer = BufWriter::new(output_file);
+    let copied = match format {
+        InputFormat::Bzip2 => io::copy(
+            &mut bzip2::read::BzDecoder::new(BufReader::new(source_file)),
+            &mut writer,
+        ),
+        InputFormat::Gzip => io::copy(
+            &mut flate2::read::GzDecoder::new(BufReader::new(source_file)),
+            &mut writer,
+        ),
+        InputFormat::Xz => io::copy(
+            &mut xz2::read::XzDecoder::new(BufReader::new(source_file)),
+            &mut writer,
+        ),
+        InputFormat::Raw => unreachable!(),
+    }
+    .map_err(|e| format!("Could not decompress the {} input: {e}", format.name()))?;
+    writer
+        .flush()
+        .and_then(|_| writer.get_ref().sync_all())
+        .map_err(|e| format!("Could not finish the normalized image: {e}"))?;
+    if copied == 0 {
+        return Err("The compressed input produced an empty image.".into());
+    }
+    Ok(destination)
+}
+
 fn prepare_session(input_image: Option<&Path>) -> Result<ApplianceSession, String> {
     let appliance = appliance_path();
     if !appliance.is_file() {
@@ -528,6 +630,25 @@ fn prepare_session(input_image: Option<&Path>) -> Result<ApplianceSession, Strin
         fixture
     };
     let input_sha256_before = sha256_file(&input_image)?;
+    let source_bytes = fs::metadata(&input_image)
+        .map_err(|e| format!("Could not inspect the input size: {e}"))?
+        .len();
+    let input_format = detect_input_format(&input_image)?;
+    let attached_image = normalize_input(&input_image, &runtime_dir, input_format)?;
+    let image_bytes = fs::metadata(&attached_image)
+        .map_err(|e| format!("Could not inspect the normalized image size: {e}"))?
+        .len();
+    let attached_sha256_before = if attached_image == input_image {
+        input_sha256_before.clone()
+    } else {
+        sha256_file(&attached_image)?
+    };
+    let input_preparation = InputPreparation {
+        source_format: input_format.name().into(),
+        normalized: input_format != InputFormat::Raw,
+        source_bytes,
+        image_bytes,
+    };
     let seed_image = runtime_dir.join("seed.iso");
     run_checked(
         Command::new("hdiutil")
@@ -576,7 +697,7 @@ fn prepare_session(input_image: Option<&Path>) -> Result<ApplianceSession, Strin
     let log_err = log
         .try_clone()
         .map_err(|e| format!("Could not prepare the QEMU log: {e}"))?;
-    let input_drive_path = input_image
+    let input_drive_path = attached_image
         .to_str()
         .ok_or("The selected image path is not valid UTF-8.")?
         .replace(',', ",,");
@@ -674,6 +795,9 @@ fn prepare_session(input_image: Option<&Path>) -> Result<ApplianceSession, Strin
         message: "Fedora builder appliance is booting.".into(),
         input_image,
         input_sha256_before,
+        attached_image,
+        attached_sha256_before,
+        input_preparation,
     })
 }
 
@@ -1002,6 +1126,18 @@ fn inspect_user_image(session: &ApplianceSession) -> Result<UserImageInspection,
             session.input_sha256_before, source_sha256_after
         ));
     }
+    let image_sha256_after = if session.attached_image == session.input_image {
+        source_sha256_after.clone()
+    } else {
+        sha256_file(&session.attached_image)?
+    };
+    let image_unchanged = session.attached_sha256_before == image_sha256_after;
+    if !image_unchanged {
+        return Err(format!(
+            "Normalized image changed during read-only inspection (before {}, after {}).",
+            session.attached_sha256_before, image_sha256_after
+        ));
+    }
     Ok(UserImageInspection {
         device: DEVICE.into(),
         disk_bytes,
@@ -1011,6 +1147,10 @@ fn inspect_user_image(session: &ApplianceSession) -> Result<UserImageInspection,
         source_sha256_before: session.input_sha256_before.clone(),
         source_sha256_after,
         source_unchanged,
+        image_sha256_before: session.attached_sha256_before.clone(),
+        image_sha256_after,
+        image_unchanged,
+        input: session.input_preparation.clone(),
     })
 }
 
@@ -1095,6 +1235,7 @@ fn session_status(session: &ApplianceSession) -> ApplianceStatus {
         message: session.message.clone(),
         ssh_port: Some(session.ssh_port),
         runtime_path: Some(session.runtime_dir.to_string_lossy().into_owned()),
+        input: Some(session.input_preparation.clone()),
     }
 }
 
@@ -1189,13 +1330,10 @@ fn start_appliance(
     if !input.is_file() {
         return Err("The selected image is no longer available.".into());
     }
-    let name = input
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if !name.ends_with(".img") {
-        return Err("Read-only inspection currently requires an uncompressed .img file. Compressed-image normalization is the next milestone.".into());
+    if !supported_image(&input) {
+        return Err(
+            "Select a SteamOS recovery image (.img, .img.bz2, .img.gz, or .img.xz).".into(),
+        );
     }
     let mut manager = manager
         .lock()
@@ -1230,6 +1368,7 @@ fn get_appliance_status(
             message: "Builder appliance is stopped.".into(),
             ssh_port: None,
             runtime_path: None,
+            input: None,
         });
     };
     if let Some(exit) = session
@@ -1420,13 +1559,25 @@ fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, Strin
         }
     }
     let input_sha256_after = sha256_file(&session.input_image);
+    let attached_sha256_after = if session.attached_image == session.input_image {
+        input_sha256_after.clone()
+    } else {
+        sha256_file(&session.attached_image)
+    };
     let archived_log = archive_and_remove_runtime(&session.runtime_dir);
     let input_sha256_after = input_sha256_after?;
+    let attached_sha256_after = attached_sha256_after?;
     let archived_log = archived_log?;
     if input_sha256_after != session.input_sha256_before {
         return Err(format!(
             "Selected image changed during the appliance session (before {}, after {}).",
             session.input_sha256_before, input_sha256_after
+        ));
+    }
+    if attached_sha256_after != session.attached_sha256_before {
+        return Err(format!(
+            "Normalized image changed during the appliance session (before {}, after {}).",
+            session.attached_sha256_before, attached_sha256_after
         ));
     }
     Ok(archived_log)
@@ -1445,6 +1596,7 @@ fn stop_appliance(
             message: "Builder appliance is stopped.".into(),
             ssh_port: None,
             runtime_path: None,
+            input: None,
         });
     };
     let archived_log = stop_session(&mut session)?;
@@ -1453,6 +1605,7 @@ fn stop_appliance(
         message: "Builder appliance stopped; disposable disk and credentials were removed.".into(),
         ssh_port: None,
         runtime_path: archived_log.map(|path| path.to_string_lossy().into_owned()),
+        input: None,
     })
 }
 
@@ -1526,11 +1679,112 @@ mod tests {
     }
 
     #[test]
+    fn normalization_detects_content_and_is_idempotent_for_raw_images() {
+        const PAYLOAD: &[u8] = b"SteamOS image normalization fixture\n";
+        let root = std::env::temp_dir().join(format!(
+            "steamos-builder-normalization-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("test clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("create normalization test directory");
+
+        let raw = root.join("raw.img");
+        fs::write(&raw, PAYLOAD).expect("write raw fixture");
+        assert_eq!(detect_input_format(&raw).unwrap(), InputFormat::Raw);
+        assert_eq!(normalize_input(&raw, &root, InputFormat::Raw).unwrap(), raw);
+
+        let bzip_source = root.join("compressed-but-named.img");
+        let mut bzip = bzip2::write::BzEncoder::new(
+            File::create(&bzip_source).expect("create bzip fixture"),
+            bzip2::Compression::best(),
+        );
+        bzip.write_all(PAYLOAD).expect("compress bzip fixture");
+        bzip.finish().expect("finish bzip fixture");
+        assert_eq!(
+            detect_input_format(&bzip_source).unwrap(),
+            InputFormat::Bzip2
+        );
+        let bzip_runtime = root.join("bzip-runtime");
+        fs::create_dir(&bzip_runtime).unwrap();
+        let bzip_image = normalize_input(&bzip_source, &bzip_runtime, InputFormat::Bzip2)
+            .expect("normalize bzip fixture");
+        assert_eq!(fs::read(bzip_image).unwrap(), PAYLOAD);
+
+        let gzip_source = root.join("fixture.img.gz");
+        let mut gzip = flate2::write::GzEncoder::new(
+            File::create(&gzip_source).expect("create gzip fixture"),
+            flate2::Compression::best(),
+        );
+        gzip.write_all(PAYLOAD).expect("compress gzip fixture");
+        gzip.finish().expect("finish gzip fixture");
+        assert_eq!(
+            detect_input_format(&gzip_source).unwrap(),
+            InputFormat::Gzip
+        );
+        let gzip_runtime = root.join("gzip-runtime");
+        fs::create_dir(&gzip_runtime).unwrap();
+        let gzip_image = normalize_input(&gzip_source, &gzip_runtime, InputFormat::Gzip)
+            .expect("normalize gzip fixture");
+        assert_eq!(fs::read(gzip_image).unwrap(), PAYLOAD);
+
+        let xz_source = root.join("fixture.img.xz");
+        let mut xz =
+            xz2::write::XzEncoder::new(File::create(&xz_source).expect("create xz fixture"), 9);
+        xz.write_all(PAYLOAD).expect("compress xz fixture");
+        xz.finish().expect("finish xz fixture");
+        assert_eq!(detect_input_format(&xz_source).unwrap(), InputFormat::Xz);
+        let xz_runtime = root.join("xz-runtime");
+        fs::create_dir(&xz_runtime).unwrap();
+        let xz_image = normalize_input(&xz_source, &xz_runtime, InputFormat::Xz)
+            .expect("normalize xz fixture");
+        assert_eq!(fs::read(xz_image).unwrap(), PAYLOAD);
+
+        fs::remove_dir_all(root).expect("remove normalization test directory");
+    }
+
+    #[test]
     #[ignore = "launches the local Fedora/QEMU appliance"]
     fn live_appliance_reaches_ready_marker() {
         let appliance = appliance_path();
         let appliance_sha256_before = sha256_file(&appliance).expect("hash appliance before");
-        let mut session = prepare_session(None).expect("the appliance should start");
+        let input_root = std::env::temp_dir().join(format!(
+            "steamos-builder-live-compressed-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("test clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&input_root).expect("create live input directory");
+        let raw_fixture = input_root.join("fixture.img");
+        let mut raw_file = File::create(&raw_fixture).expect("create live raw fixture");
+        raw_file.set_len(8 * 1024 * 1024).unwrap();
+        let mut mbr = [0_u8; 512];
+        mbr[446 + 4] = 0x83;
+        mbr[446 + 8..446 + 12].copy_from_slice(&2048_u32.to_le_bytes());
+        mbr[446 + 12..446 + 16].copy_from_slice(&8192_u32.to_le_bytes());
+        mbr[510] = 0x55;
+        mbr[511] = 0xaa;
+        raw_file.write_all(&mbr).unwrap();
+        raw_file.sync_all().unwrap();
+        drop(raw_file);
+        let compressed_fixture = input_root.join("fixture.img.bz2");
+        let mut encoder = bzip2::write::BzEncoder::new(
+            File::create(&compressed_fixture).expect("create live compressed fixture"),
+            bzip2::Compression::best(),
+        );
+        let mut raw_file = File::open(&raw_fixture).unwrap();
+        io::copy(&mut raw_file, &mut encoder).expect("compress live fixture");
+        encoder.finish().expect("finish live compressed fixture");
+        fs::remove_file(raw_fixture).expect("remove intermediate live raw fixture");
+        let mut session =
+            prepare_session(Some(&compressed_fixture)).expect("the appliance should start");
+        assert!(session.input_preparation.normalized);
+        assert_eq!(session.input_preparation.source_format, "bzip2");
+        assert_eq!(session.input_preparation.image_bytes, 8 * 1024 * 1024);
         let deadline = Instant::now() + BOOT_TIMEOUT;
         loop {
             assert_eq!(
@@ -1602,6 +1856,7 @@ mod tests {
             sha256_file(&appliance).expect("hash appliance after"),
             "the base appliance must remain unchanged"
         );
+        fs::remove_dir_all(input_root).expect("remove live compressed input directory");
     }
 }
 

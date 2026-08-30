@@ -313,11 +313,11 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Require selected path to exist and be a file.
 * [x] Canonicalize selected path.
 * [x] Accept supported image/compression extensions.
-* [ ] Inspect actual magic bytes instead of trusting extension alone.
-* [ ] Detect compression type independently of filename.
-* [ ] Verify decompressor availability in guest.
+* [x] Inspect actual magic bytes instead of trusting extension alone.
+* [x] Detect raw, bzip2, gzip, and xz content independently of filename.
+* [x] Use embedded Rust decoders so normalization does not depend on guest decompressor availability.
 * [ ] Reject directories, device nodes, sockets, FIFOs, and unexpected special files.
-* [ ] Determine source image size before build.
+* [x] Determine source and normalized image sizes before QEMU launch.
 * [ ] Verify sufficient host free space for decompression, working copy, overlays, and final output.
 * [ ] Detect obvious non-SteamOS images before destructive or expensive processing.
 * [ ] Identify SteamOS recovery image version/build if possible.
@@ -330,16 +330,16 @@ The project is not yet producing a bootable modified SteamOS image.
 # 13. Input decompression and normalization
 
 * [x] Support raw `.img` input without unnecessary recompression for read-only inspection.
-* [ ] Decompress `.img.bz2`.
-* [ ] Decompress `.img.gz`.
-* [ ] Decompress `.img.xz`.
-* [ ] Stream decompression when practical rather than loading whole image into memory.
+* [x] Decompress `.img.bz2`.
+* [x] Decompress `.img.gz`.
+* [x] Decompress `.img.xz`.
+* [x] Stream decompression rather than loading the image into memory.
 * [ ] Show decompression progress.
 * [ ] Verify decompressed output size is sane.
-* [ ] Compute checksum of normalized working image.
-* [ ] Keep original compressed input untouched.
-* [ ] Clean incomplete normalized images after cancellation/failure.
-* [ ] Decide whether normalized working image belongs on host filesystem or inside guest-accessible storage.
+* [x] Compute and verify the normalized raw-image checksum.
+* [x] Keep original compressed input untouched and verify its checksum after the session.
+* [x] Clean incomplete normalized images with the disposable-runtime guard after failure/cancellation.
+* [x] Keep normalized raw storage in the host-side disposable runtime and expose only its block device to the guest.
 
 ---
 

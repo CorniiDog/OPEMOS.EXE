@@ -141,12 +141,21 @@ async function runBuild(request) {
   elements.closeWindow.classList.add("hidden");
   elements.cancelBuild.disabled = false;
   elements.inputName.textContent = request.name;
-  setStatus("running", "Preparing builder", "Creating an isolated Fedora session.", 8);
+  const compressedInput = /\.(?:bz2|gz|xz)$/i.test(request.name);
+  setStatus(
+    "running",
+    compressedInput ? "Normalizing compressed image" : "Preparing builder",
+    compressedInput
+      ? "Streaming the image into disposable raw storage; the original remains unchanged."
+      : "Raw image detected; using it directly without another conversion.",
+    8,
+  );
   addStageLog(`Input: ${request.path}`);
 
   let logTimer = null;
   try {
     const started = await invoke("start_appliance", { path: request.path });
+    addStageLog(`Input preparation: detected ${started.input.sourceFormat}; normalized=${started.input.normalized}; ${started.input.sourceBytes} source bytes → ${started.input.imageBytes} raw image bytes.`);
     addStageLog(`Appliance session created on local port ${started.sshPort}.`);
     setStatus("running", "Starting builder", "Waiting for the Fedora guest readiness handshake.", 22);
     logTimer = setInterval(refreshLogs, 750);
@@ -203,6 +212,9 @@ async function runBuild(request) {
       addStageLog(`Image node: ${node.path}; type=${node.nodeType}; size=${node.sizeBytes}; mounted=${node.mounted}${details ? `; ${details}` : ""}.`);
     }
     addStageLog(`Selected image SHA256: ${image.sourceSha256After}; unchanged=${image.sourceUnchanged}.`);
+    if (image.input.normalized) {
+      addStageLog(`Normalized image SHA256: ${image.imageSha256After}; unchanged=${image.imageUnchanged}.`);
+    }
     if (cancelling) return;
 
     setStatus("running", "Creating prototype output", "Validating the selected image and writing the prototype result.", 94);
