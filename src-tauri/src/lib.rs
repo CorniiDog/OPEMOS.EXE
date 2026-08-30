@@ -6,7 +6,10 @@ use std::{
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -196,10 +199,17 @@ struct ReportingReader<'a> {
     total: u64,
     next_report: u64,
     progress: Option<&'a ProgressCallback<'a>>,
+    cancel: Option<&'a AtomicBool>,
 }
 
 impl Read for ReportingReader<'_> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if self
+            .cancel
+            .is_some_and(|cancel| cancel.load(Ordering::Relaxed))
+        {
+            return Err(io::Error::other("image preparation cancelled"));
+        }
         let count = self.inner.read(buffer)?;
         self.processed += count as u64;
         if self.processed >= self.next_report || count == 0 {
@@ -248,13 +258,25 @@ impl Drop for ApplianceSession {
     }
 }
 
-#[derive(Default)]
 struct ApplianceManager {
     session: Option<ApplianceSession>,
+    preparing: bool,
+    cancel_preparation: Arc<AtomicBool>,
+}
+
+impl Default for ApplianceManager {
+    fn default() -> Self {
+        Self {
+            session: None,
+            preparing: false,
+            cancel_preparation: Arc::new(AtomicBool::new(false)),
+        }
+    }
 }
 
 impl Drop for ApplianceManager {
     fn drop(&mut self) {
+        self.cancel_preparation.store(true, Ordering::Relaxed);
         if let Some(session) = self.session.as_mut() {
             let _ = session.child.kill();
             let _ = session.child.wait();
@@ -476,14 +498,16 @@ fn allocate_ssh_port() -> Result<u16, String> {
         .map_err(|e| format!("Could not inspect the guest SSH port: {e}"))
 }
 
+#[cfg(test)]
 fn sha256_file(path: &Path) -> Result<String, String> {
-    sha256_file_with_progress(path, "hashing", None)
+    sha256_file_with_progress(path, "hashing", None, None)
 }
 
 fn sha256_file_with_progress(
     path: &Path,
     stage: &str,
     progress: Option<&ProgressCallback<'_>>,
+    cancel: Option<&AtomicBool>,
 ) -> Result<String, String> {
     let file = File::open(path)
         .map_err(|e| format!("Could not open {} for hashing: {e}", path.display()))?;
@@ -496,6 +520,9 @@ fn sha256_file_with_progress(
     let mut processed = 0_u64;
     let mut next_report = 8 * 1024 * 1024;
     loop {
+        if cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed)) {
+            return Err("Image preparation cancelled.".into());
+        }
         let count = reader
             .read(&mut buffer)
             .map_err(|e| format!("Could not hash {}: {e}", path.display()))?;
@@ -545,6 +572,7 @@ fn normalize_input(
     runtime_dir: &Path,
     format: InputFormat,
     progress: Option<&ProgressCallback<'_>>,
+    cancel: Option<&AtomicBool>,
 ) -> Result<PathBuf, String> {
     if format == InputFormat::Raw {
         return Ok(source.to_path_buf());
@@ -563,6 +591,7 @@ fn normalize_input(
         total: source_bytes,
         next_report: 0,
         progress,
+        cancel,
     };
     let output_file = OpenOptions::new()
         .create_new(true)
@@ -599,6 +628,7 @@ fn normalize_input(
 fn prepare_session(
     input_image: Option<&Path>,
     progress: Option<&ProgressCallback<'_>>,
+    cancel: Option<&AtomicBool>,
 ) -> Result<ApplianceSession, String> {
     let appliance = appliance_path();
     if !appliance.is_file() {
@@ -701,19 +731,21 @@ fn prepare_session(
             .map_err(|e| format!("Could not initialize the user-image inspection fixture: {e}"))?;
         fixture
     };
-    let input_sha256_before = sha256_file_with_progress(&input_image, "hashing-source", progress)?;
+    let input_sha256_before =
+        sha256_file_with_progress(&input_image, "hashing-source", progress, cancel)?;
     let source_bytes = fs::metadata(&input_image)
         .map_err(|e| format!("Could not inspect the input size: {e}"))?
         .len();
     let input_format = detect_input_format(&input_image)?;
-    let attached_image = normalize_input(&input_image, &runtime_dir, input_format, progress)?;
+    let attached_image =
+        normalize_input(&input_image, &runtime_dir, input_format, progress, cancel)?;
     let image_bytes = fs::metadata(&attached_image)
         .map_err(|e| format!("Could not inspect the normalized image size: {e}"))?
         .len();
     let attached_sha256_before = if attached_image == input_image {
         input_sha256_before.clone()
     } else {
-        sha256_file_with_progress(&attached_image, "hashing-image", progress)?
+        sha256_file_with_progress(&attached_image, "hashing-image", progress, cancel)?
     };
     let input_preparation = InputPreparation {
         source_format: input_format.name().into(),
@@ -1143,7 +1175,10 @@ fn append_image_nodes(
     }
 }
 
-fn inspect_user_image(session: &ApplianceSession) -> Result<UserImageInspection, String> {
+fn inspect_user_image(
+    session: &ApplianceSession,
+    progress: Option<&ProgressCallback<'_>>,
+) -> Result<UserImageInspection, String> {
     const DEVICE: &str = "/dev/disk/by-id/virtio-steamos-user-input";
     let read_only = run_guest_command(
         session,
@@ -1190,7 +1225,12 @@ fn inspect_user_image(session: &ApplianceSession) -> Result<UserImageInspection,
             node.path
         ));
     }
-    let source_sha256_after = sha256_file(&session.input_image)?;
+    let source_sha256_after = sha256_file_with_progress(
+        &session.input_image,
+        "verifying-source-after",
+        progress,
+        None,
+    )?;
     let source_unchanged = session.input_sha256_before == source_sha256_after;
     if !source_unchanged {
         return Err(format!(
@@ -1201,7 +1241,12 @@ fn inspect_user_image(session: &ApplianceSession) -> Result<UserImageInspection,
     let image_sha256_after = if session.attached_image == session.input_image {
         source_sha256_after.clone()
     } else {
-        sha256_file(&session.attached_image)?
+        sha256_file_with_progress(
+            &session.attached_image,
+            "verifying-image-after",
+            progress,
+            None,
+        )?
     };
     let image_unchanged = session.attached_sha256_before == image_sha256_after;
     if !image_unchanged {
@@ -1393,10 +1438,22 @@ fn check_builder_environment() -> BuilderEnvironment {
 }
 
 #[tauri::command]
-fn start_appliance(
+async fn start_appliance(path: String, app: tauri::AppHandle) -> Result<ApplianceStatus, String> {
+    let recovery_app = app.clone();
+    match tauri::async_runtime::spawn_blocking(move || start_appliance_blocking(path, app)).await {
+        Ok(result) => result,
+        Err(error) => {
+            if let Ok(mut manager) = recovery_app.state::<Mutex<ApplianceManager>>().lock() {
+                manager.preparing = false;
+            }
+            Err(format!("Image preparation worker failed: {error}"))
+        }
+    }
+}
+
+fn start_appliance_blocking(
     path: String,
     app: tauri::AppHandle,
-    manager: tauri::State<'_, Mutex<ApplianceManager>>,
 ) -> Result<ApplianceStatus, String> {
     let input = fs::canonicalize(PathBuf::from(path))
         .map_err(|e| format!("Could not resolve the selected image: {e}"))?;
@@ -1408,9 +1465,13 @@ fn start_appliance(
             "Select a SteamOS recovery image (.img, .img.bz2, .img.gz, or .img.xz).".into(),
         );
     }
-    let mut manager = manager
+    let manager_state = app.state::<Mutex<ApplianceManager>>();
+    let mut manager = manager_state
         .lock()
         .map_err(|_| "Appliance state lock is unavailable.")?;
+    if manager.preparing {
+        return Err("Another image is already being prepared.".into());
+    }
     if let Some(session) = manager.session.as_mut() {
         if session
             .child
@@ -1422,6 +1483,11 @@ fn start_appliance(
         }
         manager.session = None;
     }
+    manager.cancel_preparation.store(false, Ordering::Relaxed);
+    manager.preparing = true;
+    let cancel = manager.cancel_preparation.clone();
+    drop(manager);
+
     let report_progress = |stage: &str, processed_bytes: u64, total_bytes: u64| {
         let _ = app.emit_to(
             "build-progress",
@@ -1433,7 +1499,16 @@ fn start_appliance(
             },
         );
     };
-    let session = prepare_session(Some(&input), Some(&report_progress))?;
+    let prepared = prepare_session(Some(&input), Some(&report_progress), Some(&cancel));
+    let mut manager = manager_state
+        .lock()
+        .map_err(|_| "Appliance state lock is unavailable.")?;
+    manager.preparing = false;
+    if cancel.load(Ordering::Relaxed) {
+        drop(prepared);
+        return Err("Image preparation cancelled.".into());
+    }
+    let session = prepared?;
     let status = session_status(&session);
     manager.session = Some(session);
     Ok(status)
@@ -1446,6 +1521,15 @@ fn get_appliance_status(
     let mut manager = manager
         .lock()
         .map_err(|_| "Appliance state lock is unavailable.")?;
+    if manager.preparing {
+        return Ok(ApplianceStatus {
+            state: "preparing".into(),
+            message: "Input image preparation is running in the background.".into(),
+            ssh_port: None,
+            runtime_path: None,
+            input: None,
+        });
+    }
     let Some(session) = manager.session.as_mut() else {
         return Ok(ApplianceStatus {
             state: "stopped".into(),
@@ -1553,10 +1637,15 @@ fn inspect_test_disk(
 }
 
 #[tauri::command]
-fn inspect_selected_image(
-    manager: tauri::State<'_, Mutex<ApplianceManager>>,
-) -> Result<UserImageInspection, String> {
-    let manager = manager
+async fn inspect_selected_image(app: tauri::AppHandle) -> Result<UserImageInspection, String> {
+    tauri::async_runtime::spawn_blocking(move || inspect_selected_image_blocking(app))
+        .await
+        .map_err(|error| format!("Image inspection worker failed: {error}"))?
+}
+
+fn inspect_selected_image_blocking(app: tauri::AppHandle) -> Result<UserImageInspection, String> {
+    let manager_state = app.state::<Mutex<ApplianceManager>>();
+    let manager = manager_state
         .lock()
         .map_err(|_| "Appliance state lock is unavailable.")?;
     let session = manager
@@ -1566,7 +1655,18 @@ fn inspect_selected_image(
     if session.state != "ready" {
         return Err("Builder appliance is not ready for selected image inspection.".into());
     }
-    inspect_user_image(session)
+    let report_progress = |stage: &str, processed_bytes: u64, total_bytes: u64| {
+        let _ = app.emit_to(
+            "build-progress",
+            "input-progress",
+            InputProgress {
+                stage: stage.into(),
+                processed_bytes,
+                total_bytes,
+            },
+        );
+    };
+    inspect_user_image(session, Some(&report_progress))
 }
 
 #[tauri::command]
@@ -1642,38 +1742,31 @@ fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, Strin
                 .map_err(|e| format!("Could not finish appliance shutdown: {e}"))?;
         }
     }
-    let input_sha256_after = sha256_file(&session.input_image);
-    let attached_sha256_after = if session.attached_image == session.input_image {
-        input_sha256_after.clone()
-    } else {
-        sha256_file(&session.attached_image)
-    };
-    let archived_log = archive_and_remove_runtime(&session.runtime_dir);
-    let input_sha256_after = input_sha256_after?;
-    let attached_sha256_after = attached_sha256_after?;
-    let archived_log = archived_log?;
-    if input_sha256_after != session.input_sha256_before {
-        return Err(format!(
-            "Selected image changed during the appliance session (before {}, after {}).",
-            session.input_sha256_before, input_sha256_after
-        ));
-    }
-    if attached_sha256_after != session.attached_sha256_before {
-        return Err(format!(
-            "Normalized image changed during the appliance session (before {}, after {}).",
-            session.attached_sha256_before, attached_sha256_after
-        ));
-    }
-    Ok(archived_log)
+    archive_and_remove_runtime(&session.runtime_dir)
 }
 
 #[tauri::command]
-fn stop_appliance(
-    manager: tauri::State<'_, Mutex<ApplianceManager>>,
-) -> Result<ApplianceStatus, String> {
-    let mut manager = manager
+async fn stop_appliance(app: tauri::AppHandle) -> Result<ApplianceStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || stop_appliance_blocking(app))
+        .await
+        .map_err(|error| format!("Appliance shutdown worker failed: {error}"))?
+}
+
+fn stop_appliance_blocking(app: tauri::AppHandle) -> Result<ApplianceStatus, String> {
+    let manager_state = app.state::<Mutex<ApplianceManager>>();
+    let mut manager = manager_state
         .lock()
         .map_err(|_| "Appliance state lock is unavailable.")?;
+    if manager.preparing {
+        manager.cancel_preparation.store(true, Ordering::Relaxed);
+        return Ok(ApplianceStatus {
+            state: "stopping".into(),
+            message: "Cancelling background image preparation.".into(),
+            ssh_port: None,
+            runtime_path: None,
+            input: None,
+        });
+    }
     let Some(mut session) = manager.session.take() else {
         return Ok(ApplianceStatus {
             state: "stopped".into(),
@@ -1779,7 +1872,7 @@ mod tests {
         fs::write(&raw, PAYLOAD).expect("write raw fixture");
         assert_eq!(detect_input_format(&raw).unwrap(), InputFormat::Raw);
         assert_eq!(
-            normalize_input(&raw, &root, InputFormat::Raw, None).unwrap(),
+            normalize_input(&raw, &root, InputFormat::Raw, None, None).unwrap(),
             raw
         );
 
@@ -1808,6 +1901,7 @@ mod tests {
             &bzip_runtime,
             InputFormat::Bzip2,
             Some(&report),
+            None,
         )
         .expect("normalize bzip fixture");
         assert_eq!(fs::read(bzip_image).unwrap(), PAYLOAD);
@@ -1815,6 +1909,19 @@ mod tests {
         assert!(!reports.is_empty());
         assert_eq!(reports.last().unwrap().0, "decompressing");
         assert_eq!(reports.last().unwrap().1, reports.last().unwrap().2);
+
+        let cancelled_runtime = root.join("cancelled-runtime");
+        fs::create_dir(&cancelled_runtime).unwrap();
+        let cancellation = AtomicBool::new(true);
+        let error = normalize_input(
+            &bzip_source,
+            &cancelled_runtime,
+            InputFormat::Bzip2,
+            None,
+            Some(&cancellation),
+        )
+        .expect_err("cancelled normalization should stop");
+        assert!(error.contains("cancelled"));
 
         let gzip_source = root.join("fixture.img.gz");
         let mut gzip = flate2::write::GzEncoder::new(
@@ -1829,8 +1936,9 @@ mod tests {
         );
         let gzip_runtime = root.join("gzip-runtime");
         fs::create_dir(&gzip_runtime).unwrap();
-        let gzip_image = normalize_input(&gzip_source, &gzip_runtime, InputFormat::Gzip, None)
-            .expect("normalize gzip fixture");
+        let gzip_image =
+            normalize_input(&gzip_source, &gzip_runtime, InputFormat::Gzip, None, None)
+                .expect("normalize gzip fixture");
         assert_eq!(fs::read(gzip_image).unwrap(), PAYLOAD);
 
         let xz_source = root.join("fixture.img.xz");
@@ -1841,7 +1949,7 @@ mod tests {
         assert_eq!(detect_input_format(&xz_source).unwrap(), InputFormat::Xz);
         let xz_runtime = root.join("xz-runtime");
         fs::create_dir(&xz_runtime).unwrap();
-        let xz_image = normalize_input(&xz_source, &xz_runtime, InputFormat::Xz, None)
+        let xz_image = normalize_input(&xz_source, &xz_runtime, InputFormat::Xz, None, None)
             .expect("normalize xz fixture");
         assert_eq!(fs::read(xz_image).unwrap(), PAYLOAD);
 
@@ -1883,8 +1991,8 @@ mod tests {
         io::copy(&mut raw_file, &mut encoder).expect("compress live fixture");
         encoder.finish().expect("finish live compressed fixture");
         fs::remove_file(raw_fixture).expect("remove intermediate live raw fixture");
-        let mut session =
-            prepare_session(Some(&compressed_fixture), None).expect("the appliance should start");
+        let mut session = prepare_session(Some(&compressed_fixture), None, None)
+            .expect("the appliance should start");
         assert!(session.input_preparation.normalized);
         assert_eq!(session.input_preparation.source_format, "bzip2");
         assert_eq!(session.input_preparation.image_bytes, 8 * 1024 * 1024);
@@ -1927,7 +2035,7 @@ mod tests {
             mutation.marker_path,
             "/etc/steamos-nvidia-image-builder-test"
         );
-        let input = inspect_user_image(&session).expect("user image inspection should pass");
+        let input = inspect_user_image(&session, None).expect("user image inspection should pass");
         assert_eq!(input.disk_bytes, 8 * 1024 * 1024);
         assert!(input.read_only);
         assert!(input.source_unchanged);
@@ -2004,6 +2112,7 @@ pub fn run() {
             ..
         } if label == "main" => {
             if let Ok(mut manager) = app_handle.state::<Mutex<ApplianceManager>>().lock() {
+                manager.cancel_preparation.store(true, Ordering::Relaxed);
                 if let Some(mut session) = manager.session.take() {
                     let _ = stop_session(&mut session);
                 }
@@ -2012,6 +2121,7 @@ pub fn run() {
         }
         tauri::RunEvent::ExitRequested { .. } => {
             if let Ok(mut manager) = app_handle.state::<Mutex<ApplianceManager>>().lock() {
+                manager.cancel_preparation.store(true, Ordering::Relaxed);
                 if let Some(mut session) = manager.session.take() {
                     let _ = stop_session(&mut session);
                 }

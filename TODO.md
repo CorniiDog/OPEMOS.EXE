@@ -675,11 +675,11 @@ The project is not yet producing a bootable modified SteamOS image.
 # 33. Cancellation
 
 * [ ] Support cancellation while downloading.
-* [ ] Support cancellation while copying/decompressing.
+* [x] Support cancellation while hashing/copying/decompressing.
 * [x] Support cancellation while the guest is booting.
 * [ ] Support cancellation during image mutation.
 * [ ] Support cancellation during compression/finalization.
-* [ ] Make cancellation cooperative first.
+* [x] Make image-preparation cancellation cooperative with an atomic worker signal.
 * [x] Add bounded forced termination fallback.
 * [ ] Unmount/detach filesystems on cancellation.
 * [ ] Delete incomplete output by default or clearly mark it incomplete.
@@ -1002,7 +1002,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Choose sane guest memory default.
 * [ ] Detect host CPU count.
 * [ ] Choose sane guest vCPU default.
-* [ ] Keep enough resources for host UI responsiveness.
+* [x] Run CPU/blocking image preparation, inspection verification, and shutdown outside the UI thread.
 * [ ] Detect low disk space before guest startup.
 * [ ] Allow advanced resource override only if needed.
 * [ ] Record effective resource configuration in diagnostics.

@@ -83,10 +83,10 @@ function appendAnsiText(parent, text) {
   appendChunk(text.slice(offset));
 }
 
-function setStatus(state, title, message, progress) {
+function setStatus(state, title, message, progress, activity = "Working") {
   elements.statusTitle.textContent = title;
   elements.statusMessage.textContent = message;
-  elements.statusBadge.textContent = state === "complete" ? "Complete" : state === "failed" ? "Failed" : state === "cancelled" ? "Cancelled" : "Working";
+  elements.statusBadge.textContent = state === "complete" ? "Complete" : state === "failed" ? "Failed" : state === "cancelled" ? "Cancelled" : activity;
   elements.statusBadge.className = `status ${state === "complete" ? "" : state === "failed" || state === "cancelled" ? "failed" : "pending"}`;
   elements.progressBar.style.width = `${progress}%`;
 }
@@ -107,15 +107,19 @@ function formatBytes(bytes) {
 }
 
 function showInputProgress(progress) {
-  if (!running || !progress.totalBytes) return;
+  if (!running || cancelling || !progress.totalBytes) return;
   const ratio = Math.min(progress.processedBytes / progress.totalBytes, 1);
   const amount = `${formatBytes(progress.processedBytes)} of ${formatBytes(progress.totalBytes)}`;
   if (progress.stage === "hashing-source") {
-    setStatus("running", "Verifying source image", `Computing the original input SHA-256: ${amount}.`, 4 + ratio * 4);
+    setStatus("running", "Verifying source image", `Computing the original input SHA-256: ${amount}.`, 4 + ratio * 4, "Hashing");
   } else if (progress.stage === "decompressing") {
-    setStatus("running", "Normalizing compressed image", `Read ${amount} of the compressed input.`, 8 + ratio * 8);
+    setStatus("running", "Normalizing compressed image", `Read ${amount} of the compressed input.`, 8 + ratio * 8, "Unzipping");
   } else if (progress.stage === "hashing-image") {
-    setStatus("running", "Verifying normalized image", `Computing the disposable raw-image SHA-256: ${amount}.`, 16 + ratio * 6);
+    setStatus("running", "Verifying normalized image", `Computing the disposable raw-image SHA-256: ${amount}.`, 16 + ratio * 6, "Hashing");
+  } else if (progress.stage === "verifying-source-after") {
+    setStatus("running", "Verifying source integrity", `Confirming the original input remains unchanged: ${amount}.`, 88 + ratio * 2, "Hashing");
+  } else if (progress.stage === "verifying-image-after") {
+    setStatus("running", "Verifying image integrity", `Confirming the attached raw image remains unchanged: ${amount}.`, 90 + ratio * 2, "Hashing");
   }
 }
 
@@ -144,14 +148,13 @@ async function cancelBuild() {
   if (!running || cancelling) return;
   cancelling = true;
   elements.cancelBuild.disabled = true;
-  setStatus("running", "Cancelling safely…", "Stopping the disposable builder appliance.", 90);
+  setStatus("running", "Cancelling safely…", "Stopping the disposable builder appliance.", 90, "Cancelling");
   addStageLog("Cancellation requested.");
   try { await invoke("stop_appliance"); }
   catch (error) { addStageLog(`Shutdown warning: ${error}`); }
   setStatus("cancelled", "Build cancelled", "The original image was not modified.", 100);
   addStageLog("Build cancelled; disposable session stopped.");
   await finish("cancelled", "Prototype build cancelled.");
-  cancelling = false;
 }
 
 async function runBuild(request) {
@@ -198,7 +201,7 @@ async function runBuild(request) {
     addStageLog(`Health: ${health.requiredTools.length} required tools available; ${health.availableBytes} bytes free.`);
     if (cancelling) return;
 
-    setStatus("running", "Verifying isolated transfer", "Sending a harmless probe through Fedora and checking the returned bytes.", 62);
+    setStatus("running", "Verifying isolated transfer", "Sending a harmless probe through Fedora and checking the returned bytes.", 62, "Transferring");
     const transfer = await invoke("verify_guest_transfer");
     addStageLog(`Transfer: ${transfer.message}`);
     addStageLog(`Transfer: ${transfer.bytesVerified} bytes; guest SHA256 ${transfer.guestSha256}.`);
@@ -218,7 +221,7 @@ async function runBuild(request) {
     addStageLog(`Marker mutation: source SHA256 ${mutation.sourceSha256After}; working SHA256 ${mutation.workingSha256}.`);
     if (cancelling) return;
 
-    setStatus("running", "Inspecting selected image", "Reading its disk layout without mounting or modifying it.", 88);
+    setStatus("running", "Inspecting selected image", "Reading its disk layout without mounting or modifying it.", 88, "Inspecting");
     const image = await invoke("inspect_selected_image");
     addStageLog(`Selected image: ${image.diskBytes} bytes; ${image.partitionTable || "unrecognized"} partition table; read-only=${image.readOnly}.`);
     for (const node of image.nodes) {
