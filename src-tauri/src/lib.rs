@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     net::{TcpListener, TcpStream},
@@ -28,6 +28,10 @@ const RELEASES_RESPONSE_LIMIT: u64 = 4 * 1024 * 1024;
 const CHECKSUM_RESPONSE_LIMIT: u64 = 4 * 1024;
 const PROVENANCE_RESPONSE_LIMIT: u64 = 1024 * 1024;
 const NVIDIA_ARCHIVE_LIMIT: u64 = 512 * 1024 * 1024;
+const ARCH_ARCHIVE_INDEX_LIMIT: u64 = 8 * 1024 * 1024;
+const NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 512 * 1024 * 1024;
+const LIB32_NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 128 * 1024 * 1024;
+const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 
 #[derive(Serialize)]
 struct ImageInfo {
@@ -240,6 +244,29 @@ struct NvidiaPublishedResolution {
     target: NvidiaTargetReadiness,
     publication: Option<NvidiaPublishedPublication>,
     artifact: Option<NvidiaPublishedArtifact>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaUserspacePackage {
+    name: String,
+    filename: String,
+    full_version: String,
+    package_path: String,
+    signature_path: String,
+    package_sha256: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaUserspaceResolution {
+    schema_version: u32,
+    status: String,
+    reason: String,
+    message: String,
+    nvidia_version: String,
+    signature_status: String,
+    packages: Vec<NvidiaUserspacePackage>,
 }
 
 #[derive(Clone, Serialize)]
@@ -531,6 +558,8 @@ struct ApplianceSession {
     working_image: PathBuf,
     input_preparation: InputPreparation,
     target_system: Option<TargetSystemDiscovery>,
+    nvidia_resolution: Option<NvidiaPublishedResolution>,
+    nvidia_userspace: Option<NvidiaUserspaceResolution>,
 }
 
 struct NvidiaBuildSession {
@@ -666,10 +695,23 @@ struct PartialOutputGuard {
     armed: bool,
 }
 
+struct StagingDirectoryGuard {
+    path: PathBuf,
+    armed: bool,
+}
+
 impl Drop for PartialOutputGuard {
     fn drop(&mut self) {
         if self.armed && self.path.is_file() {
             let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+impl Drop for StagingDirectoryGuard {
+    fn drop(&mut self) {
+        if self.armed && self.path.is_dir() {
+            let _ = fs::remove_dir_all(&self.path);
         }
     }
 }
@@ -1647,6 +1689,8 @@ fn prepare_session(
         working_image,
         input_preparation,
         target_system: None,
+        nvidia_resolution: None,
+        nvidia_userspace: None,
     })
 }
 
@@ -2826,6 +2870,279 @@ fn resolve_published_nvidia_for_target(
             trust,
         }),
     })
+}
+
+fn arch_package_release_key(value: &str) -> Option<Vec<u64>> {
+    let parts = value.split('.').collect::<Vec<_>>();
+    if parts.is_empty()
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || !part.bytes().all(|byte| byte.is_ascii_digit())
+                || (part.len() > 1 && part.starts_with('0'))
+        })
+    {
+        return None;
+    }
+    parts
+        .into_iter()
+        .map(|part| part.parse::<u64>().ok())
+        .collect()
+}
+
+fn arch_index_hrefs(index: &str) -> HashSet<&str> {
+    index
+        .split("href=\"")
+        .skip(1)
+        .filter_map(|rest| rest.split_once('"').map(|(href, _)| href))
+        .collect()
+}
+
+fn select_arch_userspace_package(
+    index: &str,
+    package: &str,
+    nvidia_version: &str,
+) -> Result<(String, String), String> {
+    if !matches!(package, "nvidia-utils" | "lib32-nvidia-utils")
+        || !valid_numeric_version(nvidia_version, 2..=3)
+    {
+        return Err("Invalid NVIDIA userspace package selection request.".into());
+    }
+    let hrefs = arch_index_hrefs(index);
+    let prefix = format!("{package}-{nvidia_version}-");
+    let suffix = "-x86_64.pkg.tar.zst";
+    let mut candidates = Vec::new();
+    for href in &hrefs {
+        let Some(release) = href
+            .strip_prefix(&prefix)
+            .and_then(|value| value.strip_suffix(suffix))
+        else {
+            continue;
+        };
+        let Some(release_key) = arch_package_release_key(release) else {
+            continue;
+        };
+        if !hrefs.contains(format!("{href}.sig").as_str()) {
+            continue;
+        }
+        candidates.push((release_key, release.to_string(), (*href).to_string()));
+    }
+    candidates.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    let Some((highest_key, highest_release, highest_filename)) = candidates.pop() else {
+        return Err(format!(
+            "The Arch Linux Archive has no signed x86_64 {package} package for exact NVIDIA version {nvidia_version}."
+        ));
+    };
+    if candidates
+        .last()
+        .is_some_and(|candidate| candidate.0 == highest_key)
+    {
+        return Err(format!(
+            "The Arch Linux Archive returned an ambiguous highest {package} package release."
+        ));
+    }
+    Ok((
+        highest_filename,
+        format!("{nvidia_version}-{highest_release}"),
+    ))
+}
+
+fn arch_package_directory(package: &str) -> Result<&'static str, String> {
+    match package {
+        "nvidia-utils" => Ok("https://archive.archlinux.org/packages/n/nvidia-utils"),
+        "lib32-nvidia-utils" => Ok("https://archive.archlinux.org/packages/l/lib32-nvidia-utils"),
+        _ => Err("Unsupported NVIDIA userspace package name.".into()),
+    }
+}
+
+fn download_arch_userspace_asset(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    destination: &Path,
+    limit: u64,
+    cancel: &AtomicBool,
+    stage: &str,
+    progress: &impl Fn(&str, u64, u64),
+) -> Result<String, String> {
+    if destination.exists() {
+        return Err(format!(
+            "Refusing to overwrite a staged NVIDIA userspace input: {}",
+            destination.display()
+        ));
+    }
+    let partial = destination.with_file_name(format!(
+        ".{}.partial",
+        destination
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("NVIDIA userspace asset has an invalid filename.")?
+    ));
+    if partial.exists() {
+        fs::remove_file(&partial)
+            .map_err(|e| format!("Could not remove an abandoned userspace download: {e}"))?;
+    }
+    let mut guard = PartialOutputGuard {
+        path: partial.clone(),
+        armed: true,
+    };
+    let mut response = client
+        .get(url)
+        .header("Accept", "application/octet-stream")
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|e| format!("Could not download NVIDIA userspace input: {e}"))?;
+    if response
+        .content_length()
+        .is_some_and(|length| length == 0 || length > limit)
+    {
+        return Err("NVIDIA userspace input has an invalid download size.".into());
+    }
+    let total = response.content_length().unwrap_or(0);
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&partial)
+        .map_err(|e| format!("Could not stage NVIDIA userspace input: {e}"))?;
+    let mut hasher = Sha256::new();
+    let mut downloaded = 0_u64;
+    let mut next_report = 0_u64;
+    let mut buffer = vec![0_u8; 256 * 1024];
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("NVIDIA userspace download cancelled.".into());
+        }
+        let count = response
+            .read(&mut buffer)
+            .map_err(|e| format!("Could not read NVIDIA userspace input: {e}"))?;
+        if count == 0 {
+            break;
+        }
+        downloaded = downloaded
+            .checked_add(count as u64)
+            .filter(|value| *value <= limit)
+            .ok_or("NVIDIA userspace input exceeds the safety limit.")?;
+        output
+            .write_all(&buffer[..count])
+            .map_err(|e| format!("Could not write NVIDIA userspace input: {e}"))?;
+        hasher.update(&buffer[..count]);
+        if downloaded >= next_report {
+            progress(stage, downloaded, total);
+            next_report = downloaded.saturating_add(1024 * 1024);
+        }
+    }
+    if downloaded == 0 || (total != 0 && downloaded != total) {
+        return Err("NVIDIA userspace input download was incomplete.".into());
+    }
+    output
+        .flush()
+        .map_err(|e| format!("Could not finish NVIDIA userspace input: {e}"))?;
+    progress(stage, downloaded, total);
+    fs::rename(&partial, destination)
+        .map_err(|e| format!("Could not finalize NVIDIA userspace input: {e}"))?;
+    guard.armed = false;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn resolve_nvidia_userspace_for_version(
+    runtime_dir: &Path,
+    nvidia_version: &str,
+    client: &reqwest::blocking::Client,
+    cancel: &AtomicBool,
+    progress: &impl Fn(&str, u64, u64),
+) -> Result<NvidiaUserspaceResolution, String> {
+    if !valid_numeric_version(nvidia_version, 2..=3) {
+        return Err("Published NVIDIA artifact has an invalid userspace version.".into());
+    }
+    let output_dir = runtime_dir.join(format!(
+        "nvidia-userspace-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    ));
+    fs::create_dir(&output_dir)
+        .map_err(|e| format!("Could not create NVIDIA userspace staging: {e}"))?;
+    let mut output_guard = StagingDirectoryGuard {
+        path: output_dir.clone(),
+        armed: true,
+    };
+    let mut packages = Vec::new();
+    for (package, package_limit, package_stage, signature_stage) in [
+        (
+            "nvidia-utils",
+            NVIDIA_UTILS_ARCHIVE_LIMIT,
+            "downloading-nvidia-utils",
+            "downloading-nvidia-utils-signature",
+        ),
+        (
+            "lib32-nvidia-utils",
+            LIB32_NVIDIA_UTILS_ARCHIVE_LIMIT,
+            "downloading-lib32-nvidia-utils",
+            "downloading-lib32-nvidia-utils-signature",
+        ),
+    ] {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("NVIDIA userspace resolution cancelled.".into());
+        }
+        let directory = arch_package_directory(package)?;
+        progress("querying-arch-package-index", packages.len() as u64, 2);
+        let index_response = client
+            .get(format!("{directory}/"))
+            .header("Accept", "text/html")
+            .send()
+            .map_err(|e| format!("Could not query the Arch Linux Archive for {package}: {e}"))?;
+        let index_bytes = read_http_response_limited(
+            index_response,
+            ARCH_ARCHIVE_INDEX_LIMIT,
+            &format!("{package} archive index"),
+        )?;
+        let index = std::str::from_utf8(&index_bytes)
+            .map_err(|e| format!("{package} archive index is not UTF-8: {e}"))?;
+        let (filename, full_version) =
+            select_arch_userspace_package(index, package, nvidia_version)?;
+        let signature_filename = format!("{filename}.sig");
+        let package_path = output_dir.join(&filename);
+        let signature_path = output_dir.join(&signature_filename);
+        let package_sha256 = download_arch_userspace_asset(
+            client,
+            &format!("{directory}/{filename}"),
+            &package_path,
+            package_limit,
+            cancel,
+            package_stage,
+            progress,
+        )?;
+        download_arch_userspace_asset(
+            client,
+            &format!("{directory}/{signature_filename}"),
+            &signature_path,
+            ARCH_PACKAGE_SIGNATURE_LIMIT,
+            cancel,
+            signature_stage,
+            progress,
+        )?;
+        packages.push(NvidiaUserspacePackage {
+            name: package.into(),
+            filename,
+            full_version,
+            package_path: package_path.to_string_lossy().into_owned(),
+            signature_path: signature_path.to_string_lossy().into_owned(),
+            package_sha256,
+        });
+    }
+    progress("querying-arch-package-index", 2, 2);
+    let resolution = NvidiaUserspaceResolution {
+        schema_version: 1,
+        status: "prepared".into(),
+        reason: "signed_packages_staged".into(),
+        message: format!(
+            "Staged exact NVIDIA {nvidia_version} userspace packages and detached signatures; trust remains pending x86 appliance verification."
+        ),
+        nvidia_version: nvidia_version.into(),
+        signature_status: "pending-x86-validation".into(),
+        packages,
+    };
+    output_guard.armed = false;
+    Ok(resolution)
 }
 
 fn nvidia_development_asset_name(spec: &NvidiaTargetBuildSpec) -> String {
@@ -5271,34 +5588,115 @@ async fn resolve_published_nvidia(
                 },
             );
         };
-        if !target.ready {
-            return resolve_published_nvidia_for_target(
+        let resolution = if !target.ready {
+            resolve_published_nvidia_for_target(
                 target,
                 &runtime_dir,
                 &nvidia_http_client()?,
                 &[],
                 &cancel,
                 &report_progress,
-            );
-        }
-        if cancel.load(Ordering::Relaxed) {
-            return Err("Published NVIDIA resolution cancelled.".into());
-        }
-        report_progress("querying-nvidia-releases", 0, 1);
-        let client = nvidia_http_client()?;
-        let releases = fetch_github_releases(&client)?;
-        report_progress("querying-nvidia-releases", 1, 1);
-        resolve_published_nvidia_for_target(
-            target,
-            &runtime_dir,
-            &client,
-            &releases,
-            &cancel,
-            &report_progress,
-        )
+            )?
+        } else {
+            if cancel.load(Ordering::Relaxed) {
+                return Err("Published NVIDIA resolution cancelled.".into());
+            }
+            report_progress("querying-nvidia-releases", 0, 1);
+            let client = nvidia_http_client()?;
+            let releases = fetch_github_releases(&client)?;
+            report_progress("querying-nvidia-releases", 1, 1);
+            resolve_published_nvidia_for_target(
+                target,
+                &runtime_dir,
+                &client,
+                &releases,
+                &cancel,
+                &report_progress,
+            )?
+        };
+        let mut manager = manager_state
+            .lock()
+            .map_err(|_| "Appliance state lock is unavailable.")?;
+        let active = manager
+            .session
+            .as_mut()
+            .filter(|session| session.runtime_dir == runtime_dir)
+            .ok_or("Builder session ended before NVIDIA resolution could be recorded.")?;
+        active.nvidia_resolution = Some(resolution.clone());
+        active.nvidia_userspace = None;
+        Ok(resolution)
     })
     .await
     .map_err(|error| format!("Published NVIDIA resolver worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn prepare_nvidia_userspace(
+    app: tauri::AppHandle,
+) -> Result<NvidiaUserspaceResolution, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager_state = app.state::<Mutex<ApplianceManager>>();
+        let (runtime_dir, nvidia_version, cancel) = {
+            let manager = manager_state
+                .lock()
+                .map_err(|_| "Appliance state lock is unavailable.")?;
+            let session = manager
+                .session
+                .as_ref()
+                .ok_or("The builder appliance is not running.")?;
+            let resolution = session
+                .nvidia_resolution
+                .as_ref()
+                .filter(|resolution| resolution.status == "compatible")
+                .ok_or("A compatible published NVIDIA artifact must be verified first.")?;
+            let publication = resolution
+                .publication
+                .as_ref()
+                .ok_or("Compatible NVIDIA resolution omitted publication metadata.")?;
+            if let Some(userspace) = session
+                .nvidia_userspace
+                .as_ref()
+                .filter(|userspace| userspace.nvidia_version == publication.nvidia_version)
+            {
+                return Ok(userspace.clone());
+            }
+            (
+                session.runtime_dir.clone(),
+                publication.nvidia_version.clone(),
+                manager.cancel_preparation.clone(),
+            )
+        };
+        let report_progress = |stage: &str, processed_bytes: u64, total_bytes: u64| {
+            let _ = app.emit_to(
+                "build-progress",
+                "nvidia-resolution-progress",
+                NvidiaResolutionProgress {
+                    stage: stage.into(),
+                    processed_bytes,
+                    total_bytes,
+                },
+            );
+        };
+        let userspace = resolve_nvidia_userspace_for_version(
+            &runtime_dir,
+            &nvidia_version,
+            &nvidia_http_client()?,
+            &cancel,
+            &report_progress,
+        )?;
+        let mut manager = manager_state
+            .lock()
+            .map_err(|_| "Appliance state lock is unavailable.")?;
+        let active = manager
+            .session
+            .as_mut()
+            .filter(|session| session.runtime_dir == runtime_dir)
+            .ok_or("Builder session ended before NVIDIA userspace inputs could be recorded.")?;
+        active.nvidia_userspace = Some(userspace.clone());
+        Ok(userspace)
+    })
+    .await
+    .map_err(|error| format!("NVIDIA userspace preparation worker failed: {error}"))?
 }
 
 fn stop_session_process(session: &mut ApplianceSession) -> Result<(), String> {
@@ -5813,6 +6211,66 @@ mod tests {
         assert!(unique_release_asset(exact_release, &provenance_name)
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn selects_exact_signed_arch_userspace_packages_independently() {
+        let nvidia_index = r#"
+            <a href="nvidia-utils-575.64.05-1-x86_64.pkg.tar.zst">old</a>
+            <a href="nvidia-utils-575.64.05-1-x86_64.pkg.tar.zst.sig">old signature</a>
+            <a href="nvidia-utils-575.64.05-2-x86_64.pkg.tar.zst">selected</a>
+            <a href="nvidia-utils-575.64.05-2-x86_64.pkg.tar.zst.sig">selected signature</a>
+            <a href="nvidia-utils-575.64.05-3-x86_64.pkg.tar.zst">unsigned</a>
+            <a href="nvidia-utils-580.1.1-1-x86_64.pkg.tar.zst">wrong version</a>
+            <a href="nvidia-utils-580.1.1-1-x86_64.pkg.tar.zst.sig">wrong signature</a>
+        "#;
+        let lib32_index = r#"
+            <a href="lib32-nvidia-utils-575.64.05-1-x86_64.pkg.tar.zst">selected</a>
+            <a href="lib32-nvidia-utils-575.64.05-1-x86_64.pkg.tar.zst.sig">selected signature</a>
+        "#;
+        let (nvidia, nvidia_full_version) =
+            select_arch_userspace_package(nvidia_index, "nvidia-utils", "575.64.05").unwrap();
+        let (lib32, lib32_full_version) =
+            select_arch_userspace_package(lib32_index, "lib32-nvidia-utils", "575.64.05").unwrap();
+        assert_eq!(nvidia, "nvidia-utils-575.64.05-2-x86_64.pkg.tar.zst");
+        assert_eq!(nvidia_full_version, "575.64.05-2");
+        assert_eq!(lib32, "lib32-nvidia-utils-575.64.05-1-x86_64.pkg.tar.zst");
+        assert_eq!(lib32_full_version, "575.64.05-1");
+        assert!(select_arch_userspace_package(nvidia_index, "nvidia-utils", "575.64.06").is_err());
+        assert!(arch_package_release_key("01").is_none());
+        assert!(arch_package_release_key("1..2").is_none());
+    }
+
+    #[test]
+    #[ignore = "queries the live Arch Linux Archive package indexes"]
+    fn live_arch_userspace_package_selection() {
+        let client = nvidia_http_client().expect("create HTTPS client");
+        for (package, expected) in [
+            (
+                "nvidia-utils",
+                "nvidia-utils-575.64.05-2-x86_64.pkg.tar.zst",
+            ),
+            (
+                "lib32-nvidia-utils",
+                "lib32-nvidia-utils-575.64.05-1-x86_64.pkg.tar.zst",
+            ),
+        ] {
+            let directory = arch_package_directory(package).expect("known package directory");
+            let response = client
+                .get(format!("{directory}/"))
+                .send()
+                .expect("query package index");
+            let bytes = read_http_response_limited(
+                response,
+                ARCH_ARCHIVE_INDEX_LIMIT,
+                "live package index",
+            )
+            .expect("read package index");
+            let index = std::str::from_utf8(&bytes).expect("UTF-8 package index");
+            let (filename, _) = select_arch_userspace_package(index, package, "575.64.05")
+                .expect("select exact signed package");
+            assert_eq!(filename, expected);
+        }
     }
 
     #[test]
@@ -6550,6 +7008,7 @@ pub fn run() {
             mutate_selected_marker,
             assess_nvidia_target,
             resolve_published_nvidia,
+            prepare_nvidia_userspace,
             export_marker_image,
             stop_appliance,
             stop_nvidia_build_appliance,

@@ -159,6 +159,16 @@ function showNvidiaResolutionProgress(progress) {
     setStatus("running", "Downloading compatible NVIDIA modules", `${formatBytes(processed)} of ${formatBytes(total)} transferred.`, 95.7 + ratio * 0.2, "Downloading");
   } else if (progress.stage === "validating-nvidia-artifact") {
     setStatus("running", "Validating NVIDIA artifact", "Checking GitHub digests, checksum, embedded provenance, exact vermagic, and all five module hashes.", 95.92 + ratio * 0.06, "Validating");
+  } else if (progress.stage === "querying-arch-package-index") {
+    setStatus("running", "Resolving NVIDIA userspace", "Finding exact signed nvidia-utils packages in the Arch Linux Archive.", 95.98, "Resolving");
+  } else if (progress.stage === "downloading-nvidia-utils") {
+    setStatus("running", "Downloading NVIDIA userspace", `${formatBytes(processed)}${total ? ` of ${formatBytes(total)}` : ""} transferred.`, 96 + ratio * 0.35, "Downloading");
+  } else if (progress.stage === "downloading-nvidia-utils-signature") {
+    setStatus("running", "Downloading NVIDIA signature", "Staging the detached nvidia-utils signature for appliance verification.", 96.36, "Downloading");
+  } else if (progress.stage === "downloading-lib32-nvidia-utils") {
+    setStatus("running", "Downloading 32-bit NVIDIA userspace", `${formatBytes(processed)}${total ? ` of ${formatBytes(total)}` : ""} transferred.`, 96.38 + ratio * 0.2, "Downloading");
+  } else if (progress.stage === "downloading-lib32-nvidia-utils-signature") {
+    setStatus("running", "Downloading 32-bit NVIDIA signature", "Staging the detached lib32-nvidia-utils signature for appliance verification.", 96.59, "Downloading");
   }
 }
 
@@ -388,7 +398,12 @@ async function runBuild(request) {
         addStageLog(`NVIDIA publication: ${publication.tag}; compatibility=${nvidiaResolution.compatibility}.`);
         addStageLog(`NVIDIA artifact: version ${publication.nvidiaVersion}; trust=${artifact.trust}; SHA256 ${artifact.archiveSha256}.`);
         addStageLog("NVIDIA artifact passed host-side checksum, provenance, exact-kernel, architecture, and five-module validation.");
-        addStageLog("warning: NVIDIA injection is not enabled in this marker-only milestone; the verified artifact remains disposable with this session.");
+        const userspace = await invoke("prepare_nvidia_userspace");
+        for (const packageInput of userspace.packages) {
+          addStageLog(`NVIDIA userspace: ${packageInput.name} ${packageInput.fullVersion}; SHA256 ${packageInput.packageSha256}.`);
+        }
+        addStageLog(`NVIDIA userspace signatures: ${userspace.signatureStatus}; exact packages are staged for the managed x86 installer.`);
+        addStageLog("warning: NVIDIA injection is not enabled in this milestone; the verified module artifact and pending-signature userspace inputs remain disposable with this session.");
       } else {
         addStageLog(`warning: ${nvidiaResolution.message}`);
         addStageLog(`NVIDIA publication status: ${nvidiaResolution.reason}; continuing with a marker-only output.`);

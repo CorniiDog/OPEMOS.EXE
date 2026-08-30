@@ -11,13 +11,14 @@ The Rust backend prepares a disposable Fedora session, launches QEMU in the back
 On Apple Silicon, the normal inspection/mutation appliance remains native
 aarch64 with HVF acceleration. Development tooling can acquire and launch a
 separate x86_64 Fedora appliance under TCG software emulation for exact-kernel
-NVIDIA compilation experiments. The Rust backend owns an isolated lifecycle for
-that worker, including its disposable overlay and credentials, dynamic SSH
-port, architecture health check, logs, ten-minute emulated-boot timeout, and
-shutdown cleanup. The normal frontend build flow does not invoke that slower
-worker yet, and artifacts from it remain development/unverified until the
-support repository's Fedora build, installer, and package-signature gates have
-passed.
+NVIDIA compilation and offline-root installation. The Rust backend owns an
+isolated lifecycle for that worker, including its disposable overlay and
+credentials, dynamic SSH port, architecture health check, logs, ten-minute
+emulated-boot timeout, and shutdown cleanup. The support repository's complete
+Fedora suite, real recursive bind-mount cleanup, real signed-package validation,
+and validation/mutation cancellation paths have passed in that managed x86_64
+appliance. The normal frontend does not move or mutate the working image through
+the x86 worker yet.
 
 An opt-in development command can copy an explicitly selected support-repository
 checkout into the managed x86 worker and execute its fixed offline-target build
@@ -67,6 +68,16 @@ has downloaded and passed the current SteamOS 3.8.16/NVIDIA 575.64.05 release.
 Injection is intentionally not enabled yet: the verified download is removed
 with the disposable session and the exported output remains clearly
 marker-only.
+
+After accepting a compatible module publication, the backend now queries the
+official Arch Linux Archive for exact-version `nvidia-utils` and
+`lib32-nvidia-utils` packages. It independently selects the highest signed
+package release for each name, so a valid `575.64.05-2`/`575.64.05-1` pairing is
+not rejected. Packages and detached signatures are downloaded through bounded,
+cancellable streams, hashed while transferring, and retained only in backend
+session state. Their trust remains explicitly `pending-x86-validation`; the UI
+cannot provide alternate paths or promote them before the managed x86 installer
+checks the reviewed signer policy, package contents, and exact GSP firmware.
 
 Marker-only exports use an explicit `-marker.img` suffix. The builder reserves
 the `-nvidia.img` label for a future output that has successfully installed and
