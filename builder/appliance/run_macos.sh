@@ -11,10 +11,16 @@ SCRIPT_DIR="$(
 APPLIANCE_IMAGE="${SCRIPT_DIR}/fedora-builder.qcow2"
 
 CLOUD_INIT_DIR="${SCRIPT_DIR}/cloud-init"
+RUNTIME_DIR="${SCRIPT_DIR}/runtime"
 USER_DATA="${CLOUD_INIT_DIR}/user-data"
 META_DATA="${CLOUD_INIT_DIR}/meta-data"
 
-RUNTIME_DIR="${SCRIPT_DIR}/runtime"
+RUNTIME_CLOUD_INIT_DIR="${RUNTIME_DIR}/cloud-init"
+RUNTIME_USER_DATA="${RUNTIME_CLOUD_INIT_DIR}/user-data"
+RUNTIME_META_DATA="${RUNTIME_CLOUD_INIT_DIR}/meta-data"
+SSH_PRIVATE_KEY="${RUNTIME_DIR}/builder_key"
+SSH_PUBLIC_KEY="${RUNTIME_DIR}/builder_key.pub"
+
 SEED_IMAGE="${RUNTIME_DIR}/seed.iso"
 VARS_IMAGE="${RUNTIME_DIR}/uefi-vars.fd"
 RUNTIME_DISK="${RUNTIME_DIR}/session.qcow2"
@@ -52,6 +58,27 @@ command -v qemu-img >/dev/null 2>&1 ||
     die "qemu-img is required."
 
 mkdir -p "$RUNTIME_DIR"
+mkdir -p "$RUNTIME_CLOUD_INIT_DIR"
+
+#
+# Generate runtime SSH identity.
+#
+
+if [[ ! -f "$SSH_PRIVATE_KEY" ]]; then
+    log "Generating builder SSH identity..."
+
+    ssh-keygen         -q         -t ed25519         -N ""         -f "$SSH_PRIVATE_KEY"
+fi
+
+BUILDER_PUBLIC_KEY="$(cat "$SSH_PUBLIC_KEY")"
+
+#
+# Build runtime cloud-init configuration.
+#
+
+cp "$META_DATA" "$RUNTIME_META_DATA"
+
+python3 -c 'from pathlib import Path; import sys; source=Path(sys.argv[1]).read_text(); key=sys.argv[3]; marker="    lock_passwd: false\n"; assert marker in source; source=source.replace(marker, marker+"    ssh_authorized_keys:\n      - "+key+"\n", 1); Path(sys.argv[2]).write_text(source)'     "$USER_DATA"     "$RUNTIME_USER_DATA"     "$BUILDER_PUBLIC_KEY"
 
 #
 # Create a disposable writable overlay.
@@ -78,7 +105,7 @@ hdiutil makehybrid \
     -joliet \
     -default-volume-name cidata \
     -o "$SEED_IMAGE" \
-    "$CLOUD_INIT_DIR"
+    "$RUNTIME_CLOUD_INIT_DIR"
 
 #
 # hdiutil may append .iso automatically depending on macOS behavior.
