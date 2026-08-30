@@ -6,9 +6,9 @@ Below is the consolidated project checklist based on the current repository stat
 
 **Status: development / backend bring-up**
 
-The desktop shell, macOS development bootstrap, Fedora appliance bootstrap, disposable QEMU runtime, cloud-init provisioning, and non-interactive host-to-guest readiness handshake are now working as separate pieces.
+The desktop shell, macOS development bootstrap, Fedora appliance bootstrap, disposable Rust-managed QEMU runtime, cloud-init provisioning, fixed guest operations, synthetic mutation proof, and raw user-image inspection path are working.
 
-The next major transition is to move appliance lifecycle management into the Rust/Tauri backend, then begin harmless mutation of a user-supplied official Valve SteamOS recovery image inside the Fedora guest.
+The next major transition is to validate inspection against an actual Valve recovery image, normalize compressed inputs, and then create the first harmless working-copy mutation without writing to the source.
 
 The project is not yet producing a bootable modified SteamOS image.
 
@@ -36,9 +36,9 @@ The project is not yet producing a bootable modified SteamOS image.
 5. [x] Add graceful guest shutdown and reliable forced cleanup fallback.
 6. [ ] Keep each appliance session disposable and verify no state leaks between builds.
 7. [x] Pass a harmless host file into the guest, return it, and verify identical bytes.
-8. [ ] Pass a user-selected SteamOS recovery image to the guest as data without booting it.
+8. [x] Pass a user-selected raw SteamOS image to the guest as a host-level read-only block device without booting it.
 9. [ ] Detect compression/container format and prepare a writable working image.
-10. [ ] Mount or inspect the SteamOS image read-only first and inventory its partition/filesystem layout.
+10. [x] Inspect a selected raw image read-only without mounting and return structured partition/filesystem metadata. (Real Valve-image validation remains in the immediate sequence.)
 11. [ ] Implement the first deterministic marker-only image mutation.
 12. [ ] Integrate NVIDIA support from `open-gpu-kernel-modules-steamos-support` only after the generic image-mutation path is proven.
 
@@ -189,7 +189,8 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Prevent concurrent builds through one Rust-managed session and one active progress workflow.
 * [x] Remove abandoned inactive overlays after crashes on the next launch.
 * [x] Track runtime disk lifecycle from Rust.
-* [ ] Verify the base qcow2 remains byte-for-byte unchanged across normal sessions.
+* [x] Remove partially prepared runtime state automatically when startup fails before QEMU launches.
+* [x] Verify the base qcow2 remains byte-for-byte unchanged across a complete live session.
 * [ ] Add a corruption/recovery path if the base appliance fails `qemu-img check`.
 
 ---
@@ -320,7 +321,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Verify sufficient host free space for decompression, working copy, overlays, and final output.
 * [ ] Detect obvious non-SteamOS images before destructive or expensive processing.
 * [ ] Identify SteamOS recovery image version/build if possible.
-* [ ] Record input SHA256 for diagnostics/reproducibility.
+* [x] Record input SHA256 before and after read-only inspection and fail if it changes.
 * [ ] Optionally verify known official Valve image hashes when trustworthy metadata is available.
 * [ ] Never reject a legitimate newer Valve image solely because its hash is unknown without a clear compatibility reason.
 
@@ -328,7 +329,7 @@ The project is not yet producing a bootable modified SteamOS image.
 
 # 13. Input decompression and normalization
 
-* [ ] Support raw `.img` input without unnecessary recompression.
+* [x] Support raw `.img` input without unnecessary recompression for read-only inspection.
 * [ ] Decompress `.img.bz2`.
 * [ ] Decompress `.img.gz`.
 * [ ] Decompress `.img.xz`.
@@ -345,16 +346,16 @@ The project is not yet producing a bootable modified SteamOS image.
 # 14. Host-to-guest image transport
 
 * [ ] Choose a safe high-performance transport for large recovery images.
-* [ ] Evaluate attaching the host working image directly as a QEMU block device.
+* [x] Attach the selected raw host image directly as a QEMU block device for inspection.
 * [x] Prove direct QEMU virtio block attachment with an isolated sparse synthetic image.
 * [ ] Evaluate virtiofs/shared-folder approaches where supported.
 * [ ] Avoid copying multi-gigabyte images over SSH unless there is a compelling reason.
-* [ ] Mount/attach user image as read-only for initial inspection.
+* [x] Attach the user image read-only at the host/QEMU boundary for initial inspection; never mount it.
 * [ ] Attach a distinct writable working copy for mutation.
 * [ ] Prevent guest from seeing unrelated host directories.
-* [ ] Validate paths before exposing them to QEMU.
+* [x] Canonicalize and validate the selected path before exposing it to QEMU.
 * [ ] Handle spaces and Unicode in host paths safely.
-* [ ] Verify transport on Apple Silicon macOS first.
+* [x] Verify read-only block transport and structured inspection on Apple Silicon macOS first.
 * [ ] Design transport abstraction that can be implemented on Windows and Linux.
 
 ---
@@ -371,7 +372,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Build layout detection around labels/metadata rather than hard-coded partition numbers where possible.
 * [ ] Fail safely on unknown layouts.
 * [ ] Produce an inspection report before first real NVIDIA modification.
-* [ ] Preserve an anonymized layout fixture or synthetic test image for automated tests.
+* [x] Preserve a deterministic non-Valve DOS-partition fixture for the opt-in live inspection test.
 
 ---
 
@@ -737,7 +738,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Test ext4/btrfs/etc. filesystem discovery as needed.
 * [ ] Test marker mutation without using Valve images in CI.
 * [ ] Test cleanup after forced mutation failure.
-* [ ] Test input checksum preservation.
+* [x] Test input checksum preservation in the opt-in live appliance test.
 * [ ] Test output validation.
 
 ---
@@ -845,7 +846,7 @@ The project is not yet producing a bootable modified SteamOS image.
 
 * [x] Define initial protocol version `1`.
 * [x] Define the fixed health operation and structured host result.
-* [ ] Define the general user-image inspection command. (Structured synthetic inspection is complete.)
+* [x] Define the general user-image inspection command and structured Rust result.
 * [ ] Define prepare-working-image command.
 * [ ] Define the general working-image marker command. (Structured synthetic marker mutation is complete.)
 * [ ] Define integrate-NVIDIA command.
@@ -1153,9 +1154,9 @@ Before calling the project **beta**, verify:
 6. [x] Add a tiny host↔guest file-transfer or block-attachment proof.
 7. [x] Attach a synthetic disk image, lock it read-only, and inspect it without mounting.
 8. [x] Implement deterministic marker mutation on a synthetic working copy and prove source immutability.
-9. [ ] Run the same inspection path against a user-supplied Valve recovery image.
+9. [ ] Run the implemented read-only inspection path against a real user-supplied Valve recovery `.img` and record its layout.
 10. [ ] Produce first modified Valve-image working copy containing only a harmless marker.
-11. [ ] Validate output and input immutability automatically.
+11. [ ] Validate output and input immutability automatically. (Input SHA-256 preservation is implemented; output validation remains.)
 12. [ ] Only then begin NVIDIA support-repo integration.
 
 ---

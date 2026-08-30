@@ -1,6 +1,8 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
+    io::{BufReader, Read, Seek, SeekFrom, Write},
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -89,6 +91,57 @@ struct MarkerMutation {
     mounted: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImageNodeInspection {
+    path: String,
+    node_type: String,
+    size_bytes: u64,
+    start_bytes: Option<u64>,
+    filesystem: Option<String>,
+    filesystem_label: Option<String>,
+    partition_label: Option<String>,
+    partition_type: Option<String>,
+    partition_uuid: Option<String>,
+    filesystem_uuid: Option<String>,
+    mounted: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UserImageInspection {
+    device: String,
+    disk_bytes: u64,
+    read_only: bool,
+    partition_table: Option<String>,
+    nodes: Vec<ImageNodeInspection>,
+    source_sha256_before: String,
+    source_sha256_after: String,
+    source_unchanged: bool,
+}
+
+#[derive(Deserialize)]
+struct LsblkResponse {
+    blockdevices: Vec<LsblkNode>,
+}
+
+#[derive(Deserialize)]
+struct LsblkNode {
+    path: String,
+    #[serde(rename = "type")]
+    node_type: String,
+    size: u64,
+    start: Option<u64>,
+    fstype: Option<String>,
+    label: Option<String>,
+    partlabel: Option<String>,
+    parttype: Option<String>,
+    partuuid: Option<String>,
+    uuid: Option<String>,
+    mountpoints: Option<Vec<Option<String>>>,
+    children: Option<Vec<LsblkNode>>,
+}
+
 struct ApplianceSession {
     child: Child,
     runtime_dir: PathBuf,
@@ -97,6 +150,21 @@ struct ApplianceSession {
     started_at: Instant,
     state: String,
     message: String,
+    input_image: PathBuf,
+    input_sha256_before: String,
+}
+
+struct RuntimeGuard {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl Drop for RuntimeGuard {
+    fn drop(&mut self) {
+        if self.armed && self.path.is_dir() {
+            let _ = archive_and_remove_runtime(&self.path);
+        }
+    }
 }
 
 impl Drop for ApplianceSession {
@@ -339,7 +407,25 @@ fn allocate_ssh_port() -> Result<u16, String> {
         .map_err(|e| format!("Could not inspect the guest SSH port: {e}"))
 }
 
-fn prepare_session() -> Result<ApplianceSession, String> {
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let file = File::open(path)
+        .map_err(|e| format!("Could not open {} for hashing: {e}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        let count = reader
+            .read(&mut buffer)
+            .map_err(|e| format!("Could not hash {}: {e}", path.display()))?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn prepare_session(input_image: Option<&Path>) -> Result<ApplianceSession, String> {
     let appliance = appliance_path();
     if !appliance.is_file() {
         return Err(format!(
@@ -359,6 +445,10 @@ fn prepare_session() -> Result<ApplianceSession, String> {
     let cloud_init_dir = runtime_dir.join("cloud-init");
     fs::create_dir_all(&cloud_init_dir)
         .map_err(|e| format!("Could not create runtime directory: {e}"))?;
+    let mut runtime_guard = RuntimeGuard {
+        path: runtime_dir.clone(),
+        armed: true,
+    };
 
     let ssh_key = runtime_dir.join("builder_key");
     run_checked(
@@ -413,6 +503,31 @@ fn prepare_session() -> Result<ApplianceSession, String> {
         .open(&synthetic_working_disk)
         .and_then(|file| file.set_len(64 * 1024 * 1024))
         .map_err(|e| format!("Could not create the sparse synthetic working disk: {e}"))?;
+    let input_image = if let Some(path) = input_image {
+        path.to_path_buf()
+    } else {
+        let fixture = runtime_dir.join("user-input-fixture.img");
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&fixture)
+            .map_err(|e| format!("Could not create the user-image inspection fixture: {e}"))?;
+        file.set_len(8 * 1024 * 1024)
+            .map_err(|e| format!("Could not size the user-image inspection fixture: {e}"))?;
+        let mut mbr = [0_u8; 512];
+        mbr[446 + 4] = 0x83;
+        mbr[446 + 8..446 + 12].copy_from_slice(&2048_u32.to_le_bytes());
+        mbr[446 + 12..446 + 16].copy_from_slice(&8192_u32.to_le_bytes());
+        mbr[510] = 0x55;
+        mbr[511] = 0xaa;
+        file.seek(SeekFrom::Start(0))
+            .and_then(|_| file.write_all(&mbr))
+            .and_then(|_| file.sync_all())
+            .map_err(|e| format!("Could not initialize the user-image inspection fixture: {e}"))?;
+        fixture
+    };
+    let input_sha256_before = sha256_file(&input_image)?;
     let seed_image = runtime_dir.join("seed.iso");
     run_checked(
         Command::new("hdiutil")
@@ -461,6 +576,10 @@ fn prepare_session() -> Result<ApplianceSession, String> {
     let log_err = log
         .try_clone()
         .map_err(|e| format!("Could not prepare the QEMU log: {e}"))?;
+    let input_drive_path = input_image
+        .to_str()
+        .ok_or("The selected image path is not valid UTF-8.")?
+        .replace(',', ",,");
 
     let mut child = Command::new(qemu)
         .args([
@@ -513,6 +632,15 @@ fn prepare_session() -> Result<ApplianceSession, String> {
             "-device",
             "virtio-blk-pci,drive=synthetic-working,serial=steamos-working",
         ])
+        .arg("-drive")
+        .arg(format!(
+            "file={},if=none,format=raw,readonly=on,id=user-input",
+            input_drive_path
+        ))
+        .args([
+            "-device",
+            "virtio-blk-pci,drive=user-input,serial=steamos-user-input",
+        ])
         .args([
             "-device",
             "virtio-rng-pci",
@@ -535,6 +663,7 @@ fn prepare_session() -> Result<ApplianceSession, String> {
         ));
     }
 
+    runtime_guard.armed = false;
     Ok(ApplianceSession {
         child,
         runtime_dir,
@@ -543,6 +672,8 @@ fn prepare_session() -> Result<ApplianceSession, String> {
         started_at: Instant::now(),
         state: "booting".into(),
         message: "Fedora builder appliance is booting.".into(),
+        input_image,
+        input_sha256_before,
     })
 }
 
@@ -787,6 +918,102 @@ test -n "$DISK_NODE""#;
     })
 }
 
+fn append_image_nodes(
+    node: LsblkNode,
+    logical_sector_bytes: u64,
+    nodes: &mut Vec<ImageNodeInspection>,
+) {
+    let mounted = node
+        .mountpoints
+        .as_ref()
+        .is_some_and(|mountpoints| mountpoints.iter().flatten().any(|value| !value.is_empty()));
+    nodes.push(ImageNodeInspection {
+        path: node.path,
+        node_type: node.node_type,
+        size_bytes: node.size,
+        start_bytes: node
+            .start
+            .and_then(|start| start.checked_mul(logical_sector_bytes)),
+        filesystem: node.fstype,
+        filesystem_label: node.label,
+        partition_label: node.partlabel,
+        partition_type: node.parttype,
+        partition_uuid: node.partuuid,
+        filesystem_uuid: node.uuid,
+        mounted,
+    });
+    for child in node.children.unwrap_or_default() {
+        append_image_nodes(child, logical_sector_bytes, nodes);
+    }
+}
+
+fn inspect_user_image(session: &ApplianceSession) -> Result<UserImageInspection, String> {
+    const DEVICE: &str = "/dev/disk/by-id/virtio-steamos-user-input";
+    let read_only = run_guest_command(
+        session,
+        "set -eu; DEVICE=/dev/disk/by-id/virtio-steamos-user-input; test -b \"$DEVICE\"; sudo blockdev --getro \"$DEVICE\"",
+    )? == "1";
+    if !read_only {
+        return Err("Selected image was not attached read-only; inspection was stopped.".into());
+    }
+    let parse_device_number = |command: &str, description: &str| -> Result<u64, String> {
+        run_guest_command(session, command)?
+            .parse::<u64>()
+            .map_err(|e| {
+                format!("Selected image inspection returned an invalid {description}: {e}")
+            })
+    };
+    let disk_bytes = parse_device_number(
+        "set -eu; DEVICE=/dev/disk/by-id/virtio-steamos-user-input; sudo blockdev --getsize64 \"$DEVICE\"",
+        "disk size",
+    )?;
+    let logical_sector_bytes = parse_device_number(
+        "set -eu; DEVICE=/dev/disk/by-id/virtio-steamos-user-input; sudo blockdev --getss \"$DEVICE\"",
+        "logical sector size",
+    )?;
+    let partition_table = run_guest_command(
+        session,
+        "DEVICE=/dev/disk/by-id/virtio-steamos-user-input; sudo blkid -p -s PTTYPE -o value \"$DEVICE\" 2>/dev/null || true",
+    )?;
+    let json = run_guest_command(
+        session,
+        "set -eu; DEVICE=/dev/disk/by-id/virtio-steamos-user-input; sudo lsblk --json --bytes --output PATH,TYPE,SIZE,START,FSTYPE,LABEL,PARTLABEL,PARTTYPE,PARTUUID,UUID,MOUNTPOINTS \"$DEVICE\"",
+    )?;
+    let response: LsblkResponse = serde_json::from_str(&json)
+        .map_err(|e| format!("Could not parse selected image layout from the guest: {e}"))?;
+    let mut nodes = Vec::new();
+    for node in response.blockdevices {
+        append_image_nodes(node, logical_sector_bytes, &mut nodes);
+    }
+    if nodes.is_empty() {
+        return Err("Selected image inspection returned no block devices.".into());
+    }
+    if let Some(node) = nodes.iter().find(|node| node.mounted) {
+        return Err(format!(
+            "Selected image node {} was unexpectedly mounted; inspection was stopped.",
+            node.path
+        ));
+    }
+    let source_sha256_after = sha256_file(&session.input_image)?;
+    let source_unchanged = session.input_sha256_before == source_sha256_after;
+    if !source_unchanged {
+        return Err(format!(
+            "Selected image changed during read-only inspection (before {}, after {}).",
+            session.input_sha256_before, source_sha256_after
+        ));
+    }
+    Ok(UserImageInspection {
+        device: DEVICE.into(),
+        disk_bytes,
+        read_only,
+        partition_table: (!partition_table.is_empty()).then_some(partition_table),
+        nodes,
+        source_sha256_before: session.input_sha256_before.clone(),
+        source_sha256_after,
+        source_unchanged,
+    })
+}
+
 fn mutate_synthetic_marker(session: &ApplianceSession) -> Result<MarkerMutation, String> {
     const MARKER_PATH: &str = "/etc/steamos-nvidia-image-builder-test";
     const MARKER_CONTENT: &str = "SteamOS NVIDIA Image Builder synthetic marker\nprotocol=1\n";
@@ -954,8 +1181,22 @@ fn check_builder_environment() -> BuilderEnvironment {
 
 #[tauri::command]
 fn start_appliance(
+    path: String,
     manager: tauri::State<'_, Mutex<ApplianceManager>>,
 ) -> Result<ApplianceStatus, String> {
+    let input = fs::canonicalize(PathBuf::from(path))
+        .map_err(|e| format!("Could not resolve the selected image: {e}"))?;
+    if !input.is_file() {
+        return Err("The selected image is no longer available.".into());
+    }
+    let name = input
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !name.ends_with(".img") {
+        return Err("Read-only inspection currently requires an uncompressed .img file. Compressed-image normalization is the next milestone.".into());
+    }
     let mut manager = manager
         .lock()
         .map_err(|_| "Appliance state lock is unavailable.")?;
@@ -970,7 +1211,7 @@ fn start_appliance(
         }
         manager.session = None;
     }
-    let session = prepare_session()?;
+    let session = prepare_session(Some(&input))?;
     let status = session_status(&session);
     manager.session = Some(session);
     Ok(status)
@@ -1089,6 +1330,23 @@ fn inspect_test_disk(
 }
 
 #[tauri::command]
+fn inspect_selected_image(
+    manager: tauri::State<'_, Mutex<ApplianceManager>>,
+) -> Result<UserImageInspection, String> {
+    let manager = manager
+        .lock()
+        .map_err(|_| "Appliance state lock is unavailable.")?;
+    let session = manager
+        .session
+        .as_ref()
+        .ok_or("Builder appliance is not running.")?;
+    if session.state != "ready" {
+        return Err("Builder appliance is not ready for selected image inspection.".into());
+    }
+    inspect_user_image(session)
+}
+
+#[tauri::command]
 fn mutate_test_marker(
     manager: tauri::State<'_, Mutex<ApplianceManager>>,
 ) -> Result<MarkerMutation, String> {
@@ -1161,7 +1419,17 @@ fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, Strin
                 .map_err(|e| format!("Could not finish appliance shutdown: {e}"))?;
         }
     }
-    archive_and_remove_runtime(&session.runtime_dir)
+    let input_sha256_after = sha256_file(&session.input_image);
+    let archived_log = archive_and_remove_runtime(&session.runtime_dir);
+    let input_sha256_after = input_sha256_after?;
+    let archived_log = archived_log?;
+    if input_sha256_after != session.input_sha256_before {
+        return Err(format!(
+            "Selected image changed during the appliance session (before {}, after {}).",
+            session.input_sha256_before, input_sha256_after
+        ));
+    }
+    Ok(archived_log)
 }
 
 #[tauri::command]
@@ -1260,7 +1528,9 @@ mod tests {
     #[test]
     #[ignore = "launches the local Fedora/QEMU appliance"]
     fn live_appliance_reaches_ready_marker() {
-        let mut session = prepare_session().expect("the appliance should start");
+        let appliance = appliance_path();
+        let appliance_sha256_before = sha256_file(&appliance).expect("hash appliance before");
+        let mut session = prepare_session(None).expect("the appliance should start");
         let deadline = Instant::now() + BOOT_TIMEOUT;
         loop {
             assert_eq!(
@@ -1300,6 +1570,21 @@ mod tests {
             mutation.marker_path,
             "/etc/steamos-nvidia-image-builder-test"
         );
+        let input = inspect_user_image(&session).expect("user image inspection should pass");
+        assert_eq!(input.disk_bytes, 8 * 1024 * 1024);
+        assert!(input.read_only);
+        assert!(input.source_unchanged);
+        assert_eq!(input.source_sha256_before, input.source_sha256_after);
+        assert_eq!(input.partition_table.as_deref(), Some("dos"));
+        assert_eq!(input.nodes.len(), 2);
+        assert!(input.nodes.iter().all(|node| !node.mounted));
+        let partition = input
+            .nodes
+            .iter()
+            .find(|node| node.node_type == "part")
+            .expect("fixture partition should be discovered");
+        assert_eq!(partition.start_bytes, Some(1024 * 1024));
+        assert_eq!(partition.size_bytes, 4 * 1024 * 1024);
         let runtime_dir = session.runtime_dir.clone();
         let archived_log = stop_session(&mut session)
             .expect("the ready appliance should stop and clean up")
@@ -1311,6 +1596,11 @@ mod tests {
         assert!(
             archived_log.is_file(),
             "the archived QEMU log should remain"
+        );
+        assert_eq!(
+            appliance_sha256_before,
+            sha256_file(&appliance).expect("hash appliance after"),
+            "the base appliance must remain unchanged"
         );
     }
 }
@@ -1333,6 +1623,7 @@ pub fn run() {
             guest_health,
             verify_guest_transfer,
             inspect_test_disk,
+            inspect_selected_image,
             mutate_test_marker,
             stop_appliance,
             validate_image,

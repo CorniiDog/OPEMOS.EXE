@@ -146,7 +146,7 @@ async function runBuild(request) {
 
   let logTimer = null;
   try {
-    const started = await invoke("start_appliance");
+    const started = await invoke("start_appliance", { path: request.path });
     addStageLog(`Appliance session created on local port ${started.sshPort}.`);
     setStatus("running", "Starting builder", "Waiting for the Fedora guest readiness handshake.", 22);
     logTimer = setInterval(refreshLogs, 750);
@@ -187,10 +187,28 @@ async function runBuild(request) {
     addStageLog(`Marker mutation: source SHA256 ${mutation.sourceSha256After}; working SHA256 ${mutation.workingSha256}.`);
     if (cancelling) return;
 
-    setStatus("running", "Creating prototype output", "Validating the selected image and writing the prototype result.", 90);
+    setStatus("running", "Inspecting selected image", "Reading its disk layout without mounting or modifying it.", 88);
+    const image = await invoke("inspect_selected_image");
+    addStageLog(`Selected image: ${image.diskBytes} bytes; ${image.partitionTable || "unrecognized"} partition table; read-only=${image.readOnly}.`);
+    for (const node of image.nodes) {
+      const details = [
+        node.startBytes != null && `offset=${node.startBytes}`,
+        node.filesystem && `filesystem=${node.filesystem}`,
+        node.filesystemLabel && `label=${node.filesystemLabel}`,
+        node.partitionLabel && `partition-label=${node.partitionLabel}`,
+        node.partitionType && `partition-type=${node.partitionType}`,
+        node.partitionUuid && `partition-UUID=${node.partitionUuid}`,
+        node.filesystemUuid && `UUID=${node.filesystemUuid}`,
+      ].filter(Boolean).join("; ");
+      addStageLog(`Image node: ${node.path}; type=${node.nodeType}; size=${node.sizeBytes}; mounted=${node.mounted}${details ? `; ${details}` : ""}.`);
+    }
+    addStageLog(`Selected image SHA256: ${image.sourceSha256After}; unchanged=${image.sourceUnchanged}.`);
+    if (cancelling) return;
+
+    setStatus("running", "Creating prototype output", "Validating the selected image and writing the prototype result.", 94);
     const output = await invoke("prototype_build", { path: request.path });
     addStageLog(`Prototype output created: ${output}`);
-    setStatus("running", "Finalizing", "Stopping the disposable builder session.", 92);
+    setStatus("running", "Finalizing", "Stopping the disposable builder session.", 97);
     await invoke("stop_appliance");
     addStageLog("Builder session stopped.");
     setStatus("complete", "Prototype complete", "Finder opened the generated prototype output.", 100);
