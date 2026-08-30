@@ -6,3 +6,4 @@ builder/appliance/*.raw
 builder/appliance/*.img
 builder/appliance/fedora-builder.qcow2
 builder/appliance/work/
+builder/appliance/runtime/
