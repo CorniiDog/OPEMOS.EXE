@@ -131,6 +131,16 @@ async function runBuild(request) {
 
 elements.cancelBuild.addEventListener("click", cancelBuild);
 elements.closeWindow.addEventListener("click", () => progressWindow.hide());
+elements.buildLog.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+    event.preventDefault();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(elements.buildLog);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+});
 await progressWindow.listen("build-requested", (event) => runBuild(event.payload));
 await progressWindow.onCloseRequested(async (event) => {
   event.preventDefault();
