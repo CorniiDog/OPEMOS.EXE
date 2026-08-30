@@ -20,7 +20,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] **Disposable runtime:** boot through a writable qcow2 overlay so the Fedora base remains pristine.
 * [x] **Guest handshake:** provision the guest with cloud-init and verify readiness through non-interactive SSH.
 * [x] **Backend integration:** Rust owns appliance startup, readiness polling, fixed guest operations, shutdown, and cleanup.
-* [ ] **Harmless image mutation:** pass a user-selected Valve recovery image to the guest, create a working copy, mount it safely, write a deterministic marker, unmount it, and return a validated modified image. (Implementation complete; first full-size export run pending.)
+* [x] **Harmless image mutation:** pass a user-selected Valve recovery image to the guest, create a working copy, mount it safely, write a deterministic marker, unmount it, and return a validated modified image.
 * [ ] **NVIDIA integration prototype:** inject the project’s NVIDIA kernel-module/userspace support into a SteamOS recovery image without requiring manual post-install repair.
 * [ ] **Bootable alpha image:** generated image boots/install-recovery media successfully on at least one NVIDIA test machine.
 * [ ] **Beta:** repeatable builds, clean-image tests, rollback/error handling, and multiple NVIDIA hardware configurations.
@@ -1201,7 +1201,7 @@ Before calling the project **beta**, verify:
 8. [x] Implement deterministic marker mutation on a synthetic working copy and prove source immutability.
 9. [x] Run the implemented read-only inspection path against a real user-supplied Valve recovery image and record its `valve-recovery-a` GPT/Btrfs layout.
 10. [x] Produce first modified Valve-image working copy containing only a harmless marker.
-11. [ ] Validate durable output and input immutability automatically. (Implementation complete; first full-size real-image export run pending.)
+11. [x] Validate durable output and input immutability automatically against a full-size Valve recovery image.
 12. [ ] Only then begin NVIDIA support-repo integration.
 
 ---
