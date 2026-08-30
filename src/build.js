@@ -180,7 +180,14 @@ async function runBuild(request) {
     addStageLog(`Synthetic filesystem: ${disk.filesystem}; label ${disk.filesystemLabel}; UUID ${disk.filesystemUuid}.`);
     if (cancelling) return;
 
-    setStatus("running", "Creating prototype output", "Validating the selected image and writing the prototype result.", 84);
+    setStatus("running", "Testing safe mutation", "Cloning the synthetic source, writing only to the working copy, and verifying source immutability.", 82);
+    const mutation = await invoke("mutate_test_marker");
+    addStageLog(`Marker mutation: wrote ${mutation.markerPath} to the synthetic working copy.`);
+    addStageLog(`Marker mutation: source unchanged=${mutation.sourceUnchanged}; working read-only=${mutation.workingReadOnly}; mounted=${mutation.mounted}.`);
+    addStageLog(`Marker mutation: source SHA256 ${mutation.sourceSha256After}; working SHA256 ${mutation.workingSha256}.`);
+    if (cancelling) return;
+
+    setStatus("running", "Creating prototype output", "Validating the selected image and writing the prototype result.", 90);
     const output = await invoke("prototype_build", { path: request.path });
     addStageLog(`Prototype output created: ${output}`);
     setStatus("running", "Finalizing", "Stopping the disposable builder session.", 92);

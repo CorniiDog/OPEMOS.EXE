@@ -76,6 +76,19 @@ struct SyntheticDiskInspection {
     mounted: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MarkerMutation {
+    marker_path: String,
+    marker_content: String,
+    source_sha256_before: String,
+    source_sha256_after: String,
+    working_sha256: String,
+    source_unchanged: bool,
+    working_read_only: bool,
+    mounted: bool,
+}
+
 struct ApplianceSession {
     child: Child,
     runtime_dir: PathBuf,
@@ -393,6 +406,13 @@ fn prepare_session() -> Result<ApplianceSession, String> {
         .open(&synthetic_disk)
         .and_then(|file| file.set_len(64 * 1024 * 1024))
         .map_err(|e| format!("Could not create the sparse synthetic test disk: {e}"))?;
+    let synthetic_working_disk = runtime_dir.join("synthetic-working.img");
+    OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&synthetic_working_disk)
+        .and_then(|file| file.set_len(64 * 1024 * 1024))
+        .map_err(|e| format!("Could not create the sparse synthetic working disk: {e}"))?;
     let seed_image = runtime_dir.join("seed.iso");
     run_checked(
         Command::new("hdiutil")
@@ -484,6 +504,15 @@ fn prepare_session() -> Result<ApplianceSession, String> {
             "-device",
             "virtio-blk-pci,drive=synthetic,serial=steamos-synthetic",
         ])
+        .arg("-drive")
+        .arg(format!(
+            "file={},if=none,format=raw,id=synthetic-working",
+            synthetic_working_disk.display()
+        ))
+        .args([
+            "-device",
+            "virtio-blk-pci,drive=synthetic-working,serial=steamos-working",
+        ])
         .args([
             "-device",
             "virtio-rng-pci",
@@ -570,7 +599,7 @@ printf 'ARCH=%s\n' "$(uname -m)"
 . /etc/os-release
 printf 'OS=%s\n' "$PRETTY_NAME"
 printf 'AVAILABLE=%s\n' "$(df -B1 --output=avail / | tail -n 1 | tr -d ' ')"
-for tool in bash lsblk blkid findmnt mount umount sha256sum stat cp sync sfdisk mkfs.ext4 blockdev; do
+for tool in bash lsblk blkid findmnt mount umount sha256sum stat cp sync dd sfdisk mkfs.ext4 blockdev; do
   command -v "$tool" >/dev/null 2>&1 && printf 'TOOL=%s\n' "$tool" || printf 'MISSING=%s\n' "$tool"
 done"#;
     let output = run_guest_command(session, HEALTH_COMMAND)?;
@@ -754,6 +783,81 @@ test -n "$DISK_NODE""#;
         filesystem: required("FILESYSTEM")?.to_string(),
         filesystem_label: required("FILESYSTEM_LABEL")?.to_string(),
         filesystem_uuid: required("FILESYSTEM_UUID")?.to_string(),
+        mounted: required("MOUNTED")? == "1",
+    })
+}
+
+fn mutate_synthetic_marker(session: &ApplianceSession) -> Result<MarkerMutation, String> {
+    const MARKER_PATH: &str = "/etc/steamos-nvidia-image-builder-test";
+    const MARKER_CONTENT: &str = "SteamOS NVIDIA Image Builder synthetic marker\nprotocol=1\n";
+    const MUTATE_COMMAND: &str = r#"set -eu
+SOURCE=/dev/disk/by-id/virtio-steamos-synthetic
+WORK=/dev/disk/by-id/virtio-steamos-working
+WORK_PART=/dev/disk/by-id/virtio-steamos-working-part1
+MOUNT_DIR=/mnt/steamos-builder-marker
+EXPECTED=$(printf 'SteamOS NVIDIA Image Builder synthetic marker\nprotocol=1')
+test -b "$SOURCE"
+test -b "$WORK"
+test "$(sudo blockdev --getro "$SOURCE")" = 1
+SOURCE_BEFORE=$(sudo sha256sum "$SOURCE" | cut -d ' ' -f 1)
+sudo blockdev --setrw "$WORK"
+sudo dd if="$SOURCE" of="$WORK" bs=4M conv=fsync status=none
+sudo blockdev --rereadpt "$WORK"
+for attempt in $(seq 1 20); do
+  test -b "$WORK_PART" && break
+  sleep 0.1
+done
+test -b "$WORK_PART"
+sudo mkdir -p "$MOUNT_DIR"
+cleanup_mount() {
+  findmnt -rn -M "$MOUNT_DIR" >/dev/null 2>&1 && sudo umount "$MOUNT_DIR" || true
+}
+trap cleanup_mount EXIT
+sudo mount -o rw "$WORK_PART" "$MOUNT_DIR"
+sudo mkdir -p "$MOUNT_DIR/etc"
+printf 'SteamOS NVIDIA Image Builder synthetic marker\nprotocol=1\n' | sudo tee "$MOUNT_DIR/etc/steamos-nvidia-image-builder-test" >/dev/null
+sync
+test "$(sudo cat "$MOUNT_DIR/etc/steamos-nvidia-image-builder-test")" = "$EXPECTED"
+sudo umount "$MOUNT_DIR"
+trap - EXIT
+sudo blockdev --setro "$WORK"
+SOURCE_AFTER=$(sudo sha256sum "$SOURCE" | cut -d ' ' -f 1)
+WORKING_SHA=$(sudo sha256sum "$WORK" | cut -d ' ' -f 1)
+MOUNTED=0
+findmnt -rn -S "$WORK_PART" >/dev/null 2>&1 && MOUNTED=1
+printf 'SOURCE_BEFORE=%s\n' "$SOURCE_BEFORE"
+printf 'SOURCE_AFTER=%s\n' "$SOURCE_AFTER"
+printf 'WORKING_SHA=%s\n' "$WORKING_SHA"
+printf 'WORKING_READ_ONLY=%s\n' "$(sudo blockdev --getro "$WORK")"
+printf 'MOUNTED=%s\n' "$MOUNTED"
+test "$SOURCE_BEFORE" = "$SOURCE_AFTER"
+test "$SOURCE_BEFORE" != "$WORKING_SHA"
+test "$(sudo blockdev --getro "$WORK")" = 1
+test "$MOUNTED" = 0"#;
+    let output = run_guest_command(session, MUTATE_COMMAND)?;
+    let mut values = std::collections::HashMap::new();
+    for line in output.lines() {
+        if let Some((key, value)) = line.split_once('=') {
+            values.insert(key, value);
+        }
+    }
+    let required = |key: &str| {
+        values
+            .get(key)
+            .copied()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| format!("Synthetic marker mutation omitted {key}."))
+    };
+    let source_sha256_before = required("SOURCE_BEFORE")?.to_string();
+    let source_sha256_after = required("SOURCE_AFTER")?.to_string();
+    Ok(MarkerMutation {
+        marker_path: MARKER_PATH.into(),
+        marker_content: MARKER_CONTENT.into(),
+        source_unchanged: source_sha256_before == source_sha256_after,
+        source_sha256_before,
+        source_sha256_after,
+        working_sha256: required("WORKING_SHA")?.to_string(),
+        working_read_only: required("WORKING_READ_ONLY")? == "1",
         mounted: required("MOUNTED")? == "1",
     })
 }
@@ -984,6 +1088,23 @@ fn inspect_test_disk(
     inspect_synthetic_disk(session)
 }
 
+#[tauri::command]
+fn mutate_test_marker(
+    manager: tauri::State<'_, Mutex<ApplianceManager>>,
+) -> Result<MarkerMutation, String> {
+    let manager = manager
+        .lock()
+        .map_err(|_| "Appliance state lock is unavailable.")?;
+    let session = manager
+        .session
+        .as_ref()
+        .ok_or("Builder appliance is not running.")?;
+    if session.state != "ready" {
+        return Err("Builder appliance is not ready for synthetic marker mutation.".into());
+    }
+    mutate_synthetic_marker(session)
+}
+
 fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, String> {
     if session
         .child
@@ -1168,6 +1289,17 @@ mod tests {
         assert_eq!(disk.filesystem_label, "STEAMOS_TEST");
         assert_eq!(disk.filesystem_uuid, "11111111-2222-3333-4444-555555555555");
         assert!(!disk.mounted);
+        let mutation = mutate_synthetic_marker(&session)
+            .expect("synthetic working-copy marker mutation should pass");
+        assert!(mutation.source_unchanged);
+        assert_eq!(mutation.source_sha256_before, mutation.source_sha256_after);
+        assert_ne!(mutation.source_sha256_after, mutation.working_sha256);
+        assert!(mutation.working_read_only);
+        assert!(!mutation.mounted);
+        assert_eq!(
+            mutation.marker_path,
+            "/etc/steamos-nvidia-image-builder-test"
+        );
         let runtime_dir = session.runtime_dir.clone();
         let archived_log = stop_session(&mut session)
             .expect("the ready appliance should stop and clean up")
@@ -1201,6 +1333,7 @@ pub fn run() {
             guest_health,
             verify_guest_transfer,
             inspect_test_disk,
+            mutate_test_marker,
             stop_appliance,
             validate_image,
             prototype_build

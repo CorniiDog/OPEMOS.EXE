@@ -387,8 +387,8 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Preserve original partition offsets and sizes unless resize is explicitly required.
 * [ ] Avoid repartitioning until proven necessary.
 * [ ] Create a transaction manifest listing every modified path.
-* [ ] Add deterministic marker-only mutation as the first integration test.
-* [ ] Verify marker is present in output and absent from input.
+* [x] Add deterministic marker-only mutation as the first synthetic integration test.
+* [x] Verify the marker on the synthetic working copy and prove the source hash is unchanged.
 * [ ] Verify second run does not accidentally modify the first input.
 * [ ] Verify cancellation cannot modify original image.
 
@@ -847,7 +847,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Define the fixed health operation and structured host result.
 * [ ] Define the general user-image inspection command. (Structured synthetic inspection is complete.)
 * [ ] Define prepare-working-image command.
-* [ ] Define mutate-marker command.
+* [ ] Define the general working-image marker command. (Structured synthetic marker mutation is complete.)
 * [ ] Define integrate-NVIDIA command.
 * [ ] Define integrate-Gamescope command.
 * [ ] Define validate-output command.
@@ -1152,7 +1152,7 @@ Before calling the project **beta**, verify:
 5. [x] Add one structured guest command such as `health`.
 6. [x] Add a tiny host↔guest file-transfer or block-attachment proof.
 7. [x] Attach a synthetic disk image, lock it read-only, and inspect it without mounting.
-8. [ ] Implement deterministic marker mutation on synthetic image.
+8. [x] Implement deterministic marker mutation on a synthetic working copy and prove source immutability.
 9. [ ] Run the same inspection path against a user-supplied Valve recovery image.
 10. [ ] Produce first modified Valve-image working copy containing only a harmless marker.
 11. [ ] Validate output and input immutability automatically.
