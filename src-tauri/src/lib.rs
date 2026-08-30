@@ -13,6 +13,7 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tauri::utils::config::Color;
 use tauri::{Emitter, Manager};
 
 const READY_MARKER: &str = "SteamOS NVIDIA Image Builder appliance\nREADY";
@@ -2136,6 +2137,44 @@ fn validate_image(path: String) -> Result<ImageInfo, String> {
 }
 
 #[tauri::command]
+fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(progress) = app.get_webview_window("build-progress") {
+        progress
+            .show()
+            .map_err(|e| format!("Could not show the build progress window: {e}"))?;
+        progress
+            .set_focus()
+            .map_err(|e| format!("Could not focus the build progress window: {e}"))?;
+        return Ok(());
+    }
+    let main = app
+        .get_webview_window("main")
+        .ok_or("The main application window is unavailable.")?;
+    let progress = tauri::WebviewWindowBuilder::new(
+        &app,
+        "build-progress",
+        tauri::WebviewUrl::App("build.html".into()),
+    )
+    .title("SteamOS NVIDIA Builder — Progress")
+    .inner_size(680.0, 620.0)
+    .min_inner_size(680.0, 620.0)
+    .resizable(true)
+    .theme(Some(tauri::Theme::Dark))
+    .background_color(Color(13, 17, 23, 255))
+    .visible(false)
+    .parent(&main)
+    .map_err(|e| format!("Could not couple the build progress window: {e}"))?
+    .build()
+    .map_err(|e| format!("Could not create the build progress window: {e}"))?;
+    progress
+        .show()
+        .map_err(|e| format!("Could not show the build progress window: {e}"))?;
+    progress
+        .set_focus()
+        .map_err(|e| format!("Could not focus the build progress window: {e}"))
+}
+
+#[tauri::command]
 fn prototype_build(path: String) -> Result<String, String> {
     let input = PathBuf::from(path);
     if !input.is_file() || !supported_image(&input) {
@@ -2447,6 +2486,7 @@ pub fn run() {
             mutate_test_marker,
             stop_appliance,
             validate_image,
+            open_progress_window,
             prototype_build
         ])
         .build(tauri::generate_context!())

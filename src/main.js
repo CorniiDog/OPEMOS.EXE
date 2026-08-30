@@ -103,17 +103,11 @@ elements.buildButton.addEventListener("click", async () => {
   if (!currentImage || !hostReady) return;
   elements.buildButton.disabled = true;
   elements.resultMessage.textContent = "Build progress opened in a separate window.";
-  const windows = await getAllWebviewWindows();
-  const progressWindow = windows.find((window) => window.label === "build-progress");
-  if (!progressWindow) {
-    elements.resultMessage.textContent = "The build progress window is unavailable.";
-    elements.resultMessage.className = "result-message error";
-    updateBuildButton();
-    return;
-  }
   try {
-    await progressWindow.show();
-    await progressWindow.setFocus();
+    await invoke("open_progress_window");
+    const windows = await getAllWebviewWindows();
+    const progressWindow = windows.find((window) => window.label === "build-progress");
+    if (!progressWindow) throw new Error("The build progress window is unavailable.");
     await waitForProgressWindow(progressWindow);
     await progressWindow.emit("build-requested", { path: currentImage, name: currentImageName });
   } catch (error) {
