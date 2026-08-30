@@ -17,6 +17,7 @@ META_DATA="${CLOUD_INIT_DIR}/meta-data"
 RUNTIME_DIR="${SCRIPT_DIR}/runtime"
 SEED_IMAGE="${RUNTIME_DIR}/seed.iso"
 VARS_IMAGE="${RUNTIME_DIR}/uefi-vars.fd"
+RUNTIME_DISK="${RUNTIME_DIR}/session.qcow2"
 
 SSH_PORT="2222"
 
@@ -51,6 +52,17 @@ command -v qemu-img >/dev/null 2>&1 ||
     die "qemu-img is required."
 
 mkdir -p "$RUNTIME_DIR"
+
+#
+# Create a disposable writable overlay.
+#
+
+log "Creating disposable appliance overlay..."
+
+rm -f "$RUNTIME_DISK"
+
+qemu-img create     -f qcow2     -F qcow2     -b "$APPLIANCE_IMAGE"     "$RUNTIME_DISK"
+
 
 #
 # Create cloud-init NoCloud seed image.
@@ -154,7 +166,7 @@ if [[ "$(uname -m)" == "arm64" ]]; then
         -m 4096 \
         -drive "file=${UEFI_CODE},if=pflash,format=raw,readonly=on" \
         -drive "file=${VARS_IMAGE},if=pflash,format=raw" \
-        -drive "file=${APPLIANCE_IMAGE},if=virtio,format=qcow2" \
+        -drive "file=${RUNTIME_DISK},if=virtio,format=qcow2" \
         -drive "file=${SEED_IMAGE},if=virtio,format=raw,readonly=on" \
         -device virtio-rng-pci \
         -device virtio-net-pci,netdev=net0 \
@@ -171,7 +183,7 @@ else
         -m 4096 \
         -drive "file=${UEFI_CODE},if=pflash,format=raw,readonly=on" \
         -drive "file=${VARS_IMAGE},if=pflash,format=raw" \
-        -drive "file=${APPLIANCE_IMAGE},if=virtio,format=qcow2" \
+        -drive "file=${RUNTIME_DISK},if=virtio,format=qcow2" \
         -drive "file=${SEED_IMAGE},if=virtio,format=raw,readonly=on" \
         -device virtio-rng-pci \
         -device virtio-net-pci,netdev=net0 \
