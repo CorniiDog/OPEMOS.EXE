@@ -41,3 +41,16 @@ After creating it, inspect or launch the separate development VM with:
 The launch plan uses `qemu-system-x86_64` with TCG software emulation when the
 host is Apple Silicon. Its runtime directory is also separate, so it cannot
 overwrite or collide with the native appliance runtime.
+
+The Tauri backend also exposes an isolated managed lifecycle for this x86_64
+worker. After the separate appliance has been prepared, its opt-in lifecycle
+test is:
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml \
+  live_nvidia_build_appliance_reaches_ready_marker -- --ignored --nocapture
+```
+
+The test can take several minutes under Apple Silicon software emulation. It
+verifies the guest architecture, clean shutdown, disposable-runtime removal,
+log archival, and base-appliance immutability. It does not compile NVIDIA yet.

@@ -11,10 +11,13 @@ The Rust backend prepares a disposable Fedora session, launches QEMU in the back
 On Apple Silicon, the normal inspection/mutation appliance remains native
 aarch64 with HVF acceleration. Development tooling can acquire and launch a
 separate x86_64 Fedora appliance under TCG software emulation for exact-kernel
-NVIDIA compilation experiments. The desktop app does not invoke that slower
-build appliance yet, and artifacts from it remain development/unverified until
-the support repository's Fedora build, installer, and package-signature gates
-have passed.
+NVIDIA compilation experiments. The Rust backend owns an isolated lifecycle for
+that worker, including its disposable overlay and credentials, dynamic SSH
+port, architecture health check, logs, ten-minute emulated-boot timeout, and
+shutdown cleanup. The normal frontend build flow does not invoke that slower
+worker yet, and artifacts from it remain development/unverified until the
+support repository's Fedora build, installer, and package-signature gates have
+passed.
 
 ## Architecture
 

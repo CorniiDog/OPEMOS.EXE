@@ -18,6 +18,7 @@ use tauri::{Emitter, Manager};
 
 const READY_MARKER: &str = "SteamOS NVIDIA Image Builder appliance\nREADY";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
+const NVIDIA_BUILD_BOOT_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[derive(Serialize)]
 struct ImageInfo {
@@ -36,6 +37,32 @@ struct BuilderEnvironment {
     message: String,
     appliance_present: bool,
     appliance_path: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaBuildEnvironment {
+    ready: bool,
+    host_arch: String,
+    guest_arch: String,
+    acceleration: String,
+    qemu_binary: Option<String>,
+    qemu_version: Option<String>,
+    qemu_launch_test: bool,
+    appliance_present: bool,
+    appliance_path: String,
+    message: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaBuildStatus {
+    state: String,
+    message: String,
+    architecture: String,
+    acceleration: String,
+    ssh_port: Option<u16>,
+    runtime_path: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -321,6 +348,17 @@ struct ApplianceSession {
     target_system: Option<TargetSystemDiscovery>,
 }
 
+struct NvidiaBuildSession {
+    child: Child,
+    runtime_dir: PathBuf,
+    ssh_key: PathBuf,
+    ssh_port: u16,
+    started_at: Instant,
+    state: String,
+    message: String,
+    acceleration: String,
+}
+
 #[derive(Clone)]
 struct ImageInspectionSession {
     runtime_dir: PathBuf,
@@ -416,6 +454,11 @@ struct RuntimeGuard {
     armed: bool,
 }
 
+struct NvidiaBuildRuntimeGuard {
+    path: PathBuf,
+    armed: bool,
+}
+
 struct PartialOutputGuard {
     path: PathBuf,
     armed: bool,
@@ -437,6 +480,14 @@ impl Drop for RuntimeGuard {
     }
 }
 
+impl Drop for NvidiaBuildRuntimeGuard {
+    fn drop(&mut self) {
+        if self.armed && self.path.is_dir() {
+            let _ = archive_and_remove_nvidia_build_runtime(&self.path);
+        }
+    }
+}
+
 impl Drop for ApplianceSession {
     fn drop(&mut self) {
         if self.child.try_wait().ok().flatten().is_none() {
@@ -449,10 +500,37 @@ impl Drop for ApplianceSession {
     }
 }
 
+impl Drop for NvidiaBuildSession {
+    fn drop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+        if self.runtime_dir.is_dir() {
+            let _ = archive_and_remove_nvidia_build_runtime(&self.runtime_dir);
+        }
+    }
+}
+
 struct ApplianceManager {
     session: Option<ApplianceSession>,
     preparing: bool,
     cancel_preparation: Arc<AtomicBool>,
+}
+
+#[derive(Default)]
+struct NvidiaBuildManager {
+    session: Option<NvidiaBuildSession>,
+    starting: bool,
+}
+
+impl Drop for NvidiaBuildManager {
+    fn drop(&mut self) {
+        if let Some(session) = self.session.as_mut() {
+            let _ = session.child.kill();
+            let _ = session.child.wait();
+        }
+    }
 }
 
 impl Default for ApplianceManager {
@@ -489,8 +567,26 @@ fn appliance_path() -> PathBuf {
     appliance_dir().join("fedora-builder.qcow2")
 }
 
+fn nvidia_build_appliance_path() -> PathBuf {
+    appliance_dir().join("fedora-builder-x86_64.qcow2")
+}
+
 fn runtime_root() -> PathBuf {
     appliance_dir().join("runtime")
+}
+
+fn nvidia_build_runtime_root() -> PathBuf {
+    appliance_dir().join("runtime-x86_64-managed")
+}
+
+fn nvidia_build_qemu_spec(
+    host_arch: &str,
+) -> Result<(&'static str, &'static str, &'static str), String> {
+    match host_arch {
+        "aarch64" => Ok(("tcg", "q35,accel=tcg", "max")),
+        "x86_64" => Ok(("hvf", "q35,accel=hvf", "host")),
+        arch => Err(format!("Unsupported host architecture: {arch}")),
+    }
 }
 
 fn process_is_alive(pid: u32) -> bool {
@@ -523,6 +619,28 @@ fn archive_and_remove_runtime(runtime_dir: &Path) -> Result<Option<PathBuf>, Str
     Ok(archive)
 }
 
+fn archive_and_remove_nvidia_build_runtime(runtime_dir: &Path) -> Result<Option<PathBuf>, String> {
+    let log_source = runtime_dir.join("qemu.log");
+    let archive = if log_source.is_file() {
+        let archive_dir = nvidia_build_runtime_root().join("logs");
+        fs::create_dir_all(&archive_dir)
+            .map_err(|e| format!("Could not create the x86 build log archive: {e}"))?;
+        let session_name = runtime_dir
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("unknown-session");
+        let archive_path = archive_dir.join(format!("{session_name}.log"));
+        fs::copy(&log_source, &archive_path)
+            .map_err(|e| format!("Could not archive the x86 build-appliance log: {e}"))?;
+        Some(archive_path)
+    } else {
+        None
+    };
+    fs::remove_dir_all(runtime_dir)
+        .map_err(|e| format!("Could not remove the x86 build-appliance runtime: {e}"))?;
+    Ok(archive)
+}
+
 fn cleanup_abandoned_runtimes() -> Result<(), String> {
     let root = runtime_root();
     if !root.is_dir() {
@@ -549,6 +667,38 @@ fn cleanup_abandoned_runtimes() -> Result<(), String> {
             .unwrap_or(false);
         if !active {
             archive_and_remove_runtime(&path)?;
+        }
+    }
+    Ok(())
+}
+
+fn cleanup_abandoned_nvidia_build_runtimes() -> Result<(), String> {
+    let root = nvidia_build_runtime_root();
+    if !root.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&root)
+        .map_err(|e| format!("Could not inspect x86 build-appliance runtime state: {e}"))?
+    {
+        let entry =
+            entry.map_err(|e| format!("Could not inspect an x86 build-appliance runtime: {e}"))?;
+        let path = entry.path();
+        let is_session = path.is_dir()
+            && path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(|name| name.starts_with("session-"))
+                .unwrap_or(false);
+        if !is_session {
+            continue;
+        }
+        let active = fs::read_to_string(path.join("qemu.pid"))
+            .ok()
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .map(process_is_alive)
+            .unwrap_or(false);
+        if !active {
+            archive_and_remove_nvidia_build_runtime(&path)?;
         }
     }
     Ok(())
@@ -1260,11 +1410,192 @@ fn prepare_session(
     })
 }
 
+fn prepare_nvidia_build_session() -> Result<NvidiaBuildSession, String> {
+    let appliance = nvidia_build_appliance_path();
+    if !appliance.is_file() {
+        return Err(format!(
+            "x86_64 Fedora build appliance not found: {}",
+            appliance.display()
+        ));
+    }
+    let qemu = find_binary("qemu-system-x86_64")
+        .ok_or("qemu-system-x86_64 is required for NVIDIA artifact builds.")?;
+    let qemu_img = find_binary("qemu-img").ok_or("qemu-img is required.")?;
+    let ssh_keygen = find_binary("ssh-keygen").ok_or("ssh-keygen is required.")?;
+    let (acceleration, machine, cpu_model) = nvidia_build_qemu_spec(std::env::consts::ARCH)?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| format!("System clock error: {e}"))?
+        .as_millis();
+    let runtime_dir =
+        nvidia_build_runtime_root().join(format!("session-{timestamp}-{}", std::process::id()));
+    let cloud_init_dir = runtime_dir.join("cloud-init");
+    fs::create_dir_all(&cloud_init_dir)
+        .map_err(|e| format!("Could not create the x86 build runtime: {e}"))?;
+    let mut runtime_guard = NvidiaBuildRuntimeGuard {
+        path: runtime_dir.clone(),
+        armed: true,
+    };
+
+    let ssh_key = runtime_dir.join("builder_key");
+    run_checked(
+        Command::new(ssh_keygen)
+            .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+            .arg(&ssh_key),
+        "Could not generate the x86 build-appliance SSH identity",
+    )?;
+    let public_key = fs::read_to_string(ssh_key.with_extension("pub"))
+        .map_err(|e| format!("Could not read the x86 build-appliance SSH key: {e}"))?;
+    let source_user_data = fs::read_to_string(appliance_dir().join("cloud-init/user-data"))
+        .map_err(|e| format!("Could not read cloud-init user-data: {e}"))?;
+    let marker = "    lock_passwd: false\n";
+    if !source_user_data.contains(marker) {
+        return Err("Cloud-init user-data does not contain the SSH key insertion marker.".into());
+    }
+    let runtime_user_data = source_user_data.replacen(
+        marker,
+        &format!(
+            "{marker}    ssh_authorized_keys:\n      - {}\n",
+            public_key.trim()
+        ),
+        1,
+    );
+    fs::write(cloud_init_dir.join("user-data"), runtime_user_data)
+        .map_err(|e| format!("Could not write x86 build cloud-init data: {e}"))?;
+    fs::copy(
+        appliance_dir().join("cloud-init/meta-data"),
+        cloud_init_dir.join("meta-data"),
+    )
+    .map_err(|e| format!("Could not copy x86 build cloud-init metadata: {e}"))?;
+
+    let runtime_disk = runtime_dir.join("session.qcow2");
+    run_checked(
+        Command::new(qemu_img)
+            .args(["create", "-f", "qcow2", "-F", "qcow2", "-b"])
+            .arg(&appliance)
+            .arg(&runtime_disk),
+        "Could not create the disposable x86 build-appliance overlay",
+    )?;
+    let seed_image = runtime_dir.join("seed.iso");
+    run_checked(
+        Command::new("hdiutil")
+            .args([
+                "makehybrid",
+                "-quiet",
+                "-iso",
+                "-joliet",
+                "-default-volume-name",
+                "cidata",
+                "-o",
+            ])
+            .arg(&seed_image)
+            .arg(&cloud_init_dir),
+        "Could not create the x86 build-appliance cloud-init seed",
+    )?;
+    let appended_seed = runtime_dir.join("seed.iso.iso");
+    if !seed_image.is_file() && appended_seed.is_file() {
+        fs::rename(appended_seed, &seed_image)
+            .map_err(|e| format!("Could not normalize x86 build seed name: {e}"))?;
+    }
+    if !seed_image.is_file() {
+        return Err("The x86 build-appliance cloud-init seed was not created.".into());
+    }
+
+    let share = homebrew_qemu_share()?;
+    let uefi_code = share.join("edk2-x86_64-code.fd");
+    let vars_template = share.join("edk2-i386-vars.fd");
+    if !uefi_code.is_file() || !vars_template.is_file() {
+        return Err(format!(
+            "Required x86 QEMU firmware was not found under {}.",
+            share.display()
+        ));
+    }
+    let vars_image = runtime_dir.join("uefi-vars.fd");
+    fs::copy(&vars_template, &vars_image)
+        .map_err(|e| format!("Could not create the x86 UEFI variable store: {e}"))?;
+    let ssh_port = allocate_ssh_port()?;
+    let log = File::create(runtime_dir.join("qemu.log"))
+        .map_err(|e| format!("Could not create the x86 build-appliance log: {e}"))?;
+    let log_err = log
+        .try_clone()
+        .map_err(|e| format!("Could not prepare the x86 build-appliance log: {e}"))?;
+
+    let mut child = Command::new(qemu)
+        .args([
+            "-name",
+            "SteamOS NVIDIA x86 Build Worker",
+            "-machine",
+            machine,
+            "-cpu",
+            cpu_model,
+            "-smp",
+            "4",
+            "-m",
+            "4096",
+        ])
+        .arg("-drive")
+        .arg(format!(
+            "file={},if=pflash,format=raw,readonly=on",
+            uefi_code.display()
+        ))
+        .arg("-drive")
+        .arg(format!(
+            "file={},if=pflash,format=raw",
+            vars_image.display()
+        ))
+        .arg("-drive")
+        .arg(format!(
+            "file={},if=virtio,format=qcow2",
+            runtime_disk.display()
+        ))
+        .arg("-drive")
+        .arg(format!(
+            "file={},if=virtio,format=raw,readonly=on",
+            seed_image.display()
+        ))
+        .args([
+            "-device",
+            "virtio-rng-pci",
+            "-device",
+            "virtio-net-pci,netdev=net0",
+        ])
+        .arg("-netdev")
+        .arg(format!("user,id=net0,hostfwd=tcp:127.0.0.1:{ssh_port}-:22"))
+        .args(["-display", "none", "-monitor", "none", "-serial", "stdio"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log_err))
+        .spawn()
+        .map_err(|e| format!("Could not start the x86 Fedora build appliance: {e}"))?;
+    if let Err(error) = fs::write(runtime_dir.join("qemu.pid"), child.id().to_string()) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!(
+            "Could not record the x86 build-appliance process ID: {error}"
+        ));
+    }
+
+    runtime_guard.armed = false;
+    Ok(NvidiaBuildSession {
+        child,
+        runtime_dir,
+        ssh_key,
+        ssh_port,
+        started_at: Instant::now(),
+        state: "booting".into(),
+        message: if acceleration == "tcg" {
+            "x86_64 Fedora build appliance is booting under software emulation.".into()
+        } else {
+            "x86_64 Fedora build appliance is booting.".into()
+        },
+        acceleration: acceleration.into(),
+    })
+}
+
 trait GuestConnection {
     fn ssh_key(&self) -> &Path;
     fn ssh_port(&self) -> u16;
     fn runtime_dir(&self) -> &Path;
-    fn working_image(&self) -> &Path;
 }
 
 impl GuestConnection for ApplianceSession {
@@ -1278,10 +1609,6 @@ impl GuestConnection for ApplianceSession {
 
     fn runtime_dir(&self) -> &Path {
         &self.runtime_dir
-    }
-
-    fn working_image(&self) -> &Path {
-        &self.working_image
     }
 }
 
@@ -1297,9 +1624,19 @@ impl GuestConnection for ImageInspectionSession {
     fn runtime_dir(&self) -> &Path {
         &self.runtime_dir
     }
+}
 
-    fn working_image(&self) -> &Path {
-        &self.working_image
+impl GuestConnection for NvidiaBuildSession {
+    fn ssh_key(&self) -> &Path {
+        &self.ssh_key
+    }
+
+    fn ssh_port(&self) -> u16 {
+        self.ssh_port
+    }
+
+    fn runtime_dir(&self) -> &Path {
+        &self.runtime_dir
     }
 }
 
@@ -2640,6 +2977,278 @@ fn session_status(session: &ApplianceSession) -> ApplianceStatus {
     }
 }
 
+fn nvidia_build_status(session: &NvidiaBuildSession) -> NvidiaBuildStatus {
+    NvidiaBuildStatus {
+        state: session.state.clone(),
+        message: session.message.clone(),
+        architecture: "x86_64".into(),
+        acceleration: session.acceleration.clone(),
+        ssh_port: Some(session.ssh_port),
+        runtime_path: Some(session.runtime_dir.to_string_lossy().into_owned()),
+    }
+}
+
+fn stopped_nvidia_build_status(message: impl Into<String>) -> NvidiaBuildStatus {
+    let acceleration = nvidia_build_qemu_spec(std::env::consts::ARCH)
+        .map(|(acceleration, _, _)| acceleration)
+        .unwrap_or("unavailable");
+    NvidiaBuildStatus {
+        state: "stopped".into(),
+        message: message.into(),
+        architecture: "x86_64".into(),
+        acceleration: acceleration.into(),
+        ssh_port: None,
+        runtime_path: None,
+    }
+}
+
+#[tauri::command]
+async fn check_nvidia_build_environment() -> Result<NvidiaBuildEnvironment, String> {
+    tauri::async_runtime::spawn_blocking(check_nvidia_build_environment_blocking)
+        .await
+        .map_err(|error| format!("NVIDIA build-environment worker failed: {error}"))
+}
+
+fn check_nvidia_build_environment_blocking() -> NvidiaBuildEnvironment {
+    let host_arch = std::env::consts::ARCH.to_string();
+    let appliance = nvidia_build_appliance_path();
+    let appliance_present = appliance.is_file();
+    let appliance_path = appliance.to_string_lossy().into_owned();
+    let Ok((acceleration, _, _)) = nvidia_build_qemu_spec(&host_arch) else {
+        return NvidiaBuildEnvironment {
+            ready: false,
+            host_arch,
+            guest_arch: "x86_64".into(),
+            acceleration: "unavailable".into(),
+            qemu_binary: None,
+            qemu_version: None,
+            qemu_launch_test: false,
+            appliance_present,
+            appliance_path,
+            message: "The host architecture cannot run the x86 build appliance.".into(),
+        };
+    };
+    let Some(qemu) = find_binary("qemu-system-x86_64") else {
+        return NvidiaBuildEnvironment {
+            ready: false,
+            host_arch,
+            guest_arch: "x86_64".into(),
+            acceleration: acceleration.into(),
+            qemu_binary: None,
+            qemu_version: None,
+            qemu_launch_test: false,
+            appliance_present,
+            appliance_path,
+            message: "qemu-system-x86_64 is required for NVIDIA artifact builds.".into(),
+        };
+    };
+    let version = qemu_version(&qemu);
+    let launch_result = smoke_test_qemu(&qemu);
+    let firmware_present = homebrew_qemu_share()
+        .map(|share| {
+            share.join("edk2-x86_64-code.fd").is_file() && share.join("edk2-i386-vars.fd").is_file()
+        })
+        .unwrap_or(false);
+    let ready = appliance_present && version.is_some() && launch_result.is_ok() && firmware_present;
+    let message = if !appliance_present {
+        "The separate x86_64 Fedora build appliance has not been prepared.".into()
+    } else if version.is_none() {
+        "QEMU was found, but its version could not be determined.".into()
+    } else if let Err(error) = &launch_result {
+        error.clone()
+    } else if !firmware_present {
+        "Required x86 QEMU firmware is unavailable.".into()
+    } else if acceleration == "tcg" {
+        "x86_64 build worker is available under slower software emulation.".into()
+    } else {
+        "x86_64 build worker is available with hardware acceleration.".into()
+    };
+    NvidiaBuildEnvironment {
+        ready,
+        host_arch,
+        guest_arch: "x86_64".into(),
+        acceleration: acceleration.into(),
+        qemu_binary: Some(qemu.to_string_lossy().into_owned()),
+        qemu_version: version,
+        qemu_launch_test: launch_result.is_ok(),
+        appliance_present,
+        appliance_path,
+        message,
+    }
+}
+
+#[tauri::command]
+async fn start_nvidia_build_appliance(app: tauri::AppHandle) -> Result<NvidiaBuildStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || start_nvidia_build_appliance_blocking(app))
+        .await
+        .map_err(|error| format!("NVIDIA build-appliance startup worker failed: {error}"))?
+}
+
+fn start_nvidia_build_appliance_blocking(
+    app: tauri::AppHandle,
+) -> Result<NvidiaBuildStatus, String> {
+    let manager_state = app.state::<Mutex<NvidiaBuildManager>>();
+    {
+        let mut manager = manager_state
+            .lock()
+            .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+        if manager.starting {
+            return Ok(NvidiaBuildStatus {
+                state: "starting".into(),
+                message: "The x86_64 Fedora build appliance is being prepared.".into(),
+                architecture: "x86_64".into(),
+                acceleration: nvidia_build_qemu_spec(std::env::consts::ARCH)?.0.into(),
+                ssh_port: None,
+                runtime_path: None,
+            });
+        }
+        if let Some(session) = manager.session.as_mut() {
+            if session
+                .child
+                .try_wait()
+                .map_err(|e| format!("Could not inspect the x86 build appliance: {e}"))?
+                .is_none()
+            {
+                return Ok(nvidia_build_status(session));
+            }
+            manager.session = None;
+        }
+        manager.starting = true;
+    }
+    let prepared = prepare_nvidia_build_session();
+    let mut manager = manager_state
+        .lock()
+        .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+    manager.starting = false;
+    let session = prepared?;
+    let status = nvidia_build_status(&session);
+    manager.session = Some(session);
+    Ok(status)
+}
+
+#[tauri::command]
+async fn get_nvidia_build_appliance_status(
+    app: tauri::AppHandle,
+) -> Result<NvidiaBuildStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager_state = app.state::<Mutex<NvidiaBuildManager>>();
+        let mut manager = manager_state
+            .lock()
+            .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+        if manager.starting {
+            return Ok(NvidiaBuildStatus {
+                state: "starting".into(),
+                message: "The x86_64 Fedora build appliance is being prepared.".into(),
+                architecture: "x86_64".into(),
+                acceleration: nvidia_build_qemu_spec(std::env::consts::ARCH)?.0.into(),
+                ssh_port: None,
+                runtime_path: None,
+            });
+        }
+        let Some(session) = manager.session.as_mut() else {
+            return Ok(stopped_nvidia_build_status(
+                "The x86_64 Fedora build appliance is stopped.",
+            ));
+        };
+        if let Some(exit) = session
+            .child
+            .try_wait()
+            .map_err(|e| format!("Could not inspect the x86 build appliance: {e}"))?
+        {
+            session.state = "failed".into();
+            session.message = format!(
+                "x86_64 Fedora build appliance exited with {exit}. See its archived log for details."
+            );
+            return Ok(nvidia_build_status(session));
+        }
+        if session.state != "booting" {
+            return Ok(nvidia_build_status(session));
+        }
+        match handshake(session) {
+            Ok(output) if output == READY_MARKER => match collect_guest_health(session) {
+                Ok(health) if health.architecture == "x86_64" => {
+                    session.state = "ready".into();
+                    session.message = "x86_64 Fedora build appliance is ready.".into();
+                }
+                Ok(health) => {
+                    session.state = "failed".into();
+                    session.message = format!(
+                        "Build appliance reported architecture {}; expected x86_64.",
+                        health.architecture
+                    );
+                }
+                Err(error) => {
+                    session.state = "failed".into();
+                    session.message = format!("Build-appliance health check failed: {error}");
+                }
+            },
+            Ok(_) => {
+                session.state = "failed".into();
+                session.message = "Build-appliance handshake returned an unexpected marker.".into();
+            }
+            Err(_) if session.started_at.elapsed() >= NVIDIA_BUILD_BOOT_TIMEOUT => {
+                session.state = "timedOut".into();
+                session.message =
+                    "x86_64 Fedora build appliance did not become ready within 10 minutes.".into();
+            }
+            Err(_) => {}
+        }
+        Ok(nvidia_build_status(session))
+    })
+    .await
+    .map_err(|error| format!("NVIDIA build-appliance status worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn nvidia_build_guest_health(app: tauri::AppHandle) -> Result<GuestHealth, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager_state = app.state::<Mutex<NvidiaBuildManager>>();
+        let manager = manager_state
+            .lock()
+            .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+        let session = manager
+            .session
+            .as_ref()
+            .ok_or("The x86_64 Fedora build appliance is not running.")?;
+        if session.state != "ready" {
+            return Err("The x86_64 Fedora build appliance is not ready.".into());
+        }
+        let health = collect_guest_health(session)?;
+        if health.architecture != "x86_64" {
+            return Err(format!(
+                "Build appliance reported architecture {}; expected x86_64.",
+                health.architecture
+            ));
+        }
+        Ok(health)
+    })
+    .await
+    .map_err(|error| format!("NVIDIA build-appliance health worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn read_nvidia_build_appliance_log(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let log_path = {
+            let manager_state = app.state::<Mutex<NvidiaBuildManager>>();
+            let manager = manager_state
+                .lock()
+                .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+            let Some(session) = manager.session.as_ref() else {
+                return Ok(String::new());
+            };
+            session.runtime_dir.join("qemu.log")
+        };
+        let bytes = fs::read(log_path)
+            .map_err(|e| format!("Could not read the x86 build-appliance log: {e}"))?;
+        const LOG_LIMIT: usize = 32 * 1024;
+        let start = bytes.len().saturating_sub(LOG_LIMIT);
+        Ok(String::from_utf8_lossy(&bytes[start..]).into_owned())
+    })
+    .await
+    .map_err(|error| format!("NVIDIA build-appliance log worker failed: {error}"))?
+}
+
 #[tauri::command]
 async fn check_builder_environment() -> Result<BuilderEnvironment, String> {
     tauri::async_runtime::spawn_blocking(check_builder_environment_blocking)
@@ -2995,7 +3604,7 @@ fn inspect_selected_image_blocking(app: tauri::AppHandle) -> Result<UserImageIns
 async fn verify_working_image(app: tauri::AppHandle) -> Result<WorkingImageVerification, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let session = ready_session_snapshot(&app, "working-image verification")?;
-        if !session.working_image().is_file() {
+        if !session.working_image.is_file() {
             return Err("The disposable working image is unavailable.".into());
         }
         verify_user_working_image(&session)
@@ -3099,6 +3708,69 @@ fn stop_session_process(session: &mut ApplianceSession) -> Result<(), String> {
 fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, String> {
     stop_session_process(session)?;
     archive_and_remove_runtime(&session.runtime_dir)
+}
+
+fn stop_nvidia_build_session(session: &mut NvidiaBuildSession) -> Result<Option<PathBuf>, String> {
+    if session
+        .child
+        .try_wait()
+        .map_err(|e| format!("Could not inspect the x86 build appliance: {e}"))?
+        .is_none()
+    {
+        if let Ok(mut command) = ssh_command(session) {
+            let _ = command.arg("sudo systemctl poweroff").output();
+        }
+        for _ in 0..40 {
+            if session
+                .child
+                .try_wait()
+                .map_err(|e| format!("Could not inspect x86 build-appliance shutdown: {e}"))?
+                .is_some()
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(250));
+        }
+        if session
+            .child
+            .try_wait()
+            .map_err(|e| format!("Could not inspect x86 build-appliance shutdown: {e}"))?
+            .is_none()
+        {
+            session
+                .child
+                .kill()
+                .map_err(|e| format!("Could not force-stop the x86 build appliance: {e}"))?;
+            session
+                .child
+                .wait()
+                .map_err(|e| format!("Could not finish x86 build-appliance shutdown: {e}"))?;
+        }
+    }
+    archive_and_remove_nvidia_build_runtime(&session.runtime_dir)
+}
+
+#[tauri::command]
+async fn stop_nvidia_build_appliance(app: tauri::AppHandle) -> Result<NvidiaBuildStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager_state = app.state::<Mutex<NvidiaBuildManager>>();
+        let mut manager = manager_state
+            .lock()
+            .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+        let Some(mut session) = manager.session.take() else {
+            return Ok(stopped_nvidia_build_status(
+                "The x86_64 Fedora build appliance is stopped.",
+            ));
+        };
+        let archived_log = stop_nvidia_build_session(&mut session)?;
+        let mut status = stopped_nvidia_build_status(
+            "x86_64 Fedora build appliance stopped; its disposable disk and credentials were removed.",
+        );
+        status.runtime_path = archived_log.map(|path| path.to_string_lossy().into_owned());
+        Ok(status)
+    })
+    .await
+    .map_err(|error| format!("NVIDIA build-appliance shutdown worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -3207,6 +3879,19 @@ fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selects_isolated_x86_build_acceleration_by_host() {
+        assert_eq!(
+            nvidia_build_qemu_spec("aarch64").unwrap(),
+            ("tcg", "q35,accel=tcg", "max")
+        );
+        assert_eq!(
+            nvidia_build_qemu_spec("x86_64").unwrap(),
+            ("hvf", "q35,accel=hvf", "host")
+        );
+        assert!(nvidia_build_qemu_spec("unsupported").is_err());
+    }
 
     #[test]
     fn accepts_only_supported_recovery_image_names() {
@@ -3669,6 +4354,46 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "launches the separately prepared x86_64 Fedora build appliance"]
+    fn live_nvidia_build_appliance_reaches_ready_marker() {
+        let appliance = nvidia_build_appliance_path();
+        let appliance_sha256_before = sha256_file(&appliance).expect("hash x86 appliance before");
+        let mut session =
+            prepare_nvidia_build_session().expect("the x86 build appliance should start");
+        let deadline = Instant::now() + NVIDIA_BUILD_BOOT_TIMEOUT;
+        loop {
+            assert_eq!(
+                session.child.try_wait().expect("x86 QEMU status"),
+                None,
+                "x86 QEMU exited before readiness"
+            );
+            if handshake(&session).as_deref() == Ok(READY_MARKER) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "x86 build-appliance handshake timed out"
+            );
+            thread::sleep(Duration::from_secs(1));
+        }
+        let health = collect_guest_health(&session).expect("x86 guest health should pass");
+        assert_eq!(health.protocol_version, "1");
+        assert_eq!(health.architecture, "x86_64");
+        assert!(!health.required_tools.is_empty());
+        let runtime_dir = session.runtime_dir.clone();
+        let archived_log = stop_nvidia_build_session(&mut session)
+            .expect("the x86 appliance should stop and clean up")
+            .expect("the x86 QEMU log should be archived");
+        assert!(!runtime_dir.exists(), "the x86 runtime should be removed");
+        assert!(archived_log.is_file(), "the x86 log should remain");
+        assert_eq!(
+            appliance_sha256_before,
+            sha256_file(&appliance).expect("hash x86 appliance after"),
+            "the x86 base appliance must remain unchanged"
+        );
+    }
+
+    #[test]
     #[ignore = "requires STEAMOS_RECOVERY_IMAGE and launches the local Fedora/QEMU appliance"]
     fn live_recovery_image_layout_report() {
         let input = std::env::var_os("STEAMOS_RECOVERY_IMAGE")
@@ -3737,18 +4462,25 @@ pub fn run() {
             }
         })
         .manage(Mutex::new(ApplianceManager::default()))
+        .manage(Mutex::new(NvidiaBuildManager::default()))
         .setup(|_| {
             cleanup_abandoned_runtimes().map_err(std::io::Error::other)?;
+            cleanup_abandoned_nvidia_build_runtimes().map_err(std::io::Error::other)?;
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             check_builder_environment,
+            check_nvidia_build_environment,
             start_appliance,
+            start_nvidia_build_appliance,
             get_appliance_status,
+            get_nvidia_build_appliance_status,
             read_appliance_log,
+            read_nvidia_build_appliance_log,
             guest_health,
+            nvidia_build_guest_health,
             verify_guest_transfer,
             inspect_test_disk,
             inspect_selected_image,
@@ -3757,6 +4489,7 @@ pub fn run() {
             mutate_selected_marker,
             export_marker_image,
             stop_appliance,
+            stop_nvidia_build_appliance,
             validate_image,
             open_progress_window,
         ])
@@ -3775,6 +4508,11 @@ pub fn run() {
                     let _ = stop_session(&mut session);
                 }
             }
+            if let Ok(mut manager) = app_handle.state::<Mutex<NvidiaBuildManager>>().lock() {
+                if let Some(mut session) = manager.session.take() {
+                    let _ = stop_nvidia_build_session(&mut session);
+                }
+            }
             app_handle.exit(0);
         }
         tauri::RunEvent::ExitRequested { .. } => {
@@ -3782,6 +4520,11 @@ pub fn run() {
                 manager.cancel_preparation.store(true, Ordering::Relaxed);
                 if let Some(mut session) = manager.session.take() {
                     let _ = stop_session(&mut session);
+                }
+            }
+            if let Ok(mut manager) = app_handle.state::<Mutex<NvidiaBuildManager>>().lock() {
+                if let Some(mut session) = manager.session.take() {
+                    let _ = stop_nvidia_build_session(&mut session);
                 }
             }
         }

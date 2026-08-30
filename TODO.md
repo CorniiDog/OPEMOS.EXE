@@ -439,6 +439,8 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Emit the archive, checksum, and build metadata format already accepted by the support installer.
 * [x] Make the shared module validator and local contract checks compatible with macOS Bash 3.2; skip and clearly retain Fedora-only transaction coverage where modern Bash/Linux behavior is required.
 * [x] Add non-network architecture-plan modes and separate macOS acquisition/launch paths for a development x86_64 Fedora appliance without replacing or colliding with the native appliance.
+* [x] Add an isolated Rust-owned x86_64 build-appliance manager with disposable overlay/credentials, dynamic SSH forwarding, architecture health enforcement, bounded boot status, log access, graceful shutdown, forced-stop fallback, and abandoned-runtime cleanup.
+* [x] Add an opt-in live lifecycle test that verifies x86_64 guest identity, runtime cleanup, log preservation, and base-appliance immutability.
 * [ ] Run a real offline-target build inside an x86_64 Fedora environment.
 * [ ] Confirm Valve still serves the exact historical headers package for the observed SteamOS 3.8.14 `valve24.4` kernel.
 * [ ] Confirm NVIDIA 575.64.05 produces all five modules with exact target vermagic.
@@ -459,7 +461,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Treat “no compatible published artifact” as a normal, non-destructive resolution result with a clear UI status; do not create an NVIDIA-labeled output or classify it as an application failure.
 * [ ] Keep Gamescope fallback policy independent from NVIDIA kernel-module fallback policy.
 * [ ] Require exact target-kernel identity/vermagic for NVIDIA artifacts; never reuse the SteamOS 3.8.16 `valve24.5` modules for the observed 3.8.14 `valve24.4` kernel.
-* [ ] Integrate the separate x86_64 Fedora build-appliance path into the Rust-managed workflow on Apple Silicon; development acquisition/launch tooling exists, but the app does not invoke it yet.
+* [ ] Connect the Rust-managed x86_64 Fedora build-appliance commands to the normal build workflow and progress UI on Apple Silicon; the isolated backend lifecycle exists, but the frontend does not invoke it yet.
 * [ ] Decide whether the Apple Silicon fallback uses a separately managed emulated x86_64 appliance or a trusted remote x86_64 build worker, accounting for performance and artifact provenance.
 * [ ] Consider a Gamescope 3.8.16 compatibility floor for earlier SteamOS 3.8.x images only after its binary dependencies and runtime behavior are explicitly validated on those releases.
 
@@ -1229,7 +1231,7 @@ Before calling the project **beta**, verify:
 11. [x] Validate durable output and input immutability automatically against a full-size Valve recovery image.
 12. [x] Begin NVIDIA support-repo integration with target SteamOS identity, architecture, and kernel discovery.
 13. [ ] Validate the support repository's offline-target build end to end in x86_64 Fedora for the observed SteamOS 3.8.14 kernel.
-14. [ ] Add the managed x86_64 build path required on Apple Silicon and expose build/download/validation progress through the existing progress window.
+14. [ ] Connect the managed x86_64 build path to the workflow and expose appliance acquisition, boot, build, download, and validation progress through the existing progress window. (Isolated Rust lifecycle complete; workflow/UI integration remains.)
 15. [ ] Invoke the support repository's machine-readable resolver/build contract from Rust without duplicating its compatibility policy.
 16. [ ] Install the resulting development artifact into only the disposable SteamOS working image, then verify modules, metadata, source immutability, and output manifest before export.
 
