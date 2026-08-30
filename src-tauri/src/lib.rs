@@ -41,6 +41,25 @@ struct ApplianceStatus {
     runtime_path: Option<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GuestHealth {
+    protocol_version: String,
+    hostname: String,
+    architecture: String,
+    operating_system: String,
+    available_bytes: u64,
+    required_tools: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TransferProof {
+    bytes_verified: usize,
+    guest_sha256: String,
+    message: String,
+}
+
 struct ApplianceSession {
     child: Child,
     runtime_dir: PathBuf,
@@ -466,9 +485,10 @@ fn prepare_session() -> Result<ApplianceSession, String> {
     })
 }
 
-fn handshake(session: &ApplianceSession) -> Result<String, String> {
+fn ssh_command(session: &ApplianceSession) -> Result<Command, String> {
     let ssh = find_binary("ssh").ok_or("ssh is required for the guest handshake.")?;
-    let output = Command::new(ssh)
+    let mut command = Command::new(ssh);
+    command
         .arg("-p")
         .arg(session.ssh_port.to_string())
         .arg("-i")
@@ -485,14 +505,153 @@ fn handshake(session: &ApplianceSession) -> Result<String, String> {
             "-o",
             "UserKnownHostsFile=/dev/null",
             "builder@127.0.0.1",
-            "cat /etc/steamos-builder-ready",
-        ])
+        ]);
+    Ok(command)
+}
+
+fn run_guest_command(session: &ApplianceSession, command: &str) -> Result<String, String> {
+    let output = ssh_command(session)?
+        .arg(command)
         .output()
-        .map_err(|e| format!("Could not run the guest handshake: {e}"))?;
+        .map_err(|e| format!("Could not run the structured guest command: {e}"))?;
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if detail.is_empty() {
+            format!("Guest command exited with {}.", output.status)
+        } else {
+            detail
+        });
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn handshake(session: &ApplianceSession) -> Result<String, String> {
+    run_guest_command(session, "cat /etc/steamos-builder-ready")
+}
+
+fn collect_guest_health(session: &ApplianceSession) -> Result<GuestHealth, String> {
+    const HEALTH_COMMAND: &str = r#"set -eu
+test "$(cat /etc/steamos-builder-ready)" = "$(printf 'SteamOS NVIDIA Image Builder appliance\nREADY')"
+printf 'PROTOCOL=1\n'
+printf 'HOSTNAME=%s\n' "$(hostname)"
+printf 'ARCH=%s\n' "$(uname -m)"
+. /etc/os-release
+printf 'OS=%s\n' "$PRETTY_NAME"
+printf 'AVAILABLE=%s\n' "$(df -B1 --output=avail / | tail -n 1 | tr -d ' ')"
+for tool in bash lsblk blkid findmnt mount umount sha256sum stat cp sync; do
+  command -v "$tool" >/dev/null 2>&1 && printf 'TOOL=%s\n' "$tool" || printf 'MISSING=%s\n' "$tool"
+done"#;
+    let output = run_guest_command(session, HEALTH_COMMAND)?;
+    let mut protocol_version = None;
+    let mut hostname = None;
+    let mut architecture = None;
+    let mut operating_system = None;
+    let mut available_bytes = None;
+    let mut required_tools = Vec::new();
+    let mut missing_tools = Vec::new();
+    for line in output.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key {
+            "PROTOCOL" => protocol_version = Some(value.to_string()),
+            "HOSTNAME" => hostname = Some(value.to_string()),
+            "ARCH" => architecture = Some(value.to_string()),
+            "OS" => operating_system = Some(value.to_string()),
+            "AVAILABLE" => {
+                available_bytes = value.parse::<u64>().ok();
+            }
+            "TOOL" => required_tools.push(value.to_string()),
+            "MISSING" => missing_tools.push(value.to_string()),
+            _ => {}
+        }
+    }
+    if !missing_tools.is_empty() {
+        return Err(format!(
+            "Builder appliance is missing required tools: {}.",
+            missing_tools.join(", ")
+        ));
+    }
+    let protocol_version =
+        protocol_version.ok_or("Guest health response omitted protocol version.")?;
+    if protocol_version != "1" {
+        return Err(format!(
+            "Unsupported guest protocol version {protocol_version}; expected 1."
+        ));
+    }
+    Ok(GuestHealth {
+        protocol_version,
+        hostname: hostname.ok_or("Guest health response omitted hostname.")?,
+        architecture: architecture.ok_or("Guest health response omitted architecture.")?,
+        operating_system: operating_system
+            .ok_or("Guest health response omitted operating system.")?,
+        available_bytes: available_bytes
+            .ok_or("Guest health response omitted available disk space.")?,
+        required_tools,
+    })
+}
+
+fn scp_command(session: &ApplianceSession) -> Result<Command, String> {
+    let scp = find_binary("scp").ok_or("scp is required for controlled guest file transfer.")?;
+    let mut command = Command::new(scp);
+    command
+        .arg("-P")
+        .arg(session.ssh_port.to_string())
+        .arg("-i")
+        .arg(&session.ssh_key)
+        .args([
+            "-o",
+            "IdentitiesOnly=yes",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=3",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+        ]);
+    Ok(command)
+}
+
+fn run_transfer_proof(session: &ApplianceSession) -> Result<TransferProof, String> {
+    const PROBE: &[u8] = b"STEAMOS_BUILDER_TRANSFER_PROBE_V1\n";
+    const GUEST_INPUT: &str = "/tmp/steamos-builder-transfer-probe.in";
+    const GUEST_OUTPUT: &str = "/tmp/steamos-builder-transfer-probe.out";
+    let host_input = session.runtime_dir.join("transfer-probe.in");
+    let host_output = session.runtime_dir.join("transfer-probe.out");
+    fs::write(&host_input, PROBE).map_err(|e| format!("Could not create transfer probe: {e}"))?;
+
+    run_checked(
+        scp_command(session)?
+            .arg(&host_input)
+            .arg(format!("builder@127.0.0.1:{GUEST_INPUT}")),
+        "Could not copy the transfer probe into the guest",
+    )?;
+    let guest_sha256 = run_guest_command(
+        session,
+        "set -eu; sha256sum /tmp/steamos-builder-transfer-probe.in | cut -d ' ' -f 1; cp /tmp/steamos-builder-transfer-probe.in /tmp/steamos-builder-transfer-probe.out; sync",
+    )?;
+    run_checked(
+        scp_command(session)?
+            .arg(format!("builder@127.0.0.1:{GUEST_OUTPUT}"))
+            .arg(&host_output),
+        "Could not copy the transfer probe back from the guest",
+    )?;
+    let returned = fs::read(&host_output)
+        .map_err(|e| format!("Could not read the returned transfer probe: {e}"))?;
+    let _ = run_guest_command(
+        session,
+        "rm -f /tmp/steamos-builder-transfer-probe.in /tmp/steamos-builder-transfer-probe.out",
+    );
+    if returned != PROBE {
+        return Err("Returned transfer probe did not match the original bytes.".into());
+    }
+    Ok(TransferProof {
+        bytes_verified: returned.len(),
+        guest_sha256,
+        message: "Host-to-guest-to-host transfer verified byte-for-byte.".into(),
+    })
 }
 
 fn session_status(session: &ApplianceSession) -> ApplianceStatus {
@@ -672,6 +831,38 @@ fn read_appliance_log(
     Ok(String::from_utf8_lossy(&bytes[start..]).into_owned())
 }
 
+#[tauri::command]
+fn guest_health(manager: tauri::State<'_, Mutex<ApplianceManager>>) -> Result<GuestHealth, String> {
+    let manager = manager
+        .lock()
+        .map_err(|_| "Appliance state lock is unavailable.")?;
+    let session = manager
+        .session
+        .as_ref()
+        .ok_or("Builder appliance is not running.")?;
+    if session.state != "ready" {
+        return Err("Builder appliance is not ready for health checks.".into());
+    }
+    collect_guest_health(session)
+}
+
+#[tauri::command]
+fn verify_guest_transfer(
+    manager: tauri::State<'_, Mutex<ApplianceManager>>,
+) -> Result<TransferProof, String> {
+    let manager = manager
+        .lock()
+        .map_err(|_| "Appliance state lock is unavailable.")?;
+    let session = manager
+        .session
+        .as_ref()
+        .ok_or("Builder appliance is not running.")?;
+    if session.state != "ready" {
+        return Err("Builder appliance is not ready for file transfer.".into());
+    }
+    run_transfer_proof(session)
+}
+
 fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, String> {
     if session
         .child
@@ -841,6 +1032,11 @@ mod tests {
             assert!(Instant::now() < deadline, "guest handshake timed out");
             thread::sleep(Duration::from_secs(1));
         }
+        let health = collect_guest_health(&session).expect("guest health should pass");
+        assert_eq!(health.protocol_version, "1");
+        assert!(!health.required_tools.is_empty());
+        let transfer = run_transfer_proof(&session).expect("transfer proof should pass");
+        assert_eq!(transfer.bytes_verified, 34);
         let runtime_dir = session.runtime_dir.clone();
         let archived_log = stop_session(&mut session)
             .expect("the ready appliance should stop and clean up")
@@ -871,6 +1067,8 @@ pub fn run() {
             start_appliance,
             get_appliance_status,
             read_appliance_log,
+            guest_health,
+            verify_guest_transfer,
             stop_appliance,
             validate_image,
             prototype_build

@@ -16,6 +16,8 @@ Closing the progress window cancels the active prototype build. Closing the main
 
 Once the guest reports the exact readiness marker, later milestones will pass a copy of the user-selected Valve image into the guest for controlled image operations. NVIDIA build/install logic will come from `open-gpu-kernel-modules-steamos-support`, patched NVIDIA source from `open-gpu-kernel-modules-steamos`, and the compositor payload from `gamescope-nvidia`.
 
+The current guest protocol exposes only fixed Rust-owned operations. Protocol version `1` provides a health check for guest identity, architecture, free space, and required tools, plus a deterministic host→guest→host transfer probe verified byte-for-byte. The frontend cannot submit arbitrary guest shell commands.
+
 ## Development
 
 ```bash

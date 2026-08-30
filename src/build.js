@@ -97,6 +97,18 @@ async function runBuild(request) {
     if (cancelling) return;
 
     addStageLog("STEAMOS_BUILDER_READY received.");
+    setStatus("running", "Checking builder health", "Verifying the guest protocol, tools, architecture, and available space.", 45);
+    const health = await invoke("guest_health");
+    addStageLog(`Health: protocol ${health.protocolVersion}; ${health.operatingSystem}; ${health.architecture}; ${health.hostname}.`);
+    addStageLog(`Health: ${health.requiredTools.length} required tools available; ${health.availableBytes} bytes free.`);
+    if (cancelling) return;
+
+    setStatus("running", "Verifying isolated transfer", "Sending a harmless probe through Fedora and checking the returned bytes.", 62);
+    const transfer = await invoke("verify_guest_transfer");
+    addStageLog(`Transfer: ${transfer.message}`);
+    addStageLog(`Transfer: ${transfer.bytesVerified} bytes; guest SHA256 ${transfer.guestSha256}.`);
+    if (cancelling) return;
+
     setStatus("running", "Creating prototype output", "Validating the selected image and writing the prototype result.", 78);
     const output = await invoke("prototype_build", { path: request.path });
     addStageLog(`Prototype output created: ${output}`);

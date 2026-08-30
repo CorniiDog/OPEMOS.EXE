@@ -19,7 +19,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] **Appliance bring-up:** build and boot a Fedora Cloud appliance under QEMU on macOS.
 * [x] **Disposable runtime:** boot through a writable qcow2 overlay so the Fedora base remains pristine.
 * [x] **Guest handshake:** provision the guest with cloud-init and verify readiness through non-interactive SSH.
-* [ ] **Backend integration:** Rust owns appliance startup, readiness polling, shutdown, and cleanup; structured guest command execution remains.
+* [x] **Backend integration:** Rust owns appliance startup, readiness polling, fixed guest operations, shutdown, and cleanup.
 * [ ] **Harmless image mutation:** pass a user-selected Valve recovery image to the guest, create a working copy, mount it safely, write a deterministic marker, unmount it, and return a modified image.
 * [ ] **NVIDIA integration prototype:** inject the project’s NVIDIA kernel-module/userspace support into a SteamOS recovery image without requiring manual post-install repair.
 * [ ] **Bootable alpha image:** generated image boots/install-recovery media successfully on at least one NVIDIA test machine.
@@ -32,10 +32,10 @@ The project is not yet producing a bootable modified SteamOS image.
 1. [x] Move the successful `STEAMOS_BUILDER_READY` handshake into the Rust backend.
 2. [x] Make Rust launch the Fedora appliance in the background without an interactive terminal.
 3. [x] Add bounded readiness polling and distinguish booting, ready, failed, timed out, and stopped states.
-4. [ ] Add controlled guest command execution from Rust.
+4. [x] Add controlled guest command execution from Rust.
 5. [x] Add graceful guest shutdown and reliable forced cleanup fallback.
 6. [ ] Keep each appliance session disposable and verify no state leaks between builds.
-7. [ ] Pass a harmless host file into the guest and return a harmless output file.
+7. [x] Pass a harmless host file into the guest, return it, and verify identical bytes.
 8. [ ] Pass a user-selected SteamOS recovery image to the guest as data without booting it.
 9. [ ] Detect compression/container format and prepare a writable working image.
 10. [ ] Mount or inspect the SteamOS image read-only first and inventory its partition/filesystem layout.
@@ -68,7 +68,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Use a standardized Fedora guest as the Linux image-manipulation environment.
 * [x] Use QEMU as the virtualization boundary.
 * [x] Allow Apple Silicon to run an aarch64 Fedora guest while manipulating x86_64 SteamOS images as data.
-* [ ] Define a stable host↔guest protocol rather than allowing arbitrary UI-originated shell strings.
+* [x] Establish a versioned fixed-operation host↔guest protocol without arbitrary UI-originated shell strings.
 * [ ] Define explicit responsibility boundaries among UI, Rust host backend, Fedora appliance, NVIDIA support repo, and Gamescope repo.
 * [ ] Document the architecture in the main README.
 * [ ] Add an architecture/data-flow diagram.
@@ -229,9 +229,9 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Remove development password authentication from the final appliance workflow.
 * [ ] Set `lock_passwd: true` once key-only control is complete.
 * [ ] Avoid long-lived reusable host private keys in release builds if ephemeral per-session keys are practical.
-* [ ] Version the guest control contract.
+* [x] Version the initial guest control contract as protocol `1`.
 * [ ] Provision required image-manipulation tools explicitly instead of relying on Fedora defaults.
-* [ ] Add guest-side health/self-test command.
+* [x] Add a Rust-owned guest health/self-test operation.
 
 ---
 
@@ -278,9 +278,9 @@ The project is not yet producing a bootable modified SteamOS image.
   * stopping
   * stopped
   * failed
-* [ ] Add guest command execution API.
-* [ ] Avoid allowing arbitrary frontend command strings to be passed directly to a privileged guest shell.
-* [ ] Add structured commands/arguments for supported operations.
+* [x] Add fixed guest health and transfer-proof APIs.
+* [x] Avoid allowing arbitrary frontend command strings to be passed directly to a privileged guest shell.
+* [x] Add structured results for supported operations.
 * [x] Add graceful shutdown command.
 * [x] Add timeout and kill fallback.
 * [x] Guarantee managed-session shutdown and runtime cleanup on normal application exit.
@@ -300,7 +300,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Add runtime preparation status.
 * [ ] Add guest boot status.
 * [ ] Add guest handshake status.
-* [ ] Add guest toolchain/self-test status.
+* [x] Add guest toolchain/self-test status to the prototype build flow.
 * [ ] Require all relevant statuses before enabling a real build.
 * [ ] Add machine-readable error codes instead of relying only on human strings.
 * [ ] Keep user-facing messages simple while preserving developer diagnostics.
@@ -723,7 +723,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Manually verify SSH authorized-key injection.
 * [x] Manually verify readiness marker handshake.
 * [ ] Automate disposable-overlay persistence test.
-* [ ] Automate guest health/self-test.
+* [x] Automate guest health/self-test and byte-for-byte transfer verification in the live appliance test.
 * [ ] Test damaged base qcow2 detection.
 * [ ] Test missing firmware.
 * [ ] Test occupied SSH/control port.
@@ -842,8 +842,8 @@ The project is not yet producing a bootable modified SteamOS image.
 
 # 42. Builder protocol design
 
-* [ ] Define protocol version.
-* [ ] Define health command.
+* [x] Define initial protocol version `1`.
+* [x] Define the fixed health operation and structured host result.
 * [ ] Define inspect-image command.
 * [ ] Define prepare-working-image command.
 * [ ] Define mutate-marker command.
@@ -854,7 +854,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Include machine-readable progress events.
 * [ ] Include stable error codes.
 * [ ] Keep protocol backward-compatible across minor app updates where practical.
-* [ ] Reject incompatible protocol versions clearly.
+* [x] Reject incompatible health protocol versions clearly.
 
 ---
 
@@ -1148,8 +1148,8 @@ Before calling the project **beta**, verify:
 2. [x] Reproduce current shell handshake from Rust.
 3. [x] Report real guest-ready state to frontend.
 4. [x] Add graceful shutdown/cleanup.
-5. [ ] Add one structured guest command such as `health`.
-6. [ ] Add a tiny host↔guest file-transfer or block-attachment proof.
+5. [x] Add one structured guest command such as `health`.
+6. [x] Add a tiny host↔guest file-transfer or block-attachment proof.
 7. [ ] Attach a synthetic disk image and inspect it read-only.
 8. [ ] Implement deterministic marker mutation on synthetic image.
 9. [ ] Run the same inspection path against a user-supplied Valve recovery image.
