@@ -43,9 +43,12 @@ h2 { margin: 0 0 6px; font-size: 18px; }
 .input-name { margin: 7px 0 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .status-card,
 .logs-card { border: 1px solid #273142; border-radius: 17px; background: rgba(18, 24, 34, .94); }
-.status-card { padding: 16px 19px; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.status-card { min-height: 106px; padding: 16px 19px; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.status-card > div { flex: 1; min-width: 0; }
 .status-card p { margin: 0; }
-.status { flex: none; padding: 7px 10px; border-radius: 999px; background: #183322; color: #7ee2a8; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; gap: 7px; }
+.status-card h2 { min-height: 23px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#status-message { height: 2.8em; overflow: hidden; line-height: 1.4; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.status { flex: none; min-width: 122px; padding: 7px 10px; border-radius: 999px; background: #183322; color: #7ee2a8; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
 .status.pending { background: #302b17; color: #f2d477; }
 .status.pending::before { content: ""; width: 10px; height: 10px; border: 2px solid rgba(242, 212, 119, .35); border-top-color: #f2d477; border-radius: 50%; animation: status-spin .75s linear infinite; }
 .status.failed { background: #3d2020; color: #ff9494; }

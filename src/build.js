@@ -12,6 +12,7 @@ let running = false;
 let cancelling = false;
 let stageLog = [];
 let lastApplianceLog = "";
+let lastRenderedLog = null;
 let refreshingLogs = false;
 
 function normalizeTerminalText(text) {
@@ -130,16 +131,19 @@ function showInputProgress(progress) {
 }
 
 function renderLogs(applianceLog) {
+  const normalizedLog = normalizeTerminalText(applianceLog).trim();
+  if (normalizedLog) lastApplianceLog = normalizedLog;
+  const content = [...stageLog, lastApplianceLog].filter(Boolean).join("\n");
+  if (content === lastRenderedLog) return;
   const previousScrollTop = elements.buildLog.scrollTop;
   const distanceFromBottom = elements.buildLog.scrollHeight
     - elements.buildLog.clientHeight
     - previousScrollTop;
   const followLatest = distanceFromBottom <= 24;
-  const normalizedLog = normalizeTerminalText(applianceLog).trim();
-  if (normalizedLog) lastApplianceLog = normalizedLog;
   const fragment = document.createDocumentFragment();
-  appendAnsiText(fragment, [...stageLog, lastApplianceLog].filter(Boolean).join("\n"));
+  appendAnsiText(fragment, content);
   elements.buildLog.replaceChildren(fragment);
+  lastRenderedLog = content;
   elements.buildLog.scrollTop = followLatest
     ? elements.buildLog.scrollHeight
     : previousScrollTop;
@@ -179,6 +183,7 @@ async function runBuild(request) {
   cancelling = false;
   stageLog = [];
   lastApplianceLog = "";
+  lastRenderedLog = null;
   elements.closeWindow.classList.add("hidden");
   elements.cancelBuild.disabled = false;
   elements.inputName.textContent = request.name;
@@ -199,7 +204,7 @@ async function runBuild(request) {
     addStageLog(`Input preparation: detected ${started.input.sourceFormat}; engine=${started.input.normalizer}; normalized=${started.input.normalized}; ${started.input.sourceBytes} source bytes → ${started.input.imageBytes} raw image bytes.`);
     addStageLog(`Appliance session created on local port ${started.sshPort}.`);
     setStatus("running", "Starting builder", "Waiting for the Fedora guest readiness handshake.", 22);
-    logTimer = setInterval(refreshLogs, 750);
+    logTimer = setInterval(refreshLogs, 1000);
 
     while (!cancelling) {
       const status = await invoke("get_appliance_status");
