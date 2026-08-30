@@ -19,7 +19,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] **Appliance bring-up:** build and boot a Fedora Cloud appliance under QEMU on macOS.
 * [x] **Disposable runtime:** boot through a writable qcow2 overlay so the Fedora base remains pristine.
 * [x] **Guest handshake:** provision the guest with cloud-init and verify readiness through non-interactive SSH.
-* [ ] **Backend integration:** Rust owns appliance startup, readiness polling, command execution, shutdown, and cleanup.
+* [ ] **Backend integration:** Rust owns appliance startup, readiness polling, shutdown, and cleanup; structured guest command execution remains.
 * [ ] **Harmless image mutation:** pass a user-selected Valve recovery image to the guest, create a working copy, mount it safely, write a deterministic marker, unmount it, and return a modified image.
 * [ ] **NVIDIA integration prototype:** inject the project’s NVIDIA kernel-module/userspace support into a SteamOS recovery image without requiring manual post-install repair.
 * [ ] **Bootable alpha image:** generated image boots/install-recovery media successfully on at least one NVIDIA test machine.
@@ -29,11 +29,11 @@ The project is not yet producing a bootable modified SteamOS image.
 
 ### Current priority queue
 
-1. [ ] Move the successful `STEAMOS_BUILDER_READY` handshake into the Rust backend.
-2. [ ] Make Rust launch the Fedora appliance in the background without an interactive terminal.
-3. [ ] Add bounded readiness polling and distinguish booting, ready, failed, timed out, and stopped states.
+1. [x] Move the successful `STEAMOS_BUILDER_READY` handshake into the Rust backend.
+2. [x] Make Rust launch the Fedora appliance in the background without an interactive terminal.
+3. [x] Add bounded readiness polling and distinguish booting, ready, failed, timed out, and stopped states.
 4. [ ] Add controlled guest command execution from Rust.
-5. [ ] Add graceful guest shutdown and reliable forced cleanup fallback.
+5. [x] Add graceful guest shutdown and reliable forced cleanup fallback.
 6. [ ] Keep each appliance session disposable and verify no state leaks between builds.
 7. [ ] Pass a harmless host file into the guest and return a harmless output file.
 8. [ ] Pass a user-selected SteamOS recovery image to the guest as data without booting it.
@@ -181,7 +181,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Verify guest-created files disappear between appliance runs.
 * [x] Keep runtime overlay data out of Git.
 * [x] Keep runtime UEFI variables separate from the base appliance.
-* [ ] Generate collision-safe per-session runtime directories rather than one global mutable runtime directory.
+* [x] Generate collision-safe per-session runtime directories rather than one global mutable runtime directory.
 * [ ] Support concurrent-build prevention or explicit multi-session isolation.
 * [ ] Remove abandoned overlays after crashes.
 * [ ] Track runtime disk lifecycle from Rust.
@@ -198,13 +198,13 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Configure CPU, memory, virtio block, RNG, and networking.
 * [x] Forward localhost TCP port 2222 to guest SSH port 22 during development.
 * [x] Run the guest headlessly.
-* [ ] Move QEMU away from interactive `-serial mon:stdio` for application-managed sessions.
-* [ ] Capture serial/QEMU logs to a runtime log file or Rust pipe.
+* [x] Move QEMU away from interactive `-serial mon:stdio` for application-managed sessions.
+* [x] Capture serial/QEMU logs to a runtime log file or Rust pipe.
 * [ ] Add QMP or another structured lifecycle/control channel if useful.
-* [ ] Implement predictable graceful shutdown.
-* [ ] Implement forced termination fallback.
+* [x] Implement predictable graceful shutdown.
+* [x] Implement forced termination fallback.
 * [ ] Detect accidental port collision before QEMU startup.
-* [ ] Allocate dynamic localhost ports or another transport for parallel-safe operation.
+* [x] Allocate dynamic localhost ports or another transport for parallel-safe operation.
 * [ ] Evaluate QEMU vsock for host↔guest control once cross-platform behavior is understood.
 
 ---
@@ -243,10 +243,10 @@ The project is not yet producing a bootable modified SteamOS image.
 
   * `STEAMOS_BUILDER_READY`
 * [x] Validate the complete handshake successfully against a fresh pristine-base appliance session.
-* [ ] Implement the same handshake directly in Rust.
-* [ ] Poll readiness while QEMU is booting.
-* [ ] Add timeout.
-* [ ] Distinguish connection refused, guest boot failure, SSH authentication failure, marker mismatch, and timeout.
+* [x] Implement the same handshake directly in Rust.
+* [x] Poll readiness while QEMU is booting.
+* [x] Add timeout.
+* [ ] Distinguish connection refused, guest boot failure, SSH authentication failure, marker mismatch, and timeout. (Process exit, marker mismatch, and timeout are distinct; SSH connection/authentication errors still need separate codes.)
 * [ ] Surface a concise user message plus detailed diagnostic reason.
 * [ ] Remove the shell handshake helper from the production path once Rust owns the protocol.
 
@@ -254,15 +254,15 @@ The project is not yet producing a bootable modified SteamOS image.
 
 # 10. Rust appliance lifecycle integration
 
-* [ ] Add an appliance lifecycle manager to `src-tauri`.
-* [ ] Generate or prepare runtime files from Rust.
-* [ ] Create qcow2 session overlay from Rust or a controlled helper.
-* [ ] Generate cloud-init seed from Rust or a controlled helper.
-* [ ] Locate firmware from Rust.
-* [ ] Spawn QEMU detached from the terminal.
-* [ ] Store QEMU child/process handle.
-* [ ] Stream or capture QEMU stderr/serial diagnostics.
-* [ ] Poll SSH/guest readiness.
+* [x] Add an appliance lifecycle manager to `src-tauri`.
+* [x] Generate or prepare runtime files from Rust.
+* [x] Create qcow2 session overlay from Rust or a controlled helper.
+* [x] Generate cloud-init seed from Rust or a controlled helper.
+* [x] Locate firmware from Rust.
+* [x] Spawn QEMU detached from the terminal.
+* [x] Store QEMU child/process handle.
+* [x] Stream or capture QEMU stderr/serial diagnostics.
+* [x] Poll SSH/guest readiness.
 * [ ] Expose appliance states to frontend:
 
   * unavailable
@@ -277,8 +277,8 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Add guest command execution API.
 * [ ] Avoid allowing arbitrary frontend command strings to be passed directly to a privileged guest shell.
 * [ ] Add structured commands/arguments for supported operations.
-* [ ] Add graceful shutdown command.
-* [ ] Add timeout and kill fallback.
+* [x] Add graceful shutdown command.
+* [x] Add timeout and kill fallback.
 * [ ] Guarantee cleanup on normal application exit.
 * [ ] Attempt cleanup after panic/crash on the next startup.
 * [ ] Ensure stale QEMU instances do not interfere with a new build.
