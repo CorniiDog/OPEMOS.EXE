@@ -2066,9 +2066,9 @@ release_value() {
       | tr '\r\n' '  ' | cut -c1-512
   fi
 }
-OS_RELEASE="$MUTATION_ROOT/usr/lib/os-release"
+OS_RELEASE="$MUTATION_ROOT/etc/os-release"
 if test ! -f "$OS_RELEASE" || test -L "$OS_RELEASE"; then
-  OS_RELEASE="$MUTATION_ROOT/etc/os-release"
+  OS_RELEASE="$MUTATION_ROOT/usr/lib/os-release"
 fi
 if test ! -f "$OS_RELEASE" || test -L "$OS_RELEASE"; then
   OS_RELEASE=
@@ -2221,13 +2221,18 @@ fn output_path_for_input(input: &Path) -> Result<PathBuf, String> {
     if base.is_empty() {
         base = "SteamOS".into();
     }
+    let output_base = if base.to_ascii_lowercase().ends_with("-nvidia") {
+        base
+    } else {
+        format!("{base}-nvidia")
+    };
     for number in 1..=9999_u32 {
         let suffix = if number == 1 {
             String::new()
         } else {
             format!("-{number}")
         };
-        let candidate = parent.join(format!("{base}-nvidia{suffix}.img"));
+        let candidate = parent.join(format!("{output_base}{suffix}.img"));
         if !candidate.exists() && !manifest_path_for_output(&candidate).exists() {
             return Ok(candidate);
         }
@@ -3249,6 +3254,12 @@ mod tests {
         assert_eq!(
             output_path_for_input(&root.join("raw.img")).unwrap(),
             root.join("raw-nvidia.img")
+        );
+        fs::write(root.join("already-nvidia.img"), b"input")
+            .expect("create already-suffixed input");
+        assert_eq!(
+            output_path_for_input(&root.join("already-nvidia.img")).unwrap(),
+            root.join("already-nvidia-2.img")
         );
         let manifest_only_input = root.join("manifest-only.img.xz");
         fs::write(

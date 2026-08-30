@@ -380,7 +380,8 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Keep unknown or ambiguous layouts non-actionable.
 * [x] Produce a structured inspection report before first real NVIDIA modification.
 * [x] Preserve a deterministic non-Valve DOS-partition fixture for the opt-in live inspection test.
-* [ ] Confirm bounded `os-release`, ELF architecture, and `/usr/lib/modules` discovery against the current full-size Valve image. (Implementation added; real-image result pending.)
+* [x] Confirm bounded ELF architecture and `/usr/lib/modules` discovery against the current full-size Valve image (`x86_64`, kernel `6.16.12-valve24.4-1-neptune-616-gfe145653a794`).
+* [ ] Confirm SteamOS `VERSION_ID` discovery from the recovery root; prefer a safe regular `/etc/os-release` before `/usr/lib/os-release` and do not infer certification from the host path or filename.
 
 ---
 
@@ -438,12 +439,16 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Record selected NVIDIA driver version in build manifest.
 * [ ] Record selected SteamOS/kernel certification in build manifest.
 * [ ] Fail closed when no compatible certified release exists unless the user explicitly selects development mode.
+* [ ] Treat “no compatible published artifact” as a normal, non-destructive resolution result with a clear UI status; do not create an NVIDIA-labeled output or classify it as an application failure.
+* [ ] Keep Gamescope fallback policy independent from NVIDIA kernel-module fallback policy.
+* [ ] Require exact target-kernel identity/vermagic for NVIDIA artifacts; never reuse the SteamOS 3.8.16 `valve24.5` modules for the observed 3.8.14 `valve24.4` kernel.
+* [ ] Consider a Gamescope 3.8.16 compatibility floor for earlier SteamOS 3.8.x images only after its binary dependencies and runtime behavior are explicitly validated on those releases.
 
 ---
 
 # 19. NVIDIA kernel-module injection
 
-* [ ] Determine target kernel(s) contained in the recovery image. (Safe module-directory inventory implemented; real-image confirmation pending.)
+* [x] Determine target kernel(s) contained in the recovery image through safe module-directory inventory.
 * [ ] Place all required open NVIDIA modules in the correct target module tree.
 * [ ] Support compressed `.ko.zst` modules where SteamOS expects them.
 * [ ] Preserve exact kernel vermagic compatibility.
@@ -893,7 +898,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Include appliance version/hash.
 * [x] Include input and normalized-image SHA256 values.
 * [ ] Include detected SteamOS version. (Manifest fields implemented; real-image confirmation pending.)
-* [ ] Include detected target kernel(s). (Manifest fields implemented; real-image confirmation pending.)
+* [x] Include detected target kernel(s) in the manifest.
 * [ ] Include NVIDIA version/release source.
 * [ ] Include NVIDIA artifact checksums.
 * [ ] Include Gamescope version/artifact checksums.
