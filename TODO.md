@@ -186,9 +186,9 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Keep runtime overlay data out of Git.
 * [x] Keep runtime UEFI variables separate from the base appliance.
 * [x] Generate collision-safe per-session runtime directories rather than one global mutable runtime directory.
-* [ ] Support concurrent-build prevention or explicit multi-session isolation.
-* [ ] Remove abandoned overlays after crashes.
-* [ ] Track runtime disk lifecycle from Rust.
+* [x] Prevent concurrent builds through one Rust-managed session and one active progress workflow.
+* [x] Remove abandoned inactive overlays after crashes on the next launch.
+* [x] Track runtime disk lifecycle from Rust.
 * [ ] Verify the base qcow2 remains byte-for-byte unchanged across normal sessions.
 * [ ] Add a corruption/recovery path if the base appliance fails `qemu-img check`.
 
@@ -283,8 +283,8 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Add structured commands/arguments for supported operations.
 * [x] Add graceful shutdown command.
 * [x] Add timeout and kill fallback.
-* [ ] Guarantee cleanup on normal application exit.
-* [ ] Attempt cleanup after panic/crash on the next startup.
+* [x] Guarantee managed-session shutdown and runtime cleanup on normal application exit.
+* [x] Clean inactive abandoned session state on the next startup after a crash.
 * [ ] Ensure stale QEMU instances do not interfere with a new build.
 
 ---
@@ -1009,11 +1009,11 @@ The project is not yet producing a bootable modified SteamOS image.
 
 # 53. Application lifecycle
 
-* [ ] Prevent accidental app quit during irreversible/finalization stages or make quit equivalent to safe cancellation.
+* [x] Make main-window quit equivalent to safe appliance cancellation for the current prototype workflow.
 * [x] Stop the managed QEMU child when application state is dropped on exit.
-* [ ] Clean session overlay on app exit when safe.
-* [ ] Detect stale runtime state on next launch.
-* [ ] Offer cleanup of abandoned workspace data.
+* [x] Clean the session overlay and ephemeral SSH credentials on app exit.
+* [x] Detect inactive stale runtime state on next launch.
+* [x] Automatically clean abandoned inactive workspace data while archiving QEMU logs.
 * [ ] Preserve completed output even if app crashes immediately afterward.
 * [ ] Keep state machine recoverable after frontend reload.
 

@@ -8,6 +8,7 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tauri::Manager;
 
 const READY_MARKER: &str = "SteamOS NVIDIA Image Builder appliance\nREADY";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -56,6 +57,9 @@ impl Drop for ApplianceSession {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
+        if self.runtime_dir.is_dir() {
+            let _ = archive_and_remove_runtime(&self.runtime_dir);
+        }
     }
 }
 
@@ -85,6 +89,71 @@ fn appliance_dir() -> PathBuf {
 }
 fn appliance_path() -> PathBuf {
     appliance_dir().join("fedora-builder.qcow2")
+}
+
+fn runtime_root() -> PathBuf {
+    appliance_dir().join("runtime")
+}
+
+fn process_is_alive(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn archive_and_remove_runtime(runtime_dir: &Path) -> Result<Option<PathBuf>, String> {
+    let log_source = runtime_dir.join("qemu.log");
+    let archive = if log_source.is_file() {
+        let archive_dir = runtime_root().join("logs");
+        fs::create_dir_all(&archive_dir)
+            .map_err(|e| format!("Could not create the appliance log archive: {e}"))?;
+        let session_name = runtime_dir
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("unknown-session");
+        let archive_path = archive_dir.join(format!("{session_name}.log"));
+        fs::copy(&log_source, &archive_path)
+            .map_err(|e| format!("Could not archive the appliance log: {e}"))?;
+        Some(archive_path)
+    } else {
+        None
+    };
+    fs::remove_dir_all(runtime_dir)
+        .map_err(|e| format!("Could not remove the disposable appliance runtime: {e}"))?;
+    Ok(archive)
+}
+
+fn cleanup_abandoned_runtimes() -> Result<(), String> {
+    let root = runtime_root();
+    if !root.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&root)
+        .map_err(|e| format!("Could not inspect appliance runtime state: {e}"))?
+    {
+        let entry = entry.map_err(|e| format!("Could not inspect a runtime entry: {e}"))?;
+        let path = entry.path();
+        let is_session = path.is_dir()
+            && path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(|name| name.starts_with("session-"))
+                .unwrap_or(false);
+        if !is_session {
+            continue;
+        }
+        let active = fs::read_to_string(path.join("qemu.pid"))
+            .ok()
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .map(process_is_alive)
+            .unwrap_or(false);
+        if !active {
+            archive_and_remove_runtime(&path)?;
+        }
+    }
+    Ok(())
 }
 
 fn supported_image(path: &Path) -> bool {
@@ -238,9 +307,7 @@ fn prepare_session() -> Result<ApplianceSession, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|e| format!("System clock error: {e}"))?
         .as_millis();
-    let runtime_dir = appliance_dir()
-        .join("runtime")
-        .join(format!("session-{timestamp}-{}", std::process::id()));
+    let runtime_dir = runtime_root().join(format!("session-{timestamp}-{}", std::process::id()));
     let cloud_init_dir = runtime_dir.join("cloud-init");
     fs::create_dir_all(&cloud_init_dir)
         .map_err(|e| format!("Could not create runtime directory: {e}"))?;
@@ -333,7 +400,7 @@ fn prepare_session() -> Result<ApplianceSession, String> {
         .try_clone()
         .map_err(|e| format!("Could not prepare the QEMU log: {e}"))?;
 
-    let child = Command::new(qemu)
+    let mut child = Command::new(qemu)
         .args([
             "-name",
             "SteamOS NVIDIA Builder",
@@ -380,6 +447,13 @@ fn prepare_session() -> Result<ApplianceSession, String> {
         .stderr(Stdio::from(log_err))
         .spawn()
         .map_err(|e| format!("Could not start the Fedora builder appliance: {e}"))?;
+    if let Err(error) = fs::write(runtime_dir.join("qemu.pid"), child.id().to_string()) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!(
+            "Could not record the appliance process ID: {error}"
+        ));
+    }
 
     Ok(ApplianceSession {
         child,
@@ -598,21 +672,7 @@ fn read_appliance_log(
     Ok(String::from_utf8_lossy(&bytes[start..]).into_owned())
 }
 
-#[tauri::command]
-fn stop_appliance(
-    manager: tauri::State<'_, Mutex<ApplianceManager>>,
-) -> Result<ApplianceStatus, String> {
-    let mut manager = manager
-        .lock()
-        .map_err(|_| "Appliance state lock is unavailable.")?;
-    let Some(mut session) = manager.session.take() else {
-        return Ok(ApplianceStatus {
-            state: "stopped".into(),
-            message: "Builder appliance is stopped.".into(),
-            ssh_port: None,
-            runtime_path: None,
-        });
-    };
+fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, String> {
     if session
         .child
         .try_wait()
@@ -668,12 +728,30 @@ fn stop_appliance(
                 .map_err(|e| format!("Could not finish appliance shutdown: {e}"))?;
         }
     }
+    archive_and_remove_runtime(&session.runtime_dir)
+}
+
+#[tauri::command]
+fn stop_appliance(
+    manager: tauri::State<'_, Mutex<ApplianceManager>>,
+) -> Result<ApplianceStatus, String> {
+    let mut manager = manager
+        .lock()
+        .map_err(|_| "Appliance state lock is unavailable.")?;
+    let Some(mut session) = manager.session.take() else {
+        return Ok(ApplianceStatus {
+            state: "stopped".into(),
+            message: "Builder appliance is stopped.".into(),
+            ssh_port: None,
+            runtime_path: None,
+        });
+    };
+    let archived_log = stop_session(&mut session)?;
     Ok(ApplianceStatus {
         state: "stopped".into(),
-        message: "Builder appliance stopped; its disposable runtime was preserved for diagnostics."
-            .into(),
+        message: "Builder appliance stopped; disposable disk and credentials were removed.".into(),
         ssh_port: None,
-        runtime_path: Some(session.runtime_dir.to_string_lossy().into_owned()),
+        runtime_path: archived_log.map(|path| path.to_string_lossy().into_owned()),
     })
 }
 
@@ -763,13 +841,29 @@ mod tests {
             assert!(Instant::now() < deadline, "guest handshake timed out");
             thread::sleep(Duration::from_secs(1));
         }
+        let runtime_dir = session.runtime_dir.clone();
+        let archived_log = stop_session(&mut session)
+            .expect("the ready appliance should stop and clean up")
+            .expect("the QEMU log should be archived");
+        assert!(
+            !runtime_dir.exists(),
+            "the disposable runtime should be removed"
+        );
+        assert!(
+            archived_log.is_file(),
+            "the archived QEMU log should remain"
+        );
     }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(Mutex::new(ApplianceManager::default()))
+        .setup(|_| {
+            cleanup_abandoned_runtimes().map_err(std::io::Error::other)?;
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -781,6 +875,29 @@ pub fn run() {
             validate_image,
             prototype_build
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running SteamOS NVIDIA Image Builder");
+        .build(tauri::generate_context!())
+        .expect("error while building SteamOS NVIDIA Image Builder");
+
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::CloseRequested { .. },
+            ..
+        } if label == "main" => {
+            if let Ok(mut manager) = app_handle.state::<Mutex<ApplianceManager>>().lock() {
+                if let Some(mut session) = manager.session.take() {
+                    let _ = stop_session(&mut session);
+                }
+            }
+            app_handle.exit(0);
+        }
+        tauri::RunEvent::ExitRequested { .. } => {
+            if let Ok(mut manager) = app_handle.state::<Mutex<ApplianceManager>>().lock() {
+                if let Some(mut session) = manager.session.take() {
+                    let _ = stop_session(&mut session);
+                }
+            }
+        }
+        _ => {}
+    });
 }

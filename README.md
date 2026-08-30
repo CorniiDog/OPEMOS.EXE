@@ -12,6 +12,8 @@ The Rust backend now prepares a disposable Fedora session, launches QEMU in the 
 
 The Tauri frontend invokes a fixed set of Rust commands; it does not pass arbitrary shell commands to the host or guest. Rust owns the QEMU child process and creates a unique runtime directory containing an ephemeral SSH identity, cloud-init seed, qcow2 overlay, writable UEFI variables, and `qemu.log`. The pristine Fedora appliance remains unchanged.
 
+Closing the progress window cancels the active prototype build. Closing the main application gracefully powers off the managed guest, falls back to terminating QEMU after a bounded wait, archives `qemu.log`, and removes the disposable overlay and SSH credentials. Abandoned inactive session directories are cleaned on the next launch.
+
 Once the guest reports the exact readiness marker, later milestones will pass a copy of the user-selected Valve image into the guest for controlled image operations. NVIDIA build/install logic will come from `open-gpu-kernel-modules-steamos-support`, patched NVIDIA source from `open-gpu-kernel-modules-steamos`, and the compositor payload from `gamescope-nvidia`.
 
 ## Development
