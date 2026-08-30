@@ -1,7 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { open } from "@tauri-apps/plugin-dialog";
-import { openUrl } from "@tauri-apps/plugin-opener";
+const { invoke } = window.__TAURI__.core;
+const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
+const open = (options) => invoke("plugin:dialog|open", { options });
+const openUrl = (url) => invoke("plugin:opener|open_url", { url });
 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
