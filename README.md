@@ -17,8 +17,10 @@ credentials, dynamic SSH port, architecture health check, logs, ten-minute
 emulated-boot timeout, and shutdown cleanup. The support repository's complete
 Fedora suite, real recursive bind-mount cleanup, real signed-package validation,
 and validation/mutation cancellation paths have passed in that managed x86_64
-appliance. The normal frontend does not move or mutate the working image through
-the x86 worker yet.
+appliance. For a compatible published artifact, the normal frontend now stops
+the native guest while preserving its working qcow2, attaches that layer only
+to the x86 worker, and performs the first integrated read-only installer
+validation. Image mutation through that worker remains the next gate.
 
 An opt-in development command can copy an explicitly selected support-repository
 checkout into the managed x86 worker and execute its fixed offline-target build
@@ -67,7 +69,9 @@ than being promoted merely because an artifact was published. A live Rust test
 has downloaded and passed the current SteamOS 3.8.16/NVIDIA 575.64.05 release.
 Injection is intentionally not enabled yet: the verified download is removed
 with the disposable session and the exported output remains clearly
-marker-only.
+marker-only. Before export, however, the complete input set must now pass the
+pinned support installer's structured `--validate-only` contract in x86_64
+Fedora.
 
 After accepting a compatible module publication, the backend now queries the
 official Arch Linux Archive for exact-version `nvidia-utils` and
@@ -86,6 +90,19 @@ every file must match before a versioned bundle manifest is recorded. The
 normal workflow therefore does not accept a user-selected support checkout or
 follow a moving branch. Failed or cancelled downloads remove the entire partial
 bundle, and repeated preparation revalidates and reuses the session-owned copy.
+The handoff transfers that bundle plus the verified module archive, checksum,
+provenance, exact userspace packages, and detached signatures into the x86
+worker. It prepares a minimal keyring from Fedora's trusted Arch key material,
+mounts uniquely identified `rootfs-A` and `efi-A` read-only, and accepts only a
+schema-1 `validated/validation_complete` result whose target, trust, hashes,
+package-specific signers, and released-mount status all match Rust-owned state.
+
+The older `steamos-nvidia-installer` project remains a useful reference for the
+later recovery-media contract: an install-ready result also needs the `home`
+partition's desktop launcher and tools, a safely preserved and patched Valve
+`repair_device.sh`, and verification that rootfs, EFI, and home changes survive
+installation. Those responsibilities are tracked separately and are not implied
+by this read-only validation milestone.
 
 Marker-only exports use an explicit `-marker.img` suffix. The builder reserves
 the `-nvidia.img` label for a future output that has successfully installed and

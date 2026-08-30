@@ -11,6 +11,7 @@ const progressWindow = getCurrentWebviewWindow();
 let running = false;
 let cancelling = false;
 let lastApplianceLog = "";
+let lastNvidiaApplianceLog = "";
 let pendingLogChunks = [];
 let followingLogs = true;
 let refreshingLogs = false;
@@ -211,11 +212,16 @@ function applianceLogDelta(previous, current) {
   return `\n\x1b[33m[log] Output advanced beyond the live buffer; resuming from the latest tail.\x1b[0m\n${current}`;
 }
 
-function renderLogs(applianceLog) {
+function renderLogs(applianceLog, source = "native") {
   const normalizedLog = normalizeTerminalText(applianceLog);
   if (!normalizedLog) return;
-  const delta = applianceLogDelta(lastApplianceLog, normalizedLog);
-  lastApplianceLog = normalizedLog;
+  const previous = source === "nvidia" ? lastNvidiaApplianceLog : lastApplianceLog;
+  let delta = applianceLogDelta(previous, normalizedLog);
+  if (!previous && source === "nvidia") {
+    delta = `\n\x1b[1;35m[x86_64 installer appliance]\x1b[0m\n${delta}`;
+  }
+  if (source === "nvidia") lastNvidiaApplianceLog = normalizedLog;
+  else lastApplianceLog = normalizedLog;
   queueLogChunk(delta);
 }
 
@@ -234,8 +240,14 @@ function resumeLogFollowing() {
 async function refreshLogs() {
   if (refreshingLogs) return;
   refreshingLogs = true;
-  try { renderLogs(await invoke("read_appliance_log")); }
-  catch (error) { addStageLog(`Could not refresh appliance log: ${error}`); }
+  try {
+    const [nativeLog, nvidiaLog] = await Promise.allSettled([
+      invoke("read_appliance_log"),
+      invoke("read_nvidia_build_appliance_log"),
+    ]);
+    if (nativeLog.status === "fulfilled") renderLogs(nativeLog.value, "native");
+    if (nvidiaLog.status === "fulfilled") renderLogs(nvidiaLog.value, "nvidia");
+  } catch (error) { addStageLog(`Could not refresh appliance log: ${error}`); }
   finally { refreshingLogs = false; }
 }
 
@@ -273,6 +285,7 @@ async function runBuild(request) {
   running = true;
   cancelling = false;
   lastApplianceLog = "";
+  lastNvidiaApplianceLog = "";
   pendingLogChunks = [];
   ansiState = freshAnsiState();
   followingLogs = true;
@@ -407,7 +420,25 @@ async function runBuild(request) {
         addStageLog(`NVIDIA userspace signatures: ${userspace.signatureStatus}; exact packages are staged for the managed x86 installer.`);
         const installer = await invoke("prepare_nvidia_installer_bundle");
         addStageLog(`NVIDIA installer: pinned ${installer.repository}@${installer.commit}; ${installer.files.length} files verified.`);
-        addStageLog("warning: NVIDIA injection is not enabled in this milestone; the verified module artifact and pending-signature userspace inputs remain disposable with this session.");
+        setStatus("running", "Starting x86 installer validation", "Handing the preserved working image to the managed x86_64 Fedora appliance.", 96.67, "Starting");
+        const installerAppliance = await invoke("start_nvidia_install_appliance");
+        addStageLog(`x86 installer appliance: ${installerAppliance.acceleration}; working image attached exclusively after native shutdown.`);
+        while (!cancelling) {
+          const status = await invoke("get_nvidia_build_appliance_status");
+          await refreshLogs();
+          if (status.state === "ready") break;
+          if (status.state === "failed" || status.state === "timedOut") throw new Error(status.message);
+          await new Promise((resolve) => setTimeout(resolve, 750));
+        }
+        if (cancelling) return;
+        setStatus("running", "Validating offline NVIDIA install", "Mounting rootfs-A and efi-A read-only, authenticating userspace, and checking the exact-kernel installer contract.", 96.8, "Validating");
+        const validation = await invoke("validate_nvidia_install_handoff");
+        addStageLog(`NVIDIA offline validation: ${validation.message}`);
+        addStageLog(`NVIDIA trust: ${validation.trust}; keyring SHA256 ${validation.keyringSha256}; mounts released=${validation.mountsReleased}.`);
+        for (const packageInput of validation.packages) {
+          addStageLog(`NVIDIA signature verified: ${packageInput.name} ${packageInput.fullVersion}; signer ${packageInput.signer}.`);
+        }
+        addStageLog("warning: This milestone validates the complete offline installation input set without mutating the image; NVIDIA injection remains the next gate.");
       } else {
         addStageLog(`warning: ${nvidiaResolution.message}`);
         addStageLog(`NVIDIA publication status: ${nvidiaResolution.reason}; continuing with a marker-only output.`);
