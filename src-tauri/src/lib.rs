@@ -218,24 +218,28 @@ struct ApplianceSession {
 
 #[derive(Clone)]
 struct ImageInspectionSession {
+    runtime_dir: PathBuf,
     ssh_key: PathBuf,
     ssh_port: u16,
     input_image: PathBuf,
     input_sha256_before: String,
     attached_image: PathBuf,
     attached_sha256_before: String,
+    working_image: PathBuf,
     input_preparation: InputPreparation,
 }
 
 impl From<&ApplianceSession> for ImageInspectionSession {
     fn from(session: &ApplianceSession) -> Self {
         Self {
+            runtime_dir: session.runtime_dir.clone(),
             ssh_key: session.ssh_key.clone(),
             ssh_port: session.ssh_port,
             input_image: session.input_image.clone(),
             input_sha256_before: session.input_sha256_before.clone(),
             attached_image: session.attached_image.clone(),
             attached_sha256_before: session.attached_sha256_before.clone(),
+            working_image: session.working_image.clone(),
             input_preparation: session.input_preparation.clone(),
         }
     }
@@ -283,7 +287,7 @@ impl Read for ReportingReader<'_> {
             if let Some(progress) = self.progress {
                 progress(self.stage, self.processed, self.total);
             }
-            self.next_report = self.processed.saturating_add(8 * 1024 * 1024);
+            self.next_report = self.processed.saturating_add(64 * 1024 * 1024);
         }
         Ok(count)
     }
@@ -585,7 +589,7 @@ fn sha256_file_with_progress(
         .map_err(|e| format!("Could not inspect {} for hashing: {e}", path.display()))?
         .len();
     let mut processed = 0_u64;
-    let mut next_report = 32 * 1024 * 1024;
+    let mut next_report = 128 * 1024 * 1024;
     loop {
         if cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed)) {
             return Err("Image preparation cancelled.".into());
@@ -605,7 +609,7 @@ fn sha256_file_with_progress(
             if let Some(progress) = progress {
                 progress(stage, processed, total);
             }
-            next_report = processed.saturating_add(32 * 1024 * 1024);
+            next_report = processed.saturating_add(128 * 1024 * 1024);
         }
     }
     Ok(format!("{:x}", hasher.finalize()))
@@ -749,7 +753,7 @@ fn normalize_bzip2_parallel(
     let error_log = File::create(&error_path)
         .map_err(|e| format!("Could not create the parallel decompressor log: {e}"))?;
     let workers = thread::available_parallelism()
-        .map(|count| count.get().saturating_sub(1).max(1))
+        .map(|count| count.get().saturating_sub(2).clamp(1, 6))
         .unwrap_or(1);
     let mut command = Command::new(binary);
     match tool {
@@ -792,7 +796,7 @@ fn normalize_bzip2_parallel(
                 .unwrap_or(0);
             progress("decompressing-output", output_bytes, 0);
         }
-        thread::sleep(Duration::from_millis(150));
+        thread::sleep(Duration::from_millis(500));
     };
     if !status.success() {
         let detail = fs::read_to_string(&error_path).unwrap_or_default();
@@ -1130,6 +1134,8 @@ fn prepare_session(
 trait GuestConnection {
     fn ssh_key(&self) -> &Path;
     fn ssh_port(&self) -> u16;
+    fn runtime_dir(&self) -> &Path;
+    fn working_image(&self) -> &Path;
 }
 
 impl GuestConnection for ApplianceSession {
@@ -1140,6 +1146,14 @@ impl GuestConnection for ApplianceSession {
     fn ssh_port(&self) -> u16 {
         self.ssh_port
     }
+
+    fn runtime_dir(&self) -> &Path {
+        &self.runtime_dir
+    }
+
+    fn working_image(&self) -> &Path {
+        &self.working_image
+    }
 }
 
 impl GuestConnection for ImageInspectionSession {
@@ -1149,6 +1163,14 @@ impl GuestConnection for ImageInspectionSession {
 
     fn ssh_port(&self) -> u16 {
         self.ssh_port
+    }
+
+    fn runtime_dir(&self) -> &Path {
+        &self.runtime_dir
+    }
+
+    fn working_image(&self) -> &Path {
+        &self.working_image
     }
 }
 
@@ -1192,11 +1214,11 @@ fn run_guest_command(session: &impl GuestConnection, command: &str) -> Result<St
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn handshake(session: &ApplianceSession) -> Result<String, String> {
+fn handshake(session: &impl GuestConnection) -> Result<String, String> {
     run_guest_command(session, "cat /etc/steamos-builder-ready")
 }
 
-fn collect_guest_health(session: &ApplianceSession) -> Result<GuestHealth, String> {
+fn collect_guest_health(session: &impl GuestConnection) -> Result<GuestHealth, String> {
     const HEALTH_COMMAND: &str = r#"set -eu
 test "$(cat /etc/steamos-builder-ready)" = "$(printf 'SteamOS NVIDIA Image Builder appliance\nREADY')"
 printf 'PROTOCOL=1\n'
@@ -1258,14 +1280,14 @@ done"#;
     })
 }
 
-fn scp_command(session: &ApplianceSession) -> Result<Command, String> {
+fn scp_command(session: &impl GuestConnection) -> Result<Command, String> {
     let scp = find_binary("scp").ok_or("scp is required for controlled guest file transfer.")?;
     let mut command = Command::new(scp);
     command
         .arg("-P")
-        .arg(session.ssh_port.to_string())
+        .arg(session.ssh_port().to_string())
         .arg("-i")
-        .arg(&session.ssh_key)
+        .arg(session.ssh_key())
         .args([
             "-o",
             "IdentitiesOnly=yes",
@@ -1281,12 +1303,12 @@ fn scp_command(session: &ApplianceSession) -> Result<Command, String> {
     Ok(command)
 }
 
-fn run_transfer_proof(session: &ApplianceSession) -> Result<TransferProof, String> {
+fn run_transfer_proof(session: &impl GuestConnection) -> Result<TransferProof, String> {
     const PROBE: &[u8] = b"STEAMOS_BUILDER_TRANSFER_PROBE_V1\n";
     const GUEST_INPUT: &str = "/tmp/steamos-builder-transfer-probe.in";
     const GUEST_OUTPUT: &str = "/tmp/steamos-builder-transfer-probe.out";
-    let host_input = session.runtime_dir.join("transfer-probe.in");
-    let host_output = session.runtime_dir.join("transfer-probe.out");
+    let host_input = session.runtime_dir().join("transfer-probe.in");
+    let host_output = session.runtime_dir().join("transfer-probe.out");
     fs::write(&host_input, PROBE).map_err(|e| format!("Could not create transfer probe: {e}"))?;
 
     run_checked(
@@ -1321,7 +1343,9 @@ fn run_transfer_proof(session: &ApplianceSession) -> Result<TransferProof, Strin
     })
 }
 
-fn inspect_synthetic_disk(session: &ApplianceSession) -> Result<SyntheticDiskInspection, String> {
+fn inspect_synthetic_disk(
+    session: &impl GuestConnection,
+) -> Result<SyntheticDiskInspection, String> {
     const INSPECT_COMMAND: &str = r#"set -eu
 DEVICE=/dev/disk/by-id/virtio-steamos-synthetic
 PART=/dev/disk/by-id/virtio-steamos-synthetic-part1
@@ -1598,7 +1622,7 @@ fn inspect_user_image(
 }
 
 fn verify_user_working_image(
-    session: &ApplianceSession,
+    session: &impl GuestConnection,
 ) -> Result<WorkingImageVerification, String> {
     const SOURCE: &str = "/dev/disk/by-id/virtio-steamos-user-input";
     const WORKING: &str = "/dev/disk/by-id/virtio-steamos-user-working";
@@ -1669,7 +1693,7 @@ test "$WORKING_MOUNTED" = 0"#;
     })
 }
 
-fn mutate_synthetic_marker(session: &ApplianceSession) -> Result<MarkerMutation, String> {
+fn mutate_synthetic_marker(session: &impl GuestConnection) -> Result<MarkerMutation, String> {
     const MARKER_PATH: &str = "/etc/steamos-nvidia-image-builder-test";
     const MARKER_CONTENT: &str = "SteamOS NVIDIA Image Builder synthetic marker\nprotocol=1\n";
     const MUTATE_COMMAND: &str = r#"set -eu
@@ -1755,7 +1779,13 @@ fn session_status(session: &ApplianceSession) -> ApplianceStatus {
 }
 
 #[tauri::command]
-fn check_builder_environment() -> BuilderEnvironment {
+async fn check_builder_environment() -> Result<BuilderEnvironment, String> {
+    tauri::async_runtime::spawn_blocking(check_builder_environment_blocking)
+        .await
+        .map_err(|error| format!("Builder environment worker failed: {error}"))
+}
+
+fn check_builder_environment_blocking() -> BuilderEnvironment {
     let host_os = std::env::consts::OS.to_string();
     let host_arch = std::env::consts::ARCH.to_string();
     let appliance = appliance_path();
@@ -1913,21 +1943,61 @@ fn start_appliance_blocking(
 }
 
 #[tauri::command]
-fn get_appliance_status(
-    manager: tauri::State<'_, Mutex<ApplianceManager>>,
-) -> Result<ApplianceStatus, String> {
-    let mut manager = manager
+async fn get_appliance_status(app: tauri::AppHandle) -> Result<ApplianceStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || get_appliance_status_blocking(app))
+        .await
+        .map_err(|error| format!("Appliance status worker failed: {error}"))?
+}
+
+fn get_appliance_status_blocking(app: tauri::AppHandle) -> Result<ApplianceStatus, String> {
+    let manager_state = app.state::<Mutex<ApplianceManager>>();
+    let (snapshot, session_port, started_at) = {
+        let mut manager = manager_state
+            .lock()
+            .map_err(|_| "Appliance state lock is unavailable.")?;
+        if manager.preparing {
+            return Ok(ApplianceStatus {
+                state: "preparing".into(),
+                message: "Input image preparation is running in the background.".into(),
+                ssh_port: None,
+                runtime_path: None,
+                input: None,
+            });
+        }
+        let Some(session) = manager.session.as_mut() else {
+            return Ok(ApplianceStatus {
+                state: "stopped".into(),
+                message: "Builder appliance is stopped.".into(),
+                ssh_port: None,
+                runtime_path: None,
+                input: None,
+            });
+        };
+        if let Some(exit) = session
+            .child
+            .try_wait()
+            .map_err(|e| format!("Could not inspect the appliance: {e}"))?
+        {
+            session.state = "failed".into();
+            session.message = format!(
+                "Builder appliance exited unexpectedly with {exit}. See qemu.log for details."
+            );
+            return Ok(session_status(session));
+        }
+        if session.state != "booting" {
+            return Ok(session_status(session));
+        }
+        (
+            ImageInspectionSession::from(&*session),
+            session.ssh_port,
+            session.started_at,
+        )
+    };
+
+    let handshake_result = handshake(&snapshot);
+    let mut manager = manager_state
         .lock()
         .map_err(|_| "Appliance state lock is unavailable.")?;
-    if manager.preparing {
-        return Ok(ApplianceStatus {
-            state: "preparing".into(),
-            message: "Input image preparation is running in the background.".into(),
-            ssh_port: None,
-            runtime_path: None,
-            input: None,
-        });
-    }
     let Some(session) = manager.session.as_mut() else {
         return Ok(ApplianceStatus {
             state: "stopped".into(),
@@ -1937,43 +2007,56 @@ fn get_appliance_status(
             input: None,
         });
     };
-    if let Some(exit) = session
-        .child
-        .try_wait()
-        .map_err(|e| format!("Could not inspect the appliance: {e}"))?
-    {
-        session.state = "failed".into();
-        session.message =
-            format!("Builder appliance exited unexpectedly with {exit}. See qemu.log for details.");
+    if session.ssh_port != session_port || session.state != "booting" {
         return Ok(session_status(session));
     }
-    if session.state == "booting" {
-        match handshake(session) {
-            Ok(output) if output == READY_MARKER => {
-                session.state = "ready".into();
-                session.message = "Builder appliance is ready.".into();
-            }
-            Ok(_) => {
-                session.state = "failed".into();
-                session.message = "Builder handshake returned an unexpected marker.".into();
-            }
-            Err(_) if session.started_at.elapsed() >= BOOT_TIMEOUT => {
-                session.state = "timedOut".into();
-                session.message =
-                    "Builder appliance did not become ready within 120 seconds.".into();
-            }
-            Err(_) => {}
+    match handshake_result {
+        Ok(output) if output == READY_MARKER => {
+            session.state = "ready".into();
+            session.message = "Builder appliance is ready.".into();
         }
+        Ok(_) => {
+            session.state = "failed".into();
+            session.message = "Builder handshake returned an unexpected marker.".into();
+        }
+        Err(_) if started_at.elapsed() >= BOOT_TIMEOUT => {
+            session.state = "timedOut".into();
+            session.message = "Builder appliance did not become ready within 120 seconds.".into();
+        }
+        Err(_) => {}
     }
     Ok(session_status(session))
 }
 
+fn ready_session_snapshot(
+    app: &tauri::AppHandle,
+    operation: &str,
+) -> Result<ImageInspectionSession, String> {
+    let manager_state = app.state::<Mutex<ApplianceManager>>();
+    let manager = manager_state
+        .lock()
+        .map_err(|_| "Appliance state lock is unavailable.")?;
+    let session = manager
+        .session
+        .as_ref()
+        .ok_or("Builder appliance is not running.")?;
+    if session.state != "ready" {
+        return Err(format!("Builder appliance is not ready for {operation}."));
+    }
+    Ok(ImageInspectionSession::from(session))
+}
+
 #[tauri::command]
-fn read_appliance_log(
-    manager: tauri::State<'_, Mutex<ApplianceManager>>,
-) -> Result<String, String> {
+async fn read_appliance_log(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || read_appliance_log_blocking(app))
+        .await
+        .map_err(|error| format!("Appliance log worker failed: {error}"))?
+}
+
+fn read_appliance_log_blocking(app: tauri::AppHandle) -> Result<String, String> {
     let log_path = {
-        let manager = manager
+        let manager_state = app.state::<Mutex<ApplianceManager>>();
+        let manager = manager_state
             .lock()
             .map_err(|_| "Appliance state lock is unavailable.")?;
         let Some(session) = manager.session.as_ref() else {
@@ -1988,52 +2071,33 @@ fn read_appliance_log(
 }
 
 #[tauri::command]
-fn guest_health(manager: tauri::State<'_, Mutex<ApplianceManager>>) -> Result<GuestHealth, String> {
-    let manager = manager
-        .lock()
-        .map_err(|_| "Appliance state lock is unavailable.")?;
-    let session = manager
-        .session
-        .as_ref()
-        .ok_or("Builder appliance is not running.")?;
-    if session.state != "ready" {
-        return Err("Builder appliance is not ready for health checks.".into());
-    }
-    collect_guest_health(session)
+async fn guest_health(app: tauri::AppHandle) -> Result<GuestHealth, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let session = ready_session_snapshot(&app, "health checks")?;
+        collect_guest_health(&session)
+    })
+    .await
+    .map_err(|error| format!("Guest health worker failed: {error}"))?
 }
 
 #[tauri::command]
-fn verify_guest_transfer(
-    manager: tauri::State<'_, Mutex<ApplianceManager>>,
-) -> Result<TransferProof, String> {
-    let manager = manager
-        .lock()
-        .map_err(|_| "Appliance state lock is unavailable.")?;
-    let session = manager
-        .session
-        .as_ref()
-        .ok_or("Builder appliance is not running.")?;
-    if session.state != "ready" {
-        return Err("Builder appliance is not ready for file transfer.".into());
-    }
-    run_transfer_proof(session)
+async fn verify_guest_transfer(app: tauri::AppHandle) -> Result<TransferProof, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let session = ready_session_snapshot(&app, "file transfer")?;
+        run_transfer_proof(&session)
+    })
+    .await
+    .map_err(|error| format!("Guest transfer worker failed: {error}"))?
 }
 
 #[tauri::command]
-fn inspect_test_disk(
-    manager: tauri::State<'_, Mutex<ApplianceManager>>,
-) -> Result<SyntheticDiskInspection, String> {
-    let manager = manager
-        .lock()
-        .map_err(|_| "Appliance state lock is unavailable.")?;
-    let session = manager
-        .session
-        .as_ref()
-        .ok_or("Builder appliance is not running.")?;
-    if session.state != "ready" {
-        return Err("Builder appliance is not ready for synthetic disk inspection.".into());
-    }
-    inspect_synthetic_disk(session)
+async fn inspect_test_disk(app: tauri::AppHandle) -> Result<SyntheticDiskInspection, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let session = ready_session_snapshot(&app, "synthetic disk inspection")?;
+        inspect_synthetic_disk(&session)
+    })
+    .await
+    .map_err(|error| format!("Synthetic disk worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -2044,23 +2108,13 @@ async fn inspect_selected_image(app: tauri::AppHandle) -> Result<UserImageInspec
 }
 
 fn inspect_selected_image_blocking(app: tauri::AppHandle) -> Result<UserImageInspection, String> {
-    let manager_state = app.state::<Mutex<ApplianceManager>>();
-    let (session, cancel) = {
-        let manager = manager_state
-            .lock()
-            .map_err(|_| "Appliance state lock is unavailable.")?;
-        let session = manager
-            .session
-            .as_ref()
-            .ok_or("Builder appliance is not running.")?;
-        if session.state != "ready" {
-            return Err("Builder appliance is not ready for selected image inspection.".into());
-        }
-        (
-            ImageInspectionSession::from(session),
-            manager.cancel_preparation.clone(),
-        )
-    };
+    let session = ready_session_snapshot(&app, "selected image inspection")?;
+    let cancel = app
+        .state::<Mutex<ApplianceManager>>()
+        .lock()
+        .map_err(|_| "Appliance state lock is unavailable.")?
+        .cancel_preparation
+        .clone();
     let report_progress = |stage: &str, processed_bytes: u64, total_bytes: u64| {
         let _ = app.emit_to(
             "build-progress",
@@ -2076,40 +2130,26 @@ fn inspect_selected_image_blocking(app: tauri::AppHandle) -> Result<UserImageIns
 }
 
 #[tauri::command]
-fn verify_working_image(
-    manager: tauri::State<'_, Mutex<ApplianceManager>>,
-) -> Result<WorkingImageVerification, String> {
-    let manager = manager
-        .lock()
-        .map_err(|_| "Appliance state lock is unavailable.")?;
-    let session = manager
-        .session
-        .as_ref()
-        .ok_or("Builder appliance is not running.")?;
-    if session.state != "ready" {
-        return Err("Builder appliance is not ready for working-image verification.".into());
-    }
-    if !session.working_image.is_file() {
-        return Err("The disposable working image is unavailable.".into());
-    }
-    verify_user_working_image(session)
+async fn verify_working_image(app: tauri::AppHandle) -> Result<WorkingImageVerification, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let session = ready_session_snapshot(&app, "working-image verification")?;
+        if !session.working_image().is_file() {
+            return Err("The disposable working image is unavailable.".into());
+        }
+        verify_user_working_image(&session)
+    })
+    .await
+    .map_err(|error| format!("Working-image verification worker failed: {error}"))?
 }
 
 #[tauri::command]
-fn mutate_test_marker(
-    manager: tauri::State<'_, Mutex<ApplianceManager>>,
-) -> Result<MarkerMutation, String> {
-    let manager = manager
-        .lock()
-        .map_err(|_| "Appliance state lock is unavailable.")?;
-    let session = manager
-        .session
-        .as_ref()
-        .ok_or("Builder appliance is not running.")?;
-    if session.state != "ready" {
-        return Err("Builder appliance is not ready for synthetic marker mutation.".into());
-    }
-    mutate_synthetic_marker(session)
+async fn mutate_test_marker(app: tauri::AppHandle) -> Result<MarkerMutation, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let session = ready_session_snapshot(&app, "synthetic marker mutation")?;
+        mutate_synthetic_marker(&session)
+    })
+    .await
+    .map_err(|error| format!("Synthetic mutation worker failed: {error}"))?
 }
 
 fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, String> {
@@ -2256,8 +2296,8 @@ fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> {
         tauri::WebviewUrl::App("build.html".into()),
     )
     .title("SteamOS NVIDIA Builder — Progress")
-    .inner_size(680.0, 620.0)
-    .min_inner_size(680.0, 620.0)
+    .inner_size(680.0, 680.0)
+    .min_inner_size(680.0, 680.0)
     .resizable(true)
     .theme(Some(tauri::Theme::Dark))
     .background_color(Color(13, 17, 23, 255))
