@@ -1,5 +1,5 @@
 const { invoke } = window.__TAURI__.core;
-const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
+const { getAllWebviewWindows, getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 const open = (options) => invoke("plugin:dialog|open", { options });
 const openUrl = (url) => invoke("plugin:opener|open_url", { url });
 
@@ -8,120 +8,99 @@ const elements = {
   dropZone: $("#drop-zone"), chooseImage: $("#choose-image"), openValve: $("#open-valve"),
   selectionCard: $("#selection-card"), selectedName: $("#selected-name"), selectedPath: $("#selected-path"),
   selectionStatus: $("#selection-status"), buildCard: $("#build-card"), buildButton: $("#build-button"),
-  progressWrap: $("#progress-wrap"), progressBar: $("#progress-bar"), progressLabel: $("#progress-label"),
   resultMessage: $("#result-message"), environmentTitle: $("#environment-title"),
   environmentMessage: $("#environment-message"), environmentDetails: $("#environment-details"),
-  environmentStatus: $("#environment-status"), startAppliance: $("#start-appliance"), stopAppliance: $("#stop-appliance"),
+  environmentStatus: $("#environment-status"),
 };
 
 let currentImage = null;
+let currentImageName = null;
 let hostReady = false;
-let statusTimer = null;
 
-function showApplianceStatus(status) {
-  const labels = { booting: "Booting", ready: "Ready", failed: "Failed", timedOut: "Timed out", stopped: "Stopped" };
-  elements.environmentTitle.textContent = status.state === "ready" ? "Builder is ready" : "Builder appliance";
-  elements.environmentMessage.textContent = status.message;
-  elements.environmentDetails.textContent = [status.sshPort ? `Local control port: ${status.sshPort}` : "", status.runtimePath || ""].filter(Boolean).join(" · ");
-  elements.environmentStatus.textContent = labels[status.state] || status.state;
-  const failed = status.state === "failed" || status.state === "timedOut";
-  elements.environmentStatus.className = `status ${status.state === "booting" ? "pending" : failed ? "failed" : ""}`;
-  elements.startAppliance.classList.toggle("hidden", !hostReady || status.state === "booting" || status.state === "ready");
-  elements.stopAppliance.classList.toggle("hidden", status.state === "stopped");
-  if (status.state !== "booting" && statusTimer) {
-    clearInterval(statusTimer);
-    statusTimer = null;
-  }
-}
-
-async function refreshApplianceStatus() {
-  try { showApplianceStatus(await invoke("get_appliance_status")); }
-  catch (error) { showApplianceStatus({ state: "failed", message: String(error) }); }
+function updateBuildButton() {
+  elements.buildButton.disabled = !currentImage || !hostReady;
 }
 
 async function checkEnvironment() {
   try {
     const environment = await invoke("check_builder_environment");
     hostReady = environment.ready;
-    elements.environmentTitle.textContent = environment.ready ? "Host prerequisites ready" : "Builder unavailable";
-    elements.environmentMessage.textContent = environment.message;
+    elements.environmentTitle.textContent = environment.ready ? "Ready to build" : "Builder unavailable";
+    elements.environmentMessage.textContent = environment.ready
+      ? "The isolated builder will start automatically when you begin."
+      : environment.message;
     elements.environmentDetails.textContent = [environment.host_os, environment.host_arch, environment.qemu_version].filter(Boolean).join(" · ");
     elements.environmentStatus.textContent = environment.ready ? "Available" : "Unavailable";
     elements.environmentStatus.className = `status ${environment.ready ? "" : "failed"}`;
-    elements.startAppliance.classList.toggle("hidden", !environment.ready);
-    if (environment.ready) await refreshApplianceStatus();
   } catch (error) {
+    hostReady = false;
     elements.environmentTitle.textContent = "Environment check failed";
     elements.environmentMessage.textContent = String(error);
     elements.environmentStatus.textContent = "Failed";
     elements.environmentStatus.className = "status failed";
   }
+  updateBuildButton();
 }
-
-elements.startAppliance.addEventListener("click", async () => {
-  elements.startAppliance.disabled = true;
-  try {
-    showApplianceStatus(await invoke("start_appliance"));
-    statusTimer ??= setInterval(refreshApplianceStatus, 1500);
-  } catch (error) { showApplianceStatus({ state: "failed", message: String(error) }); }
-  finally { elements.startAppliance.disabled = false; }
-});
-
-elements.stopAppliance.addEventListener("click", async () => {
-  elements.stopAppliance.disabled = true;
-  try { showApplianceStatus(await invoke("stop_appliance")); }
-  catch (error) { showApplianceStatus({ state: "failed", message: String(error) }); }
-  finally { elements.stopAppliance.disabled = false; }
-});
 
 async function selectImage(path) {
   try {
     const info = await invoke("validate_image", { path });
     currentImage = info.path;
+    currentImageName = info.name;
     elements.selectedName.textContent = info.name;
     elements.selectedPath.textContent = info.path;
-    elements.selectionStatus.textContent = "Recognized";
+    elements.selectionStatus.textContent = "Ready";
+    elements.selectionStatus.className = "status";
     elements.selectionCard.classList.remove("hidden");
     elements.buildCard.classList.remove("hidden");
     elements.resultMessage.textContent = "";
-  } catch {
+  } catch (error) {
     currentImage = null;
+    currentImageName = null;
     elements.selectedName.textContent = path.split(/[\\/]/).pop();
     elements.selectedPath.textContent = path;
     elements.selectionStatus.textContent = "Unsupported";
+    elements.selectionStatus.className = "status failed";
     elements.selectionCard.classList.remove("hidden");
     elements.buildCard.classList.add("hidden");
+    elements.resultMessage.textContent = String(error);
   }
+  updateBuildButton();
 }
 
 elements.chooseImage.addEventListener("click", async () => {
   const selected = await open({ multiple: false, directory: false, filters: [{ name: "SteamOS recovery image", extensions: ["img", "bz2", "gz", "xz"] }] });
   if (typeof selected === "string") await selectImage(selected);
 });
+
 elements.openValve.addEventListener("click", () => openUrl("https://store.steampowered.com/steamos/download/?ver=steamdeck"));
 
 elements.buildButton.addEventListener("click", async () => {
-  if (!currentImage) return;
+  if (!currentImage || !hostReady) return;
   elements.buildButton.disabled = true;
-  elements.progressWrap.classList.remove("hidden");
-  elements.resultMessage.textContent = "";
-  for (const [label, progress] of [["Preparing builder…", 15], ["Checking SteamOS image…", 34], ["Preparing output…", 53], ["Simulating NVIDIA integration…", 72], ["Simulating Gamescope integration…", 88], ["Finalizing prototype…", 100]]) {
-    elements.progressLabel.textContent = label;
-    elements.progressBar.style.width = `${progress}%`;
-    await new Promise((resolve) => setTimeout(resolve, 300));
-  }
-  try {
-    const output = await invoke("prototype_build", { path: currentImage });
-    elements.resultMessage.textContent = `Prototype created: ${output}`;
-    elements.resultMessage.className = "result-message success";
-    elements.progressLabel.textContent = "Prototype complete.";
-  } catch (error) {
-    elements.resultMessage.textContent = String(error);
+  elements.resultMessage.textContent = "Build progress opened in a separate window.";
+  const windows = await getAllWebviewWindows();
+  const progressWindow = windows.find((window) => window.label === "build-progress");
+  if (!progressWindow) {
+    elements.resultMessage.textContent = "The build progress window is unavailable.";
     elements.resultMessage.className = "result-message error";
-  } finally { elements.buildButton.disabled = false; }
+    updateBuildButton();
+    return;
+  }
+  await progressWindow.emit("build-requested", { path: currentImage, name: currentImageName });
+  await progressWindow.show();
+  await progressWindow.setFocus();
 });
 
-await getCurrentWebviewWindow().onDragDropEvent(async (event) => {
+const mainWindow = getCurrentWebviewWindow();
+await mainWindow.listen("build-finished", (event) => {
+  const { state, message } = event.payload;
+  elements.resultMessage.textContent = message;
+  elements.resultMessage.className = `result-message ${state === "complete" ? "success" : state === "failed" ? "error" : ""}`;
+  updateBuildButton();
+});
+
+await mainWindow.onDragDropEvent(async (event) => {
   if (event.payload.type === "over") { elements.dropZone.classList.add("dragging"); return; }
   elements.dropZone.classList.remove("dragging");
   if (event.payload.type === "drop") {

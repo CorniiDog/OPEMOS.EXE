@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Build Progress</title>
+    <link rel="stylesheet" href="/build.css">
+</head>
+<body>
+    <main class="progress-shell">
+        <header>
+            <p class="eyebrow">SteamOS NVIDIA Image Builder</p>
+            <h1>Prototype build progress</h1>
+            <p id="input-name" class="input-name">Waiting for an image…</p>
+        </header>
+
+        <section class="status-card">
+            <div>
+                <p class="eyebrow">Current status</p>
+                <h2 id="status-title">Waiting</h2>
+                <p id="status-message">Select an image in the main window to begin.</p>
+            </div>
+            <span id="status-badge" class="status pending">Waiting</span>
+        </section>
+
+        <div class="progress-track" aria-hidden="true">
+            <div id="progress-bar" class="progress-bar"></div>
+        </div>
+
+        <section class="logs-card">
+            <div class="logs-heading">
+                <h2>Build logs</h2>
+                <span>Live diagnostics</span>
+            </div>
+            <pre id="build-log" aria-live="polite">Waiting for the build to start…</pre>
+        </section>
+
+        <div class="actions">
+            <button id="cancel-build" class="danger" disabled>Cancel Build</button>
+            <button id="close-window" class="secondary hidden">Close</button>
+        </div>
+
+        <p class="prototype-note">Prototype only — this milestone does not create a bootable SteamOS image.</p>
+    </main>
+    <script type="module" src="/build.js"></script>
+</body>
+</html>

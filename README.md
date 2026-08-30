@@ -4,7 +4,7 @@ A desktop application that takes an official Valve SteamOS recovery image and pr
 
 ## Current milestone
 
-The first target is macOS. The desktop shell provides drag-and-drop, file picker fallback, Valve download-page access, builder-appliance controls, prototype progress, and automatic Finder reveal.
+The first target is macOS. The desktop shell provides drag-and-drop, file picker fallback, Valve download-page access, and one image-driven build action. A separate progress window automatically manages the builder appliance, displays live logs and status, supports cancellation, and reveals the prototype result in Finder.
 
 The Rust backend now prepares a disposable Fedora session, launches QEMU in the background, polls the guest's SSH readiness marker, reports lifecycle states, and performs graceful shutdown with a forced-stop fallback. Prototype output is still **not** bootable SteamOS.
 

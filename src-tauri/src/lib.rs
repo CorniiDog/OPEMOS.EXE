@@ -582,6 +582,23 @@ fn get_appliance_status(
 }
 
 #[tauri::command]
+fn read_appliance_log(
+    manager: tauri::State<'_, Mutex<ApplianceManager>>,
+) -> Result<String, String> {
+    let manager = manager
+        .lock()
+        .map_err(|_| "Appliance state lock is unavailable.")?;
+    let Some(session) = manager.session.as_ref() else {
+        return Ok(String::new());
+    };
+    let bytes = fs::read(session.runtime_dir.join("qemu.log"))
+        .map_err(|e| format!("Could not read the appliance log: {e}"))?;
+    const LOG_LIMIT: usize = 64 * 1024;
+    let start = bytes.len().saturating_sub(LOG_LIMIT);
+    Ok(String::from_utf8_lossy(&bytes[start..]).into_owned())
+}
+
+#[tauri::command]
 fn stop_appliance(
     manager: tauri::State<'_, Mutex<ApplianceManager>>,
 ) -> Result<ApplianceStatus, String> {
@@ -759,6 +776,7 @@ pub fn run() {
             check_builder_environment,
             start_appliance,
             get_appliance_status,
+            read_appliance_log,
             stop_appliance,
             validate_image,
             prototype_build

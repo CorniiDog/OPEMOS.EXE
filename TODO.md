@@ -84,6 +84,8 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Add Valve recovery-image download-page access.
 * [x] Add selected-image summary card.
 * [x] Add build button and prototype progress state.
+* [x] Move build status, live logs, and cancellation into a dedicated progress window.
+* [x] Start and stop the builder appliance automatically as part of the build workflow.
 * [x] Reveal prototype output in Finder on macOS.
 * [x] Accept:
 
@@ -94,14 +96,14 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Reject unsupported file extensions early.
 * [x] Add project icon/assets.
 * [ ] Replace prototype build wording once the real backend path exists.
-* [ ] Show distinct host, appliance, guest-handshake, input-image, and output-image states.
+* [x] Show distinct host, appliance, guest-handshake, input-image, and prototype-output states.
 * [ ] Add a clear pre-build summary of exactly what will happen.
 * [ ] Display original image path and chosen output location separately.
 * [ ] Add user-selectable output path/name.
 * [ ] Warn before overwriting an existing output.
-* [ ] Add cancel control for long-running operations.
+* [x] Add cancel control for the current appliance/prototype workflow.
 * [ ] Keep advanced diagnostics hidden by default but accessible.
-* [ ] Ensure normal users never need Fedora, QEMU, SSH, cloud-init, or partitioning terminology to complete a build.
+* [x] Ensure normal users never need Fedora, QEMU, SSH, cloud-init, or partitioning terminology to complete the current workflow.
 
 ---
 
@@ -633,16 +635,16 @@ The project is not yet producing a bootable modified SteamOS image.
 
 # 31. Progress reporting
 
-* [ ] Define structured build stages.
+* [x] Define structured prototype build stages in the progress UI.
 * [ ] Report current stage from Rust to frontend.
 * [ ] Add stage percentages where meaningful.
 * [ ] Avoid fake linear percentages for operations with unknown duration.
 * [ ] Show bytes processed during copy/decompression/compression.
-* [ ] Show appliance startup separately from image mutation.
+* [x] Show appliance startup separately from prototype output creation.
 * [ ] Show NVIDIA/Gamescope integration steps separately.
-* [ ] Preserve a detailed build log.
+* [x] Preserve and display the current session's QEMU/serial log through completion.
 * [ ] Add a “Copy diagnostics” action.
-* [ ] Keep normal success UX concise.
+* [x] Keep normal prototype success UX concise.
 
 ---
 
@@ -658,8 +660,8 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Define typed errors for download verification failure.
 * [ ] Define typed errors for final output validation failure.
 * [ ] Always clean guest mounts after errors.
-* [ ] Always stop QEMU after build failure unless diagnostics mode intentionally keeps it alive.
-* [ ] Preserve useful logs after cleanup.
+* [x] Always stop QEMU after the current prototype build fails.
+* [x] Preserve useful appliance logs after current-session cleanup.
 * [ ] Never delete the original user image.
 * [ ] Never leave the UI claiming success after a partial failure.
 
@@ -669,20 +671,20 @@ The project is not yet producing a bootable modified SteamOS image.
 
 * [ ] Support cancellation while downloading.
 * [ ] Support cancellation while copying/decompressing.
-* [ ] Support cancellation while guest is booting.
+* [x] Support cancellation while the guest is booting.
 * [ ] Support cancellation during image mutation.
 * [ ] Support cancellation during compression/finalization.
 * [ ] Make cancellation cooperative first.
-* [ ] Add bounded forced termination fallback.
+* [x] Add bounded forced termination fallback.
 * [ ] Unmount/detach filesystems on cancellation.
 * [ ] Delete incomplete output by default or clearly mark it incomplete.
-* [ ] Never cancel in a way that can damage the original image.
+* [x] Never modify the original image during the current cancellable prototype workflow.
 
 ---
 
 # 34. Logging and diagnostics
 
-* [ ] Create per-build diagnostic directory.
+* [x] Create a unique per-build runtime/diagnostic directory.
 * [ ] Record app version.
 * [ ] Record host OS/architecture.
 * [ ] Record QEMU version.
@@ -693,7 +695,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Record selected NVIDIA certification.
 * [ ] Record selected Gamescope build/patch identifier.
 * [ ] Capture guest command exit statuses.
-* [ ] Capture QEMU stderr/serial logs.
+* [x] Capture QEMU stderr/serial logs.
 * [ ] Redact private keys and sensitive host paths from user-shareable diagnostics.
 * [ ] Add one-click diagnostics export.
 
@@ -703,7 +705,7 @@ The project is not yet producing a bootable modified SteamOS image.
 
 ## Rust/unit tests
 
-* [ ] Test supported-image detection.
+* [x] Test supported-image detection.
 * [ ] Test extension/magic mismatch handling.
 * [ ] Test QEMU binary selection by architecture.
 * [ ] Test environment status state machine.
@@ -1005,7 +1007,7 @@ The project is not yet producing a bootable modified SteamOS image.
 # 53. Application lifecycle
 
 * [ ] Prevent accidental app quit during irreversible/finalization stages or make quit equivalent to safe cancellation.
-* [ ] Stop QEMU on app exit.
+* [x] Stop the managed QEMU child when application state is dropped on exit.
 * [ ] Clean session overlay on app exit when safe.
 * [ ] Detect stale runtime state on next launch.
 * [ ] Offer cleanup of abandoned workspace data.
@@ -1139,10 +1141,10 @@ Before calling the project **beta**, verify:
 
 # 62. Immediate next implementation sequence
 
-1. [ ] Add Rust-owned appliance process manager.
-2. [ ] Reproduce current shell handshake from Rust.
-3. [ ] Report real guest-ready state to frontend.
-4. [ ] Add graceful shutdown/cleanup.
+1. [x] Add Rust-owned appliance process manager.
+2. [x] Reproduce current shell handshake from Rust.
+3. [x] Report real guest-ready state to frontend.
+4. [x] Add graceful shutdown/cleanup.
 5. [ ] Add one structured guest command such as `health`.
 6. [ ] Add a tiny host↔guest file-transfer or block-attachment proof.
 7. [ ] Attach a synthetic disk image and inspect it read-only.
