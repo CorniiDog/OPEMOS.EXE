@@ -37,7 +37,7 @@ The project is not yet producing a bootable modified SteamOS image.
 6. [ ] Keep each appliance session disposable and verify no state leaks between builds.
 7. [x] Pass a harmless host file into the guest, return it, and verify identical bytes.
 8. [x] Pass a user-selected raw SteamOS image to the guest as a host-level read-only block device without booting it.
-9. [ ] Detect compression/container format and prepare a writable working image.
+9. [x] Detect compression/container format and prepare a disposable writable qcow2 working layer.
 10. [x] Inspect a selected raw image read-only without mounting and return structured partition/filesystem metadata. (Real Valve-image validation remains in the immediate sequence.)
 11. [ ] Implement the first deterministic marker-only image mutation.
 12. [ ] Integrate NVIDIA support from `open-gpu-kernel-modules-steamos-support` only after the generic image-mutation path is proven.
@@ -356,7 +356,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Evaluate virtiofs/shared-folder approaches where supported.
 * [ ] Avoid copying multi-gigabyte images over SSH unless there is a compelling reason.
 * [x] Attach the user image read-only at the host/QEMU boundary for initial inspection; never mount it.
-* [ ] Attach a distinct writable working copy for mutation.
+* [x] Attach a distinct writable qcow2 working layer for mutation.
 * [ ] Prevent guest from seeing unrelated host directories.
 * [x] Canonicalize and validate the selected path before exposing it to QEMU.
 * [ ] Handle spaces and Unicode in host paths safely.

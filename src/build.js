@@ -251,10 +251,16 @@ async function runBuild(request) {
     }
     if (cancelling) return;
 
-    setStatus("running", "Creating prototype output", "Validating the selected image and writing the prototype result.", 94);
+    setStatus("running", "Preparing isolated working layer", "Verifying a disposable writable overlay without mounting or changing it.", 93);
+    const working = await invoke("verify_working_image");
+    addStageLog(`Working layer: ${working.overlayFormat}; ${working.workingBytes} bytes; layout matches source=${working.layoutMatches}.`);
+    addStageLog(`Working isolation: source read-only=${working.sourceReadOnly}; working read-only=${working.workingReadOnly}; source mounted=${working.sourceMounted}; working mounted=${working.workingMounted}.`);
+    if (cancelling) return;
+
+    setStatus("running", "Creating prototype output", "Validating the selected image and writing the prototype result.", 96);
     const output = await invoke("prototype_build", { path: request.path });
     addStageLog(`Prototype output created: ${output}`);
-    setStatus("running", "Finalizing", "Stopping the disposable builder session.", 97);
+    setStatus("running", "Finalizing", "Stopping the disposable builder session.", 98);
     await invoke("stop_appliance");
     addStageLog("Builder session stopped.");
     setStatus("complete", "Prototype complete", "Finder opened the generated prototype output.", 100);

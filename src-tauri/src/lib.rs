@@ -138,6 +138,23 @@ struct UserImageInspection {
     input: InputPreparation,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkingImageVerification {
+    source_device: String,
+    working_device: String,
+    source_bytes: u64,
+    working_bytes: u64,
+    source_read_only: bool,
+    working_read_only: bool,
+    source_mounted: bool,
+    working_mounted: bool,
+    source_partition_table: Option<String>,
+    working_partition_table: Option<String>,
+    layout_matches: bool,
+    overlay_format: String,
+}
+
 #[derive(Deserialize)]
 struct LsblkResponse {
     blockdevices: Vec<LsblkNode>,
@@ -172,6 +189,7 @@ struct ApplianceSession {
     input_sha256_before: String,
     attached_image: PathBuf,
     attached_sha256_before: String,
+    working_image: PathBuf,
     input_preparation: InputPreparation,
 }
 
@@ -837,7 +855,7 @@ fn prepare_session(
 
     let runtime_disk = runtime_dir.join("session.qcow2");
     run_checked(
-        Command::new(qemu_img)
+        Command::new(&qemu_img)
             .args(["create", "-f", "qcow2", "-F", "qcow2", "-b"])
             .arg(&appliance)
             .arg(&runtime_disk),
@@ -912,6 +930,14 @@ fn prepare_session(
         source_bytes,
         image_bytes,
     };
+    let working_image = runtime_dir.join("user-working.qcow2");
+    run_checked(
+        Command::new(&qemu_img)
+            .args(["create", "-q", "-f", "qcow2", "-F", "raw", "-b"])
+            .arg(&attached_image)
+            .arg(&working_image),
+        "Could not create the disposable user-image working layer",
+    )?;
     let seed_image = runtime_dir.join("seed.iso");
     run_checked(
         Command::new("hdiutil")
@@ -963,6 +989,10 @@ fn prepare_session(
     let input_drive_path = attached_image
         .to_str()
         .ok_or("The selected image path is not valid UTF-8.")?
+        .replace(',', ",,");
+    let working_drive_path = working_image
+        .to_str()
+        .ok_or("The working image path is not valid UTF-8.")?
         .replace(',', ",,");
 
     let mut child = Command::new(qemu)
@@ -1025,6 +1055,15 @@ fn prepare_session(
             "-device",
             "virtio-blk-pci,drive=user-input,serial=steamos-user-input",
         ])
+        .arg("-drive")
+        .arg(format!(
+            "file={},if=none,format=qcow2,id=user-working",
+            working_drive_path
+        ))
+        .args([
+            "-device",
+            "virtio-blk-pci,drive=user-working,serial=steamos-user-working",
+        ])
         .args([
             "-device",
             "virtio-rng-pci",
@@ -1060,6 +1099,7 @@ fn prepare_session(
         input_sha256_before,
         attached_image,
         attached_sha256_before,
+        working_image,
         input_preparation,
     })
 }
@@ -1453,6 +1493,78 @@ fn inspect_user_image(
         image_sha256_after,
         image_unchanged,
         input: session.input_preparation.clone(),
+    })
+}
+
+fn verify_user_working_image(
+    session: &ApplianceSession,
+) -> Result<WorkingImageVerification, String> {
+    const SOURCE: &str = "/dev/disk/by-id/virtio-steamos-user-input";
+    const WORKING: &str = "/dev/disk/by-id/virtio-steamos-user-working";
+    const VERIFY_COMMAND: &str = r#"set -eu
+SOURCE=/dev/disk/by-id/virtio-steamos-user-input
+WORKING=/dev/disk/by-id/virtio-steamos-user-working
+test -b "$SOURCE"
+test -b "$WORKING"
+SOURCE_MOUNTED=0
+WORKING_MOUNTED=0
+lsblk -nr -o MOUNTPOINTS "$SOURCE" | grep -q '[^[:space:]]' && SOURCE_MOUNTED=1 || true
+lsblk -nr -o MOUNTPOINTS "$WORKING" | grep -q '[^[:space:]]' && WORKING_MOUNTED=1 || true
+printf 'SOURCE_BYTES=%s\n' "$(sudo blockdev --getsize64 "$SOURCE")"
+printf 'WORKING_BYTES=%s\n' "$(sudo blockdev --getsize64 "$WORKING")"
+printf 'SOURCE_READ_ONLY=%s\n' "$(sudo blockdev --getro "$SOURCE")"
+printf 'WORKING_READ_ONLY=%s\n' "$(sudo blockdev --getro "$WORKING")"
+printf 'SOURCE_MOUNTED=%s\n' "$SOURCE_MOUNTED"
+printf 'WORKING_MOUNTED=%s\n' "$WORKING_MOUNTED"
+printf 'SOURCE_PARTITION_TABLE=%s\n' "$(sudo blkid -p -s PTTYPE -o value "$SOURCE" 2>/dev/null || true)"
+printf 'WORKING_PARTITION_TABLE=%s\n' "$(sudo blkid -p -s PTTYPE -o value "$WORKING" 2>/dev/null || true)"
+test "$(sudo blockdev --getro "$SOURCE")" = 1
+test "$(sudo blockdev --getro "$WORKING")" = 0
+test "$(sudo blockdev --getsize64 "$SOURCE")" = "$(sudo blockdev --getsize64 "$WORKING")"
+test "$SOURCE_MOUNTED" = 0
+test "$WORKING_MOUNTED" = 0"#;
+    let output = run_guest_command(session, VERIFY_COMMAND)?;
+    let mut values = std::collections::HashMap::new();
+    for line in output.lines() {
+        if let Some((key, value)) = line.split_once('=') {
+            values.insert(key, value);
+        }
+    }
+    let required = |key: &str| {
+        values
+            .get(key)
+            .copied()
+            .ok_or_else(|| format!("Working-image verification omitted {key}."))
+    };
+    let parse_u64 = |key: &str| -> Result<u64, String> {
+        required(key)?
+            .parse::<u64>()
+            .map_err(|e| format!("Working-image verification returned invalid {key}: {e}"))
+    };
+    let source_bytes = parse_u64("SOURCE_BYTES")?;
+    let working_bytes = parse_u64("WORKING_BYTES")?;
+    let source_partition_table = required("SOURCE_PARTITION_TABLE")?;
+    let working_partition_table = required("WORKING_PARTITION_TABLE")?;
+    let layout_matches =
+        source_bytes == working_bytes && source_partition_table == working_partition_table;
+    if !layout_matches {
+        return Err("The disposable working layer does not match the source image layout.".into());
+    }
+    Ok(WorkingImageVerification {
+        source_device: SOURCE.into(),
+        working_device: WORKING.into(),
+        source_bytes,
+        working_bytes,
+        source_read_only: required("SOURCE_READ_ONLY")? == "1",
+        working_read_only: required("WORKING_READ_ONLY")? == "1",
+        source_mounted: required("SOURCE_MOUNTED")? == "1",
+        working_mounted: required("WORKING_MOUNTED")? == "1",
+        source_partition_table: (!source_partition_table.is_empty())
+            .then(|| source_partition_table.to_string()),
+        working_partition_table: (!working_partition_table.is_empty())
+            .then(|| working_partition_table.to_string()),
+        layout_matches,
+        overlay_format: "qcow2".into(),
     })
 }
 
@@ -1863,6 +1975,26 @@ fn inspect_selected_image_blocking(app: tauri::AppHandle) -> Result<UserImageIns
 }
 
 #[tauri::command]
+fn verify_working_image(
+    manager: tauri::State<'_, Mutex<ApplianceManager>>,
+) -> Result<WorkingImageVerification, String> {
+    let manager = manager
+        .lock()
+        .map_err(|_| "Appliance state lock is unavailable.")?;
+    let session = manager
+        .session
+        .as_ref()
+        .ok_or("Builder appliance is not running.")?;
+    if session.state != "ready" {
+        return Err("Builder appliance is not ready for working-image verification.".into());
+    }
+    if !session.working_image.is_file() {
+        return Err("The disposable working image is unavailable.".into());
+    }
+    verify_user_working_image(session)
+}
+
+#[tauri::command]
 fn mutate_test_marker(
     manager: tauri::State<'_, Mutex<ApplianceManager>>,
 ) -> Result<MarkerMutation, String> {
@@ -2252,6 +2384,18 @@ mod tests {
             .expect("fixture partition should be discovered");
         assert_eq!(partition.start_bytes, Some(1024 * 1024));
         assert_eq!(partition.size_bytes, 4 * 1024 * 1024);
+        let working = verify_user_working_image(&session)
+            .expect("user working image verification should pass");
+        assert_eq!(working.source_bytes, 8 * 1024 * 1024);
+        assert_eq!(working.source_bytes, working.working_bytes);
+        assert!(working.source_read_only);
+        assert!(!working.working_read_only);
+        assert!(!working.source_mounted);
+        assert!(!working.working_mounted);
+        assert!(working.layout_matches);
+        assert_eq!(working.source_partition_table.as_deref(), Some("dos"));
+        assert_eq!(working.working_partition_table.as_deref(), Some("dos"));
+        assert_eq!(working.overlay_format, "qcow2");
         let runtime_dir = session.runtime_dir.clone();
         let archived_log = stop_session(&mut session)
             .expect("the ready appliance should stop and clean up")
@@ -2299,6 +2443,7 @@ pub fn run() {
             verify_guest_transfer,
             inspect_test_disk,
             inspect_selected_image,
+            verify_working_image,
             mutate_test_marker,
             stop_appliance,
             validate_image,
