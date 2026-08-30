@@ -173,6 +173,44 @@ fi
 # Launch
 #
 
+#
+# Stop stale development instance
+#
+
+if pgrep -f "target/debug/${PROJECT_NAME}" >/dev/null 2>&1 ||
+   pgrep -f "tauri dev" >/dev/null 2>&1; then
+
+    log "Stopping existing development instance..."
+
+    pkill -f "target/debug/${PROJECT_NAME}" 2>/dev/null || true
+    pkill -f "tauri dev" 2>/dev/null || true
+
+    sleep 1
+fi
+
+log "Starting Tauri development mode..."
+
+exec npm run dev
+
+#
+# Stop stale development instance
+#
+
+if pgrep -f "target/debug/${PROJECT_NAME}" >/dev/null 2>&1 ||
+   pgrep -f "tauri dev" >/dev/null 2>&1; then
+
+    log "Stopping existing development instance..."
+
+    pkill -f "target/debug/${PROJECT_NAME}" 2>/dev/null || true
+    pkill -f "tauri dev" 2>/dev/null || true
+
+    sleep 1
+fi
+
+#
+# Launch
+#
+
 log "Starting Tauri development mode..."
 
 exec npm run dev

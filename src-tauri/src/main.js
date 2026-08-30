@@ -79,11 +79,15 @@ async function checkBuilderEnvironment() {
         ];
 
         if (environment.qemu_version) {
-            details.push(environment.qemu_version);
+            details.push(
+                environment.qemu_version,
+            );
         }
 
         if (!environment.appliance_present) {
-            details.push("Fedora appliance missing");
+            details.push(
+                "Fedora appliance missing",
+            );
         }
 
         environmentDetails.textContent =
@@ -96,7 +100,9 @@ async function checkBuilderEnvironment() {
             environmentStatus.textContent =
                 "Ready";
 
-            environmentStatus.classList.remove("error");
+            environmentStatus.classList.remove(
+                "error",
+            );
         } else {
             environmentTitle.textContent =
                 "Builder not ready";
@@ -104,7 +110,9 @@ async function checkBuilderEnvironment() {
             environmentStatus.textContent =
                 "Not Ready";
 
-            environmentStatus.classList.add("error");
+            environmentStatus.classList.add(
+                "error",
+            );
         }
 
         updateBuildButton();
@@ -120,7 +128,9 @@ async function checkBuilderEnvironment() {
         environmentStatus.textContent =
             "Error";
 
-        environmentStatus.classList.add("error");
+        environmentStatus.classList.add(
+            "error",
+        );
 
         updateBuildButton();
     }
@@ -151,8 +161,13 @@ async function selectImage(path) {
         selectionStatus.textContent =
             "Recognized";
 
-        selectionCard.classList.remove("hidden");
-        buildCard.classList.remove("hidden");
+        selectionCard.classList.remove(
+            "hidden",
+        );
+
+        buildCard.classList.remove(
+            "hidden",
+        );
 
         resultMessage.textContent =
             "";
@@ -173,8 +188,13 @@ async function selectImage(path) {
         selectionStatus.textContent =
             "Unsupported";
 
-        selectionCard.classList.remove("hidden");
-        buildCard.classList.add("hidden");
+        selectionCard.classList.remove(
+            "hidden",
+        );
+
+        buildCard.classList.add(
+            "hidden",
+        );
 
         resultMessage.textContent =
             String(error);
@@ -229,7 +249,9 @@ buildButton.addEventListener(
         buildButton.disabled =
             true;
 
-        progressWrap.classList.remove("hidden");
+        progressWrap.classList.remove(
+            "hidden",
+        );
 
         resultMessage.textContent =
             "";
@@ -291,11 +313,16 @@ const appWindow =
 await appWindow.onDragDropEvent(
     async (event) => {
         if (event.payload.type === "over") {
-            dropZone.classList.add("dragging");
+            dropZone.classList.add(
+                "dragging",
+            );
+
             return;
         }
 
-        dropZone.classList.remove("dragging");
+        dropZone.classList.remove(
+            "dragging",
+        );
 
         if (event.payload.type === "drop") {
             const [path] =
