@@ -83,6 +83,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Add native file-picker fallback.
 * [x] Add Valve recovery-image download-page access.
 * [x] Add selected-image summary card.
+* [x] Show immediate image-validation feedback and bring the selected image/build action into view.
 * [x] Add build button and prototype progress state.
 * [x] Move build status, live logs, and cancellation into a dedicated progress window.
 * [x] Start and stop the builder appliance automatically as part of the build workflow.

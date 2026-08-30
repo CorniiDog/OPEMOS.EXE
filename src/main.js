@@ -6,6 +6,7 @@ const openUrl = (url) => invoke("plugin:opener|open_url", { url });
 const $ = (selector) => document.querySelector(selector);
 const elements = {
   dropZone: $("#drop-zone"), chooseImage: $("#choose-image"), openValve: $("#open-valve"),
+  dropTitle: $("#drop-title"), dropMessage: $("#drop-message"),
   selectionCard: $("#selection-card"), selectedName: $("#selected-name"), selectedPath: $("#selected-path"),
   selectionStatus: $("#selection-status"), buildCard: $("#build-card"), buildButton: $("#build-button"),
   resultMessage: $("#result-message"), environmentTitle: $("#environment-title"),
@@ -43,6 +44,10 @@ async function checkEnvironment() {
 }
 
 async function selectImage(path) {
+  elements.dropZone.classList.add("processing");
+  elements.chooseImage.disabled = true;
+  elements.dropTitle.textContent = "Checking selected image…";
+  elements.dropMessage.textContent = "Validating the file path and supported format.";
   try {
     const info = await invoke("validate_image", { path });
     currentImage = info.path;
@@ -54,6 +59,7 @@ async function selectImage(path) {
     elements.selectionCard.classList.remove("hidden");
     elements.buildCard.classList.remove("hidden");
     elements.resultMessage.textContent = "";
+    elements.selectionCard.scrollIntoView({ behavior: "smooth", block: "center" });
   } catch (error) {
     currentImage = null;
     currentImageName = null;
@@ -64,6 +70,12 @@ async function selectImage(path) {
     elements.selectionCard.classList.remove("hidden");
     elements.buildCard.classList.add("hidden");
     elements.resultMessage.textContent = String(error);
+    elements.selectionCard.scrollIntoView({ behavior: "smooth", block: "center" });
+  } finally {
+    elements.dropZone.classList.remove("processing");
+    elements.chooseImage.disabled = false;
+    elements.dropTitle.textContent = currentImage ? "SteamOS image selected" : "Drop SteamOS recovery image here";
+    elements.dropMessage.textContent = currentImage ? "Review it below, then start the prototype build." : ".img, .img.bz2, .img.gz, or .img.xz";
   }
   updateBuildButton();
 }
@@ -109,4 +121,6 @@ await mainWindow.onDragDropEvent(async (event) => {
   }
 });
 
+elements.dropZone.after(elements.selectionCard);
+elements.selectionCard.after(elements.buildCard);
 await checkEnvironment();
