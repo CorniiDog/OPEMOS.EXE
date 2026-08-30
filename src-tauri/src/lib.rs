@@ -137,6 +137,28 @@ struct UserImageInspection {
     image_sha256_after: String,
     image_unchanged: bool,
     input: InputPreparation,
+    layout: SteamOsLayoutDiscovery,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SteamOsPartitionRole {
+    role: String,
+    path: String,
+    size_bytes: u64,
+    filesystem: String,
+    filesystem_label: String,
+    partition_label: String,
+    partition_type: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SteamOsLayoutDiscovery {
+    recognized: bool,
+    scheme: Option<String>,
+    roles: Vec<SteamOsPartitionRole>,
+    issues: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -1400,6 +1422,81 @@ fn append_image_nodes(
     }
 }
 
+fn discover_steamos_layout(
+    partition_table: Option<&str>,
+    nodes: &[ImageNodeInspection],
+) -> SteamOsLayoutDiscovery {
+    const ESP_TYPE: &str = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b";
+    const BASIC_DATA_TYPE: &str = "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7";
+    const ROOT_X86_64_TYPE: &str = "4f68bce3-e8cd-4db1-96e7-fbcaf984b709";
+    const VAR_TYPE: &str = "4d21b016-b534-45c2-a9fb-5c16e091fd2d";
+    const HOME_TYPE: &str = "933ac7e1-2eb4-4f13-b844-0e14e2aef915";
+
+    let expected = [
+        ("esp", "vfat", "esp", "esp", ESP_TYPE),
+        ("efi", "vfat", "efi", "efi-a", BASIC_DATA_TYPE),
+        ("rootfs", "btrfs", "rootfs", "rootfs-a", ROOT_X86_64_TYPE),
+        ("var", "ext4", "var", "var-a", VAR_TYPE),
+        ("home", "ext4", "home", "home", HOME_TYPE),
+    ];
+    let mut roles = Vec::new();
+    let mut issues = Vec::new();
+    if partition_table != Some("gpt") {
+        issues.push("Expected a GPT partition table.".into());
+    }
+    if nodes.iter().any(|node| node.mounted) {
+        issues.push("At least one image filesystem is already mounted.".into());
+    }
+    for (role, filesystem, filesystem_label, partition_label, partition_type) in expected {
+        let matches = nodes
+            .iter()
+            .filter(|node| {
+                node.node_type == "part"
+                    && node
+                        .filesystem
+                        .as_deref()
+                        .is_some_and(|value| value.eq_ignore_ascii_case(filesystem))
+                    && node
+                        .filesystem_label
+                        .as_deref()
+                        .is_some_and(|value| value.eq_ignore_ascii_case(filesystem_label))
+                    && node
+                        .partition_label
+                        .as_deref()
+                        .is_some_and(|value| value.eq_ignore_ascii_case(partition_label))
+                    && node
+                        .partition_type
+                        .as_deref()
+                        .is_some_and(|value| value.eq_ignore_ascii_case(partition_type))
+            })
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            issues.push(format!(
+                "Expected exactly one {role} partition, found {}.",
+                matches.len()
+            ));
+            continue;
+        }
+        let node = matches[0];
+        roles.push(SteamOsPartitionRole {
+            role: role.into(),
+            path: node.path.clone(),
+            size_bytes: node.size_bytes,
+            filesystem: filesystem.into(),
+            filesystem_label: filesystem_label.into(),
+            partition_label: partition_label.into(),
+            partition_type: partition_type.into(),
+        });
+    }
+    let recognized = issues.is_empty() && roles.len() == expected.len();
+    SteamOsLayoutDiscovery {
+        recognized,
+        scheme: recognized.then(|| "valve-recovery-a".into()),
+        roles,
+        issues,
+    }
+}
+
 fn inspect_user_image(
     session: &ImageInspectionSession,
     progress: Option<&ProgressCallback<'_>>,
@@ -1481,11 +1578,13 @@ fn inspect_user_image(
             session.attached_sha256_before, image_sha256_after
         ));
     }
+    let partition_table = (!partition_table.is_empty()).then_some(partition_table);
+    let layout = discover_steamos_layout(partition_table.as_deref(), &nodes);
     Ok(UserImageInspection {
         device: DEVICE.into(),
         disk_bytes,
         read_only,
-        partition_table: (!partition_table.is_empty()).then_some(partition_table),
+        partition_table,
         nodes,
         source_sha256_before: session.input_sha256_before.clone(),
         source_sha256_after,
@@ -1494,6 +1593,7 @@ fn inspect_user_image(
         image_sha256_after,
         image_unchanged,
         input: session.input_preparation.clone(),
+        layout,
     })
 }
 
@@ -2328,6 +2428,80 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_observed_valve_recovery_layout_conservatively() {
+        let partition = |path: &str,
+                         size_bytes: u64,
+                         filesystem: &str,
+                         filesystem_label: &str,
+                         partition_label: &str,
+                         partition_type: &str| ImageNodeInspection {
+            path: path.into(),
+            node_type: "part".into(),
+            size_bytes,
+            start_bytes: Some(0),
+            filesystem: Some(filesystem.into()),
+            filesystem_label: Some(filesystem_label.into()),
+            partition_label: Some(partition_label.into()),
+            partition_type: Some(partition_type.into()),
+            partition_uuid: Some("fixture-partition-uuid".into()),
+            filesystem_uuid: Some("fixture-filesystem-uuid".into()),
+            mounted: false,
+        };
+        let mut nodes = vec![
+            partition(
+                "/dev/vdc1",
+                67_091_456,
+                "vfat",
+                "esp",
+                "esp",
+                "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            ),
+            partition(
+                "/dev/vdc2",
+                134_217_728,
+                "vfat",
+                "efi",
+                "efi-A",
+                "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+            ),
+            partition(
+                "/dev/vdc3",
+                5_368_709_120,
+                "btrfs",
+                "rootfs",
+                "rootfs-A",
+                "4f68bce3-e8cd-4db1-96e7-fbcaf984b709",
+            ),
+            partition(
+                "/dev/vdc4",
+                268_435_456,
+                "ext4",
+                "var",
+                "var-A",
+                "4d21b016-b534-45c2-a9fb-5c16e091fd2d",
+            ),
+            partition(
+                "/dev/vdc5",
+                2_147_466_752,
+                "ext4",
+                "home",
+                "home",
+                "933ac7e1-2eb4-4f13-b844-0e14e2aef915",
+            ),
+        ];
+        let detected = discover_steamos_layout(Some("gpt"), &nodes);
+        assert!(detected.recognized);
+        assert_eq!(detected.scheme.as_deref(), Some("valve-recovery-a"));
+        assert_eq!(detected.roles.len(), 5);
+        assert!(detected.issues.is_empty());
+
+        nodes[2].partition_label = Some("unexpected-root".into());
+        let rejected = discover_steamos_layout(Some("gpt"), &nodes);
+        assert!(!rejected.recognized);
+        assert!(rejected.issues.iter().any(|issue| issue.contains("rootfs")));
+    }
+
+    #[test]
     #[ignore = "launches the local Fedora/QEMU appliance"]
     fn live_appliance_reaches_ready_marker() {
         let appliance = appliance_path();
@@ -2453,6 +2627,52 @@ mod tests {
             "the base appliance must remain unchanged"
         );
         fs::remove_dir_all(input_root).expect("remove live compressed input directory");
+    }
+
+    #[test]
+    #[ignore = "requires STEAMOS_RECOVERY_IMAGE and launches the local Fedora/QEMU appliance"]
+    fn live_recovery_image_layout_report() {
+        let input = std::env::var_os("STEAMOS_RECOVERY_IMAGE")
+            .map(PathBuf::from)
+            .expect("set STEAMOS_RECOVERY_IMAGE to a Valve recovery image");
+        let mut session = prepare_session(Some(&input), None, None)
+            .expect("the recovery-image appliance session should start");
+        for _ in 0..160 {
+            assert_eq!(
+                session.child.try_wait().expect("QEMU status"),
+                None,
+                "QEMU exited before readiness"
+            );
+            if handshake(&session).ok().as_deref() == Some(READY_MARKER) {
+                session.state = "ready".into();
+                break;
+            }
+            thread::sleep(Duration::from_millis(750));
+        }
+        assert_eq!(session.state, "ready", "appliance did not become ready");
+        let inspection_session = ImageInspectionSession::from(&session);
+        let inspection = inspect_user_image(&inspection_session, None, None)
+            .expect("the recovery image should inspect read-only");
+        assert!(
+            inspection.layout.recognized,
+            "the selected recovery image layout was not recognized: {}",
+            inspection.layout.issues.join(" ")
+        );
+        assert_eq!(
+            inspection.layout.scheme.as_deref(),
+            Some("valve-recovery-a")
+        );
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&inspection).expect("serialize recovery-image report")
+        );
+        let working = verify_user_working_image(&session)
+            .expect("the recovery-image working layer should verify");
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&working).expect("serialize working-layer report")
+        );
+        stop_session(&mut session).expect("stop recovery-image appliance session");
     }
 }
 

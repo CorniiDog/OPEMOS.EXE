@@ -324,6 +324,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Determine source and normalized image sizes before QEMU launch.
 * [ ] Verify sufficient host free space for decompression, working copy, overlays, and final output.
 * [ ] Detect obvious non-SteamOS images before destructive or expensive processing.
+* [x] Recognize the observed Valve recovery A-layout conservatively from GPT type GUIDs, labels, and filesystems.
 * [ ] Identify SteamOS recovery image version/build if possible.
 * [x] Record input SHA256 before and after read-only inspection and fail if it changes.
 * [ ] Optionally verify known official Valve image hashes when trustworthy metadata is available.
@@ -368,16 +369,16 @@ The project is not yet producing a bootable modified SteamOS image.
 
 # 15. SteamOS recovery-image discovery
 
-* [ ] Inventory partition table without mounting anything writable.
-* [ ] Record GPT/partition GUIDs, labels, filesystem types, offsets, and sizes.
+* [x] Inventory partition table without mounting anything writable.
+* [x] Record GPT/partition GUIDs, labels, filesystem types, offsets, and sizes.
 * [ ] Determine which partition contains the recovery/root payload relevant to installation.
-* [ ] Identify boot/EFI partition.
-* [ ] Identify root filesystem layout.
+* [x] Identify the observed ESP and `efi-A` partitions without relying on partition numbers.
+* [x] Identify the observed Btrfs `rootfs-A` filesystem layout.
 * [ ] Identify `/usr`, `/etc`, `/var`, `/home`, and recovery/install scripts as represented in the image.
 * [ ] Determine whether Valve image layout varies by release.
-* [ ] Build layout detection around labels/metadata rather than hard-coded partition numbers where possible.
-* [ ] Fail safely on unknown layouts.
-* [ ] Produce an inspection report before first real NVIDIA modification.
+* [x] Build layout detection around labels/metadata rather than hard-coded partition numbers where possible.
+* [x] Keep unknown or ambiguous layouts non-actionable.
+* [x] Produce a structured inspection report before first real NVIDIA modification.
 * [x] Preserve a deterministic non-Valve DOS-partition fixture for the opt-in live inspection test.
 
 ---

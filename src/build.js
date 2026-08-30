@@ -245,6 +245,14 @@ async function runBuild(request) {
       ].filter(Boolean).join("; ");
       addStageLog(`Image node: ${node.path}; type=${node.nodeType}; size=${node.sizeBytes}; mounted=${node.mounted}${details ? `; ${details}` : ""}.`);
     }
+    if (image.layout.recognized) {
+      addStageLog(`SteamOS layout: recognized ${image.layout.scheme} with ${image.layout.roles.length} required partition roles.`);
+      for (const role of image.layout.roles) {
+        addStageLog(`SteamOS role: ${role.role} → ${role.path}; ${role.filesystem}; label=${role.partitionLabel}; size=${role.sizeBytes}.`);
+      }
+    } else {
+      addStageLog(`warning: SteamOS layout is not recognized safely: ${image.layout.issues.join(" ")}`);
+    }
     addStageLog(`Selected image SHA256: ${image.sourceSha256After}; unchanged=${image.sourceUnchanged}.`);
     if (image.input.normalized) {
       addStageLog(`Normalized image SHA256: ${image.imageSha256After}; unchanged=${image.imageUnchanged}.`);
