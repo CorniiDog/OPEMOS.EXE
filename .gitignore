@@ -1,3 +1,6 @@
 node_modules
 src-tauri/target/
 .venv
+builder/appliance/*.qcow2
+builder/appliance/*.raw
+builder/appliance/*.img
