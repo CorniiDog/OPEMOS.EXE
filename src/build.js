@@ -130,12 +130,19 @@ function showInputProgress(progress) {
 }
 
 function renderLogs(applianceLog) {
+  const previousScrollTop = elements.buildLog.scrollTop;
+  const distanceFromBottom = elements.buildLog.scrollHeight
+    - elements.buildLog.clientHeight
+    - previousScrollTop;
+  const followLatest = distanceFromBottom <= 24;
   const normalizedLog = normalizeTerminalText(applianceLog).trim();
   if (normalizedLog) lastApplianceLog = normalizedLog;
   const fragment = document.createDocumentFragment();
   appendAnsiText(fragment, [...stageLog, lastApplianceLog].filter(Boolean).join("\n"));
   elements.buildLog.replaceChildren(fragment);
-  elements.buildLog.scrollTop = elements.buildLog.scrollHeight;
+  elements.buildLog.scrollTop = followLatest
+    ? elements.buildLog.scrollHeight
+    : previousScrollTop;
 }
 
 async function refreshLogs() {

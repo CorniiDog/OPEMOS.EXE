@@ -654,6 +654,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Show appliance startup separately from prototype output creation.
 * [ ] Show NVIDIA/Gamescope integration steps separately.
 * [x] Preserve and display the current session's QEMU/serial log through completion.
+* [x] Auto-follow live logs only while the viewer remains at the bottom; preserve manual scroll position otherwise.
 * [x] Render ANSI SGR colors safely while normalizing unsupported terminal cursor/control sequences.
 * [ ] Add a “Copy diagnostics” action.
 * [x] Keep normal prototype success UX concise.
