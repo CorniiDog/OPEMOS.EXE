@@ -124,6 +124,22 @@ footer p { color: #aab4c5; }
 .status.pending { background: #302b17; color: #f2d477; }
 .status.failed { background: #3d2020; color: #ff9494; }
 .build-card { padding: 13px 16px; }
+.source-choice { margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.source-choice span { min-width: 0; }
+.source-choice strong { display: block; font-size: 14px; }
+.source-choice small { display: block; margin-top: 3px; color: #8490a3; font-size: 11px; }
+.source-choice select {
+  flex: none;
+  width: min(290px, 42%);
+  padding: 8px 34px 8px 10px;
+  border: 1px solid #36445c;
+  border-radius: 10px;
+  color: #dce5ff;
+  background: #202a3a;
+  font: inherit;
+  font-size: 13px;
+}
+.source-choice select:disabled { opacity: .55; }
 .result-message { margin: 8px 2px 0; max-height: 2.8em; overflow: hidden; color: #aab4c5; font-size: 13px; line-height: 1.4; }
 .result-message:empty { display: none; }
 .result-message.success { color: #7ee2a8; }

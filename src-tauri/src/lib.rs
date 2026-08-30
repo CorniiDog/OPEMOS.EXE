@@ -22,6 +22,9 @@ const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
 const NVIDIA_BUILD_BOOT_TIMEOUT: Duration = Duration::from_secs(600);
 const NVIDIA_RELEASES_API: &str = "https://api.github.com/repos/CorniiDog/open-gpu-kernel-modules-steamos-support/releases?per_page=100";
 const NVIDIA_RELEASE_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
+const NVIDIA_SOURCE_BRANCHES_API: &str =
+    "https://api.github.com/repos/CorniiDog/open-gpu-kernel-modules-steamos/branches?per_page=100";
+const NVIDIA_SOURCE_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos";
 const NVIDIA_RESOLVER_SCHEMA: u32 = 2;
 const APPROVED_VALVE_SIGNER: &str = "889B5EBDDD505A683621900DAF1D2199EF0A3CCF";
 const RELEASES_RESPONSE_LIMIT: u64 = 4 * 1024 * 1024;
@@ -75,6 +78,25 @@ struct NvidiaReleasePublication {
     tag: String,
     url: String,
     message: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GithubBranchCommit {
+    sha: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GithubBranch {
+    name: String,
+    commit: GithubBranchCommit,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaSourceBranch {
+    name: String,
+    version: String,
+    commit: String,
 }
 
 struct PinnedInstallerFile {
@@ -338,6 +360,8 @@ struct NvidiaOnDemandBuildPlan {
     baseline_release: String,
     support_commit: String,
     expected_trust: String,
+    source_branch: String,
+    source_commit: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -3072,6 +3096,68 @@ fn fetch_github_releases(client: &reqwest::blocking::Client) -> Result<Vec<Githu
         .map_err(|e| format!("Published NVIDIA release metadata is invalid JSON: {e}"))
 }
 
+fn valid_nvidia_source_branch(value: &str) -> Option<&str> {
+    let version = value.strip_prefix("nvidia/")?;
+    numeric_version(version, 2..=3)?;
+    Some(version)
+}
+
+fn fetch_nvidia_source_branches(
+    client: &reqwest::blocking::Client,
+) -> Result<Vec<NvidiaSourceBranch>, String> {
+    let response = client
+        .get(NVIDIA_SOURCE_BRANCHES_API)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .map_err(|error| format!("Could not query NVIDIA source branches: {error}"))?;
+    let bytes = read_http_response_limited(
+        response,
+        RELEASES_RESPONSE_LIMIT,
+        "NVIDIA source branch metadata",
+    )?;
+    let branches: Vec<GithubBranch> = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("NVIDIA source branch metadata is invalid JSON: {error}"))?;
+    let mut result: Vec<_> = branches
+        .into_iter()
+        .filter_map(|branch| {
+            let version = valid_nvidia_source_branch(&branch.name)?.to_string();
+            if branch.commit.sha.len() != 40
+                || !branch
+                    .commit
+                    .sha
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
+            {
+                return None;
+            }
+            Some(NvidiaSourceBranch {
+                name: branch.name,
+                version,
+                commit: branch.commit.sha.to_ascii_lowercase(),
+            })
+        })
+        .collect();
+    result.sort_by(|left, right| {
+        let left_version = numeric_version(&left.version, 2..=3).expect("validated branch");
+        let right_version = numeric_version(&right.version, 2..=3).expect("validated branch");
+        right_version.cmp(&left_version)
+    });
+    if result.is_empty() {
+        return Err(
+            "The NVIDIA source repository exposed no valid nvidia/<version> branches.".into(),
+        );
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+async fn list_nvidia_source_branches() -> Result<Vec<NvidiaSourceBranch>, String> {
+    tauri::async_runtime::spawn_blocking(|| fetch_nvidia_source_branches(&nvidia_http_client()?))
+        .await
+        .map_err(|error| format!("NVIDIA source-branch worker failed: {error}"))?
+}
+
 struct PublishedDownloadContext<'a> {
     client: &'a reqwest::blocking::Client,
     cancel: &'a AtomicBool,
@@ -3328,10 +3414,12 @@ fn resolve_published_nvidia_for_target(
             build_plan: Some(NvidiaOnDemandBuildPlan {
                 steamos_version,
                 kernel_version,
-                nvidia_version,
+                nvidia_version: nvidia_version.clone(),
                 baseline_release,
                 support_commit: NVIDIA_SUPPORT_BUILD_COMMIT.into(),
                 expected_trust: "locally-built-verified".into(),
+                source_branch: format!("nvidia/{nvidia_version}"),
+                source_commit: String::new(),
             }),
         });
     };
@@ -4158,11 +4246,22 @@ enum NvidiaSupportSource<'a> {
 fn build_nvidia_for_target_from_source(
     session: &impl GuestConnection,
     support_source: NvidiaSupportSource<'_>,
+    source_pin: Option<(&str, &str)>,
     output_dir: &Path,
     spec: &NvidiaTargetBuildSpec,
     cancel: Option<&AtomicBool>,
 ) -> Result<NvidiaDevelopmentArtifact, String> {
     validate_nvidia_target_build_spec(spec)?;
+    if let Some((branch, commit)) = source_pin {
+        if valid_nvidia_source_branch(branch) != Some(spec.nvidia_version.as_str())
+            || commit.len() != 40
+            || !commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(
+                "Pinned NVIDIA source branch/commit does not match the requested version.".into(),
+            );
+        }
+    }
     let (local_support_repository, approved_signer) = match support_source {
         NvidiaSupportSource::Local(repository) => {
             let repository = fs::canonicalize(repository)
@@ -4258,8 +4357,18 @@ fn build_nvidia_for_target_from_source(
     } else {
         " --require-compiler-major-match"
     };
+    let (source_setup, source_argument) = if let Some((_, commit)) = source_pin {
+        (
+            format!(
+                "mkdir -p /tmp/steamos-nvidia-source; git -C /tmp/steamos-nvidia-source init --quiet; git -C /tmp/steamos-nvidia-source remote add origin https://github.com/{NVIDIA_SOURCE_REPOSITORY}.git; git -C /tmp/steamos-nvidia-source fetch --quiet --depth 1 origin {commit}; git -C /tmp/steamos-nvidia-source checkout --quiet --detach {commit}; test \"$(git -C /tmp/steamos-nvidia-source rev-parse HEAD)\" = {commit}; test -z \"$(git -C /tmp/steamos-nvidia-source status --porcelain)\";"
+            ),
+            " --source /tmp/steamos-nvidia-source",
+        )
+    } else {
+        (String::new(), "")
+    };
     let build_command = format!(
-        r#"set -eu; rm -rf /tmp/steamos-nvidia-support /tmp/steamos-nvidia-artifacts; mkdir -p /tmp/steamos-nvidia-artifacts; {support_setup} cd /tmp/steamos-nvidia-support; sudo dnf install -y bsdtar gnupg2 python3; python3 ./bootstrap/prepare_valve_keyring.py --output /tmp/steamos-nvidia-artifacts/valve-package-signers.gpg; signer="$(python3 -c 'import json; data=json.load(open("trust/valve-package-signers.json", encoding="utf-8")); signers=data["signers"]; assert data["schemaVersion"] == 1 and len(signers) == 1; print(signers[0]["fingerprint"])')"; bash ./bootstrap/build_for_target.sh --steamos {} --kernel {} --nvidia {} --architecture x86_64 --install-dependencies{compiler_requirement} --output /tmp/steamos-nvidia-artifacts --result-json /tmp/steamos-nvidia-artifacts/build-result.json --header-keyring /tmp/steamos-nvidia-artifacts/valve-package-signers.gpg --header-signer "$signer""#,
+        r#"set -eu; rm -rf /tmp/steamos-nvidia-support /tmp/steamos-nvidia-source /tmp/steamos-nvidia-artifacts; mkdir -p /tmp/steamos-nvidia-artifacts; {support_setup} {source_setup} cd /tmp/steamos-nvidia-support; sudo dnf install -y bsdtar gnupg2 python3; python3 ./bootstrap/prepare_valve_keyring.py --output /tmp/steamos-nvidia-artifacts/valve-package-signers.gpg; signer="$(python3 -c 'import json; data=json.load(open("trust/valve-package-signers.json", encoding="utf-8")); signers=data["signers"]; assert data["schemaVersion"] == 1 and len(signers) == 1; print(signers[0]["fingerprint"])')"; bash ./bootstrap/build_for_target.sh --steamos {} --kernel {} --nvidia {} --architecture x86_64 --install-dependencies{compiler_requirement}{source_argument} --output /tmp/steamos-nvidia-artifacts --result-json /tmp/steamos-nvidia-artifacts/build-result.json --header-keyring /tmp/steamos-nvidia-artifacts/valve-package-signers.gpg --header-signer "$signer""#,
         spec.steamos_version, spec.kernel_version, spec.nvidia_version,
     );
     let execution_result = run_guest_command_logged(
@@ -4511,6 +4620,7 @@ fn build_nvidia_for_target(
     build_nvidia_for_target_from_source(
         session,
         NvidiaSupportSource::Local(support_repository),
+        None,
         output_dir,
         spec,
         cancel,
@@ -6541,6 +6651,7 @@ async fn assess_nvidia_target(app: tauri::AppHandle) -> Result<NvidiaTargetReadi
 #[tauri::command]
 async fn resolve_published_nvidia(
     app: tauri::AppHandle,
+    source_selection: Option<String>,
 ) -> Result<NvidiaPublishedResolution, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let manager_state = app.state::<Mutex<ApplianceManager>>();
@@ -6573,7 +6684,7 @@ async fn resolve_published_nvidia(
                 },
             );
         };
-        let resolution = if !target.ready {
+        let mut resolution = if !target.ready {
             resolve_published_nvidia_for_target(
                 target,
                 &runtime_dir,
@@ -6599,6 +6710,43 @@ async fn resolve_published_nvidia(
                 &report_progress,
             )?
         };
+        if resolution.status == "build_required" {
+            let client = nvidia_http_client()?;
+            let branches = fetch_nvidia_source_branches(&client)?;
+            let plan = resolution
+                .build_plan
+                .as_mut()
+                .ok_or("NVIDIA resolver omitted the on-demand build plan.")?;
+            let selection = source_selection.as_deref().unwrap_or("automatic");
+            let selected_name = match selection {
+                "automatic" => plan.source_branch.as_str(),
+                "latest" => branches
+                    .first()
+                    .map(|branch| branch.name.as_str())
+                    .ok_or("No NVIDIA source branches are available.")?,
+                branch if valid_nvidia_source_branch(branch).is_some() => branch,
+                _ => return Err("NVIDIA source selection is invalid.".into()),
+            };
+            let selected = branches
+                .iter()
+                .find(|branch| branch.name == selected_name)
+                .ok_or_else(|| {
+                    format!(
+                        "Selected NVIDIA source branch {selected_name} is no longer available. Choose Automatic or another branch in settings."
+                    )
+                })?;
+            plan.nvidia_version = selected.version.clone();
+            plan.source_branch = selected.name.clone();
+            plan.source_commit = selected.commit.clone();
+            resolution.message = format!(
+                "No published artifact matches exact kernel {}. NVIDIA {} will be built locally from {} at {} (selection: {}).",
+                plan.kernel_version,
+                plan.nvidia_version,
+                plan.source_branch,
+                &plan.source_commit[..12],
+                selection
+            );
+        }
         let mut manager = manager_state
             .lock()
             .map_err(|_| "Appliance state lock is unavailable.")?;
@@ -6882,6 +7030,12 @@ fn validate_on_demand_build_plan(session: &ApplianceSession) -> Result<(), Strin
         || target.architecture != "x86_64"
         || plan.support_commit != NVIDIA_SUPPORT_BUILD_COMMIT
         || plan.expected_trust != "locally-built-verified"
+        || valid_nvidia_source_branch(&plan.source_branch) != Some(plan.nvidia_version.as_str())
+        || plan.source_commit.len() != 40
+        || !plan
+            .source_commit
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
     {
         return Err("NVIDIA on-demand build plan does not match the exact image target or pinned support policy.".into());
     }
@@ -7032,6 +7186,7 @@ async fn build_nvidia_target_on_demand(
         let build = build_nvidia_for_target_from_source(
             &connection,
             NvidiaSupportSource::PinnedGithub,
+            Some((&plan.source_branch, &plan.source_commit)),
             &output_dir,
             &spec,
             Some(&cancel),
@@ -7057,6 +7212,18 @@ async fn build_nvidia_target_on_demand(
                 "On-demand artifact trust was {}; expected {}. The artifact will not be installed.",
                 artifact.trust, plan.expected_trust
             ));
+        }
+        let build_info = fs::read_to_string(&artifact.build_info_path)
+            .map_err(|error| format!("Could not re-open on-demand build metadata: {error}"))?;
+        if metadata_field(&build_info, "source_commit") != Some(plan.source_commit.as_str())
+            || metadata_field(&build_info, "support_commit") != Some(NVIDIA_SUPPORT_BUILD_COMMIT)
+            || metadata_field(&build_info, "source_dirty") != Some("0")
+            || metadata_field(&build_info, "support_dirty") != Some("0")
+        {
+            return Err(
+                "On-demand artifact metadata does not match the pinned clean source/support commits."
+                    .into(),
+            );
         }
         let resolution = NvidiaPublishedResolution {
             schema_version: NVIDIA_RESOLVER_SCHEMA,
@@ -7157,6 +7324,13 @@ async fn publish_on_demand_nvidia_release(
             || publication.steamos_version != plan.steamos_version
             || publication.kernel_version != plan.kernel_version
             || publication.nvidia_version != plan.nvidia_version
+            || valid_nvidia_source_branch(&plan.source_branch)
+                != Some(plan.nvidia_version.as_str())
+            || plan.source_commit.len() != 40
+            || !plan
+                .source_commit
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
         {
             return Err("On-demand artifact no longer satisfies the release trust policy.".into());
         }
@@ -7228,8 +7402,8 @@ async fn publish_on_demand_nvidia_release(
             plan.nvidia_version, plan.steamos_version, plan.kernel_version
         );
         let notes = format!(
-            "Exact-kernel NVIDIA open-module artifact built by SteamOS NVIDIA Image Builder.\n\nTrust: locally-built-verified\nSupport commit: {NVIDIA_SUPPORT_BUILD_COMMIT}\nBaseline release: {}\nArchive SHA-256: {}",
-            plan.baseline_release, artifact.archive_sha256
+            "Exact-kernel NVIDIA open-module artifact built by SteamOS NVIDIA Image Builder.\n\nTrust: locally-built-verified\nSupport commit: {NVIDIA_SUPPORT_BUILD_COMMIT}\nSource branch: {}\nSource commit: {}\nBaseline release: {}\nArchive SHA-256: {}",
+            plan.source_branch, plan.source_commit, plan.baseline_release, artifact.archive_sha256
         );
         let output = Command::new(&gh)
             .args(["release", "create", &identity.tag])
@@ -8042,6 +8216,24 @@ mod tests {
         assert!(serialized.contains("trackSteamosDriverUpdates"));
         for forbidden in ["token", "password", "secret", "ssh"] {
             assert!(!serialized.to_ascii_lowercase().contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn accepts_only_versioned_project_nvidia_branches() {
+        assert_eq!(
+            valid_nvidia_source_branch("nvidia/575.64.05"),
+            Some("575.64.05")
+        );
+        assert_eq!(valid_nvidia_source_branch("nvidia/610.57"), Some("610.57"));
+        for invalid in [
+            "main",
+            "latest",
+            "nvidia/latest",
+            "nvidia/575;touch",
+            "upstream/575.64.05",
+        ] {
+            assert!(valid_nvidia_source_branch(invalid).is_none());
         }
     }
 
@@ -9410,6 +9602,7 @@ pub fn run() {
             update_builder_settings,
             get_github_maintainer_status,
             connect_github_maintainer,
+            list_nvidia_source_branches,
             start_appliance,
             start_nvidia_build_appliance,
             get_appliance_status,

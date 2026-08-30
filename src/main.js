@@ -9,6 +9,7 @@ const elements = {
   dropTitle: $("#drop-title"), dropMessage: $("#drop-message"),
   selectionCard: $("#selection-card"), selectedName: $("#selected-name"), selectedPath: $("#selected-path"),
   selectionStatus: $("#selection-status"), buildCard: $("#build-card"), buildButton: $("#build-button"),
+  nvidiaSource: $("#nvidia-source"),
   resultMessage: $("#result-message"), environmentTitle: $("#environment-title"),
   environmentMessage: $("#environment-message"), environmentDetails: $("#environment-details"),
   environmentStatus: $("#environment-status"),
@@ -123,6 +124,23 @@ async function checkEnvironment() {
   updateBuildButton();
 }
 
+async function loadNvidiaSourceBranches() {
+  elements.nvidiaSource.disabled = true;
+  try {
+    const branches = await invoke("list_nvidia_source_branches");
+    for (const branch of branches) {
+      const option = document.createElement("option");
+      option.value = branch.name;
+      option.textContent = `${branch.version} · ${branch.commit.slice(0, 12)}`;
+      elements.nvidiaSource.append(option);
+    }
+  } catch (error) {
+    elements.resultMessage.textContent = `Could not load optional NVIDIA branches: ${error}`;
+  } finally {
+    elements.nvidiaSource.disabled = false;
+  }
+}
+
 async function selectImage(path) {
   elements.dropZone.classList.add("processing");
   elements.chooseImage.disabled = true;
@@ -203,7 +221,11 @@ elements.buildButton.addEventListener("click", async () => {
     const progressWindow = windows.find((window) => window.label === "build-progress");
     if (!progressWindow) throw new Error("The build progress window is unavailable.");
     await waitForProgressWindow(progressWindow);
-    await progressWindow.emit("build-requested", { path: currentImage, name: currentImageName });
+    await progressWindow.emit("build-requested", {
+      path: currentImage,
+      name: currentImageName,
+      sourceSelection: elements.nvidiaSource.value,
+    });
   } catch (error) {
     elements.resultMessage.textContent = String(error);
     elements.resultMessage.className = "result-message error";
@@ -236,3 +258,4 @@ environmentCard.after(elements.selectionCard);
 elements.selectionCard.after(elements.buildCard);
 await checkEnvironment();
 await loadSettings();
+await loadNvidiaSourceBranches();

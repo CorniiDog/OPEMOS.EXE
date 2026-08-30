@@ -430,11 +430,13 @@ async function runBuild(request) {
       addStageLog(`NVIDIA target: ${nvidiaTarget.message}`);
 
       setStatus("running", "Resolving published NVIDIA support", "Looking for a verified publication matching the image's exact kernel.", 95.55, "Resolving");
-      let nvidiaResolution = await invoke("resolve_published_nvidia");
+      let nvidiaResolution = await invoke("resolve_published_nvidia", {
+        sourceSelection: request.sourceSelection || "automatic",
+      });
       let x86ApplianceReady = false;
       if (nvidiaResolution.status === "build_required") {
         const plan = nvidiaResolution.buildPlan;
-        addStageLog(`NVIDIA on-demand plan: ${plan.nvidiaVersion} for exact kernel ${plan.kernelVersion}.`);
+        addStageLog(`NVIDIA on-demand plan: ${plan.nvidiaVersion} from ${plan.sourceBranch}@${plan.sourceCommit.slice(0, 12)} for exact kernel ${plan.kernelVersion}.`);
         addStageLog(`NVIDIA version baseline: ${plan.baselineRelease}; pinned support commit ${plan.supportCommit}.`);
         const approved = window.confirm(
           `No published NVIDIA artifact exactly matches this SteamOS kernel.\n\n` +
@@ -471,6 +473,7 @@ async function runBuild(request) {
                 `Repository: CorniiDog/open-gpu-kernel-modules-steamos-support\n` +
                 `Tag: ${releaseTag}\n` +
                 `Support commit: ${nvidiaResolution.buildPlan.supportCommit}\n` +
+                `Source: ${nvidiaResolution.buildPlan.sourceBranch}@${nvidiaResolution.buildPlan.sourceCommit}\n` +
                 `Trust: ${builtArtifact.trust}\n` +
                 `SHA-256: ${builtArtifact.archiveSha256}`
               );

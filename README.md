@@ -4,6 +4,8 @@ The main window includes a compact settings panel for durable, non-secret prefer
 
 When an exact-kernel NVIDIA artifact is built locally and reaches `locally-built-verified`, maintainers who opted in receive a release confirmation naming the repository, tag, pinned support commit, trust classification, and archive hash. “No, keep local” is focused by default. The publisher refuses to overwrite an existing release and uploads only the NVIDIA archive, checksum, and provenance sidecar—never the recovery image or generated SteamOS image.
 
+The main build card also exposes a per-build NVIDIA source selector. `Automatic` remains the default and follows the nearest compatible same-series release; `Latest` explicitly selects the newest available project branch; individual `nvidia/<version>` branches can be selected for controlled testing. Every choice is resolved to an exact source commit before the x86_64 build begins.
+
 A desktop application that takes an official Valve SteamOS recovery image and prepares a locally generated NVIDIA-oriented SteamOS image.
 
 ## Current milestone
