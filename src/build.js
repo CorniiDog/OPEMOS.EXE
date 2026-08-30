@@ -338,6 +338,14 @@ async function runBuild(request) {
     addStageLog(`Selected-image marker: wrote and re-opened ${selectedMutation.markerPath} on ${selectedMutation.targetPartition}.`);
     addStageLog(`Selected-image marker: filesystem=${selectedMutation.filesystem}; partition-label=${selectedMutation.targetPartitionLabel}; working read-only=${selectedMutation.workingReadOnly}; mounted=${selectedMutation.mounted}.`);
     addStageLog(`Selected-image safety: original unchanged=${selectedMutation.inputUnchanged}; SHA256 ${selectedMutation.inputSha256After}.`);
+    const target = selectedMutation.system;
+    const targetIdentity = [target.prettyName || target.osId || "Unknown SteamOS", target.versionId, target.buildId && `build ${target.buildId}`].filter(Boolean).join(" · ");
+    addStageLog(`Target system: ${targetIdentity}; architecture=${target.architecture}.`);
+    if (target.kernelVersions.length) {
+      addStageLog(`Target kernels: ${target.kernelVersions.join(", ")}.`);
+    } else {
+      addStageLog("warning: No target kernel module directories were discovered; NVIDIA compatibility resolution will remain unavailable.");
+    }
     if (cancelling) return;
 
     setStatus("running", "Exporting raw image", "Stopping the mutation VM, flattening its working layer, and validating the result in a fresh appliance.", 96, "Exporting");

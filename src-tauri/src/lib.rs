@@ -106,6 +106,18 @@ struct MarkerMutation {
     mounted: bool,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TargetSystemDiscovery {
+    os_id: Option<String>,
+    pretty_name: Option<String>,
+    version_id: Option<String>,
+    build_id: Option<String>,
+    variant_id: Option<String>,
+    architecture: String,
+    kernel_versions: Vec<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UserMarkerMutation {
@@ -119,6 +131,7 @@ struct UserMarkerMutation {
     input_unchanged: bool,
     working_read_only: bool,
     mounted: bool,
+    system: TargetSystemDiscovery,
 }
 
 #[derive(Serialize)]
@@ -142,6 +155,7 @@ struct MarkerManifestData<'a> {
     output_bytes: u64,
     output_sha256: &'a str,
     layout: &'a SteamOsLayoutDiscovery,
+    target_system: &'a TargetSystemDiscovery,
 }
 
 fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json::Value {
@@ -171,8 +185,13 @@ fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json::Value {
         },
         "steamos": {
             "layoutScheme": data.layout.scheme,
-            "version": null,
-            "targetKernels": []
+            "id": data.target_system.os_id,
+            "prettyName": data.target_system.pretty_name,
+            "versionId": data.target_system.version_id,
+            "buildId": data.target_system.build_id,
+            "variantId": data.target_system.variant_id,
+            "architecture": data.target_system.architecture,
+            "targetKernels": data.target_system.kernel_versions
         },
         "integration": {
             "milestone": "marker-only",
@@ -299,6 +318,7 @@ struct ApplianceSession {
     attached_sha256_before: String,
     working_image: PathBuf,
     input_preparation: InputPreparation,
+    target_system: Option<TargetSystemDiscovery>,
 }
 
 #[derive(Clone)]
@@ -1236,6 +1256,7 @@ fn prepare_session(
         attached_sha256_before,
         working_image,
         input_preparation,
+        target_system: None,
     })
 }
 
@@ -1392,7 +1413,7 @@ printf 'ARCH=%s\n' "$(uname -m)"
 . /etc/os-release
 printf 'OS=%s\n' "$PRETTY_NAME"
 printf 'AVAILABLE=%s\n' "$(df -B1 --output=avail / | tail -n 1 | tr -d ' ')"
-for tool in bash lsblk blkid findmnt mount umount sha256sum stat cp sync dd sfdisk mkfs.ext4 blockdev btrfs btrfstune; do
+for tool in bash lsblk blkid findmnt mount umount sha256sum stat cp sync dd sfdisk mkfs.ext4 blockdev btrfs btrfstune awk od cut sort head find; do
   command -v "$tool" >/dev/null 2>&1 && printf 'TOOL=%s\n' "$tool" || printf 'MISSING=%s\n' "$tool"
 done"#;
     let output = run_guest_command(session, HEALTH_COMMAND)?;
@@ -1935,6 +1956,22 @@ test "$MOUNTED" = 0"#;
     })
 }
 
+fn normalize_os_release_field(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let unquoted = if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    };
+    (!unquoted.is_empty()).then(|| unquoted.to_string())
+}
+
 fn mutate_user_marker(session: &ImageInspectionSession) -> Result<UserMarkerMutation, String> {
     const MARKER_PATH: &str = "/etc/steamos-nvidia-image-builder-test";
     const MARKER_CONTENT: &str =
@@ -2021,6 +2058,45 @@ if test -n "$SNAPSHOT_ROOT"; then
 else
   MUTATION_ROOT="$SOURCE_ROOT"
 fi
+release_value() {
+  RELEASE_FILE="$1"
+  RELEASE_KEY="$2"
+  if test -f "$RELEASE_FILE"; then
+    sudo awk -F= -v wanted="$RELEASE_KEY" '$1 == wanted { sub(/^[^=]*=/, ""); print; exit }' "$RELEASE_FILE" \
+      | tr '\r\n' '  ' | cut -c1-512
+  fi
+}
+OS_RELEASE="$MUTATION_ROOT/usr/lib/os-release"
+if test ! -f "$OS_RELEASE" || test -L "$OS_RELEASE"; then
+  OS_RELEASE="$MUTATION_ROOT/etc/os-release"
+fi
+if test ! -f "$OS_RELEASE" || test -L "$OS_RELEASE"; then
+  OS_RELEASE=
+fi
+OS_ID=$(release_value "$OS_RELEASE" ID)
+OS_PRETTY_NAME=$(release_value "$OS_RELEASE" PRETTY_NAME)
+OS_VERSION_ID=$(release_value "$OS_RELEASE" VERSION_ID)
+OS_BUILD_ID=$(release_value "$OS_RELEASE" BUILD_ID)
+OS_VARIANT_ID=$(release_value "$OS_RELEASE" VARIANT_ID)
+TARGET_ARCH=unknown
+for ELF_PATH in "$MUTATION_ROOT/usr/bin/bash" "$MUTATION_ROOT/bin/bash"; do
+  if test -f "$ELF_PATH" && test ! -L "$ELF_PATH"; then
+    ELF_MACHINE=$(sudo od -An -t u2 -j 18 -N 2 "$ELF_PATH" | tr -d '[:space:]')
+    case "$ELF_MACHINE" in
+      62) TARGET_ARCH=x86_64 ;;
+      183) TARGET_ARCH=aarch64 ;;
+    esac
+    break
+  fi
+done
+KERNELS=
+for MODULE_ROOT in "$MUTATION_ROOT/usr/lib/modules"; do
+  if test -d "$MODULE_ROOT" && test ! -L "$MODULE_ROOT"; then
+    KERNELS=$(sudo find "$MODULE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
+      | LC_ALL=C sort -u | awk '/^[A-Za-z0-9._+:-]+$/ { print }' | head -32)
+    test -n "$KERNELS" && break
+  fi
+done
 sudo mkdir -p "$MUTATION_ROOT/etc"
 printf 'SteamOS NVIDIA Image Builder marker\nprotocol=1\nmilestone=marker-only\n' | sudo tee "$MUTATION_ROOT/etc/steamos-nvidia-image-builder-test" >/dev/null
 sync
@@ -2054,13 +2130,29 @@ printf 'PARTITION_LABEL=%s\n' "$(sudo blkid -s PARTLABEL -o value "$TARGET")"
 printf 'FILESYSTEM=%s\n' "$(sudo blkid -s TYPE -o value "$TARGET")"
 printf 'WORKING_READ_ONLY=%s\n' "$(sudo blockdev --getro "$WORK")"
 printf 'MOUNTED=%s\n' "$MOUNTED"
+printf 'OS_ID=%s\n' "$OS_ID"
+printf 'OS_PRETTY_NAME=%s\n' "$OS_PRETTY_NAME"
+printf 'OS_VERSION_ID=%s\n' "$OS_VERSION_ID"
+printf 'OS_BUILD_ID=%s\n' "$OS_BUILD_ID"
+printf 'OS_VARIANT_ID=%s\n' "$OS_VARIANT_ID"
+printf 'TARGET_ARCH=%s\n' "$TARGET_ARCH"
+printf '%s\n' "$KERNELS" | while IFS= read -r KERNEL; do
+  test -n "$KERNEL" && printf 'KERNEL=%s\n' "$KERNEL"
+done
 test "$(sudo blockdev --getro "$WORK")" = 1
 test "$MOUNTED" = 0"#;
     let output = run_guest_command(session, MUTATE_COMMAND)?;
     let mut values = std::collections::HashMap::new();
+    let mut kernel_versions = Vec::new();
     for line in output.lines() {
         if let Some((key, value)) = line.split_once('=') {
-            values.insert(key, value);
+            if key == "KERNEL" {
+                if !value.is_empty() && !kernel_versions.iter().any(|kernel| kernel == value) {
+                    kernel_versions.push(value.to_string());
+                }
+            } else {
+                values.insert(key, value);
+            }
         }
     }
     let required = |key: &str| {
@@ -2083,6 +2175,20 @@ test "$MOUNTED" = 0"#;
             session.input_sha256_before, input_sha256_after
         ));
     }
+    let optional_release = |key: &str| {
+        values
+            .get(key)
+            .and_then(|value| normalize_os_release_field(value))
+    };
+    let system = TargetSystemDiscovery {
+        os_id: optional_release("OS_ID"),
+        pretty_name: optional_release("OS_PRETTY_NAME"),
+        version_id: optional_release("OS_VERSION_ID"),
+        build_id: optional_release("OS_BUILD_ID"),
+        variant_id: optional_release("OS_VARIANT_ID"),
+        architecture: required("TARGET_ARCH")?.to_string(),
+        kernel_versions,
+    };
     Ok(UserMarkerMutation {
         marker_path: MARKER_PATH.into(),
         marker_content: MARKER_CONTENT.into(),
@@ -2094,6 +2200,7 @@ test "$MOUNTED" = 0"#;
         input_unchanged,
         working_read_only: required("WORKING_READ_ONLY")? == "1",
         mounted: required("MOUNTED")? == "1",
+        system,
     })
 }
 
@@ -2349,6 +2456,9 @@ fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, 
         if cancel.load(Ordering::Relaxed) {
             return Err("Image export cancelled.".into());
         }
+        if session.target_system.is_none() {
+            return Err("Target SteamOS metadata was not recorded before export.".into());
+        }
         run_guest_command(
             &ImageInspectionSession::from(&session),
             "set -eu; sync; WORK=/dev/disk/by-id/virtio-steamos-user-working; test \"$(sudo blockdev --getro \"$WORK\")\" = 1; ! findmnt -rn -S \"$WORK\" >/dev/null 2>&1",
@@ -2466,6 +2576,10 @@ fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, 
             output_bytes: exported_bytes,
             output_sha256: &output_sha256,
             layout: &inspection.layout,
+            target_system: session
+                .target_system
+                .as_ref()
+                .ok_or("Target SteamOS metadata is unavailable for the manifest.")?,
         });
         let mut manifest_guard = PartialOutputGuard {
             path: partial_manifest_path.clone(),
@@ -2899,7 +3013,18 @@ async fn mutate_test_marker(app: tauri::AppHandle) -> Result<MarkerMutation, Str
 async fn mutate_selected_marker(app: tauri::AppHandle) -> Result<UserMarkerMutation, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let session = ready_session_snapshot(&app, "selected-image marker mutation")?;
-        mutate_user_marker(&session)
+        let mutation = mutate_user_marker(&session)?;
+        let manager_state = app.state::<Mutex<ApplianceManager>>();
+        let mut manager = manager_state
+            .lock()
+            .map_err(|_| "Appliance state lock is unavailable.")?;
+        let active = manager
+            .session
+            .as_mut()
+            .filter(|active| active.ssh_port == session.ssh_port)
+            .ok_or("Builder session ended before target metadata could be recorded.")?;
+        active.target_system = Some(mutation.system.clone());
+        Ok(mutation)
     })
     .await
     .map_err(|error| format!("Selected-image mutation worker failed: {error}"))?
@@ -3145,6 +3270,23 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_bounded_os_release_values_without_executing_them() {
+        assert_eq!(
+            normalize_os_release_field("\"SteamOS 3.8\""),
+            Some("SteamOS 3.8".into())
+        );
+        assert_eq!(
+            normalize_os_release_field("'steamdeck'"),
+            Some("steamdeck".into())
+        );
+        assert_eq!(normalize_os_release_field("   "), None);
+        assert_eq!(
+            normalize_os_release_field("$(touch /tmp/must-not-run)"),
+            Some("$(touch /tmp/must-not-run)".into())
+        );
+    }
+
+    #[test]
     fn marker_manifest_is_versioned_and_omits_host_paths() {
         let input = Path::new("/Users/private-user/Downloads/recovery.img.bz2");
         let output = Path::new("/Users/private-user/Downloads/recovery-nvidia.img");
@@ -3161,6 +3303,15 @@ mod tests {
             roles: Vec::new(),
             issues: Vec::new(),
         };
+        let target_system = TargetSystemDiscovery {
+            os_id: Some("steamos".into()),
+            pretty_name: Some("SteamOS".into()),
+            version_id: Some("3.8.14".into()),
+            build_id: Some("20260707.10".into()),
+            variant_id: Some("steamdeck".into()),
+            architecture: "x86_64".into(),
+            kernel_versions: vec!["6.11.11-valve1-neptune-611".into()],
+        };
         let manifest = marker_build_manifest(MarkerManifestData {
             input,
             output,
@@ -3170,12 +3321,18 @@ mod tests {
             output_bytes: 20,
             output_sha256: "output-hash",
             layout: &layout,
+            target_system: &target_system,
         });
         assert_eq!(manifest["schemaVersion"], 1);
         assert_eq!(manifest["resultClass"], "mutation-valid");
         assert_eq!(manifest["validation"]["passed"], true);
         assert_eq!(manifest["input"]["filename"], "recovery.img.bz2");
         assert_eq!(manifest["output"]["filename"], "recovery-nvidia.img");
+        assert_eq!(manifest["steamos"]["architecture"], "x86_64");
+        assert_eq!(
+            manifest["steamos"]["targetKernels"][0],
+            "6.11.11-valve1-neptune-611"
+        );
         let serialized = serde_json::to_string(&manifest).expect("serialize manifest fixture");
         assert!(!serialized.contains("private-user"));
         assert!(!serialized.contains("/Users/"));

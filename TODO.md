@@ -380,6 +380,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Keep unknown or ambiguous layouts non-actionable.
 * [x] Produce a structured inspection report before first real NVIDIA modification.
 * [x] Preserve a deterministic non-Valve DOS-partition fixture for the opt-in live inspection test.
+* [ ] Confirm bounded `os-release`, ELF architecture, and `/usr/lib/modules` discovery against the current full-size Valve image. (Implementation added; real-image result pending.)
 
 ---
 
@@ -428,7 +429,7 @@ The project is not yet producing a bootable modified SteamOS image.
 
 * [ ] Consume supported/certified logic from `open-gpu-kernel-modules-steamos-support` rather than duplicating compatibility rules in the image builder.
 * [ ] Define a machine-readable integration interface from the support repo.
-* [ ] Resolve SteamOS version/kernel compatibility from the image contents rather than the host.
+* [ ] Resolve SteamOS version/kernel compatibility from the image contents rather than the host. (Target identity/kernel discovery implemented; certified compatibility mapping remains.)
 * [ ] Resolve the appropriate certified NVIDIA release for the target SteamOS image.
 * [ ] Preserve development/upstream modes as explicit advanced workflows rather than default end-user behavior.
 * [ ] Decide whether the image builder should consume published release artifacts or invoke support-repo build logic inside the Fedora appliance.
@@ -442,7 +443,7 @@ The project is not yet producing a bootable modified SteamOS image.
 
 # 19. NVIDIA kernel-module injection
 
-* [ ] Determine target kernel(s) contained in the recovery image.
+* [ ] Determine target kernel(s) contained in the recovery image. (Safe module-directory inventory implemented; real-image confirmation pending.)
 * [ ] Place all required open NVIDIA modules in the correct target module tree.
 * [ ] Support compressed `.ko.zst` modules where SteamOS expects them.
 * [ ] Preserve exact kernel vermagic compatibility.
@@ -891,8 +892,8 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Include application version/commit. (Application version included; source commit pending.)
 * [ ] Include appliance version/hash.
 * [x] Include input and normalized-image SHA256 values.
-* [ ] Include detected SteamOS version.
-* [ ] Include detected target kernel(s).
+* [ ] Include detected SteamOS version. (Manifest fields implemented; real-image confirmation pending.)
+* [ ] Include detected target kernel(s). (Manifest fields implemented; real-image confirmation pending.)
 * [ ] Include NVIDIA version/release source.
 * [ ] Include NVIDIA artifact checksums.
 * [ ] Include Gamescope version/artifact checksums.
@@ -1202,7 +1203,7 @@ Before calling the project **beta**, verify:
 9. [x] Run the implemented read-only inspection path against a real user-supplied Valve recovery image and record its `valve-recovery-a` GPT/Btrfs layout.
 10. [x] Produce first modified Valve-image working copy containing only a harmless marker.
 11. [x] Validate durable output and input immutability automatically against a full-size Valve recovery image.
-12. [ ] Only then begin NVIDIA support-repo integration.
+12. [x] Begin NVIDIA support-repo integration with target SteamOS identity, architecture, and kernel discovery.
 
 ---
 
