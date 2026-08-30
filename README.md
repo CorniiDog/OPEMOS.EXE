@@ -22,18 +22,30 @@ passed.
 An opt-in development command can copy an explicitly selected support-repository
 checkout into the managed x86 worker and execute its fixed offline-target build
 contract. Output is streamed to the worker log rather than buffered on the UI
-thread. Returned archives are accepted only after host-side checksum, archive
-membership, metadata, and target-identity validation. They are always labeled
-`development-unverified` while Valve header-package signature verification is
-still pending. The normal build button does not invoke this command yet.
+thread. Control flow uses the support repository's versioned final-result JSON,
+including its stable failure reason, target identity, trust classification,
+artifact filenames, and hash; human logs remain diagnostic only. Returned
+archives are accepted only after independent host-side checksum, archive
+membership, metadata, and target-identity validation. The result JSON is
+preserved beside successful artifacts and in archived failure diagnostics. The
+worker also prepares the support repository's reviewed, hash-pinned Valve
+keyring and requires the exact historical header package's detached signature;
+the host rejects returned metadata that does not confirm that verification. The
+host also requires the schema-1 provenance sidecar to exactly match the embedded
+`PROVENANCE.json`, validates its target/trust/signer and five-module metadata,
+and hashes every archived module against it. The normal build button does not
+invoke this command yet.
 
-The complete exact-target path has been exercised locally on Apple Silicon:
-the emulated x86_64 Fedora worker found the historical SteamOS 3.8.14 headers,
-built all five NVIDIA 575.64.05 modules with the exact target vermagic, returned
-the artifacts, and passed the independent host validation in 30 minutes 15
-seconds. That result remains `development-unverified`: the Valve header package
-was not signature-verified, and Fedora 44's GCC 16.2.1 differed from the GCC
-15.1.1 compiler recorded by the target kernel.
+The complete exact-target path has been exercised locally on Apple Silicon.
+The current support HEAD completed in 53 minutes 25 seconds: the emulated
+x86_64 Fedora worker authenticated the historical SteamOS 3.8.14 headers,
+built and structurally validated all five NVIDIA 575.64.05 modules with exact
+target vermagic, produced structured provenance, and passed every independent
+host check. The result remains `development-unverified`: Fedora 44's GCC 16.2.1
+differs from the GCC 15.1.1 reported by the kernel build, and the safe checkout
+transfer does not expose `.git` provenance to the guest. The full run used
+support commit `d6a43f5`; the following `e5d183e` compiler-parser fix passes its
+focused local contract test but has not repeated the hour-long compilation.
 
 The normal progress flow now assesses the discovered offline target before any
 future artifact resolution. It permits NVIDIA resolution only for a valid

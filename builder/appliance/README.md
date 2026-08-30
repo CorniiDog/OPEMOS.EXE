@@ -71,10 +71,22 @@ and performs a full compilation under emulated x86_64. It may take substantially
 longer than the lifecycle test. The host validates and preserves the returned
 archive, checksum, and build-info file in `NVIDIA_TARGET_ARTIFACT_DIR`; it never
 treats this result as certified while header signatures remain unverified.
+The controller also requests and validates the support repository's schema-1
+build-result JSON, preserves it beside successful artifacts, and uses its typed
+reason/message for failures instead of parsing the human build log.
+It prepares the support checkout's reviewed, hash-pinned Valve keyring inside
+the disposable guest, requires the manifest's single approved signer for the
+headers package, and accepts the returned metadata only when detached-signature
+verification is recorded.
+The controller also preserves the schema-1 provenance sidecar, requires it to
+match the archive's embedded `PROVENANCE.json`, validates its target, trust,
+signer and exact five-module metadata, and verifies each archived module hash.
 
-The first Apple Silicon run completed in 30 minutes 15 seconds for SteamOS
-3.8.14, kernel `6.16.12-valve24.4-1-neptune-616-gfe145653a794`, and NVIDIA
-575.64.05. It produced all five modules with exact vermagic. Fedora 44 used GCC
-16.2.1 while the Valve kernel reports GCC 15.1.1, so the successful result is
-also compiler-mismatch-unverified until the support policy reproduces or
-explicitly validates that toolchain difference.
+The current support HEAD completed the full Apple Silicon path in 53 minutes 25
+seconds for SteamOS 3.8.14, kernel
+`6.16.12-valve24.4-1-neptune-616-gfe145653a794`, and NVIDIA 575.64.05. It
+authenticated the exact headers, produced all five modules with exact vermagic,
+emitted provenance, and passed host validation. Fedora 44 used GCC 16.2.1 while
+the Valve kernel build reports GCC 15.1.1, so the successful result remains
+compiler-mismatch-unverified until the support policy reproduces or explicitly
+validates that toolchain difference.

@@ -441,22 +441,25 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Make the shared module validator and local contract checks compatible with macOS Bash 3.2; skip and clearly retain Fedora-only transaction coverage where modern Bash/Linux behavior is required.
 * [x] Add non-network architecture-plan modes and separate macOS acquisition/launch paths for a development x86_64 Fedora appliance without replacing or colliding with the native appliance.
 * [x] Add an isolated Rust-owned x86_64 build-appliance manager with disposable overlay/credentials, dynamic SSH forwarding, architecture health enforcement, bounded boot status, log access, graceful shutdown, forced-stop fallback, and abandoned-runtime cleanup.
+* [x] Run abandoned-runtime reclamation on every direct appliance preparation path, not only Tauri application setup, so hard-aborted development tests are recovered by the next worker start.
 * [x] Add an opt-in live lifecycle test that verifies x86_64 guest identity, runtime cleanup, log preservation, and base-appliance immutability.
 * [x] Validate the isolated x86_64 lifecycle on Apple Silicon under TCG (`57.40s` in the first successful local run).
 * [x] Add a controlled development build command that transfers an explicit support-repository checkout, streams the fixed offline-target build into managed logs, supports cancellation, and retrieves artifacts without exposing arbitrary guest commands.
 * [x] Make progress-window cancellation and failure cleanup stop both the image appliance and the isolated x86 NVIDIA worker.
 * [x] Validate returned development artifacts on the host for SHA-256, safe/exact archive membership, matching internal/external build metadata, requested target identity, and explicit unverified-header trust state.
+* [x] Consume the support repository's versioned final build-result JSON for stable success/failure reasons, target/trust validation, artifact identity/hash checks, and preserved diagnostics; do not branch on human log text.
+* [x] Preserve and validate the support repository's schema-1 provenance sidecar, require byte-identical embedded `PROVENANCE.json`, verify target/trust/pinned-signer/module metadata, and hash every archived module against its provenance record.
 * [x] Gate NVIDIA artifact resolution on a valid SteamOS identity/version, x86_64 target architecture, and exactly one unique safe kernel release; zero or multiple discovered kernels remain non-actionable instead of selecting the first directory (`177.59s` real-image test passed for SteamOS 3.8.14 build `20260707.10`).
-* [x] Run a real offline-target build inside an x86_64 Fedora environment (`30m15s` under TCG on Apple Silicon in the first successful local run).
+* [x] Run a real offline-target build inside an x86_64 Fedora environment (`30m15s` in the first successful Apple Silicon TCG run; `34m18s` for the initial result contract; `53m25s` for current support HEAD with pinned header signature, comprehensive module validation, and structured provenance).
 * [x] Confirm Valve still serves the exact historical headers package for the observed SteamOS 3.8.14 `valve24.4` kernel (SHA-256 `dd532330d2bb34d4ab6b00ffb249d245ec882841a37694ae703548dab6d09f17`; package signature verification remains pending).
 * [x] Confirm NVIDIA 575.64.05 produces all five modules with exact target vermagic.
 * [ ] Run the complete transaction/installer suite under Fedora with modern Bash.
-* [ ] Pin and verify Valve package signatures before treating an on-demand artifact as certified; until then label it development/unverified.
-* [ ] Reproduce Valve's GCC 15.1.1 kernel compiler for certified builds, or define and validate a documented compiler-mismatch policy; Fedora 44 currently supplies GCC 16.2.1 and the first successful development build emitted the NVIDIA mismatch warning.
-* [ ] Extend support build metadata with the support-repository commit, compiler/binutils versions, and builder-appliance version/hash; the first real artifact already records the NVIDIA source commit, header package/hash, module hashes, and vermagic.
+* [x] Consume the support repository's reviewed, hash-pinned Valve keyring manifest, require the exact header package's detached signature during development builds, and reject metadata that does not confirm pinned-keyring verification. Certification still requires the remaining compiler, provenance, and hardware gates.
+* [ ] Reproduce Valve's GCC 15.1.1 kernel compiler for certified builds, or define and validate a documented compiler-mismatch policy; Fedora 44 currently supplies GCC 16.2.1 and the real development builds emit NVIDIA's mismatch warning. Support commit `e5d183e` fixes the tab-separated Valve compiler parser and its focused local contract test passes; confirm the corrected `15.1.1`/major-mismatch provenance on the next full build.
+* [ ] Complete provenance identity across the appliance boundary. The support repo now emits and the image builder preserves/validates the structured provenance sidecar, but the image builder safely excludes `.git` from guest transfers, so the support commit/dirty fields remain `unknown`; add explicit, validated provenance inputs rather than copying Git credentials/hooks. Builder-appliance version/hash also remains to be recorded.
 
 * [ ] Consume supported/certified logic from `open-gpu-kernel-modules-steamos-support` rather than duplicating compatibility rules in the image builder.
-* [ ] Define a machine-readable integration interface from the support repo.
+* [x] Define and consume a versioned machine-readable target-build result interface from the support repo; certified target resolution and offline-root installation remain separate contracts.
 * [ ] Resolve SteamOS version/kernel compatibility from the image contents rather than the host. (Target identity/kernel discovery implemented; certified compatibility mapping remains.)
 * [ ] Resolve the appropriate certified NVIDIA release for the target SteamOS image.
 * [ ] Preserve development/upstream modes as explicit advanced workflows rather than default end-user behavior.

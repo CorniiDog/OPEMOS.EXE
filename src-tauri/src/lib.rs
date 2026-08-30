@@ -78,11 +78,90 @@ struct NvidiaDevelopmentArtifact {
     archive_path: String,
     checksum_path: String,
     build_info_path: String,
+    provenance_path: String,
+    result_path: String,
     archive_sha256: String,
     steamos_version: String,
     kernel_version: String,
     nvidia_version: String,
     trust: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportBuildResult {
+    schema_version: u32,
+    status: String,
+    reason: String,
+    message: String,
+    trust: String,
+    target: SupportBuildTarget,
+    artifact: Option<SupportBuildArtifact>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportBuildTarget {
+    steamos_version: String,
+    kernel_version: String,
+    nvidia_version: String,
+    architecture: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportBuildArtifact {
+    archive: String,
+    checksum: String,
+    build_info: String,
+    provenance: String,
+    sha256: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportBuildProvenance {
+    schema_version: u32,
+    trust: String,
+    target: SupportBuildTarget,
+    artifact: SupportProvenanceArtifact,
+    headers: SupportProvenanceHeaders,
+    modules: Vec<SupportProvenanceModule>,
+}
+
+#[derive(Deserialize)]
+struct SupportProvenanceArtifact {
+    archive: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportProvenanceHeaders {
+    signature_status: String,
+    signing_key_fingerprint: String,
+    primary_key_fingerprint: String,
+    authentication: String,
+}
+
+#[derive(Deserialize)]
+struct SupportProvenanceModule {
+    name: String,
+    sha256: String,
+    version: String,
+    architecture: String,
+    vermagic: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ValveTrustManifest {
+    schema_version: u32,
+    signers: Vec<ValveTrustSigner>,
+}
+
+#[derive(Deserialize)]
+struct ValveTrustSigner {
+    fingerprint: String,
 }
 
 #[derive(Serialize)]
@@ -669,8 +748,15 @@ fn archive_and_remove_runtime(runtime_dir: &Path) -> Result<Option<PathBuf>, Str
 }
 
 fn archive_and_remove_nvidia_build_runtime(runtime_dir: &Path) -> Result<Option<PathBuf>, String> {
-    let log_source = runtime_dir.join("qemu.log");
-    let archive = if log_source.is_file() {
+    let diagnostic_sources = [
+        ("QEMU", runtime_dir.join("qemu.log")),
+        ("NVIDIA BUILD", runtime_dir.join("nvidia-build.log")),
+        ("BUILD RESULT", runtime_dir.join("nvidia-build-result.json")),
+    ];
+    let archive = if diagnostic_sources
+        .iter()
+        .any(|(_, source)| source.is_file())
+    {
         let archive_dir = nvidia_build_runtime_root().join("logs");
         fs::create_dir_all(&archive_dir)
             .map_err(|e| format!("Could not create the x86 build log archive: {e}"))?;
@@ -679,8 +765,25 @@ fn archive_and_remove_nvidia_build_runtime(runtime_dir: &Path) -> Result<Option<
             .and_then(|value| value.to_str())
             .unwrap_or("unknown-session");
         let archive_path = archive_dir.join(format!("{session_name}.log"));
-        fs::copy(&log_source, &archive_path)
-            .map_err(|e| format!("Could not archive the x86 build-appliance log: {e}"))?;
+        let archive_file = File::create(&archive_path)
+            .map_err(|e| format!("Could not create the x86 build diagnostic archive: {e}"))?;
+        let mut archive_writer = BufWriter::new(archive_file);
+        for (label, source) in diagnostic_sources {
+            if !source.is_file() {
+                continue;
+            }
+            writeln!(archive_writer, "===== {label} =====")
+                .map_err(|e| format!("Could not write the x86 build diagnostic header: {e}"))?;
+            let mut source_file = File::open(&source)
+                .map_err(|e| format!("Could not read x86 build diagnostics: {e}"))?;
+            io::copy(&mut source_file, &mut archive_writer)
+                .map_err(|e| format!("Could not archive x86 build diagnostics: {e}"))?;
+            writeln!(archive_writer)
+                .map_err(|e| format!("Could not finish x86 build diagnostics: {e}"))?;
+        }
+        archive_writer
+            .flush()
+            .map_err(|e| format!("Could not flush x86 build diagnostics: {e}"))?;
         Some(archive_path)
     } else {
         None
@@ -1156,6 +1259,7 @@ fn prepare_session(
     progress: Option<&ProgressCallback<'_>>,
     cancel: Option<&AtomicBool>,
 ) -> Result<ApplianceSession, String> {
+    cleanup_abandoned_runtimes()?;
     let appliance = appliance_path();
     if !appliance.is_file() {
         return Err(format!(
@@ -1472,6 +1576,7 @@ fn prepare_session(
 }
 
 fn prepare_nvidia_build_session() -> Result<NvidiaBuildSession, String> {
+    cleanup_abandoned_nvidia_build_runtimes()?;
     let appliance = nvidia_build_appliance_path();
     if !appliance.is_file() {
         return Err(format!(
@@ -2032,6 +2137,121 @@ fn nvidia_development_asset_name(spec: &NvidiaTargetBuildSpec) -> String {
     )
 }
 
+fn validate_support_build_result(
+    document: SupportBuildResult,
+    spec: &NvidiaTargetBuildSpec,
+) -> Result<(SupportBuildArtifact, String), String> {
+    if document.schema_version != 1 {
+        return Err(format!(
+            "Unsupported NVIDIA build-result schema version {}.",
+            document.schema_version
+        ));
+    }
+    if document.target.steamos_version != spec.steamos_version
+        || document.target.kernel_version != spec.kernel_version
+        || document.target.nvidia_version != spec.nvidia_version
+        || document.target.architecture != "x86_64"
+    {
+        return Err("NVIDIA build result does not match the requested target identity.".into());
+    }
+    if document.status != "success" {
+        if document.artifact.is_some() {
+            return Err("Failed NVIDIA build result unexpectedly contains an artifact.".into());
+        }
+        return Err(format!(
+            "NVIDIA target build {} ({}): {}",
+            document.status, document.reason, document.message
+        ));
+    }
+    if document.reason != "build_complete" {
+        return Err(format!(
+            "Successful NVIDIA build result has unexpected reason {}.",
+            document.reason
+        ));
+    }
+    if !matches!(
+        document.trust.as_str(),
+        "development-unverified" | "locally-built-verified"
+    ) {
+        return Err(format!(
+            "Local NVIDIA build returned unsupported trust classification {}.",
+            document.trust
+        ));
+    }
+    let artifact = document
+        .artifact
+        .ok_or("Successful NVIDIA build result omitted artifact metadata.")?;
+    let asset_name = nvidia_development_asset_name(spec);
+    let checksum_name = format!("{asset_name}.sha256");
+    let build_info_name = format!("{}.build-info.txt", asset_name.trim_end_matches(".tar.gz"));
+    let provenance_name = format!("{}.provenance.json", asset_name.trim_end_matches(".tar.gz"));
+    if artifact.archive != asset_name
+        || artifact.checksum != checksum_name
+        || artifact.build_info != build_info_name
+        || artifact.provenance != provenance_name
+        || artifact.sha256.len() != 64
+        || !artifact.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("NVIDIA build result contains invalid artifact identity or hash data.".into());
+    }
+    Ok((artifact, document.trust))
+}
+
+fn validate_support_build_provenance(
+    document: &SupportBuildProvenance,
+    spec: &NvidiaTargetBuildSpec,
+    trust: &str,
+    approved_signer: &str,
+) -> Result<(), String> {
+    if document.schema_version != 1
+        || document.trust != trust
+        || document.target.steamos_version != spec.steamos_version
+        || document.target.kernel_version != spec.kernel_version
+        || document.target.nvidia_version != spec.nvidia_version
+        || document.target.architecture != "x86_64"
+        || document.artifact.archive != nvidia_development_asset_name(spec)
+    {
+        return Err("NVIDIA provenance does not match the accepted build result.".into());
+    }
+    if document.headers.signature_status != "verified"
+        || document.headers.authentication != "detached-signature-verified-with-pinned-keyring"
+        || (document.headers.signing_key_fingerprint != approved_signer
+            && document.headers.primary_key_fingerprint != approved_signer)
+    {
+        return Err("NVIDIA provenance does not confirm the approved Valve signer.".into());
+    }
+    let expected_modules = [
+        "nvidia-drm.ko",
+        "nvidia-modeset.ko",
+        "nvidia-peermem.ko",
+        "nvidia-uvm.ko",
+        "nvidia.ko",
+    ];
+    let mut module_names: Vec<&str> = document
+        .modules
+        .iter()
+        .map(|module| module.name.as_str())
+        .collect();
+    module_names.sort_unstable();
+    if module_names != expected_modules {
+        return Err("NVIDIA provenance does not contain the exact five-module set.".into());
+    }
+    for module in &document.modules {
+        if module.version != spec.nvidia_version
+            || module.architecture != "x86_64"
+            || module.vermagic.split_whitespace().next() != Some(spec.kernel_version.as_str())
+            || module.sha256.len() != 64
+            || !module.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(format!(
+                "NVIDIA provenance contains invalid metadata for {}.",
+                module.name
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn run_guest_command_logged(
     session: &impl GuestConnection,
     command: &str,
@@ -2087,13 +2307,33 @@ fn build_nvidia_for_target(
     validate_nvidia_target_build_spec(spec)?;
     let support_repository = fs::canonicalize(support_repository)
         .map_err(|e| format!("Could not resolve the NVIDIA support repository: {e}"))?;
-    for required in ["bootstrap/build_for_target.sh", "lib/common.sh"] {
+    for required in [
+        "bootstrap/build_for_target.sh",
+        "bootstrap/prepare_valve_keyring.py",
+        "lib/common.sh",
+        "trust/valve-package-signers.json",
+    ] {
         if !support_repository.join(required).is_file() {
             return Err(format!(
                 "NVIDIA support repository is missing required file {required}."
             ));
         }
     }
+    let trust_manifest: ValveTrustManifest = serde_json::from_reader(
+        File::open(support_repository.join("trust/valve-package-signers.json"))
+            .map_err(|e| format!("Could not read the Valve trust manifest: {e}"))?,
+    )
+    .map_err(|e| format!("Valve trust manifest is invalid JSON: {e}"))?;
+    let approved_signer = trust_manifest
+        .signers
+        .first()
+        .filter(|_| trust_manifest.schema_version == 1 && trust_manifest.signers.len() == 1)
+        .map(|signer| signer.fingerprint.to_ascii_uppercase())
+        .filter(|fingerprint| {
+            matches!(fingerprint.len(), 40 | 64)
+                && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+        .ok_or("Valve trust manifest must contain exactly one full approved signer fingerprint.")?;
     fs::create_dir_all(output_dir)
         .map_err(|e| format!("Could not create the NVIDIA artifact output directory: {e}"))?;
     let output_dir = fs::canonicalize(output_dir)
@@ -2101,7 +2341,18 @@ fn build_nvidia_for_target(
     let asset_name = nvidia_development_asset_name(spec);
     let checksum_name = format!("{asset_name}.sha256");
     let build_info_name = format!("{}.build-info.txt", asset_name.trim_end_matches(".tar.gz"));
-    for name in [&asset_name, &checksum_name, &build_info_name] {
+    let provenance_name = format!("{}.provenance.json", asset_name.trim_end_matches(".tar.gz"));
+    let result_name = format!(
+        "{}.build-result.json",
+        asset_name.trim_end_matches(".tar.gz")
+    );
+    for name in [
+        &asset_name,
+        &checksum_name,
+        &build_info_name,
+        &provenance_name,
+        &result_name,
+    ] {
         if output_dir.join(name).exists() {
             return Err(format!(
                 "Refusing to overwrite an existing NVIDIA artifact: {}",
@@ -2116,7 +2367,7 @@ fn build_nvidia_for_target(
             // Prevent macOS tar from adding AppleDouble/xattr headers that GNU tar
             // reports as unknown while unpacking the checkout in Fedora.
             .env("COPYFILE_DISABLE", "1")
-            .args(["-czf"])
+            .args(["--no-xattrs", "-czf"])
             .arg(&transfer_archive)
             .args(["--exclude", ".git", "--exclude", "target", "-C"])
             .arg(&support_repository)
@@ -2130,20 +2381,43 @@ fn build_nvidia_for_target(
         "Could not copy the NVIDIA support repository into the x86 guest",
     )?;
     let build_command = format!(
-        "set -eu; rm -rf /tmp/steamos-nvidia-support /tmp/steamos-nvidia-artifacts; mkdir -p /tmp/steamos-nvidia-support /tmp/steamos-nvidia-artifacts; tar -xzf /tmp/steamos-nvidia-support.tar.gz -C /tmp/steamos-nvidia-support; cd /tmp/steamos-nvidia-support; bash ./bootstrap/build_for_target.sh --steamos {} --kernel {} --nvidia {} --architecture x86_64 --install-dependencies --output /tmp/steamos-nvidia-artifacts",
+        r#"set -eu; rm -rf /tmp/steamos-nvidia-support /tmp/steamos-nvidia-artifacts; mkdir -p /tmp/steamos-nvidia-support /tmp/steamos-nvidia-artifacts; tar -xzf /tmp/steamos-nvidia-support.tar.gz -C /tmp/steamos-nvidia-support; cd /tmp/steamos-nvidia-support; sudo dnf install -y bsdtar gnupg2 python3; python3 ./bootstrap/prepare_valve_keyring.py --output /tmp/steamos-nvidia-artifacts/valve-package-signers.gpg; signer="$(python3 -c 'import json; data=json.load(open("trust/valve-package-signers.json", encoding="utf-8")); signers=data["signers"]; assert data["schemaVersion"] == 1 and len(signers) == 1; print(signers[0]["fingerprint"])')"; bash ./bootstrap/build_for_target.sh --steamos {} --kernel {} --nvidia {} --architecture x86_64 --install-dependencies --output /tmp/steamos-nvidia-artifacts --result-json /tmp/steamos-nvidia-artifacts/build-result.json --header-keyring /tmp/steamos-nvidia-artifacts/valve-package-signers.gpg --header-signer "$signer""#,
         spec.steamos_version, spec.kernel_version, spec.nvidia_version
     );
-    run_guest_command_logged(
+    let execution_result = run_guest_command_logged(
         session,
         &build_command,
         &session.runtime_dir().join("nvidia-build.log"),
         cancel,
-    )?;
+    );
+
+    let staged_result = session.runtime_dir().join("nvidia-build-result.json");
+    let result_transfer = run_checked(
+        scp_command(session)?
+            .arg("builder@127.0.0.1:/tmp/steamos-nvidia-artifacts/build-result.json")
+            .arg(&staged_result),
+        "Could not copy the NVIDIA build result from the x86 guest",
+    );
+    if let Err(transfer_error) = result_transfer {
+        return Err(execution_result.err().unwrap_or(transfer_error));
+    }
+    let result_document: SupportBuildResult = serde_json::from_reader(
+        File::open(&staged_result)
+            .map_err(|e| format!("Could not read the NVIDIA build result: {e}"))?,
+    )
+    .map_err(|e| format!("NVIDIA build result is invalid JSON: {e}"))?;
+    let (result_artifact, result_trust) = validate_support_build_result(result_document, spec)?;
+    execution_result?;
 
     let download_dir = session.runtime_dir().join("artifact-download");
     fs::create_dir_all(&download_dir)
         .map_err(|e| format!("Could not create the artifact download staging directory: {e}"))?;
-    for name in [&asset_name, &checksum_name, &build_info_name] {
+    for name in [
+        &asset_name,
+        &checksum_name,
+        &build_info_name,
+        &provenance_name,
+    ] {
         run_checked(
             scp_command(session)?
                 .arg(format!(
@@ -2157,6 +2431,7 @@ fn build_nvidia_for_target(
     let staged_archive = download_dir.join(&asset_name);
     let staged_checksum = download_dir.join(&checksum_name);
     let staged_build_info = download_dir.join(&build_info_name);
+    let staged_provenance = download_dir.join(&provenance_name);
     let expected_sha256 = fs::read_to_string(&staged_checksum)
         .map_err(|e| format!("Could not read the NVIDIA artifact checksum: {e}"))?
         .split_whitespace()
@@ -2167,6 +2442,9 @@ fn build_nvidia_for_target(
     let archive_sha256 = sha256_file(&staged_archive)?;
     if archive_sha256 != expected_sha256 {
         return Err("Generated NVIDIA artifact checksum verification failed.".into());
+    }
+    if archive_sha256 != result_artifact.sha256.to_ascii_lowercase() {
+        return Err("NVIDIA build-result hash does not match the returned archive.".into());
     }
     let listing = Command::new("tar")
         .args(["-tzf"])
@@ -2193,8 +2471,10 @@ fn build_nvidia_for_target(
         {
             return Err("Generated NVIDIA artifact contains an unsafe path.".into());
         }
-        let allowed =
-            entry == "modules/" || entry == "BUILD-INFO.txt" || expected_modules.contains(&entry);
+        let allowed = entry == "modules/"
+            || entry == "BUILD-INFO.txt"
+            || entry == "PROVENANCE.json"
+            || expected_modules.contains(&entry);
         if !allowed {
             return Err(format!(
                 "Generated NVIDIA artifact contains an unexpected entry: {entry}"
@@ -2205,6 +2485,7 @@ fn build_nvidia_for_target(
         .iter()
         .all(|expected| entries.lines().any(|entry| entry == *expected))
         || !entries.lines().any(|entry| entry == "BUILD-INFO.txt")
+        || !entries.lines().any(|entry| entry == "PROVENANCE.json")
     {
         return Err("Generated NVIDIA artifact is missing required modules or metadata.".into());
     }
@@ -2230,17 +2511,54 @@ fn build_nvidia_for_target(
         || metadata("kernel_version") != Some(spec.kernel_version.as_str())
         || metadata("nvidia_version") != Some(spec.nvidia_version.as_str())
         || metadata("build_architecture") != Some("x86_64")
+        || metadata("trust_classification") != Some(result_trust.as_str())
         || metadata("header_authentication")
-            != Some("https-transport-or-local-input-not-signature-verified")
+            != Some("detached-signature-verified-with-pinned-keyring")
+        || metadata("header_signature_status") != Some("verified")
     {
         return Err(
             "Generated NVIDIA artifact metadata does not match the requested target.".into(),
         );
     }
+    let provenance_bytes = fs::read(&staged_provenance)
+        .map_err(|e| format!("Could not read generated NVIDIA provenance: {e}"))?;
+    let archived_provenance = Command::new("tar")
+        .args(["-xOzf"])
+        .arg(&staged_archive)
+        .arg("PROVENANCE.json")
+        .output()
+        .map_err(|e| format!("Could not extract NVIDIA archive provenance: {e}"))?;
+    if !archived_provenance.status.success()
+        || archived_provenance.stdout.as_slice() != provenance_bytes.as_slice()
+    {
+        return Err("NVIDIA archive provenance does not match its external sidecar file.".into());
+    }
+    let provenance: SupportBuildProvenance = serde_json::from_slice(&provenance_bytes)
+        .map_err(|e| format!("NVIDIA provenance is invalid JSON: {e}"))?;
+    validate_support_build_provenance(&provenance, spec, &result_trust, &approved_signer)?;
+    for module in &provenance.modules {
+        let archived_module = Command::new("tar")
+            .args(["-xOzf"])
+            .arg(&staged_archive)
+            .arg(format!("modules/{}", module.name))
+            .output()
+            .map_err(|e| format!("Could not extract {} for verification: {e}", module.name))?;
+        if !archived_module.status.success()
+            || format!("{:x}", Sha256::digest(&archived_module.stdout))
+                != module.sha256.to_ascii_lowercase()
+        {
+            return Err(format!(
+                "Archived NVIDIA module does not match provenance: {}.",
+                module.name
+            ));
+        }
+    }
 
     let final_archive = output_dir.join(&asset_name);
     let final_checksum = output_dir.join(&checksum_name);
     let final_build_info = output_dir.join(&build_info_name);
+    let final_provenance = output_dir.join(&provenance_name);
+    let final_result = output_dir.join(&result_name);
     let mut archive_guard = PartialOutputGuard {
         path: final_archive.clone(),
         armed: true,
@@ -2251,6 +2569,14 @@ fn build_nvidia_for_target(
     };
     let mut build_info_guard = PartialOutputGuard {
         path: final_build_info.clone(),
+        armed: true,
+    };
+    let mut provenance_guard = PartialOutputGuard {
+        path: final_provenance.clone(),
+        armed: true,
+    };
+    let mut result_guard = PartialOutputGuard {
+        path: final_result.clone(),
         armed: true,
     };
     copy_new_file(
@@ -2268,18 +2594,32 @@ fn build_nvidia_for_target(
         &final_build_info,
         "Could not finalize the NVIDIA build metadata",
     )?;
+    copy_new_file(
+        &staged_provenance,
+        &final_provenance,
+        "Could not finalize the NVIDIA provenance",
+    )?;
+    copy_new_file(
+        &staged_result,
+        &final_result,
+        "Could not finalize the NVIDIA build result",
+    )?;
     archive_guard.armed = false;
     checksum_guard.armed = false;
     build_info_guard.armed = false;
+    provenance_guard.armed = false;
+    result_guard.armed = false;
     Ok(NvidiaDevelopmentArtifact {
         archive_path: final_archive.to_string_lossy().into_owned(),
         checksum_path: final_checksum.to_string_lossy().into_owned(),
         build_info_path: final_build_info.to_string_lossy().into_owned(),
+        provenance_path: final_provenance.to_string_lossy().into_owned(),
+        result_path: final_result.to_string_lossy().into_owned(),
         archive_sha256,
         steamos_version: spec.steamos_version.clone(),
         kernel_version: spec.kernel_version.clone(),
         nvidia_version: spec.nvidia_version.clone(),
-        trust: "development-unverified".into(),
+        trust: result_trust,
     })
 }
 
@@ -4471,6 +4811,111 @@ mod tests {
     }
 
     #[test]
+    fn validates_versioned_support_build_results() {
+        let spec = NvidiaTargetBuildSpec {
+            steamos_version: "3.8.14".into(),
+            kernel_version: "6.16.12-valve24.4-1-neptune-616-gfe145653a794".into(),
+            nvidia_version: "575.64.05".into(),
+        };
+        let asset = nvidia_development_asset_name(&spec);
+        let result = serde_json::json!({
+            "schemaVersion": 1,
+            "status": "success",
+            "reason": "build_complete",
+            "message": "fixture passed",
+            "trust": "development-unverified",
+            "target": {
+                "steamosVersion": spec.steamos_version,
+                "kernelVersion": spec.kernel_version,
+                "nvidiaVersion": spec.nvidia_version,
+                "architecture": "x86_64"
+            },
+            "artifact": {
+                "archive": asset,
+                "checksum": format!("{asset}.sha256"),
+                "buildInfo": format!("{}.build-info.txt", asset.trim_end_matches(".tar.gz")),
+                "provenance": format!("{}.provenance.json", asset.trim_end_matches(".tar.gz")),
+                "sha256": "a".repeat(64)
+            }
+        });
+        let parsed: SupportBuildResult = serde_json::from_value(result.clone()).unwrap();
+        let (artifact, trust) = validate_support_build_result(parsed, &spec).unwrap();
+        assert_eq!(artifact.archive, asset);
+        assert_eq!(trust, "development-unverified");
+
+        let mut failure = result.clone();
+        failure["status"] = serde_json::json!("failed");
+        failure["reason"] = serde_json::json!("headers_not_found");
+        failure["message"] = serde_json::json!("exact headers unavailable");
+        failure.as_object_mut().unwrap().remove("artifact");
+        let error = validate_support_build_result(serde_json::from_value(failure).unwrap(), &spec)
+            .unwrap_err();
+        assert!(error.contains("headers_not_found"));
+
+        let mut wrong_target = result;
+        wrong_target["target"]["kernelVersion"] = serde_json::json!("wrong-kernel");
+        assert!(validate_support_build_result(
+            serde_json::from_value(wrong_target).unwrap(),
+            &spec,
+        )
+        .is_err());
+
+        let signer = "889B5EBDDD505A683621900DAF1D2199EF0A3CCF";
+        let modules: Vec<_> = [
+            "nvidia-drm.ko",
+            "nvidia-modeset.ko",
+            "nvidia-peermem.ko",
+            "nvidia-uvm.ko",
+            "nvidia.ko",
+        ]
+        .into_iter()
+        .map(|name| {
+            serde_json::json!({
+                "name": name,
+                "sha256": "b".repeat(64),
+                "version": spec.nvidia_version,
+                "architecture": "x86_64",
+                "vermagic": format!("{} SMP preempt", spec.kernel_version)
+            })
+        })
+        .collect();
+        let provenance = serde_json::json!({
+            "schemaVersion": 1,
+            "trust": "development-unverified",
+            "target": {
+                "steamosVersion": spec.steamos_version,
+                "kernelVersion": spec.kernel_version,
+                "nvidiaVersion": spec.nvidia_version,
+                "architecture": "x86_64"
+            },
+            "artifact": {
+                "archive": asset
+            },
+            "headers": {
+                "signatureStatus": "verified",
+                "signingKeyFingerprint": signer,
+                "primaryKeyFingerprint": "not-reported",
+                "authentication": "detached-signature-verified-with-pinned-keyring"
+            },
+            "modules": modules
+        });
+        let parsed: SupportBuildProvenance = serde_json::from_value(provenance.clone()).unwrap();
+        validate_support_build_provenance(&parsed, &spec, "development-unverified", signer)
+            .unwrap();
+
+        let mut wrong_module = provenance;
+        wrong_module["modules"][0]["vermagic"] = serde_json::json!("wrong-kernel SMP");
+        let parsed: SupportBuildProvenance = serde_json::from_value(wrong_module).unwrap();
+        assert!(validate_support_build_provenance(
+            &parsed,
+            &spec,
+            "development-unverified",
+            signer,
+        )
+        .is_err());
+    }
+
+    #[test]
     fn requires_one_unambiguous_offline_nvidia_kernel() {
         let target = TargetSystemDiscovery {
             os_id: Some("steamos".into()),
@@ -5091,6 +5536,8 @@ mod tests {
         assert!(Path::new(&artifact.archive_path).is_file());
         assert!(Path::new(&artifact.checksum_path).is_file());
         assert!(Path::new(&artifact.build_info_path).is_file());
+        assert!(Path::new(&artifact.provenance_path).is_file());
+        assert!(Path::new(&artifact.result_path).is_file());
     }
 
     #[test]
