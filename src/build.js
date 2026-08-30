@@ -97,6 +97,28 @@ function addStageLog(message) {
   renderLogs("");
 }
 
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 1024) return `${bytes} B`;
+  const units = ["KiB", "MiB", "GiB", "TiB"];
+  let value = bytes;
+  let unit = -1;
+  do { value /= 1024; unit += 1; } while (value >= 1024 && unit < units.length - 1);
+  return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[unit]}`;
+}
+
+function showInputProgress(progress) {
+  if (!running || !progress.totalBytes) return;
+  const ratio = Math.min(progress.processedBytes / progress.totalBytes, 1);
+  const amount = `${formatBytes(progress.processedBytes)} of ${formatBytes(progress.totalBytes)}`;
+  if (progress.stage === "hashing-source") {
+    setStatus("running", "Verifying source image", `Computing the original input SHA-256: ${amount}.`, 4 + ratio * 4);
+  } else if (progress.stage === "decompressing") {
+    setStatus("running", "Normalizing compressed image", `Read ${amount} of the compressed input.`, 8 + ratio * 8);
+  } else if (progress.stage === "hashing-image") {
+    setStatus("running", "Verifying normalized image", `Computing the disposable raw-image SHA-256: ${amount}.`, 16 + ratio * 6);
+  }
+}
+
 function renderLogs(applianceLog) {
   const normalizedLog = normalizeTerminalText(applianceLog).trim();
   if (normalizedLog) lastApplianceLog = normalizedLog;
@@ -250,6 +272,9 @@ elements.buildLog.addEventListener("keydown", (event) => {
   }
 });
 await progressWindow.listen("build-requested", (event) => runBuild(event.payload));
+await progressWindow.listen("input-progress", (event) => showInputProgress(event.payload));
+await progressWindow.listen("build-progress-probe", () => progressWindow.emitTo("main", "build-progress-ready"));
+await progressWindow.emitTo("main", "build-progress-ready");
 await progressWindow.onCloseRequested(async (event) => {
   event.preventDefault();
   if (running) await cancelBuild();

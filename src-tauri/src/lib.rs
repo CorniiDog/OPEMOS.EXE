@@ -10,7 +10,7 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 const READY_MARKER: &str = "SteamOS NVIDIA Image Builder appliance\nREADY";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -177,6 +177,39 @@ enum InputFormat {
     Bzip2,
     Gzip,
     Xz,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InputProgress {
+    stage: String,
+    processed_bytes: u64,
+    total_bytes: u64,
+}
+
+type ProgressCallback<'a> = dyn Fn(&str, u64, u64) + 'a;
+
+struct ReportingReader<'a> {
+    inner: File,
+    stage: &'static str,
+    processed: u64,
+    total: u64,
+    next_report: u64,
+    progress: Option<&'a ProgressCallback<'a>>,
+}
+
+impl Read for ReportingReader<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let count = self.inner.read(buffer)?;
+        self.processed += count as u64;
+        if self.processed >= self.next_report || count == 0 {
+            if let Some(progress) = self.progress {
+                progress(self.stage, self.processed, self.total);
+            }
+            self.next_report = self.processed.saturating_add(8 * 1024 * 1024);
+        }
+        Ok(count)
+    }
 }
 
 impl InputFormat {
@@ -444,19 +477,42 @@ fn allocate_ssh_port() -> Result<u16, String> {
 }
 
 fn sha256_file(path: &Path) -> Result<String, String> {
+    sha256_file_with_progress(path, "hashing", None)
+}
+
+fn sha256_file_with_progress(
+    path: &Path,
+    stage: &str,
+    progress: Option<&ProgressCallback<'_>>,
+) -> Result<String, String> {
     let file = File::open(path)
         .map_err(|e| format!("Could not open {} for hashing: {e}", path.display()))?;
     let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 1024 * 1024];
+    let total = fs::metadata(path)
+        .map_err(|e| format!("Could not inspect {} for hashing: {e}", path.display()))?
+        .len();
+    let mut processed = 0_u64;
+    let mut next_report = 8 * 1024 * 1024;
     loop {
         let count = reader
             .read(&mut buffer)
             .map_err(|e| format!("Could not hash {}: {e}", path.display()))?;
         if count == 0 {
+            if let Some(progress) = progress {
+                progress(stage, processed, total);
+            }
             break;
         }
         hasher.update(&buffer[..count]);
+        processed += count as u64;
+        if processed >= next_report {
+            if let Some(progress) = progress {
+                progress(stage, processed, total);
+            }
+            next_report = processed.saturating_add(8 * 1024 * 1024);
+        }
     }
     Ok(format!("{:x}", hasher.finalize()))
 }
@@ -488,6 +544,7 @@ fn normalize_input(
     source: &Path,
     runtime_dir: &Path,
     format: InputFormat,
+    progress: Option<&ProgressCallback<'_>>,
 ) -> Result<PathBuf, String> {
     if format == InputFormat::Raw {
         return Ok(source.to_path_buf());
@@ -495,6 +552,18 @@ fn normalize_input(
     let destination = runtime_dir.join("normalized-input.img");
     let source_file =
         File::open(source).map_err(|e| format!("Could not open the compressed input: {e}"))?;
+    let source_bytes = source_file
+        .metadata()
+        .map_err(|e| format!("Could not inspect the compressed input: {e}"))?
+        .len();
+    let source_reader = ReportingReader {
+        inner: source_file,
+        stage: "decompressing",
+        processed: 0,
+        total: source_bytes,
+        next_report: 0,
+        progress,
+    };
     let output_file = OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -503,15 +572,15 @@ fn normalize_input(
     let mut writer = BufWriter::new(output_file);
     let copied = match format {
         InputFormat::Bzip2 => io::copy(
-            &mut bzip2::read::BzDecoder::new(BufReader::new(source_file)),
+            &mut bzip2::read::BzDecoder::new(BufReader::new(source_reader)),
             &mut writer,
         ),
         InputFormat::Gzip => io::copy(
-            &mut flate2::read::GzDecoder::new(BufReader::new(source_file)),
+            &mut flate2::read::GzDecoder::new(BufReader::new(source_reader)),
             &mut writer,
         ),
         InputFormat::Xz => io::copy(
-            &mut xz2::read::XzDecoder::new(BufReader::new(source_file)),
+            &mut xz2::read::XzDecoder::new(BufReader::new(source_reader)),
             &mut writer,
         ),
         InputFormat::Raw => unreachable!(),
@@ -527,7 +596,10 @@ fn normalize_input(
     Ok(destination)
 }
 
-fn prepare_session(input_image: Option<&Path>) -> Result<ApplianceSession, String> {
+fn prepare_session(
+    input_image: Option<&Path>,
+    progress: Option<&ProgressCallback<'_>>,
+) -> Result<ApplianceSession, String> {
     let appliance = appliance_path();
     if !appliance.is_file() {
         return Err(format!(
@@ -629,19 +701,19 @@ fn prepare_session(input_image: Option<&Path>) -> Result<ApplianceSession, Strin
             .map_err(|e| format!("Could not initialize the user-image inspection fixture: {e}"))?;
         fixture
     };
-    let input_sha256_before = sha256_file(&input_image)?;
+    let input_sha256_before = sha256_file_with_progress(&input_image, "hashing-source", progress)?;
     let source_bytes = fs::metadata(&input_image)
         .map_err(|e| format!("Could not inspect the input size: {e}"))?
         .len();
     let input_format = detect_input_format(&input_image)?;
-    let attached_image = normalize_input(&input_image, &runtime_dir, input_format)?;
+    let attached_image = normalize_input(&input_image, &runtime_dir, input_format, progress)?;
     let image_bytes = fs::metadata(&attached_image)
         .map_err(|e| format!("Could not inspect the normalized image size: {e}"))?
         .len();
     let attached_sha256_before = if attached_image == input_image {
         input_sha256_before.clone()
     } else {
-        sha256_file(&attached_image)?
+        sha256_file_with_progress(&attached_image, "hashing-image", progress)?
     };
     let input_preparation = InputPreparation {
         source_format: input_format.name().into(),
@@ -1323,6 +1395,7 @@ fn check_builder_environment() -> BuilderEnvironment {
 #[tauri::command]
 fn start_appliance(
     path: String,
+    app: tauri::AppHandle,
     manager: tauri::State<'_, Mutex<ApplianceManager>>,
 ) -> Result<ApplianceStatus, String> {
     let input = fs::canonicalize(PathBuf::from(path))
@@ -1349,7 +1422,18 @@ fn start_appliance(
         }
         manager.session = None;
     }
-    let session = prepare_session(Some(&input))?;
+    let report_progress = |stage: &str, processed_bytes: u64, total_bytes: u64| {
+        let _ = app.emit_to(
+            "build-progress",
+            "input-progress",
+            InputProgress {
+                stage: stage.into(),
+                processed_bytes,
+                total_bytes,
+            },
+        );
+    };
+    let session = prepare_session(Some(&input), Some(&report_progress))?;
     let status = session_status(&session);
     manager.session = Some(session);
     Ok(status)
@@ -1694,7 +1778,10 @@ mod tests {
         let raw = root.join("raw.img");
         fs::write(&raw, PAYLOAD).expect("write raw fixture");
         assert_eq!(detect_input_format(&raw).unwrap(), InputFormat::Raw);
-        assert_eq!(normalize_input(&raw, &root, InputFormat::Raw).unwrap(), raw);
+        assert_eq!(
+            normalize_input(&raw, &root, InputFormat::Raw, None).unwrap(),
+            raw
+        );
 
         let bzip_source = root.join("compressed-but-named.img");
         let mut bzip = bzip2::write::BzEncoder::new(
@@ -1709,9 +1796,25 @@ mod tests {
         );
         let bzip_runtime = root.join("bzip-runtime");
         fs::create_dir(&bzip_runtime).unwrap();
-        let bzip_image = normalize_input(&bzip_source, &bzip_runtime, InputFormat::Bzip2)
-            .expect("normalize bzip fixture");
+        let reports = Mutex::new(Vec::new());
+        let report = |stage: &str, processed: u64, total: u64| {
+            reports
+                .lock()
+                .unwrap()
+                .push((stage.to_string(), processed, total));
+        };
+        let bzip_image = normalize_input(
+            &bzip_source,
+            &bzip_runtime,
+            InputFormat::Bzip2,
+            Some(&report),
+        )
+        .expect("normalize bzip fixture");
         assert_eq!(fs::read(bzip_image).unwrap(), PAYLOAD);
+        let reports = reports.into_inner().unwrap();
+        assert!(!reports.is_empty());
+        assert_eq!(reports.last().unwrap().0, "decompressing");
+        assert_eq!(reports.last().unwrap().1, reports.last().unwrap().2);
 
         let gzip_source = root.join("fixture.img.gz");
         let mut gzip = flate2::write::GzEncoder::new(
@@ -1726,7 +1829,7 @@ mod tests {
         );
         let gzip_runtime = root.join("gzip-runtime");
         fs::create_dir(&gzip_runtime).unwrap();
-        let gzip_image = normalize_input(&gzip_source, &gzip_runtime, InputFormat::Gzip)
+        let gzip_image = normalize_input(&gzip_source, &gzip_runtime, InputFormat::Gzip, None)
             .expect("normalize gzip fixture");
         assert_eq!(fs::read(gzip_image).unwrap(), PAYLOAD);
 
@@ -1738,7 +1841,7 @@ mod tests {
         assert_eq!(detect_input_format(&xz_source).unwrap(), InputFormat::Xz);
         let xz_runtime = root.join("xz-runtime");
         fs::create_dir(&xz_runtime).unwrap();
-        let xz_image = normalize_input(&xz_source, &xz_runtime, InputFormat::Xz)
+        let xz_image = normalize_input(&xz_source, &xz_runtime, InputFormat::Xz, None)
             .expect("normalize xz fixture");
         assert_eq!(fs::read(xz_image).unwrap(), PAYLOAD);
 
@@ -1781,7 +1884,7 @@ mod tests {
         encoder.finish().expect("finish live compressed fixture");
         fs::remove_file(raw_fixture).expect("remove intermediate live raw fixture");
         let mut session =
-            prepare_session(Some(&compressed_fixture)).expect("the appliance should start");
+            prepare_session(Some(&compressed_fixture), None).expect("the appliance should start");
         assert!(session.input_preparation.normalized);
         assert_eq!(session.input_preparation.source_format, "bzip2");
         assert_eq!(session.input_preparation.image_bytes, 8 * 1024 * 1024);

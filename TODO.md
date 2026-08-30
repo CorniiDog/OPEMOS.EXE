@@ -334,7 +334,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Decompress `.img.gz`.
 * [x] Decompress `.img.xz`.
 * [x] Stream decompression rather than loading the image into memory.
-* [ ] Show decompression progress.
+* [x] Show live source-hashing, compressed-byte, and normalized-image hashing progress.
 * [ ] Verify decompressed output size is sane.
 * [x] Compute and verify the normalized raw-image checksum.
 * [x] Keep original compressed input untouched and verify its checksum after the session.

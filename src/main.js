@@ -17,6 +17,20 @@ const elements = {
 let currentImage = null;
 let currentImageName = null;
 let hostReady = false;
+let progressReady = false;
+const mainWindow = getCurrentWebviewWindow();
+
+await mainWindow.listen("build-progress-ready", () => { progressReady = true; });
+
+async function waitForProgressWindow(progressWindow) {
+  progressReady = false;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    await progressWindow.emit("build-progress-probe");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (progressReady) return;
+  }
+  throw new Error("The build progress window did not become ready.");
+}
 
 function updateBuildButton() {
   elements.buildButton.disabled = !currentImage || !hostReady;
@@ -99,12 +113,18 @@ elements.buildButton.addEventListener("click", async () => {
     updateBuildButton();
     return;
   }
-  await progressWindow.emit("build-requested", { path: currentImage, name: currentImageName });
-  await progressWindow.show();
-  await progressWindow.setFocus();
+  try {
+    await progressWindow.show();
+    await progressWindow.setFocus();
+    await waitForProgressWindow(progressWindow);
+    await progressWindow.emit("build-requested", { path: currentImage, name: currentImageName });
+  } catch (error) {
+    elements.resultMessage.textContent = String(error);
+    elements.resultMessage.className = "result-message error";
+    updateBuildButton();
+  }
 });
 
-const mainWindow = getCurrentWebviewWindow();
 await mainWindow.listen("build-finished", (event) => {
   const { state, message } = event.payload;
   elements.resultMessage.textContent = message;
