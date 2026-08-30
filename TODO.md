@@ -469,7 +469,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Prefer published, provenance-bearing artifacts for normal users.
 * [x] Before allowing future injection, verify GitHub asset digests, the archive checksum, byte-identical embedded/external provenance, pinned Valve header-signature identity, exact module hashes, architecture, version, and vermagic.
 * [x] Resolve exact signed `nvidia-utils` and `lib32-nvidia-utils` inputs from the Arch Linux Archive without requiring their package releases to match; stage them through bounded cancellable downloads and keep signature trust pending until x86 appliance validation.
-* [ ] Package or immutably pin the support repository's offline installer and reviewed userspace signer policy as an application resource instead of accepting a user-selected support checkout in the normal workflow.
+* [x] Immutably pin the support repository's offline installer and reviewed userspace signer policy for the normal workflow: exact support commit, seven required paths, byte counts, SHA-256 hashes, safe staging, cancellation cleanup, and a versioned bundle manifest are enforced without accepting a user-selected checkout or moving branch.
 * [ ] Transfer the verified module/userspace inputs into the managed x86_64 appliance, prepare the minimal reviewed binary keyring, and consume the installer's structured validation/install result.
 * [ ] Stop the native mutation appliance without deleting its working qcow2, attach that working layer only to the x86_64 installer appliance, and mount the uniquely recognized `rootfs-A` plus matching `efi-A` at `<root>/boot`; never guess an A/B slot.
 * [ ] Record selected NVIDIA driver version in build manifest.

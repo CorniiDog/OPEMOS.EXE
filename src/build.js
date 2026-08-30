@@ -169,6 +169,8 @@ function showNvidiaResolutionProgress(progress) {
     setStatus("running", "Downloading 32-bit NVIDIA userspace", `${formatBytes(processed)}${total ? ` of ${formatBytes(total)}` : ""} transferred.`, 96.38 + ratio * 0.2, "Downloading");
   } else if (progress.stage === "downloading-lib32-nvidia-utils-signature") {
     setStatus("running", "Downloading 32-bit NVIDIA signature", "Staging the detached lib32-nvidia-utils signature for appliance verification.", 96.59, "Downloading");
+  } else if (progress.stage === "downloading-nvidia-installer") {
+    setStatus("running", "Preparing pinned NVIDIA installer", `Verified ${formatBytes(processed)} of ${formatBytes(total)} from the immutable support snapshot.`, 96.6 + ratio * 0.05, "Verifying");
   }
 }
 
@@ -403,6 +405,8 @@ async function runBuild(request) {
           addStageLog(`NVIDIA userspace: ${packageInput.name} ${packageInput.fullVersion}; SHA256 ${packageInput.packageSha256}.`);
         }
         addStageLog(`NVIDIA userspace signatures: ${userspace.signatureStatus}; exact packages are staged for the managed x86 installer.`);
+        const installer = await invoke("prepare_nvidia_installer_bundle");
+        addStageLog(`NVIDIA installer: pinned ${installer.repository}@${installer.commit}; ${installer.files.length} files verified.`);
         addStageLog("warning: NVIDIA injection is not enabled in this milestone; the verified module artifact and pending-signature userspace inputs remain disposable with this session.");
       } else {
         addStageLog(`warning: ${nvidiaResolution.message}`);

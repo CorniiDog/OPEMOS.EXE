@@ -32,6 +32,60 @@ const ARCH_ARCHIVE_INDEX_LIMIT: u64 = 8 * 1024 * 1024;
 const NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 512 * 1024 * 1024;
 const LIB32_NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 128 * 1024 * 1024;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
+const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
+const NVIDIA_INSTALLER_COMMIT: &str = "064b540d32dc22070a953724366e14b78a8b3460";
+
+struct PinnedInstallerFile {
+    path: &'static str,
+    sha256: &'static str,
+    bytes: u64,
+    executable: bool,
+}
+
+const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 7] = [
+    PinnedInstallerFile {
+        path: "bootstrap/install_to_root.sh",
+        sha256: "f35349b228bede8c73a6c0511ac9ee8ab2f4ea4a1b4c5710c9e527b8aec80c6f",
+        bytes: 11_903,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "bootstrap/prepare_nvidia_package_keyring.py",
+        sha256: "4b0fb99452e95bca66cf1e1a1e94396f023946885dc04016795c5b532eefbb33",
+        bytes: 2_995,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/common.sh",
+        sha256: "fa66c6d7d6569bfc95d7d7b971e4f7ba3bc5ac454294c42faf7e48fe28c63ec2",
+        bytes: 6_862,
+        executable: false,
+    },
+    PinnedInstallerFile {
+        path: "lib/run_in_process_group.py",
+        sha256: "06ada2883b18e40a8114861644e03bf59bc10b9bd8174a5437e47fc77a3f177f",
+        bytes: 250,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/validate_install_inputs.py",
+        sha256: "4f2ad25fb9ab90b367667372bf96683fe171427e5d0a210497becabbbfa87691",
+        bytes: 15_741,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/write_install_result.py",
+        sha256: "a0d66199d09f0ab0fea5901444461d25d9d443b3d01acdf3fdab34e83589f254",
+        bytes: 3_317,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "trust/nvidia-userspace-package-signers.json",
+        sha256: "9ac4de749f4d881bb177f45eb42dbef718bebcfe1d8702a9f4a06abc0a2b53c5",
+        bytes: 584,
+        executable: false,
+    },
+];
 
 #[derive(Serialize)]
 struct ImageInfo {
@@ -267,6 +321,33 @@ struct NvidiaUserspaceResolution {
     nvidia_version: String,
     signature_status: String,
     packages: Vec<NvidiaUserspacePackage>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaInstallerBundleFile {
+    path: String,
+    sha256: String,
+    bytes: u64,
+    executable: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaInstallerBundle {
+    schema_version: u32,
+    status: String,
+    reason: String,
+    message: String,
+    repository: String,
+    commit: String,
+    files: Vec<NvidiaInstallerBundleFile>,
+}
+
+#[derive(Clone)]
+struct NvidiaInstallerBundleState {
+    root: PathBuf,
+    report: NvidiaInstallerBundle,
 }
 
 #[derive(Clone, Serialize)]
@@ -560,6 +641,7 @@ struct ApplianceSession {
     target_system: Option<TargetSystemDiscovery>,
     nvidia_resolution: Option<NvidiaPublishedResolution>,
     nvidia_userspace: Option<NvidiaUserspaceResolution>,
+    nvidia_installer_bundle: Option<NvidiaInstallerBundleState>,
 }
 
 struct NvidiaBuildSession {
@@ -1691,6 +1773,7 @@ fn prepare_session(
         target_system: None,
         nvidia_resolution: None,
         nvidia_userspace: None,
+        nvidia_installer_bundle: None,
     })
 }
 
@@ -3143,6 +3226,242 @@ fn resolve_nvidia_userspace_for_version(
     };
     output_guard.armed = false;
     Ok(resolution)
+}
+
+fn validate_pinned_installer_contract() -> Result<u64, String> {
+    if NVIDIA_INSTALLER_COMMIT.len() != 40
+        || !NVIDIA_INSTALLER_COMMIT
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("Pinned NVIDIA installer commit is invalid.".into());
+    }
+    let mut paths = HashSet::new();
+    let mut total = 0_u64;
+    for file in &PINNED_INSTALLER_FILES {
+        let path = Path::new(file.path);
+        if file.path.is_empty()
+            || path
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            || !paths.insert(file.path)
+            || file.sha256.len() != 64
+            || !file.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || file.bytes == 0
+        {
+            return Err("Pinned NVIDIA installer file contract is invalid.".into());
+        }
+        total = total
+            .checked_add(file.bytes)
+            .ok_or("Pinned NVIDIA installer size overflowed.")?;
+    }
+    Ok(total)
+}
+
+fn download_pinned_installer_file(
+    client: &reqwest::blocking::Client,
+    file: &PinnedInstallerFile,
+    destination: &Path,
+    completed_before: u64,
+    total_bytes: u64,
+    cancel: &AtomicBool,
+    progress: &impl Fn(&str, u64, u64),
+) -> Result<(), String> {
+    if destination.exists() {
+        return Err(format!(
+            "Refusing to overwrite a staged NVIDIA installer file: {}",
+            destination.display()
+        ));
+    }
+    let parent = destination
+        .parent()
+        .ok_or("Pinned NVIDIA installer path has no parent.")?;
+    fs::create_dir_all(parent)
+        .map_err(|e| format!("Could not create NVIDIA installer directory: {e}"))?;
+    let partial = destination.with_file_name(format!(
+        ".{}.partial",
+        destination
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("Pinned NVIDIA installer filename is invalid.")?
+    ));
+    let mut partial_guard = PartialOutputGuard {
+        path: partial.clone(),
+        armed: true,
+    };
+    let url = format!(
+        "https://raw.githubusercontent.com/{NVIDIA_SUPPORT_REPOSITORY}/{NVIDIA_INSTALLER_COMMIT}/{}",
+        file.path
+    );
+    let mut response = client
+        .get(url)
+        .header("Accept", "application/octet-stream")
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|e| {
+            format!(
+                "Could not download pinned installer file {}: {e}",
+                file.path
+            )
+        })?;
+    if response
+        .content_length()
+        .is_some_and(|length| length != file.bytes)
+    {
+        return Err(format!(
+            "Pinned installer file {} has an unexpected download size.",
+            file.path
+        ));
+    }
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&partial)
+        .map_err(|e| format!("Could not stage pinned installer file {}: {e}", file.path))?;
+    let mut hasher = Sha256::new();
+    let mut downloaded = 0_u64;
+    let mut buffer = [0_u8; 32 * 1024];
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("NVIDIA installer bundle download cancelled.".into());
+        }
+        let count = response
+            .read(&mut buffer)
+            .map_err(|e| format!("Could not read pinned installer file {}: {e}", file.path))?;
+        if count == 0 {
+            break;
+        }
+        downloaded = downloaded
+            .checked_add(count as u64)
+            .filter(|value| *value <= file.bytes)
+            .ok_or_else(|| format!("Pinned installer file {} is too large.", file.path))?;
+        output
+            .write_all(&buffer[..count])
+            .map_err(|e| format!("Could not write pinned installer file {}: {e}", file.path))?;
+        hasher.update(&buffer[..count]);
+        progress(
+            "downloading-nvidia-installer",
+            completed_before + downloaded,
+            total_bytes,
+        );
+    }
+    if downloaded != file.bytes {
+        return Err(format!(
+            "Pinned installer file {} downloaded {downloaded} bytes; expected {}.",
+            file.path, file.bytes
+        ));
+    }
+    let digest = format!("{:x}", hasher.finalize());
+    if digest != file.sha256 {
+        return Err(format!(
+            "Pinned installer file {} failed SHA-256 verification.",
+            file.path
+        ));
+    }
+    output
+        .flush()
+        .map_err(|e| format!("Could not finish pinned installer file {}: {e}", file.path))?;
+    fs::rename(&partial, destination).map_err(|e| {
+        format!(
+            "Could not finalize pinned installer file {}: {e}",
+            file.path
+        )
+    })?;
+    partial_guard.armed = false;
+    Ok(())
+}
+
+fn prepare_pinned_nvidia_installer_bundle(
+    runtime_dir: &Path,
+    client: &reqwest::blocking::Client,
+    cancel: &AtomicBool,
+    progress: &impl Fn(&str, u64, u64),
+) -> Result<NvidiaInstallerBundleState, String> {
+    let total_bytes = validate_pinned_installer_contract()?;
+    let root = runtime_dir.join(format!("nvidia-installer-{NVIDIA_INSTALLER_COMMIT}"));
+    fs::create_dir(&root)
+        .map_err(|e| format!("Could not create pinned NVIDIA installer staging: {e}"))?;
+    let mut root_guard = StagingDirectoryGuard {
+        path: root.clone(),
+        armed: true,
+    };
+    let mut completed = 0_u64;
+    let mut files = Vec::new();
+    for file in &PINNED_INSTALLER_FILES {
+        let destination = root.join(file.path);
+        download_pinned_installer_file(
+            client,
+            file,
+            &destination,
+            completed,
+            total_bytes,
+            cancel,
+            progress,
+        )?;
+        completed += file.bytes;
+        files.push(NvidiaInstallerBundleFile {
+            path: file.path.into(),
+            sha256: file.sha256.into(),
+            bytes: file.bytes,
+            executable: file.executable,
+        });
+    }
+    let report = NvidiaInstallerBundle {
+        schema_version: 1,
+        status: "verified".into(),
+        reason: "pinned_installer_verified".into(),
+        message: format!(
+            "Downloaded and verified the pinned offline installer from support commit {NVIDIA_INSTALLER_COMMIT}."
+        ),
+        repository: NVIDIA_SUPPORT_REPOSITORY.into(),
+        commit: NVIDIA_INSTALLER_COMMIT.into(),
+        files,
+    };
+    let manifest = serde_json::to_vec_pretty(&report)
+        .map_err(|e| format!("Could not serialize NVIDIA installer manifest: {e}"))?;
+    let manifest_path = root.join("installer-bundle.json");
+    let staged_manifest = root.join(".installer-bundle.json.partial");
+    fs::write(&staged_manifest, manifest)
+        .map_err(|e| format!("Could not stage NVIDIA installer manifest: {e}"))?;
+    fs::rename(staged_manifest, manifest_path)
+        .map_err(|e| format!("Could not finalize NVIDIA installer manifest: {e}"))?;
+    progress("downloading-nvidia-installer", total_bytes, total_bytes);
+    root_guard.armed = false;
+    Ok(NvidiaInstallerBundleState { root, report })
+}
+
+fn validate_staged_nvidia_installer_bundle(
+    state: &NvidiaInstallerBundleState,
+) -> Result<(), String> {
+    if state.report.schema_version != 1
+        || state.report.status != "verified"
+        || state.report.repository != NVIDIA_SUPPORT_REPOSITORY
+        || state.report.commit != NVIDIA_INSTALLER_COMMIT
+        || state.report.files.len() != PINNED_INSTALLER_FILES.len()
+    {
+        return Err(
+            "Staged NVIDIA installer manifest no longer matches the pinned contract.".into(),
+        );
+    }
+    for pinned in &PINNED_INSTALLER_FILES {
+        let path = state.root.join(pinned.path);
+        let metadata = fs::symlink_metadata(&path).map_err(|e| {
+            format!(
+                "Could not inspect staged installer file {}: {e}",
+                pinned.path
+            )
+        })?;
+        if !metadata.file_type().is_file()
+            || metadata.len() != pinned.bytes
+            || sha256_file(&path)? != pinned.sha256
+        {
+            return Err(format!(
+                "Staged NVIDIA installer file no longer matches its pin: {}.",
+                pinned.path
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn nvidia_development_asset_name(spec: &NvidiaTargetBuildSpec) -> String {
@@ -5624,6 +5943,7 @@ async fn resolve_published_nvidia(
             .ok_or("Builder session ended before NVIDIA resolution could be recorded.")?;
         active.nvidia_resolution = Some(resolution.clone());
         active.nvidia_userspace = None;
+        active.nvidia_installer_bundle = None;
         Ok(resolution)
     })
     .await
@@ -5693,10 +6013,93 @@ async fn prepare_nvidia_userspace(
             .filter(|session| session.runtime_dir == runtime_dir)
             .ok_or("Builder session ended before NVIDIA userspace inputs could be recorded.")?;
         active.nvidia_userspace = Some(userspace.clone());
+        active.nvidia_installer_bundle = None;
         Ok(userspace)
     })
     .await
     .map_err(|error| format!("NVIDIA userspace preparation worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn prepare_nvidia_installer_bundle(
+    app: tauri::AppHandle,
+) -> Result<NvidiaInstallerBundle, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager_state = app.state::<Mutex<ApplianceManager>>();
+        let (runtime_dir, cancel) = {
+            let manager = manager_state
+                .lock()
+                .map_err(|_| "Appliance state lock is unavailable.")?;
+            let session = manager
+                .session
+                .as_ref()
+                .ok_or("The builder appliance is not running.")?;
+            session
+                .nvidia_resolution
+                .as_ref()
+                .filter(|resolution| resolution.status == "compatible")
+                .ok_or("A compatible published NVIDIA artifact must be verified first.")?;
+            let userspace = session
+                .nvidia_userspace
+                .as_ref()
+                .filter(|userspace| {
+                    userspace.status == "prepared"
+                        && userspace.signature_status == "pending-x86-validation"
+                        && userspace.packages.len() == 2
+                })
+                .ok_or("Exact NVIDIA userspace packages must be staged first.")?;
+            if let Some(bundle) = session.nvidia_installer_bundle.as_ref() {
+                validate_staged_nvidia_installer_bundle(bundle)?;
+                return Ok(bundle.report.clone());
+            }
+            let publication_version = session
+                .nvidia_resolution
+                .as_ref()
+                .and_then(|resolution| resolution.publication.as_ref())
+                .map(|publication| publication.nvidia_version.as_str())
+                .ok_or("Compatible NVIDIA resolution omitted publication metadata.")?;
+            if userspace.nvidia_version != publication_version {
+                return Err(
+                    "Staged NVIDIA userspace version does not match the publication.".into(),
+                );
+            }
+            (
+                session.runtime_dir.clone(),
+                manager.cancel_preparation.clone(),
+            )
+        };
+        let report_progress = |stage: &str, processed_bytes: u64, total_bytes: u64| {
+            let _ = app.emit_to(
+                "build-progress",
+                "nvidia-resolution-progress",
+                NvidiaResolutionProgress {
+                    stage: stage.into(),
+                    processed_bytes,
+                    total_bytes,
+                },
+            );
+        };
+        let bundle = prepare_pinned_nvidia_installer_bundle(
+            &runtime_dir,
+            &nvidia_http_client()?,
+            &cancel,
+            &report_progress,
+        )?;
+        validate_staged_nvidia_installer_bundle(&bundle)?;
+        let report = bundle.report.clone();
+        let mut manager = manager_state
+            .lock()
+            .map_err(|_| "Appliance state lock is unavailable.")?;
+        let active = manager
+            .session
+            .as_mut()
+            .filter(|session| session.runtime_dir == runtime_dir)
+            .ok_or("Builder session ended before the NVIDIA installer could be recorded.")?;
+        active.nvidia_installer_bundle = Some(bundle);
+        Ok(report)
+    })
+    .await
+    .map_err(|error| format!("NVIDIA installer preparation worker failed: {error}"))?
 }
 
 fn stop_session_process(session: &mut ApplianceSession) -> Result<(), String> {
@@ -6271,6 +6674,53 @@ mod tests {
                 .expect("select exact signed package");
             assert_eq!(filename, expected);
         }
+    }
+
+    #[test]
+    fn pinned_installer_contract_is_safe_and_versioned() {
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 41_652);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 7);
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "trust/nvidia-userspace-package-signers.json" && !file.executable
+        }));
+    }
+
+    #[test]
+    #[ignore = "downloads and verifies the immutable support-installer snapshot"]
+    fn live_pinned_nvidia_installer_bundle() {
+        struct TestDirectory(PathBuf);
+        impl Drop for TestDirectory {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TestDirectory(std::env::temp_dir().join(format!(
+            "steamos-builder-pinned-installer-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("test clock")
+                .as_nanos()
+        )));
+        fs::create_dir(&root.0).expect("create pinned installer test directory");
+        let cancel = AtomicBool::new(false);
+        let state = prepare_pinned_nvidia_installer_bundle(
+            &root.0,
+            &nvidia_http_client().expect("create HTTPS client"),
+            &cancel,
+            &|_, _, _| {},
+        )
+        .expect("download pinned installer bundle");
+        validate_staged_nvidia_installer_bundle(&state).expect("validate staged installer");
+        assert_eq!(state.report.status, "verified");
+        assert_eq!(state.report.commit, NVIDIA_INSTALLER_COMMIT);
+        assert_eq!(state.report.files.len(), PINNED_INSTALLER_FILES.len());
+        assert!(state.root.join("installer-bundle.json").is_file());
+        let serialized = serde_json::to_string(&state.report).expect("serialize installer report");
+        assert!(!serialized.contains(&root.0.to_string_lossy().to_string()));
     }
 
     #[test]
@@ -7009,6 +7459,7 @@ pub fn run() {
             assess_nvidia_target,
             resolve_published_nvidia,
             prepare_nvidia_userspace,
+            prepare_nvidia_installer_bundle,
             export_marker_image,
             stop_appliance,
             stop_nvidia_build_appliance,

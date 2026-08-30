@@ -79,6 +79,14 @@ session state. Their trust remains explicitly `pending-x86-validation`; the UI
 cannot provide alternate paths or promote them before the managed x86 installer
 checks the reviewed signer policy, package contents, and exact GSP firmware.
 
+The backend also stages the offline-root installer from immutable support commit
+`064b540d32dc22070a953724366e14b78a8b3460`. Its seven required scripts,
+helpers, and signer-policy files have embedded byte counts and SHA-256 pins;
+every file must match before a versioned bundle manifest is recorded. The
+normal workflow therefore does not accept a user-selected support checkout or
+follow a moving branch. Failed or cancelled downloads remove the entire partial
+bundle, and repeated preparation revalidates and reuses the session-owned copy.
+
 Marker-only exports use an explicit `-marker.img` suffix. The builder reserves
 the `-nvidia.img` label for a future output that has successfully installed and
 independently validated the complete NVIDIA payload.
