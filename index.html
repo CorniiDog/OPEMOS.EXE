@@ -1,1 +1,196 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SteamOS NVIDIA Builder</title><link rel="stylesheet" href="/src/styles.css"></head><body><main class="app-shell"><header><p class="eyebrow">SteamOS NVIDIA Image Builder</p><h1>Build an NVIDIA-ready SteamOS image</h1><p class="lead">Download Valve's official recovery image, then drag it into this window.</p></header><section id="drop-zone" class="drop-zone"><div class="drop-icon">⇩</div><strong>Drop SteamOS recovery image here</strong><span>.img, .img.bz2, .img.gz, or .img.xz</span><button id="choose-image" class="secondary">Choose Image…</button></section><section class="download-card"><div><h2>Need the official image?</h2><p>Open Valve's SteamOS download page, download the recovery image, then return here.</p><button id="open-valve" class="secondary">Open Valve Download Page</button></div><div class="guide"><div class="guide-shot"><span>Valve download-page guide</span><strong>Screenshot will be added here</strong></div><p class="guide-caption">Maintained screenshot showing the correct download control.</p></div></section><section id="selection-card" class="selection-card hidden"><div><p class="eyebrow">Selected image</p><h2 id="selected-name">No image selected</h2><p id="selected-path" class="path"></p></div><span id="selection-status" class="status">Ready</span></section><section id="build-card" class="build-card hidden"><button id="build-button" class="primary">Build NVIDIA SteamOS Image</button><div id="progress-wrap" class="progress-wrap hidden"><div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div><p id="progress-label">Preparing…</p></div><p id="result-message" class="result-message"></p></section><footer><p>Prototype UI — Fedora/QEMU image manipulation is not connected yet.</p></footer></main><script type="module" src="/src/main.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <title>SteamOS NVIDIA Builder</title>
+
+    <link
+        rel="stylesheet"
+        href="/src/styles.css"
+    >
+</head>
+
+<body>
+    <main class="app-shell">
+        <header>
+            <p class="eyebrow">
+                SteamOS NVIDIA Image Builder
+            </p>
+
+            <h1>
+                Build an NVIDIA-ready SteamOS image
+            </h1>
+
+            <p class="lead">
+                Download Valve's official recovery image,
+                then drag it into this window.
+            </p>
+        </header>
+
+        <section class="environment-card">
+            <div>
+                <p class="eyebrow">
+                    Builder environment
+                </p>
+
+                <h2 id="environment-title">
+                    Checking builder…
+                </h2>
+
+                <p id="environment-message">
+                    Checking QEMU availability.
+                </p>
+
+                <p
+                    id="environment-details"
+                    class="path"
+                ></p>
+            </div>
+
+            <span
+                id="environment-status"
+                class="status"
+            >
+                Checking
+            </span>
+        </section>
+
+        <section
+            id="drop-zone"
+            class="drop-zone"
+        >
+            <div class="drop-icon">
+                ⇩
+            </div>
+
+            <strong>
+                Drop SteamOS recovery image here
+            </strong>
+
+            <span>
+                .img, .img.bz2, .img.gz, or .img.xz
+            </span>
+
+            <button
+                id="choose-image"
+                class="secondary"
+            >
+                Choose Image…
+            </button>
+        </section>
+
+        <section class="download-card">
+            <div>
+                <h2>
+                    Need the official image?
+                </h2>
+
+                <p>
+                    Open Valve's SteamOS download page,
+                    download the recovery image,
+                    then return here.
+                </p>
+
+                <button
+                    id="open-valve"
+                    class="secondary"
+                >
+                    Open Valve Download Page
+                </button>
+            </div>
+
+            <div class="guide">
+                <div class="guide-shot">
+                    <span>
+                        Valve download-page guide
+                    </span>
+
+                    <strong>
+                        Screenshot will be added here
+                    </strong>
+                </div>
+
+                <p class="guide-caption">
+                    Maintained screenshot showing the correct download control.
+                </p>
+            </div>
+        </section>
+
+        <section
+            id="selection-card"
+            class="selection-card hidden"
+        >
+            <div>
+                <p class="eyebrow">
+                    Selected image
+                </p>
+
+                <h2 id="selected-name">
+                    No image selected
+                </h2>
+
+                <p
+                    id="selected-path"
+                    class="path"
+                ></p>
+            </div>
+
+            <span
+                id="selection-status"
+                class="status"
+            >
+                Ready
+            </span>
+        </section>
+
+        <section
+            id="build-card"
+            class="build-card hidden"
+        >
+            <button
+                id="build-button"
+                class="primary"
+            >
+                Build NVIDIA SteamOS Image
+            </button>
+
+            <div
+                id="progress-wrap"
+                class="progress-wrap hidden"
+            >
+                <div class="progress-track">
+                    <div
+                        id="progress-bar"
+                        class="progress-bar"
+                    ></div>
+                </div>
+
+                <p id="progress-label">
+                    Preparing…
+                </p>
+            </div>
+
+            <p
+                id="result-message"
+                class="result-message"
+            ></p>
+        </section>
+
+        <footer>
+            <p>
+                Prototype UI — Fedora/QEMU image manipulation is not connected yet.
+            </p>
+        </footer>
+    </main>
+
+    <script
+        type="module"
+        src="/src/main.js"
+    ></script>
+</body>
+</html>

@@ -23,6 +23,10 @@ fi
 
 log "Checking macOS development environment..."
 
+#
+# Xcode Command Line Tools
+#
+
 if ! xcode-select -p >/dev/null 2>&1; then
     log "Xcode Command Line Tools are required."
     log "Opening Apple's installer..."
@@ -35,6 +39,56 @@ if ! xcode-select -p >/dev/null 2>&1; then
 fi
 
 log "Xcode Command Line Tools found."
+
+#
+# Homebrew
+#
+
+if ! command -v brew >/dev/null 2>&1; then
+    log "Homebrew is not installed."
+    log "Installing Homebrew..."
+
+    NONINTERACTIVE=1 /bin/bash -c \
+        "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+fi
+
+#
+# Homebrew may have just been installed, so load its environment.
+#
+
+if [[ -x /opt/homebrew/bin/brew ]]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [[ -x /usr/local/bin/brew ]]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+fi
+
+command -v brew >/dev/null 2>&1 ||
+    die "Homebrew was installed but is not available in PATH."
+
+log "Homebrew: $(brew --version | head -n 1)"
+
+#
+# Node.js / npm
+#
+
+if ! command -v node >/dev/null 2>&1 ||
+   ! command -v npm >/dev/null 2>&1; then
+
+    log "Node.js/npm are not installed."
+    log "Installing Node.js..."
+
+    brew install node
+fi
+
+command -v node >/dev/null 2>&1 ||
+    die "Node.js was installed but is not available in PATH."
+
+command -v npm >/dev/null 2>&1 ||
+    die "npm was installed but is not available in PATH."
+
+#
+# Rust / Cargo
+#
 
 if ! command -v rustup >/dev/null 2>&1; then
     log "Rust is not installed."
@@ -58,19 +112,48 @@ command -v cargo >/dev/null 2>&1 ||
 command -v rustc >/dev/null 2>&1 ||
     die "rustc was installed but is not available in PATH."
 
-command -v node >/dev/null 2>&1 ||
-    die "Node.js is required. Install Node.js, then run this script again."
+#
+# QEMU
+#
 
-command -v npm >/dev/null 2>&1 ||
-    die "npm is required. Install Node.js/npm, then run this script again."
+case "$(uname -m)" in
+    arm64)
+        QEMU_BINARY="qemu-system-aarch64"
+        ;;
+    x86_64)
+        QEMU_BINARY="qemu-system-x86_64"
+        ;;
+    *)
+        die "Unsupported macOS architecture: $(uname -m)"
+        ;;
+esac
+
+if ! command -v "$QEMU_BINARY" >/dev/null 2>&1; then
+    log "QEMU is not installed."
+    log "Installing QEMU..."
+
+    brew install qemu
+fi
+
+command -v "$QEMU_BINARY" >/dev/null 2>&1 ||
+    die "QEMU was installed but ${QEMU_BINARY} is not available in PATH."
+
+#
+# Environment summary
+#
 
 log "Rust: $(rustc --version)"
 log "Cargo: $(cargo --version)"
 log "Node: $(node --version)"
 log "npm:  $(npm --version)"
+log "QEMU: $("$QEMU_BINARY" --version | head -n 1)"
+
+#
+# JavaScript dependencies
+#
 
 if [[ ! -d node_modules ]]; then
-    log "Installing JavaScript dependencies..."
+    log "Installing project JavaScript dependencies..."
 
     if [[ -f package-lock.json ]]; then
         npm ci
@@ -81,5 +164,10 @@ else
     log "JavaScript dependencies already present."
 fi
 
+#
+# Launch
+#
+
 log "Starting Tauri development mode..."
+
 exec npm run dev
