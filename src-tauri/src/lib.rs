@@ -1608,6 +1608,13 @@ mod tests {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main"
+                && payload.event() == tauri::webview::PageLoadEvent::Finished
+            {
+                let _ = webview.window().show();
+            }
+        })
         .manage(Mutex::new(ApplianceManager::default()))
         .setup(|_| {
             cleanup_abandoned_runtimes().map_err(std::io::Error::other)?;
