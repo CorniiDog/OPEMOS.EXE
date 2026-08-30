@@ -114,6 +114,10 @@ function formatBytes(bytes) {
 
 function showInputProgress(progress) {
   if (!running || cancelling) return;
+  if (progress.stage === "starting-output-validation") {
+    setStatus("running", "Starting output validation", "Booting a fresh appliance to inspect the exported image independently.", 98, "Validating");
+    return;
+  }
   if (progress.stage === "decompressing-output") {
     setStatus("running", "Normalizing compressed image", `Parallel decompressor produced ${formatBytes(progress.processedBytes)} of raw image data.`, 12, "Unzipping");
     return;
@@ -131,6 +135,12 @@ function showInputProgress(progress) {
     setStatus("running", "Verifying source integrity", `Confirming the original input remains unchanged: ${amount}.`, 88 + ratio * 2, "Hashing");
   } else if (progress.stage === "verifying-image-after") {
     setStatus("running", "Verifying image integrity", `Confirming the attached raw image remains unchanged: ${amount}.`, 90 + ratio * 2, "Hashing");
+  } else if (progress.stage === "exporting-image") {
+    setStatus("running", "Exporting raw image", `Flattening the verified working layer: ${amount}.`, 96 + ratio * 1.5, "Exporting");
+  } else if (progress.stage === "hashing-output") {
+    setStatus("running", "Validating exported image", `Hashing the independently attached raw output: ${amount}.`, 97.5 + ratio, "Validating");
+  } else if (progress.stage === "verifying-source-after-export") {
+    setStatus("running", "Rechecking original image", `Confirming the original input remains unchanged: ${amount}.`, 98.5 + ratio * 0.5, "Hashing");
   }
 }
 
@@ -216,7 +226,7 @@ async function cancelBuild() {
   catch (error) { addStageLog(`Shutdown warning: ${error}`); }
   setStatus("cancelled", "Build cancelled", "The original image was not modified.", 100);
   addStageLog("Build cancelled; disposable session stopped.");
-  await finish("cancelled", "Prototype build cancelled.");
+  await finish("cancelled", "Image build cancelled.");
 }
 
 async function runBuild(request) {
@@ -330,20 +340,20 @@ async function runBuild(request) {
     addStageLog(`Selected-image safety: original unchanged=${selectedMutation.inputUnchanged}; SHA256 ${selectedMutation.inputSha256After}.`);
     if (cancelling) return;
 
-    setStatus("running", "Creating prototype output", "Recording the successful disposable marker proof in the prototype result.", 97);
-    const output = await invoke("prototype_build", { path: request.path });
-    addStageLog(`Prototype output created: ${output}`);
-    setStatus("running", "Finalizing", "Stopping the disposable builder session.", 98);
-    await invoke("stop_appliance");
-    addStageLog("Builder session stopped.");
-    setStatus("complete", "Prototype complete", "Finder opened the generated prototype output.", 100);
-    await finish("complete", `Prototype created: ${output}`);
+    setStatus("running", "Exporting raw image", "Stopping the mutation VM, flattening its working layer, and validating the result in a fresh appliance.", 96, "Exporting");
+    const output = await invoke("export_marker_image");
+    addStageLog(`Exported image: ${output.path}; ${output.bytes} bytes; raw layout=${output.layoutScheme}.`);
+    addStageLog(`Build manifest: ${output.manifestPath}.`);
+    addStageLog(`Export validation: marker=${output.markerPath}; SHA256 ${output.sha256}.`);
+    addStageLog(`Source safety: original SHA256 ${output.sourceSha256}; unchanged=true.`);
+    setStatus("complete", "Marker image complete", "Finder opened the validated raw image.", 100);
+    await finish("complete", `Marker image created: ${output.path}`);
   } catch (error) {
     if (cancelling) return;
     addStageLog(`ERROR: ${error}`);
     try { await invoke("stop_appliance"); } catch (stopError) { addStageLog(`Shutdown warning: ${stopError}`); }
     setStatus("failed", "Build failed", String(error), 100);
-    await finish("failed", `Prototype build failed: ${error}`);
+    await finish("failed", `Image build failed: ${error}`);
   } finally {
     if (logTimer) clearInterval(logTimer);
     await refreshLogs();

@@ -8,7 +8,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        mpsc, Arc, Mutex,
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -119,6 +119,75 @@ struct UserMarkerMutation {
     input_unchanged: bool,
     working_read_only: bool,
     mounted: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportedImage {
+    path: String,
+    manifest_path: String,
+    bytes: u64,
+    sha256: String,
+    source_sha256: String,
+    layout_scheme: String,
+    marker_path: String,
+}
+
+struct MarkerManifestData<'a> {
+    input: &'a Path,
+    output: &'a Path,
+    input_preparation: &'a InputPreparation,
+    input_sha256: &'a str,
+    normalized_sha256: &'a str,
+    output_bytes: u64,
+    output_sha256: &'a str,
+    layout: &'a SteamOsLayoutDiscovery,
+}
+
+fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json::Value {
+    serde_json::json!({
+        "schemaVersion": 1,
+        "resultClass": "mutation-valid",
+        "application": {
+            "name": env!("CARGO_PKG_NAME"),
+            "version": env!("CARGO_PKG_VERSION"),
+            "commit": null
+        },
+        "builderProtocolVersion": "1",
+        "input": {
+            "filename": data.input.file_name().and_then(|value| value.to_str()).unwrap_or("unknown"),
+            "sourceFormat": data.input_preparation.source_format,
+            "normalizer": data.input_preparation.normalizer,
+            "sourceBytes": data.input_preparation.source_bytes,
+            "normalizedBytes": data.input_preparation.image_bytes,
+            "sourceSha256": data.input_sha256,
+            "normalizedSha256": data.normalized_sha256
+        },
+        "output": {
+            "filename": data.output.file_name().and_then(|value| value.to_str()).unwrap_or("unknown.img"),
+            "format": "raw",
+            "bytes": data.output_bytes,
+            "sha256": data.output_sha256
+        },
+        "steamos": {
+            "layoutScheme": data.layout.scheme,
+            "version": null,
+            "targetKernels": []
+        },
+        "integration": {
+            "milestone": "marker-only",
+            "nvidia": null,
+            "gamescope": null,
+            "modifiedPaths": ["/etc/steamos-nvidia-image-builder-test"]
+        },
+        "validation": {
+            "candidateAttachedReadOnly": true,
+            "layoutRecognized": data.layout.recognized,
+            "markerVerified": true,
+            "sourceUnchanged": true,
+            "passed": true
+        }
+    })
 }
 
 #[derive(Serialize)]
@@ -325,6 +394,19 @@ impl InputFormat {
 struct RuntimeGuard {
     path: PathBuf,
     armed: bool,
+}
+
+struct PartialOutputGuard {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl Drop for PartialOutputGuard {
+    fn drop(&mut self) {
+        if self.armed && self.path.is_file() {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
 }
 
 impl Drop for RuntimeGuard {
@@ -1219,6 +1301,8 @@ fn ssh_command(session: &impl GuestConnection) -> Result<Command, String> {
             "StrictHostKeyChecking=no",
             "-o",
             "UserKnownHostsFile=/dev/null",
+            "-o",
+            "LogLevel=ERROR",
             "builder@127.0.0.1",
         ]);
     Ok(command)
@@ -1230,11 +1314,13 @@ fn run_guest_command(session: &impl GuestConnection, command: &str) -> Result<St
         .output()
         .map_err(|e| format!("Could not run the structured guest command: {e}"))?;
     if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
         return Err(if detail.is_empty() {
             format!("Guest command exited with {}.", output.status)
         } else {
-            detail
+            format!("Guest command exited with {}: {detail}", output.status)
         });
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -1378,6 +1464,8 @@ fn scp_command(session: &impl GuestConnection) -> Result<Command, String> {
             "StrictHostKeyChecking=no",
             "-o",
             "UserKnownHostsFile=/dev/null",
+            "-o",
+            "LogLevel=ERROR",
         ]);
     Ok(command)
 }
@@ -1869,11 +1957,14 @@ SOURCE=/dev/disk/by-id/virtio-steamos-user-input
 WORK=/dev/disk/by-id/virtio-steamos-user-working
 MOUNT_DIR=/mnt/steamos-user-marker
 EXPECTED=$(printf 'SteamOS NVIDIA Image Builder marker\nprotocol=1\nmilestone=marker-only')
-for attempt in $(seq 1 50); do
+for attempt in $(seq 1 150); do
   test ! -b "$SOURCE" && break
   sleep 0.1
 done
-test ! -b "$SOURCE"
+if test -b "$SOURCE"; then
+  echo 'The read-only source device did not finish detaching within 15 seconds.' >&2
+  exit 1
+fi
 test -b "$WORK"
 TARGETS=$(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$WORK" | awk '$2 == "rootfs-A" && $3 == "btrfs" { print $1 }')
 test "$(printf '%s\n' "$TARGETS" | sed '/^$/d' | wc -l | tr -d ' ')" = 1
@@ -2004,6 +2095,420 @@ test "$MOUNTED" = 0"#;
         working_read_only: required("WORKING_READ_ONLY")? == "1",
         mounted: required("MOUNTED")? == "1",
     })
+}
+
+fn output_path_for_input(input: &Path) -> Result<PathBuf, String> {
+    let parent = input
+        .parent()
+        .ok_or("Could not determine the selected image folder.")?;
+    let filename = input
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or("The selected image filename is not valid UTF-8.")?;
+    let mut base = filename.to_string();
+    for suffix in [".bz2", ".gz", ".xz", ".img"] {
+        if base.to_ascii_lowercase().ends_with(suffix) {
+            base.truncate(base.len() - suffix.len());
+        }
+    }
+    if base.is_empty() {
+        base = "SteamOS".into();
+    }
+    for number in 1..=9999_u32 {
+        let suffix = if number == 1 {
+            String::new()
+        } else {
+            format!("-{number}")
+        };
+        let candidate = parent.join(format!("{base}-nvidia{suffix}.img"));
+        if !candidate.exists() && !manifest_path_for_output(&candidate).exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("Could not choose an unused output filename.".into())
+}
+
+fn manifest_path_for_output(output: &Path) -> PathBuf {
+    let mut path = output.as_os_str().to_os_string();
+    path.push(".manifest.json");
+    PathBuf::from(path)
+}
+
+fn write_json_file(path: &Path, value: &serde_json::Value) -> Result<(), String> {
+    let file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| format!("Could not create build manifest: {e}"))?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer_pretty(&mut writer, value)
+        .map_err(|e| format!("Could not serialize build manifest: {e}"))?;
+    writer
+        .write_all(b"\n")
+        .and_then(|_| writer.flush())
+        .and_then(|_| writer.get_ref().sync_all())
+        .map_err(|e| format!("Could not finish build manifest: {e}"))
+}
+
+fn parse_qemu_img_progress(line: &str) -> Option<f64> {
+    let end = line.rfind("/100%)")?;
+    let start = line[..end].rfind('(')? + 1;
+    line[start..end].trim().parse::<f64>().ok()
+}
+
+fn convert_working_image(
+    qemu_img: &Path,
+    source: &Path,
+    destination: &Path,
+    virtual_bytes: u64,
+    progress: Option<&ProgressCallback<'_>>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), String> {
+    let mut child = Command::new(qemu_img)
+        .args(["convert", "-p", "-f", "qcow2", "-O", "raw"])
+        .arg(source)
+        .arg(destination)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Could not start raw-image export: {e}"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or("Could not monitor raw-image export progress.")?;
+    let (sender, receiver) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        let mut buffer = [0_u8; 1024];
+        let mut pending = String::new();
+        let mut detail = String::new();
+        loop {
+            match stderr.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => {
+                    let chunk = String::from_utf8_lossy(&buffer[..count]);
+                    detail.push_str(&chunk);
+                    pending.push_str(&chunk);
+                    while let Some(index) = pending.find(['\r', '\n']) {
+                        let line = pending[..index].to_string();
+                        pending.drain(..=index);
+                        if let Some(percent) = parse_qemu_img_progress(&line) {
+                            let _ = sender.send(percent);
+                        }
+                    }
+                }
+                Err(error) => {
+                    detail.push_str(&format!("\nCould not read export progress: {error}"));
+                    break;
+                }
+            }
+        }
+        if let Some(percent) = parse_qemu_img_progress(&pending) {
+            let _ = sender.send(percent);
+        }
+        detail
+    });
+    let status = loop {
+        if cancel.is_some_and(|value| value.load(Ordering::Relaxed)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            return Err("Image export cancelled.".into());
+        }
+        while let Ok(percent) = receiver.try_recv() {
+            if let Some(progress) = progress {
+                let processed = ((percent / 100.0) * virtual_bytes as f64) as u64;
+                progress(
+                    "exporting-image",
+                    processed.min(virtual_bytes),
+                    virtual_bytes,
+                );
+            }
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| format!("Could not inspect raw-image export: {e}"))?
+        {
+            break status;
+        }
+        thread::sleep(Duration::from_millis(150));
+    };
+    let detail = reader
+        .join()
+        .map_err(|_| "Raw-image export progress worker failed.".to_string())?;
+    if !status.success() {
+        return Err(if detail.trim().is_empty() {
+            format!("Raw-image export failed with {status}.")
+        } else {
+            format!("Raw-image export failed: {}", detail.trim())
+        });
+    }
+    if let Some(progress) = progress {
+        progress("exporting-image", virtual_bytes, virtual_bytes);
+    }
+    let output =
+        File::open(destination).map_err(|e| format!("Could not open the exported image: {e}"))?;
+    output
+        .sync_all()
+        .map_err(|e| format!("Could not flush the exported image: {e}"))
+}
+
+fn verify_marker_from_validation_overlay(session: &ImageInspectionSession) -> Result<(), String> {
+    qmp_remove_user_input(session)?;
+    const VERIFY_COMMAND: &str = r#"set -eu
+SOURCE=/dev/disk/by-id/virtio-steamos-user-input
+WORK=/dev/disk/by-id/virtio-steamos-user-working
+MOUNT_DIR=/mnt/steamos-export-validation
+EXPECTED=$(printf 'SteamOS NVIDIA Image Builder marker\nprotocol=1\nmilestone=marker-only')
+for attempt in $(seq 1 150); do
+  test ! -b "$SOURCE" && break
+  sleep 0.1
+done
+if test -b "$SOURCE"; then
+  echo 'The exported-image source device did not finish detaching within 15 seconds.' >&2
+  exit 1
+fi
+test -b "$WORK"
+TARGETS=$(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$WORK" | awk '$2 == "rootfs-A" && $3 == "btrfs" { print $1 }')
+test "$(printf '%s\n' "$TARGETS" | sed '/^$/d' | wc -l | tr -d ' ')" = 1
+TARGET=$(printf '%s\n' "$TARGETS" | sed '/^$/d')
+sudo blockdev --setro "$WORK"
+sudo mkdir -p "$MOUNT_DIR"
+cleanup_validation() {
+  findmnt -rn -M "$MOUNT_DIR" >/dev/null 2>&1 && sudo umount "$MOUNT_DIR" || true
+}
+trap cleanup_validation EXIT
+sudo mount -o ro "$TARGET" "$MOUNT_DIR"
+test "$(sudo cat "$MOUNT_DIR/etc/steamos-nvidia-image-builder-test")" = "$EXPECTED"
+sudo umount "$MOUNT_DIR"
+trap - EXIT
+test "$(sudo blockdev --getro "$WORK")" = 1
+! findmnt -rn -S "$TARGET" >/dev/null 2>&1"#;
+    run_guest_command(session, VERIFY_COMMAND).map(|_| ())
+}
+
+fn wait_for_ready(session: &mut ApplianceSession, cancel: &AtomicBool) -> Result<(), String> {
+    let deadline = Instant::now() + BOOT_TIMEOUT;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("Image export cancelled.".into());
+        }
+        if let Some(status) = session
+            .child
+            .try_wait()
+            .map_err(|e| format!("Could not inspect validation appliance: {e}"))?
+        {
+            return Err(format!(
+                "Validation appliance exited unexpectedly with {status}."
+            ));
+        }
+        if handshake(session).ok().as_deref() == Some(READY_MARKER) {
+            session.state = "ready".into();
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err("Validation appliance did not become ready within 120 seconds.".into());
+        }
+        thread::sleep(Duration::from_millis(750));
+    }
+}
+
+fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, String> {
+    let manager_state = app.state::<Mutex<ApplianceManager>>();
+    let (mut session, cancel) = {
+        let mut manager = manager_state
+            .lock()
+            .map_err(|_| "Appliance state lock is unavailable.")?;
+        if manager.preparing {
+            return Err("Another image operation is already running.".into());
+        }
+        let session = manager
+            .session
+            .take()
+            .ok_or("Builder appliance is not running.")?;
+        if session.state != "ready" {
+            manager.session = Some(session);
+            return Err("Builder appliance is not ready for image export.".into());
+        }
+        manager.cancel_preparation.store(false, Ordering::Relaxed);
+        manager.preparing = true;
+        (session, manager.cancel_preparation.clone())
+    };
+    let report_progress = |stage: &str, processed_bytes: u64, total_bytes: u64| {
+        let _ = app.emit_to(
+            "build-progress",
+            "input-progress",
+            InputProgress {
+                stage: stage.into(),
+                processed_bytes,
+                total_bytes,
+            },
+        );
+    };
+    let result = (|| {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("Image export cancelled.".into());
+        }
+        run_guest_command(
+            &ImageInspectionSession::from(&session),
+            "set -eu; sync; WORK=/dev/disk/by-id/virtio-steamos-user-working; test \"$(sudo blockdev --getro \"$WORK\")\" = 1; ! findmnt -rn -S \"$WORK\" >/dev/null 2>&1",
+        )?;
+        stop_session_process(&mut session)?;
+        let final_path = output_path_for_input(&session.input_image)?;
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| format!("System clock error: {e}"))?
+            .as_nanos();
+        let partial_name = format!(
+            ".{}.partial-{}-{timestamp}",
+            final_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("steamos-nvidia.img"),
+            std::process::id()
+        );
+        let partial_path = final_path
+            .parent()
+            .ok_or("Could not determine the output folder.")?
+            .join(partial_name);
+        let mut partial_guard = PartialOutputGuard {
+            path: partial_path.clone(),
+            armed: true,
+        };
+        let qemu_img = find_binary("qemu-img").ok_or("qemu-img is required for image export.")?;
+        convert_working_image(
+            &qemu_img,
+            &session.working_image,
+            &partial_path,
+            session.input_preparation.image_bytes,
+            Some(&report_progress),
+            Some(&cancel),
+        )?;
+        let exported_bytes = fs::metadata(&partial_path)
+            .map_err(|e| format!("Could not inspect the exported image: {e}"))?
+            .len();
+        if exported_bytes != session.input_preparation.image_bytes {
+            return Err(format!(
+                "Exported image size mismatch: expected {}, received {exported_bytes}.",
+                session.input_preparation.image_bytes
+            ));
+        }
+        stop_session(&mut session)?;
+
+        let validation_progress = |stage: &str, processed: u64, total: u64| {
+            let mapped = match stage {
+                "hashing-source" | "verifying-source-after" => "hashing-output",
+                other => other,
+            };
+            report_progress(mapped, processed, total);
+        };
+        report_progress("starting-output-validation", 0, 1);
+        let mut validation = prepare_session(
+            Some(&partial_path),
+            Some(&validation_progress),
+            Some(&cancel),
+        )?;
+        wait_for_ready(&mut validation, &cancel)?;
+        let validation_snapshot = ImageInspectionSession::from(&validation);
+        let inspection = inspect_user_image(
+            &validation_snapshot,
+            Some(&validation_progress),
+            Some(&cancel),
+        )?;
+        if !inspection.layout.recognized {
+            return Err(format!(
+                "Exported image no longer matches the supported Valve layout: {}",
+                inspection.layout.issues.join(" ")
+            ));
+        }
+        if inspection.disk_bytes != exported_bytes || !inspection.read_only {
+            return Err("Exported image failed independent size/read-only validation.".into());
+        }
+        verify_marker_from_validation_overlay(&validation_snapshot)?;
+        let output_sha256 = inspection.source_sha256_after.clone();
+        if output_sha256 == session.attached_sha256_before {
+            return Err("Exported image hash matches the unmodified source; marker changes were not preserved.".into());
+        }
+        stop_session(&mut validation)?;
+
+        let source_sha256 = sha256_file_with_progress(
+            &session.input_image,
+            "verifying-source-after-export",
+            Some(&report_progress),
+            Some(&cancel),
+        )?;
+        if source_sha256 != session.input_sha256_before {
+            return Err(format!(
+                "Original input changed during export (before {}, after {source_sha256}).",
+                session.input_sha256_before
+            ));
+        }
+        if final_path.exists() {
+            return Err(format!(
+                "The chosen output path appeared during export: {}",
+                final_path.display()
+            ));
+        }
+        let final_manifest_path = manifest_path_for_output(&final_path);
+        if final_manifest_path.exists() {
+            return Err(format!(
+                "The chosen manifest path appeared during export: {}",
+                final_manifest_path.display()
+            ));
+        }
+        let partial_manifest_path = manifest_path_for_output(&partial_path);
+        let manifest = marker_build_manifest(MarkerManifestData {
+            input: &session.input_image,
+            output: &final_path,
+            input_preparation: &session.input_preparation,
+            input_sha256: &source_sha256,
+            normalized_sha256: &session.attached_sha256_before,
+            output_bytes: exported_bytes,
+            output_sha256: &output_sha256,
+            layout: &inspection.layout,
+        });
+        let mut manifest_guard = PartialOutputGuard {
+            path: partial_manifest_path.clone(),
+            armed: true,
+        };
+        write_json_file(&partial_manifest_path, &manifest)?;
+        fs::rename(&partial_path, &final_path)
+            .map_err(|e| format!("Could not finalize the exported image: {e}"))?;
+        if let Err(error) = fs::rename(&partial_manifest_path, &final_manifest_path) {
+            let rollback = fs::rename(&final_path, &partial_path);
+            return Err(if let Err(rollback_error) = rollback {
+                format!(
+                    "Could not finalize the build manifest ({error}); the image also could not be returned to its temporary name ({rollback_error})."
+                )
+            } else {
+                format!("Could not finalize the build manifest: {error}")
+            });
+        }
+        partial_guard.armed = false;
+        manifest_guard.armed = false;
+        #[cfg(target_os = "macos")]
+        let _ = Command::new("open").arg("-R").arg(&final_path).spawn();
+        Ok(ExportedImage {
+            path: final_path.to_string_lossy().into_owned(),
+            manifest_path: final_manifest_path.to_string_lossy().into_owned(),
+            bytes: exported_bytes,
+            sha256: output_sha256,
+            source_sha256,
+            layout_scheme: inspection.layout.scheme.unwrap_or_default(),
+            marker_path: "/etc/steamos-nvidia-image-builder-test".into(),
+        })
+    })();
+    if let Ok(mut manager) = manager_state.lock() {
+        manager.preparing = false;
+    }
+    result
+}
+
+#[tauri::command]
+async fn export_marker_image(app: tauri::AppHandle) -> Result<ExportedImage, String> {
+    tauri::async_runtime::spawn_blocking(move || export_marker_image_blocking(app))
+        .await
+        .map_err(|error| format!("Image export worker failed: {error}"))?
 }
 
 fn session_status(session: &ApplianceSession) -> ApplianceStatus {
@@ -2400,7 +2905,7 @@ async fn mutate_selected_marker(app: tauri::AppHandle) -> Result<UserMarkerMutat
     .map_err(|error| format!("Selected-image mutation worker failed: {error}"))?
 }
 
-fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, String> {
+fn stop_session_process(session: &mut ApplianceSession) -> Result<(), String> {
     if session
         .child
         .try_wait()
@@ -2424,6 +2929,8 @@ fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, Strin
                     "StrictHostKeyChecking=no",
                     "-o",
                     "UserKnownHostsFile=/dev/null",
+                    "-o",
+                    "LogLevel=ERROR",
                     "builder@127.0.0.1",
                     "sudo systemctl poweroff",
                 ])
@@ -2456,6 +2963,11 @@ fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, Strin
                 .map_err(|e| format!("Could not finish appliance shutdown: {e}"))?;
         }
     }
+    Ok(())
+}
+
+fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, String> {
+    stop_session_process(session)?;
     archive_and_remove_runtime(&session.runtime_dir)
 }
 
@@ -2562,26 +3074,6 @@ fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("Could not focus the build progress window: {e}"))
 }
 
-#[tauri::command]
-fn prototype_build(path: String) -> Result<String, String> {
-    let input = PathBuf::from(path);
-    if !input.is_file() || !supported_image(&input) {
-        return Err("The selected SteamOS image is no longer available or supported.".into());
-    }
-    let output = input
-        .parent()
-        .ok_or("Could not determine input folder")?
-        .join("SteamOS-NVIDIA-PROTOTYPE.txt");
-    fs::write(&output, format!("SteamOS NVIDIA Image Builder prototype\n\nInput image:\n{}\n\nThis is not a bootable image.\n", input.display())).map_err(|e| format!("Could not create prototype output: {e}"))?;
-    #[cfg(target_os = "macos")]
-    Command::new("open")
-        .arg("-R")
-        .arg(&output)
-        .spawn()
-        .map_err(|e| format!("Created output but Finder reveal failed: {e}"))?;
-    Ok(output.to_string_lossy().into_owned())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2605,6 +3097,88 @@ mod tests {
                 "{name} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn derives_non_overwriting_raw_output_names() {
+        let root = std::env::temp_dir().join(format!(
+            "steamos-builder-output-name-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("test clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("create output-name test directory");
+        let compressed = root.join("steamdeck-repair.img.bz2");
+        assert_eq!(
+            output_path_for_input(&compressed).unwrap(),
+            root.join("steamdeck-repair-nvidia.img")
+        );
+        fs::write(root.join("steamdeck-repair-nvidia.img"), b"occupied")
+            .expect("reserve first output name");
+        assert_eq!(
+            output_path_for_input(&compressed).unwrap(),
+            root.join("steamdeck-repair-nvidia-2.img")
+        );
+        assert_eq!(
+            output_path_for_input(&root.join("raw.img")).unwrap(),
+            root.join("raw-nvidia.img")
+        );
+        let manifest_only_input = root.join("manifest-only.img.xz");
+        fs::write(
+            manifest_path_for_output(&root.join("manifest-only-nvidia.img")),
+            b"occupied",
+        )
+        .expect("reserve first manifest name");
+        assert_eq!(
+            output_path_for_input(&manifest_only_input).unwrap(),
+            root.join("manifest-only-nvidia-2.img")
+        );
+        fs::remove_dir_all(root).expect("remove output-name test directory");
+    }
+
+    #[test]
+    fn parses_qemu_img_percentage_output() {
+        assert_eq!(parse_qemu_img_progress("    (42.50/100%)"), Some(42.5));
+        assert_eq!(parse_qemu_img_progress("not progress"), None);
+    }
+
+    #[test]
+    fn marker_manifest_is_versioned_and_omits_host_paths() {
+        let input = Path::new("/Users/private-user/Downloads/recovery.img.bz2");
+        let output = Path::new("/Users/private-user/Downloads/recovery-nvidia.img");
+        let preparation = InputPreparation {
+            source_format: "bzip2".into(),
+            normalizer: "sevenzip".into(),
+            normalized: true,
+            source_bytes: 10,
+            image_bytes: 20,
+        };
+        let layout = SteamOsLayoutDiscovery {
+            recognized: true,
+            scheme: Some("valve-recovery-a".into()),
+            roles: Vec::new(),
+            issues: Vec::new(),
+        };
+        let manifest = marker_build_manifest(MarkerManifestData {
+            input,
+            output,
+            input_preparation: &preparation,
+            input_sha256: "input-hash",
+            normalized_sha256: "normalized-hash",
+            output_bytes: 20,
+            output_sha256: "output-hash",
+            layout: &layout,
+        });
+        assert_eq!(manifest["schemaVersion"], 1);
+        assert_eq!(manifest["resultClass"], "mutation-valid");
+        assert_eq!(manifest["validation"]["passed"], true);
+        assert_eq!(manifest["input"]["filename"], "recovery.img.bz2");
+        assert_eq!(manifest["output"]["filename"], "recovery-nvidia.img");
+        let serialized = serde_json::to_string(&manifest).expect("serialize manifest fixture");
+        assert!(!serialized.contains("private-user"));
+        assert!(!serialized.contains("/Users/"));
     }
 
     #[test]
@@ -3013,10 +3587,10 @@ pub fn run() {
             verify_working_image,
             mutate_test_marker,
             mutate_selected_marker,
+            export_marker_image,
             stop_appliance,
             validate_image,
             open_progress_window,
-            prototype_build
         ])
         .build(tauri::generate_context!())
         .expect("error while building SteamOS NVIDIA Image Builder");

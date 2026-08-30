@@ -87,7 +87,7 @@ async function selectImage(path) {
     elements.dropZone.classList.remove("processing");
     elements.chooseImage.disabled = false;
     elements.dropTitle.textContent = currentImage ? "SteamOS image selected" : "Drop SteamOS recovery image here";
-    elements.dropMessage.textContent = currentImage ? "Review it below, then start the prototype build." : ".img, .img.bz2, .img.gz, or .img.xz";
+    elements.dropMessage.textContent = currentImage ? "Review it below, then build a separate marker-only image." : ".img, .img.bz2, .img.gz, or .img.xz";
   }
   updateBuildButton();
 }

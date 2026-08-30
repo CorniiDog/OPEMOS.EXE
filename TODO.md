@@ -20,7 +20,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] **Disposable runtime:** boot through a writable qcow2 overlay so the Fedora base remains pristine.
 * [x] **Guest handshake:** provision the guest with cloud-init and verify readiness through non-interactive SSH.
 * [x] **Backend integration:** Rust owns appliance startup, readiness polling, fixed guest operations, shutdown, and cleanup.
-* [ ] **Harmless image mutation:** pass a user-selected Valve recovery image to the guest, create a working copy, mount it safely, write a deterministic marker, unmount it, and return a modified image.
+* [ ] **Harmless image mutation:** pass a user-selected Valve recovery image to the guest, create a working copy, mount it safely, write a deterministic marker, unmount it, and return a validated modified image. (Implementation complete; first full-size export run pending.)
 * [ ] **NVIDIA integration prototype:** inject the project’s NVIDIA kernel-module/userspace support into a SteamOS recovery image without requiring manual post-install repair.
 * [ ] **Bootable alpha image:** generated image boots/install-recovery media successfully on at least one NVIDIA test machine.
 * [ ] **Beta:** repeatable builds, clean-image tests, rollback/error handling, and multiple NVIDIA hardware configurations.
@@ -92,7 +92,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Keep progress controls fixed while the log viewport absorbs window resizing.
 * [x] Keep the main workflow window compact and fixed-size while allowing the progress log window to expand from its minimum size.
 * [x] Start and stop the builder appliance automatically as part of the build workflow.
-* [x] Reveal prototype output in Finder on macOS.
+* [x] Reveal the validated raw marker image in Finder on macOS.
 * [x] Accept:
 
   * `.img`
@@ -101,8 +101,8 @@ The project is not yet producing a bootable modified SteamOS image.
   * `.img.xz`
 * [x] Reject unsupported file extensions early.
 * [x] Add project icon/assets.
-* [ ] Replace prototype build wording once the real backend path exists.
-* [x] Show distinct host, appliance, guest-handshake, input-image, and prototype-output states.
+* [x] Replace prototype text-output wording with marker-image export wording.
+* [x] Show distinct host, appliance, guest-handshake, input-image, export, validation, and output states.
 * [ ] Add a clear pre-build summary of exactly what will happen.
 * [ ] Display original image path and chosen output location separately.
 * [ ] Add user-selectable output path/name.
@@ -413,14 +413,14 @@ The project is not yet producing a bootable modified SteamOS image.
   * `/etc/steamos-nvidia-image-builder-test`
 * [x] Include deterministic marker content with protocol/milestone data and no host-private information.
 * [x] Unmount cleanly.
-* [ ] Detach image.
-* [ ] Return output image to host.
+* [x] Stop the mutation VM before flattening its qcow2 working layer so conversion never races an open QEMU writer.
+* [x] Return a separately named raw output image beside the selected input.
 * [x] Verify input checksum remains unchanged after working-layer mutation.
 * [x] Hot-unplug the guest-visible source before Btrfs mutation so duplicate filesystem UUIDs cannot redirect the mount.
 * [x] Restore Valve's Btrfs read-only subvolume/seeding state after modifying only the disposable overlay.
-* [ ] Verify output checksum differs.
-* [ ] Re-open output read-only and verify marker.
-* [ ] Make the UI report successful image mutation before beginning NVIDIA integration.
+* [x] Verify output checksum differs from the normalized unmodified source.
+* [x] Re-open the candidate output through a fresh appliance, rediscover its layout, and verify the marker read-only before finalizing its name.
+* [x] Make the UI report successful image mutation only after export validation succeeds.
 
 ---
 
@@ -511,24 +511,24 @@ The project is not yet producing a bootable modified SteamOS image.
 
 # 23. Output-image construction
 
-* [ ] Produce a distinct output filename.
-* [ ] Preserve raw `.img` output as the canonical first format.
+* [x] Produce a distinct, non-overwriting output filename.
+* [x] Preserve raw `.img` output as the canonical first format.
 * [ ] Decide whether to offer optional `.xz`, `.gz`, or `.bz2` compression.
-* [ ] Compute final SHA256.
-* [ ] Write sidecar build manifest.
+* [x] Compute final SHA256.
+* [x] Write a versioned marker-milestone sidecar build manifest atomically beside the output.
 * [ ] Distinguish `mutation-valid` output from `install-ready` output; require verified `rootfs-A`, `efi-A`, and `home` installer assets before using the latter status.
-* [ ] Include input hash, app version, appliance version, SteamOS version, NVIDIA version, Gamescope version, and modification summary.
+* [ ] Include input hash, app version, appliance version, SteamOS version, NVIDIA version, Gamescope version, and modification summary. (Marker schema currently includes hashes, app version, null/not-integrated placeholders, and modified paths; appliance/source detection remains.)
 * [ ] Never embed the user’s full host path or username into the output image unless explicitly needed.
-* [ ] Verify resulting GPT/filesystems after finalization.
+* [x] Verify the candidate raw image's GPT/filesystem roles before atomic finalization.
 * [ ] Verify output can be opened by standard flashing tools.
-* [ ] Reveal output in Finder/Explorer/file manager.
+* [x] Reveal output in Finder on the current macOS target.
 
 ---
 
 # 24. Output validation before success
 
-* [ ] Re-open final image read-only.
-* [ ] Re-run partition discovery.
+* [x] Re-open the candidate final image read-only through a fresh validation appliance.
+* [x] Re-run conservative Valve partition discovery.
 * [ ] Verify required NVIDIA kernel modules exist.
 * [ ] Verify expected NVIDIA userspace files exist.
 * [ ] Verify Gamescope modification exists when selected.
@@ -537,8 +537,8 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Verify no runtime SSH keys or Fedora guest secrets leaked into SteamOS output.
 * [ ] Verify no Fedora appliance files were copied into SteamOS accidentally.
 * [ ] Verify filesystem health.
-* [ ] Emit a final validation report.
-* [ ] Do not show “Build complete” unless validation passes.
+* [x] Emit the current marker-milestone validation report as the versioned sidecar manifest.
+* [x] Do not show “Build complete” unless candidate layout, marker, size, hashes, and source immutability validation pass.
 
 ---
 
@@ -887,19 +887,19 @@ The project is not yet producing a bootable modified SteamOS image.
 
 # 43. Build manifest
 
-* [ ] Define manifest schema.
-* [ ] Include application version/commit.
+* [x] Define marker-manifest schema version 1 with an explicit `mutation-valid` result class.
+* [ ] Include application version/commit. (Application version included; source commit pending.)
 * [ ] Include appliance version/hash.
-* [ ] Include input SHA256.
+* [x] Include input and normalized-image SHA256 values.
 * [ ] Include detected SteamOS version.
 * [ ] Include detected target kernel(s).
 * [ ] Include NVIDIA version/release source.
 * [ ] Include NVIDIA artifact checksums.
 * [ ] Include Gamescope version/artifact checksums.
-* [ ] Include all modified target paths.
-* [ ] Include final image SHA256.
+* [x] Include all modified target paths for the marker milestone.
+* [x] Include final image SHA256.
 * [ ] Include build timestamp only where nondeterminism is acceptable.
-* [ ] Save manifest beside output image.
+* [x] Save manifest beside output image without host directory paths or usernames.
 * [ ] Optionally place a copy inside generated SteamOS image for later diagnostics.
 
 ---
@@ -1200,8 +1200,8 @@ Before calling the project **beta**, verify:
 7. [x] Attach a synthetic disk image, lock it read-only, and inspect it without mounting.
 8. [x] Implement deterministic marker mutation on a synthetic working copy and prove source immutability.
 9. [x] Run the implemented read-only inspection path against a real user-supplied Valve recovery image and record its `valve-recovery-a` GPT/Btrfs layout.
-10. [ ] Produce first modified Valve-image working copy containing only a harmless marker.
-11. [ ] Validate output and input immutability automatically. (Input SHA-256 preservation is implemented; output validation remains.)
+10. [x] Produce first modified Valve-image working copy containing only a harmless marker.
+11. [ ] Validate durable output and input immutability automatically. (Implementation complete; first full-size real-image export run pending.)
 12. [ ] Only then begin NVIDIA support-repo integration.
 
 ---
