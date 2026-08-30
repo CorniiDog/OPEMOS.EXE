@@ -27,6 +27,14 @@ membership, metadata, and target-identity validation. They are always labeled
 `development-unverified` while Valve header-package signature verification is
 still pending. The normal build button does not invoke this command yet.
 
+The complete exact-target path has been exercised locally on Apple Silicon:
+the emulated x86_64 Fedora worker found the historical SteamOS 3.8.14 headers,
+built all five NVIDIA 575.64.05 modules with the exact target vermagic, returned
+the artifacts, and passed the independent host validation in 30 minutes 15
+seconds. That result remains `development-unverified`: the Valve header package
+was not signature-verified, and Fedora 44's GCC 16.2.1 differed from the GCC
+15.1.1 compiler recorded by the target kernel.
+
 ## Architecture
 
 The Tauri frontend invokes a fixed set of Rust commands; it does not pass arbitrary shell commands to the host or guest. Rust owns the QEMU child process and creates a unique runtime directory containing an ephemeral SSH identity, cloud-init seed, qcow2 overlay, writable UEFI variables, and `qemu.log`. The pristine Fedora appliance remains unchanged.

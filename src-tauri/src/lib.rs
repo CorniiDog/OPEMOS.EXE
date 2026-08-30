@@ -2013,6 +2013,9 @@ fn build_nvidia_for_target(
     let transfer_archive = session.runtime_dir().join("support-repository.tar.gz");
     run_checked(
         Command::new("tar")
+            // Prevent macOS tar from adding AppleDouble/xattr headers that GNU tar
+            // reports as unknown while unpacking the checkout in Fedora.
+            .env("COPYFILE_DISABLE", "1")
             .args(["-czf"])
             .arg(&transfer_archive)
             .args(["--exclude", ".git", "--exclude", "target", "-C"])

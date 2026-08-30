@@ -444,11 +444,13 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Validate the isolated x86_64 lifecycle on Apple Silicon under TCG (`57.40s` in the first successful local run).
 * [x] Add a controlled development build command that transfers an explicit support-repository checkout, streams the fixed offline-target build into managed logs, supports cancellation, and retrieves artifacts without exposing arbitrary guest commands.
 * [x] Validate returned development artifacts on the host for SHA-256, safe/exact archive membership, matching internal/external build metadata, requested target identity, and explicit unverified-header trust state.
-* [ ] Run a real offline-target build inside an x86_64 Fedora environment.
-* [ ] Confirm Valve still serves the exact historical headers package for the observed SteamOS 3.8.14 `valve24.4` kernel.
-* [ ] Confirm NVIDIA 575.64.05 produces all five modules with exact target vermagic.
+* [x] Run a real offline-target build inside an x86_64 Fedora environment (`30m15s` under TCG on Apple Silicon in the first successful local run).
+* [x] Confirm Valve still serves the exact historical headers package for the observed SteamOS 3.8.14 `valve24.4` kernel (SHA-256 `dd532330d2bb34d4ab6b00ffb249d245ec882841a37694ae703548dab6d09f17`; package signature verification remains pending).
+* [x] Confirm NVIDIA 575.64.05 produces all five modules with exact target vermagic.
 * [ ] Run the complete transaction/installer suite under Fedora with modern Bash.
 * [ ] Pin and verify Valve package signatures before treating an on-demand artifact as certified; until then label it development/unverified.
+* [ ] Reproduce Valve's GCC 15.1.1 kernel compiler for certified builds, or define and validate a documented compiler-mismatch policy; Fedora 44 currently supplies GCC 16.2.1 and the first successful development build emitted the NVIDIA mismatch warning.
+* [ ] Extend support build metadata with the support-repository commit, compiler/binutils versions, and builder-appliance version/hash; the first real artifact already records the NVIDIA source commit, header package/hash, module hashes, and vermagic.
 
 * [ ] Consume supported/certified logic from `open-gpu-kernel-modules-steamos-support` rather than duplicating compatibility rules in the image builder.
 * [ ] Define a machine-readable integration interface from the support repo.
