@@ -1,0 +1,2 @@
+Placeholder for a maintained screenshot showing where to click on Valve's official SteamOS download page.
+Do not replace this with a fabricated screenshot; add a real maintained screenshot before public release.
