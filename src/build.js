@@ -109,7 +109,14 @@ async function runBuild(request) {
     addStageLog(`Transfer: ${transfer.bytesVerified} bytes; guest SHA256 ${transfer.guestSha256}.`);
     if (cancelling) return;
 
-    setStatus("running", "Creating prototype output", "Validating the selected image and writing the prototype result.", 78);
+    setStatus("running", "Inspecting synthetic disk", "Preparing a dedicated test filesystem, locking it read-only, and inspecting its metadata.", 74);
+    const disk = await invoke("inspect_test_disk");
+    addStageLog(`Synthetic disk: ${disk.diskBytes} bytes; ${disk.partitionTable} partition table; read-only=${disk.readOnly}.`);
+    addStageLog(`Synthetic partition: offset ${disk.partitionStartBytes}; size ${disk.partitionBytes}; mounted=${disk.mounted}.`);
+    addStageLog(`Synthetic filesystem: ${disk.filesystem}; label ${disk.filesystemLabel}; UUID ${disk.filesystemUuid}.`);
+    if (cancelling) return;
+
+    setStatus("running", "Creating prototype output", "Validating the selected image and writing the prototype result.", 84);
     const output = await invoke("prototype_build", { path: request.path });
     addStageLog(`Prototype output created: ${output}`);
     setStatus("running", "Finalizing", "Stopping the disposable builder session.", 92);

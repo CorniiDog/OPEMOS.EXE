@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -58,6 +58,22 @@ struct TransferProof {
     bytes_verified: usize,
     guest_sha256: String,
     message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyntheticDiskInspection {
+    device: String,
+    disk_bytes: u64,
+    read_only: bool,
+    partition_table: String,
+    partition: String,
+    partition_start_bytes: u64,
+    partition_bytes: u64,
+    filesystem: String,
+    filesystem_label: String,
+    filesystem_uuid: String,
+    mounted: bool,
 }
 
 struct ApplianceSession {
@@ -370,6 +386,13 @@ fn prepare_session() -> Result<ApplianceSession, String> {
             .arg(&runtime_disk),
         "Could not create the disposable appliance overlay",
     )?;
+    let synthetic_disk = runtime_dir.join("synthetic-test.img");
+    OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&synthetic_disk)
+        .and_then(|file| file.set_len(64 * 1024 * 1024))
+        .map_err(|e| format!("Could not create the sparse synthetic test disk: {e}"))?;
     let seed_image = runtime_dir.join("seed.iso");
     run_checked(
         Command::new("hdiutil")
@@ -452,6 +475,15 @@ fn prepare_session() -> Result<ApplianceSession, String> {
             "file={},if=virtio,format=raw,readonly=on",
             seed_image.display()
         ))
+        .arg("-drive")
+        .arg(format!(
+            "file={},if=none,format=raw,id=synthetic",
+            synthetic_disk.display()
+        ))
+        .args([
+            "-device",
+            "virtio-blk-pci,drive=synthetic,serial=steamos-synthetic",
+        ])
         .args([
             "-device",
             "virtio-rng-pci",
@@ -538,7 +570,7 @@ printf 'ARCH=%s\n' "$(uname -m)"
 . /etc/os-release
 printf 'OS=%s\n' "$PRETTY_NAME"
 printf 'AVAILABLE=%s\n' "$(df -B1 --output=avail / | tail -n 1 | tr -d ' ')"
-for tool in bash lsblk blkid findmnt mount umount sha256sum stat cp sync; do
+for tool in bash lsblk blkid findmnt mount umount sha256sum stat cp sync sfdisk mkfs.ext4 blockdev; do
   command -v "$tool" >/dev/null 2>&1 && printf 'TOOL=%s\n' "$tool" || printf 'MISSING=%s\n' "$tool"
 done"#;
     let output = run_guest_command(session, HEALTH_COMMAND)?;
@@ -651,6 +683,78 @@ fn run_transfer_proof(session: &ApplianceSession) -> Result<TransferProof, Strin
         bytes_verified: returned.len(),
         guest_sha256,
         message: "Host-to-guest-to-host transfer verified byte-for-byte.".into(),
+    })
+}
+
+fn inspect_synthetic_disk(session: &ApplianceSession) -> Result<SyntheticDiskInspection, String> {
+    const INSPECT_COMMAND: &str = r#"set -eu
+DEVICE=/dev/disk/by-id/virtio-steamos-synthetic
+PART=/dev/disk/by-id/virtio-steamos-synthetic-part1
+test -b "$DEVICE"
+if findmnt -rn -S "$DEVICE" >/dev/null 2>&1 || findmnt -rn -S "$PART" >/dev/null 2>&1; then
+  echo 'Synthetic test device was unexpectedly mounted.' >&2
+  exit 1
+fi
+sudo blockdev --setrw "$DEVICE"
+printf 'label: dos\nunit: sectors\n\n2048,98304,83,*\n' | sudo sfdisk --wipe always "$DEVICE" >/dev/null
+for attempt in $(seq 1 20); do
+  test -b "$PART" && break
+  sleep 0.1
+done
+test -b "$PART"
+sudo mkfs.ext4 -q -F -L STEAMOS_TEST -U 11111111-2222-3333-4444-555555555555 "$PART"
+sync
+sudo blockdev --setro "$DEVICE"
+DISK_NODE=$(basename "$(readlink -f "$DEVICE")")
+PART_NODE=$(basename "$(readlink -f "$PART")")
+START_SECTORS=$(cat "/sys/class/block/$PART_NODE/start")
+MOUNTED=0
+findmnt -rn -S "$PART" >/dev/null 2>&1 && MOUNTED=1
+printf 'DEVICE=%s\n' "$DEVICE"
+printf 'DISK_BYTES=%s\n' "$(sudo blockdev --getsize64 "$DEVICE")"
+printf 'READ_ONLY=%s\n' "$(sudo blockdev --getro "$DEVICE")"
+printf 'PARTITION_TABLE=%s\n' "$(sudo blkid -p -s PTTYPE -o value "$DEVICE")"
+printf 'PARTITION=%s\n' "$PART"
+printf 'PARTITION_START_BYTES=%s\n' "$((START_SECTORS * 512))"
+printf 'PARTITION_BYTES=%s\n' "$(sudo blockdev --getsize64 "$PART")"
+printf 'FILESYSTEM=%s\n' "$(sudo blkid -s TYPE -o value "$PART")"
+printf 'FILESYSTEM_LABEL=%s\n' "$(sudo blkid -s LABEL -o value "$PART")"
+printf 'FILESYSTEM_UUID=%s\n' "$(sudo blkid -s UUID -o value "$PART")"
+printf 'MOUNTED=%s\n' "$MOUNTED"
+test "$(sudo blockdev --getro "$DEVICE")" = 1
+test "$MOUNTED" = 0
+test -n "$DISK_NODE""#;
+    let output = run_guest_command(session, INSPECT_COMMAND)?;
+    let mut values = std::collections::HashMap::new();
+    for line in output.lines() {
+        if let Some((key, value)) = line.split_once('=') {
+            values.insert(key, value);
+        }
+    }
+    let required = |key: &str| {
+        values
+            .get(key)
+            .copied()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| format!("Synthetic disk inspection omitted {key}."))
+    };
+    let parse_u64 = |key: &str| -> Result<u64, String> {
+        required(key)?
+            .parse::<u64>()
+            .map_err(|e| format!("Synthetic disk inspection returned invalid {key}: {e}"))
+    };
+    Ok(SyntheticDiskInspection {
+        device: required("DEVICE")?.to_string(),
+        disk_bytes: parse_u64("DISK_BYTES")?,
+        read_only: required("READ_ONLY")? == "1",
+        partition_table: required("PARTITION_TABLE")?.to_string(),
+        partition: required("PARTITION")?.to_string(),
+        partition_start_bytes: parse_u64("PARTITION_START_BYTES")?,
+        partition_bytes: parse_u64("PARTITION_BYTES")?,
+        filesystem: required("FILESYSTEM")?.to_string(),
+        filesystem_label: required("FILESYSTEM_LABEL")?.to_string(),
+        filesystem_uuid: required("FILESYSTEM_UUID")?.to_string(),
+        mounted: required("MOUNTED")? == "1",
     })
 }
 
@@ -863,6 +967,23 @@ fn verify_guest_transfer(
     run_transfer_proof(session)
 }
 
+#[tauri::command]
+fn inspect_test_disk(
+    manager: tauri::State<'_, Mutex<ApplianceManager>>,
+) -> Result<SyntheticDiskInspection, String> {
+    let manager = manager
+        .lock()
+        .map_err(|_| "Appliance state lock is unavailable.")?;
+    let session = manager
+        .session
+        .as_ref()
+        .ok_or("Builder appliance is not running.")?;
+    if session.state != "ready" {
+        return Err("Builder appliance is not ready for synthetic disk inspection.".into());
+    }
+    inspect_synthetic_disk(session)
+}
+
 fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, String> {
     if session
         .child
@@ -1037,6 +1158,16 @@ mod tests {
         assert!(!health.required_tools.is_empty());
         let transfer = run_transfer_proof(&session).expect("transfer proof should pass");
         assert_eq!(transfer.bytes_verified, 34);
+        let disk = inspect_synthetic_disk(&session).expect("synthetic disk inspection should pass");
+        assert_eq!(disk.disk_bytes, 64 * 1024 * 1024);
+        assert!(disk.read_only);
+        assert_eq!(disk.partition_table, "dos");
+        assert_eq!(disk.partition_start_bytes, 1024 * 1024);
+        assert_eq!(disk.partition_bytes, 48 * 1024 * 1024);
+        assert_eq!(disk.filesystem, "ext4");
+        assert_eq!(disk.filesystem_label, "STEAMOS_TEST");
+        assert_eq!(disk.filesystem_uuid, "11111111-2222-3333-4444-555555555555");
+        assert!(!disk.mounted);
         let runtime_dir = session.runtime_dir.clone();
         let archived_log = stop_session(&mut session)
             .expect("the ready appliance should stop and clean up")
@@ -1069,6 +1200,7 @@ pub fn run() {
             read_appliance_log,
             guest_health,
             verify_guest_transfer,
+            inspect_test_disk,
             stop_appliance,
             validate_image,
             prototype_build

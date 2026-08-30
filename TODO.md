@@ -346,6 +346,7 @@ The project is not yet producing a bootable modified SteamOS image.
 
 * [ ] Choose a safe high-performance transport for large recovery images.
 * [ ] Evaluate attaching the host working image directly as a QEMU block device.
+* [x] Prove direct QEMU virtio block attachment with an isolated sparse synthetic image.
 * [ ] Evaluate virtiofs/shared-folder approaches where supported.
 * [ ] Avoid copying multi-gigabyte images over SSH unless there is a compelling reason.
 * [ ] Mount/attach user image as read-only for initial inspection.
@@ -731,7 +732,7 @@ The project is not yet producing a bootable modified SteamOS image.
 
 ## Image tests
 
-* [ ] Create small synthetic disk-image fixtures.
+* [x] Create a deterministic sparse synthetic disk fixture with a DOS partition table and ext4 filesystem.
 * [ ] Test GPT discovery.
 * [ ] Test ext4/btrfs/etc. filesystem discovery as needed.
 * [ ] Test marker mutation without using Valve images in CI.
@@ -751,7 +752,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Add macOS build job.
 * [ ] Add Linux build job when Linux support begins.
 * [ ] Add Windows build job when Windows support begins.
-* [ ] Add synthetic appliance/image integration tests where CI virtualization permits.
+* [x] Add an opt-in live synthetic appliance/image integration test for local virtualization.
 * [ ] Do not require proprietary/Valve recovery images in public CI.
 * [ ] Cache safe dependencies without caching mutable secret/runtime state.
 
@@ -844,7 +845,7 @@ The project is not yet producing a bootable modified SteamOS image.
 
 * [x] Define initial protocol version `1`.
 * [x] Define the fixed health operation and structured host result.
-* [ ] Define inspect-image command.
+* [ ] Define the general user-image inspection command. (Structured synthetic inspection is complete.)
 * [ ] Define prepare-working-image command.
 * [ ] Define mutate-marker command.
 * [ ] Define integrate-NVIDIA command.
@@ -1150,7 +1151,7 @@ Before calling the project **beta**, verify:
 4. [x] Add graceful shutdown/cleanup.
 5. [x] Add one structured guest command such as `health`.
 6. [x] Add a tiny host↔guest file-transfer or block-attachment proof.
-7. [ ] Attach a synthetic disk image and inspect it read-only.
+7. [x] Attach a synthetic disk image, lock it read-only, and inspect it without mounting.
 8. [ ] Implement deterministic marker mutation on synthetic image.
 9. [ ] Run the same inspection path against a user-supplied Valve recovery image.
 10. [ ] Produce first modified Valve-image working copy containing only a harmless marker.
