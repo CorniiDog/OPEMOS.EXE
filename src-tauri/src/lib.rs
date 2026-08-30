@@ -2,7 +2,9 @@ use serde::Serialize;
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    thread,
+    time::Duration,
 };
 
 #[derive(Serialize)]
@@ -18,6 +20,7 @@ struct BuilderEnvironment {
     host_arch: String,
     qemu_binary: Option<String>,
     qemu_version: Option<String>,
+    qemu_launch_test: bool,
     message: String,
 }
 
@@ -90,6 +93,73 @@ fn qemu_version(path: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
+fn smoke_test_qemu(path: &Path) -> Result<(), String> {
+    let mut child = Command::new(path)
+        .args([
+            "-machine",
+            "none",
+            "-display",
+            "none",
+            "-monitor",
+            "none",
+            "-serial",
+            "none",
+            "-nodefaults",
+            "-S",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Could not start QEMU: {e}"))?;
+
+    thread::sleep(Duration::from_millis(350));
+
+    match child
+        .try_wait()
+        .map_err(|e| format!("Could not inspect QEMU process: {e}"))?
+    {
+        None => {
+            child
+                .kill()
+                .map_err(|e| format!("QEMU started but could not be stopped: {e}"))?;
+
+            child
+                .wait()
+                .map_err(|e| format!("Could not finish QEMU smoke test: {e}"))?;
+
+            Ok(())
+        }
+
+        Some(status) => {
+            let stderr = child
+                .stderr
+                .take()
+                .and_then(|mut stderr| {
+                    use std::io::Read;
+
+                    let mut text = String::new();
+                    stderr.read_to_string(&mut text).ok()?;
+
+                    Some(text)
+                })
+                .unwrap_or_default();
+
+            let stderr = stderr.trim();
+
+            if stderr.is_empty() {
+                Err(format!(
+                    "QEMU exited unexpectedly during startup with status {status}."
+                ))
+            } else {
+                Err(format!(
+                    "QEMU exited unexpectedly during startup: {stderr}"
+                ))
+            }
+        }
+    }
+}
+
 #[tauri::command]
 fn check_builder_environment() -> BuilderEnvironment {
     let host_os = std::env::consts::OS.to_string();
@@ -102,6 +172,7 @@ fn check_builder_environment() -> BuilderEnvironment {
             host_arch,
             qemu_binary: None,
             qemu_version: None,
+            qemu_launch_test: false,
             message: format!(
                 "{} is required before the builder appliance can run.",
                 qemu_binary_name()
@@ -111,13 +182,38 @@ fn check_builder_environment() -> BuilderEnvironment {
 
     let version = qemu_version(&qemu);
 
+    if version.is_none() {
+        return BuilderEnvironment {
+            ready: false,
+            host_os,
+            host_arch,
+            qemu_binary: Some(qemu.to_string_lossy().into_owned()),
+            qemu_version: None,
+            qemu_launch_test: false,
+            message: "QEMU was found, but its version could not be determined.".to_string(),
+        };
+    }
+
+    if let Err(error) = smoke_test_qemu(&qemu) {
+        return BuilderEnvironment {
+            ready: false,
+            host_os,
+            host_arch,
+            qemu_binary: Some(qemu.to_string_lossy().into_owned()),
+            qemu_version: version,
+            qemu_launch_test: false,
+            message: error,
+        };
+    }
+
     BuilderEnvironment {
         ready: true,
         host_os,
         host_arch,
         qemu_binary: Some(qemu.to_string_lossy().into_owned()),
         qemu_version: version,
-        message: "Builder environment is ready.".to_string(),
+        qemu_launch_test: true,
+        message: "Builder environment is ready. QEMU launch test passed.".to_string(),
     }
 }
 
@@ -160,14 +256,23 @@ fn prototype_build(path: String) -> Result<String, String> {
         );
     }
 
-    let parent = input.parent().ok_or("Could not determine input folder")?;
+    let parent = input
+        .parent()
+        .ok_or("Could not determine input folder")?;
 
     let output = parent.join("SteamOS-NVIDIA-PROTOTYPE.txt");
 
     fs::write(
         &output,
         format!(
-            "SteamOS NVIDIA Image Builder prototype\n\nInput image:\n{}\n\nThis is not a bootable image.\n",
+            concat!(
+                "SteamOS NVIDIA Image Builder prototype\n",
+                "\n",
+                "Input image:\n",
+                "{}\n",
+                "\n",
+                "This is not a bootable image.\n"
+            ),
             input.display()
         ),
     )
@@ -179,7 +284,9 @@ fn prototype_build(path: String) -> Result<String, String> {
             .arg("-R")
             .arg(&output)
             .spawn()
-            .map_err(|e| format!("Created output but Finder reveal failed: {e}"))?;
+            .map_err(|e| {
+                format!("Created output but Finder reveal failed: {e}")
+            })?;
     }
 
     Ok(output.to_string_lossy().into_owned())
@@ -196,5 +303,7 @@ pub fn run() {
             prototype_build
         ])
         .run(tauri::generate_context!())
-        .expect("error while running SteamOS NVIDIA Image Builder");
+        .expect(
+            "error while running SteamOS NVIDIA Image Builder",
+        );
 }
