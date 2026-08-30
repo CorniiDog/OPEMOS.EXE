@@ -4,3 +4,5 @@ src-tauri/target/
 builder/appliance/*.qcow2
 builder/appliance/*.raw
 builder/appliance/*.img
+builder/appliance/fedora-builder.qcow2
+builder/appliance/work/
