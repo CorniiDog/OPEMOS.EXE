@@ -6,48 +6,88 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 const valveDownloadPage =
     "https://store.steampowered.com/steamos/download/?ver=steamdeck";
 
-const $ = (selector) => document.querySelector(selector);
+const $ = (selector) =>
+    document.querySelector(selector);
 
-const environmentTitle = $("#environment-title");
-const environmentMessage = $("#environment-message");
-const environmentDetails = $("#environment-details");
-const environmentStatus = $("#environment-status");
+const environmentTitle =
+    $("#environment-title");
 
-const dropZone = $("#drop-zone");
-const chooseImage = $("#choose-image");
-const openValve = $("#open-valve");
+const environmentMessage =
+    $("#environment-message");
 
-const selectionCard = $("#selection-card");
-const selectedName = $("#selected-name");
-const selectedPath = $("#selected-path");
-const selectionStatus = $("#selection-status");
+const environmentDetails =
+    $("#environment-details");
 
-const buildCard = $("#build-card");
-const buildButton = $("#build-button");
+const environmentStatus =
+    $("#environment-status");
 
-const progressWrap = $("#progress-wrap");
-const progressBar = $("#progress-bar");
-const progressLabel = $("#progress-label");
+const dropZone =
+    $("#drop-zone");
 
-const resultMessage = $("#result-message");
+const chooseImage =
+    $("#choose-image");
+
+const openValve =
+    $("#open-valve");
+
+const selectionCard =
+    $("#selection-card");
+
+const selectedName =
+    $("#selected-name");
+
+const selectedPath =
+    $("#selected-path");
+
+const selectionStatus =
+    $("#selection-status");
+
+const buildCard =
+    $("#build-card");
+
+const buildButton =
+    $("#build-button");
+
+const progressWrap =
+    $("#progress-wrap");
+
+const progressBar =
+    $("#progress-bar");
+
+const progressLabel =
+    $("#progress-label");
+
+const resultMessage =
+    $("#result-message");
 
 let currentImage = null;
+let builderReady = false;
 
 async function checkBuilderEnvironment() {
     try {
         const environment =
             await invoke("check_builder_environment");
 
+        builderReady =
+            environment.ready;
+
         environmentMessage.textContent =
             environment.message;
 
+        const details = [
+            `${environment.host_os} / ${environment.host_arch}`,
+        ];
+
+        if (environment.qemu_version) {
+            details.push(environment.qemu_version);
+        }
+
+        if (!environment.appliance_present) {
+            details.push("Fedora appliance missing");
+        }
+
         environmentDetails.textContent =
-            `${environment.host_os} / ${environment.host_arch}` +
-            (
-                environment.qemu_version
-                    ? ` • ${environment.qemu_version}`
-                    : ""
-            );
+            details.join(" • ");
 
         if (environment.ready) {
             environmentTitle.textContent =
@@ -59,14 +99,18 @@ async function checkBuilderEnvironment() {
             environmentStatus.classList.remove("error");
         } else {
             environmentTitle.textContent =
-                "Builder dependency missing";
+                "Builder not ready";
 
             environmentStatus.textContent =
                 "Not Ready";
 
             environmentStatus.classList.add("error");
         }
+
+        updateBuildButton();
     } catch (error) {
+        builderReady = false;
+
         environmentTitle.textContent =
             "Environment check failed";
 
@@ -77,7 +121,14 @@ async function checkBuilderEnvironment() {
             "Error";
 
         environmentStatus.classList.add("error");
+
+        updateBuildButton();
     }
+}
+
+function updateBuildButton() {
+    buildButton.disabled =
+        !builderReady || !currentImage;
 }
 
 async function selectImage(path) {
@@ -105,6 +156,8 @@ async function selectImage(path) {
 
         resultMessage.textContent =
             "";
+
+        updateBuildButton();
     } catch (error) {
         currentImage =
             null;
@@ -128,6 +181,8 @@ async function selectImage(path) {
 
         resultMessage.className =
             "result-message error";
+
+        updateBuildButton();
     }
 }
 
@@ -167,7 +222,7 @@ openValve.addEventListener(
 buildButton.addEventListener(
     "click",
     async () => {
-        if (!currentImage) {
+        if (!currentImage || !builderReady) {
             return;
         }
 
@@ -196,7 +251,8 @@ buildButton.addEventListener(
                 `${percent}%`;
 
             await new Promise(
-                (resolve) => setTimeout(resolve, 300),
+                (resolve) =>
+                    setTimeout(resolve, 300),
             );
         }
 
@@ -224,8 +280,7 @@ buildButton.addEventListener(
             resultMessage.className =
                 "result-message error";
         } finally {
-            buildButton.disabled =
-                false;
+            updateBuildButton();
         }
     },
 );

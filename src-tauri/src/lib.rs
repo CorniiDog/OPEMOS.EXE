@@ -22,7 +22,18 @@ struct BuilderEnvironment {
     qemu_version: Option<String>,
     qemu_launch_test: bool,
     message: String,
+    appliance_present: bool,
+    appliance_path: String,
 }
+
+fn appliance_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri should have a repository parent")
+        .join("builder")
+        .join("appliance")
+        .join("fedora-builder.qcow2")
+    }
 
 fn supported_image(path: &Path) -> bool {
     let name = path
@@ -165,6 +176,10 @@ fn check_builder_environment() -> BuilderEnvironment {
     let host_os = std::env::consts::OS.to_string();
     let host_arch = std::env::consts::ARCH.to_string();
 
+    let appliance = appliance_path();
+    let appliance_present = appliance.is_file();
+    let appliance_path = appliance.to_string_lossy().into_owned();
+
     let Some(qemu) = find_qemu() else {
         return BuilderEnvironment {
             ready: false,
@@ -173,6 +188,8 @@ fn check_builder_environment() -> BuilderEnvironment {
             qemu_binary: None,
             qemu_version: None,
             qemu_launch_test: false,
+            appliance_present,
+            appliance_path,
             message: format!(
                 "{} is required before the builder appliance can run.",
                 qemu_binary_name()
@@ -190,6 +207,8 @@ fn check_builder_environment() -> BuilderEnvironment {
             qemu_binary: Some(qemu.to_string_lossy().into_owned()),
             qemu_version: None,
             qemu_launch_test: false,
+            appliance_present,
+            appliance_path,
             message: "QEMU was found, but its version could not be determined.".to_string(),
         };
     }
@@ -202,7 +221,23 @@ fn check_builder_environment() -> BuilderEnvironment {
             qemu_binary: Some(qemu.to_string_lossy().into_owned()),
             qemu_version: version,
             qemu_launch_test: false,
+            appliance_present,
+            appliance_path,
             message: error,
+        };
+    }
+
+    if !appliance_present {
+        return BuilderEnvironment {
+            ready: false,
+            host_os,
+            host_arch,
+            qemu_binary: Some(qemu.to_string_lossy().into_owned()),
+            qemu_version: version,
+            qemu_launch_test: true,
+            appliance_present: false,
+            appliance_path,
+            message: "QEMU is ready. Fedora builder appliance is missing.".to_string(),
         };
     }
 
@@ -213,7 +248,9 @@ fn check_builder_environment() -> BuilderEnvironment {
         qemu_binary: Some(qemu.to_string_lossy().into_owned()),
         qemu_version: version,
         qemu_launch_test: true,
-        message: "Builder environment is ready. QEMU launch test passed.".to_string(),
+        appliance_present: true,
+        appliance_path,
+        message: "Builder environment is ready.".to_string(),
     }
 }
 
