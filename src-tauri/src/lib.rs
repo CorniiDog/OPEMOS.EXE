@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     net::{TcpListener, TcpStream},
@@ -19,6 +20,14 @@ use tauri::{Emitter, Manager};
 const READY_MARKER: &str = "SteamOS NVIDIA Image Builder appliance\nREADY";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
 const NVIDIA_BUILD_BOOT_TIMEOUT: Duration = Duration::from_secs(600);
+const NVIDIA_RELEASES_API: &str = "https://api.github.com/repos/CorniiDog/open-gpu-kernel-modules-steamos-support/releases?per_page=100";
+const NVIDIA_RELEASE_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
+const NVIDIA_RESOLVER_SCHEMA: u32 = 2;
+const APPROVED_VALVE_SIGNER: &str = "889B5EBDDD505A683621900DAF1D2199EF0A3CCF";
+const RELEASES_RESPONSE_LIMIT: u64 = 4 * 1024 * 1024;
+const CHECKSUM_RESPONSE_LIMIT: u64 = 4 * 1024;
+const PROVENANCE_RESPONSE_LIMIT: u64 = 1024 * 1024;
+const NVIDIA_ARCHIVE_LIMIT: u64 = 512 * 1024 * 1024;
 
 #[derive(Serialize)]
 struct ImageInfo {
@@ -164,7 +173,7 @@ struct ValveTrustSigner {
     fingerprint: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NvidiaTargetReadiness {
     ready: bool,
@@ -173,6 +182,72 @@ struct NvidiaTargetReadiness {
     steamos_version: Option<String>,
     kernel_version: Option<String>,
     architecture: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    draft: bool,
+    prerelease: bool,
+    published_at: Option<String>,
+    assets: Vec<GithubReleaseAsset>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GithubReleaseAsset {
+    name: String,
+    browser_download_url: String,
+    size: u64,
+    digest: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PublishedReleaseIdentity {
+    steamos_version: String,
+    kernel_version: String,
+    nvidia_version: String,
+    tag: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaPublishedPublication {
+    tag: String,
+    steamos_version: String,
+    kernel_version: String,
+    nvidia_version: String,
+    published_at: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaPublishedArtifact {
+    archive_path: String,
+    checksum_path: String,
+    provenance_path: String,
+    archive_sha256: String,
+    trust: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaPublishedResolution {
+    schema_version: u32,
+    status: String,
+    reason: String,
+    message: String,
+    compatibility: Option<String>,
+    target: NvidiaTargetReadiness,
+    publication: Option<NvidiaPublishedPublication>,
+    artifact: Option<NvidiaPublishedArtifact>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaResolutionProgress {
+    stage: String,
+    processed_bytes: u64,
+    total_bytes: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -2120,6 +2195,637 @@ fn assess_nvidia_target_system(system: &TargetSystemDiscovery) -> NvidiaTargetRe
         kernel_version: Some(kernel_version),
         architecture: system.architecture.clone(),
     }
+}
+
+fn numeric_version(value: &str, components: std::ops::RangeInclusive<usize>) -> Option<Vec<u64>> {
+    let parts: Vec<_> = value.split('.').collect();
+    if !components.contains(&parts.len()) {
+        return None;
+    }
+    parts
+        .into_iter()
+        .map(|part| part.parse::<u64>().ok())
+        .collect()
+}
+
+fn published_release_identity(tag: &str) -> Option<PublishedReleaseIdentity> {
+    let remainder = tag.strip_prefix("steamos-")?;
+    let (steamos_version, remainder) = remainder.split_once("-nvidia-")?;
+    let (nvidia_version, kernel_version) = remainder.split_once("-k")?;
+    numeric_version(steamos_version, 3..=3)?;
+    numeric_version(nvidia_version, 2..=3)?;
+    if !valid_kernel_version(kernel_version) {
+        return None;
+    }
+    Some(PublishedReleaseIdentity {
+        steamos_version: steamos_version.into(),
+        kernel_version: kernel_version.into(),
+        nvidia_version: nvidia_version.into(),
+        tag: tag.into(),
+    })
+}
+
+fn select_published_nvidia_release(
+    target: &NvidiaTargetReadiness,
+    releases: &[GithubRelease],
+) -> Result<Option<(PublishedReleaseIdentity, GithubRelease, String)>, String> {
+    if !target.ready {
+        return Ok(None);
+    }
+    let target_steamos = target
+        .steamos_version
+        .as_deref()
+        .ok_or("Ready NVIDIA target omitted its SteamOS version.")?;
+    let target_kernel = target
+        .kernel_version
+        .as_deref()
+        .ok_or("Ready NVIDIA target omitted its kernel version.")?;
+    let target_version = numeric_version(target_steamos, 3..=3)
+        .ok_or("Ready NVIDIA target contains an invalid SteamOS version.")?;
+    let mut candidates = Vec::new();
+    for release in releases {
+        if release.draft || release.prerelease {
+            continue;
+        }
+        let Some(identity) = published_release_identity(&release.tag_name) else {
+            continue;
+        };
+        let steam_version =
+            numeric_version(&identity.steamos_version, 3..=3).expect("validated release version");
+        if steam_version[..2] != target_version[..2]
+            || steam_version > target_version
+            || identity.kernel_version != target_kernel
+        {
+            continue;
+        }
+        let nvidia_version =
+            numeric_version(&identity.nvidia_version, 2..=3).expect("validated NVIDIA version");
+        candidates.push((
+            steam_version,
+            nvidia_version,
+            release.published_at.clone().unwrap_or_default(),
+            identity,
+            release.clone(),
+        ));
+    }
+    candidates
+        .sort_by(|left, right| (&left.0, &left.1, &left.2).cmp(&(&right.0, &right.1, &right.2)));
+    Ok(candidates.pop().map(|(_, _, _, identity, release)| {
+        let compatibility = if identity.steamos_version == target_steamos {
+            "exact"
+        } else {
+            "same_series_fallback"
+        };
+        (identity, release, compatibility.into())
+    }))
+}
+
+fn published_asset_name(identity: &PublishedReleaseIdentity) -> String {
+    format!("nvidia-open-{}-x86_64.tar.gz", identity.tag)
+}
+
+fn expected_release_asset_url(tag: &str, name: &str) -> String {
+    format!("https://github.com/{NVIDIA_RELEASE_REPOSITORY}/releases/download/{tag}/{name}")
+}
+
+fn unique_release_asset<'a>(
+    release: &'a GithubRelease,
+    name: &str,
+) -> Result<Option<&'a GithubReleaseAsset>, String> {
+    let matches: Vec<_> = release
+        .assets
+        .iter()
+        .filter(|asset| asset.name == name)
+        .collect();
+    if matches.len() > 1 {
+        return Err(format!(
+            "Published NVIDIA release contains duplicate asset {name}."
+        ));
+    }
+    Ok(matches.into_iter().next())
+}
+
+fn github_sha256(asset: &GithubReleaseAsset) -> Result<String, String> {
+    let digest = asset
+        .digest
+        .as_deref()
+        .and_then(|value| value.strip_prefix("sha256:"))
+        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or_else(|| format!("GitHub did not provide a valid SHA-256 for {}.", asset.name))?;
+    Ok(digest.to_ascii_lowercase())
+}
+
+struct PublishedArchiveInspection {
+    build_info: Vec<u8>,
+    provenance: Vec<u8>,
+    module_hashes: HashMap<String, String>,
+}
+
+fn inspect_published_nvidia_archive(path: &Path) -> Result<PublishedArchiveInspection, String> {
+    const METADATA_LIMIT: u64 = 1024 * 1024;
+    const UNCOMPRESSED_LIMIT: u64 = 256 * 1024 * 1024;
+    let file = File::open(path)
+        .map_err(|e| format!("Could not open the published NVIDIA archive: {e}"))?;
+    let decoder = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+    let expected_modules = [
+        "nvidia-drm.ko",
+        "nvidia-modeset.ko",
+        "nvidia-peermem.ko",
+        "nvidia-uvm.ko",
+        "nvidia.ko",
+    ];
+    let mut build_info = None;
+    let mut provenance = None;
+    let mut module_hashes = HashMap::new();
+    let mut total_size = 0_u64;
+    let entries = archive
+        .entries()
+        .map_err(|e| format!("Published NVIDIA artifact is not a readable tar.gz archive: {e}"))?;
+    for entry in entries {
+        let mut entry = entry
+            .map_err(|e| format!("Could not inspect a published NVIDIA archive entry: {e}"))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("Published NVIDIA archive contains an invalid path: {e}"))?;
+        if path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err("Published NVIDIA archive contains an unsafe path.".into());
+        }
+        let name = path
+            .to_str()
+            .ok_or("Published NVIDIA archive contains a non-UTF-8 path.")?
+            .to_owned();
+        let kind = entry.header().entry_type();
+        if matches!(name.as_str(), "modules" | "modules/") && kind.is_dir() {
+            continue;
+        }
+        if !kind.is_file() {
+            return Err(format!(
+                "Published NVIDIA archive contains an unsupported entry: {name}."
+            ));
+        }
+        let size = entry.size();
+        total_size = total_size
+            .checked_add(size)
+            .filter(|value| *value <= UNCOMPRESSED_LIMIT)
+            .ok_or("Published NVIDIA archive expands beyond the safety limit.")?;
+        if name == "BUILD-INFO.txt" || name == "PROVENANCE.json" {
+            if size > METADATA_LIMIT {
+                return Err(format!("Published NVIDIA metadata is too large: {name}."));
+            }
+            let mut bytes = Vec::with_capacity(size as usize);
+            entry
+                .read_to_end(&mut bytes)
+                .map_err(|e| format!("Could not read {name} from the NVIDIA archive: {e}"))?;
+            let destination = if name == "BUILD-INFO.txt" {
+                &mut build_info
+            } else {
+                &mut provenance
+            };
+            if destination.replace(bytes).is_some() {
+                return Err(format!("Published NVIDIA archive repeats {name}."));
+            }
+            continue;
+        }
+        let Some(module_name) = name.strip_prefix("modules/") else {
+            return Err(format!(
+                "Published NVIDIA archive contains an unexpected entry: {name}."
+            ));
+        };
+        if !expected_modules.contains(&module_name) || module_name.contains('/') {
+            return Err(format!(
+                "Published NVIDIA archive contains an unexpected module: {name}."
+            ));
+        }
+        let mut hasher = Sha256::new();
+        io::copy(&mut entry, &mut hasher)
+            .map_err(|e| format!("Could not hash {name} from the NVIDIA archive: {e}"))?;
+        if module_hashes
+            .insert(module_name.into(), format!("{:x}", hasher.finalize()))
+            .is_some()
+        {
+            return Err(format!("Published NVIDIA archive repeats {name}."));
+        }
+    }
+    if module_hashes.len() != expected_modules.len()
+        || !expected_modules
+            .iter()
+            .all(|name| module_hashes.contains_key(*name))
+    {
+        return Err("Published NVIDIA archive does not contain the exact five-module set.".into());
+    }
+    Ok(PublishedArchiveInspection {
+        build_info: build_info.ok_or("Published NVIDIA archive omitted BUILD-INFO.txt.")?,
+        provenance: provenance.ok_or("Published NVIDIA archive omitted PROVENANCE.json.")?,
+        module_hashes,
+    })
+}
+
+fn nvidia_http_client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .user_agent("steamos-nvidia-image-builder/0.1")
+        .connect_timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(15 * 60))
+        .build()
+        .map_err(|e| format!("Could not initialize secure NVIDIA release downloads: {e}"))
+}
+
+fn read_http_response_limited(
+    mut response: reqwest::blocking::Response,
+    limit: u64,
+    description: &str,
+) -> Result<Vec<u8>, String> {
+    response = response
+        .error_for_status()
+        .map_err(|e| format!("Could not download {description}: {e}"))?;
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit)
+    {
+        return Err(format!("{description} exceeds the download safety limit."));
+    }
+    let mut bytes = Vec::new();
+    response
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Could not read {description}: {e}"))?;
+    if bytes.len() as u64 > limit {
+        return Err(format!("{description} exceeds the download safety limit."));
+    }
+    Ok(bytes)
+}
+
+fn fetch_github_releases(client: &reqwest::blocking::Client) -> Result<Vec<GithubRelease>, String> {
+    let response = client
+        .get(NVIDIA_RELEASES_API)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .map_err(|e| format!("Could not query published NVIDIA releases: {e}"))?;
+    let bytes = read_http_response_limited(response, RELEASES_RESPONSE_LIMIT, "release metadata")?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| format!("Published NVIDIA release metadata is invalid JSON: {e}"))
+}
+
+struct PublishedDownloadContext<'a> {
+    client: &'a reqwest::blocking::Client,
+    cancel: &'a AtomicBool,
+    progress: &'a dyn Fn(&str, u64, u64),
+}
+
+fn download_release_asset(
+    context: &PublishedDownloadContext<'_>,
+    asset: &GithubReleaseAsset,
+    expected_url: &str,
+    destination: &Path,
+    limit: u64,
+    stage: &str,
+) -> Result<String, String> {
+    if asset.browser_download_url != expected_url {
+        return Err(format!(
+            "GitHub returned an unexpected download URL for {}.",
+            asset.name
+        ));
+    }
+    if asset.size > limit {
+        return Err(format!(
+            "Published asset {} exceeds the safety limit.",
+            asset.name
+        ));
+    }
+    if destination.exists() {
+        return Err(format!(
+            "Refusing to overwrite a staged NVIDIA artifact: {}",
+            destination.display()
+        ));
+    }
+    let partial = destination.with_file_name(format!(
+        ".{}.partial",
+        destination
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("Published NVIDIA asset has an invalid filename.")?
+    ));
+    if partial.exists() {
+        fs::remove_file(&partial)
+            .map_err(|e| format!("Could not remove an abandoned NVIDIA download: {e}"))?;
+    }
+    let mut guard = PartialOutputGuard {
+        path: partial.clone(),
+        armed: true,
+    };
+    let mut response = context
+        .client
+        .get(expected_url)
+        .header("Accept", "application/octet-stream")
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|e| format!("Could not download {}: {e}", asset.name))?;
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit || length != asset.size)
+    {
+        return Err(format!(
+            "Published asset {} has an unexpected download size.",
+            asset.name
+        ));
+    }
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&partial)
+        .map_err(|e| format!("Could not stage {}: {e}", asset.name))?;
+    let mut hasher = Sha256::new();
+    let mut downloaded = 0_u64;
+    let mut next_report = 0_u64;
+    let mut buffer = vec![0_u8; 256 * 1024];
+    loop {
+        if context.cancel.load(Ordering::Relaxed) {
+            return Err("Published NVIDIA artifact download cancelled.".into());
+        }
+        let count = response
+            .read(&mut buffer)
+            .map_err(|e| format!("Could not read {}: {e}", asset.name))?;
+        if count == 0 {
+            break;
+        }
+        downloaded = downloaded
+            .checked_add(count as u64)
+            .filter(|value| *value <= limit)
+            .ok_or_else(|| format!("Published asset {} exceeds the safety limit.", asset.name))?;
+        output
+            .write_all(&buffer[..count])
+            .map_err(|e| format!("Could not write {}: {e}", asset.name))?;
+        hasher.update(&buffer[..count]);
+        if downloaded >= next_report {
+            (context.progress)(stage, downloaded, asset.size);
+            next_report = downloaded.saturating_add(1024 * 1024);
+        }
+    }
+    output
+        .flush()
+        .map_err(|e| format!("Could not finish staging {}: {e}", asset.name))?;
+    if downloaded != asset.size {
+        return Err(format!(
+            "Published asset {} downloaded {downloaded} bytes; expected {}.",
+            asset.name, asset.size
+        ));
+    }
+    let digest = format!("{:x}", hasher.finalize());
+    if digest != github_sha256(asset)? {
+        return Err(format!(
+            "GitHub digest verification failed for {}.",
+            asset.name
+        ));
+    }
+    (context.progress)(stage, downloaded, asset.size);
+    fs::rename(&partial, destination)
+        .map_err(|e| format!("Could not finalize {}: {e}", asset.name))?;
+    guard.armed = false;
+    Ok(digest)
+}
+
+fn metadata_field<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.lines()
+        .find_map(|line| line.strip_prefix(&format!("{key}=")))
+}
+
+fn validate_published_nvidia_artifact(
+    archive_path: &Path,
+    checksum_path: &Path,
+    provenance_path: &Path,
+    identity: &PublishedReleaseIdentity,
+    archive_sha256: &str,
+) -> Result<String, String> {
+    let checksum = fs::read_to_string(checksum_path)
+        .map_err(|e| format!("Could not read the published NVIDIA checksum: {e}"))?;
+    let expected_sha256 = checksum
+        .split_whitespace()
+        .next()
+        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or("Published NVIDIA checksum sidecar is invalid.")?
+        .to_ascii_lowercase();
+    if expected_sha256 != archive_sha256 {
+        return Err("Published NVIDIA checksum does not match the downloaded archive.".into());
+    }
+    let inspection = inspect_published_nvidia_archive(archive_path)?;
+    let external_provenance = fs::read(provenance_path)
+        .map_err(|e| format!("Could not read published NVIDIA provenance: {e}"))?;
+    if external_provenance != inspection.provenance {
+        return Err(
+            "Published NVIDIA archive provenance does not match its external sidecar file.".into(),
+        );
+    }
+    let provenance: SupportBuildProvenance = serde_json::from_slice(&external_provenance)
+        .map_err(|e| format!("Published NVIDIA provenance is invalid JSON: {e}"))?;
+    if !matches!(
+        provenance.trust.as_str(),
+        "locally-built-verified" | "certified-published"
+    ) {
+        return Err(format!(
+            "Published NVIDIA artifact has unsupported trust classification {}.",
+            provenance.trust
+        ));
+    }
+    let spec = NvidiaTargetBuildSpec {
+        steamos_version: identity.steamos_version.clone(),
+        kernel_version: identity.kernel_version.clone(),
+        nvidia_version: identity.nvidia_version.clone(),
+    };
+    validate_support_build_provenance(
+        &provenance,
+        &spec,
+        &provenance.trust,
+        APPROVED_VALVE_SIGNER,
+    )?;
+    for module in &provenance.modules {
+        if inspection.module_hashes.get(&module.name) != Some(&module.sha256.to_ascii_lowercase()) {
+            return Err(format!(
+                "Published NVIDIA module does not match provenance: {}.",
+                module.name
+            ));
+        }
+    }
+    let build_info = std::str::from_utf8(&inspection.build_info)
+        .map_err(|e| format!("Published NVIDIA build information is not UTF-8: {e}"))?;
+    if metadata_field(build_info, "steamos_version") != Some(identity.steamos_version.as_str())
+        || metadata_field(build_info, "kernel_version") != Some(identity.kernel_version.as_str())
+        || metadata_field(build_info, "nvidia_version") != Some(identity.nvidia_version.as_str())
+        || metadata_field(build_info, "build_architecture") != Some("x86_64")
+        || metadata_field(build_info, "trust_classification") != Some(provenance.trust.as_str())
+        || metadata_field(build_info, "release_tag") != Some(identity.tag.as_str())
+        || metadata_field(build_info, "release_asset")
+            != archive_path.file_name().and_then(|name| name.to_str())
+    {
+        return Err("Published NVIDIA build information does not match its publication.".into());
+    }
+    Ok(provenance.trust)
+}
+
+fn resolve_published_nvidia_for_target(
+    target: NvidiaTargetReadiness,
+    runtime_dir: &Path,
+    client: &reqwest::blocking::Client,
+    releases: &[GithubRelease],
+    cancel: &AtomicBool,
+    progress: &impl Fn(&str, u64, u64),
+) -> Result<NvidiaPublishedResolution, String> {
+    if !target.ready {
+        return Ok(NvidiaPublishedResolution {
+            schema_version: NVIDIA_RESOLVER_SCHEMA,
+            status: "unsupported_target".into(),
+            reason: target.status.clone(),
+            message: target.message.clone(),
+            compatibility: None,
+            target,
+            publication: None,
+            artifact: None,
+        });
+    }
+    let Some((identity, release, compatibility)) =
+        select_published_nvidia_release(&target, releases)?
+    else {
+        return Ok(NvidiaPublishedResolution {
+            schema_version: NVIDIA_RESOLVER_SCHEMA,
+            status: "no_compatible_artifact".into(),
+            reason: "no_compatible_release".into(),
+            message: "No published NVIDIA release matches the exact target kernel within the permitted SteamOS compatibility range.".into(),
+            compatibility: None,
+            target,
+            publication: None,
+            artifact: None,
+        });
+    };
+    let publication = NvidiaPublishedPublication {
+        tag: identity.tag.clone(),
+        steamos_version: identity.steamos_version.clone(),
+        kernel_version: identity.kernel_version.clone(),
+        nvidia_version: identity.nvidia_version.clone(),
+        published_at: release.published_at.clone(),
+    };
+    let archive_name = published_asset_name(&identity);
+    let checksum_name = format!("{archive_name}.sha256");
+    let provenance_name = format!(
+        "{}.provenance.json",
+        archive_name.trim_end_matches(".tar.gz")
+    );
+    let required_names = [&archive_name, &checksum_name, &provenance_name];
+    let mut selected_assets = Vec::new();
+    let mut missing_assets = Vec::new();
+    for name in required_names {
+        match unique_release_asset(&release, name)? {
+            Some(asset) => selected_assets.push(asset),
+            None => missing_assets.push(name.clone()),
+        }
+    }
+    if !missing_assets.is_empty() {
+        return Ok(NvidiaPublishedResolution {
+            schema_version: NVIDIA_RESOLVER_SCHEMA,
+            status: "no_compatible_artifact".into(),
+            reason: "release_assets_missing".into(),
+            message: format!(
+                "The matching NVIDIA publication is incomplete; missing {}.",
+                missing_assets.join(", ")
+            ),
+            compatibility: Some(compatibility),
+            target,
+            publication: Some(publication),
+            artifact: None,
+        });
+    }
+    let archive_asset = selected_assets[0];
+    let checksum_asset = selected_assets[1];
+    let provenance_asset = selected_assets[2];
+    let output_dir = runtime_dir.join(format!(
+        "published-nvidia-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    ));
+    fs::create_dir(&output_dir)
+        .map_err(|e| format!("Could not create the published NVIDIA staging directory: {e}"))?;
+    let archive_path = output_dir.join(&archive_name);
+    let checksum_path = output_dir.join(&checksum_name);
+    let provenance_path = output_dir.join(&provenance_name);
+    let mut archive_guard = PartialOutputGuard {
+        path: archive_path.clone(),
+        armed: true,
+    };
+    let mut checksum_guard = PartialOutputGuard {
+        path: checksum_path.clone(),
+        armed: true,
+    };
+    let mut provenance_guard = PartialOutputGuard {
+        path: provenance_path.clone(),
+        armed: true,
+    };
+    let download = PublishedDownloadContext {
+        client,
+        cancel,
+        progress,
+    };
+    let checksum_url = expected_release_asset_url(&identity.tag, &checksum_name);
+    download_release_asset(
+        &download,
+        checksum_asset,
+        &checksum_url,
+        &checksum_path,
+        CHECKSUM_RESPONSE_LIMIT,
+        "downloading-nvidia-checksum",
+    )?;
+    let provenance_url = expected_release_asset_url(&identity.tag, &provenance_name);
+    download_release_asset(
+        &download,
+        provenance_asset,
+        &provenance_url,
+        &provenance_path,
+        PROVENANCE_RESPONSE_LIMIT,
+        "downloading-nvidia-provenance",
+    )?;
+    let archive_url = expected_release_asset_url(&identity.tag, &archive_name);
+    let archive_sha256 = download_release_asset(
+        &download,
+        archive_asset,
+        &archive_url,
+        &archive_path,
+        NVIDIA_ARCHIVE_LIMIT,
+        "downloading-nvidia-archive",
+    )?;
+    progress("validating-nvidia-artifact", 0, 1);
+    let trust = validate_published_nvidia_artifact(
+        &archive_path,
+        &checksum_path,
+        &provenance_path,
+        &identity,
+        &archive_sha256,
+    )?;
+    progress("validating-nvidia-artifact", 1, 1);
+    archive_guard.armed = false;
+    checksum_guard.armed = false;
+    provenance_guard.armed = false;
+    Ok(NvidiaPublishedResolution {
+        schema_version: NVIDIA_RESOLVER_SCHEMA,
+        status: "compatible".into(),
+        reason: "published_artifact_verified".into(),
+        message: format!(
+            "Verified published NVIDIA {} artifact for exact kernel {} ({trust}).",
+            identity.nvidia_version, identity.kernel_version
+        ),
+        compatibility: Some(compatibility),
+        target,
+        publication: Some(publication),
+        artifact: Some(NvidiaPublishedArtifact {
+            archive_path: archive_path.to_string_lossy().into_owned(),
+            checksum_path: checksum_path.to_string_lossy().into_owned(),
+            provenance_path: provenance_path.to_string_lossy().into_owned(),
+            archive_sha256,
+            trust,
+        }),
+    })
 }
 
 fn nvidia_development_asset_name(spec: &NvidiaTargetBuildSpec) -> String {
@@ -4530,6 +5236,71 @@ async fn assess_nvidia_target(app: tauri::AppHandle) -> Result<NvidiaTargetReadi
     .map_err(|error| format!("NVIDIA target-assessment worker failed: {error}"))?
 }
 
+#[tauri::command]
+async fn resolve_published_nvidia(
+    app: tauri::AppHandle,
+) -> Result<NvidiaPublishedResolution, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager_state = app.state::<Mutex<ApplianceManager>>();
+        let (target, runtime_dir, cancel) = {
+            let manager = manager_state
+                .lock()
+                .map_err(|_| "Appliance state lock is unavailable.")?;
+            let session = manager
+                .session
+                .as_ref()
+                .ok_or("The builder appliance is not running.")?;
+            let system = session
+                .target_system
+                .as_ref()
+                .ok_or("Target SteamOS metadata has not been discovered yet.")?;
+            (
+                assess_nvidia_target_system(system),
+                session.runtime_dir.clone(),
+                manager.cancel_preparation.clone(),
+            )
+        };
+        let report_progress = |stage: &str, processed_bytes: u64, total_bytes: u64| {
+            let _ = app.emit_to(
+                "build-progress",
+                "nvidia-resolution-progress",
+                NvidiaResolutionProgress {
+                    stage: stage.into(),
+                    processed_bytes,
+                    total_bytes,
+                },
+            );
+        };
+        if !target.ready {
+            return resolve_published_nvidia_for_target(
+                target,
+                &runtime_dir,
+                &nvidia_http_client()?,
+                &[],
+                &cancel,
+                &report_progress,
+            );
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return Err("Published NVIDIA resolution cancelled.".into());
+        }
+        report_progress("querying-nvidia-releases", 0, 1);
+        let client = nvidia_http_client()?;
+        let releases = fetch_github_releases(&client)?;
+        report_progress("querying-nvidia-releases", 1, 1);
+        resolve_published_nvidia_for_target(
+            target,
+            &runtime_dir,
+            &client,
+            &releases,
+            &cancel,
+            &report_progress,
+        )
+    })
+    .await
+    .map_err(|error| format!("Published NVIDIA resolver worker failed: {error}"))?
+}
+
 fn stop_session_process(session: &mut ApplianceSession) -> Result<(), String> {
     if session
         .child
@@ -4764,6 +5535,7 @@ fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 
@@ -4954,6 +5726,136 @@ mod tests {
         });
         assert!(!wrong_architecture.ready);
         assert_eq!(wrong_architecture.status, "unsupported-architecture");
+    }
+
+    fn published_release_fixture(steamos: &str, kernel: &str, nvidia: &str) -> GithubRelease {
+        let tag = format!("steamos-{steamos}-nvidia-{nvidia}-k{kernel}");
+        let archive = format!("nvidia-open-{tag}-x86_64.tar.gz");
+        let names = [
+            archive.clone(),
+            format!("{archive}.sha256"),
+            format!("{}.provenance.json", archive.trim_end_matches(".tar.gz")),
+        ];
+        GithubRelease {
+            tag_name: tag.clone(),
+            draft: false,
+            prerelease: false,
+            published_at: Some("2026-08-30T20:43:15Z".into()),
+            assets: names
+                .into_iter()
+                .map(|name| GithubReleaseAsset {
+                    browser_download_url: expected_release_asset_url(&tag, &name),
+                    name,
+                    size: 1,
+                    digest: Some(format!("sha256:{}", "a".repeat(64))),
+                })
+                .collect(),
+        }
+    }
+
+    fn ready_published_target(steamos: &str, kernel: &str) -> NvidiaTargetReadiness {
+        NvidiaTargetReadiness {
+            ready: true,
+            status: "exact-target".into(),
+            message: "fixture".into(),
+            steamos_version: Some(steamos.into()),
+            kernel_version: Some(kernel.into()),
+            architecture: "x86_64".into(),
+        }
+    }
+
+    #[test]
+    fn follows_schema_two_published_nvidia_selection_policy() {
+        let kernel = "6.16.12-valve24.5-1-neptune-616-gb2f7cfe85e45";
+        let releases = vec![
+            published_release_fixture("3.8.15", kernel, "575.64.05"),
+            published_release_fixture("3.8.16", kernel, "575.64.05"),
+            published_release_fixture("3.8.16", kernel, "580.1.1"),
+            published_release_fixture("3.9.0", kernel, "999.1.1"),
+        ];
+        let (exact, _, compatibility) =
+            select_published_nvidia_release(&ready_published_target("3.8.16", kernel), &releases)
+                .unwrap()
+                .unwrap();
+        assert_eq!(exact.steamos_version, "3.8.16");
+        assert_eq!(exact.nvidia_version, "580.1.1");
+        assert_eq!(compatibility, "exact");
+
+        let (fallback, _, compatibility) =
+            select_published_nvidia_release(&ready_published_target("3.8.17", kernel), &releases)
+                .unwrap()
+                .unwrap();
+        assert_eq!(fallback.steamos_version, "3.8.16");
+        assert_eq!(compatibility, "same_series_fallback");
+
+        assert!(select_published_nvidia_release(
+            &ready_published_target("3.8.14", "6.16.12-valve24.4-1-neptune-616-gfe145653a794"),
+            &releases,
+        )
+        .unwrap()
+        .is_none());
+        assert!(select_published_nvidia_release(
+            &ready_published_target("3.9.0", "different-kernel"),
+            &releases,
+        )
+        .unwrap()
+        .is_none());
+
+        let exact_name = published_asset_name(&exact);
+        let exact_release = releases
+            .iter()
+            .find(|release| release.tag_name == exact.tag)
+            .unwrap();
+        assert!(unique_release_asset(exact_release, &exact_name)
+            .unwrap()
+            .is_some());
+        let provenance_name = format!("{}.provenance.json", exact_name.trim_end_matches(".tar.gz"));
+        assert!(unique_release_asset(exact_release, &provenance_name)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    #[ignore = "downloads and validates the current published NVIDIA release"]
+    fn live_published_nvidia_resolution() {
+        struct TestDirectory(PathBuf);
+        impl Drop for TestDirectory {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TestDirectory(std::env::temp_dir().join(format!(
+            "steamos-builder-published-nvidia-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("test clock")
+                .as_nanos()
+        )));
+        fs::create_dir(&root.0).expect("create published NVIDIA test directory");
+        let kernel = "6.16.12-valve24.5-1-neptune-616-gb2f7cfe85e45";
+        let client = nvidia_http_client().expect("create NVIDIA HTTPS client");
+        let releases = fetch_github_releases(&client).expect("fetch GitHub releases");
+        let cancel = AtomicBool::new(false);
+        let result = resolve_published_nvidia_for_target(
+            ready_published_target("3.8.16", kernel),
+            &root.0,
+            &client,
+            &releases,
+            &cancel,
+            &|stage, processed, total| println!("{stage}: {processed}/{total}"),
+        )
+        .expect("resolve and validate published NVIDIA artifact");
+        assert_eq!(result.schema_version, 2);
+        assert_eq!(result.status, "compatible");
+        assert_eq!(result.compatibility.as_deref(), Some("exact"));
+        assert_eq!(
+            result
+                .artifact
+                .as_ref()
+                .map(|artifact| artifact.trust.as_str()),
+            Some("locally-built-verified")
+        );
     }
 
     #[test]
@@ -5647,6 +6549,7 @@ pub fn run() {
             mutate_test_marker,
             mutate_selected_marker,
             assess_nvidia_target,
+            resolve_published_nvidia,
             export_marker_image,
             stop_appliance,
             stop_nvidia_build_appliance,

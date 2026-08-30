@@ -458,20 +458,20 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Reproduce Valve's GCC 15.1.1 kernel compiler for certified builds, or define and validate a documented compiler-mismatch policy; Fedora 44 currently supplies GCC 16.2.1 and the real development builds emit NVIDIA's mismatch warning. Support commit `e5d183e` fixes the tab-separated Valve compiler parser and its focused local contract test passes; confirm the corrected `15.1.1`/major-mismatch provenance on the next full build.
 * [ ] Complete provenance identity across the appliance boundary. The support repo now emits and the image builder preserves/validates the structured provenance sidecar, but the image builder safely excludes `.git` from guest transfers, so the support commit/dirty fields remain `unknown`; add explicit, validated provenance inputs rather than copying Git credentials/hooks. Builder-appliance version/hash also remains to be recorded.
 
-* [ ] Consume supported/certified logic from `open-gpu-kernel-modules-steamos-support` rather than duplicating compatibility rules in the image builder.
+* [x] Consume the support repository's versioned schema-2 published-artifact contract in the image builder, including exact-kernel matching, bounded non-forward SteamOS-series fallback, required checksum/provenance assets, and pending trust until provenance verification. Keep contract tests synchronized until the support project provides a directly linkable Rust library or signed release index.
 * [x] Define and consume a versioned machine-readable target-build result interface from the support repo; certified target resolution and offline-root installation remain separate contracts.
-* [ ] Resolve SteamOS version/kernel compatibility from the image contents rather than the host. (Target identity/kernel discovery implemented; certified compatibility mapping remains.)
-* [ ] Resolve the appropriate certified NVIDIA release for the target SteamOS image.
+* [x] Resolve SteamOS version/kernel compatibility from the image contents rather than the host.
+* [x] Resolve the appropriate published NVIDIA release for the target SteamOS image without promoting its provenance trust classification.
 * [ ] Preserve development/upstream modes as explicit advanced workflows rather than default end-user behavior.
-* [ ] Decide whether the image builder should consume published release artifacts or invoke support-repo build logic inside the Fedora appliance.
-* [ ] Prefer reproducible published/certified artifacts for normal users.
-* [ ] Verify release checksums/signatures before injection.
+* [x] Consume published release artifacts in the normal path; retain the support-repository Fedora build as an explicit future development fallback when no compatible publication exists.
+* [x] Prefer published, provenance-bearing artifacts for normal users.
+* [x] Before allowing future injection, verify GitHub asset digests, the archive checksum, byte-identical embedded/external provenance, pinned Valve header-signature identity, exact module hashes, architecture, version, and vermagic.
 * [ ] Record selected NVIDIA driver version in build manifest.
 * [ ] Record selected SteamOS/kernel certification in build manifest.
-* [ ] Fail closed when no compatible certified release exists unless the user explicitly selects development mode.
-* [ ] Treat “no compatible published artifact” as a normal, non-destructive resolution result with a clear UI status; do not create an NVIDIA-labeled output or classify it as an application failure.
+* [x] Fail closed when no compatible published release exists; the normal workflow never silently enters development build mode.
+* [x] Treat “no compatible published artifact” as a normal, non-destructive resolution result with a clear UI/log status; do not create an NVIDIA-labeled output or classify it as an application failure.
 * [ ] Keep Gamescope fallback policy independent from NVIDIA kernel-module fallback policy.
-* [ ] Require exact target-kernel identity/vermagic for NVIDIA artifacts; never reuse the SteamOS 3.8.16 `valve24.5` modules for the observed 3.8.14 `valve24.4` kernel.
+* [x] Require exact target-kernel identity/vermagic for NVIDIA artifacts; never reuse the SteamOS 3.8.16 `valve24.5` modules for the observed 3.8.14 `valve24.4` kernel.
 * [ ] Connect the Rust-managed x86_64 Fedora build-appliance commands to the normal build workflow and progress UI on Apple Silicon; the isolated backend lifecycle exists, but the frontend does not invoke it yet.
 * [ ] Decide whether the Apple Silicon fallback uses a separately managed emulated x86_64 appliance or a trusted remote x86_64 build worker, accounting for performance and artifact provenance.
 * [ ] Consider a Gamescope 3.8.16 compatibility floor for earlier SteamOS 3.8.x images only after its binary dependencies and runtime behavior are explicitly validated on those releases.

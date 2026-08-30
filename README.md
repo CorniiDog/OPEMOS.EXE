@@ -47,12 +47,26 @@ transfer does not expose `.git` provenance to the guest. The full run used
 support commit `d6a43f5`; the following `e5d183e` compiler-parser fix passes its
 focused local contract test but has not repeated the hour-long compilation.
 
-The normal progress flow now assesses the discovered offline target before any
-future artifact resolution. It permits NVIDIA resolution only for a valid
-SteamOS version, x86_64 userspace, and exactly one safe kernel release. Images
-with no module tree or multiple distinct kernel trees remain marker-only and
-report a non-actionable NVIDIA status; the builder never chooses the first
-directory it happens to enumerate.
+The normal progress flow now assesses the discovered offline target and consumes
+the support repository's schema-2 published-release policy. It permits NVIDIA
+resolution only for a valid SteamOS version, x86_64 userspace, and exactly one
+safe kernel release. The host queries GitHub through its bundled Rust HTTPS
+client, applies the bounded non-forward SteamOS-series policy while still
+requiring the exact kernel, and treats a missing compatible publication as a
+normal marker-only result. It never substitutes the published SteamOS 3.8.16
+`valve24.5` modules for the observed SteamOS 3.8.14 `valve24.4` kernel.
+
+For a compatible publication, the host downloads the checksum, provenance, and
+archive into disposable session storage. Acceptance requires GitHub SHA-256
+digests, the archive checksum, safe and exact archive membership, byte-identical
+external and embedded provenance, the pinned Valve header signer, x86_64 module
+identity, exact target vermagic, and all five per-module hashes. Trust remains
+the provenance value (`locally-built-verified` for the current release) rather
+than being promoted merely because an artifact was published. A live Rust test
+has downloaded and passed the current SteamOS 3.8.16/NVIDIA 575.64.05 release.
+Injection is intentionally not enabled yet: the verified download is removed
+with the disposable session and the exported output remains clearly
+marker-only.
 
 Marker-only exports use an explicit `-marker.img` suffix. The builder reserves
 the `-nvidia.img` label for a future output that has successfully installed and

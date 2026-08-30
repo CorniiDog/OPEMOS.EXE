@@ -144,6 +144,24 @@ function showInputProgress(progress) {
   }
 }
 
+function showNvidiaResolutionProgress(progress) {
+  if (!running || cancelling) return;
+  const total = Number(progress.totalBytes) || 0;
+  const processed = Number(progress.processedBytes) || 0;
+  const ratio = total > 0 ? Math.min(processed / total, 1) : 0;
+  if (progress.stage === "querying-nvidia-releases") {
+    setStatus("running", "Checking NVIDIA compatibility", "Querying published support releases for the exact image kernel.", 95.55, "Resolving");
+  } else if (progress.stage === "downloading-nvidia-checksum") {
+    setStatus("running", "Downloading NVIDIA verification data", "Retrieving the published archive checksum through the host.", 95.6, "Downloading");
+  } else if (progress.stage === "downloading-nvidia-provenance") {
+    setStatus("running", "Downloading NVIDIA provenance", "Retrieving the structured trust and module record.", 95.65, "Downloading");
+  } else if (progress.stage === "downloading-nvidia-archive") {
+    setStatus("running", "Downloading compatible NVIDIA modules", `${formatBytes(processed)} of ${formatBytes(total)} transferred.`, 95.7 + ratio * 0.2, "Downloading");
+  } else if (progress.stage === "validating-nvidia-artifact") {
+    setStatus("running", "Validating NVIDIA artifact", "Checking GitHub digests, checksum, embedded provenance, exact vermagic, and all five module hashes.", 95.92 + ratio * 0.06, "Validating");
+  }
+}
+
 function flushPendingLogs() {
   if (!pendingLogChunks.length || !followingLogs) return;
   const content = pendingLogChunks.join("");
@@ -361,6 +379,20 @@ async function runBuild(request) {
     const nvidiaTarget = await invoke("assess_nvidia_target");
     if (nvidiaTarget.ready) {
       addStageLog(`NVIDIA target: ${nvidiaTarget.message}`);
+
+      setStatus("running", "Resolving published NVIDIA support", "Looking for a verified publication matching the image's exact kernel.", 95.55, "Resolving");
+      const nvidiaResolution = await invoke("resolve_published_nvidia");
+      if (nvidiaResolution.status === "compatible") {
+        const publication = nvidiaResolution.publication;
+        const artifact = nvidiaResolution.artifact;
+        addStageLog(`NVIDIA publication: ${publication.tag}; compatibility=${nvidiaResolution.compatibility}.`);
+        addStageLog(`NVIDIA artifact: version ${publication.nvidiaVersion}; trust=${artifact.trust}; SHA256 ${artifact.archiveSha256}.`);
+        addStageLog("NVIDIA artifact passed host-side checksum, provenance, exact-kernel, architecture, and five-module validation.");
+        addStageLog("warning: NVIDIA injection is not enabled in this marker-only milestone; the verified artifact remains disposable with this session.");
+      } else {
+        addStageLog(`warning: ${nvidiaResolution.message}`);
+        addStageLog(`NVIDIA publication status: ${nvidiaResolution.reason}; continuing with a marker-only output.`);
+      }
     } else {
       addStageLog(`warning: ${nvidiaTarget.message}`);
       addStageLog(`NVIDIA target status: ${nvidiaTarget.status}; no driver artifact will be selected or built.`);
@@ -415,6 +447,7 @@ elements.buildLog.addEventListener("keydown", (event) => {
 });
 await progressWindow.listen("build-requested", (event) => runBuild(event.payload));
 await progressWindow.listen("input-progress", (event) => showInputProgress(event.payload));
+await progressWindow.listen("nvidia-resolution-progress", (event) => showNvidiaResolutionProgress(event.payload));
 await progressWindow.listen("build-progress-probe", () => progressWindow.emitTo("main", "build-progress-ready"));
 await progressWindow.emitTo("main", "build-progress-ready");
 await progressWindow.onCloseRequested(async (event) => {
