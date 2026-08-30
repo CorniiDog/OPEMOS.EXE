@@ -175,6 +175,31 @@ struct ApplianceSession {
     input_preparation: InputPreparation,
 }
 
+#[derive(Clone)]
+struct ImageInspectionSession {
+    ssh_key: PathBuf,
+    ssh_port: u16,
+    input_image: PathBuf,
+    input_sha256_before: String,
+    attached_image: PathBuf,
+    attached_sha256_before: String,
+    input_preparation: InputPreparation,
+}
+
+impl From<&ApplianceSession> for ImageInspectionSession {
+    fn from(session: &ApplianceSession) -> Self {
+        Self {
+            ssh_key: session.ssh_key.clone(),
+            ssh_port: session.ssh_port,
+            input_image: session.input_image.clone(),
+            input_sha256_before: session.input_sha256_before.clone(),
+            attached_image: session.attached_image.clone(),
+            attached_sha256_before: session.attached_sha256_before.clone(),
+            input_preparation: session.input_preparation.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InputFormat {
     Raw,
@@ -519,7 +544,7 @@ fn sha256_file_with_progress(
         .map_err(|e| format!("Could not inspect {} for hashing: {e}", path.display()))?
         .len();
     let mut processed = 0_u64;
-    let mut next_report = 8 * 1024 * 1024;
+    let mut next_report = 32 * 1024 * 1024;
     loop {
         if cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed)) {
             return Err("Image preparation cancelled.".into());
@@ -539,7 +564,7 @@ fn sha256_file_with_progress(
             if let Some(progress) = progress {
                 progress(stage, processed, total);
             }
-            next_report = processed.saturating_add(8 * 1024 * 1024);
+            next_report = processed.saturating_add(32 * 1024 * 1024);
         }
     }
     Ok(format!("{:x}", hasher.finalize()))
@@ -1039,14 +1064,39 @@ fn prepare_session(
     })
 }
 
-fn ssh_command(session: &ApplianceSession) -> Result<Command, String> {
+trait GuestConnection {
+    fn ssh_key(&self) -> &Path;
+    fn ssh_port(&self) -> u16;
+}
+
+impl GuestConnection for ApplianceSession {
+    fn ssh_key(&self) -> &Path {
+        &self.ssh_key
+    }
+
+    fn ssh_port(&self) -> u16 {
+        self.ssh_port
+    }
+}
+
+impl GuestConnection for ImageInspectionSession {
+    fn ssh_key(&self) -> &Path {
+        &self.ssh_key
+    }
+
+    fn ssh_port(&self) -> u16 {
+        self.ssh_port
+    }
+}
+
+fn ssh_command(session: &impl GuestConnection) -> Result<Command, String> {
     let ssh = find_binary("ssh").ok_or("ssh is required for the guest handshake.")?;
     let mut command = Command::new(ssh);
     command
         .arg("-p")
-        .arg(session.ssh_port.to_string())
+        .arg(session.ssh_port().to_string())
         .arg("-i")
-        .arg(&session.ssh_key)
+        .arg(session.ssh_key())
         .args([
             "-o",
             "IdentitiesOnly=yes",
@@ -1063,7 +1113,7 @@ fn ssh_command(session: &ApplianceSession) -> Result<Command, String> {
     Ok(command)
 }
 
-fn run_guest_command(session: &ApplianceSession, command: &str) -> Result<String, String> {
+fn run_guest_command(session: &impl GuestConnection, command: &str) -> Result<String, String> {
     let output = ssh_command(session)?
         .arg(command)
         .output()
@@ -1310,8 +1360,9 @@ fn append_image_nodes(
 }
 
 fn inspect_user_image(
-    session: &ApplianceSession,
+    session: &ImageInspectionSession,
     progress: Option<&ProgressCallback<'_>>,
+    cancel: Option<&AtomicBool>,
 ) -> Result<UserImageInspection, String> {
     const DEVICE: &str = "/dev/disk/by-id/virtio-steamos-user-input";
     let read_only = run_guest_command(
@@ -1363,7 +1414,7 @@ fn inspect_user_image(
         &session.input_image,
         "verifying-source-after",
         progress,
-        None,
+        cancel,
     )?;
     let source_unchanged = session.input_sha256_before == source_sha256_after;
     if !source_unchanged {
@@ -1379,7 +1430,7 @@ fn inspect_user_image(
             &session.attached_image,
             "verifying-image-after",
             progress,
-            None,
+            cancel,
         )?
     };
     let image_unchanged = session.attached_sha256_before == image_sha256_after;
@@ -1708,14 +1759,16 @@ fn get_appliance_status(
 fn read_appliance_log(
     manager: tauri::State<'_, Mutex<ApplianceManager>>,
 ) -> Result<String, String> {
-    let manager = manager
-        .lock()
-        .map_err(|_| "Appliance state lock is unavailable.")?;
-    let Some(session) = manager.session.as_ref() else {
-        return Ok(String::new());
+    let log_path = {
+        let manager = manager
+            .lock()
+            .map_err(|_| "Appliance state lock is unavailable.")?;
+        let Some(session) = manager.session.as_ref() else {
+            return Ok(String::new());
+        };
+        session.runtime_dir.join("qemu.log")
     };
-    let bytes = fs::read(session.runtime_dir.join("qemu.log"))
-        .map_err(|e| format!("Could not read the appliance log: {e}"))?;
+    let bytes = fs::read(log_path).map_err(|e| format!("Could not read the appliance log: {e}"))?;
     const LOG_LIMIT: usize = 64 * 1024;
     let start = bytes.len().saturating_sub(LOG_LIMIT);
     Ok(String::from_utf8_lossy(&bytes[start..]).into_owned())
@@ -1779,16 +1832,22 @@ async fn inspect_selected_image(app: tauri::AppHandle) -> Result<UserImageInspec
 
 fn inspect_selected_image_blocking(app: tauri::AppHandle) -> Result<UserImageInspection, String> {
     let manager_state = app.state::<Mutex<ApplianceManager>>();
-    let manager = manager_state
-        .lock()
-        .map_err(|_| "Appliance state lock is unavailable.")?;
-    let session = manager
-        .session
-        .as_ref()
-        .ok_or("Builder appliance is not running.")?;
-    if session.state != "ready" {
-        return Err("Builder appliance is not ready for selected image inspection.".into());
-    }
+    let (session, cancel) = {
+        let manager = manager_state
+            .lock()
+            .map_err(|_| "Appliance state lock is unavailable.")?;
+        let session = manager
+            .session
+            .as_ref()
+            .ok_or("Builder appliance is not running.")?;
+        if session.state != "ready" {
+            return Err("Builder appliance is not ready for selected image inspection.".into());
+        }
+        (
+            ImageInspectionSession::from(session),
+            manager.cancel_preparation.clone(),
+        )
+    };
     let report_progress = |stage: &str, processed_bytes: u64, total_bytes: u64| {
         let _ = app.emit_to(
             "build-progress",
@@ -1800,7 +1859,7 @@ fn inspect_selected_image_blocking(app: tauri::AppHandle) -> Result<UserImageIns
             },
         );
     };
-    inspect_user_image(session, Some(&report_progress))
+    inspect_user_image(&session, Some(&report_progress), Some(&cancel))
 }
 
 #[tauri::command]
@@ -1891,8 +1950,8 @@ fn stop_appliance_blocking(app: tauri::AppHandle) -> Result<ApplianceStatus, Str
     let mut manager = manager_state
         .lock()
         .map_err(|_| "Appliance state lock is unavailable.")?;
+    manager.cancel_preparation.store(true, Ordering::Relaxed);
     if manager.preparing {
-        manager.cancel_preparation.store(true, Ordering::Relaxed);
         return Ok(ApplianceStatus {
             state: "stopping".into(),
             message: "Cancelling background image preparation.".into(),
@@ -2176,7 +2235,9 @@ mod tests {
             mutation.marker_path,
             "/etc/steamos-nvidia-image-builder-test"
         );
-        let input = inspect_user_image(&session, None).expect("user image inspection should pass");
+        let inspection_session = ImageInspectionSession::from(&session);
+        let input = inspect_user_image(&inspection_session, None, None)
+            .expect("user image inspection should pass");
         assert_eq!(input.disk_bytes, 8 * 1024 * 1024);
         assert!(input.read_only);
         assert!(input.source_unchanged);

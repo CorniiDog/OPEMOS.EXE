@@ -1,5 +1,5 @@
 const { invoke } = window.__TAURI__.core;
-const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
+const { getAllWebviewWindows, getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
@@ -12,6 +12,21 @@ let running = false;
 let cancelling = false;
 let stageLog = [];
 let lastApplianceLog = "";
+let refreshingLogs = false;
+
+async function raiseVisibleCompanion() {
+  const now = Date.now();
+  const lastRaise = Number(localStorage.getItem("companion-window-raise") || 0);
+  if (now - lastRaise < 250) return;
+  localStorage.setItem("companion-window-raise", String(now));
+  const windows = await getAllWebviewWindows();
+  const mainWindow = windows.find((window) => window.label === "main");
+  if (mainWindow && await mainWindow.isVisible()) await mainWindow.show();
+}
+
+await progressWindow.onFocusChanged(({ payload: focused }) => {
+  if (focused) raiseVisibleCompanion().catch(() => {});
+});
 
 function normalizeTerminalText(text) {
   return text
@@ -138,8 +153,11 @@ function renderLogs(applianceLog) {
 }
 
 async function refreshLogs() {
+  if (refreshingLogs) return;
+  refreshingLogs = true;
   try { renderLogs(await invoke("read_appliance_log")); }
   catch (error) { addStageLog(`Could not refresh appliance log: ${error}`); }
+  finally { refreshingLogs = false; }
 }
 
 async function finish(state, message) {

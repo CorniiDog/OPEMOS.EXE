@@ -87,6 +87,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Order the main workflow as download, image selection, readiness, and build action.
 * [x] Add build button and prototype progress state.
 * [x] Move build status, live logs, and cancellation into a dedicated progress window.
+* [x] Raise the visible main and progress windows together when the application is reactivated.
 * [x] Start and stop the builder appliance automatically as part of the build workflow.
 * [x] Reveal prototype output in Finder on macOS.
 * [x] Accept:
@@ -336,6 +337,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Stream decompression rather than loading the image into memory.
 * [x] Use multithreaded bzip2 decompression on macOS while reserving one logical CPU for responsiveness.
 * [x] Show live source-hashing, compressed-byte, and normalized-image hashing progress.
+* [x] Keep post-inspection integrity hashing off the UI thread without blocking log/status IPC.
 * [ ] Verify decompressed output size is sane.
 * [x] Compute and verify the normalized raw-image checksum.
 * [x] Keep original compressed input untouched and verify its checksum after the session.

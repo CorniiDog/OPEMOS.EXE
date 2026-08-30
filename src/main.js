@@ -20,6 +20,20 @@ let hostReady = false;
 let progressReady = false;
 const mainWindow = getCurrentWebviewWindow();
 
+async function raiseVisibleCompanion() {
+  const now = Date.now();
+  const lastRaise = Number(localStorage.getItem("companion-window-raise") || 0);
+  if (now - lastRaise < 250) return;
+  localStorage.setItem("companion-window-raise", String(now));
+  const windows = await getAllWebviewWindows();
+  const progressWindow = windows.find((window) => window.label === "build-progress");
+  if (progressWindow && await progressWindow.isVisible()) await progressWindow.show();
+}
+
+await mainWindow.onFocusChanged(({ payload: focused }) => {
+  if (focused) raiseVisibleCompanion().catch(() => {});
+});
+
 await mainWindow.listen("build-progress-ready", () => { progressReady = true; });
 
 async function waitForProgressWindow(progressWindow) {
