@@ -428,6 +428,22 @@ The project is not yet producing a bootable modified SteamOS image.
 
 # 18. NVIDIA support integration strategy
 
+Support-repository readiness (tracked here because it gates image-builder integration):
+
+* [x] Add an offline-target build command that accepts explicit SteamOS, kernel, NVIDIA, architecture, and output parameters without using the appliance's running kernel as the target.
+* [x] Add a non-mutating, machine-readable `--resolve-only` build plan.
+* [x] Derive the exact Valve Neptune headers package and require the exact `/usr/lib/modules/<full-target-kernel>/build` tree.
+* [x] Validate the headers archive paths and `.PKGINFO` package name, version, and `x86_64` architecture before extraction/use.
+* [x] Require prepared target headers, `include/generated/autoconf.h`, and `Module.symvers`.
+* [x] Validate the exact five-module NVIDIA set, x86_64 ELF architecture, and exact target-kernel vermagic before packaging.
+* [x] Emit the archive, checksum, and build metadata format already accepted by the support installer.
+* [x] Make the shared module validator and local contract checks compatible with macOS Bash 3.2; skip and clearly retain Fedora-only transaction coverage where modern Bash/Linux behavior is required.
+* [ ] Run a real offline-target build inside an x86_64 Fedora environment.
+* [ ] Confirm Valve still serves the exact historical headers package for the observed SteamOS 3.8.14 `valve24.4` kernel.
+* [ ] Confirm NVIDIA 575.64.05 produces all five modules with exact target vermagic.
+* [ ] Run the complete transaction/installer suite under Fedora with modern Bash.
+* [ ] Pin and verify Valve package signatures before treating an on-demand artifact as certified; until then label it development/unverified.
+
 * [ ] Consume supported/certified logic from `open-gpu-kernel-modules-steamos-support` rather than duplicating compatibility rules in the image builder.
 * [ ] Define a machine-readable integration interface from the support repo.
 * [ ] Resolve SteamOS version/kernel compatibility from the image contents rather than the host. (Target identity/kernel discovery implemented; certified compatibility mapping remains.)
@@ -442,6 +458,8 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Treat “no compatible published artifact” as a normal, non-destructive resolution result with a clear UI status; do not create an NVIDIA-labeled output or classify it as an application failure.
 * [ ] Keep Gamescope fallback policy independent from NVIDIA kernel-module fallback policy.
 * [ ] Require exact target-kernel identity/vermagic for NVIDIA artifacts; never reuse the SteamOS 3.8.16 `valve24.5` modules for the observed 3.8.14 `valve24.4` kernel.
+* [ ] Add an x86_64 Fedora build-appliance path on Apple Silicon; the current architecture-matched appliance is aarch64 and cannot run the native x86_64 offline-target build command.
+* [ ] Decide whether the Apple Silicon fallback uses a separately managed emulated x86_64 appliance or a trusted remote x86_64 build worker, accounting for performance and artifact provenance.
 * [ ] Consider a Gamescope 3.8.16 compatibility floor for earlier SteamOS 3.8.x images only after its binary dependencies and runtime behavior are explicitly validated on those releases.
 
 ---
@@ -1209,6 +1227,10 @@ Before calling the project **beta**, verify:
 10. [x] Produce first modified Valve-image working copy containing only a harmless marker.
 11. [x] Validate durable output and input immutability automatically against a full-size Valve recovery image.
 12. [x] Begin NVIDIA support-repo integration with target SteamOS identity, architecture, and kernel discovery.
+13. [ ] Validate the support repository's offline-target build end to end in x86_64 Fedora for the observed SteamOS 3.8.14 kernel.
+14. [ ] Add the managed x86_64 build path required on Apple Silicon and expose build/download/validation progress through the existing progress window.
+15. [ ] Invoke the support repository's machine-readable resolver/build contract from Rust without duplicating its compatibility policy.
+16. [ ] Install the resulting development artifact into only the disposable SteamOS working image, then verify modules, metadata, source immutability, and output manifest before export.
 
 ---
 
