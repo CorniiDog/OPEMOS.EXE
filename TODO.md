@@ -423,6 +423,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Verify output checksum differs from the normalized unmodified source.
 * [x] Re-open the candidate output through a fresh appliance, rediscover its layout, and verify the marker read-only before finalizing its name.
 * [x] Make the UI report successful image mutation only after export validation succeeds.
+* [x] Name prototype outputs `-marker.img`; never apply the `-nvidia.img` label before the complete NVIDIA payload has been installed and independently validated.
 
 ---
 
@@ -443,6 +444,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Add an opt-in live lifecycle test that verifies x86_64 guest identity, runtime cleanup, log preservation, and base-appliance immutability.
 * [x] Validate the isolated x86_64 lifecycle on Apple Silicon under TCG (`57.40s` in the first successful local run).
 * [x] Add a controlled development build command that transfers an explicit support-repository checkout, streams the fixed offline-target build into managed logs, supports cancellation, and retrieves artifacts without exposing arbitrary guest commands.
+* [x] Make progress-window cancellation and failure cleanup stop both the image appliance and the isolated x86 NVIDIA worker.
 * [x] Validate returned development artifacts on the host for SHA-256, safe/exact archive membership, matching internal/external build metadata, requested target identity, and explicit unverified-header trust state.
 * [x] Gate NVIDIA artifact resolution on a valid SteamOS identity/version, x86_64 target architecture, and exactly one unique safe kernel release; zero or multiple discovered kernels remain non-actionable instead of selecting the first directory (`177.59s` real-image test passed for SteamOS 3.8.14 build `20260707.10`).
 * [x] Run a real offline-target build inside an x86_64 Fedora environment (`30m15s` under TCG on Apple Silicon in the first successful local run).

@@ -2996,7 +2996,7 @@ test "$MOUNTED" = 0"#;
     })
 }
 
-fn output_path_for_input(input: &Path) -> Result<PathBuf, String> {
+fn marker_output_path_for_input(input: &Path) -> Result<PathBuf, String> {
     let parent = input
         .parent()
         .ok_or("Could not determine the selected image folder.")?;
@@ -3013,10 +3013,10 @@ fn output_path_for_input(input: &Path) -> Result<PathBuf, String> {
     if base.is_empty() {
         base = "SteamOS".into();
     }
-    let output_base = if base.to_ascii_lowercase().ends_with("-nvidia") {
+    let output_base = if base.to_ascii_lowercase().ends_with("-marker") {
         base
     } else {
-        format!("{base}-nvidia")
+        format!("{base}-marker")
     };
     for number in 1..=9999_u32 {
         let suffix = if number == 1 {
@@ -3261,7 +3261,7 @@ fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, 
             "set -eu; sync; WORK=/dev/disk/by-id/virtio-steamos-user-working; test \"$(sudo blockdev --getro \"$WORK\")\" = 1; ! findmnt -rn -S \"$WORK\" >/dev/null 2>&1",
         )?;
         stop_session_process(&mut session)?;
-        let final_path = output_path_for_input(&session.input_image)?;
+        let final_path = marker_output_path_for_input(&session.input_image)?;
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| format!("System clock error: {e}"))?
@@ -3271,7 +3271,7 @@ fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, 
             final_path
                 .file_name()
                 .and_then(|value| value.to_str())
-                .unwrap_or("steamos-nvidia.img"),
+                .unwrap_or("steamos-marker.img"),
             std::process::id()
         );
         let partial_path = final_path
@@ -4545,34 +4545,34 @@ mod tests {
         fs::create_dir_all(&root).expect("create output-name test directory");
         let compressed = root.join("steamdeck-repair.img.bz2");
         assert_eq!(
-            output_path_for_input(&compressed).unwrap(),
-            root.join("steamdeck-repair-nvidia.img")
+            marker_output_path_for_input(&compressed).unwrap(),
+            root.join("steamdeck-repair-marker.img")
         );
-        fs::write(root.join("steamdeck-repair-nvidia.img"), b"occupied")
+        fs::write(root.join("steamdeck-repair-marker.img"), b"occupied")
             .expect("reserve first output name");
         assert_eq!(
-            output_path_for_input(&compressed).unwrap(),
-            root.join("steamdeck-repair-nvidia-2.img")
+            marker_output_path_for_input(&compressed).unwrap(),
+            root.join("steamdeck-repair-marker-2.img")
         );
         assert_eq!(
-            output_path_for_input(&root.join("raw.img")).unwrap(),
-            root.join("raw-nvidia.img")
+            marker_output_path_for_input(&root.join("raw.img")).unwrap(),
+            root.join("raw-marker.img")
         );
-        fs::write(root.join("already-nvidia.img"), b"input")
+        fs::write(root.join("already-marker.img"), b"input")
             .expect("create already-suffixed input");
         assert_eq!(
-            output_path_for_input(&root.join("already-nvidia.img")).unwrap(),
-            root.join("already-nvidia-2.img")
+            marker_output_path_for_input(&root.join("already-marker.img")).unwrap(),
+            root.join("already-marker-2.img")
         );
         let manifest_only_input = root.join("manifest-only.img.xz");
         fs::write(
-            manifest_path_for_output(&root.join("manifest-only-nvidia.img")),
+            manifest_path_for_output(&root.join("manifest-only-marker.img")),
             b"occupied",
         )
         .expect("reserve first manifest name");
         assert_eq!(
-            output_path_for_input(&manifest_only_input).unwrap(),
-            root.join("manifest-only-nvidia-2.img")
+            marker_output_path_for_input(&manifest_only_input).unwrap(),
+            root.join("manifest-only-marker-2.img")
         );
         fs::remove_dir_all(root).expect("remove output-name test directory");
     }
@@ -4603,7 +4603,7 @@ mod tests {
     #[test]
     fn marker_manifest_is_versioned_and_omits_host_paths() {
         let input = Path::new("/Users/private-user/Downloads/recovery.img.bz2");
-        let output = Path::new("/Users/private-user/Downloads/recovery-nvidia.img");
+        let output = Path::new("/Users/private-user/Downloads/recovery-marker.img");
         let preparation = InputPreparation {
             source_format: "bzip2".into(),
             normalizer: "sevenzip".into(),
@@ -4641,7 +4641,7 @@ mod tests {
         assert_eq!(manifest["resultClass"], "mutation-valid");
         assert_eq!(manifest["validation"]["passed"], true);
         assert_eq!(manifest["input"]["filename"], "recovery.img.bz2");
-        assert_eq!(manifest["output"]["filename"], "recovery-nvidia.img");
+        assert_eq!(manifest["output"]["filename"], "recovery-marker.img");
         assert_eq!(manifest["steamos"]["architecture"], "x86_64");
         assert_eq!(
             manifest["steamos"]["targetKernels"][0],

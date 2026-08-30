@@ -42,6 +42,10 @@ with no module tree or multiple distinct kernel trees remain marker-only and
 report a non-actionable NVIDIA status; the builder never chooses the first
 directory it happens to enumerate.
 
+Marker-only exports use an explicit `-marker.img` suffix. The builder reserves
+the `-nvidia.img` label for a future output that has successfully installed and
+independently validated the complete NVIDIA payload.
+
 ## Architecture
 
 The Tauri frontend invokes a fixed set of Rust commands; it does not pass arbitrary shell commands to the host or guest. Rust owns the QEMU child process and creates a unique runtime directory containing an ephemeral SSH identity, cloud-init seed, qcow2 overlay, writable UEFI variables, and `qemu.log`. The pristine Fedora appliance remains unchanged.

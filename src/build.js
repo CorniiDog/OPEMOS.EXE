@@ -216,16 +216,25 @@ async function finish(state, message) {
   await progressWindow.emitTo("main", "build-finished", { state, message });
 }
 
+async function stopAllWorkers() {
+  const stops = await Promise.allSettled([
+    invoke("stop_appliance"),
+    invoke("stop_nvidia_build_appliance"),
+  ]);
+  for (const stop of stops) {
+    if (stop.status === "rejected") addStageLog(`Shutdown warning: ${stop.reason}`);
+  }
+}
+
 async function cancelBuild() {
   if (!running || cancelling) return;
   cancelling = true;
   elements.cancelBuild.disabled = true;
-  setStatus("running", "Cancelling safely…", "Stopping the disposable builder appliance.", 90, "Cancelling");
+  setStatus("running", "Cancelling safely…", "Stopping all disposable builder workers.", 90, "Cancelling");
   addStageLog("Cancellation requested.");
-  try { await invoke("stop_appliance"); }
-  catch (error) { addStageLog(`Shutdown warning: ${error}`); }
+  await stopAllWorkers();
   setStatus("cancelled", "Build cancelled", "The original image was not modified.", 100);
-  addStageLog("Build cancelled; disposable session stopped.");
+  addStageLog("Build cancelled; disposable image and NVIDIA workers stopped.");
   await finish("cancelled", "Image build cancelled.");
 }
 
@@ -369,7 +378,7 @@ async function runBuild(request) {
   } catch (error) {
     if (cancelling) return;
     addStageLog(`ERROR: ${error}`);
-    try { await invoke("stop_appliance"); } catch (stopError) { addStageLog(`Shutdown warning: ${stopError}`); }
+    await stopAllWorkers();
     setStatus("failed", "Build failed", String(error), 100);
     await finish("failed", `Image build failed: ${error}`);
   } finally {
