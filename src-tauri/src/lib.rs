@@ -65,6 +65,26 @@ struct NvidiaBuildStatus {
     runtime_path: Option<String>,
 }
 
+#[derive(Clone)]
+struct NvidiaTargetBuildSpec {
+    steamos_version: String,
+    kernel_version: String,
+    nvidia_version: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaDevelopmentArtifact {
+    archive_path: String,
+    checksum_path: String,
+    build_info_path: String,
+    archive_sha256: String,
+    steamos_version: String,
+    kernel_version: String,
+    nvidia_version: String,
+    trust: String,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ApplianceStatus {
@@ -360,6 +380,23 @@ struct NvidiaBuildSession {
 }
 
 #[derive(Clone)]
+struct NvidiaBuildConnection {
+    runtime_dir: PathBuf,
+    ssh_key: PathBuf,
+    ssh_port: u16,
+}
+
+impl From<&NvidiaBuildSession> for NvidiaBuildConnection {
+    fn from(session: &NvidiaBuildSession) -> Self {
+        Self {
+            runtime_dir: session.runtime_dir.clone(),
+            ssh_key: session.ssh_key.clone(),
+            ssh_port: session.ssh_port,
+        }
+    }
+}
+
+#[derive(Clone)]
 struct ImageInspectionSession {
     runtime_dir: PathBuf,
     ssh_key: PathBuf,
@@ -522,6 +559,7 @@ struct ApplianceManager {
 struct NvidiaBuildManager {
     session: Option<NvidiaBuildSession>,
     starting: bool,
+    cancel_build: Arc<AtomicBool>,
 }
 
 impl Drop for NvidiaBuildManager {
@@ -819,6 +857,19 @@ fn run_checked(command: &mut Command, description: &str) -> Result<(), String> {
     })
 }
 
+fn copy_new_file(source: &Path, destination: &Path, description: &str) -> Result<(), String> {
+    let mut source_file = File::open(source).map_err(|e| format!("{description}: {e}"))?;
+    let mut destination_file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(destination)
+        .map_err(|e| format!("{description}: {e}"))?;
+    io::copy(&mut source_file, &mut destination_file)
+        .and_then(|_| destination_file.sync_all())
+        .map_err(|e| format!("{description}: {e}"))?;
+    Ok(())
+}
+
 fn homebrew_qemu_share() -> Result<PathBuf, String> {
     let brew = find_binary("brew").ok_or("Homebrew is required to locate QEMU firmware.")?;
     let output = Command::new(brew)
@@ -839,7 +890,6 @@ fn allocate_ssh_port() -> Result<u16, String> {
         .map_err(|e| format!("Could not inspect the guest SSH port: {e}"))
 }
 
-#[cfg(test)]
 fn sha256_file(path: &Path) -> Result<String, String> {
     sha256_file_with_progress(path, "hashing", None, None)
 }
@@ -1640,6 +1690,20 @@ impl GuestConnection for NvidiaBuildSession {
     }
 }
 
+impl GuestConnection for NvidiaBuildConnection {
+    fn ssh_key(&self) -> &Path {
+        &self.ssh_key
+    }
+
+    fn ssh_port(&self) -> u16 {
+        self.ssh_port
+    }
+
+    fn runtime_dir(&self) -> &Path {
+        &self.runtime_dir
+    }
+}
+
 fn ssh_command(session: &impl GuestConnection) -> Result<Command, String> {
     let ssh = find_binary("ssh").ok_or("ssh is required for the guest handshake.")?;
     let mut command = Command::new(ssh);
@@ -1826,6 +1890,294 @@ fn scp_command(session: &impl GuestConnection) -> Result<Command, String> {
             "LogLevel=ERROR",
         ]);
     Ok(command)
+}
+
+fn valid_numeric_version(value: &str, components: std::ops::RangeInclusive<usize>) -> bool {
+    let parts: Vec<_> = value.split('.').collect();
+    components.contains(&parts.len())
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn validate_nvidia_target_build_spec(spec: &NvidiaTargetBuildSpec) -> Result<(), String> {
+    if !valid_numeric_version(&spec.steamos_version, 3..=3) {
+        return Err("SteamOS target version must contain three numeric components.".into());
+    }
+    if !valid_numeric_version(&spec.nvidia_version, 2..=3) {
+        return Err("NVIDIA target version must contain two or three numeric components.".into());
+    }
+    if spec.kernel_version.is_empty()
+        || !spec.kernel_version.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'~' | b'-')
+        })
+    {
+        return Err("Target kernel contains unsupported characters.".into());
+    }
+    Ok(())
+}
+
+fn nvidia_development_asset_name(spec: &NvidiaTargetBuildSpec) -> String {
+    let kernel_tag: String = spec
+        .kernel_version
+        .chars()
+        .map(|character| match character {
+            '/' | ' ' | ':' | '+' => '-',
+            other => other,
+        })
+        .collect();
+    format!(
+        "nvidia-open-steamos-{}-nvidia-{}-k{}-x86_64.tar.gz",
+        spec.steamos_version, spec.nvidia_version, kernel_tag
+    )
+}
+
+fn run_guest_command_logged(
+    session: &impl GuestConnection,
+    command: &str,
+    log_path: &Path,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), String> {
+    let log = File::create(log_path)
+        .map_err(|e| format!("Could not create the NVIDIA target-build log: {e}"))?;
+    let log_err = log
+        .try_clone()
+        .map_err(|e| format!("Could not prepare the NVIDIA target-build log: {e}"))?;
+    let mut child = ssh_command(session)?
+        .arg(command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log_err))
+        .spawn()
+        .map_err(|e| format!("Could not start the NVIDIA target build: {e}"))?;
+    let status = loop {
+        if cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("NVIDIA target build cancelled.".into());
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| format!("Could not inspect the NVIDIA target build: {e}"))?
+        {
+            break status;
+        }
+        thread::sleep(Duration::from_millis(500));
+    };
+    if status.success() {
+        return Ok(());
+    }
+    let bytes = fs::read(log_path).unwrap_or_default();
+    let start = bytes.len().saturating_sub(8 * 1024);
+    let detail = String::from_utf8_lossy(&bytes[start..]).trim().to_string();
+    Err(if detail.is_empty() {
+        format!("NVIDIA target build exited with {status}.")
+    } else {
+        format!("NVIDIA target build exited with {status}: {detail}")
+    })
+}
+
+fn build_nvidia_for_target(
+    session: &impl GuestConnection,
+    support_repository: &Path,
+    output_dir: &Path,
+    spec: &NvidiaTargetBuildSpec,
+    cancel: Option<&AtomicBool>,
+) -> Result<NvidiaDevelopmentArtifact, String> {
+    validate_nvidia_target_build_spec(spec)?;
+    let support_repository = fs::canonicalize(support_repository)
+        .map_err(|e| format!("Could not resolve the NVIDIA support repository: {e}"))?;
+    for required in ["bootstrap/build_for_target.sh", "lib/common.sh"] {
+        if !support_repository.join(required).is_file() {
+            return Err(format!(
+                "NVIDIA support repository is missing required file {required}."
+            ));
+        }
+    }
+    fs::create_dir_all(output_dir)
+        .map_err(|e| format!("Could not create the NVIDIA artifact output directory: {e}"))?;
+    let output_dir = fs::canonicalize(output_dir)
+        .map_err(|e| format!("Could not resolve the NVIDIA artifact output directory: {e}"))?;
+    let asset_name = nvidia_development_asset_name(spec);
+    let checksum_name = format!("{asset_name}.sha256");
+    let build_info_name = format!("{}.build-info.txt", asset_name.trim_end_matches(".tar.gz"));
+    for name in [&asset_name, &checksum_name, &build_info_name] {
+        if output_dir.join(name).exists() {
+            return Err(format!(
+                "Refusing to overwrite an existing NVIDIA artifact: {}",
+                output_dir.join(name).display()
+            ));
+        }
+    }
+
+    let transfer_archive = session.runtime_dir().join("support-repository.tar.gz");
+    run_checked(
+        Command::new("tar")
+            .args(["-czf"])
+            .arg(&transfer_archive)
+            .args(["--exclude", ".git", "--exclude", "target", "-C"])
+            .arg(&support_repository)
+            .arg("."),
+        "Could not package the NVIDIA support repository",
+    )?;
+    run_checked(
+        scp_command(session)?
+            .arg(&transfer_archive)
+            .arg("builder@127.0.0.1:/tmp/steamos-nvidia-support.tar.gz"),
+        "Could not copy the NVIDIA support repository into the x86 guest",
+    )?;
+    let build_command = format!(
+        "set -eu; rm -rf /tmp/steamos-nvidia-support /tmp/steamos-nvidia-artifacts; mkdir -p /tmp/steamos-nvidia-support /tmp/steamos-nvidia-artifacts; tar -xzf /tmp/steamos-nvidia-support.tar.gz -C /tmp/steamos-nvidia-support; cd /tmp/steamos-nvidia-support; bash ./bootstrap/build_for_target.sh --steamos {} --kernel {} --nvidia {} --architecture x86_64 --install-dependencies --output /tmp/steamos-nvidia-artifacts",
+        spec.steamos_version, spec.kernel_version, spec.nvidia_version
+    );
+    run_guest_command_logged(
+        session,
+        &build_command,
+        &session.runtime_dir().join("nvidia-build.log"),
+        cancel,
+    )?;
+
+    let download_dir = session.runtime_dir().join("artifact-download");
+    fs::create_dir_all(&download_dir)
+        .map_err(|e| format!("Could not create the artifact download staging directory: {e}"))?;
+    for name in [&asset_name, &checksum_name, &build_info_name] {
+        run_checked(
+            scp_command(session)?
+                .arg(format!(
+                    "builder@127.0.0.1:/tmp/steamos-nvidia-artifacts/{name}"
+                ))
+                .arg(&download_dir),
+            "Could not copy a generated NVIDIA artifact from the x86 guest",
+        )?;
+    }
+
+    let staged_archive = download_dir.join(&asset_name);
+    let staged_checksum = download_dir.join(&checksum_name);
+    let staged_build_info = download_dir.join(&build_info_name);
+    let expected_sha256 = fs::read_to_string(&staged_checksum)
+        .map_err(|e| format!("Could not read the NVIDIA artifact checksum: {e}"))?
+        .split_whitespace()
+        .next()
+        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or("Generated NVIDIA artifact checksum is invalid.")?
+        .to_ascii_lowercase();
+    let archive_sha256 = sha256_file(&staged_archive)?;
+    if archive_sha256 != expected_sha256 {
+        return Err("Generated NVIDIA artifact checksum verification failed.".into());
+    }
+    let listing = Command::new("tar")
+        .args(["-tzf"])
+        .arg(&staged_archive)
+        .output()
+        .map_err(|e| format!("Could not inspect the generated NVIDIA archive: {e}"))?;
+    if !listing.status.success() {
+        return Err("Generated NVIDIA artifact is not a readable tar.gz archive.".into());
+    }
+    let entries = String::from_utf8_lossy(&listing.stdout);
+    let expected_modules = [
+        "modules/nvidia-drm.ko",
+        "modules/nvidia-modeset.ko",
+        "modules/nvidia-peermem.ko",
+        "modules/nvidia-uvm.ko",
+        "modules/nvidia.ko",
+    ];
+    for entry in entries.lines() {
+        if entry.starts_with('/')
+            || entry == ".."
+            || entry.starts_with("../")
+            || entry.contains("/../")
+            || entry.ends_with("/..")
+        {
+            return Err("Generated NVIDIA artifact contains an unsafe path.".into());
+        }
+        let allowed =
+            entry == "modules/" || entry == "BUILD-INFO.txt" || expected_modules.contains(&entry);
+        if !allowed {
+            return Err(format!(
+                "Generated NVIDIA artifact contains an unexpected entry: {entry}"
+            ));
+        }
+    }
+    if !expected_modules
+        .iter()
+        .all(|expected| entries.lines().any(|entry| entry == *expected))
+        || !entries.lines().any(|entry| entry == "BUILD-INFO.txt")
+    {
+        return Err("Generated NVIDIA artifact is missing required modules or metadata.".into());
+    }
+    let build_info = fs::read_to_string(&staged_build_info)
+        .map_err(|e| format!("Could not read generated NVIDIA build metadata: {e}"))?;
+    let archived_build_info = Command::new("tar")
+        .args(["-xOzf"])
+        .arg(&staged_archive)
+        .arg("BUILD-INFO.txt")
+        .output()
+        .map_err(|e| format!("Could not extract NVIDIA archive metadata: {e}"))?;
+    if !archived_build_info.status.success()
+        || archived_build_info.stdout.as_slice() != build_info.as_bytes()
+    {
+        return Err("NVIDIA archive metadata does not match its external build-info file.".into());
+    }
+    let metadata = |key: &str| {
+        build_info
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{key}=")))
+    };
+    if metadata("steamos_version") != Some(spec.steamos_version.as_str())
+        || metadata("kernel_version") != Some(spec.kernel_version.as_str())
+        || metadata("nvidia_version") != Some(spec.nvidia_version.as_str())
+        || metadata("build_architecture") != Some("x86_64")
+        || metadata("header_authentication")
+            != Some("https-transport-or-local-input-not-signature-verified")
+    {
+        return Err(
+            "Generated NVIDIA artifact metadata does not match the requested target.".into(),
+        );
+    }
+
+    let final_archive = output_dir.join(&asset_name);
+    let final_checksum = output_dir.join(&checksum_name);
+    let final_build_info = output_dir.join(&build_info_name);
+    let mut archive_guard = PartialOutputGuard {
+        path: final_archive.clone(),
+        armed: true,
+    };
+    let mut checksum_guard = PartialOutputGuard {
+        path: final_checksum.clone(),
+        armed: true,
+    };
+    let mut build_info_guard = PartialOutputGuard {
+        path: final_build_info.clone(),
+        armed: true,
+    };
+    copy_new_file(
+        &staged_archive,
+        &final_archive,
+        "Could not finalize the NVIDIA archive",
+    )?;
+    copy_new_file(
+        &staged_checksum,
+        &final_checksum,
+        "Could not finalize the NVIDIA checksum",
+    )?;
+    copy_new_file(
+        &staged_build_info,
+        &final_build_info,
+        "Could not finalize the NVIDIA build metadata",
+    )?;
+    archive_guard.armed = false;
+    checksum_guard.armed = false;
+    build_info_guard.armed = false;
+    Ok(NvidiaDevelopmentArtifact {
+        archive_path: final_archive.to_string_lossy().into_owned(),
+        checksum_path: final_checksum.to_string_lossy().into_owned(),
+        build_info_path: final_build_info.to_string_lossy().into_owned(),
+        archive_sha256,
+        steamos_version: spec.steamos_version.clone(),
+        kernel_version: spec.kernel_version.clone(),
+        nvidia_version: spec.nvidia_version.clone(),
+        trust: "development-unverified".into(),
+    })
 }
 
 fn run_transfer_proof(session: &impl GuestConnection) -> Result<TransferProof, String> {
@@ -3114,6 +3466,7 @@ fn start_nvidia_build_appliance_blocking(
             manager.session = None;
         }
         manager.starting = true;
+        manager.cancel_build.store(false, Ordering::Relaxed);
     }
     let prepared = prepare_nvidia_build_session();
     let mut manager = manager_state
@@ -3227,9 +3580,72 @@ async fn nvidia_build_guest_health(app: tauri::AppHandle) -> Result<GuestHealth,
 }
 
 #[tauri::command]
+async fn build_nvidia_target_development(
+    app: tauri::AppHandle,
+    support_repository: String,
+    output_dir: String,
+    steamos_version: String,
+    kernel_version: String,
+    nvidia_version: String,
+) -> Result<NvidiaDevelopmentArtifact, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager_state = app.state::<Mutex<NvidiaBuildManager>>();
+        let (connection, cancel) = {
+            let mut manager = manager_state
+                .lock()
+                .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+            manager.cancel_build.store(false, Ordering::Relaxed);
+            let cancel = manager.cancel_build.clone();
+            let session = manager
+                .session
+                .as_mut()
+                .ok_or("The x86_64 Fedora build appliance is not running.")?;
+            if session.state != "ready" {
+                return Err("The x86_64 Fedora build appliance is not ready.".into());
+            }
+            session.state = "building".into();
+            session.message = format!(
+                "Building NVIDIA {nvidia_version} for exact kernel {kernel_version}."
+            );
+            (NvidiaBuildConnection::from(&*session), cancel)
+        };
+        let spec = NvidiaTargetBuildSpec {
+            steamos_version,
+            kernel_version,
+            nvidia_version,
+        };
+        let result = build_nvidia_for_target(
+            &connection,
+            Path::new(&support_repository),
+            Path::new(&output_dir),
+            &spec,
+            Some(&cancel),
+        );
+        if let Ok(mut manager) = manager_state.lock() {
+            if let Some(session) = manager
+                .session
+                .as_mut()
+                .filter(|session| session.ssh_port == connection.ssh_port)
+            {
+                session.state = "ready".into();
+                session.message = match &result {
+                    Ok(_) => "Development NVIDIA artifact build completed and validated.".into(),
+                    Err(error) => format!(
+                        "Development NVIDIA artifact build stopped without a usable artifact: {error}"
+                    ),
+                };
+            }
+        }
+        result
+    })
+    .await
+    .map_err(|error| format!("NVIDIA target-build worker failed: {error}"))?
+}
+
+#[tauri::command]
 async fn read_nvidia_build_appliance_log(app: tauri::AppHandle) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let log_path = {
+        let runtime_dir = {
             let manager_state = app.state::<Mutex<NvidiaBuildManager>>();
             let manager = manager_state
                 .lock()
@@ -3237,13 +3653,22 @@ async fn read_nvidia_build_appliance_log(app: tauri::AppHandle) -> Result<String
             let Some(session) = manager.session.as_ref() else {
                 return Ok(String::new());
             };
-            session.runtime_dir.join("qemu.log")
+            session.runtime_dir.clone()
         };
-        let bytes = fs::read(log_path)
-            .map_err(|e| format!("Could not read the x86 build-appliance log: {e}"))?;
         const LOG_LIMIT: usize = 32 * 1024;
-        let start = bytes.len().saturating_sub(LOG_LIMIT);
-        Ok(String::from_utf8_lossy(&bytes[start..]).into_owned())
+        let qemu_bytes = fs::read(runtime_dir.join("qemu.log"))
+            .map_err(|e| format!("Could not read the x86 build-appliance log: {e}"))?;
+        let qemu_start = qemu_bytes.len().saturating_sub(LOG_LIMIT / 4);
+        let mut output = String::from_utf8_lossy(&qemu_bytes[qemu_start..]).into_owned();
+        let build_log = runtime_dir.join("nvidia-build.log");
+        if build_log.is_file() {
+            let build_bytes = fs::read(build_log)
+                .map_err(|e| format!("Could not read the NVIDIA target-build log: {e}"))?;
+            let build_start = build_bytes.len().saturating_sub(LOG_LIMIT);
+            output.push_str("\n[NVIDIA target build]\n");
+            output.push_str(&String::from_utf8_lossy(&build_bytes[build_start..]));
+        }
+        Ok(output)
     })
     .await
     .map_err(|error| format!("NVIDIA build-appliance log worker failed: {error}"))?
@@ -3757,6 +4182,7 @@ async fn stop_nvidia_build_appliance(app: tauri::AppHandle) -> Result<NvidiaBuil
         let mut manager = manager_state
             .lock()
             .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+        manager.cancel_build.store(true, Ordering::Relaxed);
         let Some(mut session) = manager.session.take() else {
             return Ok(stopped_nvidia_build_status(
                 "The x86_64 Fedora build appliance is stopped.",
@@ -3891,6 +4317,36 @@ mod tests {
             ("hvf", "q35,accel=hvf", "host")
         );
         assert!(nvidia_build_qemu_spec("unsupported").is_err());
+    }
+
+    #[test]
+    fn validates_and_names_exact_nvidia_target_builds() {
+        let spec = NvidiaTargetBuildSpec {
+            steamos_version: "3.8.14".into(),
+            kernel_version: "6.16.12-valve24.4-1-neptune-616-gfe145653a794".into(),
+            nvidia_version: "575.64.05".into(),
+        };
+        validate_nvidia_target_build_spec(&spec).unwrap();
+        assert_eq!(
+            nvidia_development_asset_name(&spec),
+            "nvidia-open-steamos-3.8.14-nvidia-575.64.05-k6.16.12-valve24.4-1-neptune-616-gfe145653a794-x86_64.tar.gz"
+        );
+        for invalid in [
+            NvidiaTargetBuildSpec {
+                steamos_version: "3.8".into(),
+                ..spec.clone()
+            },
+            NvidiaTargetBuildSpec {
+                kernel_version: "$(uname)".into(),
+                ..spec.clone()
+            },
+            NvidiaTargetBuildSpec {
+                nvidia_version: "latest".into(),
+                ..spec.clone()
+            },
+        ] {
+            assert!(validate_nvidia_target_build_spec(&invalid).is_err());
+        }
     }
 
     #[test]
@@ -4394,6 +4850,88 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "downloads dependencies/headers/source and compiles NVIDIA under x86_64 QEMU"]
+    fn live_nvidia_offline_target_build() {
+        let support_repository = std::env::var_os("NVIDIA_SUPPORT_REPO")
+            .map(PathBuf::from)
+            .expect("set NVIDIA_SUPPORT_REPO to the support-repository checkout");
+        let output_dir = std::env::var_os("NVIDIA_TARGET_ARTIFACT_DIR")
+            .map(PathBuf::from)
+            .expect("set NVIDIA_TARGET_ARTIFACT_DIR to an empty output directory");
+        let mut session =
+            prepare_nvidia_build_session().expect("the x86 build appliance should start");
+        let deadline = Instant::now() + NVIDIA_BUILD_BOOT_TIMEOUT;
+        loop {
+            assert_eq!(
+                session.child.try_wait().expect("x86 QEMU status"),
+                None,
+                "x86 QEMU exited before readiness"
+            );
+            if handshake(&session).as_deref() == Ok(READY_MARKER) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "x86 build-appliance handshake timed out"
+            );
+            thread::sleep(Duration::from_secs(1));
+        }
+        let health = collect_guest_health(&session).expect("x86 guest health should pass");
+        assert_eq!(health.architecture, "x86_64");
+        let spec = NvidiaTargetBuildSpec {
+            steamos_version: "3.8.14".into(),
+            kernel_version: "6.16.12-valve24.4-1-neptune-616-gfe145653a794".into(),
+            nvidia_version: "575.64.05".into(),
+        };
+        let connection = NvidiaBuildConnection::from(&session);
+        let build_log = connection.runtime_dir.join("nvidia-build.log");
+        let build_result = thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                build_nvidia_for_target(&connection, &support_repository, &output_dir, &spec, None)
+            });
+            let mut printed_bytes = 0_u64;
+            while !worker.is_finished() {
+                if let Ok(mut log) = File::open(&build_log) {
+                    if log.seek(SeekFrom::Start(printed_bytes)).is_ok() {
+                        let mut update = Vec::new();
+                        if log.read_to_end(&mut update).is_ok() && !update.is_empty() {
+                            std::io::stdout()
+                                .write_all(&update)
+                                .and_then(|_| std::io::stdout().flush())
+                                .expect("print NVIDIA build progress");
+                            printed_bytes += update.len() as u64;
+                        }
+                    }
+                }
+                thread::sleep(Duration::from_secs(1));
+            }
+            if let Ok(mut log) = File::open(&build_log) {
+                if log.seek(SeekFrom::Start(printed_bytes)).is_ok() {
+                    let mut update = Vec::new();
+                    if log.read_to_end(&mut update).is_ok() && !update.is_empty() {
+                        std::io::stdout()
+                            .write_all(&update)
+                            .and_then(|_| std::io::stdout().flush())
+                            .expect("print final NVIDIA build progress");
+                    }
+                }
+            }
+            worker.join().expect("NVIDIA build worker should not panic")
+        });
+        let stop_result = stop_nvidia_build_session(&mut session);
+        let artifact = build_result.expect("the exact-kernel NVIDIA target build should pass");
+        stop_result.expect("the x86 build appliance should stop cleanly");
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&artifact).expect("serialize NVIDIA artifact report")
+        );
+        assert_eq!(artifact.trust, "development-unverified");
+        assert!(Path::new(&artifact.archive_path).is_file());
+        assert!(Path::new(&artifact.checksum_path).is_file());
+        assert!(Path::new(&artifact.build_info_path).is_file());
+    }
+
+    #[test]
     #[ignore = "requires STEAMOS_RECOVERY_IMAGE and launches the local Fedora/QEMU appliance"]
     fn live_recovery_image_layout_report() {
         let input = std::env::var_os("STEAMOS_RECOVERY_IMAGE")
@@ -4481,6 +5019,7 @@ pub fn run() {
             read_nvidia_build_appliance_log,
             guest_health,
             nvidia_build_guest_health,
+            build_nvidia_target_development,
             verify_guest_transfer,
             inspect_test_disk,
             inspect_selected_image,

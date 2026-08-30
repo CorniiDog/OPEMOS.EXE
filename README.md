@@ -19,6 +19,14 @@ worker yet, and artifacts from it remain development/unverified until the
 support repository's Fedora build, installer, and package-signature gates have
 passed.
 
+An opt-in development command can copy an explicitly selected support-repository
+checkout into the managed x86 worker and execute its fixed offline-target build
+contract. Output is streamed to the worker log rather than buffered on the UI
+thread. Returned archives are accepted only after host-side checksum, archive
+membership, metadata, and target-identity validation. They are always labeled
+`development-unverified` while Valve header-package signature verification is
+still pending. The normal build button does not invoke this command yet.
+
 ## Architecture
 
 The Tauri frontend invokes a fixed set of Rust commands; it does not pass arbitrary shell commands to the host or guest. Rust owns the QEMU child process and creates a unique runtime directory containing an ephemeral SSH identity, cloud-init seed, qcow2 overlay, writable UEFI variables, and `qemu.log`. The pristine Fedora appliance remains unchanged.

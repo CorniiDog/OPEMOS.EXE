@@ -54,3 +54,20 @@ cargo test --manifest-path src-tauri/Cargo.toml \
 The test can take several minutes under Apple Silicon software emulation. It
 verifies the guest architecture, clean shutdown, disposable-runtime removal,
 log archival, and base-appliance immutability. It does not compile NVIDIA yet.
+
+After that lifecycle test passes, run the opt-in exact-kernel compilation test
+with explicit host inputs:
+
+```bash
+NVIDIA_SUPPORT_REPO=/Users/connor/Desktop/open-gpu-kernel-modules-steamos-support \
+NVIDIA_TARGET_ARTIFACT_DIR=/Users/connor/Downloads/nvidia-target-test \
+cargo test --manifest-path src-tauri/Cargo.toml \
+  live_nvidia_offline_target_build -- --ignored --nocapture
+```
+
+This installs Fedora build dependencies into the disposable overlay, searches
+for the exact historical Valve headers, downloads the NVIDIA source branch,
+and performs a full compilation under emulated x86_64. It may take substantially
+longer than the lifecycle test. The host validates and preserves the returned
+archive, checksum, and build-info file in `NVIDIA_TARGET_ARTIFACT_DIR`; it never
+treats this result as certified while header signatures remain unverified.

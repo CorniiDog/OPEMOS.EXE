@@ -441,6 +441,9 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Add non-network architecture-plan modes and separate macOS acquisition/launch paths for a development x86_64 Fedora appliance without replacing or colliding with the native appliance.
 * [x] Add an isolated Rust-owned x86_64 build-appliance manager with disposable overlay/credentials, dynamic SSH forwarding, architecture health enforcement, bounded boot status, log access, graceful shutdown, forced-stop fallback, and abandoned-runtime cleanup.
 * [x] Add an opt-in live lifecycle test that verifies x86_64 guest identity, runtime cleanup, log preservation, and base-appliance immutability.
+* [x] Validate the isolated x86_64 lifecycle on Apple Silicon under TCG (`57.40s` in the first successful local run).
+* [x] Add a controlled development build command that transfers an explicit support-repository checkout, streams the fixed offline-target build into managed logs, supports cancellation, and retrieves artifacts without exposing arbitrary guest commands.
+* [x] Validate returned development artifacts on the host for SHA-256, safe/exact archive membership, matching internal/external build metadata, requested target identity, and explicit unverified-header trust state.
 * [ ] Run a real offline-target build inside an x86_64 Fedora environment.
 * [ ] Confirm Valve still serves the exact historical headers package for the observed SteamOS 3.8.14 `valve24.4` kernel.
 * [ ] Confirm NVIDIA 575.64.05 produces all five modules with exact target vermagic.
