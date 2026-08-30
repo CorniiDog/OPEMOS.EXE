@@ -315,7 +315,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Accept supported image/compression extensions.
 * [x] Inspect actual magic bytes instead of trusting extension alone.
 * [x] Detect raw, bzip2, gzip, and xz content independently of filename.
-* [x] Use embedded Rust decoders so normalization does not depend on guest decompressor availability.
+* [x] Prefer multithreaded host 7-Zip for bzip2, then `pbzip2` and embedded Rust fallbacks, avoiding guest decompressor dependency.
 * [ ] Reject directories, device nodes, sockets, FIFOs, and unexpected special files.
 * [x] Determine source and normalized image sizes before QEMU launch.
 * [ ] Verify sufficient host free space for decompression, working copy, overlays, and final output.
@@ -334,6 +334,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Decompress `.img.gz`.
 * [x] Decompress `.img.xz`.
 * [x] Stream decompression rather than loading the image into memory.
+* [x] Use multithreaded bzip2 decompression on macOS while reserving one logical CPU for responsiveness.
 * [x] Show live source-hashing, compressed-byte, and normalized-image hashing progress.
 * [ ] Verify decompressed output size is sane.
 * [x] Compute and verify the normalized raw-image checksum.

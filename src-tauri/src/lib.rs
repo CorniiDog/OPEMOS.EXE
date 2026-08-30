@@ -51,6 +51,7 @@ struct ApplianceStatus {
 #[serde(rename_all = "camelCase")]
 struct InputPreparation {
     source_format: String,
+    normalizer: String,
     normalized: bool,
     source_bytes: u64,
     image_bytes: u64,
@@ -578,6 +579,32 @@ fn normalize_input(
         return Ok(source.to_path_buf());
     }
     let destination = runtime_dir.join("normalized-input.img");
+    if format == InputFormat::Bzip2 {
+        if let Some(seven_zip) = find_binary("7zz") {
+            normalize_bzip2_parallel(
+                &seven_zip,
+                ParallelBzip2Tool::SevenZip,
+                source,
+                &destination,
+                runtime_dir,
+                progress,
+                cancel,
+            )?;
+            return Ok(destination);
+        }
+        if let Some(pbzip2) = find_binary("pbzip2") {
+            normalize_bzip2_parallel(
+                &pbzip2,
+                ParallelBzip2Tool::Pbzip2,
+                source,
+                &destination,
+                runtime_dir,
+                progress,
+                cancel,
+            )?;
+            return Ok(destination);
+        }
+    }
     let source_file =
         File::open(source).map_err(|e| format!("Could not open the compressed input: {e}"))?;
     let source_bytes = source_file
@@ -623,6 +650,104 @@ fn normalize_input(
         return Err("The compressed input produced an empty image.".into());
     }
     Ok(destination)
+}
+
+#[derive(Clone, Copy)]
+enum ParallelBzip2Tool {
+    SevenZip,
+    Pbzip2,
+}
+
+fn normalize_bzip2_parallel(
+    binary: &Path,
+    tool: ParallelBzip2Tool,
+    source: &Path,
+    destination: &Path,
+    runtime_dir: &Path,
+    progress: Option<&ProgressCallback<'_>>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), String> {
+    if cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed)) {
+        return Err("Image preparation cancelled.".into());
+    }
+    let output = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(destination)
+        .map_err(|e| format!("Could not create the normalized image: {e}"))?;
+    let (name, error_filename) = match tool {
+        ParallelBzip2Tool::SevenZip => ("7-Zip", "sevenzip.log"),
+        ParallelBzip2Tool::Pbzip2 => ("pbzip2", "pbzip2.log"),
+    };
+    let error_path = runtime_dir.join(error_filename);
+    let error_log = File::create(&error_path)
+        .map_err(|e| format!("Could not create the parallel decompressor log: {e}"))?;
+    let workers = thread::available_parallelism()
+        .map(|count| count.get().saturating_sub(1).max(1))
+        .unwrap_or(1);
+    let mut command = Command::new(binary);
+    match tool {
+        ParallelBzip2Tool::SevenZip => {
+            command
+                .arg("x")
+                .arg("-so")
+                .arg(format!("-mmt={workers}"))
+                .arg(source);
+        }
+        ParallelBzip2Tool::Pbzip2 => {
+            command
+                .arg("-d")
+                .arg("-c")
+                .arg(format!("-p{workers}"))
+                .arg(source);
+        }
+    }
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(output))
+        .stderr(Stdio::from(error_log))
+        .spawn()
+        .map_err(|e| format!("Could not start {name} bzip2 decompression: {e}"))?;
+    let status = loop {
+        if cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Image preparation cancelled.".into());
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| format!("Could not inspect {name} decompression: {e}"))?
+        {
+            break status;
+        }
+        if let Some(progress) = progress {
+            let output_bytes = fs::metadata(destination)
+                .map(|value| value.len())
+                .unwrap_or(0);
+            progress("decompressing-output", output_bytes, 0);
+        }
+        thread::sleep(Duration::from_millis(150));
+    };
+    if !status.success() {
+        let detail = fs::read_to_string(&error_path).unwrap_or_default();
+        return Err(if detail.trim().is_empty() {
+            format!("{name} bzip2 decompression failed with {status}.")
+        } else {
+            format!("{name} bzip2 decompression failed: {}", detail.trim())
+        });
+    }
+    let output_bytes = fs::metadata(destination)
+        .map_err(|e| format!("Could not inspect the parallel decompression output: {e}"))?
+        .len();
+    if output_bytes == 0 {
+        return Err("The compressed input produced an empty image.".into());
+    }
+    if let Some(progress) = progress {
+        progress("decompressing-output", output_bytes, 0);
+    }
+    File::open(destination)
+        .and_then(|file| file.sync_all())
+        .map_err(|e| format!("Could not finish the normalized image: {e}"))
 }
 
 fn prepare_session(
@@ -737,6 +862,14 @@ fn prepare_session(
         .map_err(|e| format!("Could not inspect the input size: {e}"))?
         .len();
     let input_format = detect_input_format(&input_image)?;
+    let normalizer = match input_format {
+        InputFormat::Raw => "direct",
+        InputFormat::Bzip2 if find_binary("7zz").is_some() => "sevenzip",
+        InputFormat::Bzip2 if find_binary("pbzip2").is_some() => "pbzip2",
+        InputFormat::Bzip2 => "embedded-bzip2",
+        InputFormat::Gzip => "embedded-gzip",
+        InputFormat::Xz => "embedded-xz",
+    };
     let attached_image =
         normalize_input(&input_image, &runtime_dir, input_format, progress, cancel)?;
     let image_bytes = fs::metadata(&attached_image)
@@ -749,6 +882,7 @@ fn prepare_session(
     };
     let input_preparation = InputPreparation {
         source_format: input_format.name().into(),
+        normalizer: normalizer.into(),
         normalized: input_format != InputFormat::Raw,
         source_bytes,
         image_bytes,
@@ -1907,8 +2041,15 @@ mod tests {
         assert_eq!(fs::read(bzip_image).unwrap(), PAYLOAD);
         let reports = reports.into_inner().unwrap();
         assert!(!reports.is_empty());
-        assert_eq!(reports.last().unwrap().0, "decompressing");
-        assert_eq!(reports.last().unwrap().1, reports.last().unwrap().2);
+        let final_report = reports.last().unwrap();
+        assert!(matches!(
+            final_report.0.as_str(),
+            "decompressing" | "decompressing-output"
+        ));
+        assert!(final_report.1 > 0);
+        if final_report.2 > 0 {
+            assert_eq!(final_report.1, final_report.2);
+        }
 
         let cancelled_runtime = root.join("cancelled-runtime");
         fs::create_dir(&cancelled_runtime).unwrap();

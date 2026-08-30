@@ -107,7 +107,12 @@ function formatBytes(bytes) {
 }
 
 function showInputProgress(progress) {
-  if (!running || cancelling || !progress.totalBytes) return;
+  if (!running || cancelling) return;
+  if (progress.stage === "decompressing-output") {
+    setStatus("running", "Normalizing compressed image", `Parallel decompressor produced ${formatBytes(progress.processedBytes)} of raw image data.`, 12, "Unzipping");
+    return;
+  }
+  if (!progress.totalBytes) return;
   const ratio = Math.min(progress.processedBytes / progress.totalBytes, 1);
   const amount = `${formatBytes(progress.processedBytes)} of ${formatBytes(progress.totalBytes)}`;
   if (progress.stage === "hashing-source") {
@@ -180,7 +185,7 @@ async function runBuild(request) {
   let logTimer = null;
   try {
     const started = await invoke("start_appliance", { path: request.path });
-    addStageLog(`Input preparation: detected ${started.input.sourceFormat}; normalized=${started.input.normalized}; ${started.input.sourceBytes} source bytes → ${started.input.imageBytes} raw image bytes.`);
+    addStageLog(`Input preparation: detected ${started.input.sourceFormat}; engine=${started.input.normalizer}; normalized=${started.input.normalized}; ${started.input.sourceBytes} source bytes → ${started.input.imageBytes} raw image bytes.`);
     addStageLog(`Appliance session created on local port ${started.sshPort}.`);
     setStatus("running", "Starting builder", "Waiting for the Fedora guest readiness handshake.", 22);
     logTimer = setInterval(refreshLogs, 750);

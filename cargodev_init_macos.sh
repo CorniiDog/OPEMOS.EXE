@@ -144,6 +144,20 @@ command -v "$QEMU_BINARY" >/dev/null 2>&1 ||
     die "QEMU was installed but ${QEMU_BINARY} is not available in PATH."
 
 #
+# Fast, multithreaded SteamOS image decompression
+#
+
+if ! command -v 7zz >/dev/null 2>&1; then
+    log "7-Zip is not installed."
+    log "Installing sevenzip..."
+
+    brew install sevenzip
+fi
+
+command -v 7zz >/dev/null 2>&1 ||
+    die "sevenzip was installed but 7zz is not available in PATH."
+
+#
 # Environment summary
 #
 
@@ -152,6 +166,7 @@ log "Cargo: $(cargo --version)"
 log "Node: $(node --version)"
 log "npm:  $(npm --version)"
 log "QEMU: $("$QEMU_BINARY" --version | head -n 1)"
+log "7-Zip: $(7zz | sed -n '2p')"
 
 #
 # JavaScript dependencies
