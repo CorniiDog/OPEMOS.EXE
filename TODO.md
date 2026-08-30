@@ -438,6 +438,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Validate the exact five-module NVIDIA set, x86_64 ELF architecture, and exact target-kernel vermagic before packaging.
 * [x] Emit the archive, checksum, and build metadata format already accepted by the support installer.
 * [x] Make the shared module validator and local contract checks compatible with macOS Bash 3.2; skip and clearly retain Fedora-only transaction coverage where modern Bash/Linux behavior is required.
+* [x] Add non-network architecture-plan modes and separate macOS acquisition/launch paths for a development x86_64 Fedora appliance without replacing or colliding with the native appliance.
 * [ ] Run a real offline-target build inside an x86_64 Fedora environment.
 * [ ] Confirm Valve still serves the exact historical headers package for the observed SteamOS 3.8.14 `valve24.4` kernel.
 * [ ] Confirm NVIDIA 575.64.05 produces all five modules with exact target vermagic.
@@ -458,7 +459,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Treat “no compatible published artifact” as a normal, non-destructive resolution result with a clear UI status; do not create an NVIDIA-labeled output or classify it as an application failure.
 * [ ] Keep Gamescope fallback policy independent from NVIDIA kernel-module fallback policy.
 * [ ] Require exact target-kernel identity/vermagic for NVIDIA artifacts; never reuse the SteamOS 3.8.16 `valve24.5` modules for the observed 3.8.14 `valve24.4` kernel.
-* [ ] Add an x86_64 Fedora build-appliance path on Apple Silicon; the current architecture-matched appliance is aarch64 and cannot run the native x86_64 offline-target build command.
+* [ ] Integrate the separate x86_64 Fedora build-appliance path into the Rust-managed workflow on Apple Silicon; development acquisition/launch tooling exists, but the app does not invoke it yet.
 * [ ] Decide whether the Apple Silicon fallback uses a separately managed emulated x86_64 appliance or a trusted remote x86_64 build worker, accounting for performance and artifact provenance.
 * [ ] Consider a Gamescope 3.8.16 compatibility floor for earlier SteamOS 3.8.x images only after its binary dependencies and runtime behavior are explicitly validated on those releases.
 

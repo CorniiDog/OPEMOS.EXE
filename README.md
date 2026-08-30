@@ -8,6 +8,14 @@ The first target is macOS. The desktop shell provides drag-and-drop, file picker
 
 The Rust backend prepares a disposable Fedora session, launches QEMU in the background, polls the guest's SSH readiness marker, reports lifecycle states, and performs graceful shutdown with a forced-stop fallback. The current marker milestone exports the modified qcow2 working state as a separate raw `.img`, then attaches that candidate read-only to a fresh validation appliance, rediscovers the supported Valve layout, verifies the marker, rechecks the original input hash, and only then gives the output its final name. A versioned `.img.manifest.json` sidecar records filenames (never full host paths), formats, sizes, hashes, layout, modified paths, and validation status. This marker-only output does **not** yet contain NVIDIA or Gamescope integration and is not an install-ready project release.
 
+On Apple Silicon, the normal inspection/mutation appliance remains native
+aarch64 with HVF acceleration. Development tooling can acquire and launch a
+separate x86_64 Fedora appliance under TCG software emulation for exact-kernel
+NVIDIA compilation experiments. The desktop app does not invoke that slower
+build appliance yet, and artifacts from it remain development/unverified until
+the support repository's Fedora build, installer, and package-signature gates
+have passed.
+
 ## Architecture
 
 The Tauri frontend invokes a fixed set of Rust commands; it does not pass arbitrary shell commands to the host or guest. Rust owns the QEMU child process and creates a unique runtime directory containing an ephemeral SSH identity, cloud-init seed, qcow2 overlay, writable UEFI variables, and `qemu.log`. The pristine Fedora appliance remains unchanged.
