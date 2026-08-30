@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
-    net::TcpListener,
+    io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
@@ -108,6 +108,21 @@ struct MarkerMutation {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct UserMarkerMutation {
+    marker_path: String,
+    marker_content: String,
+    target_partition: String,
+    target_partition_label: String,
+    filesystem: String,
+    input_sha256_before: String,
+    input_sha256_after: String,
+    input_unchanged: bool,
+    working_read_only: bool,
+    mounted: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ImageNodeInspection {
     path: String,
     node_type: String,
@@ -205,6 +220,7 @@ struct ApplianceSession {
     runtime_dir: PathBuf,
     ssh_key: PathBuf,
     ssh_port: u16,
+    qmp_port: u16,
     started_at: Instant,
     state: String,
     message: String,
@@ -221,6 +237,7 @@ struct ImageInspectionSession {
     runtime_dir: PathBuf,
     ssh_key: PathBuf,
     ssh_port: u16,
+    qmp_port: u16,
     input_image: PathBuf,
     input_sha256_before: String,
     attached_image: PathBuf,
@@ -235,6 +252,7 @@ impl From<&ApplianceSession> for ImageInspectionSession {
             runtime_dir: session.runtime_dir.clone(),
             ssh_key: session.ssh_key.clone(),
             ssh_port: session.ssh_port,
+            qmp_port: session.qmp_port,
             input_image: session.input_image.clone(),
             input_sha256_before: session.input_sha256_before.clone(),
             attached_image: session.attached_image.clone(),
@@ -1008,6 +1026,10 @@ fn prepare_session(
     fs::copy(&vars_template, &vars_image)
         .map_err(|e| format!("Could not create the writable UEFI variable store: {e}"))?;
     let ssh_port = allocate_ssh_port()?;
+    let mut qmp_port = allocate_ssh_port()?;
+    while qmp_port == ssh_port {
+        qmp_port = allocate_ssh_port()?;
+    }
     let log = File::create(runtime_dir.join("qemu.log"))
         .map_err(|e| format!("Could not create the QEMU log: {e}"))?;
     let log_err = log
@@ -1035,6 +1057,8 @@ fn prepare_session(
             "-m",
             "4096",
         ])
+        .arg("-qmp")
+        .arg(format!("tcp:127.0.0.1:{qmp_port},server=on,wait=off"))
         .arg("-drive")
         .arg(format!(
             "file={},if=pflash,format=raw,readonly=on",
@@ -1078,9 +1102,10 @@ fn prepare_session(
             "file={},if=none,format=raw,readonly=on,id=user-input",
             input_drive_path
         ))
+        .args(["-device", "pcie-root-port,id=user-input-port"])
         .args([
             "-device",
-            "virtio-blk-pci,drive=user-input,serial=steamos-user-input",
+            "virtio-blk-pci,bus=user-input-port,drive=user-input,serial=steamos-user-input,id=user-input-device",
         ])
         .arg("-drive")
         .arg(format!(
@@ -1119,6 +1144,7 @@ fn prepare_session(
         runtime_dir,
         ssh_key,
         ssh_port,
+        qmp_port,
         started_at: Instant::now(),
         state: "booting".into(),
         message: "Fedora builder appliance is booting.".into(),
@@ -1214,6 +1240,59 @@ fn run_guest_command(session: &impl GuestConnection, command: &str) -> Result<St
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+fn read_qmp_response(reader: &mut BufReader<TcpStream>) -> Result<serde_json::Value, String> {
+    loop {
+        let mut line = String::new();
+        if reader
+            .read_line(&mut line)
+            .map_err(|e| format!("Could not read the QEMU monitor response: {e}"))?
+            == 0
+        {
+            return Err("QEMU closed its monitor connection unexpectedly.".into());
+        }
+        let value: serde_json::Value = serde_json::from_str(&line)
+            .map_err(|e| format!("QEMU returned an invalid monitor response: {e}"))?;
+        if let Some(error) = value.get("error") {
+            return Err(format!("QEMU monitor command failed: {error}"));
+        }
+        if value.get("return").is_some() {
+            return Ok(value);
+        }
+    }
+}
+
+fn qmp_remove_user_input(session: &ImageInspectionSession) -> Result<(), String> {
+    let mut stream = TcpStream::connect(("127.0.0.1", session.qmp_port))
+        .map_err(|e| format!("Could not connect to the QEMU monitor: {e}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .map_err(|e| format!("Could not configure the QEMU monitor: {e}"))?;
+    let reader_stream = stream
+        .try_clone()
+        .map_err(|e| format!("Could not prepare the QEMU monitor reader: {e}"))?;
+    let mut reader = BufReader::new(reader_stream);
+    let mut greeting = String::new();
+    reader
+        .read_line(&mut greeting)
+        .map_err(|e| format!("Could not read the QEMU monitor greeting: {e}"))?;
+    let greeting: serde_json::Value = serde_json::from_str(&greeting)
+        .map_err(|e| format!("QEMU returned an invalid monitor greeting: {e}"))?;
+    if greeting.get("QMP").is_none() {
+        return Err("QEMU monitor did not provide a QMP greeting.".into());
+    }
+    stream
+        .write_all(b"{\"execute\":\"qmp_capabilities\"}\n")
+        .and_then(|_| stream.flush())
+        .map_err(|e| format!("Could not enable QEMU monitor capabilities: {e}"))?;
+    read_qmp_response(&mut reader)?;
+    stream
+        .write_all(b"{\"execute\":\"device_del\",\"arguments\":{\"id\":\"user-input-device\"}}\n")
+        .and_then(|_| stream.flush())
+        .map_err(|e| format!("Could not request source-device removal: {e}"))?;
+    read_qmp_response(&mut reader)?;
+    Ok(())
+}
+
 fn handshake(session: &impl GuestConnection) -> Result<String, String> {
     run_guest_command(session, "cat /etc/steamos-builder-ready")
 }
@@ -1227,7 +1306,7 @@ printf 'ARCH=%s\n' "$(uname -m)"
 . /etc/os-release
 printf 'OS=%s\n' "$PRETTY_NAME"
 printf 'AVAILABLE=%s\n' "$(df -B1 --output=avail / | tail -n 1 | tr -d ' ')"
-for tool in bash lsblk blkid findmnt mount umount sha256sum stat cp sync dd sfdisk mkfs.ext4 blockdev; do
+for tool in bash lsblk blkid findmnt mount umount sha256sum stat cp sync dd sfdisk mkfs.ext4 blockdev btrfs btrfstune; do
   command -v "$tool" >/dev/null 2>&1 && printf 'TOOL=%s\n' "$tool" || printf 'MISSING=%s\n' "$tool"
 done"#;
     let output = run_guest_command(session, HEALTH_COMMAND)?;
@@ -1768,6 +1847,165 @@ test "$MOUNTED" = 0"#;
     })
 }
 
+fn mutate_user_marker(session: &ImageInspectionSession) -> Result<UserMarkerMutation, String> {
+    const MARKER_PATH: &str = "/etc/steamos-nvidia-image-builder-test";
+    const MARKER_CONTENT: &str =
+        "SteamOS NVIDIA Image Builder marker\nprotocol=1\nmilestone=marker-only\n";
+    const PREFLIGHT_COMMAND: &str = r#"set -eu
+SOURCE=/dev/disk/by-id/virtio-steamos-user-input
+WORK=/dev/disk/by-id/virtio-steamos-user-working
+test -b "$SOURCE"
+test -b "$WORK"
+test "$(sudo blockdev --getro "$SOURCE")" = 1
+test "$(sudo blockdev --getro "$WORK")" = 0
+if lsblk -nr -o MOUNTPOINTS "$SOURCE" | grep -q '[^[:space:]]' || lsblk -nr -o MOUNTPOINTS "$WORK" | grep -q '[^[:space:]]'; then
+  echo 'A selected-image device was unexpectedly mounted before mutation.' >&2
+  exit 1
+fi"#;
+    run_guest_command(session, PREFLIGHT_COMMAND)?;
+    qmp_remove_user_input(session)?;
+    const MUTATE_COMMAND: &str = r#"set -eu
+SOURCE=/dev/disk/by-id/virtio-steamos-user-input
+WORK=/dev/disk/by-id/virtio-steamos-user-working
+MOUNT_DIR=/mnt/steamos-user-marker
+EXPECTED=$(printf 'SteamOS NVIDIA Image Builder marker\nprotocol=1\nmilestone=marker-only')
+for attempt in $(seq 1 50); do
+  test ! -b "$SOURCE" && break
+  sleep 0.1
+done
+test ! -b "$SOURCE"
+test -b "$WORK"
+TARGETS=$(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$WORK" | awk '$2 == "rootfs-A" && $3 == "btrfs" { print $1 }')
+test "$(printf '%s\n' "$TARGETS" | sed '/^$/d' | wc -l | tr -d ' ')" = 1
+TARGET=$(printf '%s\n' "$TARGETS" | sed '/^$/d')
+sudo mkdir -p "$MOUNT_DIR"
+WAS_SEEDING=0
+SEEDING_RESTORED=0
+SOURCE_ROOT=
+RESTORE_SOURCE_RO=0
+cleanup_marker() {
+  if findmnt -rn -M "$MOUNT_DIR" >/dev/null 2>&1 && test "$RESTORE_SOURCE_RO" = 1 && test -n "$SOURCE_ROOT"; then
+    sudo btrfs property set -f -ts "$SOURCE_ROOT" ro true >/dev/null 2>&1 || true
+  fi
+  findmnt -rn -M "$MOUNT_DIR" >/dev/null 2>&1 && sudo umount "$MOUNT_DIR" || true
+  if test "$WAS_SEEDING" = 1 && test "$SEEDING_RESTORED" = 0; then
+    sudo btrfstune -f -S 1 "$TARGET" >/dev/null 2>&1 || true
+  fi
+  sudo blockdev --setro "$WORK" >/dev/null 2>&1 || true
+}
+trap cleanup_marker EXIT
+sudo mount -o rw,subvolid=5 "$TARGET" "$MOUNT_DIR"
+if findmnt -rn -M "$MOUNT_DIR" -o OPTIONS | tr ',' '\n' | grep -qx ro; then
+  sudo umount "$MOUNT_DIR"
+  sudo btrfstune -f -S 0 "$TARGET"
+  WAS_SEEDING=1
+  sudo mount -o rw,subvolid=5 "$TARGET" "$MOUNT_DIR"
+fi
+findmnt -rn -M "$MOUNT_DIR" -o OPTIONS | tr ',' '\n' | grep -qx rw
+DEFAULT_INFO=$(sudo btrfs subvolume get-default "$MOUNT_DIR")
+DEFAULT_PATH=$(printf '%s\n' "$DEFAULT_INFO" | sed -n 's/^.* path //p')
+if test -z "$DEFAULT_PATH" && printf '%s\n' "$DEFAULT_INFO" | grep -q '^ID 5 (FS_TREE)$'; then
+  DEFAULT_PATH='<FS_TREE>'
+fi
+test -n "$DEFAULT_PATH"
+case "$DEFAULT_PATH" in
+  '<FS_TREE>') SOURCE_ROOT="$MOUNT_DIR"; SNAPSHOT_ROOT= ;;
+  /*|*..*) echo 'Unsafe Btrfs default subvolume path.' >&2; exit 1 ;;
+  *) SOURCE_ROOT="$MOUNT_DIR/$DEFAULT_PATH"; SNAPSHOT_ROOT="$MOUNT_DIR/steamos-nvidia-marker-root" ;;
+esac
+if test ! -d "$SOURCE_ROOT"; then
+  echo 'The Btrfs default root subvolume path is unavailable.' >&2
+  exit 1
+fi
+SOURCE_ROOT_RO=$(sudo btrfs property get -ts "$SOURCE_ROOT" ro | awk -F= '$1 == "ro" { print $2 }')
+test "$SOURCE_ROOT_RO" = true || test "$SOURCE_ROOT_RO" = false
+if test "$SOURCE_ROOT_RO" = true; then
+  sudo btrfs property set -f -ts "$SOURCE_ROOT" ro false
+  RESTORE_SOURCE_RO=1
+fi
+if test -n "$SNAPSHOT_ROOT"; then
+  test ! -e "$SNAPSHOT_ROOT"
+  sudo btrfs subvolume snapshot "$SOURCE_ROOT" "$SNAPSHOT_ROOT" >/dev/null
+  MUTATION_ROOT="$SNAPSHOT_ROOT"
+else
+  MUTATION_ROOT="$SOURCE_ROOT"
+fi
+sudo mkdir -p "$MUTATION_ROOT/etc"
+printf 'SteamOS NVIDIA Image Builder marker\nprotocol=1\nmilestone=marker-only\n' | sudo tee "$MUTATION_ROOT/etc/steamos-nvidia-image-builder-test" >/dev/null
+sync
+test "$(sudo cat "$MUTATION_ROOT/etc/steamos-nvidia-image-builder-test")" = "$EXPECTED"
+if test "$RESTORE_SOURCE_RO" = 1; then
+  sudo btrfs property set -f -ts "$SOURCE_ROOT" ro true
+  RESTORE_SOURCE_RO=0
+fi
+if test -n "$SNAPSHOT_ROOT"; then
+  sudo btrfs property set -ts "$SNAPSHOT_ROOT" ro true
+  test "$(sudo btrfs property get -ts "$SNAPSHOT_ROOT" ro | awk -F= '$1 == "ro" { print $2 }')" = true
+  sudo btrfs subvolume set-default "$SNAPSHOT_ROOT"
+fi
+sudo umount "$MOUNT_DIR"
+if test "$WAS_SEEDING" = 1; then
+  sudo btrfstune -f -S 1 "$TARGET"
+  SEEDING_RESTORED=1
+fi
+sudo blockdev --setro "$WORK"
+sudo mount -o ro "$TARGET" "$MOUNT_DIR"
+test "$(sudo cat "$MOUNT_DIR/etc/steamos-nvidia-image-builder-test")" = "$EXPECTED"
+if test -n "$SNAPSHOT_ROOT"; then
+  test "$(sudo btrfs property get -ts "$MOUNT_DIR" ro | awk -F= '$1 == "ro" { print $2 }')" = true
+fi
+sudo umount "$MOUNT_DIR"
+trap - EXIT
+MOUNTED=0
+findmnt -rn -S "$TARGET" >/dev/null 2>&1 && MOUNTED=1
+printf 'TARGET=%s\n' "$TARGET"
+printf 'PARTITION_LABEL=%s\n' "$(sudo blkid -s PARTLABEL -o value "$TARGET")"
+printf 'FILESYSTEM=%s\n' "$(sudo blkid -s TYPE -o value "$TARGET")"
+printf 'WORKING_READ_ONLY=%s\n' "$(sudo blockdev --getro "$WORK")"
+printf 'MOUNTED=%s\n' "$MOUNTED"
+test "$(sudo blockdev --getro "$WORK")" = 1
+test "$MOUNTED" = 0"#;
+    let output = run_guest_command(session, MUTATE_COMMAND)?;
+    let mut values = std::collections::HashMap::new();
+    for line in output.lines() {
+        if let Some((key, value)) = line.split_once('=') {
+            values.insert(key, value);
+        }
+    }
+    let required = |key: &str| {
+        values
+            .get(key)
+            .copied()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| format!("Selected-image marker mutation omitted {key}."))
+    };
+    let input_sha256_after = sha256_file_with_progress(
+        &session.input_image,
+        "verifying-source-after-mutation",
+        None,
+        None,
+    )?;
+    let input_unchanged = session.input_sha256_before == input_sha256_after;
+    if !input_unchanged {
+        return Err(format!(
+            "Selected input changed during working-layer mutation (before {}, after {}).",
+            session.input_sha256_before, input_sha256_after
+        ));
+    }
+    Ok(UserMarkerMutation {
+        marker_path: MARKER_PATH.into(),
+        marker_content: MARKER_CONTENT.into(),
+        target_partition: required("TARGET")?.to_string(),
+        target_partition_label: required("PARTITION_LABEL")?.to_string(),
+        filesystem: required("FILESYSTEM")?.to_string(),
+        input_sha256_before: session.input_sha256_before.clone(),
+        input_sha256_after,
+        input_unchanged,
+        working_read_only: required("WORKING_READ_ONLY")? == "1",
+        mounted: required("MOUNTED")? == "1",
+    })
+}
+
 fn session_status(session: &ApplianceSession) -> ApplianceStatus {
     ApplianceStatus {
         state: session.state.clone(),
@@ -2150,6 +2388,16 @@ async fn mutate_test_marker(app: tauri::AppHandle) -> Result<MarkerMutation, Str
     })
     .await
     .map_err(|error| format!("Synthetic mutation worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn mutate_selected_marker(app: tauri::AppHandle) -> Result<UserMarkerMutation, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let session = ready_session_snapshot(&app, "selected-image marker mutation")?;
+        mutate_user_marker(&session)
+    })
+    .await
+    .map_err(|error| format!("Selected-image mutation worker failed: {error}"))?
 }
 
 fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, String> {
@@ -2721,6 +2969,17 @@ mod tests {
             "{}",
             serde_json::to_string_pretty(&working).expect("serialize working-layer report")
         );
+        let mutation = mutate_user_marker(&inspection_session)
+            .expect("the recovery-image working layer should accept the marker");
+        assert!(mutation.input_unchanged);
+        assert!(mutation.working_read_only);
+        assert!(!mutation.mounted);
+        assert_eq!(mutation.target_partition_label, "rootfs-A");
+        assert_eq!(mutation.filesystem, "btrfs");
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&mutation).expect("serialize marker-mutation report")
+        );
         stop_session(&mut session).expect("stop recovery-image appliance session");
     }
 }
@@ -2753,6 +3012,7 @@ pub fn run() {
             inspect_selected_image,
             verify_working_image,
             mutate_test_marker,
+            mutate_selected_marker,
             stop_appliance,
             validate_image,
             open_progress_window,

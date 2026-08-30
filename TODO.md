@@ -39,7 +39,7 @@ The project is not yet producing a bootable modified SteamOS image.
 8. [x] Pass a user-selected raw SteamOS image to the guest as a host-level read-only block device without booting it.
 9. [x] Detect compression/container format and prepare a disposable writable qcow2 working layer.
 10. [x] Inspect a selected raw image read-only without mounting and return structured partition/filesystem metadata. (Real Valve-image validation remains in the immediate sequence.)
-11. [ ] Implement the first deterministic marker-only image mutation.
+11. [x] Implement the first deterministic marker-only mutation on the selected image's disposable working overlay.
 12. [ ] Integrate NVIDIA support from `open-gpu-kernel-modules-steamos-support` only after the generic image-mutation path is proven.
 
 ---
@@ -404,18 +404,20 @@ The project is not yet producing a bootable modified SteamOS image.
 
 # 17. First harmless image-mutation milestone
 
-* [ ] Copy/prepare selected SteamOS image into build workspace.
-* [ ] Attach it to Fedora guest as data.
-* [ ] Detect expected partition/filesystem.
-* [ ] Mount target filesystem.
-* [ ] Write a project marker such as:
+* [x] Copy/prepare selected SteamOS image into build workspace.
+* [x] Attach it to Fedora guest as data.
+* [x] Detect expected partition/filesystem.
+* [x] Mount target filesystem on the disposable working layer only.
+* [x] Write a project marker such as:
 
   * `/etc/steamos-nvidia-image-builder-test`
-* [ ] Include deterministic marker content with builder version and no host-private information.
-* [ ] Unmount cleanly.
+* [x] Include deterministic marker content with protocol/milestone data and no host-private information.
+* [x] Unmount cleanly.
 * [ ] Detach image.
 * [ ] Return output image to host.
-* [ ] Verify input checksum remains unchanged.
+* [x] Verify input checksum remains unchanged after working-layer mutation.
+* [x] Hot-unplug the guest-visible source before Btrfs mutation so duplicate filesystem UUIDs cannot redirect the mount.
+* [x] Restore Valve's Btrfs read-only subvolume/seeding state after modifying only the disposable overlay.
 * [ ] Verify output checksum differs.
 * [ ] Re-open output read-only and verify marker.
 * [ ] Make the UI report successful image mutation before beginning NVIDIA integration.
@@ -487,14 +489,22 @@ The project is not yet producing a bootable modified SteamOS image.
 
 * [ ] Determine which image-time changes survive the Valve installer/recovery process.
 * [ ] Verify NVIDIA files injected into recovery media are copied into installed SteamOS as intended.
-* [ ] If needed, modify recovery/install scripts in a minimal and auditable way.
+* [ ] Treat the recovery image as a multi-part install contract: place the NVIDIA/userspace payload and persistent configuration in `rootfs-A`, bootloader changes in `efi-A`, and installer tools/desktop launchers in the `home` partition.
+* [ ] Locate Valve's `/home/deck/tools/repair_device.sh` by inspected filesystem role rather than a fixed partition number, preserve an auditable stock copy, and reject incompatible images instead of applying a partial installer patch.
+* [ ] Stage the double-click installer under `/home/deck/tools` and `/home/deck/Desktop` with the required executable modes and `deck` ownership; validate every staged path before declaring the output install-ready.
+* [ ] Ensure the desktop action invokes a fixed project-owned wrapper which delegates installation to Valve's `repair_device.sh`; never expose arbitrary guest or host commands through the launcher.
+* [ ] Verify that Valve's clone-based install propagates the patched running recovery root into the installed SteamOS system, rather than assuming a successful recovery-image mutation guarantees an installed-system change.
+* [ ] Modify recovery/install scripts only where required, with minimal auditable patches and explicit compatibility checks for each supported Valve recovery build.
 * [ ] Avoid brittle assumptions about target install disk names.
 * [ ] Confirm the generated recovery image does not reproduce the earlier wrong-disk/Optane selection problem without clear user control.
 * [ ] Investigate how Valve recovery media chooses installation target.
-* [ ] Add target-disk safeguards if the project ever modifies installer disk-selection behavior.
+* [ ] Require a target-disk picker, exclude the booted recovery medium, validate the selected block device, and show a final destructive confirmation before a fresh install.
+* [ ] Keep fresh-install and system-upgrade modes distinct; verify upgrade mode recognizes an existing SteamOS layout and preserves the target `home` partition.
+* [ ] Pass the selected target disk explicitly to the installer without hard-coding NVMe naming, including correct partition suffix handling for NVMe and non-NVMe devices.
 * [ ] Ensure NVIDIA setup occurs before first Gaming Mode launch.
 * [ ] Verify first boot without manual TTY intervention.
 * [ ] Verify first boot without network access if all required artifacts are embedded.
+* [ ] After installing from generated media, boot without the recovery USB and verify NVIDIA modules, Gamescope, boot arguments, updater integration, desktop account state, and A/B update behavior on the installed disk.
 * [ ] Verify rollback/recovery path if NVIDIA initialization fails.
 
 ---
@@ -506,6 +516,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Decide whether to offer optional `.xz`, `.gz`, or `.bz2` compression.
 * [ ] Compute final SHA256.
 * [ ] Write sidecar build manifest.
+* [ ] Distinguish `mutation-valid` output from `install-ready` output; require verified `rootfs-A`, `efi-A`, and `home` installer assets before using the latter status.
 * [ ] Include input hash, app version, appliance version, SteamOS version, NVIDIA version, Gamescope version, and modification summary.
 * [ ] Never embed the user’s full host path or username into the output image unless explicitly needed.
 * [ ] Verify resulting GPT/filesystems after finalization.
@@ -1156,6 +1167,26 @@ Before calling the project **beta**, verify:
 * [ ] GUI diagnostics viewer.
 * [ ] Advanced custom package injection framework only if it does not dilute the NVIDIA-focused safety model.
 
+## Deferred settings, profiles, and maintainer automation
+
+* [ ] Add a hamburger/settings menu for infrequent build and maintenance options without crowding the primary image workflow.
+* [ ] Define a versioned, automatically saved JSON build-profile schema that can be reopened, validated, migrated, and reset safely.
+* [ ] Remember only non-secret preferences in the JSON profile, such as output behavior, selected compatibility policy, and driver-update preference.
+* [ ] Never store a plaintext SteamOS user password, reusable password hash, GitHub token, SSH key, or other credential in the profile JSON.
+* [ ] Add an optional SteamOS user-password setup flow so the generated image does not require a manual `passwd` step.
+* [ ] Keep password input masked and transient; use the operating-system credential store when persistence is explicitly requested, otherwise prompt for each build.
+* [ ] Generate the target Linux password representation inside the trusted Rust/backend path and prevent it from appearing in logs or manifests.
+* [ ] Add an opt-in “track SteamOS driver compatibility updates” setting; fail closed when no certified NVIDIA/Gamescope combination exists.
+* [ ] Never silently replace a certified driver with an unverified latest release solely because a newer SteamOS version is detected.
+* [ ] Add a maintainer-only workflow for building Gamescope/NVIDIA artifacts when the selected SteamOS version lacks a compatible published artifact.
+* [ ] Authenticate to GitHub with the minimum required scopes and verify effective repository role/maintainer access before enabling any upload or automated-release control.
+* [ ] Re-check GitHub authorization in the backend immediately before every build upload, tag, release, or other remote mutation; do not trust the UI checkbox alone.
+* [ ] Keep Valve recovery images and generated SteamOS images out of GitHub uploads; publish only project-owned Gamescope/NVIDIA artifacts, manifests, checksums, and permitted sources.
+* [ ] Present an explicit yes/no confirmation before every automated release, defaulting to “No” and naming the repository, tag, commits, and artifacts that will be published.
+* [ ] Prefer draft releases plus a reviewable dry-run manifest before allowing a maintainer to publish automatically.
+* [ ] Record maintainer automation actions and artifact provenance without logging credentials or private host paths.
+* [ ] Defer implementing this settings/maintainer surface until durable marker-image export and output validation are complete.
+
 ---
 
 # 62. Immediate next implementation sequence
@@ -1168,7 +1199,7 @@ Before calling the project **beta**, verify:
 6. [x] Add a tiny host↔guest file-transfer or block-attachment proof.
 7. [x] Attach a synthetic disk image, lock it read-only, and inspect it without mounting.
 8. [x] Implement deterministic marker mutation on a synthetic working copy and prove source immutability.
-9. [ ] Run the implemented read-only inspection path against a real user-supplied Valve recovery `.img` and record its layout.
+9. [x] Run the implemented read-only inspection path against a real user-supplied Valve recovery image and record its `valve-recovery-a` GPT/Btrfs layout.
 10. [ ] Produce first modified Valve-image working copy containing only a harmless marker.
 11. [ ] Validate output and input immutability automatically. (Input SHA-256 preservation is implemented; output validation remains.)
 12. [ ] Only then begin NVIDIA support-repo integration.

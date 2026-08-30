@@ -323,7 +323,14 @@ async function runBuild(request) {
     addStageLog(`Working isolation: source read-only=${working.sourceReadOnly}; working read-only=${working.workingReadOnly}; source mounted=${working.sourceMounted}; working mounted=${working.workingMounted}.`);
     if (cancelling) return;
 
-    setStatus("running", "Creating prototype output", "Validating the selected image and writing the prototype result.", 96);
+    setStatus("running", "Writing harmless image marker", "Mounting only the disposable rootfs-A working layer and verifying the deterministic marker.", 95, "Mutating");
+    const selectedMutation = await invoke("mutate_selected_marker");
+    addStageLog(`Selected-image marker: wrote and re-opened ${selectedMutation.markerPath} on ${selectedMutation.targetPartition}.`);
+    addStageLog(`Selected-image marker: filesystem=${selectedMutation.filesystem}; partition-label=${selectedMutation.targetPartitionLabel}; working read-only=${selectedMutation.workingReadOnly}; mounted=${selectedMutation.mounted}.`);
+    addStageLog(`Selected-image safety: original unchanged=${selectedMutation.inputUnchanged}; SHA256 ${selectedMutation.inputSha256After}.`);
+    if (cancelling) return;
+
+    setStatus("running", "Creating prototype output", "Recording the successful disposable marker proof in the prototype result.", 97);
     const output = await invoke("prototype_build", { path: request.path });
     addStageLog(`Prototype output created: ${output}`);
     setStatus("running", "Finalizing", "Stopping the disposable builder session.", 98);
