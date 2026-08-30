@@ -472,9 +472,10 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Immutably pin the support repository's offline installer and reviewed userspace signer policy for the normal workflow: exact support commit, seven required paths, byte counts, SHA-256 hashes, safe staging, cancellation cleanup, and a versioned bundle manifest are enforced without accepting a user-selected checkout or moving branch.
 * [x] Transfer the verified module/userspace inputs into the managed x86_64 appliance, prepare the minimal reviewed binary keyring, and consume the installer's structured validation result. Package-specific signer fingerprints, package versions/hashes, target identity, artifact trust/hash, mount cleanup, and schema/status are revalidated by Rust.
 * [x] Stop the native mutation appliance without deleting its working qcow2, attach that working layer only to the x86_64 installer appliance, and mount the uniquely recognized `rootfs-A` plus matching `efi-A` at `<root>/boot`; the first integrated pass mounts both read-only and runs `--validate-only`, never guesses an A/B slot, then releases both mounts before export.
-* [ ] After the read-only handoff passes on the real recovery image, invoke the same pinned installer without `--validate-only` against the disposable overlay, require its structured `success/install_complete` result, and discard the overlay after every failure or cancellation.
-* [ ] Record selected NVIDIA driver version in build manifest.
-* [ ] Record selected SteamOS/kernel certification in build manifest.
+* [x] Invoke the same pinned installer without `--validate-only` against the disposable overlay, require its structured `success/install_complete` result, verify NVIDIA-bearing initramfs contents, and discard the overlay after every failure or cancellation.
+* [ ] Run the newly integrated mutation path against the real SteamOS 3.8.14 recovery image and preserve the complete success/failure diagnostics.
+* [x] Record selected NVIDIA driver version in the NVIDIA-mutation build manifest.
+* [x] Record selected SteamOS/kernel target and artifact trust classification in the NVIDIA-mutation build manifest.
 * [x] Fail closed when no compatible published release exists; the normal workflow never silently enters development build mode.
 * [x] Treat “no compatible published artifact” as a normal, non-destructive resolution result with a clear UI/log status; do not create an NVIDIA-labeled output or classify it as an application failure.
 * [ ] Keep Gamescope fallback policy independent from NVIDIA kernel-module fallback policy.
@@ -488,24 +489,24 @@ Support-repository readiness (tracked here because it gates image-builder integr
 # 19. NVIDIA kernel-module injection
 
 * [x] Determine target kernel(s) contained in the recovery image through safe module-directory inventory.
-* [ ] Place all required open NVIDIA modules in the correct target module tree.
-* [ ] Support compressed `.ko.zst` modules where SteamOS expects them.
-* [ ] Preserve exact kernel vermagic compatibility.
-* [ ] Run target-image `depmod` appropriately.
-* [ ] Ensure initramfs contains required NVIDIA modules when necessary.
-* [ ] Ensure early modesetting requirements are satisfied.
-* [ ] Configure `nvidia-drm.modeset=1` where required by project support policy.
-* [ ] Avoid leaving stale conflicting module versions.
-* [ ] Verify target image module paths after injection.
-* [ ] Add rollback/removal metadata for debugging even though output image is disposable.
+* [x] Place all required open NVIDIA modules in the correct target module tree through the pinned support installer.
+* [x] Support compressed `.ko.zst` modules where SteamOS expects them.
+* [x] Preserve exact kernel vermagic compatibility through provenance validation before mutation.
+* [x] Run target-image `depmod` appropriately.
+* [x] Require the generated initramfs to contain `nvidia`, `nvidia-modeset`, `nvidia-uvm`, and `nvidia-drm` before export.
+* [x] Add the four required NVIDIA modules to the target mkinitcpio configuration.
+* [x] Configure `nvidia-drm` modeset/fbdev through the pinned project modprobe policy.
+* [x] Replace the project-owned target module directory rather than leaving stale project module versions.
+* [x] Verify all five target image module paths independently after export.
+* [x] Preserve structured provenance, kernel, and NVIDIA version state for debugging even though output image mutation remains disposable until finalization.
 
 ---
 
 # 20. NVIDIA userspace injection
 
-* [ ] Install matching NVIDIA userspace libraries into the target image.
-* [ ] Install 32-bit userspace libraries where Steam/games require them.
-* [ ] Keep userspace and kernel-module NVIDIA versions matched.
+* [x] Install matching authenticated NVIDIA userspace libraries into the target image through target-root pacman semantics.
+* [x] Install authenticated 32-bit userspace libraries where Steam/games require them.
+* [x] Keep userspace and kernel-module NVIDIA versions matched through preflight and final result validation.
 * [ ] Verify EGL/GLX/Vulkan loader integration.
 * [ ] Verify Vulkan ICD files.
 * [ ] Verify GBM/EGL paths used by Gamescope.
@@ -560,9 +561,9 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Preserve raw `.img` output as the canonical first format.
 * [ ] Decide whether to offer optional `.xz`, `.gz`, or `.bz2` compression.
 * [x] Compute final SHA256.
-* [x] Write a versioned marker-milestone sidecar build manifest atomically beside the output.
+* [x] Write a versioned marker/NVIDIA-mutation sidecar build manifest atomically beside the output.
 * [ ] Distinguish `mutation-valid` output from `install-ready` output; require verified `rootfs-A`, `efi-A`, and `home` installer assets before using the latter status.
-* [ ] Include input hash, app version, appliance version, SteamOS version, NVIDIA version, Gamescope version, and modification summary. (Marker schema currently includes hashes, app version, null/not-integrated placeholders, and modified paths; appliance/source detection remains.)
+* [ ] Include input hash, app version, appliance version, SteamOS version, NVIDIA version, Gamescope version, and modification summary. (NVIDIA mutation now records hashes, app version, SteamOS/kernel identity, NVIDIA version/trust, support commit, packages/signers, and modified paths; appliance provenance and Gamescope remain.)
 * [ ] Never embed the user’s full host path or username into the output image unless explicitly needed.
 * [x] Verify the candidate raw image's GPT/filesystem roles before atomic finalization.
 * [ ] Verify output can be opened by standard flashing tools.
@@ -574,16 +575,16 @@ Support-repository readiness (tracked here because it gates image-builder integr
 
 * [x] Re-open the candidate final image read-only through a fresh validation appliance.
 * [x] Re-run conservative Valve partition discovery.
-* [ ] Verify required NVIDIA kernel modules exist.
-* [ ] Verify expected NVIDIA userspace files exist.
+* [x] Verify all five required NVIDIA kernel modules exist in the independently attached candidate.
+* [x] Verify matching userspace package records and exact-version GSP firmware exist in the independently attached candidate.
 * [ ] Verify Gamescope modification exists when selected.
-* [ ] Verify initramfs contents/configuration where applicable.
-* [ ] Verify no temporary mount artifacts remain.
+* [x] Verify NVIDIA-bearing initramfs contents before export and independently verify the persisted mkinitcpio configuration plus nonempty initramfs output afterward.
+* [x] Verify all installer, Btrfs-top-level, root, EFI, and independent-validation mounts are released.
 * [ ] Verify no runtime SSH keys or Fedora guest secrets leaked into SteamOS output.
 * [ ] Verify no Fedora appliance files were copied into SteamOS accidentally.
 * [ ] Verify filesystem health.
-* [x] Emit the current marker-milestone validation report as the versioned sidecar manifest.
-* [x] Do not show “Build complete” unless candidate layout, marker, size, hashes, and source immutability validation pass.
+* [x] Emit the marker/NVIDIA-mutation validation report as a versioned sidecar manifest.
+* [x] Do not show completion unless candidate layout, marker, size, hashes, source immutability, and—when selected—the NVIDIA payload validation pass.
 
 ---
 

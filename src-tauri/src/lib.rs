@@ -569,12 +569,36 @@ struct MarkerManifestData<'a> {
     output_sha256: &'a str,
     layout: &'a SteamOsLayoutDiscovery,
     target_system: &'a TargetSystemDiscovery,
+    nvidia_installation: Option<&'a NvidiaInstallHandoffResult>,
 }
 
 fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json::Value {
+    let nvidia_installed = data.nvidia_installation.is_some();
+    let result_class = if nvidia_installed {
+        "nvidia-mutation-valid"
+    } else {
+        "mutation-valid"
+    };
+    let milestone = if nvidia_installed {
+        "nvidia-offline-installed"
+    } else {
+        "marker-only"
+    };
+    let modified_paths = if nvidia_installed {
+        serde_json::json!([
+            "/etc/steamos-nvidia-image-builder-test",
+            "/etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf",
+            "/etc/mkinitcpio.conf.d/90-open-gpu-kernel-modules-steamos.conf",
+            "/usr/lib/modules/<target-kernel>/updates/open-gpu-kernel-modules-steamos",
+            "/var/lib/open-gpu-kernel-modules-steamos-support/offline-install",
+            "/boot"
+        ])
+    } else {
+        serde_json::json!(["/etc/steamos-nvidia-image-builder-test"])
+    };
     serde_json::json!({
         "schemaVersion": 1,
-        "resultClass": "mutation-valid",
+        "resultClass": result_class,
         "application": {
             "name": env!("CARGO_PKG_NAME"),
             "version": env!("CARGO_PKG_VERSION"),
@@ -607,15 +631,16 @@ fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json::Value {
             "targetKernels": data.target_system.kernel_versions
         },
         "integration": {
-            "milestone": "marker-only",
-            "nvidia": null,
+            "milestone": milestone,
+            "nvidia": data.nvidia_installation,
             "gamescope": null,
-            "modifiedPaths": ["/etc/steamos-nvidia-image-builder-test"]
+            "modifiedPaths": modified_paths
         },
         "validation": {
             "candidateAttachedReadOnly": true,
             "layoutRecognized": data.layout.recognized,
             "markerVerified": true,
+            "nvidiaPayloadVerified": nvidia_installed,
             "sourceUnchanged": true,
             "passed": true
         }
@@ -736,6 +761,7 @@ struct ApplianceSession {
     nvidia_userspace: Option<NvidiaUserspaceResolution>,
     nvidia_installer_bundle: Option<NvidiaInstallerBundleState>,
     nvidia_install_validation: Option<NvidiaInstallHandoffResult>,
+    nvidia_installation: Option<NvidiaInstallHandoffResult>,
 }
 
 struct NvidiaBuildSession {
@@ -1048,8 +1074,16 @@ fn archive_and_remove_nvidia_build_runtime(runtime_dir: &Path) -> Result<Option<
         ("BUILD RESULT", runtime_dir.join("nvidia-build-result.json")),
         ("NVIDIA INSTALL", runtime_dir.join("nvidia-install.log")),
         (
+            "NVIDIA INSTALL MUTATION",
+            runtime_dir.join("nvidia-install-mutation.log"),
+        ),
+        (
             "INSTALL RESULT",
             runtime_dir.join("nvidia-install-result.json"),
+        ),
+        (
+            "INSTALL MUTATION RESULT",
+            runtime_dir.join("nvidia-install-mutation-result.json"),
         ),
     ];
     let archive = if diagnostic_sources
@@ -1875,6 +1909,7 @@ fn prepare_session(
         nvidia_userspace: None,
         nvidia_installer_bundle: None,
         nvidia_install_validation: None,
+        nvidia_installation: None,
     })
 }
 
@@ -4824,7 +4859,7 @@ test "$MOUNTED" = 0"#;
     })
 }
 
-fn marker_output_path_for_input(input: &Path) -> Result<PathBuf, String> {
+fn output_path_for_input(input: &Path, nvidia_installed: bool) -> Result<PathBuf, String> {
     let parent = input
         .parent()
         .ok_or("Could not determine the selected image folder.")?;
@@ -4841,11 +4876,21 @@ fn marker_output_path_for_input(input: &Path) -> Result<PathBuf, String> {
     if base.is_empty() {
         base = "SteamOS".into();
     }
-    let output_base = if base.to_ascii_lowercase().ends_with("-marker") {
-        base
-    } else {
-        format!("{base}-marker")
-    };
+    loop {
+        let lower = base.to_ascii_lowercase();
+        let suffix = ["-marker", "-nvidia"]
+            .into_iter()
+            .find(|suffix| lower.ends_with(suffix));
+        let Some(suffix) = suffix else { break };
+        base.truncate(base.len() - suffix.len());
+    }
+    if base.is_empty() {
+        base = "SteamOS".into();
+    }
+    let output_base = format!(
+        "{base}-{}",
+        if nvidia_installed { "nvidia" } else { "marker" }
+    );
     for number in 1..=9999_u32 {
         let suffix = if number == 1 {
             String::new()
@@ -5019,6 +5064,73 @@ test "$(sudo blockdev --getro "$WORK")" = 1
     run_guest_command(session, VERIFY_COMMAND).map(|_| ())
 }
 
+fn verify_nvidia_from_validation_overlay(
+    session: &ImageInspectionSession,
+    installation: &NvidiaInstallHandoffResult,
+) -> Result<(), String> {
+    let command = format!(
+        r#"set -euo pipefail
+WORK=/dev/disk/by-id/virtio-steamos-user-working
+ROOT=/mnt/steamos-nvidia-export-root
+test -b "$WORK"
+test "$(sudo blockdev --getro "$WORK")" = 1
+mapfile -t ROOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$WORK" | awk '$2 == "rootfs-A" && $3 == "btrfs" {{print $1}}')
+mapfile -t BOOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$WORK" | awk '$2 == "efi-A" && ($3 == "vfat" || $3 == "fat") {{print $1}}')
+test "${{#ROOT_PARTS[@]}}" -eq 1
+test "${{#BOOT_PARTS[@]}}" -eq 1
+sudo mkdir -p "$ROOT"
+ROOT_MOUNTED=0
+BOOT_MOUNTED=0
+cleanup() {{
+  rc=$?
+  trap - EXIT INT TERM
+  if (( BOOT_MOUNTED )); then sudo umount "$ROOT/boot" || rc=1; fi
+  if (( ROOT_MOUNTED )); then sudo umount "$ROOT" || rc=1; fi
+  ! findmnt -rn -M "$ROOT/boot" >/dev/null 2>&1 || rc=1
+  ! findmnt -rn -M "$ROOT" >/dev/null 2>&1 || rc=1
+  exit "$rc"
+}}
+trap cleanup EXIT INT TERM
+sudo mount -o ro "${{ROOT_PARTS[0]}}" "$ROOT"
+ROOT_MOUNTED=1
+test -d "$ROOT/boot"
+test ! -L "$ROOT/boot"
+sudo mount -o ro "${{BOOT_PARTS[0]}}" "$ROOT/boot"
+BOOT_MOUNTED=1
+MODULE_ROOT="$ROOT/usr/lib/modules/{}/updates/open-gpu-kernel-modules-steamos"
+for MODULE in nvidia nvidia-drm nvidia-modeset nvidia-peermem nvidia-uvm; do
+  test -f "$MODULE_ROOT/$MODULE.ko.zst"
+  test ! -L "$MODULE_ROOT/$MODULE.ko.zst"
+done
+grep -qx 'blacklist nouveau' "$ROOT/etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf"
+grep -qx 'options nvidia-drm modeset=1 fbdev=1' "$ROOT/etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf"
+grep -qx 'MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)' "$ROOT/etc/mkinitcpio.conf.d/90-open-gpu-kernel-modules-steamos.conf"
+STATE="$ROOT/var/lib/open-gpu-kernel-modules-steamos-support/offline-install"
+test "$(cat "$STATE/kernel-version")" = "{}"
+test "$(cat "$STATE/nvidia-version")" = "{}"
+test -f "$STATE/PROVENANCE.json"
+test -f "$STATE/BUILD-INFO.txt"
+find "$ROOT/usr/lib/firmware/nvidia/{}" -type f -name 'gsp*.bin' -print -quit | grep -q .
+find "$ROOT/var/lib/pacman/local" -mindepth 1 -maxdepth 1 -type d -name 'nvidia-utils-{}-*' -print -quit | grep -q .
+find "$ROOT/var/lib/pacman/local" -mindepth 1 -maxdepth 1 -type d -name 'lib32-nvidia-utils-{}-*' -print -quit | grep -q .
+find "$ROOT/boot" -maxdepth 1 -type f -name 'initramfs*.img' -size +0c -print -quit | grep -q .
+sudo umount "$ROOT/boot"
+BOOT_MOUNTED=0
+sudo umount "$ROOT"
+ROOT_MOUNTED=0
+! findmnt -rn -M "$ROOT/boot" >/dev/null 2>&1
+! findmnt -rn -M "$ROOT" >/dev/null 2>&1
+trap - EXIT INT TERM"#,
+        installation.kernel_version,
+        installation.kernel_version,
+        installation.nvidia_version,
+        installation.nvidia_version,
+        installation.nvidia_version,
+        installation.nvidia_version,
+    );
+    run_guest_command(session, &command).map(|_| ())
+}
+
 fn wait_for_ready(session: &mut ApplianceSession, cancel: &AtomicBool) -> Result<(), String> {
     let deadline = Instant::now() + BOOT_TIMEOUT;
     loop {
@@ -5058,7 +5170,10 @@ fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, 
             .session
             .take()
             .ok_or("Builder appliance is not running.")?;
-        if !matches!(session.state.as_str(), "ready" | "handoff-validated") {
+        if !matches!(
+            session.state.as_str(),
+            "ready" | "handoff-validated" | "nvidia-installed"
+        ) {
             manager.session = Some(session);
             return Err("Builder appliance is not ready for image export.".into());
         }
@@ -5098,7 +5213,12 @@ fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, 
         {
             return Err("The native appliance is unexpectedly still running after handoff.".into());
         }
-        let final_path = marker_output_path_for_input(&session.input_image)?;
+        let nvidia_installation = session.nvidia_installation.clone();
+        if session.state == "nvidia-installed" && nvidia_installation.is_none() {
+            return Err("NVIDIA-installed state omitted its structured result.".into());
+        }
+        let final_path =
+            output_path_for_input(&session.input_image, nvidia_installation.is_some())?;
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| format!("System clock error: {e}"))?
@@ -5169,6 +5289,9 @@ fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, 
             return Err("Exported image failed independent size/read-only validation.".into());
         }
         verify_marker_from_validation_overlay(&validation_snapshot)?;
+        if let Some(installation) = &nvidia_installation {
+            verify_nvidia_from_validation_overlay(&validation_snapshot, installation)?;
+        }
         let output_sha256 = inspection.source_sha256_after.clone();
         if output_sha256 == session.attached_sha256_before {
             return Err("Exported image hash matches the unmodified source; marker changes were not preserved.".into());
@@ -5214,6 +5337,7 @@ fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, 
                 .target_system
                 .as_ref()
                 .ok_or("Target SteamOS metadata is unavailable for the manifest.")?,
+            nvidia_installation: nvidia_installation.as_ref(),
         });
         let mut manifest_guard = PartialOutputGuard {
             path: partial_manifest_path.clone(),
@@ -5615,6 +5739,14 @@ async fn read_nvidia_build_appliance_log(app: tauri::AppHandle) -> Result<String
             let install_start = install_bytes.len().saturating_sub(LOG_LIMIT);
             output.push_str("\n[NVIDIA offline-root validation]\n");
             output.push_str(&String::from_utf8_lossy(&install_bytes[install_start..]));
+        }
+        let mutation_log = runtime_dir.join("nvidia-install-mutation.log");
+        if mutation_log.is_file() {
+            let mutation_bytes = fs::read(mutation_log)
+                .map_err(|e| format!("Could not read the NVIDIA installation log: {e}"))?;
+            let mutation_start = mutation_bytes.len().saturating_sub(LOG_LIMIT);
+            output.push_str("\n[NVIDIA offline-root installation]\n");
+            output.push_str(&String::from_utf8_lossy(&mutation_bytes[mutation_start..]));
         }
         Ok(output)
     })
@@ -6107,6 +6239,8 @@ async fn resolve_published_nvidia(
         active.nvidia_resolution = Some(resolution.clone());
         active.nvidia_userspace = None;
         active.nvidia_installer_bundle = None;
+        active.nvidia_install_validation = None;
+        active.nvidia_installation = None;
         Ok(resolution)
     })
     .await
@@ -6177,6 +6311,8 @@ async fn prepare_nvidia_userspace(
             .ok_or("Builder session ended before NVIDIA userspace inputs could be recorded.")?;
         active.nvidia_userspace = Some(userspace.clone());
         active.nvidia_installer_bundle = None;
+        active.nvidia_install_validation = None;
+        active.nvidia_installation = None;
         Ok(userspace)
     })
     .await
@@ -6435,11 +6571,14 @@ async fn start_nvidia_install_appliance(
 fn validate_nvidia_install_result(
     document: SupportInstallResult,
     inputs: &NvidiaInstallInputs,
+    expected_status: &str,
+    expected_reason: &str,
+    expected_phase: &str,
 ) -> Result<NvidiaInstallHandoffResult, String> {
     if document.schema_version != 1
-        || document.status != "validated"
-        || document.reason != "validation_complete"
-        || document.phase != "validated"
+        || document.status != expected_status
+        || document.reason != expected_reason
+        || document.phase != expected_phase
     {
         return Err(format!(
             "Offline installer validation did not succeed: {} ({}): {}",
@@ -6681,18 +6820,26 @@ trap - EXIT INT TERM"#,
             .map_err(|e| format!("Could not read the NVIDIA installer result: {e}"))?,
     )
     .map_err(|e| format!("NVIDIA installer result is invalid JSON: {e}"))?;
-    let validation = validate_nvidia_install_result(document, &inputs)?;
+    let validation = validate_nvidia_install_result(
+        document,
+        &inputs,
+        "validated",
+        "validation_complete",
+        "validated",
+    )?;
     execution_result?;
 
     {
         let mut manager = build_manager_state
             .lock()
             .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
-        let mut session = manager
+        let session = manager
             .session
-            .take()
-            .ok_or("The x86 installer appliance ended before cleanup.")?;
-        stop_nvidia_build_session(&mut session)?;
+            .as_mut()
+            .ok_or("The x86 installer appliance ended after validation.")?;
+        session.state = "ready".into();
+        session.message =
+            "Read-only NVIDIA validation passed; the appliance is ready for installation.".into();
     }
     let mut manager = image_manager_state
         .lock()
@@ -6715,6 +6862,238 @@ async fn validate_nvidia_install_handoff(
     tauri::async_runtime::spawn_blocking(move || validate_nvidia_install_handoff_blocking(app))
         .await
         .map_err(|error| format!("NVIDIA installer validation worker failed: {error}"))?
+}
+
+fn install_nvidia_to_working_image_blocking(
+    app: tauri::AppHandle,
+) -> Result<NvidiaInstallHandoffResult, String> {
+    let image_manager_state = app.state::<Mutex<ApplianceManager>>();
+    let inputs = {
+        let manager = image_manager_state
+            .lock()
+            .map_err(|_| "Appliance state lock is unavailable.")?;
+        let session = manager
+            .session
+            .as_ref()
+            .filter(|session| session.state == "handoff-validated")
+            .ok_or("The working image has not passed the x86 validation handoff.")?;
+        session
+            .nvidia_install_validation
+            .as_ref()
+            .filter(|result| {
+                result.status == "validated"
+                    && result.reason == "validation_complete"
+                    && result.mounts_released
+            })
+            .ok_or("The recorded NVIDIA validation result is not installable.")?;
+        collect_nvidia_install_inputs(session)?
+    };
+    let build_manager_state = app.state::<Mutex<NvidiaBuildManager>>();
+    let (connection, cancel) = {
+        let mut manager = build_manager_state
+            .lock()
+            .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+        manager.cancel_build.store(false, Ordering::Relaxed);
+        let cancel = manager.cancel_build.clone();
+        let session = manager
+            .session
+            .as_mut()
+            .ok_or("The x86_64 Fedora installer appliance is not running.")?;
+        if session.state != "ready"
+            || session.attached_working_image.as_ref() != Some(&inputs.working_image)
+        {
+            return Err(
+                "The validated x86 appliance is not attached to the expected working image.".into(),
+            );
+        }
+        session.state = "installing".into();
+        session.message = format!(
+            "Installing NVIDIA {} for exact kernel {}.",
+            inputs.nvidia_version, inputs.kernel_version
+        );
+        (NvidiaBuildConnection::from(&*session), cancel)
+    };
+
+    let command = format!(
+        r#"set -euo pipefail
+WORK=/tmp/steamos-nvidia-offline-install
+TARGET=/dev/disk/by-id/virtio-steamos-target
+TOP=/mnt/steamos-nvidia-top
+ROOT=/mnt/steamos-nvidia-target
+test -b "$TARGET"
+test -d "$WORK/support"
+test -f "$WORK/approved-package-signers.gpg"
+mapfile -t ROOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "rootfs-A" && $3 == "btrfs" {{print $1}}')
+mapfile -t BOOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "efi-A" && ($3 == "vfat" || $3 == "fat") {{print $1}}')
+test "${{#ROOT_PARTS[@]}}" -eq 1
+test "${{#BOOT_PARTS[@]}}" -eq 1
+test "${{ROOT_PARTS[0]}}" != "${{BOOT_PARTS[0]}}"
+sudo mkdir -p "$TOP" "$ROOT"
+TOP_MOUNTED=0
+ROOT_MOUNTED=0
+ROOT_IS_TOP=0
+BOOT_MOUNTED=0
+RESTORE_ROOT_RO=0
+WAS_SEEDING=0
+SEEDING_RESTORED=0
+SOURCE_ROOT=
+cleanup() {{
+  rc=$?
+  trap - EXIT INT TERM
+  if (( BOOT_MOUNTED )); then sudo umount "$ROOT/boot" || rc=1; fi
+  if (( ROOT_MOUNTED )); then sudo umount "$ROOT" || rc=1; fi
+  if (( RESTORE_ROOT_RO )) && (( TOP_MOUNTED )) && test -n "$SOURCE_ROOT"; then
+    sudo btrfs property set -f -ts "$SOURCE_ROOT" ro true || rc=1
+  fi
+  if (( TOP_MOUNTED )); then sudo umount "$TOP" || rc=1; fi
+  if (( WAS_SEEDING )) && ! (( SEEDING_RESTORED )); then
+    sudo btrfstune -f -S 1 "${{ROOT_PARTS[0]}}" || rc=1
+  fi
+  ! findmnt -rn -M "$ROOT/boot" >/dev/null 2>&1 || rc=1
+  ! findmnt -rn -M "$ROOT" >/dev/null 2>&1 || rc=1
+  ! findmnt -rn -M "$TOP" >/dev/null 2>&1 || rc=1
+  exit "$rc"
+}}
+trap cleanup EXIT INT TERM
+sudo mount -o rw,subvolid=5 "${{ROOT_PARTS[0]}}" "$TOP"
+TOP_MOUNTED=1
+if findmnt -rn -M "$TOP" -o OPTIONS | tr ',' '\n' | grep -qx ro; then
+  sudo umount "$TOP"
+  TOP_MOUNTED=0
+  sudo btrfstune -f -S 0 "${{ROOT_PARTS[0]}}"
+  WAS_SEEDING=1
+  sudo mount -o rw,subvolid=5 "${{ROOT_PARTS[0]}}" "$TOP"
+  TOP_MOUNTED=1
+fi
+findmnt -rn -M "$TOP" -o OPTIONS | tr ',' '\n' | grep -qx rw
+DEFAULT_INFO=$(sudo btrfs subvolume get-default "$TOP")
+DEFAULT_PATH=$(printf '%s\n' "$DEFAULT_INFO" | sed -n 's/^.* path //p')
+if test -z "$DEFAULT_PATH" && printf '%s\n' "$DEFAULT_INFO" | grep -q '^ID 5 (FS_TREE)$'; then DEFAULT_PATH='<FS_TREE>'; fi
+case "$DEFAULT_PATH" in
+  '<FS_TREE>') SOURCE_ROOT="$TOP"; ROOT="$TOP"; ROOT_IS_TOP=1 ;;
+  ''|/*|*..*) echo 'Unsafe Btrfs default subvolume path.' >&2; exit 1 ;;
+  *) SOURCE_ROOT="$TOP/$DEFAULT_PATH" ;;
+esac
+test -d "$SOURCE_ROOT"
+SOURCE_ROOT_RO=$(sudo btrfs property get -ts "$SOURCE_ROOT" ro | awk -F= '$1 == "ro" {{print $2}}')
+test "$SOURCE_ROOT_RO" = true || test "$SOURCE_ROOT_RO" = false
+if test "$SOURCE_ROOT_RO" = true; then
+  sudo btrfs property set -f -ts "$SOURCE_ROOT" ro false
+  RESTORE_ROOT_RO=1
+fi
+if ! (( ROOT_IS_TOP )); then
+  sudo mount -o rw,subvol="$DEFAULT_PATH" "${{ROOT_PARTS[0]}}" "$ROOT"
+  ROOT_MOUNTED=1
+fi
+findmnt -rn -M "$ROOT" -o OPTIONS | tr ',' '\n' | grep -qx rw
+test -d "$ROOT/boot"
+test ! -L "$ROOT/boot"
+sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/boot"
+BOOT_MOUNTED=1
+sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-mutation-result.json"
+INITRAMFS_OK=0
+while IFS= read -r INITRAMFS; do
+  test -n "$INITRAMFS" || continue
+  LISTING=$(sudo chroot "$ROOT" /usr/bin/lsinitcpio "/boot/$(basename "$INITRAMFS")")
+  if printf '%s\n' "$LISTING" | grep -q 'nvidia\.ko' \
+    && printf '%s\n' "$LISTING" | grep -q 'nvidia-modeset\.ko' \
+    && printf '%s\n' "$LISTING" | grep -q 'nvidia-uvm\.ko' \
+    && printf '%s\n' "$LISTING" | grep -q 'nvidia-drm\.ko'; then
+    INITRAMFS_OK=1
+    break
+  fi
+done < <(sudo find "$ROOT/boot" -maxdepth 1 -type f -name 'initramfs*.img' -print)
+test "$INITRAMFS_OK" = 1
+sync
+sudo umount "$ROOT/boot"
+BOOT_MOUNTED=0
+if (( ROOT_MOUNTED )); then sudo umount "$ROOT"; ROOT_MOUNTED=0; fi
+if (( RESTORE_ROOT_RO )); then
+  sudo btrfs property set -f -ts "$SOURCE_ROOT" ro true
+  RESTORE_ROOT_RO=0
+fi
+sudo umount "$TOP"
+TOP_MOUNTED=0
+if (( WAS_SEEDING )); then
+  sudo btrfstune -f -S 1 "${{ROOT_PARTS[0]}}"
+  SEEDING_RESTORED=1
+fi
+! findmnt -rn -M "$ROOT/boot" >/dev/null 2>&1
+! findmnt -rn -M "$ROOT" >/dev/null 2>&1
+! findmnt -rn -M "$TOP" >/dev/null 2>&1
+trap - EXIT INT TERM"#,
+        inputs.kernel_version
+    );
+    let execution_result = run_guest_command_logged(
+        &connection,
+        &command,
+        &connection.runtime_dir.join("nvidia-install-mutation.log"),
+        Some(&cancel),
+    );
+    let staged_result = connection
+        .runtime_dir
+        .join("nvidia-install-mutation-result.json");
+    let result_transfer = run_checked(
+        scp_command(&connection)?
+            .arg("builder@127.0.0.1:/tmp/steamos-nvidia-offline-install/install-mutation-result.json")
+            .arg(&staged_result),
+        "Could not copy the NVIDIA installation result from the x86 guest",
+    );
+    if let Err(transfer_error) = result_transfer {
+        return Err(execution_result.err().unwrap_or(transfer_error));
+    }
+    fs::copy(
+        &staged_result,
+        inputs
+            .image_runtime_dir
+            .join("nvidia-install-mutation-result.json"),
+    )
+    .map_err(|e| format!("Could not preserve the NVIDIA installation result: {e}"))?;
+    let document: SupportInstallResult = serde_json::from_reader(
+        File::open(&staged_result)
+            .map_err(|e| format!("Could not read the NVIDIA installation result: {e}"))?,
+    )
+    .map_err(|e| format!("NVIDIA installation result is invalid JSON: {e}"))?;
+    let installation = validate_nvidia_install_result(
+        document,
+        &inputs,
+        "success",
+        "install_complete",
+        "complete",
+    )?;
+    execution_result?;
+
+    {
+        let mut manager = build_manager_state
+            .lock()
+            .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+        let mut session = manager
+            .session
+            .take()
+            .ok_or("The x86 installer appliance ended before cleanup.")?;
+        stop_nvidia_build_session(&mut session)?;
+    }
+    let mut manager = image_manager_state
+        .lock()
+        .map_err(|_| "Appliance state lock is unavailable.")?;
+    let session = manager
+        .session
+        .as_mut()
+        .filter(|session| session.working_image == inputs.working_image)
+        .ok_or("Builder session ended before NVIDIA installation could be recorded.")?;
+    session.state = "nvidia-installed".into();
+    session.message = "NVIDIA payload installed into the disposable working image.".into();
+    session.nvidia_installation = Some(installation.clone());
+    Ok(installation)
+}
+
+#[tauri::command]
+async fn install_nvidia_to_working_image(
+    app: tauri::AppHandle,
+) -> Result<NvidiaInstallHandoffResult, String> {
+    tauri::async_runtime::spawn_blocking(move || install_nvidia_to_working_image_blocking(app))
+        .await
+        .map_err(|error| format!("NVIDIA offline installation worker failed: {error}"))?
 }
 
 fn stop_session_process(session: &mut ApplianceSession) -> Result<(), String> {
@@ -7369,8 +7748,14 @@ mod tests {
                 ],
             }),
         };
-        let accepted = validate_nvidia_install_result(result, &inputs)
-            .expect("the exact installer result should pass");
+        let accepted = validate_nvidia_install_result(
+            result,
+            &inputs,
+            "validated",
+            "validation_complete",
+            "validated",
+        )
+        .expect("the exact installer result should pass");
         assert_eq!(accepted.root_partition_label, "rootfs-A");
         assert_eq!(accepted.boot_partition_label, "efi-A");
         assert!(accepted.mounts_released);
@@ -7403,10 +7788,16 @@ mod tests {
                 ],
             }),
         };
-        assert!(validate_nvidia_install_result(rejected, &inputs)
-            .err()
-            .expect("a package-specific signer mismatch must fail")
-            .contains("nvidia-utils"));
+        assert!(validate_nvidia_install_result(
+            rejected,
+            &inputs,
+            "validated",
+            "validation_complete",
+            "validated"
+        )
+        .err()
+        .expect("a package-specific signer mismatch must fail")
+        .contains("nvidia-utils"));
     }
 
     #[test]
@@ -7521,23 +7912,23 @@ mod tests {
         fs::create_dir_all(&root).expect("create output-name test directory");
         let compressed = root.join("steamdeck-repair.img.bz2");
         assert_eq!(
-            marker_output_path_for_input(&compressed).unwrap(),
+            output_path_for_input(&compressed, false).unwrap(),
             root.join("steamdeck-repair-marker.img")
         );
         fs::write(root.join("steamdeck-repair-marker.img"), b"occupied")
             .expect("reserve first output name");
         assert_eq!(
-            marker_output_path_for_input(&compressed).unwrap(),
+            output_path_for_input(&compressed, false).unwrap(),
             root.join("steamdeck-repair-marker-2.img")
         );
         assert_eq!(
-            marker_output_path_for_input(&root.join("raw.img")).unwrap(),
+            output_path_for_input(&root.join("raw.img"), false).unwrap(),
             root.join("raw-marker.img")
         );
         fs::write(root.join("already-marker.img"), b"input")
             .expect("create already-suffixed input");
         assert_eq!(
-            marker_output_path_for_input(&root.join("already-marker.img")).unwrap(),
+            output_path_for_input(&root.join("already-marker.img"), false).unwrap(),
             root.join("already-marker-2.img")
         );
         let manifest_only_input = root.join("manifest-only.img.xz");
@@ -7547,8 +7938,20 @@ mod tests {
         )
         .expect("reserve first manifest name");
         assert_eq!(
-            marker_output_path_for_input(&manifest_only_input).unwrap(),
+            output_path_for_input(&manifest_only_input, false).unwrap(),
             root.join("manifest-only-marker-2.img")
+        );
+        assert_eq!(
+            output_path_for_input(
+                &root.join("steamdeck-repair-nvidia-nvidia-marker.img"),
+                true,
+            )
+            .unwrap(),
+            root.join("steamdeck-repair-nvidia.img")
+        );
+        assert_eq!(
+            output_path_for_input(&root.join("steamdeck-repair-marker.img"), true).unwrap(),
+            root.join("steamdeck-repair-nvidia.img")
         );
         fs::remove_dir_all(root).expect("remove output-name test directory");
     }
@@ -7612,6 +8015,7 @@ mod tests {
             output_sha256: "output-hash",
             layout: &layout,
             target_system: &target_system,
+            nvidia_installation: None,
         });
         assert_eq!(manifest["schemaVersion"], 1);
         assert_eq!(manifest["resultClass"], "mutation-valid");
@@ -7626,6 +8030,44 @@ mod tests {
         let serialized = serde_json::to_string(&manifest).expect("serialize manifest fixture");
         assert!(!serialized.contains("private-user"));
         assert!(!serialized.contains("/Users/"));
+
+        let installation = NvidiaInstallHandoffResult {
+            schema_version: 1,
+            status: "success".into(),
+            reason: "install_complete".into(),
+            message: "installed".into(),
+            phase: "complete".into(),
+            appliance_architecture: "x86_64".into(),
+            root_partition_label: "rootfs-A".into(),
+            boot_partition_label: "efi-A".into(),
+            support_commit: NVIDIA_INSTALLER_COMMIT.into(),
+            steamos_version: "3.8.14".into(),
+            kernel_version: "6.11.11-valve1-neptune-611".into(),
+            nvidia_version: "575.64.05".into(),
+            trust: "certified-published".into(),
+            archive_sha256: "a".repeat(64),
+            keyring_sha256: "b".repeat(64),
+            packages: Vec::new(),
+            mounts_released: true,
+        };
+        let nvidia_manifest = marker_build_manifest(MarkerManifestData {
+            input,
+            output: Path::new("/Users/private-user/Downloads/recovery-nvidia.img"),
+            input_preparation: &preparation,
+            input_sha256: "input-hash",
+            normalized_sha256: "normalized-hash",
+            output_bytes: 20,
+            output_sha256: "output-hash",
+            layout: &layout,
+            target_system: &target_system,
+            nvidia_installation: Some(&installation),
+        });
+        assert_eq!(nvidia_manifest["resultClass"], "nvidia-mutation-valid");
+        assert_eq!(
+            nvidia_manifest["integration"]["nvidia"]["nvidiaVersion"],
+            "575.64.05"
+        );
+        assert_eq!(nvidia_manifest["validation"]["nvidiaPayloadVerified"], true);
     }
 
     #[test]
@@ -8234,6 +8676,7 @@ pub fn run() {
             prepare_nvidia_installer_bundle,
             start_nvidia_install_appliance,
             validate_nvidia_install_handoff,
+            install_nvidia_to_working_image,
             export_marker_image,
             stop_appliance,
             stop_nvidia_build_appliance,

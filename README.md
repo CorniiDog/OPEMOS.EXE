@@ -6,7 +6,7 @@ A desktop application that takes an official Valve SteamOS recovery image and pr
 
 The first target is macOS. The desktop shell provides drag-and-drop, file picker fallback, Valve download-page access, and one image-driven build action. A separate progress window automatically manages the builder appliance, displays live logs and status, supports cancellation, and reveals the generated raw image in Finder.
 
-The Rust backend prepares a disposable Fedora session, launches QEMU in the background, polls the guest's SSH readiness marker, reports lifecycle states, and performs graceful shutdown with a forced-stop fallback. The current marker milestone exports the modified qcow2 working state as a separate raw `.img`, then attaches that candidate read-only to a fresh validation appliance, rediscovers the supported Valve layout, verifies the marker, rechecks the original input hash, and only then gives the output its final name. A versioned `.img.manifest.json` sidecar records filenames (never full host paths), formats, sizes, hashes, layout, modified paths, and validation status. This marker-only output does **not** yet contain NVIDIA or Gamescope integration and is not an install-ready project release.
+The Rust backend prepares a disposable Fedora session, launches QEMU in the background, polls the guest's SSH readiness marker, reports lifecycle states, and performs graceful shutdown with a forced-stop fallback. When no compatible NVIDIA publication exists, the current fallback still exports a harmless `-marker.img`. For compatible targets, the normal path now installs the authenticated NVIDIA payload into the disposable working layer and reserves `-nvidia.img` for a successful structured install plus independent read-only output inspection. A versioned `.img.manifest.json` sidecar records filenames (never full host paths), formats, sizes, hashes, layout, modified paths, NVIDIA target/trust metadata, and validation status. Gamescope and recovery-media installer integration are still separate gates, so an NVIDIA-mutated output is not yet classified as install-ready.
 
 On Apple Silicon, the normal inspection/mutation appliance remains native
 aarch64 with HVF acceleration. Development tooling can acquire and launch a
@@ -19,8 +19,9 @@ Fedora suite, real recursive bind-mount cleanup, real signed-package validation,
 and validation/mutation cancellation paths have passed in that managed x86_64
 appliance. For a compatible published artifact, the normal frontend now stops
 the native guest while preserving its working qcow2, attaches that layer only
-to the x86 worker, and performs the first integrated read-only installer
-validation. Image mutation through that worker remains the next gate.
+to the x86 worker, performs read-only installer validation, and then invokes the
+same pinned installer in mutation mode. The first real recovery-image run of
+this newly integrated mutation path remains the immediate test gate.
 
 An opt-in development command can copy an explicitly selected support-repository
 checkout into the managed x86 worker and execute its fixed offline-target build
@@ -67,11 +68,10 @@ identity, exact target vermagic, and all five per-module hashes. Trust remains
 the provenance value (`locally-built-verified` for the current release) rather
 than being promoted merely because an artifact was published. A live Rust test
 has downloaded and passed the current SteamOS 3.8.16/NVIDIA 575.64.05 release.
-Injection is intentionally not enabled yet: the verified download is removed
-with the disposable session and the exported output remains clearly
-marker-only. Before export, however, the complete input set must now pass the
-pinned support installer's structured `--validate-only` contract in x86_64
-Fedora.
+Injection is enabled only after the complete input set passes the pinned support
+installer's structured `--validate-only` contract in x86_64 Fedora. Mutation
+must then return `success/install_complete`, release every mount, and pass an
+initramfs-content check before Rust will allow an NVIDIA-named export.
 
 After accepting a compatible module publication, the backend now queries the
 official Arch Linux Archive for exact-version `nvidia-utils` and
@@ -96,17 +96,25 @@ worker. It prepares a minimal keyring from Fedora's trusted Arch key material,
 mounts uniquely identified `rootfs-A` and `efi-A` read-only, and accepts only a
 schema-1 `validated/validation_complete` result whose target, trust, hashes,
 package-specific signers, and released-mount status all match Rust-owned state.
+Mutation mounts the Btrfs top level explicitly, identifies the current default
+root subvolume, temporarily clears only that subvolume's read-only property,
+mounts the matching `efi-A` at `/boot`, and restores both Btrfs read-only and
+seed-device state afterward. The resulting raw candidate is reopened through a
+fresh appliance and checked for all five modules, matching package records and
+GSP firmware, configuration, provenance state, initramfs output, layout, and
+source immutability before finalization.
 
 The older `steamos-nvidia-installer` project remains a useful reference for the
 later recovery-media contract: an install-ready result also needs the `home`
 partition's desktop launcher and tools, a safely preserved and patched Valve
 `repair_device.sh`, and verification that rootfs, EFI, and home changes survive
 installation. Those responsibilities are tracked separately and are not implied
-by this read-only validation milestone.
+by this NVIDIA root/EFI mutation milestone.
 
-Marker-only exports use an explicit `-marker.img` suffix. The builder reserves
-the `-nvidia.img` label for a future output that has successfully installed and
-independently validated the complete NVIDIA payload.
+Marker-only exports use an explicit `-marker.img` suffix. A structured successful
+installation plus independent payload inspection uses `-nvidia.img`. Existing
+trailing `-marker`/`-nvidia` suffixes are normalized first so repeated builds do
+not produce names such as `-nvidia-nvidia-marker.img`.
 
 ## Architecture
 

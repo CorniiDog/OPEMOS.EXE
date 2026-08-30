@@ -116,7 +116,7 @@ function formatBytes(bytes) {
 function showInputProgress(progress) {
   if (!running || cancelling) return;
   if (progress.stage === "starting-output-validation") {
-    setStatus("running", "Starting output validation", "Booting a fresh appliance to inspect the exported image independently.", 98, "Validating");
+    setStatus("running", "Starting output validation", "Booting a fresh appliance to inspect the exported image independently.", 98.2, "Validating");
     return;
   }
   if (progress.stage === "decompressing-output") {
@@ -137,11 +137,11 @@ function showInputProgress(progress) {
   } else if (progress.stage === "verifying-image-after") {
     setStatus("running", "Verifying image integrity", `Confirming the attached raw image remains unchanged: ${amount}.`, 90 + ratio * 2, "Hashing");
   } else if (progress.stage === "exporting-image") {
-    setStatus("running", "Exporting raw image", `Flattening the verified working layer: ${amount}.`, 96 + ratio * 1.5, "Exporting");
+    setStatus("running", "Exporting raw image", `Flattening the verified working layer: ${amount}.`, 97 + ratio, "Exporting");
   } else if (progress.stage === "hashing-output") {
-    setStatus("running", "Validating exported image", `Hashing the independently attached raw output: ${amount}.`, 97.5 + ratio, "Validating");
+    setStatus("running", "Validating exported image", `Hashing the independently attached raw output: ${amount}.`, 98.2 + ratio * 0.6, "Validating");
   } else if (progress.stage === "verifying-source-after-export") {
-    setStatus("running", "Rechecking original image", `Confirming the original input remains unchanged: ${amount}.`, 98.5 + ratio * 0.5, "Hashing");
+    setStatus("running", "Rechecking original image", `Confirming the original input remains unchanged: ${amount}.`, 98.8 + ratio * 0.7, "Hashing");
   }
 }
 
@@ -307,6 +307,7 @@ async function runBuild(request) {
   addStageLog(`Input: ${request.path}`);
 
   let logTimer = null;
+  let nvidiaInstalled = false;
   try {
     const started = await invoke("start_appliance", { path: request.path });
     addStageLog(`Input preparation: detected ${started.input.sourceFormat}; engine=${started.input.normalizer}; normalized=${started.input.normalized}; ${started.input.sourceBytes} source bytes → ${started.input.imageBytes} raw image bytes.`);
@@ -438,7 +439,12 @@ async function runBuild(request) {
         for (const packageInput of validation.packages) {
           addStageLog(`NVIDIA signature verified: ${packageInput.name} ${packageInput.fullVersion}; signer ${packageInput.signer}.`);
         }
-        addStageLog("warning: This milestone validates the complete offline installation input set without mutating the image; NVIDIA injection remains the next gate.");
+        setStatus("running", "Installing NVIDIA into working image", "Applying authenticated userspace, exact-kernel modules, firmware, depmod, and SteamOS initramfs changes only to the disposable overlay.", 96.85, "Installing");
+        const installation = await invoke("install_nvidia_to_working_image");
+        nvidiaInstalled = true;
+        addStageLog(`NVIDIA installation: ${installation.message}`);
+        addStageLog(`NVIDIA ${installation.nvidiaVersion} installed for ${installation.kernelVersion}; trust=${installation.trust}; mounts released=${installation.mountsReleased}.`);
+        addStageLog("NVIDIA initramfs contents were checked in x86_64 Fedora; the exported image will now receive an independent read-only structural inspection.");
       } else {
         addStageLog(`warning: ${nvidiaResolution.message}`);
         addStageLog(`NVIDIA publication status: ${nvidiaResolution.reason}; continuing with a marker-only output.`);
@@ -449,14 +455,14 @@ async function runBuild(request) {
     }
     if (cancelling) return;
 
-    setStatus("running", "Exporting raw image", "Stopping the mutation VM, flattening its working layer, and validating the result in a fresh appliance.", 96, "Exporting");
+    setStatus("running", "Exporting raw image", "Stopping the mutation VM, flattening its working layer, and validating the result in a fresh appliance.", 97, "Exporting");
     const output = await invoke("export_marker_image");
     addStageLog(`Exported image: ${output.path}; ${output.bytes} bytes; raw layout=${output.layoutScheme}.`);
     addStageLog(`Build manifest: ${output.manifestPath}.`);
     addStageLog(`Export validation: marker=${output.markerPath}; SHA256 ${output.sha256}.`);
     addStageLog(`Source safety: original SHA256 ${output.sourceSha256}; unchanged=true.`);
-    setStatus("complete", "Marker image complete", "Finder opened the validated raw image.", 100);
-    await finish("complete", `Marker image created: ${output.path}`);
+    setStatus("complete", nvidiaInstalled ? "NVIDIA mutation complete" : "Marker image complete", "Finder opened the validated raw image.", 100);
+    await finish("complete", `${nvidiaInstalled ? "NVIDIA-mutated image" : "Marker image"} created: ${output.path}`);
   } catch (error) {
     if (cancelling) return;
     addStageLog(`ERROR: ${error}`);
