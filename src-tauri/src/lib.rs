@@ -34,8 +34,48 @@ const LIB32_NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 128 * 1024 * 1024;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
 const NVIDIA_INSTALLER_COMMIT: &str = "064b540d32dc22070a953724366e14b78a8b3460";
+const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_INSTALLER_COMMIT;
 const NVIDIA_UTILS_SIGNER: &str = "05C7775A9E8B977407FE08E69D4C5AA15426DA0A";
 const LIB32_NVIDIA_UTILS_SIGNER: &str = "D2E95FEC015CF1F911AAAB0C3D4C5008BB5C8D29";
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BuilderSettings {
+    schema_version: u32,
+    auto_release_verified_nvidia: bool,
+    track_steamos_driver_updates: bool,
+}
+
+impl Default for BuilderSettings {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            auto_release_verified_nvidia: false,
+            track_steamos_driver_updates: false,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GithubMaintainerStatus {
+    gh_available: bool,
+    authenticated: bool,
+    authorized: bool,
+    username: Option<String>,
+    permission: Option<String>,
+    message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaReleasePublication {
+    status: String,
+    repository: String,
+    tag: String,
+    url: String,
+    message: String,
+}
 
 struct PinnedInstallerFile {
     path: &'static str,
@@ -141,7 +181,7 @@ struct NvidiaTargetBuildSpec {
     nvidia_version: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NvidiaDevelopmentArtifact {
     archive_path: String,
@@ -291,6 +331,17 @@ struct NvidiaPublishedArtifact {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct NvidiaOnDemandBuildPlan {
+    steamos_version: String,
+    kernel_version: String,
+    nvidia_version: String,
+    baseline_release: String,
+    support_commit: String,
+    expected_trust: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct NvidiaPublishedResolution {
     schema_version: u32,
     status: String,
@@ -300,6 +351,7 @@ struct NvidiaPublishedResolution {
     target: NvidiaTargetReadiness,
     publication: Option<NvidiaPublishedPublication>,
     artifact: Option<NvidiaPublishedArtifact>,
+    build_plan: Option<NvidiaOnDemandBuildPlan>,
 }
 
 #[derive(Clone, Serialize)]
@@ -1302,6 +1354,192 @@ fn run_checked(command: &mut Command, description: &str) -> Result<(), String> {
     } else {
         format!("{description}: {detail}")
     })
+}
+
+fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join("settings.json"))
+        .map_err(|error| format!("Could not determine the settings directory: {error}"))
+}
+
+fn load_builder_settings(app: &tauri::AppHandle) -> Result<BuilderSettings, String> {
+    let path = settings_path(app)?;
+    if !path.exists() {
+        return Ok(BuilderSettings::default());
+    }
+    let settings: BuilderSettings = serde_json::from_reader(
+        File::open(&path).map_err(|error| format!("Could not open settings.json: {error}"))?,
+    )
+    .map_err(|error| format!("settings.json is invalid: {error}"))?;
+    if settings.schema_version != 1 {
+        return Err(format!(
+            "Unsupported settings schema {}; expected 1.",
+            settings.schema_version
+        ));
+    }
+    Ok(settings)
+}
+
+fn save_builder_settings(app: &tauri::AppHandle, settings: &BuilderSettings) -> Result<(), String> {
+    if settings.schema_version != 1 {
+        return Err("Only settings schema 1 can be saved.".into());
+    }
+    let path = settings_path(app)?;
+    let parent = path
+        .parent()
+        .ok_or("Settings path has no parent directory.")?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create the settings directory: {error}"))?;
+    let temporary = parent.join(format!(".settings.json.{}.tmp", std::process::id()));
+    let bytes = serde_json::to_vec_pretty(settings)
+        .map_err(|error| format!("Could not serialize settings: {error}"))?;
+    fs::write(&temporary, bytes)
+        .map_err(|error| format!("Could not stage settings.json: {error}"))?;
+    fs::rename(&temporary, &path)
+        .map_err(|error| format!("Could not finalize settings.json: {error}"))
+}
+
+fn github_maintainer_status() -> Result<GithubMaintainerStatus, String> {
+    let Some(gh) = find_binary("gh") else {
+        return Ok(GithubMaintainerStatus {
+            gh_available: false,
+            authenticated: false,
+            authorized: false,
+            username: None,
+            permission: None,
+            message: "GitHub CLI is not available. The packaged application must bundle it before maintainer publishing can be enabled.".into(),
+        });
+    };
+    let auth = Command::new(&gh)
+        .args(["auth", "status", "--hostname", "github.com"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| format!("Could not check GitHub authentication: {error}"))?;
+    if !auth.success() {
+        return Ok(GithubMaintainerStatus {
+            gh_available: true,
+            authenticated: false,
+            authorized: false,
+            username: None,
+            permission: None,
+            message:
+                "GitHub is not connected. Use browser login to authorize the maintainer workflow."
+                    .into(),
+        });
+    }
+    let user_output = Command::new(&gh)
+        .args(["api", "user", "--jq", ".login"])
+        .output()
+        .map_err(|error| format!("Could not query the authenticated GitHub account: {error}"))?;
+    if !user_output.status.success() {
+        return Err(
+            "GitHub authentication succeeded, but the account identity could not be verified."
+                .into(),
+        );
+    }
+    let username = String::from_utf8(user_output.stdout)
+        .map_err(|_| "GitHub returned a non-UTF-8 account name.".to_string())?
+        .trim()
+        .to_string();
+    if username.is_empty()
+        || !username
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err("GitHub returned an invalid account name.".into());
+    }
+    let endpoint = format!("repos/{NVIDIA_SUPPORT_REPOSITORY}/collaborators/{username}/permission");
+    let permission_output = Command::new(&gh)
+        .args(["api", &endpoint, "--jq", ".user.permission"])
+        .output()
+        .map_err(|error| format!("Could not verify repository permission: {error}"))?;
+    let permission = if permission_output.status.success() {
+        Some(
+            String::from_utf8(permission_output.stdout)
+                .map_err(|_| "GitHub returned a non-UTF-8 permission.".to_string())?
+                .trim()
+                .to_string(),
+        )
+    } else {
+        None
+    };
+    let authorized = permission
+        .as_deref()
+        .is_some_and(|value| matches!(value, "admin" | "maintain" | "push"));
+    Ok(GithubMaintainerStatus {
+        gh_available: true,
+        authenticated: true,
+        authorized,
+        username: Some(username.clone()),
+        permission: permission.clone(),
+        message: if authorized {
+            format!("Connected as {username}; release permission verified.")
+        } else {
+            format!(
+                "Connected as {username}, but release permission for {NVIDIA_SUPPORT_REPOSITORY} was not verified."
+            )
+        },
+    })
+}
+
+#[tauri::command]
+fn get_builder_settings(app: tauri::AppHandle) -> Result<BuilderSettings, String> {
+    load_builder_settings(&app)
+}
+
+#[tauri::command]
+fn update_builder_settings(
+    app: tauri::AppHandle,
+    settings: BuilderSettings,
+) -> Result<BuilderSettings, String> {
+    let mut settings = settings;
+    settings.schema_version = 1;
+    if settings.auto_release_verified_nvidia && !github_maintainer_status()?.authorized {
+        return Err(
+            "Auto-release cannot be enabled until GitHub maintainer permission is verified.".into(),
+        );
+    }
+    save_builder_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+async fn get_github_maintainer_status() -> Result<GithubMaintainerStatus, String> {
+    tauri::async_runtime::spawn_blocking(github_maintainer_status)
+        .await
+        .map_err(|error| format!("GitHub authorization worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn connect_github_maintainer() -> Result<GithubMaintainerStatus, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let gh = find_binary("gh").ok_or(
+            "GitHub CLI is not available. Install it for development; release packages will bundle it.",
+        )?;
+        let status = Command::new(gh)
+            .args([
+                "auth",
+                "login",
+                "--hostname",
+                "github.com",
+                "--git-protocol",
+                "https",
+                "--web",
+                "--clipboard",
+                "--skip-ssh-key",
+            ])
+            .stdin(Stdio::null())
+            .status()
+            .map_err(|error| format!("Could not start GitHub browser login: {error}"))?;
+        if !status.success() {
+            return Err("GitHub browser login was cancelled or did not complete.".into());
+        }
+        github_maintainer_status()
+    })
+    .await
+    .map_err(|error| format!("GitHub login worker failed: {error}"))?
 }
 
 fn copy_new_file(source: &Path, destination: &Path, description: &str) -> Result<(), String> {
@@ -2588,6 +2826,62 @@ fn select_published_nvidia_release(
     }))
 }
 
+fn select_nvidia_build_baseline(
+    target: &NvidiaTargetReadiness,
+    releases: &[GithubRelease],
+) -> Result<Option<PublishedReleaseIdentity>, String> {
+    if !target.ready {
+        return Ok(None);
+    }
+    let target_steamos = target
+        .steamos_version
+        .as_deref()
+        .ok_or("Ready NVIDIA target omitted its SteamOS version.")?;
+    let target_version = numeric_version(target_steamos, 3..=3)
+        .ok_or("Ready NVIDIA target contains an invalid SteamOS version.")?;
+    let mut older_or_equal = Vec::new();
+    let mut newer = Vec::new();
+    for release in releases {
+        if release.draft || release.prerelease {
+            continue;
+        }
+        let Some(identity) = published_release_identity(&release.tag_name) else {
+            continue;
+        };
+        let steam_version =
+            numeric_version(&identity.steamos_version, 3..=3).expect("validated release version");
+        if steam_version[..2] != target_version[..2] {
+            continue;
+        }
+        let nvidia_version =
+            numeric_version(&identity.nvidia_version, 2..=3).expect("validated NVIDIA version");
+        let candidate = (
+            steam_version.clone(),
+            nvidia_version,
+            release.published_at.clone().unwrap_or_default(),
+            identity,
+        );
+        if steam_version <= target_version {
+            older_or_equal.push(candidate);
+        } else {
+            newer.push(candidate);
+        }
+    }
+    older_or_equal
+        .sort_by(|left, right| (&left.0, &left.1, &left.2).cmp(&(&right.0, &right.1, &right.2)));
+    if let Some((_, _, _, identity)) = older_or_equal.pop() {
+        return Ok(Some(identity));
+    }
+    let Some(nearest_version) = newer.iter().map(|candidate| &candidate.0).min().cloned() else {
+        return Ok(None);
+    };
+    Ok(newer
+        .into_iter()
+        .filter(|candidate| candidate.0 == nearest_version)
+        .max_by(|left, right| (&left.1, &left.2).cmp(&(&right.1, &right.2)))
+        .map(|(_, _, _, identity)| identity))
+}
+
 fn published_asset_name(identity: &PublishedReleaseIdentity) -> String {
     format!("nvidia-open-{}-x86_64.tar.gz", identity.tag)
 }
@@ -2991,20 +3285,54 @@ fn resolve_published_nvidia_for_target(
             target,
             publication: None,
             artifact: None,
+            build_plan: None,
         });
     }
     let Some((identity, release, compatibility)) =
         select_published_nvidia_release(&target, releases)?
     else {
+        let Some(baseline) = select_nvidia_build_baseline(&target, releases)? else {
+            return Ok(NvidiaPublishedResolution {
+                schema_version: NVIDIA_RESOLVER_SCHEMA,
+                status: "no_compatible_artifact".into(),
+                reason: "no_compatible_release".into(),
+                message: "No same-series NVIDIA publication is available to select a supported driver version for an exact-kernel build.".into(),
+                compatibility: None,
+                target,
+                publication: None,
+                artifact: None,
+                build_plan: None,
+            });
+        };
+        let steamos_version = target
+            .steamos_version
+            .clone()
+            .ok_or("Ready NVIDIA target omitted its SteamOS version.")?;
+        let kernel_version = target
+            .kernel_version
+            .clone()
+            .ok_or("Ready NVIDIA target omitted its kernel version.")?;
+        let nvidia_version = baseline.nvidia_version.clone();
+        let baseline_release = baseline.tag.clone();
         return Ok(NvidiaPublishedResolution {
             schema_version: NVIDIA_RESOLVER_SCHEMA,
-            status: "no_compatible_artifact".into(),
-            reason: "no_compatible_release".into(),
-            message: "No published NVIDIA release matches the exact target kernel within the permitted SteamOS compatibility range.".into(),
-            compatibility: None,
+            status: "build_required".into(),
+            reason: "exact_kernel_artifact_missing".into(),
+            message: format!(
+                "No published artifact matches exact kernel {kernel_version}. NVIDIA {nvidia_version} can be built locally for this exact target using the verified same-series baseline {baseline_release}."
+            ),
+            compatibility: Some("on_demand_exact_kernel".into()),
             target,
             publication: None,
             artifact: None,
+            build_plan: Some(NvidiaOnDemandBuildPlan {
+                steamos_version,
+                kernel_version,
+                nvidia_version,
+                baseline_release,
+                support_commit: NVIDIA_SUPPORT_BUILD_COMMIT.into(),
+                expected_trust: "locally-built-verified".into(),
+            }),
         });
     };
     let publication = NvidiaPublishedPublication {
@@ -3042,6 +3370,7 @@ fn resolve_published_nvidia_for_target(
             target,
             publication: Some(publication),
             artifact: None,
+            build_plan: None,
         });
     }
     let archive_asset = selected_assets[0];
@@ -3133,6 +3462,7 @@ fn resolve_published_nvidia_for_target(
             archive_sha256,
             trust,
         }),
+        build_plan: None,
     })
 }
 
@@ -3820,43 +4150,54 @@ fn run_guest_command_logged(
     })
 }
 
-fn build_nvidia_for_target(
+enum NvidiaSupportSource<'a> {
+    Local(&'a Path),
+    PinnedGithub,
+}
+
+fn build_nvidia_for_target_from_source(
     session: &impl GuestConnection,
-    support_repository: &Path,
+    support_source: NvidiaSupportSource<'_>,
     output_dir: &Path,
     spec: &NvidiaTargetBuildSpec,
     cancel: Option<&AtomicBool>,
 ) -> Result<NvidiaDevelopmentArtifact, String> {
     validate_nvidia_target_build_spec(spec)?;
-    let support_repository = fs::canonicalize(support_repository)
-        .map_err(|e| format!("Could not resolve the NVIDIA support repository: {e}"))?;
-    for required in [
-        "bootstrap/build_for_target.sh",
-        "bootstrap/prepare_valve_keyring.py",
-        "lib/common.sh",
-        "trust/valve-package-signers.json",
-    ] {
-        if !support_repository.join(required).is_file() {
-            return Err(format!(
-                "NVIDIA support repository is missing required file {required}."
-            ));
+    let (local_support_repository, approved_signer) = match support_source {
+        NvidiaSupportSource::Local(repository) => {
+            let repository = fs::canonicalize(repository)
+                .map_err(|e| format!("Could not resolve the NVIDIA support repository: {e}"))?;
+            for required in [
+                "bootstrap/build_for_target.sh",
+                "bootstrap/prepare_valve_keyring.py",
+                "lib/common.sh",
+                "trust/valve-package-signers.json",
+            ] {
+                if !repository.join(required).is_file() {
+                    return Err(format!(
+                        "NVIDIA support repository is missing required file {required}."
+                    ));
+                }
+            }
+            let trust_manifest: ValveTrustManifest = serde_json::from_reader(
+                File::open(repository.join("trust/valve-package-signers.json"))
+                    .map_err(|e| format!("Could not read the Valve trust manifest: {e}"))?,
+            )
+            .map_err(|e| format!("Valve trust manifest is invalid JSON: {e}"))?;
+            let signer = trust_manifest
+                .signers
+                .first()
+                .filter(|_| trust_manifest.schema_version == 1 && trust_manifest.signers.len() == 1)
+                .map(|signer| signer.fingerprint.to_ascii_uppercase())
+                .filter(|fingerprint| {
+                    matches!(fingerprint.len(), 40 | 64)
+                        && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+                .ok_or("Valve trust manifest must contain exactly one full approved signer fingerprint.")?;
+            (Some(repository), signer)
         }
-    }
-    let trust_manifest: ValveTrustManifest = serde_json::from_reader(
-        File::open(support_repository.join("trust/valve-package-signers.json"))
-            .map_err(|e| format!("Could not read the Valve trust manifest: {e}"))?,
-    )
-    .map_err(|e| format!("Valve trust manifest is invalid JSON: {e}"))?;
-    let approved_signer = trust_manifest
-        .signers
-        .first()
-        .filter(|_| trust_manifest.schema_version == 1 && trust_manifest.signers.len() == 1)
-        .map(|signer| signer.fingerprint.to_ascii_uppercase())
-        .filter(|fingerprint| {
-            matches!(fingerprint.len(), 40 | 64)
-                && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit())
-        })
-        .ok_or("Valve trust manifest must contain exactly one full approved signer fingerprint.")?;
+        NvidiaSupportSource::PinnedGithub => (None, APPROVED_VALVE_SIGNER.to_ascii_uppercase()),
+    };
     fs::create_dir_all(output_dir)
         .map_err(|e| format!("Could not create the NVIDIA artifact output directory: {e}"))?;
     let output_dir = fs::canonicalize(output_dir)
@@ -3884,28 +4225,42 @@ fn build_nvidia_for_target(
         }
     }
 
-    let transfer_archive = session.runtime_dir().join("support-repository.tar.gz");
-    run_checked(
-        Command::new("tar")
-            // Prevent macOS tar from adding AppleDouble/xattr headers that GNU tar
-            // reports as unknown while unpacking the checkout in Fedora.
-            .env("COPYFILE_DISABLE", "1")
-            .args(["--no-xattrs", "-czf"])
-            .arg(&transfer_archive)
-            .args(["--exclude", ".git", "--exclude", "target", "-C"])
-            .arg(&support_repository)
-            .arg("."),
-        "Could not package the NVIDIA support repository",
-    )?;
-    run_checked(
-        scp_command(session)?
-            .arg(&transfer_archive)
-            .arg("builder@127.0.0.1:/tmp/steamos-nvidia-support.tar.gz"),
-        "Could not copy the NVIDIA support repository into the x86 guest",
-    )?;
+    if let Some(support_repository) = local_support_repository.as_ref() {
+        let transfer_archive = session.runtime_dir().join("support-repository.tar.gz");
+        run_checked(
+            Command::new("tar")
+                // Prevent macOS tar from adding AppleDouble/xattr headers that GNU tar
+                // reports as unknown while unpacking the checkout in Fedora.
+                .env("COPYFILE_DISABLE", "1")
+                .args(["--no-xattrs", "-czf"])
+                .arg(&transfer_archive)
+                .args(["--exclude", ".git", "--exclude", "target", "-C"])
+                .arg(support_repository)
+                .arg("."),
+            "Could not package the NVIDIA support repository",
+        )?;
+        run_checked(
+            scp_command(session)?
+                .arg(&transfer_archive)
+                .arg("builder@127.0.0.1:/tmp/steamos-nvidia-support.tar.gz"),
+            "Could not copy the NVIDIA support repository into the x86 guest",
+        )?;
+    }
+    let support_setup = if local_support_repository.is_some() {
+        "mkdir -p /tmp/steamos-nvidia-support; tar -xzf /tmp/steamos-nvidia-support.tar.gz -C /tmp/steamos-nvidia-support;".to_string()
+    } else {
+        format!(
+            "sudo dnf install -y git gcc15; git clone --quiet https://github.com/{NVIDIA_SUPPORT_REPOSITORY}.git /tmp/steamos-nvidia-support; cd /tmp/steamos-nvidia-support; git checkout --quiet --detach {NVIDIA_SUPPORT_BUILD_COMMIT}; test \"$(git rev-parse HEAD)\" = {NVIDIA_SUPPORT_BUILD_COMMIT}; test -z \"$(git status --porcelain)\";"
+        )
+    };
+    let compiler_requirement = if local_support_repository.is_some() {
+        ""
+    } else {
+        " --require-compiler-major-match"
+    };
     let build_command = format!(
-        r#"set -eu; rm -rf /tmp/steamos-nvidia-support /tmp/steamos-nvidia-artifacts; mkdir -p /tmp/steamos-nvidia-support /tmp/steamos-nvidia-artifacts; tar -xzf /tmp/steamos-nvidia-support.tar.gz -C /tmp/steamos-nvidia-support; cd /tmp/steamos-nvidia-support; sudo dnf install -y bsdtar gnupg2 python3; python3 ./bootstrap/prepare_valve_keyring.py --output /tmp/steamos-nvidia-artifacts/valve-package-signers.gpg; signer="$(python3 -c 'import json; data=json.load(open("trust/valve-package-signers.json", encoding="utf-8")); signers=data["signers"]; assert data["schemaVersion"] == 1 and len(signers) == 1; print(signers[0]["fingerprint"])')"; bash ./bootstrap/build_for_target.sh --steamos {} --kernel {} --nvidia {} --architecture x86_64 --install-dependencies --output /tmp/steamos-nvidia-artifacts --result-json /tmp/steamos-nvidia-artifacts/build-result.json --header-keyring /tmp/steamos-nvidia-artifacts/valve-package-signers.gpg --header-signer "$signer""#,
-        spec.steamos_version, spec.kernel_version, spec.nvidia_version
+        r#"set -eu; rm -rf /tmp/steamos-nvidia-support /tmp/steamos-nvidia-artifacts; mkdir -p /tmp/steamos-nvidia-artifacts; {support_setup} cd /tmp/steamos-nvidia-support; sudo dnf install -y bsdtar gnupg2 python3; python3 ./bootstrap/prepare_valve_keyring.py --output /tmp/steamos-nvidia-artifacts/valve-package-signers.gpg; signer="$(python3 -c 'import json; data=json.load(open("trust/valve-package-signers.json", encoding="utf-8")); signers=data["signers"]; assert data["schemaVersion"] == 1 and len(signers) == 1; print(signers[0]["fingerprint"])')"; bash ./bootstrap/build_for_target.sh --steamos {} --kernel {} --nvidia {} --architecture x86_64 --install-dependencies{compiler_requirement} --output /tmp/steamos-nvidia-artifacts --result-json /tmp/steamos-nvidia-artifacts/build-result.json --header-keyring /tmp/steamos-nvidia-artifacts/valve-package-signers.gpg --header-signer "$signer""#,
+        spec.steamos_version, spec.kernel_version, spec.nvidia_version,
     );
     let execution_result = run_guest_command_logged(
         session,
@@ -4144,6 +4499,22 @@ fn build_nvidia_for_target(
         nvidia_version: spec.nvidia_version.clone(),
         trust: result_trust,
     })
+}
+
+fn build_nvidia_for_target(
+    session: &impl GuestConnection,
+    support_repository: &Path,
+    output_dir: &Path,
+    spec: &NvidiaTargetBuildSpec,
+    cancel: Option<&AtomicBool>,
+) -> Result<NvidiaDevelopmentArtifact, String> {
+    build_nvidia_for_target_from_source(
+        session,
+        NvidiaSupportSource::Local(support_repository),
+        output_dir,
+        spec,
+        cancel,
+    )
 }
 
 fn run_transfer_proof(session: &impl GuestConnection) -> Result<TransferProof, String> {
@@ -6494,6 +6865,33 @@ fn collect_nvidia_install_inputs(
     Ok(inputs)
 }
 
+fn validate_on_demand_build_plan(session: &ApplianceSession) -> Result<(), String> {
+    let resolution = session
+        .nvidia_resolution
+        .as_ref()
+        .filter(|resolution| resolution.status == "build_required")
+        .ok_or("No exact-kernel NVIDIA on-demand build is pending.")?;
+    let plan = resolution
+        .build_plan
+        .as_ref()
+        .ok_or("NVIDIA resolver omitted the on-demand build plan.")?;
+    let target = &resolution.target;
+    if !target.ready
+        || target.steamos_version.as_deref() != Some(plan.steamos_version.as_str())
+        || target.kernel_version.as_deref() != Some(plan.kernel_version.as_str())
+        || target.architecture != "x86_64"
+        || plan.support_commit != NVIDIA_SUPPORT_BUILD_COMMIT
+        || plan.expected_trust != "locally-built-verified"
+    {
+        return Err("NVIDIA on-demand build plan does not match the exact image target or pinned support policy.".into());
+    }
+    validate_nvidia_target_build_spec(&NvidiaTargetBuildSpec {
+        steamos_version: plan.steamos_version.clone(),
+        kernel_version: plan.kernel_version.clone(),
+        nvidia_version: plan.nvidia_version.clone(),
+    })
+}
+
 fn start_nvidia_install_appliance_blocking(
     app: tauri::AppHandle,
 ) -> Result<NvidiaBuildStatus, String> {
@@ -6521,7 +6919,13 @@ fn start_nvidia_install_appliance_blocking(
         if session.state != "ready" {
             return Err("The builder appliance is not ready for the x86 handoff.".into());
         }
-        collect_nvidia_install_inputs(session)?;
+        match session.nvidia_resolution.as_ref().map(|resolution| resolution.status.as_str()) {
+            Some("compatible") => {
+                collect_nvidia_install_inputs(session)?;
+            }
+            Some("build_required") => validate_on_demand_build_plan(session)?,
+            _ => return Err("A compatible artifact or exact-kernel on-demand build plan is required before x86 handoff.".into()),
+        }
         run_guest_command(
             &ImageInspectionSession::from(&*session),
             "set -eu; sync; WORK=/dev/disk/by-id/virtio-steamos-user-working; test \"$(sudo blockdev --getro \"$WORK\")\" = 1; ! findmnt -rn -S \"$WORK\" >/dev/null 2>&1",
@@ -6566,6 +6970,298 @@ async fn start_nvidia_install_appliance(
     tauri::async_runtime::spawn_blocking(move || start_nvidia_install_appliance_blocking(app))
         .await
         .map_err(|error| format!("NVIDIA installer-appliance startup worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn build_nvidia_target_on_demand(
+    app: tauri::AppHandle,
+) -> Result<NvidiaPublishedResolution, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let image_manager_state = app.state::<Mutex<ApplianceManager>>();
+        let (image_runtime_dir, target, plan) = {
+            let manager = image_manager_state
+                .lock()
+                .map_err(|_| "Appliance state lock is unavailable.")?;
+            let session = manager
+                .session
+                .as_ref()
+                .ok_or("The image-builder session is not running.")?;
+            if session.state != "handoff" {
+                return Err("The working image has not been handed to the x86_64 appliance.".into());
+            }
+            validate_on_demand_build_plan(session)?;
+            let resolution = session
+                .nvidia_resolution
+                .as_ref()
+                .ok_or("NVIDIA resolution is unavailable.")?;
+            (
+                session.runtime_dir.clone(),
+                resolution.target.clone(),
+                resolution
+                    .build_plan
+                    .clone()
+                    .ok_or("NVIDIA resolver omitted the on-demand build plan.")?,
+            )
+        };
+        let build_manager_state = app.state::<Mutex<NvidiaBuildManager>>();
+        let (connection, cancel) = {
+            let mut manager = build_manager_state
+                .lock()
+                .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+            let cancel = manager.cancel_build.clone();
+            let session = manager
+                .session
+                .as_mut()
+                .ok_or("The x86_64 Fedora build appliance is not running.")?;
+            if session.state != "ready" {
+                return Err("The x86_64 Fedora build appliance is not ready.".into());
+            }
+            session.state = "building".into();
+            session.message = format!(
+                "Building NVIDIA {} for exact kernel {}.",
+                plan.nvidia_version, plan.kernel_version
+            );
+            (NvidiaBuildConnection::from(&*session), cancel)
+        };
+        let output_dir = image_runtime_dir.join("on-demand-nvidia-artifacts");
+        let spec = NvidiaTargetBuildSpec {
+            steamos_version: plan.steamos_version.clone(),
+            kernel_version: plan.kernel_version.clone(),
+            nvidia_version: plan.nvidia_version.clone(),
+        };
+        let build = build_nvidia_for_target_from_source(
+            &connection,
+            NvidiaSupportSource::PinnedGithub,
+            &output_dir,
+            &spec,
+            Some(&cancel),
+        );
+        if let Ok(mut manager) = build_manager_state.lock() {
+            if let Some(session) = manager
+                .session
+                .as_mut()
+                .filter(|session| session.ssh_port == connection.ssh_port)
+            {
+                session.state = "ready".into();
+                session.message = match &build {
+                    Ok(_) => "Exact-kernel NVIDIA artifact build completed and validated.".into(),
+                    Err(error) => format!(
+                        "Exact-kernel NVIDIA artifact build stopped without a usable artifact: {error}"
+                    ),
+                };
+            }
+        }
+        let artifact = build?;
+        if artifact.trust != plan.expected_trust {
+            return Err(format!(
+                "On-demand artifact trust was {}; expected {}. The artifact will not be installed.",
+                artifact.trust, plan.expected_trust
+            ));
+        }
+        let resolution = NvidiaPublishedResolution {
+            schema_version: NVIDIA_RESOLVER_SCHEMA,
+            status: "compatible".into(),
+            reason: "on_demand_artifact_verified".into(),
+            message: format!(
+                "Built and verified NVIDIA {} locally for exact kernel {}.",
+                plan.nvidia_version, plan.kernel_version
+            ),
+            compatibility: Some("on_demand_exact_kernel".into()),
+            target,
+            publication: Some(NvidiaPublishedPublication {
+                tag: format!(
+                    "on-demand-steamos-{}-nvidia-{}-k{}",
+                    plan.steamos_version, plan.nvidia_version, plan.kernel_version
+                ),
+                steamos_version: plan.steamos_version.clone(),
+                kernel_version: plan.kernel_version.clone(),
+                nvidia_version: plan.nvidia_version.clone(),
+                published_at: None,
+            }),
+            artifact: Some(NvidiaPublishedArtifact {
+                archive_path: artifact.archive_path,
+                checksum_path: artifact.checksum_path,
+                provenance_path: artifact.provenance_path,
+                archive_sha256: artifact.archive_sha256,
+                trust: artifact.trust,
+            }),
+            build_plan: Some(plan),
+        };
+        let mut manager = image_manager_state
+            .lock()
+            .map_err(|_| "Appliance state lock is unavailable.")?;
+        let session = manager
+            .session
+            .as_mut()
+            .filter(|session| session.runtime_dir == image_runtime_dir && session.state == "handoff")
+            .ok_or("Image-builder session ended before the on-demand artifact could be recorded.")?;
+        session.nvidia_resolution = Some(resolution.clone());
+        session.nvidia_userspace = None;
+        session.nvidia_installer_bundle = None;
+        session.nvidia_install_validation = None;
+        session.nvidia_installation = None;
+        Ok(resolution)
+    })
+    .await
+    .map_err(|error| format!("On-demand NVIDIA build worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn publish_on_demand_nvidia_release(
+    app: tauri::AppHandle,
+) -> Result<NvidiaReleasePublication, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = load_builder_settings(&app)?;
+        if !settings.auto_release_verified_nvidia {
+            return Err("Maintainer auto-release is not enabled in settings.".into());
+        }
+        let maintainer = github_maintainer_status()?;
+        if !maintainer.authorized {
+            return Err("GitHub maintainer permission could not be re-verified immediately before publication.".into());
+        }
+        let (publication, artifact, plan) = {
+            let manager_state = app.state::<Mutex<ApplianceManager>>();
+            let manager = manager_state
+                .lock()
+                .map_err(|_| "Appliance state lock is unavailable.")?;
+            let session = manager
+                .session
+                .as_ref()
+                .ok_or("The image-builder session is not running.")?;
+            let resolution = session
+                .nvidia_resolution
+                .as_ref()
+                .filter(|resolution| {
+                    resolution.status == "compatible"
+                        && resolution.reason == "on_demand_artifact_verified"
+                })
+                .ok_or("Only a newly built and verified on-demand artifact can be published.")?;
+            (
+                resolution
+                    .publication
+                    .clone()
+                    .ok_or("On-demand artifact omitted publication identity.")?,
+                resolution
+                    .artifact
+                    .clone()
+                    .ok_or("On-demand artifact omitted verified files.")?,
+                resolution
+                    .build_plan
+                    .clone()
+                    .ok_or("On-demand artifact omitted its pinned build plan.")?,
+            )
+        };
+        if artifact.trust != "locally-built-verified"
+            || plan.expected_trust != "locally-built-verified"
+            || plan.support_commit != NVIDIA_SUPPORT_BUILD_COMMIT
+            || publication.steamos_version != plan.steamos_version
+            || publication.kernel_version != plan.kernel_version
+            || publication.nvidia_version != plan.nvidia_version
+        {
+            return Err("On-demand artifact no longer satisfies the release trust policy.".into());
+        }
+        let identity = PublishedReleaseIdentity {
+            steamos_version: plan.steamos_version.clone(),
+            kernel_version: plan.kernel_version.clone(),
+            nvidia_version: plan.nvidia_version.clone(),
+            tag: format!(
+                "steamos-{}-nvidia-{}-k{}",
+                plan.steamos_version, plan.nvidia_version, plan.kernel_version
+            ),
+        };
+        let expected_archive = published_asset_name(&identity);
+        let expected_checksum = format!("{expected_archive}.sha256");
+        let expected_provenance = format!(
+            "{}.provenance.json",
+            expected_archive.trim_end_matches(".tar.gz")
+        );
+        let archive = PathBuf::from(&artifact.archive_path);
+        let checksum = PathBuf::from(&artifact.checksum_path);
+        let provenance = PathBuf::from(&artifact.provenance_path);
+        for (path, expected) in [
+            (&archive, expected_archive.as_str()),
+            (&checksum, expected_checksum.as_str()),
+            (&provenance, expected_provenance.as_str()),
+        ] {
+            if path.file_name().and_then(|name| name.to_str()) != Some(expected)
+                || !fs::symlink_metadata(path)
+                    .map(|metadata| metadata.file_type().is_file())
+                    .unwrap_or(false)
+            {
+                return Err(format!("Release input is missing or has an unexpected name: {expected}."));
+            }
+        }
+        if sha256_file(&archive)? != artifact.archive_sha256 {
+            return Err("Release archive changed after on-demand validation.".into());
+        }
+        let publish_trust = validate_published_nvidia_artifact(
+            &archive,
+            &checksum,
+            &provenance,
+            &identity,
+            &artifact.archive_sha256,
+        )?;
+        if publish_trust != "locally-built-verified" {
+            return Err("Release artifact failed the final published-artifact trust contract.".into());
+        }
+        let gh = find_binary("gh").ok_or("GitHub CLI disappeared before publication.")?;
+        let existing = Command::new(&gh)
+            .args([
+                "release",
+                "view",
+                &identity.tag,
+                "--repo",
+                NVIDIA_SUPPORT_REPOSITORY,
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|error| format!("Could not check the target GitHub release: {error}"))?;
+        if existing.success() {
+            return Err(format!(
+                "Release {} already exists. The app will not overwrite it automatically.",
+                identity.tag
+            ));
+        }
+        let title = format!(
+            "NVIDIA {} for SteamOS {} ({})",
+            plan.nvidia_version, plan.steamos_version, plan.kernel_version
+        );
+        let notes = format!(
+            "Exact-kernel NVIDIA open-module artifact built by SteamOS NVIDIA Image Builder.\n\nTrust: locally-built-verified\nSupport commit: {NVIDIA_SUPPORT_BUILD_COMMIT}\nBaseline release: {}\nArchive SHA-256: {}",
+            plan.baseline_release, artifact.archive_sha256
+        );
+        let output = Command::new(&gh)
+            .args(["release", "create", &identity.tag])
+            .arg(&archive)
+            .arg(&checksum)
+            .arg(&provenance)
+            .args([
+                "--repo",
+                NVIDIA_SUPPORT_REPOSITORY,
+                "--target",
+                NVIDIA_SUPPORT_BUILD_COMMIT,
+                "--title",
+                &title,
+                "--notes",
+                &notes,
+            ])
+            .output()
+            .map_err(|error| format!("Could not create the GitHub release: {error}"))?;
+        if !output.status.success() {
+            return Err("GitHub rejected the release. No existing release was modified.".into());
+        }
+        let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(NvidiaReleasePublication {
+            status: "published".into(),
+            repository: NVIDIA_SUPPORT_REPOSITORY.into(),
+            tag: identity.tag.clone(),
+            url,
+            message: format!("Published verified NVIDIA artifact as {}.", identity.tag),
+        })
+    })
+    .await
+    .map_err(|error| format!("NVIDIA release worker failed: {error}"))?
 }
 
 fn validate_nvidia_install_result(
@@ -7335,6 +8031,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn settings_schema_contains_preferences_but_no_credentials() {
+        let serialized = serde_json::to_string(&BuilderSettings {
+            schema_version: 1,
+            auto_release_verified_nvidia: true,
+            track_steamos_driver_updates: true,
+        })
+        .unwrap();
+        assert!(serialized.contains("autoReleaseVerifiedNvidia"));
+        assert!(serialized.contains("trackSteamosDriverUpdates"));
+        for forbidden in ["token", "password", "secret", "ssh"] {
+            assert!(!serialized.to_ascii_lowercase().contains(forbidden));
+        }
+    }
+
+    #[test]
     fn selects_isolated_x86_build_acceleration_by_host() {
         assert_eq!(
             nvidia_build_qemu_spec("aarch64").unwrap(),
@@ -7608,6 +8319,46 @@ mod tests {
         assert!(unique_release_asset(exact_release, &provenance_name)
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn plans_an_exact_kernel_build_without_reusing_mismatched_modules() {
+        let target_kernel = "6.16.12-valve24.4-1-neptune-616-gfe145653a794";
+        let published_kernel = "6.16.12-valve24.5-1-neptune-616-gb2f7cfe85e45";
+        let releases = vec![
+            published_release_fixture("3.8.16", published_kernel, "575.64.05"),
+            published_release_fixture("3.9.0", published_kernel, "999.1.1"),
+        ];
+        let target = ready_published_target("3.8.14", target_kernel);
+        assert!(select_published_nvidia_release(&target, &releases)
+            .unwrap()
+            .is_none());
+        let baseline = select_nvidia_build_baseline(&target, &releases)
+            .unwrap()
+            .unwrap();
+        assert_eq!(baseline.steamos_version, "3.8.16");
+        assert_eq!(baseline.nvidia_version, "575.64.05");
+        assert_eq!(baseline.kernel_version, published_kernel);
+
+        let cancel = AtomicBool::new(false);
+        let result = resolve_published_nvidia_for_target(
+            target,
+            &std::env::temp_dir(),
+            &nvidia_http_client().unwrap(),
+            &releases,
+            &cancel,
+            &|_, _, _| {},
+        )
+        .unwrap();
+        assert_eq!(result.status, "build_required");
+        assert_eq!(result.reason, "exact_kernel_artifact_missing");
+        assert!(result.artifact.is_none());
+        let plan = result.build_plan.unwrap();
+        assert_eq!(plan.steamos_version, "3.8.14");
+        assert_eq!(plan.kernel_version, target_kernel);
+        assert_eq!(plan.nvidia_version, "575.64.05");
+        assert_eq!(plan.expected_trust, "locally-built-verified");
+        assert_eq!(plan.support_commit, NVIDIA_SUPPORT_BUILD_COMMIT);
     }
 
     #[test]
@@ -8655,6 +9406,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             check_builder_environment,
             check_nvidia_build_environment,
+            get_builder_settings,
+            update_builder_settings,
+            get_github_maintainer_status,
+            connect_github_maintainer,
             start_appliance,
             start_nvidia_build_appliance,
             get_appliance_status,
@@ -8675,6 +9430,8 @@ pub fn run() {
             prepare_nvidia_userspace,
             prepare_nvidia_installer_bundle,
             start_nvidia_install_appliance,
+            build_nvidia_target_on_demand,
+            publish_on_demand_nvidia_release,
             validate_nvidia_install_handoff,
             install_nvidia_to_working_image,
             export_marker_image,

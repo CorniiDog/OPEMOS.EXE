@@ -42,8 +42,18 @@
             <button id="close-window" class="secondary hidden">Close</button>
         </div>
 
-        <p class="prototype-note">Marker milestone only — this output is not yet an NVIDIA-integrated SteamOS image.</p>
+        <p class="prototype-note">The original recovery image is never modified. NVIDIA output is created only after exact-kernel and offline-install validation.</p>
     </main>
+    <dialog id="release-dialog" class="release-dialog">
+        <p class="eyebrow">Maintainer confirmation</p>
+        <h2>Publish verified NVIDIA artifact?</h2>
+        <pre id="release-summary" aria-label="Release summary"></pre>
+        <p>This creates a public GitHub release. No recovery image, credential, or private host path will be uploaded.</p>
+        <div class="dialog-actions">
+            <button id="release-cancel" class="secondary" type="button" autofocus>No, keep local</button>
+            <button id="release-confirm" class="danger" type="button">Yes, publish release</button>
+        </div>
+    </dialog>
     <script type="module" src="/build.js"></script>
 </body>
 </html>

@@ -6,6 +6,8 @@ const elements = {
   inputName: $("#input-name"), statusTitle: $("#status-title"), statusMessage: $("#status-message"),
   statusBadge: $("#status-badge"), progressBar: $("#progress-bar"), buildLog: $("#build-log"),
   logFollow: $("#log-follow"), cancelBuild: $("#cancel-build"), closeWindow: $("#close-window"),
+  releaseDialog: $("#release-dialog"), releaseSummary: $("#release-summary"),
+  releaseCancel: $("#release-cancel"), releaseConfirm: $("#release-confirm"),
 };
 const progressWindow = getCurrentWebviewWindow();
 let running = false;
@@ -102,6 +104,27 @@ function setStatus(state, title, message, progress, activity = "Working") {
 function addStageLog(message) {
   const color = message.startsWith("ERROR:") ? "31" : message.includes("warning") ? "33" : "36";
   queueLogChunk(`\x1b[1;${color}m[builder]\x1b[0m ${message}\n`);
+}
+
+function confirmNvidiaRelease(summary) {
+  elements.releaseSummary.textContent = summary;
+  elements.releaseDialog.showModal();
+  elements.releaseCancel.focus();
+  return new Promise((resolve) => {
+    const finish = (approved) => {
+      elements.releaseDialog.close();
+      elements.releaseCancel.removeEventListener("click", cancel);
+      elements.releaseConfirm.removeEventListener("click", confirm);
+      elements.releaseDialog.removeEventListener("cancel", cancelEvent);
+      resolve(approved);
+    };
+    const cancel = () => finish(false);
+    const confirm = () => finish(true);
+    const cancelEvent = (event) => { event.preventDefault(); finish(false); };
+    elements.releaseCancel.addEventListener("click", cancel);
+    elements.releaseConfirm.addEventListener("click", confirm);
+    elements.releaseDialog.addEventListener("cancel", cancelEvent);
+  });
 }
 
 function formatBytes(bytes) {
@@ -407,11 +430,68 @@ async function runBuild(request) {
       addStageLog(`NVIDIA target: ${nvidiaTarget.message}`);
 
       setStatus("running", "Resolving published NVIDIA support", "Looking for a verified publication matching the image's exact kernel.", 95.55, "Resolving");
-      const nvidiaResolution = await invoke("resolve_published_nvidia");
+      let nvidiaResolution = await invoke("resolve_published_nvidia");
+      let x86ApplianceReady = false;
+      if (nvidiaResolution.status === "build_required") {
+        const plan = nvidiaResolution.buildPlan;
+        addStageLog(`NVIDIA on-demand plan: ${plan.nvidiaVersion} for exact kernel ${plan.kernelVersion}.`);
+        addStageLog(`NVIDIA version baseline: ${plan.baselineRelease}; pinned support commit ${plan.supportCommit}.`);
+        const approved = window.confirm(
+          `No published NVIDIA artifact exactly matches this SteamOS kernel.\n\n` +
+          `Build NVIDIA ${plan.nvidiaVersion} locally for:\n${plan.kernelVersion}\n\n` +
+          "On Apple Silicon this x86_64 build uses software emulation and may take 30–60 minutes or longer. Continue?"
+        );
+        if (approved) {
+          setStatus("running", "Starting exact-kernel NVIDIA build", "Handing the working image to the managed x86_64 Fedora appliance before the long local build.", 95.7, "Starting");
+          const buildAppliance = await invoke("start_nvidia_install_appliance");
+          addStageLog(`x86 build appliance: ${buildAppliance.acceleration}; working image attached exclusively after native shutdown.`);
+          while (!cancelling) {
+            const status = await invoke("get_nvidia_build_appliance_status");
+            await refreshLogs();
+            if (status.state === "ready") break;
+            if (status.state === "failed" || status.state === "timedOut") throw new Error(status.message);
+            await new Promise((resolve) => setTimeout(resolve, 750));
+          }
+          if (cancelling) return;
+          x86ApplianceReady = true;
+          setStatus("running", "Building exact-kernel NVIDIA modules", "Downloading authenticated Valve headers and compiling all five modules in isolated x86_64 Fedora. Live compiler output is shown below.", 96, "Compiling");
+          nvidiaResolution = await invoke("build_nvidia_target_on_demand");
+          const builtArtifact = nvidiaResolution.artifact;
+          addStageLog(`NVIDIA on-demand artifact: trust=${builtArtifact.trust}; SHA256 ${builtArtifact.archiveSha256}.`);
+          addStageLog("On-demand artifact passed exact-target, compiler, header-signature, provenance, vermagic, architecture, and module-hash validation.");
+          const settings = await invoke("get_builder_settings");
+          if (settings.autoReleaseVerifiedNvidia) {
+            const maintainer = await invoke("get_github_maintainer_status");
+            if (!maintainer.authorized) {
+              addStageLog(`warning: Automated release is enabled, but maintainer access is unavailable: ${maintainer.message}`);
+            } else {
+              const publication = nvidiaResolution.publication;
+              const releaseTag = `steamos-${publication.steamosVersion}-nvidia-${publication.nvidiaVersion}-k${publication.kernelVersion}`;
+              const publishApproved = await confirmNvidiaRelease(
+                `Repository: CorniiDog/open-gpu-kernel-modules-steamos-support\n` +
+                `Tag: ${releaseTag}\n` +
+                `Support commit: ${nvidiaResolution.buildPlan.supportCommit}\n` +
+                `Trust: ${builtArtifact.trust}\n` +
+                `SHA-256: ${builtArtifact.archiveSha256}`
+              );
+              if (publishApproved) {
+                setStatus("running", "Publishing verified NVIDIA artifact", "Rechecking GitHub maintainer access, release identity, hashes, and collision policy before upload.", 96.35, "Publishing");
+                const release = await invoke("publish_on_demand_nvidia_release");
+                addStageLog(`NVIDIA release: ${release.message}`);
+                if (release.url) addStageLog(`NVIDIA release URL: ${release.url}`);
+              } else {
+                addStageLog("NVIDIA release: maintainer declined publication; the verified local artifact remains build-local.");
+              }
+            }
+          }
+        } else {
+          addStageLog("warning: Exact-kernel NVIDIA build was declined; continuing with a marker-only output.");
+        }
+      }
       if (nvidiaResolution.status === "compatible") {
         const publication = nvidiaResolution.publication;
         const artifact = nvidiaResolution.artifact;
-        addStageLog(`NVIDIA publication: ${publication.tag}; compatibility=${nvidiaResolution.compatibility}.`);
+        addStageLog(`NVIDIA artifact identity: ${publication.tag}; compatibility=${nvidiaResolution.compatibility}.`);
         addStageLog(`NVIDIA artifact: version ${publication.nvidiaVersion}; trust=${artifact.trust}; SHA256 ${artifact.archiveSha256}.`);
         addStageLog("NVIDIA artifact passed host-side checksum, provenance, exact-kernel, architecture, and five-module validation.");
         const userspace = await invoke("prepare_nvidia_userspace");
@@ -421,17 +501,19 @@ async function runBuild(request) {
         addStageLog(`NVIDIA userspace signatures: ${userspace.signatureStatus}; exact packages are staged for the managed x86 installer.`);
         const installer = await invoke("prepare_nvidia_installer_bundle");
         addStageLog(`NVIDIA installer: pinned ${installer.repository}@${installer.commit}; ${installer.files.length} files verified.`);
-        setStatus("running", "Starting x86 installer validation", "Handing the preserved working image to the managed x86_64 Fedora appliance.", 96.67, "Starting");
-        const installerAppliance = await invoke("start_nvidia_install_appliance");
-        addStageLog(`x86 installer appliance: ${installerAppliance.acceleration}; working image attached exclusively after native shutdown.`);
-        while (!cancelling) {
-          const status = await invoke("get_nvidia_build_appliance_status");
-          await refreshLogs();
-          if (status.state === "ready") break;
-          if (status.state === "failed" || status.state === "timedOut") throw new Error(status.message);
-          await new Promise((resolve) => setTimeout(resolve, 750));
+        if (!x86ApplianceReady) {
+          setStatus("running", "Starting x86 installer validation", "Handing the preserved working image to the managed x86_64 Fedora appliance.", 96.67, "Starting");
+          const installerAppliance = await invoke("start_nvidia_install_appliance");
+          addStageLog(`x86 installer appliance: ${installerAppliance.acceleration}; working image attached exclusively after native shutdown.`);
+          while (!cancelling) {
+            const status = await invoke("get_nvidia_build_appliance_status");
+            await refreshLogs();
+            if (status.state === "ready") break;
+            if (status.state === "failed" || status.state === "timedOut") throw new Error(status.message);
+            await new Promise((resolve) => setTimeout(resolve, 750));
+          }
+          if (cancelling) return;
         }
-        if (cancelling) return;
         setStatus("running", "Validating offline NVIDIA install", "Mounting rootfs-A and efi-A read-only, authenticating userspace, and checking the exact-kernel installer contract.", 96.8, "Validating");
         const validation = await invoke("validate_nvidia_install_handoff");
         addStageLog(`NVIDIA offline validation: ${validation.message}`);
@@ -445,7 +527,7 @@ async function runBuild(request) {
         addStageLog(`NVIDIA installation: ${installation.message}`);
         addStageLog(`NVIDIA ${installation.nvidiaVersion} installed for ${installation.kernelVersion}; trust=${installation.trust}; mounts released=${installation.mountsReleased}.`);
         addStageLog("NVIDIA initramfs contents were checked in x86_64 Fedora; the exported image will now receive an independent read-only structural inspection.");
-      } else {
+      } else if (nvidiaResolution.status !== "build_required") {
         addStageLog(`warning: ${nvidiaResolution.message}`);
         addStageLog(`NVIDIA publication status: ${nvidiaResolution.reason}; continuing with a marker-only output.`);
       }

@@ -35,6 +35,20 @@ body {
 
 .app-shell > * { flex: none; }
 .app-shell > header { padding: 0 2px; }
+.app-header { position: relative; padding-right: 54px !important; }
+.icon-button {
+  width: 42px;
+  height: 42px;
+  border: 1px solid #334057;
+  border-radius: 12px;
+  color: #dce5ff;
+  background: rgba(24, 32, 45, .94);
+  cursor: pointer;
+  font: 700 22px/1 inherit;
+}
+.app-header > .icon-button { position: absolute; top: 0; right: 2px; }
+.icon-button:hover { border-color: #667ba5; background: #252f41; }
+.icon-button.compact { width: 34px; height: 34px; font-size: 24px; }
 .eyebrow { margin: 0 0 6px; color: #9fb4ff; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 h1 { margin: 0; font-size: 34px; line-height: 1.08; }
 h2 { margin: 0 0 6px; font-size: 19px; }
@@ -117,5 +131,54 @@ footer p { color: #aab4c5; }
 footer { margin: 0; text-align: center; font-size: 11px; }
 footer p { margin: 0; }
 .hidden { display: none !important; }
+
+.settings-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  border: 0;
+  background: rgba(3, 7, 13, .58);
+  cursor: default;
+}
+.settings-panel {
+  position: fixed;
+  z-index: 21;
+  top: 18px;
+  right: 18px;
+  width: min(440px, calc(100vw - 36px));
+  max-height: calc(100vh - 36px);
+  padding: 20px;
+  overflow: auto;
+  border: 1px solid #35435b;
+  border-radius: 18px;
+  background: #121822;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .52);
+}
+.settings-heading,
+.github-setting,
+.setting-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+.settings-heading { margin-bottom: 14px; }
+.setting-row { padding: 12px 0; cursor: pointer; }
+.setting-row span { min-width: 0; }
+.setting-row strong,
+.github-setting strong { display: block; color: #f5f7fb; font-size: 14px; }
+.setting-row small,
+.github-setting p,
+.settings-security,
+.settings-message { display: block; margin: 5px 0 0; color: #8f9bae; font-size: 12px; line-height: 1.42; }
+.setting-row input { flex: none; width: 18px; height: 18px; margin-top: 2px; accent-color: #6688ff; }
+.setting-row input:disabled { opacity: .42; cursor: not-allowed; }
+.settings-divider { height: 1px; margin: 4px 0 12px; background: #273142; }
+.github-setting { align-items: center; padding-bottom: 8px; }
+.github-setting > div { min-width: 0; }
+.github-setting .secondary { flex: none; }
+.settings-message { min-height: 17px; color: #9fb4ff; }
+.settings-message.error { color: #ff9494; }
+.settings-security { padding-top: 12px; border-top: 1px solid #273142; }
 
 @keyframes pulse { 50% { transform: scale(.9); opacity: .65; } }

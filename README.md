@@ -1,12 +1,16 @@
 # SteamOS NVIDIA Image Builder
 
+The main window includes a compact settings panel for durable, non-secret preferences. Settings use a versioned `settings.json`; GitHub credentials are never stored there. Maintainer release controls require a GitHub CLI browser login, a live permission check against `CorniiDog/open-gpu-kernel-modules-steamos-support`, and a second backend permission check immediately before publication.
+
+When an exact-kernel NVIDIA artifact is built locally and reaches `locally-built-verified`, maintainers who opted in receive a release confirmation naming the repository, tag, pinned support commit, trust classification, and archive hash. “No, keep local” is focused by default. The publisher refuses to overwrite an existing release and uploads only the NVIDIA archive, checksum, and provenance sidecar—never the recovery image or generated SteamOS image.
+
 A desktop application that takes an official Valve SteamOS recovery image and prepares a locally generated NVIDIA-oriented SteamOS image.
 
 ## Current milestone
 
 The first target is macOS. The desktop shell provides drag-and-drop, file picker fallback, Valve download-page access, and one image-driven build action. A separate progress window automatically manages the builder appliance, displays live logs and status, supports cancellation, and reveals the generated raw image in Finder.
 
-The Rust backend prepares a disposable Fedora session, launches QEMU in the background, polls the guest's SSH readiness marker, reports lifecycle states, and performs graceful shutdown with a forced-stop fallback. When no compatible NVIDIA publication exists, the current fallback still exports a harmless `-marker.img`. For compatible targets, the normal path now installs the authenticated NVIDIA payload into the disposable working layer and reserves `-nvidia.img` for a successful structured install plus independent read-only output inspection. A versioned `.img.manifest.json` sidecar records filenames (never full host paths), formats, sizes, hashes, layout, modified paths, NVIDIA target/trust metadata, and validation status. Gamescope and recovery-media installer integration are still separate gates, so an NVIDIA-mutated output is not yet classified as install-ready.
+The Rust backend prepares a disposable Fedora session, launches QEMU in the background, polls the guest's SSH readiness marker, reports lifecycle states, and performs graceful shutdown with a forced-stop fallback. When no exact published NVIDIA artifact exists, the resolver can now offer a long on-demand x86_64 build using the exact image kernel and a same-series publication only as the NVIDIA-version baseline. Declining that build still exports the harmless `-marker.img`; no mismatched published modules are reused. A compatible published or locally-built-verified target proceeds through authenticated userspace installation and reserves `-nvidia.img` for a successful structured install plus independent read-only output inspection. A versioned `.img.manifest.json` sidecar records filenames (never full host paths), formats, sizes, hashes, layout, modified paths, NVIDIA target/trust metadata, and validation status. Gamescope and recovery-media installer integration are still separate gates, so an NVIDIA-mutated output is not yet classified as install-ready.
 
 On Apple Silicon, the normal inspection/mutation appliance remains native
 aarch64 with HVF acceleration. Development tooling can acquire and launch a

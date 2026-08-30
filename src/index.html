@@ -21,7 +21,8 @@
 
 <body>
     <main class="app-shell">
-        <header>
+        <header class="app-header">
+            <button id="settings-button" class="icon-button" type="button" aria-label="Open settings" aria-controls="settings-panel" aria-expanded="false">☰</button>
             <p class="eyebrow">
                 SteamOS NVIDIA Image Builder
             </p>
@@ -35,6 +36,46 @@
                 then drag it into this window.
             </p>
         </header>
+
+        <aside id="settings-panel" class="settings-panel hidden" aria-label="Builder settings">
+            <div class="settings-heading">
+                <div>
+                    <p class="eyebrow">Preferences</p>
+                    <h2>Settings</h2>
+                </div>
+                <button id="settings-close" class="icon-button compact" type="button" aria-label="Close settings">×</button>
+            </div>
+
+            <label class="setting-row">
+                <span>
+                    <strong>Track SteamOS driver updates</strong>
+                    <small>Check for a compatible NVIDIA profile when SteamOS changes. Never selects an unverified closest kernel.</small>
+                </span>
+                <input id="track-driver-updates" type="checkbox">
+            </label>
+
+            <div class="settings-divider"></div>
+
+            <div class="github-setting">
+                <div>
+                    <strong>GitHub maintainer</strong>
+                    <p id="github-status">Checking authentication…</p>
+                </div>
+                <button id="github-connect" class="secondary" type="button">Connect GitHub</button>
+            </div>
+
+            <label class="setting-row">
+                <span>
+                    <strong>Offer automated NVIDIA release</strong>
+                    <small>After a locally-built artifact passes every trust check, ask before publishing it. Defaults to No every time.</small>
+                </span>
+                <input id="auto-release-nvidia" type="checkbox" disabled>
+            </label>
+
+            <p id="settings-message" class="settings-message"></p>
+            <p class="settings-security">GitHub CLI handles authentication. The app never copies credentials into settings.json, manifests, or build logs.</p>
+        </aside>
+        <button id="settings-scrim" class="settings-scrim hidden" type="button" aria-label="Close settings"></button>
 
         <section class="environment-card">
             <div>
@@ -158,7 +199,7 @@
                 id="build-button"
                 class="primary"
             >
-                Build Marker Image
+                Build NVIDIA Image
             </button>
 
             <p
@@ -169,7 +210,7 @@
 
         <footer>
             <p>
-                Marker milestone — creates a separate validated raw image, without NVIDIA integration yet.
+                Creates and independently validates a separate image. The original recovery image remains unchanged.
             </p>
         </footer>
     </main>

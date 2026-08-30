@@ -68,4 +68,19 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .prototype-note { height: 70px; margin: 0; padding: 5px 8px; display: grid; place-items: center; overflow: visible; text-align: center; font-size: 12px; line-height: 1.35; }
 .hidden { display: none !important; }
 
+.release-dialog {
+  width: min(600px, calc(100vw - 48px));
+  padding: 22px;
+  border: 1px solid #465675;
+  border-radius: 18px;
+  color: #f5f7fb;
+  background: #141b27;
+  box-shadow: 0 30px 100px rgba(0, 0, 0, .7);
+}
+.release-dialog::backdrop { background: rgba(3, 7, 13, .72); }
+.release-dialog h2 { margin-bottom: 10px; }
+.release-dialog > p:not(.eyebrow) { color: #aab4c5; font-size: 13px; line-height: 1.45; }
+.release-dialog pre { min-height: auto; max-height: 220px; margin: 12px 0; border: 1px solid #2d394d; border-radius: 10px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+
 @keyframes status-spin { to { transform: rotate(360deg); } }

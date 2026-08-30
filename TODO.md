@@ -1215,23 +1215,25 @@ Before calling the project **beta**, verify:
 
 ## Deferred settings, profiles, and maintainer automation
 
-* [ ] Add a hamburger/settings menu for infrequent build and maintenance options without crowding the primary image workflow.
-* [ ] Define a versioned, automatically saved JSON build-profile schema that can be reopened, validated, migrated, and reset safely.
-* [ ] Remember only non-secret preferences in the JSON profile, such as output behavior, selected compatibility policy, and driver-update preference.
-* [ ] Never store a plaintext SteamOS user password, reusable password hash, GitHub token, SSH key, or other credential in the profile JSON.
+* [x] Add a hamburger/settings menu for infrequent build and maintenance options without crowding the primary image workflow.
+* [x] Define the first versioned, automatically saved JSON settings schema that can be reopened and validated safely. (Migration/reset UI remains.)
+* [x] Remember only non-secret preferences in the JSON profile, including driver-update and verified NVIDIA release prompts.
+* [x] Never store a plaintext SteamOS user password, reusable password hash, GitHub token, SSH key, or other credential in the profile JSON.
 * [ ] Add an optional SteamOS user-password setup flow so the generated image does not require a manual `passwd` step.
 * [ ] Keep password input masked and transient; use the operating-system credential store when persistence is explicitly requested, otherwise prompt for each build.
 * [ ] Generate the target Linux password representation inside the trusted Rust/backend path and prevent it from appearing in logs or manifests.
 * [ ] Add an opt-in “track SteamOS driver compatibility updates” setting; fail closed when no certified NVIDIA/Gamescope combination exists.
 * [ ] Never silently replace a certified driver with an unverified latest release solely because a newer SteamOS version is detected.
 * [ ] Add a maintainer-only workflow for building Gamescope/NVIDIA artifacts when the selected SteamOS version lacks a compatible published artifact.
-* [ ] Authenticate to GitHub with the minimum required scopes and verify effective repository role/maintainer access before enabling any upload or automated-release control.
-* [ ] Re-check GitHub authorization in the backend immediately before every build upload, tag, release, or other remote mutation; do not trust the UI checkbox alone.
+* [x] Authenticate through GitHub CLI's browser flow and verify effective repository role/maintainer access before enabling any upload or automated-release control. (Bundle the CLI for packaged releases; development currently discovers it on the host.)
+* [x] Re-check GitHub authorization in the backend immediately before every build upload, tag, release, or other remote mutation; do not trust the UI checkbox alone.
 * [ ] Keep Valve recovery images and generated SteamOS images out of GitHub uploads; publish only project-owned Gamescope/NVIDIA artifacts, manifests, checksums, and permitted sources.
-* [ ] Present an explicit yes/no confirmation before every automated release, defaulting to “No” and naming the repository, tag, commits, and artifacts that will be published.
+* [x] Present an explicit yes/no confirmation before every automated NVIDIA release, defaulting to “No” and naming the repository, tag, support commit, trust, and artifact hash.
 * [ ] Prefer draft releases plus a reviewable dry-run manifest before allowing a maintainer to publish automatically.
-* [ ] Record maintainer automation actions and artifact provenance without logging credentials or private host paths.
-* [ ] Defer implementing this settings/maintainer surface until durable marker-image export and output validation are complete.
+* [x] Record maintainer automation actions and artifact provenance without logging credentials or private host paths.
+* [x] Begin the settings/maintainer surface after durable image export, independent output validation, and exact-kernel artifact validation were established.
+* [ ] Bundle and verify a platform-appropriate GitHub CLI binary for packaged macOS, Windows, and Linux applications.
+* [ ] Add an equivalent reviewed Gamescope artifact publisher after the Gamescope build contract is integrated.
 
 ---
 

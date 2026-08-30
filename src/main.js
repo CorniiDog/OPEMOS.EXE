@@ -12,12 +12,23 @@ const elements = {
   resultMessage: $("#result-message"), environmentTitle: $("#environment-title"),
   environmentMessage: $("#environment-message"), environmentDetails: $("#environment-details"),
   environmentStatus: $("#environment-status"),
+  settingsButton: $("#settings-button"), settingsClose: $("#settings-close"),
+  settingsPanel: $("#settings-panel"), settingsScrim: $("#settings-scrim"),
+  trackDriverUpdates: $("#track-driver-updates"), autoReleaseNvidia: $("#auto-release-nvidia"),
+  githubStatus: $("#github-status"), githubConnect: $("#github-connect"),
+  settingsMessage: $("#settings-message"),
 };
 
 let currentImage = null;
 let currentImageName = null;
 let hostReady = false;
 let progressReady = false;
+let builderSettings = {
+  schemaVersion: 1,
+  autoReleaseVerifiedNvidia: false,
+  trackSteamosDriverUpdates: false,
+};
+let githubMaintainer = null;
 const mainWindow = getCurrentWebviewWindow();
 
 await mainWindow.listen("build-progress-ready", () => { progressReady = true; });
@@ -34,6 +45,61 @@ async function waitForProgressWindow(progressWindow) {
 
 function updateBuildButton() {
   elements.buildButton.disabled = !currentImage || !hostReady;
+}
+
+function renderSettings() {
+  elements.trackDriverUpdates.checked = builderSettings.trackSteamosDriverUpdates;
+  elements.autoReleaseNvidia.checked = builderSettings.autoReleaseVerifiedNvidia;
+  elements.autoReleaseNvidia.disabled = !githubMaintainer?.authorized;
+  elements.githubStatus.textContent = githubMaintainer?.message || "GitHub status has not been checked.";
+  elements.githubConnect.textContent = githubMaintainer?.authenticated ? "Reconnect" : "Connect GitHub";
+}
+
+async function refreshGithubMaintainer() {
+  elements.githubStatus.textContent = "Checking GitHub authentication and repository permission…";
+  try {
+    githubMaintainer = await invoke("get_github_maintainer_status");
+  } catch (error) {
+    githubMaintainer = null;
+    elements.settingsMessage.textContent = String(error);
+    elements.settingsMessage.className = "settings-message error";
+  }
+  renderSettings();
+}
+
+async function loadSettings() {
+  try {
+    builderSettings = await invoke("get_builder_settings");
+    elements.settingsMessage.textContent = "Settings are saved automatically.";
+    elements.settingsMessage.className = "settings-message";
+  } catch (error) {
+    elements.settingsMessage.textContent = String(error);
+    elements.settingsMessage.className = "settings-message error";
+  }
+  renderSettings();
+}
+
+async function saveSettings(next) {
+  const previous = builderSettings;
+  builderSettings = { ...builderSettings, ...next, schemaVersion: 1 };
+  renderSettings();
+  try {
+    builderSettings = await invoke("update_builder_settings", { settings: builderSettings });
+    elements.settingsMessage.textContent = "Settings saved.";
+    elements.settingsMessage.className = "settings-message";
+  } catch (error) {
+    builderSettings = previous;
+    elements.settingsMessage.textContent = String(error);
+    elements.settingsMessage.className = "settings-message error";
+  }
+  renderSettings();
+}
+
+function setSettingsOpen(opened) {
+  elements.settingsPanel.classList.toggle("hidden", !opened);
+  elements.settingsScrim.classList.toggle("hidden", !opened);
+  elements.settingsButton.setAttribute("aria-expanded", String(opened));
+  if (opened) refreshGithubMaintainer();
 }
 
 async function checkEnvironment() {
@@ -87,7 +153,7 @@ async function selectImage(path) {
     elements.dropZone.classList.remove("processing");
     elements.chooseImage.disabled = false;
     elements.dropTitle.textContent = currentImage ? "SteamOS image selected" : "Drop SteamOS recovery image here";
-    elements.dropMessage.textContent = currentImage ? "Review it below, then build a separate marker-only image." : ".img, .img.bz2, .img.gz, or .img.xz";
+    elements.dropMessage.textContent = currentImage ? "Review it below, then build a separate validated image." : ".img, .img.bz2, .img.gz, or .img.xz";
   }
   updateBuildButton();
 }
@@ -98,6 +164,34 @@ elements.chooseImage.addEventListener("click", async () => {
 });
 
 elements.openValve.addEventListener("click", () => openUrl("https://store.steampowered.com/steamos/download/?ver=steamdeck"));
+
+elements.settingsButton.addEventListener("click", () => setSettingsOpen(true));
+elements.settingsClose.addEventListener("click", () => setSettingsOpen(false));
+elements.settingsScrim.addEventListener("click", () => setSettingsOpen(false));
+elements.trackDriverUpdates.addEventListener("change", () => saveSettings({
+  trackSteamosDriverUpdates: elements.trackDriverUpdates.checked,
+}));
+elements.autoReleaseNvidia.addEventListener("change", () => saveSettings({
+  autoReleaseVerifiedNvidia: elements.autoReleaseNvidia.checked,
+}));
+elements.githubConnect.addEventListener("click", async () => {
+  elements.githubConnect.disabled = true;
+  elements.settingsMessage.textContent = "Complete GitHub authorization in the browser…";
+  elements.settingsMessage.className = "settings-message";
+  try {
+    githubMaintainer = await invoke("connect_github_maintainer");
+    elements.settingsMessage.textContent = githubMaintainer.authorized
+      ? "Maintainer permission verified."
+      : "Login completed, but this account cannot publish to the support repository.";
+    elements.settingsMessage.className = githubMaintainer.authorized ? "settings-message" : "settings-message error";
+  } catch (error) {
+    elements.settingsMessage.textContent = String(error);
+    elements.settingsMessage.className = "settings-message error";
+  } finally {
+    elements.githubConnect.disabled = false;
+    renderSettings();
+  }
+});
 
 elements.buildButton.addEventListener("click", async () => {
   if (!currentImage || !hostReady) return;
@@ -141,3 +235,4 @@ elements.dropZone.after(environmentCard);
 environmentCard.after(elements.selectionCard);
 elements.selectionCard.after(elements.buildCard);
 await checkEnvironment();
+await loadSettings();
