@@ -845,6 +845,7 @@ struct NvidiaBuildSession {
     runtime_dir: PathBuf,
     ssh_key: PathBuf,
     ssh_port: u16,
+    qmp_port: u16,
     started_at: Instant,
     state: String,
     message: String,
@@ -2307,6 +2308,10 @@ fn prepare_nvidia_build_session(
     fs::copy(&vars_template, &vars_image)
         .map_err(|e| format!("Could not create the x86 UEFI variable store: {e}"))?;
     let ssh_port = allocate_ssh_port()?;
+    let mut qmp_port = allocate_ssh_port()?;
+    while qmp_port == ssh_port {
+        qmp_port = allocate_ssh_port()?;
+    }
     let log = File::create(runtime_dir.join("qemu.log"))
         .map_err(|e| format!("Could not create the x86 build-appliance log: {e}"))?;
     let log_err = log
@@ -2347,23 +2352,10 @@ fn prepare_nvidia_build_session(
             "file={},if=virtio,format=raw,readonly=on",
             seed_image.display()
         ));
-    if let Some(target) = &attached_working_image {
-        let target = target
-            .to_str()
-            .ok_or("The handoff working-image path is not valid UTF-8.")?
-            .replace(',', ",,");
-        qemu_command
-            .arg("-drive")
-            .arg(format!(
-                "file={target},if=none,format=qcow2,id=steamos-install-target"
-            ))
-            .args([
-                "-device",
-                "virtio-blk-pci,drive=steamos-install-target,serial=steamos-target",
-            ]);
-    }
     let mut child = qemu_command
         .args([
+            "-device",
+            "pcie-root-port,id=steamos-target-port,chassis=10,slot=10",
             "-device",
             "virtio-rng-pci",
             "-device",
@@ -2371,6 +2363,8 @@ fn prepare_nvidia_build_session(
         ])
         .arg("-netdev")
         .arg(format!("user,id=net0,hostfwd=tcp:127.0.0.1:{ssh_port}-:22"))
+        .arg("-qmp")
+        .arg(format!("tcp:127.0.0.1:{qmp_port},server=on,wait=off"))
         .args(["-display", "none", "-monitor", "none", "-serial", "stdio"])
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
@@ -2391,6 +2385,7 @@ fn prepare_nvidia_build_session(
         runtime_dir,
         ssh_key,
         ssh_port,
+        qmp_port,
         started_at: Instant::now(),
         state: "booting".into(),
         message: if acceleration == "tcg" {
@@ -2559,6 +2554,76 @@ fn qmp_remove_user_input(session: &ImageInspectionSession) -> Result<(), String>
         .and_then(|_| stream.flush())
         .map_err(|e| format!("Could not request source-device removal: {e}"))?;
     read_qmp_response(&mut reader)?;
+    Ok(())
+}
+
+fn qmp_attach_nvidia_target(session: &NvidiaBuildSession) -> Result<(), String> {
+    let Some(target) = session.attached_working_image.as_ref() else {
+        return Ok(());
+    };
+    let target = target
+        .to_str()
+        .ok_or("The handoff working-image path is not valid UTF-8.")?;
+    let mut stream = TcpStream::connect(("127.0.0.1", session.qmp_port))
+        .map_err(|e| format!("Could not connect to the x86 QEMU monitor: {e}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .map_err(|e| format!("Could not configure the x86 QEMU monitor: {e}"))?;
+    let reader_stream = stream
+        .try_clone()
+        .map_err(|e| format!("Could not prepare the x86 QEMU monitor reader: {e}"))?;
+    let mut reader = BufReader::new(reader_stream);
+    let mut greeting = String::new();
+    reader
+        .read_line(&mut greeting)
+        .map_err(|e| format!("Could not read the x86 QEMU monitor greeting: {e}"))?;
+    let greeting: serde_json::Value = serde_json::from_str(&greeting)
+        .map_err(|e| format!("x86 QEMU returned an invalid monitor greeting: {e}"))?;
+    if greeting.get("QMP").is_none() {
+        return Err("x86 QEMU monitor did not provide a QMP greeting.".into());
+    }
+    let mut execute = |command: serde_json::Value| -> Result<(), String> {
+        let mut bytes = serde_json::to_vec(&command)
+            .map_err(|e| format!("Could not encode an x86 QEMU monitor command: {e}"))?;
+        bytes.push(b'\n');
+        stream
+            .write_all(&bytes)
+            .and_then(|_| stream.flush())
+            .map_err(|e| format!("Could not write an x86 QEMU monitor command: {e}"))?;
+        read_qmp_response(&mut reader)?;
+        Ok(())
+    };
+    execute(serde_json::json!({ "execute": "qmp_capabilities" }))?;
+    execute(serde_json::json!({
+        "execute": "blockdev-add",
+        "arguments": {
+            "node-name": "steamos-target-file",
+            "driver": "file",
+            "filename": target
+        }
+    }))?;
+    execute(serde_json::json!({
+        "execute": "blockdev-add",
+        "arguments": {
+            "node-name": "steamos-target-qcow2",
+            "driver": "qcow2",
+            "file": "steamos-target-file"
+        }
+    }))?;
+    execute(serde_json::json!({
+        "execute": "device_add",
+        "arguments": {
+            "driver": "virtio-blk-pci",
+            "drive": "steamos-target-qcow2",
+            "id": "steamos-install-target-device",
+            "bus": "steamos-target-port",
+            "serial": "steamos-target"
+        }
+    }))?;
+    run_guest_command(
+        session,
+        "set -eu; for attempt in $(seq 1 50); do test -b /dev/disk/by-id/virtio-steamos-target && break; sleep 0.1; done; TARGET=/dev/disk/by-id/virtio-steamos-target; test -b \"$TARGET\"; test \"$(sudo blockdev --getro \"$TARGET\")\" = 0; ! findmnt -rn -S \"$TARGET\" >/dev/null 2>&1",
+    )?;
     Ok(())
 }
 
@@ -6062,11 +6127,33 @@ async fn get_nvidia_build_appliance_status(
         if session.state != "booting" {
             return Ok(nvidia_build_status(session));
         }
+        if fs::read_to_string(session.runtime_dir.join("qemu.log"))
+            .map(|log| log.contains(r"\EFI\steamos\grubx64.efi"))
+            .unwrap_or(false)
+        {
+            session.state = "failed".into();
+            session.message = "x86_64 appliance selected the attached SteamOS data disk as its boot device instead of Fedora.".into();
+            return Ok(nvidia_build_status(session));
+        }
         match handshake(session) {
             Ok(output) if output == READY_MARKER => match collect_guest_health(session) {
                 Ok(health) if health.architecture == "x86_64" => {
-                    session.state = "ready".into();
-                    session.message = "x86_64 Fedora build appliance is ready.".into();
+                    match qmp_attach_nvidia_target(session) {
+                        Ok(()) => {
+                            session.state = "ready".into();
+                            session.message = if session.attached_working_image.is_some() {
+                                "x86_64 Fedora build appliance is ready; the SteamOS working image was attached after boot.".into()
+                            } else {
+                                "x86_64 Fedora build appliance is ready.".into()
+                            };
+                        }
+                        Err(error) => {
+                            session.state = "failed".into();
+                            session.message = format!(
+                                "Fedora booted, but the SteamOS working-image hotplug failed: {error}"
+                            );
+                        }
+                    }
                 }
                 Ok(health) => {
                     session.state = "failed".into();
@@ -9409,6 +9496,8 @@ mod tests {
             assert!(Instant::now() < deadline, "x86 handoff appliance timed out");
             thread::sleep(Duration::from_secs(1));
         }
+        qmp_attach_nvidia_target(&session)
+            .expect("hotplug the handoff device after Fedora readiness");
         run_guest_command(
             &session,
             "set -eu; TARGET=/dev/disk/by-id/virtio-steamos-target; test -b \"$TARGET\"; test \"$(sudo blockdev --getro \"$TARGET\")\" = 0; ! findmnt -rn -S \"$TARGET\" >/dev/null 2>&1",

@@ -24,8 +24,9 @@ emulated-boot timeout, and shutdown cleanup. The support repository's complete
 Fedora suite, real recursive bind-mount cleanup, real signed-package validation,
 and validation/mutation cancellation paths have passed in that managed x86_64
 appliance. For a compatible published artifact, the normal frontend now stops
-the native guest while preserving its working qcow2, attaches that layer only
-to the x86 worker, performs read-only installer validation, and then invokes the
+the native guest while preserving its working qcow2, boots the x86 worker from
+Fedora alone, then hot-plugs that layer through a dedicated PCIe port only after
+Fedora is ready. It performs read-only installer validation and then invokes the
 same pinned installer in mutation mode. The first real recovery-image run of
 this newly integrated mutation path remains the immediate test gate.
 

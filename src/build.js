@@ -447,11 +447,14 @@ async function runBuild(request) {
           setStatus("running", "Starting exact-kernel NVIDIA build", "Handing the working image to the managed x86_64 Fedora appliance before the long local build.", 95.7, "Starting");
           const buildAppliance = await invoke("start_nvidia_install_appliance");
           addStageLog(`x86 build appliance: ${buildAppliance.acceleration}; working image attached exclusively after native shutdown.`);
+          const x86BootStarted = Date.now();
           while (!cancelling) {
             const status = await invoke("get_nvidia_build_appliance_status");
             await refreshLogs();
             if (status.state === "ready") break;
             if (status.state === "failed" || status.state === "timedOut") throw new Error(status.message);
+            const elapsed = Math.floor((Date.now() - x86BootStarted) / 1000);
+            setStatus("running", "Booting x86_64 Fedora appliance", `${status.message} Software emulation has been running for ${elapsed}s.`, 95.8, "Booting");
             await new Promise((resolve) => setTimeout(resolve, 750));
           }
           if (cancelling) return;
@@ -508,11 +511,14 @@ async function runBuild(request) {
           setStatus("running", "Starting x86 installer validation", "Handing the preserved working image to the managed x86_64 Fedora appliance.", 96.67, "Starting");
           const installerAppliance = await invoke("start_nvidia_install_appliance");
           addStageLog(`x86 installer appliance: ${installerAppliance.acceleration}; working image attached exclusively after native shutdown.`);
+          const x86BootStarted = Date.now();
           while (!cancelling) {
             const status = await invoke("get_nvidia_build_appliance_status");
             await refreshLogs();
             if (status.state === "ready") break;
             if (status.state === "failed" || status.state === "timedOut") throw new Error(status.message);
+            const elapsed = Math.floor((Date.now() - x86BootStarted) / 1000);
+            setStatus("running", "Booting x86_64 Fedora appliance", `${status.message} Software emulation has been running for ${elapsed}s.`, 96.72, "Booting");
             await new Promise((resolve) => setTimeout(resolve, 750));
           }
           if (cancelling) return;
