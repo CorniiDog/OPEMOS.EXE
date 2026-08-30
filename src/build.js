@@ -348,6 +348,16 @@ async function runBuild(request) {
     }
     if (cancelling) return;
 
+    setStatus("running", "Assessing NVIDIA target", "Requiring an exact SteamOS version, x86_64 architecture, and one unambiguous target kernel.", 95.5, "Resolving");
+    const nvidiaTarget = await invoke("assess_nvidia_target");
+    if (nvidiaTarget.ready) {
+      addStageLog(`NVIDIA target: ${nvidiaTarget.message}`);
+    } else {
+      addStageLog(`warning: ${nvidiaTarget.message}`);
+      addStageLog(`NVIDIA target status: ${nvidiaTarget.status}; no driver artifact will be selected or built.`);
+    }
+    if (cancelling) return;
+
     setStatus("running", "Exporting raw image", "Stopping the mutation VM, flattening its working layer, and validating the result in a fresh appliance.", 96, "Exporting");
     const output = await invoke("export_marker_image");
     addStageLog(`Exported image: ${output.path}; ${output.bytes} bytes; raw layout=${output.layoutScheme}.`);

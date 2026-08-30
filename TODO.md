@@ -444,6 +444,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Validate the isolated x86_64 lifecycle on Apple Silicon under TCG (`57.40s` in the first successful local run).
 * [x] Add a controlled development build command that transfers an explicit support-repository checkout, streams the fixed offline-target build into managed logs, supports cancellation, and retrieves artifacts without exposing arbitrary guest commands.
 * [x] Validate returned development artifacts on the host for SHA-256, safe/exact archive membership, matching internal/external build metadata, requested target identity, and explicit unverified-header trust state.
+* [x] Gate NVIDIA artifact resolution on a valid SteamOS identity/version, x86_64 target architecture, and exactly one unique safe kernel release; zero or multiple discovered kernels remain non-actionable instead of selecting the first directory (`177.59s` real-image test passed for SteamOS 3.8.14 build `20260707.10`).
 * [x] Run a real offline-target build inside an x86_64 Fedora environment (`30m15s` under TCG on Apple Silicon in the first successful local run).
 * [x] Confirm Valve still serves the exact historical headers package for the observed SteamOS 3.8.14 `valve24.4` kernel (SHA-256 `dd532330d2bb34d4ab6b00ffb249d245ec882841a37694ae703548dab6d09f17`; package signature verification remains pending).
 * [x] Confirm NVIDIA 575.64.05 produces all five modules with exact target vermagic.

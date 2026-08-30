@@ -35,6 +35,13 @@ seconds. That result remains `development-unverified`: the Valve header package
 was not signature-verified, and Fedora 44's GCC 16.2.1 differed from the GCC
 15.1.1 compiler recorded by the target kernel.
 
+The normal progress flow now assesses the discovered offline target before any
+future artifact resolution. It permits NVIDIA resolution only for a valid
+SteamOS version, x86_64 userspace, and exactly one safe kernel release. Images
+with no module tree or multiple distinct kernel trees remain marker-only and
+report a non-actionable NVIDIA status; the builder never chooses the first
+directory it happens to enumerate.
+
 ## Architecture
 
 The Tauri frontend invokes a fixed set of Rust commands; it does not pass arbitrary shell commands to the host or guest. Rust owns the QEMU child process and creates a unique runtime directory containing an ephemeral SSH identity, cloud-init seed, qcow2 overlay, writable UEFI variables, and `qemu.log`. The pristine Fedora appliance remains unchanged.

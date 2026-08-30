@@ -85,6 +85,17 @@ struct NvidiaDevelopmentArtifact {
     trust: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaTargetReadiness {
+    ready: bool,
+    status: String,
+    message: String,
+    steamos_version: Option<String>,
+    kernel_version: Option<String>,
+    architecture: String,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ApplianceStatus {
@@ -1900,6 +1911,13 @@ fn valid_numeric_version(value: &str, components: std::ops::RangeInclusive<usize
             .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
+fn valid_kernel_version(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'~' | b'-')
+        })
+}
+
 fn validate_nvidia_target_build_spec(spec: &NvidiaTargetBuildSpec) -> Result<(), String> {
     if !valid_numeric_version(&spec.steamos_version, 3..=3) {
         return Err("SteamOS target version must contain three numeric components.".into());
@@ -1907,14 +1925,96 @@ fn validate_nvidia_target_build_spec(spec: &NvidiaTargetBuildSpec) -> Result<(),
     if !valid_numeric_version(&spec.nvidia_version, 2..=3) {
         return Err("NVIDIA target version must contain two or three numeric components.".into());
     }
-    if spec.kernel_version.is_empty()
-        || !spec.kernel_version.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'~' | b'-')
-        })
-    {
+    if !valid_kernel_version(&spec.kernel_version) {
         return Err("Target kernel contains unsupported characters.".into());
     }
     Ok(())
+}
+
+fn assess_nvidia_target_system(system: &TargetSystemDiscovery) -> NvidiaTargetReadiness {
+    let unavailable = |status: &str, message: String| NvidiaTargetReadiness {
+        ready: false,
+        status: status.into(),
+        message,
+        steamos_version: system.version_id.clone(),
+        kernel_version: None,
+        architecture: system.architecture.clone(),
+    };
+    let is_steamos = system
+        .os_id
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("steamos"))
+        || system
+            .pretty_name
+            .as_deref()
+            .is_some_and(|value| value.to_ascii_lowercase().contains("steamos"));
+    if !is_steamos {
+        return unavailable(
+            "unsupported-system",
+            "The selected root does not identify itself as SteamOS; NVIDIA resolution is disabled."
+                .into(),
+        );
+    }
+    let Some(steamos_version) = system.version_id.as_deref() else {
+        return unavailable(
+            "missing-version",
+            "The selected SteamOS root does not provide VERSION_ID; NVIDIA resolution is disabled."
+                .into(),
+        );
+    };
+    if !valid_numeric_version(steamos_version, 3..=3) {
+        return unavailable(
+            "invalid-version",
+            format!(
+                "SteamOS VERSION_ID {steamos_version:?} is not an exact three-component version; NVIDIA resolution is disabled."
+            ),
+        );
+    }
+    if system.architecture != "x86_64" {
+        return unavailable(
+            "unsupported-architecture",
+            format!(
+                "Target architecture {} is not supported by the NVIDIA artifact workflow.",
+                system.architecture
+            ),
+        );
+    }
+    let mut kernels = system.kernel_versions.clone();
+    kernels.sort();
+    kernels.dedup();
+    if kernels.is_empty() {
+        return unavailable(
+            "no-kernel",
+            "No target kernel module directory was discovered; NVIDIA resolution is disabled."
+                .into(),
+        );
+    }
+    if kernels.len() != 1 {
+        return unavailable(
+            "ambiguous-kernel",
+            format!(
+                "The image contains multiple target kernels ({}). The boot kernel is not proven, so NVIDIA resolution is disabled.",
+                kernels.join(", ")
+            ),
+        );
+    }
+    let kernel_version = kernels.remove(0);
+    if !valid_kernel_version(&kernel_version) {
+        return unavailable(
+            "invalid-kernel",
+            "Target kernel contains unsupported characters.".into(),
+        );
+    }
+    NvidiaTargetReadiness {
+        ready: true,
+        status: "exact-target".into(),
+        message: format!(
+            "Exact NVIDIA target is ready for support-repository resolution: SteamOS {steamos_version}, kernel {kernel_version}, x86_64."
+        ),
+        steamos_version: Some(steamos_version.into()),
+        kernel_version: Some(kernel_version),
+        architecture: system.architecture.clone(),
+    }
 }
 
 fn nvidia_development_asset_name(spec: &NvidiaTargetBuildSpec) -> String {
@@ -4072,6 +4172,24 @@ async fn mutate_selected_marker(app: tauri::AppHandle) -> Result<UserMarkerMutat
     .map_err(|error| format!("Selected-image mutation worker failed: {error}"))?
 }
 
+#[tauri::command]
+async fn assess_nvidia_target(app: tauri::AppHandle) -> Result<NvidiaTargetReadiness, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager_state = app.state::<Mutex<ApplianceManager>>();
+        let manager = manager_state
+            .lock()
+            .map_err(|_| "Appliance state lock is unavailable.")?;
+        let system = manager
+            .session
+            .as_ref()
+            .and_then(|session| session.target_system.as_ref())
+            .ok_or("Target SteamOS metadata has not been discovered yet.")?;
+        Ok(assess_nvidia_target_system(system))
+    })
+    .await
+    .map_err(|error| format!("NVIDIA target-assessment worker failed: {error}"))?
+}
+
 fn stop_session_process(session: &mut ApplianceSession) -> Result<(), String> {
     if session
         .child
@@ -4350,6 +4468,47 @@ mod tests {
         ] {
             assert!(validate_nvidia_target_build_spec(&invalid).is_err());
         }
+    }
+
+    #[test]
+    fn requires_one_unambiguous_offline_nvidia_kernel() {
+        let target = TargetSystemDiscovery {
+            os_id: Some("steamos".into()),
+            pretty_name: Some("SteamOS".into()),
+            version_id: Some("3.8.14".into()),
+            build_id: None,
+            variant_id: None,
+            architecture: "x86_64".into(),
+            kernel_versions: vec!["6.16.12-valve24.4-1-neptune-616-gfe145653a794".into()],
+        };
+        let ready = assess_nvidia_target_system(&target);
+        assert!(ready.ready);
+        assert_eq!(ready.status, "exact-target");
+        assert_eq!(
+            ready.kernel_version.as_deref(),
+            Some("6.16.12-valve24.4-1-neptune-616-gfe145653a794")
+        );
+
+        let no_kernel = assess_nvidia_target_system(&TargetSystemDiscovery {
+            kernel_versions: Vec::new(),
+            ..target.clone()
+        });
+        assert!(!no_kernel.ready);
+        assert_eq!(no_kernel.status, "no-kernel");
+
+        let ambiguous = assess_nvidia_target_system(&TargetSystemDiscovery {
+            kernel_versions: vec!["6.16.12-valve24.4".into(), "6.16.12-valve24.5".into()],
+            ..target.clone()
+        });
+        assert!(!ambiguous.ready);
+        assert_eq!(ambiguous.status, "ambiguous-kernel");
+
+        let wrong_architecture = assess_nvidia_target_system(&TargetSystemDiscovery {
+            architecture: "aarch64".into(),
+            ..target
+        });
+        assert!(!wrong_architecture.ready);
+        assert_eq!(wrong_architecture.status, "unsupported-architecture");
     }
 
     #[test]
@@ -4984,9 +5143,20 @@ mod tests {
         assert!(!mutation.mounted);
         assert_eq!(mutation.target_partition_label, "rootfs-A");
         assert_eq!(mutation.filesystem, "btrfs");
+        let nvidia_target = assess_nvidia_target_system(&mutation.system);
+        assert!(
+            nvidia_target.ready,
+            "the recovery image should provide one exact NVIDIA target: {}",
+            nvidia_target.message
+        );
         println!(
             "{}",
             serde_json::to_string_pretty(&mutation).expect("serialize marker-mutation report")
+        );
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&nvidia_target)
+                .expect("serialize NVIDIA target readiness")
         );
         stop_session(&mut session).expect("stop recovery-image appliance session");
     }
@@ -5029,6 +5199,7 @@ pub fn run() {
             verify_working_image,
             mutate_test_marker,
             mutate_selected_marker,
+            assess_nvidia_target,
             export_marker_image,
             stop_appliance,
             stop_nvidia_build_appliance,
