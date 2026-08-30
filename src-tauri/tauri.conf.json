@@ -24,7 +24,6 @@
       },
       {
         "label": "build-progress",
-        "parent": "main",
         "title": "SteamOS NVIDIA Builder — Progress",
         "url": "build.html",
         "width": 820,

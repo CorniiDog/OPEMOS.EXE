@@ -87,7 +87,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Order the main workflow as download, image selection, readiness, and build action.
 * [x] Add build button and prototype progress state.
 * [x] Move build status, live logs, and cancellation into a dedicated progress window.
-* [x] Make the progress window a native child of the main window so activation and ordering stay coupled.
+* [x] Avoid reciprocal focus reordering so the progress window remains foregrounded after the user starts a build.
 * [x] Prevent document scrolling and macOS overscroll exposure in both application windows.
 * [x] Keep progress controls fixed while the log viewport absorbs window resizing.
 * [x] Start and stop the builder appliance automatically as part of the build workflow.
