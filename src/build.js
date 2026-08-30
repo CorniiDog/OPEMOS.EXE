@@ -5,14 +5,14 @@ const $ = (selector) => document.querySelector(selector);
 const elements = {
   inputName: $("#input-name"), statusTitle: $("#status-title"), statusMessage: $("#status-message"),
   statusBadge: $("#status-badge"), progressBar: $("#progress-bar"), buildLog: $("#build-log"),
-  cancelBuild: $("#cancel-build"), closeWindow: $("#close-window"),
+  logFollow: $("#log-follow"), cancelBuild: $("#cancel-build"), closeWindow: $("#close-window"),
 };
 const progressWindow = getCurrentWebviewWindow();
 let running = false;
 let cancelling = false;
-let stageLog = [];
 let lastApplianceLog = "";
-let lastRenderedLog = null;
+let pendingLogChunks = [];
+let followingLogs = true;
 let refreshingLogs = false;
 
 function normalizeTerminalText(text) {
@@ -38,8 +38,13 @@ function ansi256Color(index) {
   return `rgb(${gray},${gray},${gray})`;
 }
 
-function appendAnsiText(parent, text) {
-  const state = { color: "", background: "", bold: false };
+function freshAnsiState() {
+  return { color: "", background: "", bold: false };
+}
+
+let ansiState = freshAnsiState();
+
+function appendAnsiText(parent, text, state) {
   const pattern = /\x1b\[([0-?]*)([ -/]*)([@-~])/g;
   let offset = 0;
   const appendChunk = (chunk) => {
@@ -95,8 +100,7 @@ function setStatus(state, title, message, progress, activity = "Working") {
 
 function addStageLog(message) {
   const color = message.startsWith("ERROR:") ? "31" : message.includes("warning") ? "33" : "36";
-  stageLog.push(`\x1b[1;${color}m[builder]\x1b[0m ${message}`);
-  renderLogs("");
+  queueLogChunk(`\x1b[1;${color}m[builder]\x1b[0m ${message}\n`);
 }
 
 function formatBytes(bytes) {
@@ -130,23 +134,61 @@ function showInputProgress(progress) {
   }
 }
 
-function renderLogs(applianceLog) {
-  const normalizedLog = normalizeTerminalText(applianceLog).trim();
-  if (normalizedLog) lastApplianceLog = normalizedLog;
-  const content = [...stageLog, lastApplianceLog].filter(Boolean).join("\n");
-  if (content === lastRenderedLog) return;
-  const previousScrollTop = elements.buildLog.scrollTop;
-  const distanceFromBottom = elements.buildLog.scrollHeight
-    - elements.buildLog.clientHeight
-    - previousScrollTop;
-  const followLatest = distanceFromBottom <= 24;
+function flushPendingLogs() {
+  if (!pendingLogChunks.length || !followingLogs) return;
+  const content = pendingLogChunks.join("");
+  pendingLogChunks = [];
   const fragment = document.createDocumentFragment();
-  appendAnsiText(fragment, content);
-  elements.buildLog.replaceChildren(fragment);
-  lastRenderedLog = content;
-  elements.buildLog.scrollTop = followLatest
-    ? elements.buildLog.scrollHeight
-    : previousScrollTop;
+  appendAnsiText(fragment, content, ansiState);
+  elements.buildLog.append(fragment);
+  elements.buildLog.scrollTop = elements.buildLog.scrollHeight;
+  elements.logFollow.textContent = "Following live output";
+  elements.logFollow.classList.remove("paused");
+}
+
+function queueLogChunk(content) {
+  if (!content) return;
+  pendingLogChunks.push(content);
+  if (!followingLogs) {
+    elements.logFollow.textContent = "New output · Jump to latest";
+    elements.logFollow.classList.add("paused");
+    return;
+  }
+  flushPendingLogs();
+}
+
+function applianceLogDelta(previous, current) {
+  if (!previous) return current;
+  if (current === previous) return "";
+  if (current.startsWith(previous)) return current.slice(previous.length);
+
+  // Once the backend's bounded tail rolls forward, find the shared suffix/prefix
+  // and append only bytes that have not already been painted.
+  const probeLength = Math.min(2048, previous.length);
+  const probe = previous.slice(-probeLength);
+  const overlapAt = current.lastIndexOf(probe);
+  if (overlapAt >= 0) return current.slice(overlapAt + probeLength);
+  return `\n\x1b[33m[log] Output advanced beyond the live buffer; resuming from the latest tail.\x1b[0m\n${current}`;
+}
+
+function renderLogs(applianceLog) {
+  const normalizedLog = normalizeTerminalText(applianceLog);
+  if (!normalizedLog) return;
+  const delta = applianceLogDelta(lastApplianceLog, normalizedLog);
+  lastApplianceLog = normalizedLog;
+  queueLogChunk(delta);
+}
+
+function pauseLogFollowing() {
+  if (!followingLogs) return;
+  followingLogs = false;
+  elements.logFollow.textContent = "Scroll paused";
+  elements.logFollow.classList.add("paused");
+}
+
+function resumeLogFollowing() {
+  followingLogs = true;
+  flushPendingLogs();
 }
 
 async function refreshLogs() {
@@ -181,9 +223,13 @@ async function runBuild(request) {
   if (running) return;
   running = true;
   cancelling = false;
-  stageLog = [];
   lastApplianceLog = "";
-  lastRenderedLog = null;
+  pendingLogChunks = [];
+  ansiState = freshAnsiState();
+  followingLogs = true;
+  elements.buildLog.replaceChildren();
+  elements.logFollow.textContent = "Following live output";
+  elements.logFollow.classList.remove("paused");
   elements.closeWindow.classList.add("hidden");
   elements.cancelBuild.disabled = false;
   elements.inputName.textContent = request.name;
@@ -299,6 +345,20 @@ async function runBuild(request) {
 
 elements.cancelBuild.addEventListener("click", cancelBuild);
 elements.closeWindow.addEventListener("click", () => progressWindow.hide());
+elements.logFollow.addEventListener("click", resumeLogFollowing);
+elements.buildLog.addEventListener("wheel", (event) => {
+  if (event.deltaY < 0) pauseLogFollowing();
+}, { passive: true });
+elements.buildLog.addEventListener("scroll", () => {
+  const distanceFromBottom = elements.buildLog.scrollHeight
+    - elements.buildLog.clientHeight
+    - elements.buildLog.scrollTop;
+  if (distanceFromBottom > 24) {
+    pauseLogFollowing();
+  } else if (!followingLogs) {
+    resumeLogFollowing();
+  }
+}, { passive: true });
 elements.buildLog.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
     event.preventDefault();

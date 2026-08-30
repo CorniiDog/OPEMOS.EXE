@@ -655,6 +655,9 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Show NVIDIA/Gamescope integration steps separately.
 * [x] Preserve and display the current session's QEMU/serial log through completion.
 * [x] Auto-follow live logs only while the viewer remains at the bottom; preserve manual scroll position otherwise.
+* [x] Freeze visual log updates while the user scrolls through active output, then catch up once when live following resumes.
+* [x] Append only new ANSI log output instead of reparsing and replacing the complete terminal buffer.
+* [x] Keep synthetic working-copy mutation retry-safe when the guest kernel temporarily reports a busy partition-table reread.
 * [x] Skip unchanged log redraws and keep progress-status geometry stable across message changes.
 * [x] Render ANSI SGR colors safely while normalizing unsupported terminal cursor/control sequences.
 * [ ] Add a “Copy diagnostics” action.

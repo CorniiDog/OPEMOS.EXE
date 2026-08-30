@@ -1684,9 +1684,9 @@ test "$(sudo blockdev --getro "$SOURCE")" = 1
 SOURCE_BEFORE=$(sudo sha256sum "$SOURCE" | cut -d ' ' -f 1)
 sudo blockdev --setrw "$WORK"
 sudo dd if="$SOURCE" of="$WORK" bs=4M conv=fsync status=none
-sudo blockdev --rereadpt "$WORK"
-for attempt in $(seq 1 20); do
+for attempt in $(seq 1 30); do
   test -b "$WORK_PART" && break
+  sudo blockdev --rereadpt "$WORK" 2>/dev/null || true
   sleep 0.1
 done
 test -b "$WORK_PART"
@@ -1982,7 +1982,7 @@ fn read_appliance_log(
         session.runtime_dir.join("qemu.log")
     };
     let bytes = fs::read(log_path).map_err(|e| format!("Could not read the appliance log: {e}"))?;
-    const LOG_LIMIT: usize = 64 * 1024;
+    const LOG_LIMIT: usize = 32 * 1024;
     let start = bytes.len().saturating_sub(LOG_LIMIT);
     Ok(String::from_utf8_lossy(&bytes[start..]).into_owned())
 }
@@ -2580,6 +2580,15 @@ mod tests {
             mutation.marker_path,
             "/etc/steamos-nvidia-image-builder-test"
         );
+        let retry_mutation = mutate_synthetic_marker(&session)
+            .expect("repeated synthetic marker mutation should remain idempotent");
+        assert!(retry_mutation.source_unchanged);
+        assert_eq!(
+            retry_mutation.source_sha256_before,
+            retry_mutation.source_sha256_after
+        );
+        assert!(retry_mutation.working_read_only);
+        assert!(!retry_mutation.mounted);
         let inspection_session = ImageInspectionSession::from(&session);
         let input = inspect_user_image(&inspection_session, None, None)
             .expect("user image inspection should pass");
