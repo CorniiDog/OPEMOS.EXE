@@ -10,16 +10,9 @@ users:
       - wheel
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
-    lock_passwd: false
+    lock_passwd: true
 
-chpasswd:
-  expire: false
-  users:
-    - name: builder
-      password: builder
-      type: text
-
-ssh_pwauth: true
+ssh_pwauth: false
 
 write_files:
   - path: /etc/steamos-builder-ready

@@ -27,6 +27,12 @@ downloading anything with:
 ./builder/appliance/build_macos.sh --architecture x86_64 --resolve-only
 ```
 
+A successful build also writes `<appliance>.metadata.json`. The sidecar records
+the Fedora release, compose, architecture, source URLs, source/checksum/keyring
+hashes, appliance protocol version, and whether the checksum signature was
+verified. Appliance replacement is atomic: a failed download, copy, or
+`qemu-img check` leaves the last valid qcow2 in place.
+
 The x86_64 guest must use software emulation on Apple Silicon and will be much
 slower than the native aarch64 appliance. It is intended only for exact-kernel
 NVIDIA artifact compilation when no certified published artifact exists.
@@ -41,6 +47,11 @@ After creating it, inspect or launch the separate development VM with:
 The launch plan uses `qemu-system-x86_64` with TCG software emulation when the
 host is Apple Silicon. Its runtime directory is also separate, so it cannot
 overwrite or collide with the native appliance runtime.
+
+Every launch creates a new SSH identity in the ignored runtime directory and
+injects only its public key with cloud-init. The `builder` account is locked and
+SSH password authentication is disabled; there is no reusable appliance
+password.
 
 The Tauri backend also exposes an isolated managed lifecycle for this x86_64
 worker. After the separate appliance has been prepared, its opt-in lifecycle

@@ -14,6 +14,32 @@ die()
     exit 1
 }
 
+version_pair()
+{
+    printf '%s\n' "$1" |
+        sed -E 's/^[^0-9]*([0-9]+)(\.([0-9]+))?.*/\1 \3/' |
+        awk '{ print $1, ($2 == "" ? 0 : $2) }'
+}
+
+require_minimum_version()
+{
+    local label="$1"
+    local actual="$2"
+    local minimum_major="$3"
+    local minimum_minor="$4"
+    local remediation="$5"
+    local parsed actual_major actual_minor
+
+    parsed="$(version_pair "$actual")"
+    read -r actual_major actual_minor <<<"$parsed"
+    [[ "$actual_major" =~ ^[0-9]+$ && "$actual_minor" =~ ^[0-9]+$ ]] ||
+        die "Could not parse ${label} version from: ${actual}. ${remediation}"
+    if (( actual_major < minimum_major ||
+          (actual_major == minimum_major && actual_minor < minimum_minor) )); then
+        die "${label} ${minimum_major}.${minimum_minor}+ is required; found ${actual}. ${remediation}"
+    fi
+}
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
     die "This setup script currently supports macOS only."
 fi
@@ -38,7 +64,11 @@ if ! xcode-select -p >/dev/null 2>&1; then
     exit 0
 fi
 
-log "Xcode Command Line Tools found."
+CLT_VERSION="$(pkgutil --pkg-info=com.apple.pkg.CLTools_Executables 2>/dev/null |
+    awk '/^version:/ { print $2; exit }')"
+[[ -n "$CLT_VERSION" ]] ||
+    die "Xcode Command Line Tools are present but their package version is unavailable. Run 'xcode-select --install' again."
+log "Xcode Command Line Tools: $CLT_VERSION"
 
 #
 # Homebrew
@@ -65,7 +95,9 @@ fi
 command -v brew >/dev/null 2>&1 ||
     die "Homebrew was installed but is not available in PATH."
 
-log "Homebrew: $(brew --version | head -n 1)"
+HOMEBREW_VERSION="$(brew --version | head -n 1)"
+require_minimum_version "Homebrew" "$HOMEBREW_VERSION" 4 0 "Run 'brew update'."
+log "Homebrew: $HOMEBREW_VERSION"
 
 #
 # Node.js / npm
@@ -116,7 +148,7 @@ command -v cargo >/dev/null 2>&1 ||
 
 command -v rustc >/dev/null 2>&1 ||
     die "rustc was installed but is not available in PATH."
-    
+
 #
 # QEMU
 #
@@ -158,15 +190,72 @@ command -v 7zz >/dev/null 2>&1 ||
     die "sevenzip was installed but 7zz is not available in PATH."
 
 #
+# Signature verification and helper tools
+#
+
+if ! command -v gpgv >/dev/null 2>&1; then
+    log "GnuPG/gpgv is not installed."
+    log "Installing GnuPG for authenticated appliance verification..."
+
+    brew install gnupg
+fi
+
+command -v gpgv >/dev/null 2>&1 ||
+    die "GnuPG was installed but gpgv is not available in PATH. Run 'brew reinstall gnupg'."
+
+if ! command -v python3 >/dev/null 2>&1; then
+    log "Python 3 is not installed."
+    log "Installing Python 3 for appliance-plan and validation helpers..."
+
+    brew install python
+fi
+
+for required_command in python3 git curl ssh scp qemu-img; do
+    command -v "$required_command" >/dev/null 2>&1 ||
+        die "Required command '${required_command}' is unavailable. Reinstall Xcode Command Line Tools and the Homebrew dependencies, then retry."
+done
+
+#
 # Environment summary
 #
 
-log "Rust: $(rustc --version)"
-log "Cargo: $(cargo --version)"
-log "Node: $(node --version)"
-log "npm:  $(npm --version)"
-log "QEMU: $("$QEMU_BINARY" --version | head -n 1)"
-log "7-Zip: $(7zz | sed -n '2p')"
+RUST_VERSION="$(rustc --version)"
+CARGO_VERSION="$(cargo --version)"
+NODE_VERSION="$(node --version)"
+NPM_VERSION="$(npm --version)"
+QEMU_VERSION="$("$QEMU_BINARY" --version | head -n 1)"
+QEMU_IMG_VERSION="$(qemu-img --version | head -n 1)"
+SEVENZIP_VERSION="$(7zz | sed -n '2p' | sed -E 's/^7-Zip \(z\) //')"
+GPGV_VERSION="$(gpgv --version | head -n 1)"
+PYTHON_VERSION="$(python3 --version 2>&1)"
+GIT_VERSION="$(git --version)"
+CURL_VERSION="$(curl --version | head -n 1)"
+SSH_VERSION="$(ssh -V 2>&1)"
+
+require_minimum_version "Rust" "$RUST_VERSION" 1 77 "Run 'rustup update stable'."
+require_minimum_version "Cargo" "$CARGO_VERSION" 1 77 "Run 'rustup update stable'."
+require_minimum_version "Node.js" "$NODE_VERSION" 18 0 "Run 'brew upgrade node'."
+require_minimum_version "npm" "$NPM_VERSION" 9 0 "Run 'brew upgrade node'."
+require_minimum_version "QEMU" "$QEMU_VERSION" 8 0 "Run 'brew upgrade qemu'."
+require_minimum_version "qemu-img" "$QEMU_IMG_VERSION" 8 0 "Run 'brew upgrade qemu'."
+require_minimum_version "7-Zip" "$SEVENZIP_VERSION" 23 0 "Run 'brew upgrade sevenzip'."
+require_minimum_version "gpgv" "$GPGV_VERSION" 2 2 "Run 'brew upgrade gnupg'."
+require_minimum_version "Python" "$PYTHON_VERSION" 3 9 "Run 'brew upgrade python'."
+require_minimum_version "Git" "$GIT_VERSION" 2 30 "Run 'brew upgrade git'."
+require_minimum_version "curl" "$CURL_VERSION" 7 79 "Update macOS or install a current curl with Homebrew."
+
+log "Rust: $RUST_VERSION"
+log "Cargo: $CARGO_VERSION"
+log "Node: $NODE_VERSION"
+log "npm:  $NPM_VERSION"
+log "QEMU: $QEMU_VERSION"
+log "qemu-img: $QEMU_IMG_VERSION"
+log "7-Zip: $SEVENZIP_VERSION"
+log "gpgv: $GPGV_VERSION"
+log "Python: $PYTHON_VERSION"
+log "Git: $GIT_VERSION"
+log "curl: $CURL_VERSION"
+log "SSH: $SSH_VERSION"
 
 #
 # JavaScript dependencies
@@ -185,10 +274,6 @@ else
 fi
 
 #
-# Launch
-#
-
-#
 # Stop stale development instance
 #
 
@@ -202,29 +287,6 @@ if pgrep -f "target/debug/${PROJECT_NAME}" >/dev/null 2>&1 ||
 
     sleep 1
 fi
-
-log "Starting Tauri development mode..."
-
-exec npm run dev
-
-#
-# Stop stale development instance
-#
-
-if pgrep -f "target/debug/${PROJECT_NAME}" >/dev/null 2>&1 ||
-   pgrep -f "tauri dev" >/dev/null 2>&1; then
-
-    log "Stopping existing development instance..."
-
-    pkill -f "target/debug/${PROJECT_NAME}" 2>/dev/null || true
-    pkill -f "tauri dev" 2>/dev/null || true
-
-    sleep 1
-fi
-
-#
-# Launch
-#
 
 log "Starting Tauri development mode..."
 

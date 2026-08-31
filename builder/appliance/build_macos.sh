@@ -190,6 +190,7 @@ curl \
     --output "$GPG_PATH" \
     "$FEDORA_GPG_URL"
 
+SIGNATURE_VERIFIED=0
 if command -v gpgv >/dev/null 2>&1; then
     log "Verifying Fedora checksum signature..."
 
@@ -199,6 +200,7 @@ if command -v gpgv >/dev/null 2>&1; then
         --keyring "$GPG_PATH" \
         --output "$VERIFIED_CHECKSUM" \
         "$CHECKSUM_PATH"
+    SIGNATURE_VERIFIED=1
 
     log "Verifying image SHA256..."
 
@@ -222,13 +224,78 @@ fi
 
 log "Preparing builder appliance..."
 
-rm -f "$OUTPUT_IMAGE"
+OUTPUT_TEMP="${OUTPUT_IMAGE}.partial"
+METADATA_PATH="${OUTPUT_IMAGE}.metadata.json"
+METADATA_TEMP="${METADATA_PATH}.partial"
+cleanup_partial_outputs()
+{
+    rm -f "$OUTPUT_TEMP" "$METADATA_TEMP"
+}
+trap cleanup_partial_outputs EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+cleanup_partial_outputs
 
-cp "$IMAGE_PATH" "$OUTPUT_IMAGE"
+cp "$IMAGE_PATH" "$OUTPUT_TEMP"
 
 log "Validating qcow2 image..."
 
-qemu-img check "$OUTPUT_IMAGE"
+qemu-img check "$OUTPUT_TEMP"
+
+IMAGE_SHA256="$(shasum -a 256 "$IMAGE_PATH" | awk '{ print $1 }')"
+CHECKSUM_SHA256="$(shasum -a 256 "$CHECKSUM_PATH" | awk '{ print $1 }')"
+KEYRING_SHA256="$(shasum -a 256 "$GPG_PATH" | awk '{ print $1 }')"
+python3 - "$METADATA_TEMP" "$FEDORA_RELEASE" "$FEDORA_COMPOSE" "$FEDORA_ARCH" \
+    "$IMAGE_NAME" "$IMAGE_URL" "$IMAGE_SHA256" "$CHECKSUM_NAME" "$CHECKSUM_URL" \
+    "$CHECKSUM_SHA256" "$FEDORA_GPG_URL" "$KEYRING_SHA256" "$SIGNATURE_VERIFIED" <<'PY'
+import json
+import os
+import sys
+
+(
+    output,
+    release,
+    compose,
+    architecture,
+    image_name,
+    image_url,
+    image_sha256,
+    checksum_name,
+    checksum_url,
+    checksum_sha256,
+    key_url,
+    keyring_sha256,
+    signature_verified,
+) = sys.argv[1:]
+document = {
+    "schemaVersion": 1,
+    "applianceProtocolVersion": 1,
+    "fedora": {
+        "release": release,
+        "compose": compose,
+        "architecture": architecture,
+        "imageName": image_name,
+        "imageUrl": image_url,
+        "imageSha256": image_sha256,
+        "checksumName": checksum_name,
+        "checksumUrl": checksum_url,
+        "checksumSha256": checksum_sha256,
+        "signingKeyUrl": key_url,
+        "signingKeyringSha256": keyring_sha256,
+        "checksumSignatureVerified": signature_verified == "1",
+    },
+}
+with open(output, "x", encoding="utf-8") as handle:
+    json.dump(document, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+PY
+mv "$OUTPUT_TEMP" "$OUTPUT_IMAGE"
+mv "$METADATA_TEMP" "$METADATA_PATH"
+trap - EXIT INT TERM
 
 log "Builder appliance created:"
 log "$OUTPUT_IMAGE"
+log "Provenance metadata:"
+log "$METADATA_PATH"

@@ -69,9 +69,9 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Use QEMU as the virtualization boundary.
 * [x] Allow Apple Silicon to run an aarch64 Fedora guest while manipulating x86_64 SteamOS images as data.
 * [x] Establish a versioned fixed-operation host↔guest protocol without arbitrary UI-originated shell strings.
-* [ ] Define explicit responsibility boundaries among UI, Rust host backend, Fedora appliance, NVIDIA support repo, and Gamescope repo.
-* [ ] Document the architecture in the main README.
-* [ ] Add an architecture/data-flow diagram.
+* [x] Define explicit responsibility boundaries among UI, Rust host backend, Fedora appliance, NVIDIA support repo, and Gamescope repo.
+* [x] Document the architecture and link it from the main README.
+* [x] Add an architecture/data-flow diagram.
 
 ---
 
@@ -132,11 +132,11 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Run npm dependency installation when needed.
 * [x] Launch Tauri development mode.
 * [x] Handle stale Tauri/Cargo development processes that can hold the build-directory lock.
-* [ ] Add `gpgv` or another verified signature-validation path to the development bootstrap.
-* [ ] Add explicit version reporting for every required dependency.
-* [ ] Add minimum-supported version checks rather than presence-only checks.
-* [ ] Make bootstrap failures actionable with exact remediation messages.
-* [ ] Keep developer bootstrap separate from end-user runtime dependency strategy.
+* [x] Add `gpgv` to the development bootstrap so direct appliance builds can authenticate Fedora metadata instead of silently relying on the checksum-only fallback.
+* [x] Add explicit version reporting for every required development dependency.
+* [x] Add minimum-supported version checks rather than presence-only checks.
+* [x] Make bootstrap failures actionable with exact remediation messages.
+* [x] Keep developer bootstrap separate from end-user runtime dependency strategy; packaged-runtime acquisition remains an independent release milestone.
 
 ---
 
@@ -169,6 +169,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Download Fedora signing keys.
 * [x] Verify image SHA256 against Fedora checksum metadata.
 * [x] Validate resulting qcow2 with `qemu-img check`.
+* [x] Replace an existing appliance atomically only after the new qcow2 passes validation.
 * [x] Preserve downloaded base image in appliance work cache.
 * [x] Produce `fedora-builder.qcow2` as the base appliance image.
 * [x] Keep generated appliance images out of Git.
@@ -176,7 +177,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Test `gpgv` verification path rather than relying on checksum-only fallback.
 * [ ] Pin or verify the exact Fedora signing key material expected for the selected release.
 * [ ] Decide appliance update cadence.
-* [ ] Record appliance provenance/version in machine-readable metadata.
+* [x] Record Fedora release/compose/architecture, protocol version, source URLs, image/checksum/keyring hashes, and checksum-signature status in a machine-readable appliance metadata sidecar.
 * [ ] Add builder-appliance schema/version compatibility with the desktop application.
 * [ ] Fail clearly if desktop app and appliance protocol versions differ.
 
@@ -232,9 +233,9 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Inject the runtime public key into cloud-init data.
 * [x] Verify the authorized key appears in `/home/builder/.ssh/authorized_keys` on a pristine first boot.
 * [x] Keep private SSH key in ignored runtime state.
-* [ ] Remove development password authentication from the final appliance workflow.
-* [ ] Set `lock_passwd: true` once key-only control is complete.
-* [ ] Avoid long-lived reusable host private keys in release builds if ephemeral per-session keys are practical.
+* [x] Remove development password authentication from the appliance workflow; cloud-init disables SSH password authentication.
+* [x] Set `lock_passwd: true` and inject only a per-session SSH public key.
+* [x] Generate an ephemeral host SSH identity inside each disposable runtime rather than reusing a long-lived project key.
 * [x] Version the initial guest control contract as protocol `1`.
 * [ ] Provision required image-manipulation tools explicitly instead of relying on Fedora defaults.
 * [x] Add a Rust-owned guest health/self-test operation.
@@ -321,7 +322,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Inspect actual magic bytes instead of trusting extension alone.
 * [x] Detect raw, bzip2, gzip, and xz content independently of filename.
 * [x] Prefer multithreaded host 7-Zip for bzip2, then `pbzip2` and embedded Rust fallbacks, avoiding guest decompressor dependency.
-* [ ] Reject directories, device nodes, sockets, FIFOs, and unexpected special files.
+* [x] Reject directories, device nodes, sockets, FIFOs, and unexpected special files before image preparation.
 * [x] Determine source and normalized image sizes before QEMU launch.
 * [ ] Verify sufficient host free space for decompression, working copy, overlays, and final output.
 * [ ] Detect obvious non-SteamOS images before destructive or expensive processing.
@@ -343,7 +344,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Use multithreaded bzip2 decompression on macOS while reserving one logical CPU for responsiveness.
 * [x] Show live source-hashing, compressed-byte, and normalized-image hashing progress.
 * [x] Keep post-inspection integrity hashing off the UI thread without blocking log/status IPC.
-* [ ] Verify decompressed output size is sane.
+* [x] Bound normalized raw images to 64 GiB during embedded decompression, monitor external decompressor output, and reject empty/oversized normalized images before QEMU attachment.
 * [x] Compute and verify the normalized raw-image checksum.
 * [x] Keep original compressed input untouched and verify its checksum after the session.
 * [x] Clean incomplete normalized images with the disposable-runtime guard after failure/cancellation.
@@ -362,7 +363,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Attach a distinct writable qcow2 working layer for mutation.
 * [ ] Prevent guest from seeing unrelated host directories.
 * [x] Canonicalize and validate the selected path before exposing it to QEMU.
-* [ ] Handle spaces and Unicode in host paths safely.
+* [x] Pass host paths as process arguments rather than shell fragments and cover spaces/Unicode in deterministic output naming.
 * [x] Verify read-only block transport and structured inspection on Apple Silicon macOS first.
 * [ ] Design transport abstraction that can be implemented on Windows and Linux.
 
@@ -1023,8 +1024,8 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Never enumerate and write arbitrary physical disks during normal build flow.
 * [ ] If flashing is ever added, make it a separate explicitly dangerous workflow.
 * [ ] Require unmistakable device identification before any future flashing operation.
-* [ ] Prevent output path from resolving to the input file.
-* [ ] Prevent output path from resolving to a block device.
+* [x] Canonicalize the output parent and reject any output path resolving to the input file.
+* [x] Reject block/character device output paths and any destination that appears before atomic finalization.
 * [ ] Verify sufficient space before starting.
 * [ ] Preserve recoverable logs after failure.
 * [ ] Make experimental NVIDIA/Gamescope status visible before user flashes an image.
@@ -1036,17 +1037,17 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Require users to obtain the official Valve recovery image themselves.
 * [x] Provide a link/button to Valve’s download page rather than bundling Valve image content.
 * [x] Keep generated Valve image files out of source control.
-* [ ] Document that the app modifies a user-provided image locally.
+* [x] Document that the app modifies a user-provided image locally and exports a separate result.
 * [ ] Review Valve/SteamOS redistribution terms before distributing any derivative image artifact from project infrastructure.
 * [ ] Do not publish premodified Valve recovery images as GitHub release assets without clear legal permission.
-* [ ] Prefer distributing code, recipes, patches, manifests, and builder appliance—not Valve filesystem content.
-* [ ] Clearly distinguish Valve trademarks/assets from project branding.
+* [x] Document the distribution boundary: project code, recipes, patches, manifests, and permitted appliance assets—not Valve filesystem content.
+* [x] State that the project is not affiliated with or endorsed by Valve.
 
 ---
 
 # 48. Project licensing
 
-* [ ] Add or confirm repository license.
+* [x] Confirm the repository's MIT license and link it from the README without implying that it relicenses third-party components.
 * [ ] Audit third-party licenses for bundled QEMU/firmware/Fedora components.
 * [ ] Audit licenses for any redistributed NVIDIA-related artifacts.
 * [ ] Audit Gamescope patch/build redistribution requirements.
@@ -1057,19 +1058,19 @@ Support-repository readiness (tracked here because it gates image-builder integr
 
 # 49. Documentation
 
-* [ ] Update README because current text still describes the Fedora/QEMU backend as unimplemented.
-* [ ] Document current working appliance architecture.
-* [ ] Document developer bootstrap.
-* [ ] Document appliance build process.
-* [ ] Document disposable-overlay behavior.
-* [ ] Document handshake design.
-* [ ] Document generated runtime files and why they are ignored.
-* [ ] Document input/output safety guarantees.
-* [ ] Document supported input formats.
-* [ ] Document current compatibility status.
-* [ ] Document known limitations.
-* [ ] Add troubleshooting guide.
-* [ ] Add architecture diagram.
+* [x] Keep the README aligned with the implemented Fedora/QEMU backend.
+* [x] Document current working appliance architecture.
+* [x] Document developer bootstrap.
+* [x] Document appliance build process.
+* [x] Document disposable-overlay behavior.
+* [x] Document handshake design.
+* [x] Document generated runtime files and why they are ignored.
+* [x] Document input/output safety guarantees.
+* [x] Document supported input formats.
+* [x] Document current compatibility status.
+* [x] Document known limitations.
+* [x] Add a troubleshooting responsibility guide.
+* [x] Add architecture diagram.
 * [ ] Add contributor workflow.
 * [ ] Add release process.
 * [ ] Keep this TODO synchronized as milestones are completed.
@@ -1083,10 +1084,10 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Ignore runtime directory.
 * [x] Keep private runtime SSH key out of Git.
 * [x] Keep generated cloud-init runtime copy out of Git.
-* [ ] Add checks to prevent accidental commit of multi-gigabyte image files.
-* [ ] Add checks to prevent accidental commit of private keys.
-* [ ] Keep generated SteamOS output images out of Git.
-* [ ] Keep build logs/diagnostics out of Git unless sanitized fixtures.
+* [x] Add a repository check rejecting files over 25 MiB and generated image/appliance extensions.
+* [x] Add a repository check rejecting private-key filenames and PEM markers.
+* [x] Keep generated SteamOS output images out of Git through global image-extension ignores and the repository check.
+* [x] Keep build logs/diagnostics out of Git unless they use the explicit sanitized test-fixture convention.
 * [ ] Remove stale prototype assets/code when real implementation supersedes them.
 
 ---
@@ -1100,8 +1101,8 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Measure final compression time.
 * [ ] Avoid repeated appliance startup when multiple safe stages can share one session.
 * [ ] Avoid keeping appliance alive indefinitely while idle.
-* [ ] Tune vCPU and guest memory allocation based on host resources.
-* [ ] Prevent application from exhausting low-memory hosts.
+* [x] Tune vCPU and guest memory allocation within separate native-inspection and x86-build bounds based on host resources.
+* [x] Reject hosts below the 6 GiB RAM floor and retain host CPU/memory headroom.
 * [ ] Use hardware acceleration where available.
 * [ ] Keep TCG functional enough for compatibility/testing if retained.
 
@@ -1109,14 +1110,14 @@ Support-repository readiness (tracked here because it gates image-builder integr
 
 # 52. Resource policy
 
-* [ ] Detect host RAM.
-* [ ] Choose sane guest memory default.
-* [ ] Detect host CPU count.
-* [ ] Choose sane guest vCPU default.
+* [x] Detect host RAM through macOS sysctl.
+* [x] Choose bounded 2-4 GiB native and 4-6 GiB x86 build-worker memory plans.
+* [x] Detect host logical CPU count.
+* [x] Choose 1-4 native or 1-6 build-worker vCPUs while leaving host CPU headroom.
 * [x] Run CPU/blocking image preparation, inspection verification, and shutdown outside the UI thread.
 * [ ] Detect low disk space before guest startup.
 * [ ] Allow advanced resource override only if needed.
-* [ ] Record effective resource configuration in diagnostics.
+* [x] Record schema-1 host/guest resource plans in each disposable runtime's `resources.json` diagnostics.
 
 ---
 

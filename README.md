@@ -1,5 +1,16 @@
 # SteamOS NVIDIA Image Builder
 
+This project modifies a recovery image supplied by the user entirely on the
+local machine and exports a separate image. It does not bundle, upload, or
+publish Valve recovery-image content, and it is not affiliated with or endorsed
+by Valve. See [Architecture and trust boundaries](docs/architecture.md) for the
+component responsibilities, data flow, bootstrap, safety model, and current
+limitations.
+
+Project source code is licensed under the [MIT License](LICENSE). Third-party
+runtime, Fedora, QEMU, NVIDIA, Valve, and Gamescope components retain their own
+licenses and distribution terms.
+
 The main window includes a compact settings panel for durable, non-secret preferences. Settings use a versioned `settings.json`; GitHub credentials are never stored there. On macOS, maintainer connection opens the GitHub CLI browser flow in a visible Terminal window while the responsive settings panel polls for completion. Maintainer release controls require a live permission check against `CorniiDog/open-gpu-kernel-modules-steamos-support` and a second backend permission check immediately before publication.
 
 When an exact-kernel NVIDIA artifact is built locally and reaches `locally-built-verified`, maintainers who opted in receive a release confirmation naming the repository, tag, pinned support commit, trust classification, and archive hash. “No, keep local” is focused by default. Publication uses the support repository's hash-pinned canonical publisher: Rust cross-checks its dry-run JSON and then invokes only its create-only mode. It refuses to overwrite an existing release and uploads only the NVIDIA archive, checksum, external build-info, and provenance sidecar—never the recovery image or generated SteamOS image.
@@ -109,8 +120,8 @@ remains fully offline throughout this process.
 The backend also stages the offline-root installer from immutable support commit
 `9bb16f4fc43a5d35eccc987899251d55c20d3d98`. Its nine required scripts,
 helpers, signer-policy files, reviewed lock, and minimal binary keyring have
-embedded byte counts and SHA-256 pins;
-every file must match before a versioned bundle manifest is recorded. The
+embedded byte counts and SHA-256 pins; every file must match before a versioned
+bundle manifest is recorded. The
 normal workflow therefore does not accept a user-selected support checkout or
 follow a moving branch. Failed or cancelled downloads remove the entire partial
 bundle, and repeated preparation revalidates and reuses the session-owned copy.
@@ -122,10 +133,10 @@ name; the pinned support validator then independently rehashes the transferred
 archive. It passes the pinned minimal keyring and reviewed lock directly to the
 support installer, mounts uniquely identified `rootfs-A`, `var-A`, and `efi-A`
 read-only, and accepts only a schema-1 `validated/validation_complete` result
-whose target, trust, hashes, complete locked package set, signer fingerprints, Holo database, EFI boot
-policy, authoritative storage accounting, and released-mount status all match
-Rust-owned state. A dependency-closure failure never reaches mutation and is
-not interpreted as a storage shortage.
+whose target, trust, hashes, complete locked package set, signer fingerprints,
+Holo database, EFI boot policy, authoritative storage accounting, and
+released-mount status all match Rust-owned state. A dependency-closure failure
+never reaches mutation and is not interpreted as a storage shortage.
 Mutation mounts the Btrfs top level explicitly, identifies the current default
 root subvolume, temporarily clears only that subvolume's read-only property,
 mounts the matching `var-A` at `/var` and `efi-A` at `/efi` without hiding

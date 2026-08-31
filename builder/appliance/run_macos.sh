@@ -189,7 +189,7 @@ BUILDER_PUBLIC_KEY="$(cat "$SSH_PUBLIC_KEY")"
 
 cp "$META_DATA" "$RUNTIME_META_DATA"
 
-python3 -c 'from pathlib import Path; import sys; source=Path(sys.argv[1]).read_text(); key=sys.argv[3]; marker="    lock_passwd: false\n"; assert marker in source; source=source.replace(marker, marker+"    ssh_authorized_keys:\n      - "+key+"\n", 1); Path(sys.argv[2]).write_text(source)'     "$USER_DATA"     "$RUNTIME_USER_DATA"     "$BUILDER_PUBLIC_KEY"
+python3 -c 'from pathlib import Path; import sys; source=Path(sys.argv[1]).read_text(); key=sys.argv[3]; marker="    lock_passwd: true\n"; assert marker in source; source=source.replace(marker, marker+"    ssh_authorized_keys:\n      - "+key+"\n", 1); Path(sys.argv[2]).write_text(source)'     "$USER_DATA"     "$RUNTIME_USER_DATA"     "$BUILDER_PUBLIC_KEY"
 
 #
 # Create a disposable writable overlay.
@@ -260,7 +260,7 @@ log "SSH: localhost:${SSH_PORT}"
 log ""
 log "Fedora login:"
 log "  user: builder"
-log "  password: builder"
+log "  authentication: per-session SSH key only"
 log ""
 log "Starting Fedora builder appliance..."
 log "Press Ctrl+A, then X to exit QEMU."

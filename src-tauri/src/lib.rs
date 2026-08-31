@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(unix)]
+use std::os::unix::fs::FileTypeExt;
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
@@ -46,6 +48,7 @@ const LIB32_NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 128 * 1024 * 1024;
 const NVIDIA_DEPENDENCY_ARCHIVE_LIMIT: u64 = 256 * 1024 * 1024;
 const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
+const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
 const NVIDIA_SUPPORT_COMMIT: &str = "9bb16f4fc43a5d35eccc987899251d55c20d3d98";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
@@ -1160,6 +1163,78 @@ struct InputProgress {
     total_bytes: u64,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GuestResourcePlan {
+    schema_version: u32,
+    workload: String,
+    host_memory_bytes: u64,
+    host_logical_cpus: usize,
+    guest_memory_mib: u64,
+    guest_vcpus: usize,
+}
+
+fn plan_guest_resources(
+    host_memory_bytes: u64,
+    host_logical_cpus: usize,
+    build_worker: bool,
+) -> Result<GuestResourcePlan, String> {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    if host_memory_bytes < 6 * GIB {
+        return Err(format!(
+            "At least {} bytes of host RAM are required; detected {host_memory_bytes}.",
+            6 * GIB
+        ));
+    }
+    if host_logical_cpus == 0 {
+        return Err("Host CPU detection returned zero logical processors.".into());
+    }
+    let host_memory_mib = host_memory_bytes / (1024 * 1024);
+    let guest_memory_mib = if build_worker {
+        (host_memory_mib / 3).clamp(4096, 6144)
+    } else {
+        (host_memory_mib / 4).clamp(2048, 4096)
+    };
+    let max_vcpus = if build_worker { 6 } else { 4 };
+    let guest_vcpus = if host_logical_cpus <= 2 {
+        1
+    } else {
+        host_logical_cpus.saturating_sub(1).min(max_vcpus)
+    };
+    Ok(GuestResourcePlan {
+        schema_version: 1,
+        workload: if build_worker {
+            "x86-build-install"
+        } else {
+            "native-inspection"
+        }
+        .into(),
+        host_memory_bytes,
+        host_logical_cpus,
+        guest_memory_mib,
+        guest_vcpus,
+    })
+}
+
+fn detect_guest_resources(build_worker: bool) -> Result<GuestResourcePlan, String> {
+    let output = Command::new("sysctl")
+        .args(["-n", "hw.memsize"])
+        .output()
+        .map_err(|error| format!("Could not detect host RAM with sysctl: {error}"))?;
+    if !output.status.success() {
+        return Err("Could not detect host RAM with sysctl.".into());
+    }
+    let host_memory_bytes = String::from_utf8(output.stdout)
+        .map_err(|_| "Host RAM report was not valid UTF-8.")?
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| "Host RAM report did not contain a byte count.")?;
+    let host_logical_cpus = thread::available_parallelism()
+        .map(|count| count.get())
+        .map_err(|error| format!("Could not detect host CPU count: {error}"))?;
+    plan_guest_resources(host_memory_bytes, host_logical_cpus, build_worker)
+}
+
 type ProgressCallback<'a> = dyn Fn(&str, u64, u64) + 'a;
 
 struct ReportingReader<'a> {
@@ -1170,6 +1245,39 @@ struct ReportingReader<'a> {
     next_report: u64,
     progress: Option<&'a ProgressCallback<'a>>,
     cancel: Option<&'a AtomicBool>,
+}
+
+struct BoundedWriter<W> {
+    inner: W,
+    written: u64,
+    limit: u64,
+}
+
+impl<W: Write> Write for BoundedWriter<W> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        let remaining = self.limit.saturating_sub(self.written);
+        if remaining == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "normalized image exceeds the safety limit",
+            ));
+        }
+        let allowed = usize::try_from(remaining.min(buffer.len() as u64))
+            .map_err(|_| io::Error::other("normalized image size conversion failed"))?;
+        let count = self.inner.write(&buffer[..allowed])?;
+        self.written = self
+            .written
+            .checked_add(count as u64)
+            .ok_or_else(|| io::Error::other("normalized image size overflowed"))?;
+        Ok(count)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 impl Read for ReportingReader<'_> {
@@ -1367,7 +1475,8 @@ fn process_is_alive(pid: u32) -> bool {
 
 fn archive_and_remove_runtime(runtime_dir: &Path) -> Result<Option<PathBuf>, String> {
     let log_source = runtime_dir.join("qemu.log");
-    let archive = if log_source.is_file() {
+    let resources_source = runtime_dir.join("resources.json");
+    let archive = if log_source.is_file() || resources_source.is_file() {
         let archive_dir = runtime_root().join("logs");
         fs::create_dir_all(&archive_dir)
             .map_err(|e| format!("Could not create the appliance log archive: {e}"))?;
@@ -1376,9 +1485,20 @@ fn archive_and_remove_runtime(runtime_dir: &Path) -> Result<Option<PathBuf>, Str
             .and_then(|value| value.to_str())
             .unwrap_or("unknown-session");
         let archive_path = archive_dir.join(format!("{session_name}.log"));
-        fs::copy(&log_source, &archive_path)
-            .map_err(|e| format!("Could not archive the appliance log: {e}"))?;
-        Some(archive_path)
+        let resources_path = archive_dir.join(format!("{session_name}.resources.json"));
+        if log_source.is_file() {
+            fs::copy(&log_source, &archive_path)
+                .map_err(|e| format!("Could not archive the appliance log: {e}"))?;
+        }
+        if resources_source.is_file() {
+            fs::copy(&resources_source, &resources_path)
+                .map_err(|e| format!("Could not archive the appliance resource plan: {e}"))?;
+        }
+        Some(if archive_path.is_file() {
+            archive_path
+        } else {
+            resources_path
+        })
     } else {
         None
     };
@@ -1389,6 +1509,7 @@ fn archive_and_remove_runtime(runtime_dir: &Path) -> Result<Option<PathBuf>, Str
 
 fn archive_and_remove_nvidia_build_runtime(runtime_dir: &Path) -> Result<Option<PathBuf>, String> {
     let diagnostic_sources = [
+        ("RESOURCES", runtime_dir.join("resources.json")),
         ("QEMU", runtime_dir.join("qemu.log")),
         ("NVIDIA BUILD", runtime_dir.join("nvidia-build.log")),
         ("BUILD RESULT", runtime_dir.join("nvidia-build-result.json")),
@@ -2013,7 +2134,11 @@ fn normalize_input(
         .write(true)
         .open(&destination)
         .map_err(|e| format!("Could not create the normalized image: {e}"))?;
-    let mut writer = BufWriter::new(output_file);
+    let mut writer = BoundedWriter {
+        inner: BufWriter::new(output_file),
+        written: 0,
+        limit: MAX_NORMALIZED_IMAGE_BYTES,
+    };
     let copied = match format {
         InputFormat::Bzip2 => io::copy(
             &mut bzip2::read::BzDecoder::new(BufReader::new(source_reader)),
@@ -2032,7 +2157,7 @@ fn normalize_input(
     .map_err(|e| format!("Could not decompress the {} input: {e}", format.name()))?;
     writer
         .flush()
-        .and_then(|_| writer.get_ref().sync_all())
+        .and_then(|_| writer.inner.get_ref().sync_all())
         .map_err(|e| format!("Could not finish the normalized image: {e}"))?;
     if copied == 0 {
         return Err("The compressed input produced an empty image.".into());
@@ -2112,7 +2237,25 @@ fn normalize_bzip2_parallel(
             let output_bytes = fs::metadata(destination)
                 .map(|value| value.len())
                 .unwrap_or(0);
+            if output_bytes > MAX_NORMALIZED_IMAGE_BYTES {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "{name} output exceeded the {}-byte normalized-image safety limit.",
+                    MAX_NORMALIZED_IMAGE_BYTES
+                ));
+            }
             progress("decompressing-output", output_bytes, 0);
+        } else if fs::metadata(destination)
+            .map(|value| value.len() > MAX_NORMALIZED_IMAGE_BYTES)
+            .unwrap_or(false)
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "{name} output exceeded the {}-byte normalized-image safety limit.",
+                MAX_NORMALIZED_IMAGE_BYTES
+            ));
         }
         thread::sleep(Duration::from_millis(500));
     };
@@ -2127,8 +2270,8 @@ fn normalize_bzip2_parallel(
     let output_bytes = fs::metadata(destination)
         .map_err(|e| format!("Could not inspect the parallel decompression output: {e}"))?
         .len();
-    if output_bytes == 0 {
-        return Err("The compressed input produced an empty image.".into());
+    if output_bytes == 0 || output_bytes > MAX_NORMALIZED_IMAGE_BYTES {
+        return Err("The compressed input produced an empty or implausibly large image.".into());
     }
     if let Some(progress) = progress {
         progress("decompressing-output", output_bytes, 0);
@@ -2155,6 +2298,7 @@ fn prepare_session(
         .ok_or_else(|| format!("{} is required.", qemu_binary_name().unwrap_or("QEMU")))?;
     let qemu_img = find_binary("qemu-img").ok_or("qemu-img is required.")?;
     let ssh_keygen = find_binary("ssh-keygen").ok_or("ssh-keygen is required.")?;
+    let resources = detect_guest_resources(false)?;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| format!("System clock error: {e}"))?
@@ -2167,6 +2311,12 @@ fn prepare_session(
         path: runtime_dir.clone(),
         armed: true,
     };
+    fs::write(
+        runtime_dir.join("resources.json"),
+        serde_json::to_vec_pretty(&resources)
+            .map_err(|error| format!("Could not serialize native resource plan: {error}"))?,
+    )
+    .map_err(|error| format!("Could not record native resource plan: {error}"))?;
 
     let ssh_key = runtime_dir.join("builder_key");
     run_checked(
@@ -2179,7 +2329,7 @@ fn prepare_session(
         .map_err(|e| format!("Could not read the runtime SSH public key: {e}"))?;
     let source_user_data = fs::read_to_string(appliance_dir().join("cloud-init/user-data"))
         .map_err(|e| format!("Could not read cloud-init user-data: {e}"))?;
-    let marker = "    lock_passwd: false\n";
+    let marker = "    lock_passwd: true\n";
     if !source_user_data.contains(marker) {
         return Err("Cloud-init user-data does not contain the SSH key insertion marker.".into());
     }
@@ -2264,6 +2414,12 @@ fn prepare_session(
     let image_bytes = fs::metadata(&attached_image)
         .map_err(|e| format!("Could not inspect the normalized image size: {e}"))?
         .len();
+    if image_bytes == 0 || image_bytes > MAX_NORMALIZED_IMAGE_BYTES {
+        return Err(format!(
+            "Normalized image size {image_bytes} is outside the supported 1-{} byte range.",
+            MAX_NORMALIZED_IMAGE_BYTES
+        ));
+    }
     let attached_sha256_before = if attached_image == input_image {
         input_sha256_before.clone()
     } else {
@@ -2345,6 +2501,8 @@ fn prepare_session(
         .ok_or("The working image path is not valid UTF-8.")?
         .replace(',', ",,");
 
+    let guest_vcpus = resources.guest_vcpus.to_string();
+    let guest_memory_mib = resources.guest_memory_mib.to_string();
     let mut child = Command::new(qemu)
         .args([
             "-name",
@@ -2354,9 +2512,9 @@ fn prepare_session(
             "-cpu",
             "host",
             "-smp",
-            "4",
+            &guest_vcpus,
             "-m",
-            "4096",
+            &guest_memory_mib,
         ])
         .arg("-qmp")
         .arg(format!("tcp:127.0.0.1:{qmp_port},server=on,wait=off"))
@@ -2481,6 +2639,7 @@ fn prepare_nvidia_build_session(
     let qemu_img = find_binary("qemu-img").ok_or("qemu-img is required.")?;
     let ssh_keygen = find_binary("ssh-keygen").ok_or("ssh-keygen is required.")?;
     let (acceleration, machine, cpu_model) = nvidia_build_qemu_spec(std::env::consts::ARCH)?;
+    let resources = detect_guest_resources(true)?;
     let attached_working_image = target_working_image
         .map(|path| -> Result<PathBuf, String> {
             let metadata = fs::symlink_metadata(path)
@@ -2519,6 +2678,12 @@ fn prepare_nvidia_build_session(
         path: runtime_dir.clone(),
         armed: true,
     };
+    fs::write(
+        runtime_dir.join("resources.json"),
+        serde_json::to_vec_pretty(&resources)
+            .map_err(|error| format!("Could not serialize x86 resource plan: {error}"))?,
+    )
+    .map_err(|error| format!("Could not record x86 resource plan: {error}"))?;
 
     let ssh_key = runtime_dir.join("builder_key");
     run_checked(
@@ -2531,7 +2696,7 @@ fn prepare_nvidia_build_session(
         .map_err(|e| format!("Could not read the x86 build-appliance SSH key: {e}"))?;
     let source_user_data = fs::read_to_string(appliance_dir().join("cloud-init/user-data"))
         .map_err(|e| format!("Could not read cloud-init user-data: {e}"))?;
-    let marker = "    lock_passwd: false\n";
+    let marker = "    lock_passwd: true\n";
     if !source_user_data.contains(marker) {
         return Err("Cloud-init user-data does not contain the SSH key insertion marker.".into());
     }
@@ -2607,6 +2772,8 @@ fn prepare_nvidia_build_session(
         .try_clone()
         .map_err(|e| format!("Could not prepare the x86 build-appliance log: {e}"))?;
 
+    let guest_vcpus = resources.guest_vcpus.to_string();
+    let guest_memory_mib = resources.guest_memory_mib.to_string();
     let mut qemu_command = Command::new(qemu);
     qemu_command
         .args([
@@ -2617,9 +2784,9 @@ fn prepare_nvidia_build_session(
             "-cpu",
             cpu_model,
             "-smp",
-            "4",
+            &guest_vcpus,
             "-m",
-            "4096",
+            &guest_memory_mib,
         ])
         .arg("-drive")
         .arg(format!(
@@ -6609,6 +6776,85 @@ fn output_path_for_input(input: &Path, nvidia_installed: bool) -> Result<PathBuf
     Err("Could not choose an unused output filename.".into())
 }
 
+fn host_available_bytes(path: &Path) -> Result<u64, String> {
+    let output = Command::new("df")
+        .args(["-P", "-k"])
+        .arg(path)
+        .output()
+        .map_err(|error| format!("Could not measure host output space: {error}"))?;
+    if !output.status.success() {
+        return Err("Could not measure host output space with df.".into());
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|_| "Host output-space report was not valid UTF-8.")?;
+    let fields: Vec<_> = stdout
+        .lines()
+        .rfind(|line| !line.trim().is_empty())
+        .ok_or("Host output-space report was empty.")?
+        .split_whitespace()
+        .collect();
+    if fields.len() < 6 {
+        return Err("Host output-space report had an unexpected format.".into());
+    }
+    fields[fields.len() - 3]
+        .parse::<u64>()
+        .ok()
+        .and_then(|blocks| blocks.checked_mul(1024))
+        .ok_or_else(|| "Host output-space report contained an invalid byte count.".into())
+}
+
+fn validate_output_destination(
+    input: &Path,
+    output: &Path,
+    required_bytes: u64,
+) -> Result<(), String> {
+    if !fs::symlink_metadata(input)
+        .map(|metadata| metadata.file_type().is_file())
+        .unwrap_or(false)
+    {
+        return Err("The selected input is no longer a safe regular file.".into());
+    }
+    let parent = output
+        .parent()
+        .ok_or("Could not determine the output folder.")?;
+    let resolved_parent = fs::canonicalize(parent)
+        .map_err(|error| format!("Could not resolve the output folder: {error}"))?;
+    if !fs::symlink_metadata(&resolved_parent)
+        .map(|metadata| metadata.file_type().is_dir())
+        .unwrap_or(false)
+    {
+        return Err("The output folder is not a safe directory.".into());
+    }
+    let filename = output
+        .file_name()
+        .ok_or("The output path has no filename.")?;
+    let resolved_output = resolved_parent.join(filename);
+    let resolved_input = fs::canonicalize(input)
+        .map_err(|error| format!("Could not resolve the selected input: {error}"))?;
+    if resolved_output == resolved_input {
+        return Err("The output path resolves to the selected input image.".into());
+    }
+    if let Ok(metadata) = fs::symlink_metadata(&resolved_output) {
+        #[cfg(unix)]
+        if metadata.file_type().is_block_device() || metadata.file_type().is_char_device() {
+            return Err("The output path resolves to a device node.".into());
+        }
+        return Err(format!(
+            "The output path already exists: {}",
+            resolved_output.display()
+        ));
+    }
+    if required_bytes > 0 {
+        let available = host_available_bytes(&resolved_parent)?;
+        if available < required_bytes {
+            return Err(format!(
+                "The output folder needs at least {required_bytes} free bytes; only {available} are available."
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn manifest_path_for_output(output: &Path) -> PathBuf {
     let mut path = output.as_os_str().to_os_string();
     path.push(".manifest.json");
@@ -7010,6 +7256,12 @@ fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, 
         }
         let final_path =
             output_path_for_input(&session.input_image, nvidia_installation.is_some())?;
+        let required_output_bytes = session
+            .input_preparation
+            .image_bytes
+            .checked_add(64 * 1024 * 1024)
+            .ok_or("Host output-space requirement overflowed.")?;
+        validate_output_destination(&session.input_image, &final_path, required_output_bytes)?;
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| format!("System clock error: {e}"))?
@@ -7101,12 +7353,7 @@ fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, 
                 session.input_sha256_before
             ));
         }
-        if final_path.exists() {
-            return Err(format!(
-                "The chosen output path appeared during export: {}",
-                final_path.display()
-            ));
-        }
+        validate_output_destination(&session.input_image, &final_path, 0)?;
         let final_manifest_path = manifest_path_for_output(&final_path);
         if final_manifest_path.exists() {
             return Err(format!(
@@ -10146,6 +10393,16 @@ mod tests {
     }
 
     #[test]
+    fn appliance_cloud_init_requires_ephemeral_key_authentication() {
+        let user_data = include_str!("../../builder/appliance/cloud-init/user-data");
+        assert!(user_data.contains("    lock_passwd: true\n"));
+        assert!(user_data.contains("ssh_pwauth: false\n"));
+        assert!(!user_data.contains("chpasswd:"));
+        assert!(!user_data.contains("password: builder"));
+        assert!(!user_data.contains("ssh_pwauth: true"));
+    }
+
+    #[test]
     fn reads_top_level_github_repository_permission() {
         let response = br#"{
             "permission": "admin",
@@ -10322,6 +10579,26 @@ mod tests {
             ("hvf", "q35,accel=hvf", "host")
         );
         assert!(nvidia_build_qemu_spec("unsupported").is_err());
+    }
+
+    #[test]
+    fn plans_bounded_guest_resources_from_host_capacity() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        let native = plan_guest_resources(16 * GIB, 10, false).expect("native plan");
+        assert_eq!(native.guest_memory_mib, 4096);
+        assert_eq!(native.guest_vcpus, 4);
+        assert_eq!(native.workload, "native-inspection");
+
+        let build = plan_guest_resources(32 * GIB, 12, true).expect("build plan");
+        assert_eq!(build.guest_memory_mib, 6144);
+        assert_eq!(build.guest_vcpus, 6);
+        assert_eq!(build.workload, "x86-build-install");
+
+        let constrained = plan_guest_resources(8 * GIB, 2, true).expect("constrained plan");
+        assert_eq!(constrained.guest_memory_mib, 4096);
+        assert_eq!(constrained.guest_vcpus, 1);
+        assert!(plan_guest_resources(4 * GIB, 8, false).is_err());
+        assert!(plan_guest_resources(16 * GIB, 0, false).is_err());
     }
 
     #[test]
@@ -11474,6 +11751,10 @@ mod tests {
             output_path_for_input(&root.join("raw.img"), false).unwrap(),
             root.join("raw-marker.img")
         );
+        assert_eq!(
+            output_path_for_input(&root.join("Steam Deck 🐧 recovery.img.xz"), true).unwrap(),
+            root.join("Steam Deck 🐧 recovery-nvidia.img")
+        );
         fs::write(root.join("already-marker.img"), b"input")
             .expect("create already-suffixed input");
         assert_eq!(
@@ -11506,9 +11787,66 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unsafe_or_unavailable_output_destinations() {
+        let root = std::env::temp_dir().join(format!(
+            "steamos-builder-output-safety-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("test clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("create output-safety test directory");
+        let input = root.join("input.img");
+        let output = root.join("output.img");
+        fs::write(&input, b"input").expect("create output-safety input");
+        assert!(validate_output_destination(&input, &output, 1).is_ok());
+        assert!(host_available_bytes(&root).expect("measure temporary volume") > 0);
+        assert!(validate_output_destination(&input, &input, 0)
+            .expect_err("input/output alias must fail")
+            .contains("selected input"));
+        fs::write(&output, b"occupied").expect("create occupied output");
+        assert!(validate_output_destination(&input, &output, 0)
+            .expect_err("existing output must fail")
+            .contains("already exists"));
+        #[cfg(unix)]
+        assert!(
+            validate_output_destination(&input, Path::new("/dev/null"), 0)
+                .expect_err("device output must fail")
+                .contains("device node")
+        );
+        assert!(
+            validate_output_destination(&input, &root.join("too-large.img"), u64::MAX)
+                .expect_err("impossible capacity request must fail")
+                .contains("needs at least")
+        );
+        fs::remove_dir_all(root).expect("remove output-safety test directory");
+    }
+
+    #[test]
     fn parses_qemu_img_percentage_output() {
         assert_eq!(parse_qemu_img_progress("    (42.50/100%)"), Some(42.5));
         assert_eq!(parse_qemu_img_progress("not progress"), None);
+    }
+
+    #[test]
+    fn bounds_normalized_image_writes() {
+        let mut exact = BoundedWriter {
+            inner: Vec::new(),
+            written: 0,
+            limit: 4,
+        };
+        exact.write_all(b"test").expect("write exact limit");
+        assert!(exact.write_all(b"!").is_err());
+        assert_eq!(exact.inner, b"test");
+
+        let mut oversized = BoundedWriter {
+            inner: Vec::new(),
+            written: 0,
+            limit: 3,
+        };
+        assert!(oversized.write_all(b"test").is_err());
+        assert_eq!(oversized.inner, b"tes");
     }
 
     #[test]
