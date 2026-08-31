@@ -34,6 +34,7 @@ let githubMaintainer = null;
 let githubLoginPoll = 0;
 let githubLoginPending = false;
 let autoReleaseVerificationPending = false;
+let settingsSavePending = false;
 const mainWindow = getCurrentWebviewWindow();
 
 await mainWindow.listen("build-progress-ready", () => { progressReady = true; });
@@ -52,10 +53,15 @@ function updateBuildButton() {
   elements.buildButton.disabled = !currentImage || !hostReady;
 }
 
+function waitForPaint() {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
 function renderSettings() {
   elements.trackDriverUpdates.checked = builderSettings.trackSteamosDriverUpdates;
+  elements.trackDriverUpdates.disabled = settingsSavePending;
   elements.autoReleaseNvidia.checked = builderSettings.autoReleaseVerifiedNvidia;
-  elements.autoReleaseNvidia.disabled = autoReleaseVerificationPending || !githubMaintainer?.authorized;
+  elements.autoReleaseNvidia.disabled = settingsSavePending || !githubMaintainer?.authorized;
   elements.autoReleaseSetting.classList.toggle("pending", autoReleaseVerificationPending);
   elements.githubStatus.textContent = githubMaintainer?.message || "GitHub status has not been checked.";
   elements.githubConnect.textContent = githubLoginPending
@@ -122,8 +128,12 @@ async function loadSettings() {
 async function saveSettings(next) {
   const previous = builderSettings;
   builderSettings = { ...builderSettings, ...next, schemaVersion: 1 };
+  settingsSavePending = true;
+  elements.settingsMessage.textContent = "Saving…";
+  elements.settingsMessage.className = "settings-message";
   renderSettings();
   try {
+    await waitForPaint();
     builderSettings = await invoke("update_builder_settings", { settings: builderSettings });
     elements.settingsMessage.textContent = "Settings saved.";
     elements.settingsMessage.className = "settings-message";
@@ -131,8 +141,10 @@ async function saveSettings(next) {
     builderSettings = previous;
     elements.settingsMessage.textContent = String(error);
     elements.settingsMessage.className = "settings-message error";
+  } finally {
+    settingsSavePending = false;
+    renderSettings();
   }
-  renderSettings();
 }
 
 function setSettingsOpen(opened) {
@@ -233,10 +245,12 @@ elements.autoReleaseNvidia.addEventListener("change", async () => {
   const enabled = elements.autoReleaseNvidia.checked;
   builderSettings = { ...builderSettings, autoReleaseVerifiedNvidia: enabled, schemaVersion: 1 };
   autoReleaseVerificationPending = true;
+  settingsSavePending = true;
   elements.autoReleaseStatus.textContent = enabled ? "Checking maintainer permission…" : "Saving…";
   elements.autoReleaseStatus.className = "setting-status";
   renderSettings();
   try {
+    await waitForPaint();
     builderSettings = await invoke("update_builder_settings", { settings: builderSettings });
     elements.autoReleaseStatus.textContent = enabled ? "Confirmed" : "Disabled";
     elements.autoReleaseStatus.className = enabled ? "setting-status confirmed" : "setting-status";
@@ -246,6 +260,7 @@ elements.autoReleaseNvidia.addEventListener("change", async () => {
     elements.autoReleaseStatus.className = "setting-status error";
   } finally {
     autoReleaseVerificationPending = false;
+    settingsSavePending = false;
     renderSettings();
   }
 });

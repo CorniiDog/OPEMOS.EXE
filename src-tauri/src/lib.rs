@@ -1535,19 +1535,27 @@ fn get_builder_settings(app: tauri::AppHandle) -> Result<BuilderSettings, String
 }
 
 #[tauri::command]
-fn update_builder_settings(
+async fn update_builder_settings(
     app: tauri::AppHandle,
     settings: BuilderSettings,
 ) -> Result<BuilderSettings, String> {
-    let mut settings = settings;
-    settings.schema_version = 1;
-    if settings.auto_release_verified_nvidia && !github_maintainer_status()?.authorized {
-        return Err(
-            "Auto-release cannot be enabled until GitHub maintainer permission is verified.".into(),
-        );
-    }
-    save_builder_settings(&app, &settings)?;
-    Ok(settings)
+    tauri::async_runtime::spawn_blocking(move || {
+        let current = load_builder_settings(&app)?;
+        let mut settings = settings;
+        settings.schema_version = 1;
+        let enabling_auto_release =
+            settings.auto_release_verified_nvidia && !current.auto_release_verified_nvidia;
+        if enabling_auto_release && !github_maintainer_status()?.authorized {
+            return Err(
+                "Auto-release cannot be enabled until GitHub maintainer permission is verified."
+                    .into(),
+            );
+        }
+        save_builder_settings(&app, &settings)?;
+        Ok(settings)
+    })
+    .await
+    .map_err(|error| format!("Settings worker failed: {error}"))?
 }
 
 #[tauri::command]
