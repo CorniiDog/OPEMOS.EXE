@@ -493,6 +493,7 @@ struct NvidiaInstallInputs {
     checksum: PathBuf,
     provenance: PathBuf,
     archive_sha256: String,
+    provenance_sha256: String,
     trust: String,
     steamos_version: String,
     kernel_version: String,
@@ -500,7 +501,7 @@ struct NvidiaInstallInputs {
     packages: Vec<NvidiaUserspacePackage>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SupportInstallResult {
     schema_version: u32,
@@ -514,7 +515,7 @@ struct SupportInstallResult {
     validation: Option<SupportInstallValidation>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SupportInstallTarget {
     steamos_version: String,
@@ -523,21 +524,29 @@ struct SupportInstallTarget {
     architecture: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SupportInstallCleanup {
     mounts_released: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SupportInstallValidation {
     archive_sha256: String,
+    pacman_database: SupportInstallPacmanDatabase,
     keyring: SupportInstallKeyring,
     packages: Vec<SupportInstallPackage>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportInstallPacmanDatabase {
+    path: String,
+    package_count: u64,
+}
+
+#[derive(Clone, Deserialize)]
 struct SupportInstallKeyring {
     name: String,
     sha256: String,
@@ -571,6 +580,9 @@ struct NvidiaInstallHandoffResult {
     nvidia_version: String,
     trust: String,
     archive_sha256: String,
+    provenance_sha256: String,
+    pacman_database_path: String,
+    pacman_package_count: u64,
     keyring_sha256: String,
     packages: Vec<SupportInstallPackage>,
     mounts_released: bool,
@@ -5775,8 +5787,8 @@ trap cleanup_marker EXIT
 sudo mount -o rw,subvolid=5 "$TARGET" "$MOUNT_DIR"
 if findmnt -rn -M "$MOUNT_DIR" -o OPTIONS | tr ',' '\n' | grep -qx ro; then
   sudo umount "$MOUNT_DIR"
-  sudo btrfstune -f -S 0 "$TARGET"
   WAS_SEEDING=1
+  sudo btrfstune -f -S 0 "$TARGET"
   sudo mount -o rw,subvolid=5 "$TARGET" "$MOUNT_DIR"
 fi
 findmnt -rn -M "$MOUNT_DIR" -o OPTIONS | tr ',' '\n' | grep -qx rw
@@ -5798,8 +5810,8 @@ fi
 SOURCE_ROOT_RO=$(sudo btrfs property get -ts "$SOURCE_ROOT" ro | awk -F= '$1 == "ro" { print $2 }')
 test "$SOURCE_ROOT_RO" = true || test "$SOURCE_ROOT_RO" = false
 if test "$SOURCE_ROOT_RO" = true; then
-  sudo btrfs property set -f -ts "$SOURCE_ROOT" ro false
   RESTORE_SOURCE_RO=1
+  sudo btrfs property set -f -ts "$SOURCE_ROOT" ro false
 fi
 if test -n "$SNAPSHOT_ROOT"; then
   test ! -e "$SNAPSHOT_ROOT"
@@ -6163,6 +6175,16 @@ fn verify_nvidia_from_validation_overlay(
     session: &ImageInspectionSession,
     installation: &NvidiaInstallHandoffResult,
 ) -> Result<(), String> {
+    let package_version = |name: &str| {
+        installation
+            .packages
+            .iter()
+            .find(|package| package.name == name)
+            .map(|package| package.full_version.as_str())
+            .ok_or_else(|| format!("Installed NVIDIA state omitted {name}."))
+    };
+    let nvidia_utils_version = package_version("nvidia-utils")?;
+    let lib32_nvidia_utils_version = package_version("lib32-nvidia-utils")?;
     let command = format!(
         r#"set -euo pipefail
 WORK=/dev/disk/by-id/virtio-steamos-user-working
@@ -6171,17 +6193,25 @@ test -b "$WORK"
 test "$(sudo blockdev --getro "$WORK")" = 1
 mapfile -t ROOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$WORK" | awk '$2 == "rootfs-A" && $3 == "btrfs" {{print $1}}')
 mapfile -t BOOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$WORK" | awk '$2 == "efi-A" && ($3 == "vfat" || $3 == "fat") {{print $1}}')
+mapfile -t VAR_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$WORK" | awk '$2 == "var-A" && $3 == "ext4" {{print $1}}')
 test "${{#ROOT_PARTS[@]}}" -eq 1
 test "${{#BOOT_PARTS[@]}}" -eq 1
+test "${{#VAR_PARTS[@]}}" -eq 1
+test "${{ROOT_PARTS[0]}}" != "${{BOOT_PARTS[0]}}"
+test "${{ROOT_PARTS[0]}}" != "${{VAR_PARTS[0]}}"
+test "${{BOOT_PARTS[0]}}" != "${{VAR_PARTS[0]}}"
 sudo mkdir -p "$ROOT"
 ROOT_MOUNTED=0
-BOOT_MOUNTED=0
+VAR_MOUNTED=0
+EFI_MOUNTED=0
 cleanup() {{
   rc=$?
   trap - EXIT INT TERM
-  if (( BOOT_MOUNTED )); then sudo umount "$ROOT/boot" || rc=1; fi
+  if (( EFI_MOUNTED )); then sudo umount "$ROOT/efi" || rc=1; fi
+  if (( VAR_MOUNTED )); then sudo umount "$ROOT/var" || rc=1; fi
   if (( ROOT_MOUNTED )); then sudo umount "$ROOT" || rc=1; fi
-  ! findmnt -rn -M "$ROOT/boot" >/dev/null 2>&1 || rc=1
+  ! findmnt -rn -M "$ROOT/efi" >/dev/null 2>&1 || rc=1
+  ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1 || rc=1
   ! findmnt -rn -M "$ROOT" >/dev/null 2>&1 || rc=1
   exit "$rc"
 }}
@@ -6190,12 +6220,20 @@ sudo mount -o ro "${{ROOT_PARTS[0]}}" "$ROOT"
 ROOT_MOUNTED=1
 test -d "$ROOT/boot"
 test ! -L "$ROOT/boot"
-sudo mount -o ro "${{BOOT_PARTS[0]}}" "$ROOT/boot"
-BOOT_MOUNTED=1
+test -d "$ROOT/efi"
+test ! -L "$ROOT/efi"
+test -d "$ROOT/var"
+test ! -L "$ROOT/var"
+sudo mount -o ro "${{VAR_PARTS[0]}}" "$ROOT/var"
+VAR_MOUNTED=1
+sudo mount -o ro "${{BOOT_PARTS[0]}}" "$ROOT/efi"
+EFI_MOUNTED=1
 MODULE_ROOT="$ROOT/usr/lib/modules/{}/updates/open-gpu-kernel-modules-steamos"
 for MODULE in nvidia nvidia-drm nvidia-modeset nvidia-peermem nvidia-uvm; do
   test -f "$MODULE_ROOT/$MODULE.ko.zst"
   test ! -L "$MODULE_ROOT/$MODULE.ko.zst"
+  test "$(sudo modinfo -F version "$MODULE_ROOT/$MODULE.ko.zst")" = "{}"
+  test "$(sudo modinfo -F vermagic "$MODULE_ROOT/$MODULE.ko.zst" | awk '{{print $1}}')" = "{}"
 done
 grep -qx 'blacklist nouveau' "$ROOT/etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf"
 grep -qx 'options nvidia-drm modeset=1 fbdev=1' "$ROOT/etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf"
@@ -6204,24 +6242,48 @@ STATE="$ROOT/var/lib/open-gpu-kernel-modules-steamos-support/offline-install"
 test "$(cat "$STATE/kernel-version")" = "{}"
 test "$(cat "$STATE/nvidia-version")" = "{}"
 test -f "$STATE/PROVENANCE.json"
+test ! -L "$STATE/PROVENANCE.json"
+test "$(sha256sum "$STATE/PROVENANCE.json" | awk '{{print $1}}')" = "{}"
 test -f "$STATE/BUILD-INFO.txt"
+test ! -L "$STATE/BUILD-INFO.txt"
 find "$ROOT/usr/lib/firmware/nvidia/{}" -type f -name 'gsp*.bin' -print -quit | grep -q .
-find "$ROOT/var/lib/pacman/local" -mindepth 1 -maxdepth 1 -type d -name 'nvidia-utils-{}-*' -print -quit | grep -q .
-find "$ROOT/var/lib/pacman/local" -mindepth 1 -maxdepth 1 -type d -name 'lib32-nvidia-utils-{}-*' -print -quit | grep -q .
+PACMAN_DATABASE="$ROOT{}"
+test -d "$PACMAN_DATABASE"
+test ! -L "$PACMAN_DATABASE"
+test -d "$PACMAN_DATABASE/local"
+test ! -L "$PACMAN_DATABASE/local"
+package_versions() {{
+  wanted="$1"
+  find "$PACMAN_DATABASE/local" -mindepth 2 -maxdepth 2 -type f -name desc -exec \
+    awk -v wanted="$wanted" '
+      $0 == "%NAME%" {{ getline; name=$0 }}
+      $0 == "%VERSION%" {{ getline; version=$0 }}
+      END {{ if (name == wanted) print version }}
+    ' {{}} \;
+}}
+test "$(package_versions nvidia-utils)" = "{}"
+test "$(package_versions lib32-nvidia-utils)" = "{}"
 find "$ROOT/boot" -maxdepth 1 -type f -name 'initramfs*.img' -size +0c -print -quit | grep -q .
-sudo umount "$ROOT/boot"
-BOOT_MOUNTED=0
+sudo umount "$ROOT/efi"
+EFI_MOUNTED=0
+sudo umount "$ROOT/var"
+VAR_MOUNTED=0
 sudo umount "$ROOT"
 ROOT_MOUNTED=0
-! findmnt -rn -M "$ROOT/boot" >/dev/null 2>&1
+! findmnt -rn -M "$ROOT/efi" >/dev/null 2>&1
+! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
         installation.kernel_version,
+        installation.nvidia_version,
+        installation.kernel_version,
         installation.kernel_version,
         installation.nvidia_version,
+        installation.provenance_sha256,
         installation.nvidia_version,
-        installation.nvidia_version,
-        installation.nvidia_version,
+        installation.pacman_database_path,
+        nvidia_utils_version,
+        lib32_nvidia_utils_version,
     );
     run_guest_command(session, &command).map(|_| ())
 }
@@ -7691,7 +7753,7 @@ fn collect_nvidia_install_inputs(
         .kernel_version
         .clone()
         .ok_or("NVIDIA resolution omitted the exact target kernel.")?;
-    let inputs = NvidiaInstallInputs {
+    let mut inputs = NvidiaInstallInputs {
         image_runtime_dir: session.runtime_dir.clone(),
         working_image: session.working_image.clone(),
         installer_root: installer.root.clone(),
@@ -7699,6 +7761,7 @@ fn collect_nvidia_install_inputs(
         checksum: PathBuf::from(&artifact.checksum_path),
         provenance: PathBuf::from(&artifact.provenance_path),
         archive_sha256: artifact.archive_sha256.clone(),
+        provenance_sha256: String::new(),
         trust: artifact.trust.clone(),
         steamos_version,
         kernel_version,
@@ -7721,6 +7784,7 @@ fn collect_nvidia_install_inputs(
             ));
         }
     }
+    inputs.provenance_sha256 = sha256_file(&inputs.provenance)?;
     for package in &inputs.packages {
         for path in [&package.package_path, &package.signature_path] {
             let path = Path::new(path);
@@ -8268,6 +8332,8 @@ fn validate_nvidia_install_result(
         .validation
         .ok_or("Offline installer validation result omitted verified input metadata.")?;
     if validation.archive_sha256 != inputs.archive_sha256
+        || validation.pacman_database.path != "/usr/lib/holo/pacmandb"
+        || !(1..=100_000).contains(&validation.pacman_database.package_count)
         || validation.keyring.name != "approved-package-signers.gpg"
         || validation.keyring.sha256.len() != 64
         || !validation
@@ -8319,6 +8385,9 @@ fn validate_nvidia_install_result(
         nvidia_version: inputs.nvidia_version.clone(),
         trust: inputs.trust.clone(),
         archive_sha256: inputs.archive_sha256.clone(),
+        provenance_sha256: inputs.provenance_sha256.clone(),
+        pacman_database_path: validation.pacman_database.path,
+        pacman_package_count: validation.pacman_database.package_count,
         keyring_sha256: validation.keyring.sha256,
         packages: validation.packages,
         mounts_released: true,
@@ -8437,13 +8506,13 @@ test "${{BOOT_PARTS[0]}}" != "${{VAR_PARTS[0]}}"
 sudo mkdir -p "$ROOT"
 ROOT_MOUNTED=0
 VAR_MOUNTED=0
-BOOT_MOUNTED=0
+EFI_MOUNTED=0
 cleanup() {{
   rc=$?
-  if (( BOOT_MOUNTED )); then sudo umount "$ROOT/boot" || rc=1; fi
+  if (( EFI_MOUNTED )); then sudo umount "$ROOT/efi" || rc=1; fi
   if (( VAR_MOUNTED )); then sudo umount "$ROOT/var" || rc=1; fi
   if (( ROOT_MOUNTED )); then sudo umount "$ROOT" || rc=1; fi
-  ! findmnt -rn -M "$ROOT/boot" >/dev/null 2>&1 || rc=1
+  ! findmnt -rn -M "$ROOT/efi" >/dev/null 2>&1 || rc=1
   ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1 || rc=1
   ! findmnt -rn -M "$ROOT" >/dev/null 2>&1 || rc=1
   exit "$rc"
@@ -8453,30 +8522,28 @@ sudo mount -o ro "${{ROOT_PARTS[0]}}" "$ROOT"
 ROOT_MOUNTED=1
 test -d "$ROOT/boot"
 test ! -L "$ROOT/boot"
+test -d "$ROOT/efi"
+test ! -L "$ROOT/efi"
 test -d "$ROOT/var"
 test ! -L "$ROOT/var"
 sudo mount -o ro "${{VAR_PARTS[0]}}" "$ROOT/var"
 VAR_MOUNTED=1
-sudo mount -o ro "${{BOOT_PARTS[0]}}" "$ROOT/boot"
-BOOT_MOUNTED=1
+sudo mount -o ro "${{BOOT_PARTS[0]}}" "$ROOT/efi"
+EFI_MOUNTED=1
 if test ! -d "$ROOT/usr/lib/holo/pacmandb/local"; then
   echo 'The selected SteamOS recovery root lacks its expected /usr/lib/holo/pacmandb/local package database; refusing NVIDIA mutation.' >&2
   exit 1
 fi
-if ! grep -Fq -- '--pacman-dbpath' "$WORK/support/bootstrap/install_to_root.sh"; then
-  echo 'The pinned support installer does not yet expose the reviewed --pacman-dbpath contract required for SteamOS /usr/lib/holo/pacmandb; refusing NVIDIA mutation.' >&2
-  exit 1
-fi
 sudo dnf install -y bsdtar gnupg2 python3 kmod pacman archlinux-keyring
 python3 "$WORK/support/bootstrap/prepare_nvidia_package_keyring.py" --source /usr/share/pacman/keyrings/archlinux.gpg --output "$WORK/approved-package-signers.gpg"
-sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --root "$ROOT" --pacman-dbpath /usr/lib/holo/pacmandb --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-result.json"
-sudo umount "$ROOT/boot"
-BOOT_MOUNTED=0
+sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-result.json"
+sudo umount "$ROOT/efi"
+EFI_MOUNTED=0
 sudo umount "$ROOT/var"
 VAR_MOUNTED=0
 sudo umount "$ROOT"
 ROOT_MOUNTED=0
-! findmnt -rn -M "$ROOT/boot" >/dev/null 2>&1
+! findmnt -rn -M "$ROOT/efi" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
@@ -8627,7 +8694,7 @@ TOP_MOUNTED=0
 ROOT_MOUNTED=0
 ROOT_IS_TOP=0
 VAR_MOUNTED=0
-BOOT_MOUNTED=0
+EFI_MOUNTED=0
 RESTORE_ROOT_RO=0
 WAS_SEEDING=0
 SEEDING_RESTORED=0
@@ -8635,7 +8702,7 @@ SOURCE_ROOT=
 cleanup() {{
   rc=$?
   trap - EXIT INT TERM
-  if (( BOOT_MOUNTED )); then sudo umount "$ROOT/boot" || rc=1; fi
+  if (( EFI_MOUNTED )); then sudo umount "$ROOT/efi" || rc=1; fi
   if (( VAR_MOUNTED )); then sudo umount "$ROOT/var" || rc=1; fi
   if (( ROOT_MOUNTED )); then sudo umount "$ROOT" || rc=1; fi
   if (( RESTORE_ROOT_RO )) && (( TOP_MOUNTED )) && test -n "$SOURCE_ROOT"; then
@@ -8645,7 +8712,7 @@ cleanup() {{
   if (( WAS_SEEDING )) && ! (( SEEDING_RESTORED )); then
     sudo btrfstune -f -S 1 "${{ROOT_PARTS[0]}}" || rc=1
   fi
-  ! findmnt -rn -M "$ROOT/boot" >/dev/null 2>&1 || rc=1
+  ! findmnt -rn -M "$ROOT/efi" >/dev/null 2>&1 || rc=1
   ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1 || rc=1
   ! findmnt -rn -M "$ROOT" >/dev/null 2>&1 || rc=1
   ! findmnt -rn -M "$TOP" >/dev/null 2>&1 || rc=1
@@ -8657,8 +8724,8 @@ TOP_MOUNTED=1
 if findmnt -rn -M "$TOP" -o OPTIONS | tr ',' '\n' | grep -qx ro; then
   sudo umount "$TOP"
   TOP_MOUNTED=0
-  sudo btrfstune -f -S 0 "${{ROOT_PARTS[0]}}"
   WAS_SEEDING=1
+  sudo btrfstune -f -S 0 "${{ROOT_PARTS[0]}}"
   sudo mount -o rw,subvolid=5 "${{ROOT_PARTS[0]}}" "$TOP"
   TOP_MOUNTED=1
 fi
@@ -8675,8 +8742,8 @@ test -d "$SOURCE_ROOT"
 SOURCE_ROOT_RO=$(sudo btrfs property get -ts "$SOURCE_ROOT" ro | awk -F= '$1 == "ro" {{print $2}}')
 test "$SOURCE_ROOT_RO" = true || test "$SOURCE_ROOT_RO" = false
 if test "$SOURCE_ROOT_RO" = true; then
-  sudo btrfs property set -f -ts "$SOURCE_ROOT" ro false
   RESTORE_ROOT_RO=1
+  sudo btrfs property set -f -ts "$SOURCE_ROOT" ro false
 fi
 if ! (( ROOT_IS_TOP )); then
   sudo mount -o rw,subvol="$DEFAULT_PATH" "${{ROOT_PARTS[0]}}" "$ROOT"
@@ -8685,13 +8752,15 @@ fi
 findmnt -rn -M "$ROOT" -o OPTIONS | tr ',' '\n' | grep -qx rw
 test -d "$ROOT/boot"
 test ! -L "$ROOT/boot"
+test -d "$ROOT/efi"
+test ! -L "$ROOT/efi"
 test -d "$ROOT/var"
 test ! -L "$ROOT/var"
 sudo mount -o rw "${{VAR_PARTS[0]}}" "$ROOT/var"
 VAR_MOUNTED=1
-sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/boot"
-BOOT_MOUNTED=1
-sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --pacman-dbpath /usr/lib/holo/pacmandb --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-mutation-result.json"
+sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/efi"
+EFI_MOUNTED=1
+sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-mutation-result.json"
 INITRAMFS_OK=0
 while IFS= read -r INITRAMFS; do
   test -n "$INITRAMFS" || continue
@@ -8706,8 +8775,8 @@ while IFS= read -r INITRAMFS; do
 done < <(sudo find "$ROOT/boot" -maxdepth 1 -type f -name 'initramfs*.img' -print)
 test "$INITRAMFS_OK" = 1
 sync
-sudo umount "$ROOT/boot"
-BOOT_MOUNTED=0
+sudo umount "$ROOT/efi"
+EFI_MOUNTED=0
 sudo umount "$ROOT/var"
 VAR_MOUNTED=0
 if (( ROOT_MOUNTED )); then sudo umount "$ROOT"; ROOT_MOUNTED=0; fi
@@ -8721,7 +8790,7 @@ if (( WAS_SEEDING )); then
   sudo btrfstune -f -S 1 "${{ROOT_PARTS[0]}}"
   SEEDING_RESTORED=1
 fi
-! findmnt -rn -M "$ROOT/boot" >/dev/null 2>&1
+! findmnt -rn -M "$ROOT/efi" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 ! findmnt -rn -M "$TOP" >/dev/null 2>&1
@@ -9668,17 +9737,17 @@ mod tests {
     }
 
     #[test]
-    fn offline_handoff_mounts_the_separate_var_partition() {
+    fn offline_handoff_mounts_var_and_efi_without_hiding_root_boot() {
         let source = include_str!("lib.rs")
             .split("#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests {")
             .next()
             .expect("production source");
-        assert_eq!(source.matches("mapfile -t VAR_PARTS").count(), 2);
+        assert_eq!(source.matches("mapfile -t VAR_PARTS").count(), 3);
         assert_eq!(
             source
                 .matches(r#"sudo mount -o ro "${{VAR_PARTS[0]}}" "$ROOT/var""#)
                 .count(),
-            1
+            2
         );
         assert_eq!(
             source
@@ -9690,14 +9759,29 @@ mod tests {
             source
                 .matches(r#"if (( VAR_MOUNTED )); then sudo umount "$ROOT/var""#)
                 .count(),
+            3
+        );
+        assert_eq!(source.matches("mapfile -t BOOT_PARTS").count(), 3);
+        assert_eq!(
+            source
+                .matches(r#"sudo mount -o ro "${{BOOT_PARTS[0]}}" "$ROOT/efi""#)
+                .count(),
             2
         );
         assert_eq!(
             source
-                .matches("--pacman-dbpath /usr/lib/holo/pacmandb")
+                .matches(r#"sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/efi""#)
                 .count(),
-            2
+            1
         );
+        assert_eq!(
+            source
+                .matches(r#"if (( EFI_MOUNTED )); then sudo umount "$ROOT/efi""#)
+                .count(),
+            3
+        );
+        assert!(!source.contains(r#""${{BOOT_PARTS[0]}}" "$ROOT/boot""#));
+        assert!(source.contains(r#"validation.pacman_database.path != "/usr/lib/holo/pacmandb""#));
     }
 
     #[test]
@@ -9720,6 +9804,7 @@ mod tests {
             checksum: "/modules.tar.gz.sha256".into(),
             provenance: "/modules.provenance.json".into(),
             archive_sha256: digest('a'),
+            provenance_sha256: digest('e'),
             trust: "certified-published".into(),
             steamos_version: "3.8.14".into(),
             kernel_version: "6.16.12-valve24.4-1-neptune-616-gfe145653a794".into(),
@@ -9756,6 +9841,10 @@ mod tests {
             },
             validation: Some(SupportInstallValidation {
                 archive_sha256: digest('a'),
+                pacman_database: SupportInstallPacmanDatabase {
+                    path: "/usr/lib/holo/pacmandb".into(),
+                    package_count: 1_158,
+                },
                 keyring: SupportInstallKeyring {
                     name: "approved-package-signers.gpg".into(),
                     sha256: digest('d'),
@@ -9766,6 +9855,36 @@ mod tests {
                 ],
             }),
         };
+        let mut wrong_database = result.clone();
+        wrong_database
+            .validation
+            .as_mut()
+            .expect("fixture validation")
+            .pacman_database
+            .path = "/var/lib/pacman".into();
+        assert!(validate_nvidia_install_result(
+            wrong_database,
+            &inputs,
+            "validated",
+            "validation_complete",
+            "validated"
+        )
+        .is_err());
+        let mut empty_database = result.clone();
+        empty_database
+            .validation
+            .as_mut()
+            .expect("fixture validation")
+            .pacman_database
+            .package_count = 0;
+        assert!(validate_nvidia_install_result(
+            empty_database,
+            &inputs,
+            "validated",
+            "validation_complete",
+            "validated"
+        )
+        .is_err());
         let accepted = validate_nvidia_install_result(
             result,
             &inputs,
@@ -9796,6 +9915,10 @@ mod tests {
             },
             validation: Some(SupportInstallValidation {
                 archive_sha256: digest('a'),
+                pacman_database: SupportInstallPacmanDatabase {
+                    path: "/usr/lib/holo/pacmandb".into(),
+                    package_count: 1_158,
+                },
                 keyring: SupportInstallKeyring {
                     name: "approved-package-signers.gpg".into(),
                     sha256: digest('d'),
@@ -10096,6 +10219,9 @@ mod tests {
             nvidia_version: "575.64.05".into(),
             trust: "certified-published".into(),
             archive_sha256: "a".repeat(64),
+            provenance_sha256: "c".repeat(64),
+            pacman_database_path: "/usr/lib/holo/pacmandb".into(),
+            pacman_package_count: 1_158,
             keyring_sha256: "b".repeat(64),
             packages: Vec::new(),
             mounts_released: true,
@@ -10653,15 +10779,20 @@ mod tests {
 DISK=/dev/disk/by-id/virtio-steamos-user-input
 ROOT=/mnt/steamos-package-root
 VAR=/mnt/steamos-package-var
+EFI=/mnt/steamos-package-efi
 mapfile -t ROOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$DISK" | awk '$2 == "rootfs-A" && $3 == "btrfs" {print $1}')
 mapfile -t VAR_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$DISK" | awk '$2 == "var-A" && $3 == "ext4" {print $1}')
+mapfile -t EFI_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$DISK" | awk '$2 == "efi-A" && ($3 == "vfat" || $3 == "fat") {print $1}')
 test "${#ROOT_PARTS[@]}" -eq 1
 test "${#VAR_PARTS[@]}" -eq 1
-sudo mkdir -p "$ROOT" "$VAR"
+test "${#EFI_PARTS[@]}" -eq 1
+sudo mkdir -p "$ROOT" "$VAR" "$EFI"
 ROOT_MOUNTED=0
 VAR_MOUNTED=0
+EFI_MOUNTED=0
 cleanup() {
   rc=$?
+  if (( EFI_MOUNTED )); then sudo umount "$EFI" || rc=1; fi
   if (( VAR_MOUNTED )); then sudo umount "$VAR" || rc=1; fi
   if (( ROOT_MOUNTED )); then sudo umount "$ROOT" || rc=1; fi
   exit "$rc"
@@ -10671,6 +10802,8 @@ sudo mount -o ro "${ROOT_PARTS[0]}" "$ROOT"
 ROOT_MOUNTED=1
 sudo mount -o ro "${VAR_PARTS[0]}" "$VAR"
 VAR_MOUNTED=1
+sudo mount -o ro "${EFI_PARTS[0]}" "$EFI"
+EFI_MOUNTED=1
 root_db=absent
 var_db=absent
 holo_db=absent
@@ -10693,6 +10826,12 @@ printf '%s\n' '--- root /etc/fstab ---'
 if test -f "$ROOT/etc/fstab"; then sudo sed -n '1,120p' "$ROOT/etc/fstab"; else printf '%s\n' '<absent>'; fi
 printf '%s\n' '--- var-A top-level ---'
 sudo find "$VAR" -mindepth 1 -maxdepth 2 -printf '%P\n' | LC_ALL=C sort | head -120
+printf '%s\n' '--- root /boot ---'
+sudo find "$ROOT/boot" -mindepth 1 -maxdepth 2 -printf '%P\n' | LC_ALL=C sort | head -120
+printf '%s\n' '--- efi-A top-level ---'
+sudo find "$EFI" -mindepth 1 -maxdepth 3 -printf '%P\n' | LC_ALL=C sort | head -160
+sudo umount "$EFI"
+EFI_MOUNTED=0
 sudo umount "$VAR"
 VAR_MOUNTED=0
 sudo umount "$ROOT"
@@ -10705,6 +10844,7 @@ trap - EXIT"#,
         assert!(report.contains("var_pacman_db=absent"));
         assert!(report.contains("holo_pacman_db=present"));
         assert!(report.contains("lib/overlays"));
+        assert!(report.contains("EFI/steamos/grub.cfg"));
         stop_session(&mut session).expect("stop recovery-image appliance session");
     }
 

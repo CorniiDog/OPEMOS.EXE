@@ -148,9 +148,18 @@ The observed Valve SteamOS 3.8.14 recovery image has no pacman database at
 contains only `lib/overlays`, and its recovery `fstab` leaves `/var` commented
 out. SteamOS instead keeps its package database under
 `/usr/lib/holo/pacmandb`. The builder now verifies that database exists and
-rejects the currently pinned support installer before mutation while it still
-hard-codes `/var/lib/pacman`. The reviewed installer contract must accept and
-validate the SteamOS database location rather than initializing an empty one.
+requires the pinned support installer to own and report that internal database
+selection; no second CLI override exists. The builder independently rechecks
+the reported path and package count, then validates the exact installed package
+records from the Holo database in the exported image.
+
+The recovery root also owns a populated `/boot` containing the Neptune kernel
+and initramfs images; `efi-A` separately contains `EFI/steamos/grub.cfg` and the
+EFI loader. The builder mounts `efi-A` at `<root>/efi`, never over `<root>/boot`,
+so target `mkinitcpio` updates the real rootfs initramfs. Independent output
+verification mounts both `var-A` and `efi-A` read-only, checks exact module
+version/vermagic and Holo package versions, and requires the installed
+provenance file to retain its validated SHA-256.
 
 ## Architecture
 
