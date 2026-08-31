@@ -6280,7 +6280,7 @@ BEGIN {{
     sub(/=.*/, "", key[index])
   }}
 }}
-/^[[:space:]]*(linux|linuxefi|linux16)[[:space:]]+/ {{
+/^[[:space:]]*(steamenv_boot[[:space:]]+)?(linux|linuxefi|linux16)[[:space:]]+/ {{
   entries++
   delete count
   for (field=1; field<=NF; field++) {{
@@ -9854,6 +9854,9 @@ mod tests {
         );
         assert!(!source.contains(r#""${{BOOT_PARTS[0]}}" "$ROOT/boot""#));
         assert!(source.contains(r#"validation.pacman_database.path != "/usr/lib/holo/pacmandb""#));
+        assert!(
+            source.contains(r#"(steamenv_boot[[:space:]]+)?(linux|linuxefi|linux16)[[:space:]]+"#)
+        );
     }
 
     #[test]
@@ -10937,6 +10940,8 @@ printf '%s\n' '--- root /boot ---'
 sudo find "$ROOT/boot" -mindepth 1 -maxdepth 2 -printf '%P\n' | LC_ALL=C sort | head -120
 printf '%s\n' '--- efi-A top-level ---'
 sudo find "$EFI" -mindepth 1 -maxdepth 3 -printf '%P\n' | LC_ALL=C sort | head -160
+printf '%s\n' '--- efi-A SteamOS GRUB configuration ---'
+if test -f "$EFI/EFI/steamos/grub.cfg"; then sudo sed -n '1,240p' "$EFI/EFI/steamos/grub.cfg"; else printf '%s\n' '<absent>'; fi
 sudo umount "$EFI"
 EFI_MOUNTED=0
 sudo umount "$VAR"
@@ -10952,6 +10957,7 @@ trap - EXIT"#,
         assert!(report.contains("holo_pacman_db=present"));
         assert!(report.contains("lib/overlays"));
         assert!(report.contains("EFI/steamos/grub.cfg"));
+        assert!(report.contains("steamenv_boot\tlinux /boot/vmlinuz-linux-neptune-616"));
         stop_session(&mut session).expect("stop recovery-image appliance session");
     }
 
