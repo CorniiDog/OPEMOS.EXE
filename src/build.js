@@ -478,15 +478,19 @@ async function runBuild(request) {
       setStatus("running", "Resolving published NVIDIA support", "Looking for a verified publication matching the image's exact kernel.", 95.55, "Resolving");
       let nvidiaResolution = await invoke("resolve_published_nvidia", {
         sourceSelection: request.sourceSelection || "automatic",
+        allowExperimentalUpstream: request.allowExperimentalUpstream === true,
       });
       let x86ApplianceReady = false;
       if (nvidiaResolution.status === "build_required") {
         const plan = nvidiaResolution.buildPlan;
-        addStageLog(`NVIDIA on-demand plan: ${plan.nvidiaVersion} from ${plan.sourceBranch}@${plan.sourceCommit.slice(0, 12)} for exact kernel ${plan.kernelVersion}.`);
+        addStageLog(`NVIDIA on-demand plan: ${plan.nvidiaVersion} from ${plan.sourceRepository}:${plan.sourceBranch}@${plan.sourceCommit.slice(0, 12)} for exact kernel ${plan.kernelVersion}.`);
         addStageLog(`NVIDIA version baseline: ${plan.baselineRelease}; pinned support commit ${plan.supportCommit}.`);
+        if (plan.sourceOrigin === "upstream") {
+          addStageLog("warning: Experimental NVIDIA upstream source selected. Matching userspace was preflighted, but this local build is not eligible for automated publication.");
+        }
         const approved = window.confirm(
           `No published NVIDIA artifact exactly matches this SteamOS kernel.\n\n` +
-          `Build NVIDIA ${plan.nvidiaVersion} locally for:\n${plan.kernelVersion}\n\n` +
+          `Build ${plan.sourceOrigin === "upstream" ? "experimental upstream " : ""}NVIDIA ${plan.nvidiaVersion} locally for:\n${plan.kernelVersion}\n\n` +
           "On Apple Silicon this x86_64 build uses software emulation and may take 30–60 minutes or longer. Continue?"
         );
         if (approved) {
@@ -515,7 +519,7 @@ async function runBuild(request) {
           addStageLog(`NVIDIA on-demand artifact: trust=${builtArtifact.trust}; SHA256 ${builtArtifact.archiveSha256}.`);
           addStageLog("On-demand artifact passed exact-target, compiler, header-signature, provenance, vermagic, architecture, and module-hash validation.");
           const settings = await invoke("get_builder_settings");
-          if (settings.autoReleaseVerifiedNvidia) {
+          if (settings.autoReleaseVerifiedNvidia && plan.sourceOrigin !== "upstream") {
             const maintainer = await invoke("get_github_maintainer_status");
             if (!maintainer.authorized) {
               addStageLog(`warning: Automated release is enabled, but maintainer access is unavailable: ${maintainer.message}`);
@@ -539,6 +543,8 @@ async function runBuild(request) {
                 addStageLog("NVIDIA release: maintainer declined publication; the verified local artifact remains build-local.");
               }
             }
+          } else if (settings.autoReleaseVerifiedNvidia && plan.sourceOrigin === "upstream") {
+            addStageLog("NVIDIA release: skipped because experimental upstream artifacts are local-only.");
           }
         } else {
           addStageLog("warning: Exact-kernel NVIDIA build was declined; continuing with a marker-only output.");

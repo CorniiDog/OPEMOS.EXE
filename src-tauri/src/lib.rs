@@ -25,7 +25,11 @@ const NVIDIA_RELEASE_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steam
 const NVIDIA_SOURCE_BRANCHES_API: &str =
     "https://api.github.com/repos/CorniiDog/open-gpu-kernel-modules-steamos/branches?per_page=100";
 const NVIDIA_SOURCE_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos";
+const NVIDIA_UPSTREAM_TAGS_API: &str =
+    "https://api.github.com/repos/NVIDIA/open-gpu-kernel-modules/tags?per_page=100";
+const NVIDIA_UPSTREAM_REPOSITORY: &str = "NVIDIA/open-gpu-kernel-modules";
 const NVIDIA_RESOLVER_SCHEMA: u32 = 2;
+const BUILDER_SETTINGS_SCHEMA: u32 = 2;
 const APPROVED_VALVE_SIGNER: &str = "889B5EBDDD505A683621900DAF1D2199EF0A3CCF";
 const RELEASES_RESPONSE_LIMIT: u64 = 4 * 1024 * 1024;
 const CHECKSUM_RESPONSE_LIMIT: u64 = 4 * 1024;
@@ -48,14 +52,17 @@ struct BuilderSettings {
     schema_version: u32,
     auto_release_verified_nvidia: bool,
     track_steamos_driver_updates: bool,
+    #[serde(default)]
+    include_upstream_nvidia_releases: bool,
 }
 
 impl Default for BuilderSettings {
     fn default() -> Self {
         Self {
-            schema_version: 1,
+            schema_version: BUILDER_SETTINGS_SCHEMA,
             auto_release_verified_nvidia: false,
             track_steamos_driver_updates: false,
+            include_upstream_nvidia_releases: false,
         }
     }
 }
@@ -116,6 +123,10 @@ struct NvidiaSourceBranch {
     name: String,
     version: String,
     commit: String,
+    origin: String,
+    repository: String,
+    selection: String,
+    experimental: bool,
 }
 
 struct PinnedInstallerFile {
@@ -290,6 +301,7 @@ struct SupportBuildProvenance {
     trust: String,
     target: SupportBuildTarget,
     artifact: SupportProvenanceArtifact,
+    source: SupportProvenanceSource,
     headers: SupportProvenanceHeaders,
     modules: Vec<SupportProvenanceModule>,
 }
@@ -297,6 +309,14 @@ struct SupportBuildProvenance {
 #[derive(Deserialize)]
 struct SupportProvenanceArtifact {
     archive: String,
+}
+
+#[derive(Deserialize)]
+struct SupportProvenanceSource {
+    repository: String,
+    branch: String,
+    commit: String,
+    dirty: String,
 }
 
 #[derive(Deserialize)]
@@ -395,6 +415,8 @@ struct NvidiaOnDemandBuildPlan {
     baseline_release: String,
     support_commit: String,
     expected_trust: String,
+    source_origin: String,
+    source_repository: String,
     source_branch: String,
     source_commit: String,
 }
@@ -681,6 +703,8 @@ struct MarkerManifestData<'a> {
     layout: &'a SteamOsLayoutDiscovery,
     target_system: &'a TargetSystemDiscovery,
     nvidia_installation: Option<&'a NvidiaInstallHandoffResult>,
+    nvidia_resolution: Option<&'a NvidiaPublishedResolution>,
+    nvidia_source_selection: Option<&'a str>,
 }
 
 fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json::Value {
@@ -707,6 +731,43 @@ fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json::Value {
     } else {
         serde_json::json!(["/etc/steamos-nvidia-image-builder-test"])
     };
+    let nvidia_source_policy = data.nvidia_installation.map(|installation| {
+        let selection = data.nvidia_source_selection.unwrap_or("automatic");
+        let automatic = selection == "automatic";
+        let plan = data
+            .nvidia_resolution
+            .and_then(|resolution| resolution.build_plan.as_ref());
+        let source_origin = plan
+            .map(|plan| plan.source_origin.as_str())
+            .unwrap_or("project");
+        let source_repository = plan
+            .map(|plan| plan.source_repository.as_str())
+            .or(Some(if source_origin == "upstream" {
+                NVIDIA_UPSTREAM_REPOSITORY
+            } else {
+                NVIDIA_SOURCE_REPOSITORY
+            }));
+        let fallback_reference = (!automatic).then(|| {
+            selection
+                .strip_prefix("project:")
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("nvidia/{}", installation.nvidia_version))
+        });
+        serde_json::json!({
+            "selection": selection,
+            "mode": if automatic { "automatic" } else { "pinned" },
+            "nvidiaVersion": installation.nvidia_version,
+            "sourceOrigin": source_origin,
+            "sourceRepository": source_repository,
+            "sourceReference": plan.map(|plan| plan.source_branch.as_str()).or(fallback_reference.as_deref()),
+            "sourceCommit": plan.map(|plan| plan.source_commit.as_str()),
+            "updateBehavior": if automatic {
+                "follow-newest-compatible-verified-profile"
+            } else {
+                "rebuild-exact-version-or-require-user-decision"
+            }
+        })
+    });
     serde_json::json!({
         "schemaVersion": 1,
         "resultClass": result_class,
@@ -744,6 +805,7 @@ fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json::Value {
         "integration": {
             "milestone": milestone,
             "nvidia": data.nvidia_installation,
+            "nvidiaSourcePolicy": nvidia_source_policy,
             "gamescope": null,
             "modifiedPaths": modified_paths
         },
@@ -869,6 +931,7 @@ struct ApplianceSession {
     input_preparation: InputPreparation,
     target_system: Option<TargetSystemDiscovery>,
     nvidia_resolution: Option<NvidiaPublishedResolution>,
+    nvidia_source_selection: Option<String>,
     nvidia_userspace: Option<NvidiaUserspaceResolution>,
     nvidia_installer_bundle: Option<NvidiaInstallerBundleState>,
     nvidia_install_validation: Option<NvidiaInstallHandoffResult>,
@@ -1428,22 +1491,28 @@ fn load_builder_settings(app: &tauri::AppHandle) -> Result<BuilderSettings, Stri
     if !path.exists() {
         return Ok(BuilderSettings::default());
     }
-    let settings: BuilderSettings = serde_json::from_reader(
+    let mut settings: BuilderSettings = serde_json::from_reader(
         File::open(&path).map_err(|error| format!("Could not open settings.json: {error}"))?,
     )
     .map_err(|error| format!("settings.json is invalid: {error}"))?;
-    if settings.schema_version != 1 {
+    if settings.schema_version == 1 {
+        settings.schema_version = BUILDER_SETTINGS_SCHEMA;
+        settings.include_upstream_nvidia_releases = false;
+        save_builder_settings(app, &settings)?;
+    } else if settings.schema_version != BUILDER_SETTINGS_SCHEMA {
         return Err(format!(
-            "Unsupported settings schema {}; expected 1.",
-            settings.schema_version
+            "Unsupported settings schema {}; expected {}.",
+            settings.schema_version, BUILDER_SETTINGS_SCHEMA
         ));
     }
     Ok(settings)
 }
 
 fn save_builder_settings(app: &tauri::AppHandle, settings: &BuilderSettings) -> Result<(), String> {
-    if settings.schema_version != 1 {
-        return Err("Only settings schema 1 can be saved.".into());
+    if settings.schema_version != BUILDER_SETTINGS_SCHEMA {
+        return Err(format!(
+            "Only settings schema {BUILDER_SETTINGS_SCHEMA} can be saved."
+        ));
     }
     let path = settings_path(app)?;
     let parent = path
@@ -1572,7 +1641,7 @@ async fn update_builder_settings(
     tauri::async_runtime::spawn_blocking(move || {
         let current = load_builder_settings(&app)?;
         let mut settings = settings;
-        settings.schema_version = 1;
+        settings.schema_version = BUILDER_SETTINGS_SCHEMA;
         let enabling_auto_release =
             settings.auto_release_verified_nvidia && !current.auto_release_verified_nvidia;
         if enabling_auto_release && !github_maintainer_status()?.authorized {
@@ -2243,6 +2312,7 @@ fn prepare_session(
         input_preparation,
         target_system: None,
         nvidia_resolution: None,
+        nvidia_source_selection: None,
         nvidia_userspace: None,
         nvidia_installer_bundle: None,
         nvidia_install_validation: None,
@@ -3045,6 +3115,57 @@ fn select_nvidia_build_baseline(
         .map(|(_, _, _, identity)| identity))
 }
 
+fn explicit_nvidia_build_resolution(
+    target: NvidiaTargetReadiness,
+    source: &NvidiaSourceBranch,
+    baseline_release: String,
+) -> Result<NvidiaPublishedResolution, String> {
+    if !target.ready {
+        return Err("An explicit NVIDIA source requires a ready exact image target.".into());
+    }
+    let steamos_version = target
+        .steamos_version
+        .clone()
+        .ok_or("Ready NVIDIA target omitted its SteamOS version.")?;
+    let kernel_version = target
+        .kernel_version
+        .clone()
+        .ok_or("Ready NVIDIA target omitted its exact kernel.")?;
+    Ok(NvidiaPublishedResolution {
+        schema_version: NVIDIA_RESOLVER_SCHEMA,
+        status: "build_required".into(),
+        reason: if source.experimental {
+            "experimental_upstream_selected".into()
+        } else {
+            "selected_version_artifact_missing".into()
+        },
+        message: format!(
+            "No published artifact for selected NVIDIA {} matches exact kernel {}.",
+            source.version, kernel_version
+        ),
+        compatibility: Some(if source.experimental {
+            "experimental_upstream".into()
+        } else {
+            "on_demand_exact_kernel".into()
+        }),
+        target,
+        publication: None,
+        artifact: None,
+        build_plan: Some(NvidiaOnDemandBuildPlan {
+            steamos_version,
+            kernel_version,
+            nvidia_version: source.version.clone(),
+            baseline_release,
+            support_commit: NVIDIA_SUPPORT_BUILD_COMMIT.into(),
+            expected_trust: "locally-built-verified".into(),
+            source_origin: source.origin.clone(),
+            source_repository: source.repository.clone(),
+            source_branch: source.name.clone(),
+            source_commit: source.commit.clone(),
+        }),
+    })
+}
+
 fn published_asset_name(identity: &PublishedReleaseIdentity) -> String {
     format!("nvidia-open-{}-x86_64.tar.gz", identity.tag)
 }
@@ -3241,6 +3362,30 @@ fn valid_nvidia_source_branch(value: &str) -> Option<&str> {
     Some(version)
 }
 
+fn valid_upstream_nvidia_tag(value: &str) -> Option<&str> {
+    numeric_version(value, 2..=3)?;
+    Some(value)
+}
+
+fn valid_nvidia_source_identity(
+    origin: &str,
+    repository: &str,
+    reference: &str,
+    version: &str,
+) -> bool {
+    match origin {
+        "project" => {
+            repository == NVIDIA_SOURCE_REPOSITORY
+                && valid_nvidia_source_branch(reference) == Some(version)
+        }
+        "upstream" => {
+            repository == NVIDIA_UPSTREAM_REPOSITORY
+                && valid_upstream_nvidia_tag(reference) == Some(version)
+        }
+        _ => false,
+    }
+}
+
 fn fetch_nvidia_source_branches(
     client: &reqwest::blocking::Client,
 ) -> Result<Vec<NvidiaSourceBranch>, String> {
@@ -3271,9 +3416,13 @@ fn fetch_nvidia_source_branches(
                 return None;
             }
             Some(NvidiaSourceBranch {
+                selection: format!("project:{}", branch.name),
                 name: branch.name,
                 version,
                 commit: branch.commit.sha.to_ascii_lowercase(),
+                origin: "project".into(),
+                repository: NVIDIA_SOURCE_REPOSITORY.into(),
+                experimental: false,
             })
         })
         .collect();
@@ -3290,11 +3439,67 @@ fn fetch_nvidia_source_branches(
     Ok(result)
 }
 
+fn fetch_upstream_nvidia_tags(
+    client: &reqwest::blocking::Client,
+) -> Result<Vec<NvidiaSourceBranch>, String> {
+    let response = client
+        .get(NVIDIA_UPSTREAM_TAGS_API)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .map_err(|error| format!("Could not query upstream NVIDIA tags: {error}"))?;
+    let bytes = read_http_response_limited(
+        response,
+        RELEASES_RESPONSE_LIMIT,
+        "upstream NVIDIA tag metadata",
+    )?;
+    let tags: Vec<GithubBranch> = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Upstream NVIDIA tag metadata is invalid JSON: {error}"))?;
+    let mut result: Vec<_> = tags
+        .into_iter()
+        .filter_map(|tag| {
+            let version = valid_upstream_nvidia_tag(&tag.name)?.to_string();
+            if tag.commit.sha.len() != 40
+                || !tag.commit.sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return None;
+            }
+            Some(NvidiaSourceBranch {
+                selection: format!("upstream:{}", tag.name),
+                name: tag.name,
+                version,
+                commit: tag.commit.sha.to_ascii_lowercase(),
+                origin: "upstream".into(),
+                repository: NVIDIA_UPSTREAM_REPOSITORY.into(),
+                experimental: true,
+            })
+        })
+        .collect();
+    result.sort_by(|left, right| {
+        let left_version = numeric_version(&left.version, 2..=3).expect("validated tag");
+        let right_version = numeric_version(&right.version, 2..=3).expect("validated tag");
+        right_version.cmp(&left_version)
+    });
+    if result.is_empty() {
+        return Err("NVIDIA exposed no valid numeric upstream release tags.".into());
+    }
+    Ok(result)
+}
+
 #[tauri::command]
-async fn list_nvidia_source_branches() -> Result<Vec<NvidiaSourceBranch>, String> {
-    tauri::async_runtime::spawn_blocking(|| fetch_nvidia_source_branches(&nvidia_http_client()?))
-        .await
-        .map_err(|error| format!("NVIDIA source-branch worker failed: {error}"))?
+async fn list_nvidia_source_branches(
+    app: tauri::AppHandle,
+) -> Result<Vec<NvidiaSourceBranch>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = nvidia_http_client()?;
+        let mut sources = fetch_nvidia_source_branches(&client)?;
+        if load_builder_settings(&app)?.include_upstream_nvidia_releases {
+            sources.extend(fetch_upstream_nvidia_tags(&client)?);
+        }
+        Ok(sources)
+    })
+    .await
+    .map_err(|error| format!("NVIDIA source-list worker failed: {error}"))?
 }
 
 struct PublishedDownloadContext<'a> {
@@ -3557,6 +3762,8 @@ fn resolve_published_nvidia_for_target(
                 baseline_release,
                 support_commit: NVIDIA_SUPPORT_BUILD_COMMIT.into(),
                 expected_trust: "locally-built-verified".into(),
+                source_origin: "project".into(),
+                source_repository: NVIDIA_SOURCE_REPOSITORY.into(),
                 source_branch: format!("nvidia/{nvidia_version}"),
                 source_commit: String::new(),
             }),
@@ -3776,6 +3983,45 @@ fn arch_package_directory(package: &str) -> Result<&'static str, String> {
     }
 }
 
+fn query_arch_userspace_package(
+    client: &reqwest::blocking::Client,
+    package: &str,
+    nvidia_version: &str,
+) -> Result<(String, String), String> {
+    let directory = arch_package_directory(package)?;
+    let index_response = client
+        .get(format!("{directory}/"))
+        .header("Accept", "text/html")
+        .send()
+        .map_err(|e| format!("Could not query the Arch Linux Archive for {package}: {e}"))?;
+    let index_bytes = read_http_response_limited(
+        index_response,
+        ARCH_ARCHIVE_INDEX_LIMIT,
+        &format!("{package} archive index"),
+    )?;
+    let index = std::str::from_utf8(&index_bytes)
+        .map_err(|e| format!("{package} archive index is not UTF-8: {e}"))?;
+    select_arch_userspace_package(index, package, nvidia_version)
+}
+
+fn preflight_nvidia_userspace(
+    client: &reqwest::blocking::Client,
+    nvidia_version: &str,
+) -> Result<Vec<String>, String> {
+    ["nvidia-utils", "lib32-nvidia-utils"]
+        .into_iter()
+        .map(|package| {
+            query_arch_userspace_package(client, package, nvidia_version)
+                .map(|(filename, _)| filename)
+                .map_err(|error| {
+                    format!(
+                        "NVIDIA {nvidia_version} cannot be selected because matching signed {package} input is unavailable: {error}"
+                    )
+                })
+        })
+        .collect()
+}
+
 fn download_arch_userspace_asset(
     client: &reqwest::blocking::Client,
     url: &str,
@@ -3905,22 +4151,10 @@ fn resolve_nvidia_userspace_for_version(
         if cancel.load(Ordering::Relaxed) {
             return Err("NVIDIA userspace resolution cancelled.".into());
         }
-        let directory = arch_package_directory(package)?;
         progress("querying-arch-package-index", packages.len() as u64, 2);
-        let index_response = client
-            .get(format!("{directory}/"))
-            .header("Accept", "text/html")
-            .send()
-            .map_err(|e| format!("Could not query the Arch Linux Archive for {package}: {e}"))?;
-        let index_bytes = read_http_response_limited(
-            index_response,
-            ARCH_ARCHIVE_INDEX_LIMIT,
-            &format!("{package} archive index"),
-        )?;
-        let index = std::str::from_utf8(&index_bytes)
-            .map_err(|e| format!("{package} archive index is not UTF-8: {e}"))?;
+        let directory = arch_package_directory(package)?;
         let (filename, full_version) =
-            select_arch_userspace_package(index, package, nvidia_version)?;
+            query_arch_userspace_package(client, package, nvidia_version)?;
         let signature_filename = format!("{filename}.sig");
         let package_path = output_dir.join(&filename);
         let signature_path = output_dir.join(&signature_filename);
@@ -4370,6 +4604,20 @@ fn validate_support_build_provenance(
     {
         return Err("NVIDIA provenance does not match the accepted build result.".into());
     }
+    if !matches!(
+        document.source.repository.as_str(),
+        NVIDIA_SOURCE_REPOSITORY | NVIDIA_UPSTREAM_REPOSITORY
+    ) || document.source.branch.is_empty()
+        || document.source.commit.len() != 40
+        || !document
+            .source
+            .commit
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+        || document.source.dirty != "0"
+    {
+        return Err("NVIDIA provenance contains an invalid or dirty source identity.".into());
+    }
     if document.headers.signature_status != "verified"
         || document.headers.authentication != "detached-signature-verified-with-pinned-keyring"
         || (document.headers.signing_key_fingerprint != approved_signer
@@ -4459,22 +4707,37 @@ enum NvidiaSupportSource<'a> {
     PinnedGithub,
 }
 
+struct NvidiaSourcePin<'a> {
+    origin: &'a str,
+    repository: &'a str,
+    reference: &'a str,
+    commit: &'a str,
+}
+
 fn build_nvidia_for_target_from_source(
     session: &impl GuestConnection,
     support_source: NvidiaSupportSource<'_>,
-    source_pin: Option<(&str, &str)>,
+    source_pin: Option<NvidiaSourcePin<'_>>,
     output_dir: &Path,
     spec: &NvidiaTargetBuildSpec,
     cancel: Option<&AtomicBool>,
 ) -> Result<NvidiaDevelopmentArtifact, String> {
     validate_nvidia_target_build_spec(spec)?;
-    if let Some((branch, commit)) = source_pin {
-        if valid_nvidia_source_branch(branch) != Some(spec.nvidia_version.as_str())
-            || commit.len() != 40
-            || !commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+    let expected_source = source_pin
+        .as_ref()
+        .map(|pin| (pin.repository.to_string(), pin.commit.to_ascii_lowercase()));
+    if let Some(pin) = source_pin.as_ref() {
+        if !valid_nvidia_source_identity(
+            pin.origin,
+            pin.repository,
+            pin.reference,
+            &spec.nvidia_version,
+        ) || pin.commit.len() != 40
+            || !pin.commit.bytes().all(|byte| byte.is_ascii_hexdigit())
         {
             return Err(
-                "Pinned NVIDIA source branch/commit does not match the requested version.".into(),
+                "Pinned NVIDIA source origin/reference/commit does not match the requested version."
+                    .into(),
             );
         }
     }
@@ -4573,18 +4836,20 @@ fn build_nvidia_for_target_from_source(
     } else {
         " --require-compiler-major-match"
     };
-    let (source_setup, source_argument) = if let Some((_, commit)) = source_pin {
+    let (source_setup, source_argument, source_environment) = if let Some(pin) = source_pin {
         (
             format!(
-                "mkdir -p /tmp/steamos-nvidia-source; git -C /tmp/steamos-nvidia-source init --quiet; git -C /tmp/steamos-nvidia-source remote add origin https://github.com/{NVIDIA_SOURCE_REPOSITORY}.git; git -C /tmp/steamos-nvidia-source fetch --quiet --depth 1 origin {commit}; git -C /tmp/steamos-nvidia-source checkout --quiet --detach {commit}; test \"$(git -C /tmp/steamos-nvidia-source rev-parse HEAD)\" = {commit}; test -z \"$(git -C /tmp/steamos-nvidia-source status --porcelain)\";"
+                "mkdir -p /tmp/steamos-nvidia-source; git -C /tmp/steamos-nvidia-source init --quiet; git -C /tmp/steamos-nvidia-source remote add origin https://github.com/{}.git; git -C /tmp/steamos-nvidia-source fetch --quiet --depth 1 origin {}; git -C /tmp/steamos-nvidia-source checkout --quiet --detach {}; test \"$(git -C /tmp/steamos-nvidia-source rev-parse HEAD)\" = {}; test -z \"$(git -C /tmp/steamos-nvidia-source status --porcelain)\";",
+                pin.repository, pin.commit, pin.commit, pin.commit
             ),
             " --source /tmp/steamos-nvidia-source",
+            format!("SOURCE_REPO={} ", pin.repository),
         )
     } else {
-        (String::new(), "")
+        (String::new(), "", String::new())
     };
     let build_command = format!(
-        r#"set -eu; rm -rf /tmp/steamos-nvidia-support /tmp/steamos-nvidia-source /tmp/steamos-nvidia-artifacts; mkdir -p /tmp/steamos-nvidia-artifacts; {support_setup} {source_setup} cd /tmp/steamos-nvidia-support; sudo dnf install -y bsdtar gnupg2 python3; python3 ./bootstrap/prepare_valve_keyring.py --output /tmp/steamos-nvidia-artifacts/valve-package-signers.gpg; signer="$(python3 -c 'import json; data=json.load(open("trust/valve-package-signers.json", encoding="utf-8")); signers=data["signers"]; assert data["schemaVersion"] == 1 and len(signers) == 1; print(signers[0]["fingerprint"])')"; bash ./bootstrap/build_for_target.sh --steamos {} --kernel {} --nvidia {} --architecture x86_64 --install-dependencies{compiler_requirement}{source_argument} --output /tmp/steamos-nvidia-artifacts --result-json /tmp/steamos-nvidia-artifacts/build-result.json --header-keyring /tmp/steamos-nvidia-artifacts/valve-package-signers.gpg --header-signer "$signer""#,
+        r#"set -eu; rm -rf /tmp/steamos-nvidia-support /tmp/steamos-nvidia-source /tmp/steamos-nvidia-artifacts; mkdir -p /tmp/steamos-nvidia-artifacts; {support_setup} {source_setup} cd /tmp/steamos-nvidia-support; sudo dnf install -y bsdtar gnupg2 python3; python3 ./bootstrap/prepare_valve_keyring.py --output /tmp/steamos-nvidia-artifacts/valve-package-signers.gpg; signer="$(python3 -c 'import json; data=json.load(open("trust/valve-package-signers.json", encoding="utf-8")); signers=data["signers"]; assert data["schemaVersion"] == 1 and len(signers) == 1; print(signers[0]["fingerprint"])')"; {source_environment}bash ./bootstrap/build_for_target.sh --steamos {} --kernel {} --nvidia {} --architecture x86_64 --install-dependencies{compiler_requirement}{source_argument} --output /tmp/steamos-nvidia-artifacts --result-json /tmp/steamos-nvidia-artifacts/build-result.json --header-keyring /tmp/steamos-nvidia-artifacts/valve-package-signers.gpg --header-signer "$signer""#,
         spec.steamos_version, spec.kernel_version, spec.nvidia_version,
     );
     let execution_result = run_guest_command_logged(
@@ -4739,6 +5004,18 @@ fn build_nvidia_for_target_from_source(
     let provenance: SupportBuildProvenance = serde_json::from_slice(&provenance_bytes)
         .map_err(|e| format!("NVIDIA provenance is invalid JSON: {e}"))?;
     validate_support_build_provenance(&provenance, spec, &result_trust, &approved_signer)?;
+    if expected_source
+        .as_ref()
+        .is_some_and(|(repository, commit)| {
+            provenance.source.repository != *repository
+                || provenance.source.commit.to_ascii_lowercase() != *commit
+        })
+    {
+        return Err(
+            "NVIDIA provenance does not match the exact pinned source repository and commit."
+                .into(),
+        );
+    }
     for module in &provenance.modules {
         let archived_module = Command::new("tar")
             .args(["-xOzf"])
@@ -6035,6 +6312,8 @@ fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, 
                 .as_ref()
                 .ok_or("Target SteamOS metadata is unavailable for the manifest.")?,
             nvidia_installation: nvidia_installation.as_ref(),
+            nvidia_resolution: session.nvidia_resolution.as_ref(),
+            nvidia_source_selection: session.nvidia_source_selection.as_deref(),
         });
         let mut manifest_guard = PartialOutputGuard {
             path: partial_manifest_path.clone(),
@@ -6894,6 +7173,7 @@ async fn assess_nvidia_target(app: tauri::AppHandle) -> Result<NvidiaTargetReadi
 async fn resolve_published_nvidia(
     app: tauri::AppHandle,
     source_selection: Option<String>,
+    allow_experimental_upstream: Option<bool>,
 ) -> Result<NvidiaPublishedResolution, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let manager_state = app.state::<Mutex<ApplianceManager>>();
@@ -6926,7 +7206,8 @@ async fn resolve_published_nvidia(
                 },
             );
         };
-        let mut resolution = if !target.ready {
+        let selection = source_selection.as_deref().unwrap_or("automatic");
+        let resolution = if !target.ready {
             resolve_published_nvidia_for_target(
                 target,
                 &runtime_dir,
@@ -6943,52 +7224,132 @@ async fn resolve_published_nvidia(
             let client = nvidia_http_client()?;
             let releases = fetch_github_releases(&client)?;
             report_progress("querying-nvidia-releases", 1, 1);
-            resolve_published_nvidia_for_target(
-                target,
-                &runtime_dir,
-                &client,
-                &releases,
-                &cancel,
-                &report_progress,
-            )?
-        };
-        if resolution.status == "build_required" {
-            let client = nvidia_http_client()?;
-            let branches = fetch_nvidia_source_branches(&client)?;
-            let plan = resolution
-                .build_plan
-                .as_mut()
-                .ok_or("NVIDIA resolver omitted the on-demand build plan.")?;
-            let selection = source_selection.as_deref().unwrap_or("automatic");
-            let selected_name = match selection {
-                "automatic" => plan.source_branch.as_str(),
-                "latest" => branches
-                    .first()
-                    .map(|branch| branch.name.as_str())
+            let explicit_source = match selection {
+                "automatic" => None,
+                "latest" => fetch_nvidia_source_branches(&client)?
+                    .into_iter()
+                    .next()
+                    .map(Some)
                     .ok_or("No NVIDIA source branches are available.")?,
-                branch if valid_nvidia_source_branch(branch).is_some() => branch,
+                branch if branch.starts_with("project:") => {
+                    let name = branch.trim_start_matches("project:");
+                    fetch_nvidia_source_branches(&client)?
+                        .into_iter()
+                        .find(|branch| branch.name == name)
+                        .ok_or_else(|| {
+                            format!(
+                                "Selected project NVIDIA source branch {name} is no longer available."
+                            )
+                        })
+                        .map(Some)?
+                }
+                branch if valid_nvidia_source_branch(branch).is_some() => {
+                    fetch_nvidia_source_branches(&client)?
+                        .into_iter()
+                        .find(|candidate| candidate.name == branch)
+                        .ok_or_else(|| {
+                            format!(
+                                "Selected project NVIDIA source branch {branch} is no longer available."
+                            )
+                        })
+                        .map(Some)?
+                }
+                upstream if upstream.starts_with("upstream:") => {
+                    let settings = load_builder_settings(&app)?;
+                    if !settings.include_upstream_nvidia_releases {
+                        return Err(
+                            "Experimental upstream NVIDIA releases are disabled in settings."
+                                .into(),
+                        );
+                    }
+                    if allow_experimental_upstream != Some(true) {
+                        return Err(
+                            "Experimental upstream NVIDIA selection requires explicit per-build acknowledgement."
+                                .into(),
+                        );
+                    }
+                    let tag = upstream.trim_start_matches("upstream:");
+                    let tags = fetch_upstream_nvidia_tags(&client)?;
+                    let selected = tags
+                        .into_iter()
+                        .find(|candidate| candidate.name == tag)
+                        .ok_or_else(|| {
+                            format!(
+                                "Selected upstream NVIDIA release {tag} no longer exists."
+                            )
+                        })?;
+                    Some(selected)
+                }
                 _ => return Err("NVIDIA source selection is invalid.".into()),
             };
-            let selected = branches
-                .iter()
-                .find(|branch| branch.name == selected_name)
-                .ok_or_else(|| {
-                    format!(
-                        "Selected NVIDIA source branch {selected_name} is no longer available. Choose Automatic or another branch in settings."
-                    )
-                })?;
-            plan.nvidia_version = selected.version.clone();
-            plan.source_branch = selected.name.clone();
-            plan.source_commit = selected.commit.clone();
-            resolution.message = format!(
-                "No published artifact matches exact kernel {}. NVIDIA {} will be built locally from {} at {} (selection: {}).",
-                plan.kernel_version,
-                plan.nvidia_version,
-                plan.source_branch,
-                &plan.source_commit[..12],
-                selection
-            );
-        }
+
+            if let Some(selected) = explicit_source {
+                preflight_nvidia_userspace(&client, &selected.version)?;
+                if selected.experimental {
+                    explicit_nvidia_build_resolution(
+                        target,
+                        &selected,
+                        format!("upstream-tag-{}", selected.name),
+                    )?
+                } else {
+                    let matching_releases: Vec<_> = releases
+                        .iter()
+                        .filter(|release| {
+                            published_release_identity(&release.tag_name)
+                                .is_some_and(|identity| identity.nvidia_version == selected.version)
+                        })
+                        .cloned()
+                        .collect();
+                    let selected_resolution = resolve_published_nvidia_for_target(
+                        target.clone(),
+                        &runtime_dir,
+                        &client,
+                        &matching_releases,
+                        &cancel,
+                        &report_progress,
+                    )?;
+                    if selected_resolution.status == "compatible" {
+                        selected_resolution
+                    } else {
+                        let baseline = selected_resolution
+                            .build_plan
+                            .as_ref()
+                            .map(|plan| plan.baseline_release.clone())
+                            .unwrap_or_else(|| {
+                                format!("selected-project-source-{}", selected.name)
+                            });
+                        explicit_nvidia_build_resolution(target, &selected, baseline)?
+                    }
+                }
+            } else {
+                let mut automatic = resolve_published_nvidia_for_target(
+                    target,
+                    &runtime_dir,
+                    &client,
+                    &releases,
+                    &cancel,
+                    &report_progress,
+                )?;
+                if automatic.status == "build_required" {
+                    let branches = fetch_nvidia_source_branches(&client)?;
+                    let plan = automatic
+                        .build_plan
+                        .as_mut()
+                        .ok_or("NVIDIA resolver omitted the automatic build plan.")?;
+                    let selected = branches
+                        .iter()
+                        .find(|branch| branch.name == plan.source_branch)
+                        .ok_or_else(|| {
+                            format!(
+                                "Automatic NVIDIA source branch {} is no longer available.",
+                                plan.source_branch
+                            )
+                        })?;
+                    plan.source_commit = selected.commit.clone();
+                }
+                automatic
+            }
+        };
         let mut manager = manager_state
             .lock()
             .map_err(|_| "Appliance state lock is unavailable.")?;
@@ -6998,6 +7359,7 @@ async fn resolve_published_nvidia(
             .filter(|session| session.runtime_dir == runtime_dir)
             .ok_or("Builder session ended before NVIDIA resolution could be recorded.")?;
         active.nvidia_resolution = Some(resolution.clone());
+        active.nvidia_source_selection = Some(selection.to_string());
         active.nvidia_userspace = None;
         active.nvidia_installer_bundle = None;
         active.nvidia_install_validation = None;
@@ -7272,7 +7634,12 @@ fn validate_on_demand_build_plan(session: &ApplianceSession) -> Result<(), Strin
         || target.architecture != "x86_64"
         || plan.support_commit != NVIDIA_SUPPORT_BUILD_COMMIT
         || plan.expected_trust != "locally-built-verified"
-        || valid_nvidia_source_branch(&plan.source_branch) != Some(plan.nvidia_version.as_str())
+        || !valid_nvidia_source_identity(
+            &plan.source_origin,
+            &plan.source_repository,
+            &plan.source_branch,
+            &plan.nvidia_version,
+        )
         || plan.source_commit.len() != 40
         || !plan
             .source_commit
@@ -7428,7 +7795,12 @@ async fn build_nvidia_target_on_demand(
         let build = build_nvidia_for_target_from_source(
             &connection,
             NvidiaSupportSource::PinnedGithub,
-            Some((&plan.source_branch, &plan.source_commit)),
+            Some(NvidiaSourcePin {
+                origin: &plan.source_origin,
+                repository: &plan.source_repository,
+                reference: &plan.source_branch,
+                commit: &plan.source_commit,
+            }),
             &output_dir,
             &spec,
             Some(&cancel),
@@ -7458,6 +7830,8 @@ async fn build_nvidia_target_on_demand(
         let build_info = fs::read_to_string(&artifact.build_info_path)
             .map_err(|error| format!("Could not re-open on-demand build metadata: {error}"))?;
         if metadata_field(&build_info, "source_commit") != Some(plan.source_commit.as_str())
+            || metadata_field(&build_info, "source_repository")
+                != Some(plan.source_repository.as_str())
             || metadata_field(&build_info, "support_commit") != Some(NVIDIA_SUPPORT_BUILD_COMMIT)
             || metadata_field(&build_info, "source_dirty") != Some("0")
             || metadata_field(&build_info, "support_dirty") != Some("0")
@@ -7565,11 +7939,17 @@ async fn publish_on_demand_nvidia_release(
         if artifact.trust != "locally-built-verified"
             || plan.expected_trust != "locally-built-verified"
             || plan.support_commit != NVIDIA_SUPPORT_BUILD_COMMIT
+            || plan.source_origin != "project"
+            || plan.source_repository != NVIDIA_SOURCE_REPOSITORY
             || publication.steamos_version != plan.steamos_version
             || publication.kernel_version != plan.kernel_version
             || publication.nvidia_version != plan.nvidia_version
-            || valid_nvidia_source_branch(&plan.source_branch)
-                != Some(plan.nvidia_version.as_str())
+            || !valid_nvidia_source_identity(
+                &plan.source_origin,
+                &plan.source_repository,
+                &plan.source_branch,
+                &plan.nvidia_version,
+            )
             || plan.source_commit.len() != 40
             || !plan
                 .source_commit
@@ -8532,13 +8912,15 @@ mod tests {
     #[test]
     fn settings_schema_contains_preferences_but_no_credentials() {
         let serialized = serde_json::to_string(&BuilderSettings {
-            schema_version: 1,
+            schema_version: BUILDER_SETTINGS_SCHEMA,
             auto_release_verified_nvidia: true,
             track_steamos_driver_updates: true,
+            include_upstream_nvidia_releases: true,
         })
         .unwrap();
         assert!(serialized.contains("autoReleaseVerifiedNvidia"));
         assert!(serialized.contains("trackSteamosDriverUpdates"));
+        assert!(serialized.contains("includeUpstreamNvidiaReleases"));
         for forbidden in ["token", "password", "secret", "ssh"] {
             assert!(!serialized.to_ascii_lowercase().contains(forbidden));
         }
@@ -8577,6 +8959,78 @@ mod tests {
         ] {
             assert!(valid_nvidia_source_branch(invalid).is_none());
         }
+        assert!(valid_nvidia_source_identity(
+            "project",
+            NVIDIA_SOURCE_REPOSITORY,
+            "nvidia/575.64.05",
+            "575.64.05"
+        ));
+        assert!(valid_nvidia_source_identity(
+            "upstream",
+            NVIDIA_UPSTREAM_REPOSITORY,
+            "580.159.04",
+            "580.159.04"
+        ));
+        assert!(!valid_nvidia_source_identity(
+            "upstream",
+            NVIDIA_SOURCE_REPOSITORY,
+            "580.159.04",
+            "580.159.04"
+        ));
+    }
+
+    #[test]
+    fn explicit_upstream_source_is_pinned_and_never_treated_as_automatic() {
+        let target =
+            ready_published_target("3.8.14", "6.16.12-valve24.4-1-neptune-616-gfe145653a794");
+        let source = NvidiaSourceBranch {
+            name: "580.159.04".into(),
+            version: "580.159.04".into(),
+            commit: "a".repeat(40),
+            origin: "upstream".into(),
+            repository: NVIDIA_UPSTREAM_REPOSITORY.into(),
+            selection: "upstream:580.159.04".into(),
+            experimental: true,
+        };
+        let resolution =
+            explicit_nvidia_build_resolution(target, &source, "upstream-tag-580.159.04".into())
+                .unwrap();
+        assert_eq!(resolution.status, "build_required");
+        assert_eq!(
+            resolution.compatibility.as_deref(),
+            Some("experimental_upstream")
+        );
+        let plan = resolution.build_plan.unwrap();
+        assert_eq!(plan.source_origin, "upstream");
+        assert_eq!(plan.source_repository, NVIDIA_UPSTREAM_REPOSITORY);
+        assert_eq!(plan.source_branch, "580.159.04");
+        assert!(valid_nvidia_source_identity(
+            &plan.source_origin,
+            &plan.source_repository,
+            &plan.source_branch,
+            &plan.nvidia_version
+        ));
+    }
+
+    #[test]
+    #[ignore = "queries NVIDIA's official tags and Arch userspace package indexes"]
+    fn live_upstream_nvidia_source_preflight() {
+        let client = nvidia_http_client().expect("create HTTPS client");
+        let tags = fetch_upstream_nvidia_tags(&client).expect("fetch upstream tags");
+        assert!(tags.iter().all(|tag| {
+            tag.experimental
+                && valid_nvidia_source_identity(
+                    &tag.origin,
+                    &tag.repository,
+                    &tag.name,
+                    &tag.version,
+                )
+                && tag.commit.len() == 40
+        }));
+        let packages =
+            preflight_nvidia_userspace(&client, "575.64.05").expect("preflight userspace");
+        assert_eq!(packages.len(), 2);
+        assert!(packages.iter().all(|package| package.contains("575.64.05")));
     }
 
     #[test]
@@ -8702,6 +9156,12 @@ mod tests {
             },
             "artifact": {
                 "archive": asset
+            },
+            "source": {
+                "repository": NVIDIA_SOURCE_REPOSITORY,
+                "branch": "nvidia/575.64.05",
+                "commit": "c".repeat(40),
+                "dirty": "0"
             },
             "headers": {
                 "signatureStatus": "verified",
@@ -9410,6 +9870,8 @@ mod tests {
             layout: &layout,
             target_system: &target_system,
             nvidia_installation: None,
+            nvidia_resolution: None,
+            nvidia_source_selection: None,
         });
         assert_eq!(manifest["schemaVersion"], 1);
         assert_eq!(manifest["resultClass"], "mutation-valid");
@@ -9455,6 +9917,8 @@ mod tests {
             layout: &layout,
             target_system: &target_system,
             nvidia_installation: Some(&installation),
+            nvidia_resolution: None,
+            nvidia_source_selection: Some("project:nvidia/575.64.05"),
         });
         assert_eq!(nvidia_manifest["resultClass"], "nvidia-mutation-valid");
         assert_eq!(
@@ -9462,6 +9926,14 @@ mod tests {
             "575.64.05"
         );
         assert_eq!(nvidia_manifest["validation"]["nvidiaPayloadVerified"], true);
+        assert_eq!(
+            nvidia_manifest["integration"]["nvidiaSourcePolicy"]["mode"],
+            "pinned"
+        );
+        assert_eq!(
+            nvidia_manifest["integration"]["nvidiaSourcePolicy"]["updateBehavior"],
+            "rebuild-exact-version-or-require-user-decision"
+        );
     }
 
     #[test]

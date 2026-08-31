@@ -54,6 +54,14 @@
                 <input id="track-driver-updates" type="checkbox">
             </label>
 
+            <label class="setting-row">
+                <span>
+                    <strong>Show experimental upstream NVIDIA releases</strong>
+                    <small>Add NVIDIA's unpatched open-module tags to the per-build selector. Automatic mode never selects them.</small>
+                </span>
+                <input id="include-upstream-nvidia" type="checkbox">
+            </label>
+
             <div class="settings-divider"></div>
 
             <div class="github-setting">
@@ -203,9 +211,20 @@
                 </span>
                 <select id="nvidia-source">
                     <option value="automatic">Automatic (Recommended)</option>
-                    <option value="latest">Latest available branch</option>
+                    <option value="latest">Latest project branch</option>
                 </select>
             </label>
+
+            <div id="upstream-warning" class="source-warning hidden">
+                <div>
+                    <strong>Experimental upstream source</strong>
+                    <small>The app will preflight the exact tag and matching userspace, build it locally, and disable automated publication.</small>
+                </div>
+                <label>
+                    <input id="allow-upstream-build" type="checkbox">
+                    <span>Allow this experimental build</span>
+                </label>
+            </div>
 
             <button
                 id="build-button"

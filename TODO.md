@@ -1211,8 +1211,12 @@ Before calling the project **beta**, verify:
 * [ ] Offline build mode.
 * [ ] Multiple certified NVIDIA profiles.
 * [ ] Experimental driver/Gamescope profiles.
+* [x] Add an off-by-default experimental NVIDIA-upstream source catalog with separate grouping, exact tag/commit resolution, matching-userspace preflight, and transient per-build acknowledgement.
+* [x] Keep experimental upstream builds local-only and reject them from the canonical automated publisher until source-origin-aware release identities exist.
+* [x] Record automatic-versus-pinned NVIDIA source policy in generated image manifests.
 * [ ] Automated compatibility report upload with explicit user consent.
 * [ ] Rebuild/update workflow for an already-installed SteamOS system.
+* [ ] Make the future updater honor manifest source policy: rebuild a pinned NVIDIA version for each exact new kernel or pause for an explicit switch to Automatic/another version.
 * [ ] Recovery-image comparison/diff tooling.
 * [ ] GUI diagnostics viewer.
 * [ ] Advanced custom package injection framework only if it does not dilute the NVIDIA-focused safety model.

@@ -9,13 +9,15 @@ const elements = {
   dropTitle: $("#drop-title"), dropMessage: $("#drop-message"),
   selectionCard: $("#selection-card"), selectedName: $("#selected-name"), selectedPath: $("#selected-path"),
   selectionStatus: $("#selection-status"), buildCard: $("#build-card"), buildButton: $("#build-button"),
-  nvidiaSource: $("#nvidia-source"),
+  nvidiaSource: $("#nvidia-source"), upstreamWarning: $("#upstream-warning"),
+  allowUpstreamBuild: $("#allow-upstream-build"),
   resultMessage: $("#result-message"), environmentTitle: $("#environment-title"),
   environmentMessage: $("#environment-message"), environmentDetails: $("#environment-details"),
   environmentStatus: $("#environment-status"),
   settingsButton: $("#settings-button"), settingsClose: $("#settings-close"),
   settingsPanel: $("#settings-panel"), settingsScrim: $("#settings-scrim"),
-  trackDriverUpdates: $("#track-driver-updates"), autoReleaseNvidia: $("#auto-release-nvidia"),
+  trackDriverUpdates: $("#track-driver-updates"), includeUpstreamNvidia: $("#include-upstream-nvidia"),
+  autoReleaseNvidia: $("#auto-release-nvidia"),
   autoReleaseSetting: $("#auto-release-setting"), autoReleaseStatus: $("#auto-release-status"),
   githubStatus: $("#github-status"), githubConnect: $("#github-connect"),
   settingsMessage: $("#settings-message"),
@@ -26,9 +28,10 @@ let currentImageName = null;
 let hostReady = false;
 let progressReady = false;
 let builderSettings = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   autoReleaseVerifiedNvidia: false,
   trackSteamosDriverUpdates: false,
+  includeUpstreamNvidiaReleases: false,
 };
 let githubMaintainer = null;
 let githubLoginPoll = 0;
@@ -50,7 +53,16 @@ async function waitForProgressWindow(progressWindow) {
 }
 
 function updateBuildButton() {
-  elements.buildButton.disabled = !currentImage || !hostReady;
+  const upstreamSelected = elements.nvidiaSource.value.startsWith("upstream:");
+  elements.buildButton.disabled = !currentImage || !hostReady
+    || (upstreamSelected && !elements.allowUpstreamBuild.checked);
+}
+
+function renderSourceWarning() {
+  const upstreamSelected = elements.nvidiaSource.value.startsWith("upstream:");
+  elements.upstreamWarning.classList.toggle("hidden", !upstreamSelected);
+  if (!upstreamSelected) elements.allowUpstreamBuild.checked = false;
+  updateBuildButton();
 }
 
 function waitForPaint() {
@@ -60,6 +72,8 @@ function waitForPaint() {
 function renderSettings() {
   elements.trackDriverUpdates.checked = builderSettings.trackSteamosDriverUpdates;
   elements.trackDriverUpdates.disabled = settingsSavePending;
+  elements.includeUpstreamNvidia.checked = builderSettings.includeUpstreamNvidiaReleases;
+  elements.includeUpstreamNvidia.disabled = settingsSavePending;
   elements.autoReleaseNvidia.checked = builderSettings.autoReleaseVerifiedNvidia;
   elements.autoReleaseNvidia.disabled = settingsSavePending || !githubMaintainer?.authorized;
   elements.autoReleaseSetting.classList.toggle("pending", autoReleaseVerificationPending);
@@ -127,7 +141,7 @@ async function loadSettings() {
 
 async function saveSettings(next) {
   const previous = builderSettings;
-  builderSettings = { ...builderSettings, ...next, schemaVersion: 1 };
+  builderSettings = { ...builderSettings, ...next, schemaVersion: 2 };
   settingsSavePending = true;
   elements.settingsMessage.textContent = "Saving…";
   elements.settingsMessage.className = "settings-message";
@@ -176,19 +190,33 @@ async function checkEnvironment() {
 }
 
 async function loadNvidiaSourceBranches() {
+  const previous = elements.nvidiaSource.value;
   elements.nvidiaSource.disabled = true;
+  elements.nvidiaSource.querySelectorAll("optgroup").forEach((group) => group.remove());
   try {
     const branches = await invoke("list_nvidia_source_branches");
+    const project = document.createElement("optgroup");
+    project.label = "Project-supported branches";
+    const upstream = document.createElement("optgroup");
+    upstream.label = "Experimental NVIDIA upstream tags";
     for (const branch of branches) {
       const option = document.createElement("option");
-      option.value = branch.name;
+      option.value = branch.selection;
       option.textContent = `${branch.version} · ${branch.commit.slice(0, 12)}`;
-      elements.nvidiaSource.append(option);
+      (branch.experimental ? upstream : project).append(option);
+    }
+    if (project.children.length) elements.nvidiaSource.append(project);
+    if (upstream.children.length) elements.nvidiaSource.append(upstream);
+    if ([...elements.nvidiaSource.options].some((option) => option.value === previous)) {
+      elements.nvidiaSource.value = previous;
+    } else {
+      elements.nvidiaSource.value = "automatic";
     }
   } catch (error) {
     elements.resultMessage.textContent = `Could not load optional NVIDIA branches: ${error}`;
   } finally {
     elements.nvidiaSource.disabled = false;
+    renderSourceWarning();
   }
 }
 
@@ -240,10 +268,18 @@ elements.settingsScrim.addEventListener("click", () => setSettingsOpen(false));
 elements.trackDriverUpdates.addEventListener("change", () => saveSettings({
   trackSteamosDriverUpdates: elements.trackDriverUpdates.checked,
 }));
+elements.includeUpstreamNvidia.addEventListener("change", async () => {
+  await saveSettings({
+    includeUpstreamNvidiaReleases: elements.includeUpstreamNvidia.checked,
+  });
+  await loadNvidiaSourceBranches();
+});
+elements.nvidiaSource.addEventListener("change", renderSourceWarning);
+elements.allowUpstreamBuild.addEventListener("change", updateBuildButton);
 elements.autoReleaseNvidia.addEventListener("change", async () => {
   const previous = builderSettings;
   const enabled = elements.autoReleaseNvidia.checked;
-  builderSettings = { ...builderSettings, autoReleaseVerifiedNvidia: enabled, schemaVersion: 1 };
+  builderSettings = { ...builderSettings, autoReleaseVerifiedNvidia: enabled, schemaVersion: 2 };
   autoReleaseVerificationPending = true;
   settingsSavePending = true;
   elements.autoReleaseStatus.textContent = enabled ? "Checking maintainer permission…" : "Saving…";
@@ -300,6 +336,8 @@ elements.buildButton.addEventListener("click", async () => {
       path: currentImage,
       name: currentImageName,
       sourceSelection: elements.nvidiaSource.value,
+      allowExperimentalUpstream: elements.nvidiaSource.value.startsWith("upstream:")
+        && elements.allowUpstreamBuild.checked,
     });
   } catch (error) {
     elements.resultMessage.textContent = String(error);
