@@ -9588,30 +9588,59 @@ fn require_guest_free_space(
     .map(|_| ())
 }
 
-fn guest_userspace_name(
-    package: &NvidiaUserspacePackage,
-    dependency_index: usize,
-) -> Result<String, String> {
-    match package.name.as_str() {
-        "nvidia-utils" => Ok("nvidia-utils".into()),
-        "lib32-nvidia-utils" => Ok("lib32-nvidia-utils".into()),
-        _ if package.role == "dependency" => Ok(format!("dependency-{dependency_index}")),
-        _ => Err("Unexpected userspace package in the installer handoff.".into()),
+fn guest_userspace_filenames(package: &NvidiaUserspacePackage) -> Result<(String, String), String> {
+    let filename = package.filename.as_str();
+    if !filename.ends_with(".pkg.tar.zst")
+        || filename.is_empty()
+        || filename.bytes().any(|byte| {
+            !(byte.is_ascii_alphanumeric()
+                || matches!(byte, b'@' | b'.' | b'_' | b'+' | b':' | b'-'))
+        })
+        || Path::new(filename)
+            .file_name()
+            .and_then(|name| name.to_str())
+            != Some(filename)
+    {
+        return Err(format!(
+            "Reviewed userspace package {} has an unsafe guest filename.",
+            package.name
+        ));
     }
+    Ok((filename.into(), format!("{filename}.sig")))
 }
 
-fn dependency_installer_arguments(packages: &[NvidiaUserspacePackage]) -> Result<String, String> {
+fn userspace_installer_arguments(packages: &[NvidiaUserspacePackage]) -> Result<String, String> {
     let mut arguments = String::new();
-    let mut dependency_index = 0;
+    let mut nvidia_utils = false;
+    let mut lib32_nvidia_utils = false;
     for package in packages {
-        if package.role != "dependency" {
-            continue;
-        }
-        let stem = guest_userspace_name(package, dependency_index)?;
+        let (filename, signature_filename) = guest_userspace_filenames(package)?;
+        let option = match package.name.as_str() {
+            "nvidia-utils" if package.role == "nvidia-userspace" && !nvidia_utils => {
+                nvidia_utils = true;
+                "nvidia-utils"
+            }
+            "lib32-nvidia-utils" if package.role == "nvidia-userspace" && !lib32_nvidia_utils => {
+                lib32_nvidia_utils = true;
+                "lib32-nvidia-utils"
+            }
+            _ if package.role == "dependency" => "dependency-package",
+            _ => return Err("Unexpected userspace package in the installer handoff.".into()),
+        };
+        arguments.push_str(&format!(" --{option} /tmp/{filename}"));
         arguments.push_str(&format!(
-            " --dependency-package /tmp/{stem}.pkg.tar.zst --dependency-signature /tmp/{stem}.pkg.tar.zst.sig"
+            " --{} /tmp/{signature_filename}",
+            if option == "dependency-package" {
+                "dependency-signature"
+            } else if option == "nvidia-utils" {
+                "nvidia-utils-signature"
+            } else {
+                "lib32-nvidia-utils-signature"
+            }
         ));
-        dependency_index += 1;
+    }
+    if !nvidia_utils || !lib32_nvidia_utils {
+        return Err("The installer handoff is missing a required NVIDIA userspace seed.".into());
     }
     Ok(arguments)
 }
@@ -9685,27 +9714,19 @@ fn validate_nvidia_install_handoff_blocking(
         &inputs.provenance,
         "nvidia-modules.provenance.json",
     )?;
-    let mut dependency_index = 0;
     for package in &inputs.packages {
-        let stem = guest_userspace_name(package, dependency_index)?;
-        if package.role == "dependency" {
-            dependency_index += 1;
-        }
-        copy_install_input_to_guest(
-            &connection,
-            Path::new(&package.package_path),
-            &format!("{stem}.pkg.tar.zst"),
-        )?;
+        let (filename, signature_filename) = guest_userspace_filenames(package)?;
+        copy_install_input_to_guest(&connection, Path::new(&package.package_path), &filename)?;
         copy_install_input_to_guest(
             &connection,
             Path::new(&package.signature_path),
-            &format!("{stem}.pkg.tar.zst.sig"),
+            &signature_filename,
         )?;
     }
 
     let validation_attempt = 1_usize;
     let validation = {
-        let dependency_arguments = dependency_installer_arguments(&inputs.packages)?;
+        let userspace_arguments = userspace_installer_arguments(&inputs.packages)?;
         let command = format!(
             r#"set -euo pipefail
 WORK=/tmp/steamos-nvidia-offline-install
@@ -9758,7 +9779,7 @@ fi
 sudo dnf install -y bsdtar gnupg2 python3 kmod pacman
 test -f "$WORK/support/{keyring_path}"
 test -f "$WORK/support/{lock_path}"
-sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --progress-attempt {validation_attempt} --result-json "$WORK/install-result.json"{dependency_arguments}
+sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --progress-attempt {validation_attempt} --result-json "$WORK/install-result.json"
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
 sudo umount "$ROOT/var"
@@ -9772,7 +9793,7 @@ trap - EXIT INT TERM"#,
             keyring_path = NVIDIA_USERSPACE_KEYRING_PATH,
             lock_path = NVIDIA_USERSPACE_LOCK_PATH,
             kernel = inputs.kernel_version,
-            dependency_arguments = dependency_arguments,
+            userspace_arguments = userspace_arguments,
         );
         let execution_result = run_guest_command_logged(
             &connection,
@@ -9914,7 +9935,7 @@ fn install_nvidia_to_working_image_blocking(
         );
         (NvidiaBuildConnection::from(&*session), cancel)
     };
-    let dependency_arguments = dependency_installer_arguments(&inputs.packages)?;
+    let userspace_arguments = userspace_installer_arguments(&inputs.packages)?;
     let command = format!(
         r#"set -euo pipefail
 WORK=/tmp/steamos-nvidia-offline-install
@@ -10005,7 +10026,7 @@ sudo mount -o rw "${{VAR_PARTS[0]}}" "$ROOT/var"
 VAR_MOUNTED=1
 sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/efi"
 EFI_MOUNTED=1
-sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --result-json "$WORK/install-mutation-result.json"{dependency_arguments}
+sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --result-json "$WORK/install-mutation-result.json"
 INITRAMFS_OK=0
 while IFS= read -r INITRAMFS; do
   test -n "$INITRAMFS" || continue
@@ -10043,7 +10064,7 @@ trap - EXIT INT TERM"#,
         keyring_path = NVIDIA_USERSPACE_KEYRING_PATH,
         lock_path = NVIDIA_USERSPACE_LOCK_PATH,
         kernel = inputs.kernel_version,
-        dependency_arguments = dependency_arguments,
+        userspace_arguments = userspace_arguments,
     );
     let execution_result = run_guest_command_logged(
         &connection,
@@ -10374,6 +10395,46 @@ fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preserves_reviewed_userspace_filenames_across_guest_handoff() {
+        let package = |name: &str, role: &str, filename: &str| NvidiaUserspacePackage {
+            name: name.into(),
+            role: role.into(),
+            filename: filename.into(),
+            full_version: "1-1".into(),
+            package_path: format!("/host/{filename}"),
+            signature_path: format!("/host/{filename}.sig"),
+            package_sha256: "a".repeat(64),
+        };
+        let packages = vec![
+            package(
+                "nvidia-utils",
+                "nvidia-userspace",
+                "nvidia-utils-575.64.05-2-x86_64.pkg.tar.zst",
+            ),
+            package(
+                "lib32-nvidia-utils",
+                "nvidia-userspace",
+                "lib32-nvidia-utils-575.64.05-1-x86_64.pkg.tar.zst",
+            ),
+            package(
+                "egl-wayland",
+                "dependency",
+                "egl-wayland-4:1.1.19-1-x86_64.pkg.tar.zst",
+            ),
+        ];
+        let arguments = userspace_installer_arguments(&packages)
+            .expect("reviewed filenames should produce installer arguments");
+        for package in &packages {
+            assert!(arguments.contains(&format!("/tmp/{}", package.filename)));
+            assert!(arguments.contains(&format!("/tmp/{}.sig", package.filename)));
+        }
+        assert!(!arguments.contains("dependency-0"));
+
+        let unsafe_package = package("egl-wayland", "dependency", "../egl-wayland.pkg.tar.zst");
+        assert!(guest_userspace_filenames(&unsafe_package).is_err());
+    }
 
     #[test]
     fn settings_schema_contains_preferences_but_no_credentials() {
