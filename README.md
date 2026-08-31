@@ -104,7 +104,10 @@ follow a moving branch. Failed or cancelled downloads remove the entire partial
 bundle, and repeated preparation revalidates and reuses the session-owned copy.
 The handoff transfers that bundle plus the verified module archive, checksum,
 provenance, exact userspace packages, and detached signatures into the x86
-worker. It prepares a minimal keyring from Fedora's trusted Arch key material,
+worker. Because the guest uses a fixed archive basename, Rust derives its guest
+checksum sidecar from the already verified archive digest with that exact fixed
+name; the pinned support validator then independently rehashes the transferred
+archive. It prepares a minimal keyring from Fedora's trusted Arch key material,
 mounts uniquely identified `rootfs-A`, `var-A`, and `efi-A` read-only, and accepts only a
 schema-1 `validated/validation_complete` result whose target, trust, hashes,
 package-specific signers, Holo database, EFI boot policy, and released-mount

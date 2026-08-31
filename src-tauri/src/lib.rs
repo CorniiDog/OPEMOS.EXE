@@ -8476,6 +8476,34 @@ fn copy_install_input_to_guest(
     )
 }
 
+fn nvidia_handoff_checksum(archive_sha256: &str) -> Result<String, String> {
+    if archive_sha256.len() != 64 || !archive_sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Verified NVIDIA archive SHA-256 is invalid.".into());
+    }
+    Ok(format!(
+        "{}  nvidia-modules.tar.gz\n",
+        archive_sha256.to_ascii_lowercase()
+    ))
+}
+
+fn stage_nvidia_handoff_checksum(
+    runtime_dir: &Path,
+    archive_sha256: &str,
+) -> Result<PathBuf, String> {
+    let path = runtime_dir.join("nvidia-modules.tar.gz.sha256");
+    let checksum = nvidia_handoff_checksum(archive_sha256)?;
+    let mut output = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&path)
+        .map_err(|error| format!("Could not stage the normalized NVIDIA checksum: {error}"))?;
+    output
+        .write_all(checksum.as_bytes())
+        .and_then(|_| output.sync_all())
+        .map_err(|error| format!("Could not finish the normalized NVIDIA checksum: {error}"))?;
+    Ok(path)
+}
+
 fn validate_nvidia_install_handoff_blocking(
     app: tauri::AppHandle,
 ) -> Result<NvidiaInstallHandoffResult, String> {
@@ -8526,9 +8554,11 @@ fn validate_nvidia_install_handoff_blocking(
     )?;
     copy_install_input_to_guest(&connection, &installer_archive, "offline-installer.tar.gz")?;
     copy_install_input_to_guest(&connection, &inputs.archive, "nvidia-modules.tar.gz")?;
+    let handoff_checksum =
+        stage_nvidia_handoff_checksum(&connection.runtime_dir, &inputs.archive_sha256)?;
     copy_install_input_to_guest(
         &connection,
-        &inputs.checksum,
+        &handoff_checksum,
         "nvidia-modules.tar.gz.sha256",
     )?;
     copy_install_input_to_guest(
@@ -9766,6 +9796,17 @@ mod tests {
         assert!(PINNED_PUBLISHER_FILES
             .iter()
             .any(|file| file.path == "lib/validate_publish_inputs.py" && file.executable));
+    }
+
+    #[test]
+    fn normalizes_verified_checksum_for_fixed_guest_archive_name() {
+        let digest = "A".repeat(64);
+        assert_eq!(
+            nvidia_handoff_checksum(&digest).unwrap(),
+            format!("{}  nvidia-modules.tar.gz\n", "a".repeat(64))
+        );
+        assert!(nvidia_handoff_checksum(&"g".repeat(64)).is_err());
+        assert!(nvidia_handoff_checksum("abcd").is_err());
     }
 
     #[test]
