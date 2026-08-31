@@ -43,6 +43,10 @@ test("diagnostic copy drops routine noise and retains failure context", () => {
   const raw = [
     "[    0.100] Linux boot noise",
     "[    0.200] Linux boot noise",
+    "[  OK  ] Started systemd-journald.service - Journal Service.",
+    "         Starting cloud-init-network.service - Cloud-init: Network Stage...",
+    "error: ../../grub-core/commands/loadenv.h:read_envblk_file:51:invalid",
+    "environment block.",
     "CC [M] module.o",
     "[ nvidia ] CC kernel-open/nvidia/nv.o",
     "[builder] NVIDIA offline validation started",
@@ -58,5 +62,5 @@ test("diagnostic copy drops routine noise and retains failure context", () => {
   assert.match(result, /Input: recovery\.img/);
   assert.match(result, /package_dependency_unsatisfied/);
   assert.match(result, /\/usr\/lib\/holo\/pacmandb/);
-  assert.doesNotMatch(result, /Linux boot noise|CC \[M\]|QEMU: Terminated|\/Users\/connor/);
+  assert.doesNotMatch(result, /Linux boot noise|systemd-journald|cloud-init-network|grub-core|environment block|CC \[M\]|QEMU: Terminated|\/Users\/connor/);
 });

@@ -1,7 +1,7 @@
 const ANSI_CSI = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const ANSI_OSC = /\x1b\][^\x07]*(?:\x07|\x1b\\)/g;
 
-const ROUTINE_LINE = /^(?:\[\s*\d+(?:\.\d+)?\]\s|UEFI firmware|ArmTrngLib|Tpm2|BdsDxe:|Error: Image at|Image type X64|Fedora Linux \d+|Kernel .* on an |steamos-builder login:|qemu-system-|QEMU: Terminated|cloud-init\[|\[[^\]]+\]\s+(?:CC|LD|AR|BTF|MODPOST)\b|\s*(?:CC|LD|AR|BTF|MODPOST)\s+\[M\]|make\[\d+\]: (?:Entering|Leaving) directory|\s*\[\d+\/\d+\]|\s*\(\d+\/\d+\)|Downloading Packages:|Running transaction|Complete!$|Last metadata expiration check:|Dependencies resolved\.|Package\s+Architecture\s+Version|Transaction Summary|\s*(?:Installing|Upgrading|Verifying|Preparing)\s*:|Total download size:|Installed size:|Is this ok \[y\/N\])/i;
+const ROUTINE_LINE = /^(?:\[\s*\d+(?:\.\d+)?\]\s|\[\s*OK\s*\]|\s*(?:Starting|Started|Stopping|Stopped|Finished|Reached target|Listening on|Mounted|Mounting|Found device|Expecting device|Created slice|Activated swap|Activating swap|Closed|Set up automount)\b|UEFI firmware|ArmTrngLib|Tpm2|BdsDxe:|Error: Image at|Image type X64|error: \.\.\/\.\.\/grub-core\/|(?:invalid\s+)?environment block\.|\s*(?:serial port|terminal)\s+|isn't found\.$|sparse file not$|allowed\.$|\s*Booting `Fedora Linux|Fedora Linux \d+|Kernel .* on |enp\d|Try contacting this VM|steamos-builder login:|qemu-system-|QEMU: Terminated|cloud-init\[|P\+q6E616D65|\[\*+\s*\]\s+Job |^[M\r]$|\[[^\]]+\]\s+(?:CC|LD|AR|BTF|MODPOST)\b|\s*(?:CC|LD|AR|BTF|MODPOST)\s+\[M\]|make\[\d+\]: (?:Entering|Leaving) directory|\s*\[\s*\d+\/\d+\]|\s*\(\d+\/\d+\)|Updating and loading repositories:|Repositories loaded\.|\s*Fedora .*100%|Package .* is already installed\.|Package\s+Arch\s+Version|\s*[A-Za-z0-9@._+:-]+\s+(?:x86_64|any|noarch)\s+|Downloading Packages:|Running transaction|Complete!$|Last metadata expiration check:|Dependencies resolved\.|Package\s+Architecture\s+Version|Transaction Summary|\s*(?:Installing|Upgrading|Verifying|Preparing)\s*:|Total (?:download )?size|Total size of inbound packages|After this operation|Installed size:|Replacing:|Importing OpenPGP key|UserID\s*:|Fingerprint:|From\s*:|The key was successfully imported|>>>|-+$|Is this ok \[y\/N\])/i;
 
 const NVIDIA_MILESTONES = [
   [32, "Preparing isolated NVIDIA build", /Installing Fedora offline-target build dependencies/i],
@@ -62,6 +62,7 @@ function compactLines(lines) {
   let omitted = 0;
   let previous = null;
   let repeats = 0;
+  const seen = new Set();
 
   const flushOmitted = () => {
     if (omitted > 0) selected.push(`[... ${omitted} routine or redundant line${omitted === 1 ? "" : "s"} omitted ...]`);
@@ -72,6 +73,7 @@ function compactLines(lines) {
     const line = lines[index].replace(/[ \t]+$/g, "");
     const trimmed = line.trim();
     if (!trimmed) {
+      if (omitted > 0) continue;
       if (selected.length && selected[selected.length - 1] !== "") selected.push("");
       continue;
     }
@@ -83,6 +85,12 @@ function compactLines(lines) {
     }
     if (repeats > 0) repeats = 0;
     previous = trimmed;
+
+    if (seen.has(trimmed)) {
+      omitted += 1;
+      continue;
+    }
+    seen.add(trimmed);
 
     if (ROUTINE_LINE.test(trimmed)) {
       omitted += 1;

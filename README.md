@@ -97,10 +97,17 @@ not rejected. Packages and detached signatures are downloaded through bounded,
 cancellable streams, hashed while transferring, and retained only in backend
 session state. Their trust remains explicitly `pending-x86-validation`; the UI
 cannot provide alternate paths or promote them before the managed x86 installer
-checks the reviewed signer policy, package contents, and exact GSP firmware.
+checks the reviewed signer policy, package contents, and exact GSP firmware. If
+the installer reports `validation.missingDependencies`, Rust resolves each safe
+package identity from the Arch Linux Archive, stages its package and paired
+signature under generated guest filenames, and repeats read-only validation.
+The closure is bounded to 16 dependencies, rejects duplicate/unsatisfied
+versions rather than guessing, and is reused verbatim for mutation only after
+the support validator authenticates every package. Guest pacman remains fully
+offline throughout this process.
 
 The backend also stages the offline-root installer from immutable support commit
-`236b926c4cf29bdefbadad2b6fea85ef46c904dd`. Its eight required scripts,
+`82a761622f682db62f58721e00bf329749ffb4a8`. Its eight required scripts,
 helpers, and signer-policy files have embedded byte counts and SHA-256 pins;
 every file must match before a versioned bundle manifest is recorded. The
 normal workflow therefore does not accept a user-selected support checkout or
@@ -114,8 +121,10 @@ name; the pinned support validator then independently rehashes the transferred
 archive. It prepares a minimal keyring from Fedora's trusted Arch key material,
 mounts uniquely identified `rootfs-A`, `var-A`, and `efi-A` read-only, and accepts only a
 schema-1 `validated/validation_complete` result whose target, trust, hashes,
-package-specific signers, Holo database, EFI boot policy, and released-mount
-status all match Rust-owned state.
+complete ordered package set, signer fingerprints, Holo database, EFI boot
+policy, authoritative storage accounting, and released-mount status all match
+Rust-owned state. A dependency-closure failure never reaches mutation and is
+not interpreted as a storage shortage.
 Mutation mounts the Btrfs top level explicitly, identifies the current default
 root subvolume, temporarily clears only that subvolume's read-only property,
 mounts the matching `var-A` at `/var` and `efi-A` at `/efi` without hiding

@@ -244,6 +244,12 @@ function showNvidiaResolutionProgress(progress) {
     setStatus("running", "Downloading 32-bit NVIDIA signature", "Staging the detached lib32-nvidia-utils signature for appliance verification.", 38, "Downloading");
   } else if (progress.stage === "downloading-nvidia-installer") {
     setStatus("running", "Preparing pinned NVIDIA installer", `Verified ${formatBytes(processed)} of ${formatBytes(total)} from the immutable support snapshot.`, 38 + ratio * 2, "Verifying");
+  } else if (progress.stage === "querying-arch-dependency-index") {
+    setStatus("running", "Resolving signed userspace dependency", "The installer identified a missing dependency; locating its signed Arch Archive package before retrying validation.", 65, "Resolving");
+  } else if (progress.stage === "downloading-userspace-dependency") {
+    setStatus("running", "Downloading signed userspace dependency", `${formatBytes(processed)}${total ? ` of ${formatBytes(total)}` : ""} transferred before validation retries.`, 65 + ratio * 2, "Downloading");
+  } else if (progress.stage === "downloading-userspace-dependency-signature") {
+    setStatus("running", "Downloading dependency signature", "Staging the paired detached signature for x86_64 keyring verification.", 67, "Downloading");
   }
 }
 
@@ -658,8 +664,11 @@ async function runBuild(request) {
         addStageLog(`NVIDIA offline validation: ${validation.message}`);
         addStageLog(`NVIDIA trust: ${validation.trust}; keyring SHA256 ${validation.keyringSha256}; mounts released=${validation.mountsReleased}.`);
         for (const packageInput of validation.packages) {
-          addStageLog(`NVIDIA signature verified: ${packageInput.name} ${packageInput.fullVersion}; signer ${packageInput.signer}.`);
+          const packageRole = packageInput.role === "dependency" ? "dependency" : "NVIDIA userspace";
+          addStageLog(`${packageRole} signature verified: ${packageInput.name} ${packageInput.fullVersion}; signer ${packageInput.signer}.`);
         }
+        const storage = validation.storage;
+        addStageLog(`NVIDIA storage validation: root ${storage.rootRequiredBytes} required / ${storage.rootAvailableBytes} available bytes; var ${storage.varRequiredBytes} / ${storage.varAvailableBytes}; EFI ${storage.efiRequiredBytes} / ${storage.efiAvailableBytes}.`);
         activeNvidiaPhase = "installation";
         setStatus("running", "Installing NVIDIA into working image", "Applying authenticated userspace, exact-kernel modules, firmware, depmod, and SteamOS initramfs changes only to the disposable overlay.", 71, "Installing");
         let installation;

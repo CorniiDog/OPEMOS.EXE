@@ -43,9 +43,11 @@ const _: () = assert!(NVIDIA_ARCHIVE_LIMIT <= 2 * 1024 * 1024 * 1024);
 const ARCH_ARCHIVE_INDEX_LIMIT: u64 = 8 * 1024 * 1024;
 const NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 512 * 1024 * 1024;
 const LIB32_NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 128 * 1024 * 1024;
+const NVIDIA_DEPENDENCY_ARCHIVE_LIMIT: u64 = 256 * 1024 * 1024;
+const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_SUPPORT_COMMIT: &str = "236b926c4cf29bdefbadad2b6fea85ef46c904dd";
+const NVIDIA_SUPPORT_COMMIT: &str = "82a761622f682db62f58721e00bf329749ffb4a8";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_UTILS_SIGNER: &str = "05C7775A9E8B977407FE08E69D4C5AA15426DA0A";
@@ -150,8 +152,8 @@ struct PinnedInstallerFile {
 const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 8] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "efef1d2cae77110be925e8bb1c0e6987ae957cca4a1db77d82c3b5ee4a51e3ec",
-        bytes: 12_990,
+        sha256: "d29c0fb58f631d1119f64ecafeb9a80ee0d671b1cbe924abfe990256106a9437",
+        bytes: 13_969,
         executable: true,
     },
     PinnedInstallerFile {
@@ -180,14 +182,14 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 8] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "8f3fdd19dfe7b70f57219d933d68df900eb809d2199d120f2c004bde5cc4769c",
-        bytes: 38_089,
+        sha256: "c89aa0343e58617b5a4ddf2bc7f5e5dc74c4a6ecff2bbc49506d53972d3c4cf5",
+        bytes: 39_580,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "dd2a3e3b673e5f8037cf2d47c3bab25f837209d1af17b3dca7a4725e4c63af4e",
-        bytes: 4_031,
+        sha256: "709b5c60b11f253e449f2d73c27c9c43207dbffdfcbfc1b283e0e9fd46f58d02",
+        bytes: 4_138,
         executable: true,
     },
     PinnedInstallerFile {
@@ -458,6 +460,7 @@ struct NvidiaPublishedResolution {
 #[serde(rename_all = "camelCase")]
 struct NvidiaUserspacePackage {
     name: String,
+    role: String,
     filename: String,
     full_version: String,
     package_path: String,
@@ -504,6 +507,7 @@ struct NvidiaInstallerBundleState {
     report: NvidiaInstallerBundle,
 }
 
+#[derive(Clone)]
 struct NvidiaInstallInputs {
     image_runtime_dir: PathBuf,
     working_image: PathBuf,
@@ -572,7 +576,18 @@ struct SupportInstallValidation {
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SupportInstallFailureValidation {
-    storage: SupportInstallStorage,
+    #[serde(default)]
+    storage: Option<SupportInstallStorage>,
+    #[serde(default)]
+    missing_dependencies: Vec<String>,
+    #[serde(default)]
+    dependency_requested_by: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
+struct MissingDependencyRequest {
+    specifications: Vec<String>,
+    requested_by: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -618,6 +633,7 @@ struct SupportInstallKeyring {
 #[serde(rename_all = "camelCase")]
 struct SupportInstallPackage {
     name: String,
+    role: String,
     full_version: String,
     pkgver: String,
     pkgrel: String,
@@ -4104,6 +4120,200 @@ fn query_arch_userspace_package(
     select_arch_userspace_package(index, package, nvidia_version)
 }
 
+fn arch_dependency_name(specification: &str) -> Result<&str, String> {
+    let name = specification
+        .split(['<', '>', '='])
+        .next()
+        .unwrap_or_default();
+    if name.is_empty()
+        || name.len() > 128
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"@._+-".contains(&byte))
+    {
+        return Err(format!(
+            "Installer requested an unsupported Arch dependency identity: {specification}"
+        ));
+    }
+    Ok(name)
+}
+
+fn natural_arch_version_cmp(left: &str, right: &str) -> std::cmp::Ordering {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    let (mut left_at, mut right_at) = (0, 0);
+    while left_at < left.len() && right_at < right.len() {
+        if left[left_at].is_ascii_digit() && right[right_at].is_ascii_digit() {
+            let left_end = (left_at..left.len())
+                .find(|index| !left[*index].is_ascii_digit())
+                .unwrap_or(left.len());
+            let right_end = (right_at..right.len())
+                .find(|index| !right[*index].is_ascii_digit())
+                .unwrap_or(right.len());
+            let left_number = &left[left_at..left_end];
+            let right_number = &right[right_at..right_end];
+            let left_trimmed = left_number
+                .iter()
+                .position(|byte| *byte != b'0')
+                .map(|index| &left_number[index..])
+                .unwrap_or(&left_number[left_number.len().saturating_sub(1)..]);
+            let right_trimmed = right_number
+                .iter()
+                .position(|byte| *byte != b'0')
+                .map(|index| &right_number[index..])
+                .unwrap_or(&right_number[right_number.len().saturating_sub(1)..]);
+            let compared = left_trimmed
+                .len()
+                .cmp(&right_trimmed.len())
+                .then_with(|| left_trimmed.cmp(right_trimmed))
+                .then_with(|| left_number.len().cmp(&right_number.len()).reverse());
+            if compared != std::cmp::Ordering::Equal {
+                return compared;
+            }
+            left_at = left_end;
+            right_at = right_end;
+            continue;
+        }
+        let compared = left[left_at].cmp(&right[right_at]);
+        if compared != std::cmp::Ordering::Equal {
+            return compared;
+        }
+        left_at += 1;
+        right_at += 1;
+    }
+    left.len().cmp(&right.len())
+}
+
+fn select_arch_dependency_package(index: &str, package: &str) -> Result<(String, String), String> {
+    arch_dependency_name(package)?;
+    let hrefs = arch_index_hrefs(index);
+    let prefix = format!("{package}-");
+    let suffixes = ["-x86_64.pkg.tar.zst", "-any.pkg.tar.zst"];
+    let mut candidates = Vec::new();
+    for href in &hrefs {
+        let Some(without_prefix) = href.strip_prefix(&prefix) else {
+            continue;
+        };
+        let Some((full_version, architecture)) =
+            suffixes.iter().enumerate().find_map(|(rank, suffix)| {
+                without_prefix
+                    .strip_suffix(suffix)
+                    .map(|version| (version, rank))
+            })
+        else {
+            continue;
+        };
+        if href.len() > 255
+            || Path::new(href).file_name().and_then(|name| name.to_str()) != Some(href)
+            || full_version.is_empty()
+            || !full_version.contains('-')
+            || !full_version
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"@._+~:-".contains(&byte))
+            || !hrefs.contains(format!("{href}.sig").as_str())
+        {
+            continue;
+        }
+        candidates.push((full_version.to_string(), architecture, (*href).to_string()));
+    }
+    candidates.sort_by(|left, right| {
+        natural_arch_version_cmp(&left.0, &right.0)
+            .then_with(|| right.1.cmp(&left.1))
+            .then_with(|| left.2.cmp(&right.2))
+    });
+    let Some((full_version, _, filename)) = candidates.pop() else {
+        return Err(format!(
+            "The Arch Linux Archive has no signed x86_64/any package for dependency {package}."
+        ));
+    };
+    Ok((filename, full_version))
+}
+
+fn arch_dependency_directory(package: &str) -> Result<String, String> {
+    let package = arch_dependency_name(package)?;
+    let initial = package
+        .chars()
+        .next()
+        .ok_or("Arch dependency name is empty.")?
+        .to_ascii_lowercase();
+    if !initial.is_ascii_alphanumeric() {
+        return Err("Arch dependency has an unsupported archive directory.".into());
+    }
+    Ok(format!(
+        "https://archive.archlinux.org/packages/{initial}/{package}"
+    ))
+}
+
+fn query_arch_dependency_package(
+    client: &reqwest::blocking::Client,
+    specification: &str,
+) -> Result<(String, String, String, String), String> {
+    let package = arch_dependency_name(specification)?;
+    let directory = arch_dependency_directory(package)?;
+    let response = client
+        .get(format!("{directory}/"))
+        .header("Accept", "text/html")
+        .send()
+        .map_err(|error| {
+            format!("Could not query the Arch Linux Archive for {package}: {error}")
+        })?;
+    let bytes = read_http_response_limited(
+        response,
+        ARCH_ARCHIVE_INDEX_LIMIT,
+        &format!("{package} archive index"),
+    )?;
+    let index = std::str::from_utf8(&bytes)
+        .map_err(|error| format!("{package} archive index is not UTF-8: {error}"))?;
+    let (filename, full_version) = select_arch_dependency_package(index, package)?;
+    Ok((package.into(), directory, filename, full_version))
+}
+
+fn stage_arch_dependency_package(
+    staging_dir: &Path,
+    specification: &str,
+    client: &reqwest::blocking::Client,
+    cancel: &AtomicBool,
+    progress: &impl Fn(&str, u64, u64),
+) -> Result<NvidiaUserspacePackage, String> {
+    progress("querying-arch-dependency-index", 0, 0);
+    let (name, directory, filename, full_version) =
+        query_arch_dependency_package(client, specification)?;
+    let signature_filename = format!("{filename}.sig");
+    let package_path = staging_dir.join(&filename);
+    let signature_path = staging_dir.join(&signature_filename);
+    let package_sha256 = download_arch_userspace_asset(
+        client,
+        &format!("{directory}/{filename}"),
+        &package_path,
+        NVIDIA_DEPENDENCY_ARCHIVE_LIMIT,
+        cancel,
+        "downloading-userspace-dependency",
+        progress,
+    )?;
+    if let Err(error) = download_arch_userspace_asset(
+        client,
+        &format!("{directory}/{signature_filename}"),
+        &signature_path,
+        ARCH_PACKAGE_SIGNATURE_LIMIT,
+        cancel,
+        "downloading-userspace-dependency-signature",
+        progress,
+    ) {
+        let _ = fs::remove_file(&package_path);
+        let _ = fs::remove_file(&signature_path);
+        return Err(error);
+    }
+    Ok(NvidiaUserspacePackage {
+        name,
+        role: "dependency".into(),
+        filename,
+        full_version,
+        package_path: package_path.to_string_lossy().into_owned(),
+        signature_path: signature_path.to_string_lossy().into_owned(),
+        package_sha256,
+    })
+}
+
 fn preflight_nvidia_userspace(
     client: &reqwest::blocking::Client,
     nvidia_version: &str,
@@ -4278,6 +4488,7 @@ fn resolve_nvidia_userspace_for_version(
         )?;
         packages.push(NvidiaUserspacePackage {
             name: package.into(),
+            role: "nvidia-userspace".into(),
             filename,
             full_version,
             package_path: package_path.to_string_lossy().into_owned(),
@@ -4299,6 +4510,28 @@ fn resolve_nvidia_userspace_for_version(
     };
     output_guard.armed = false;
     Ok(resolution)
+}
+
+fn valid_prepared_userspace_packages(packages: &[NvidiaUserspacePackage]) -> bool {
+    if !(2..=2 + NVIDIA_DEPENDENCY_LIMIT).contains(&packages.len()) {
+        return false;
+    }
+    let mut names = HashSet::new();
+    for package in packages {
+        if !names.insert(package.name.as_str()) {
+            return false;
+        }
+        match package.name.as_str() {
+            "nvidia-utils" | "lib32-nvidia-utils" => {
+                if package.role != "nvidia-userspace" {
+                    return false;
+                }
+            }
+            _ if package.role == "dependency" => {}
+            _ => return false,
+        }
+    }
+    names.contains("nvidia-utils") && names.contains("lib32-nvidia-utils")
 }
 
 fn validate_pinned_support_files(files: &[PinnedInstallerFile]) -> Result<u64, String> {
@@ -6263,16 +6496,23 @@ fn verify_nvidia_from_validation_overlay(
     session: &ImageInspectionSession,
     installation: &NvidiaInstallHandoffResult,
 ) -> Result<(), String> {
-    let package_version = |name: &str| {
-        installation
-            .packages
-            .iter()
-            .find(|package| package.name == name)
-            .map(|package| package.full_version.as_str())
-            .ok_or_else(|| format!("Installed NVIDIA state omitted {name}."))
-    };
-    let nvidia_utils_version = package_version("nvidia-utils")?;
-    let lib32_nvidia_utils_version = package_version("lib32-nvidia-utils")?;
+    let mut package_assertions = String::new();
+    for package in &installation.packages {
+        if arch_dependency_name(&package.name)? != package.name
+            || package.full_version.is_empty()
+            || package.full_version.len() > 256
+            || !package
+                .full_version
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"@._+~:-".contains(&byte))
+        {
+            return Err("Installed package manifest contains an unsafe identity.".into());
+        }
+        package_assertions.push_str(&format!(
+            "test \"$(package_versions '{}')\" = '{}'\n",
+            package.name, package.full_version
+        ));
+    }
     let command = format!(
         r#"set -euo pipefail
 WORK=/dev/disk/by-id/virtio-steamos-user-working
@@ -6381,8 +6621,7 @@ package_versions() {{
       END {{ if (name == wanted) print version }}
     ' {{}} \;
 }}
-test "$(package_versions nvidia-utils)" = "{}"
-test "$(package_versions lib32-nvidia-utils)" = "{}"
+{}
 find "$ROOT/boot" -maxdepth 1 -type f -name 'initramfs*.img' -size +0c -print -quit | grep -q .
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
@@ -6402,8 +6641,7 @@ trap - EXIT INT TERM"#,
         installation.provenance_sha256,
         installation.nvidia_version,
         installation.pacman_database_path,
-        nvidia_utils_version,
-        lib32_nvidia_utils_version,
+        package_assertions,
     );
     run_guest_command(session, &command).map(|_| ())
 }
@@ -7770,7 +8008,7 @@ async fn prepare_nvidia_installer_bundle(
                 .filter(|userspace| {
                     userspace.status == "prepared"
                         && userspace.signature_status == "pending-x86-validation"
-                        && userspace.packages.len() == 2
+                        && valid_prepared_userspace_packages(&userspace.packages)
                 })
                 .ok_or("Exact NVIDIA userspace packages must be staged first.")?;
             if let Some(bundle) = session.nvidia_installer_bundle.as_ref() {
@@ -7853,7 +8091,7 @@ fn collect_nvidia_install_inputs(
         .filter(|userspace| {
             userspace.status == "prepared"
                 && userspace.signature_status == "pending-x86-validation"
-                && userspace.packages.len() == 2
+                && valid_prepared_userspace_packages(&userspace.packages)
         })
         .ok_or("Exact NVIDIA userspace packages must be staged first.")?;
     let installer = session
@@ -8482,14 +8720,18 @@ fn validate_nvidia_storage_failure(
     {
         return Err("Offline installer returned an invalid storage-failure result.".into());
     }
-    let storage = match document.validation.as_ref() {
-        Some(SupportInstallValidationDocument::Failed(validation)) => &validation.storage,
-        _ => {
-            return Err(
-                "Offline installer storage failure omitted authoritative accounting.".into(),
-            )
-        }
-    };
+    let storage =
+        match document.validation.as_ref() {
+            Some(SupportInstallValidationDocument::Failed(validation)) => validation
+                .storage
+                .as_ref()
+                .ok_or("Offline installer storage failure omitted authoritative accounting.")?,
+            _ => {
+                return Err(
+                    "Offline installer storage failure omitted authoritative accounting.".into(),
+                )
+            }
+        };
     validate_support_storage(storage, false)?;
     Ok(format!(
         "SteamOS target storage is insufficient: root {} required / {} available bytes; var {} / {}; EFI {} / {}. No mutation began.",
@@ -8554,33 +8796,52 @@ fn validate_nvidia_install_result(
             .sha256
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit())
-        || validation.packages.len() != 2
+        || validation.packages.len() != inputs.packages.len()
     {
         return Err(
             "Offline installer validation metadata does not match the staged inputs.".into(),
         );
     }
-    for expected in &inputs.packages {
-        let signer = match expected.name.as_str() {
-            "nvidia-utils" => NVIDIA_UTILS_SIGNER,
-            "lib32-nvidia-utils" => LIB32_NVIDIA_UTILS_SIGNER,
-            _ => return Err("Unexpected NVIDIA userspace package in the handoff.".into()),
-        };
-        let validated = validation
-            .packages
-            .iter()
-            .find(|package| package.name == expected.name)
-            .ok_or_else(|| format!("Offline validation omitted {}.", expected.name))?;
-        if validated.full_version != expected.full_version
-            || validated.pkgver != inputs.nvidia_version
-            || validated.signer != signer
+    let mut validated_names = HashSet::new();
+    if validation
+        .packages
+        .iter()
+        .any(|package| !validated_names.insert(package.name.as_str()))
+    {
+        return Err("Offline validation returned duplicate package identities.".into());
+    }
+    for (expected, validated) in inputs.packages.iter().zip(&validation.packages) {
+        if validated.name != expected.name
+            || validated.full_version != expected.full_version
+            || validated.role != expected.role
             || validated.sha256 != expected.package_sha256
             || validated.pkgrel.is_empty()
+            || validated.signer.len() != 40
+            || !validated
+                .signer
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
         {
             return Err(format!(
                 "Offline validation metadata does not match staged {}.",
                 expected.name
             ));
+        }
+        match expected.name.as_str() {
+            "nvidia-utils"
+                if validated.pkgver == inputs.nvidia_version
+                    && validated.signer == NVIDIA_UTILS_SIGNER => {}
+            "lib32-nvidia-utils"
+                if validated.pkgver == inputs.nvidia_version
+                    && validated.signer == LIB32_NVIDIA_UTILS_SIGNER => {}
+            "nvidia-utils" | "lib32-nvidia-utils" => {
+                return Err(format!(
+                    "Offline validation returned an unapproved signer or version for {}.",
+                    expected.name
+                ));
+            }
+            _ if expected.role == "dependency" => {}
+            _ => return Err("Unexpected userspace package role in the handoff.".into()),
         }
     }
     Ok(NvidiaInstallHandoffResult {
@@ -8739,11 +9000,195 @@ fn require_guest_free_space(
     .map(|_| ())
 }
 
+fn guest_userspace_name(
+    package: &NvidiaUserspacePackage,
+    dependency_index: usize,
+) -> Result<String, String> {
+    match package.name.as_str() {
+        "nvidia-utils" => Ok("nvidia-utils".into()),
+        "lib32-nvidia-utils" => Ok("lib32-nvidia-utils".into()),
+        _ if package.role == "dependency" => Ok(format!("dependency-{dependency_index}")),
+        _ => Err("Unexpected userspace package in the installer handoff.".into()),
+    }
+}
+
+fn dependency_installer_arguments(packages: &[NvidiaUserspacePackage]) -> Result<String, String> {
+    let mut arguments = String::new();
+    let mut dependency_index = 0;
+    for package in packages {
+        if package.role != "dependency" {
+            continue;
+        }
+        let stem = guest_userspace_name(package, dependency_index)?;
+        arguments.push_str(&format!(
+            " --dependency-package /tmp/{stem}.pkg.tar.zst --dependency-signature /tmp/{stem}.pkg.tar.zst.sig"
+        ));
+        dependency_index += 1;
+    }
+    Ok(arguments)
+}
+
+fn missing_dependency_requests(
+    document: &SupportInstallResult,
+    inputs: &NvidiaInstallInputs,
+) -> Result<Option<MissingDependencyRequest>, String> {
+    if document.status != "failed" || document.reason != "package_dependency_unsatisfied" {
+        return Ok(None);
+    }
+    if document.schema_version != 1
+        || document.phase != "validation"
+        || document.target.architecture != "x86_64"
+        || document.target.kernel_version != inputs.kernel_version
+        || !document.cleanup.mounts_released
+    {
+        return Err("Offline installer returned an invalid dependency-closure failure.".into());
+    }
+    let failure = match document.validation.as_ref() {
+        Some(SupportInstallValidationDocument::Failed(validation)) => validation,
+        _ => {
+            return Err(
+                "Offline installer dependency failure omitted structured validation metadata."
+                    .into(),
+            )
+        }
+    };
+    if failure.missing_dependencies.is_empty()
+        || failure.missing_dependencies.len() > NVIDIA_DEPENDENCY_LIMIT
+    {
+        return Err("Offline installer returned an invalid missing-dependency set.".into());
+    }
+    let mut names = HashSet::new();
+    for specification in &failure.missing_dependencies {
+        let name = arch_dependency_name(specification)?;
+        if !names.insert(name) {
+            return Err("Offline installer returned duplicate missing dependencies.".into());
+        }
+    }
+    if failure
+        .dependency_requested_by
+        .as_deref()
+        .is_some_and(|requester| arch_dependency_name(requester) != Ok(requester))
+    {
+        return Err("Offline installer returned an invalid dependency requester.".into());
+    }
+    Ok(Some(MissingDependencyRequest {
+        specifications: failure.missing_dependencies.clone(),
+        requested_by: failure.dependency_requested_by.clone(),
+    }))
+}
+
+fn stage_missing_userspace_dependencies(
+    app: &tauri::AppHandle,
+    image_manager_state: &tauri::State<'_, Mutex<ApplianceManager>>,
+    connection: &NvidiaBuildConnection,
+    cancel: &AtomicBool,
+    inputs: &mut NvidiaInstallInputs,
+    specifications: &[String],
+    requested_by: Option<&str>,
+) -> Result<(), String> {
+    let dependency_count = inputs
+        .packages
+        .iter()
+        .filter(|package| package.role == "dependency")
+        .count();
+    if dependency_count
+        .checked_add(specifications.len())
+        .is_none_or(|count| count > NVIDIA_DEPENDENCY_LIMIT)
+    {
+        return Err("NVIDIA userspace dependency closure exceeds its safety limit.".into());
+    }
+    let staging_dir = inputs
+        .packages
+        .first()
+        .and_then(|package| Path::new(&package.package_path).parent())
+        .ok_or("NVIDIA userspace staging directory is unavailable.")?
+        .to_path_buf();
+    let client = nvidia_http_client()?;
+    let report_progress = |stage: &str, processed_bytes: u64, total_bytes: u64| {
+        let _ = app.emit_to(
+            "build-progress",
+            "nvidia-resolution-progress",
+            NvidiaResolutionProgress {
+                stage: stage.into(),
+                processed_bytes,
+                total_bytes,
+            },
+        );
+    };
+    for specification in specifications {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("NVIDIA dependency staging cancelled.".into());
+        }
+        let name = arch_dependency_name(specification)?;
+        if inputs.packages.iter().any(|package| package.name == name) {
+            return Err(format!(
+                "The newest staged signed {name} package did not satisfy {specification}{}; refusing to guess another dependency version.",
+                requested_by
+                    .map(|requester| format!(" requested by {requester}"))
+                    .unwrap_or_default()
+            ));
+        }
+        let package = stage_arch_dependency_package(
+            &staging_dir,
+            specification,
+            &client,
+            cancel,
+            &report_progress,
+        )?;
+        let transfer_bytes = checked_space_sum([
+            safe_regular_file_size(Path::new(&package.package_path), "dependency package")?,
+            safe_regular_file_size(Path::new(&package.signature_path), "dependency signature")?,
+            64 * 1024 * 1024,
+        ])?;
+        require_guest_free_space(
+            connection,
+            "/tmp",
+            transfer_bytes,
+            &format!("Signed {name} dependency handoff"),
+        )?;
+        let index = inputs
+            .packages
+            .iter()
+            .filter(|candidate| candidate.role == "dependency")
+            .count();
+        let stem = guest_userspace_name(&package, index)?;
+        copy_install_input_to_guest(
+            connection,
+            Path::new(&package.package_path),
+            &format!("{stem}.pkg.tar.zst"),
+        )?;
+        copy_install_input_to_guest(
+            connection,
+            Path::new(&package.signature_path),
+            &format!("{stem}.pkg.tar.zst.sig"),
+        )?;
+        inputs.packages.push(package.clone());
+        let mut manager = image_manager_state
+            .lock()
+            .map_err(|_| "Appliance state lock is unavailable.")?;
+        let userspace = manager
+            .session
+            .as_mut()
+            .filter(|session| session.working_image == inputs.working_image)
+            .and_then(|session| session.nvidia_userspace.as_mut())
+            .ok_or("Builder session ended before dependency staging could be recorded.")?;
+        if userspace
+            .packages
+            .iter()
+            .any(|candidate| candidate.name == package.name)
+        {
+            return Err("Dependency staging attempted to record a duplicate package.".into());
+        }
+        userspace.packages.push(package);
+    }
+    Ok(())
+}
+
 fn validate_nvidia_install_handoff_blocking(
     app: tauri::AppHandle,
 ) -> Result<NvidiaInstallHandoffResult, String> {
     let image_manager_state = app.state::<Mutex<ApplianceManager>>();
-    let inputs = {
+    let mut inputs = {
         let manager = image_manager_state
             .lock()
             .map_err(|_| "Appliance state lock is unavailable.")?;
@@ -8808,12 +9253,12 @@ fn validate_nvidia_install_handoff_blocking(
         &inputs.provenance,
         "nvidia-modules.provenance.json",
     )?;
+    let mut dependency_index = 0;
     for package in &inputs.packages {
-        let stem = match package.name.as_str() {
-            "nvidia-utils" => "nvidia-utils",
-            "lib32-nvidia-utils" => "lib32-nvidia-utils",
-            _ => return Err("Unexpected NVIDIA userspace package in the handoff.".into()),
-        };
+        let stem = guest_userspace_name(package, dependency_index)?;
+        if package.role == "dependency" {
+            dependency_index += 1;
+        }
         copy_install_input_to_guest(
             &connection,
             Path::new(&package.package_path),
@@ -8826,8 +9271,15 @@ fn validate_nvidia_install_handoff_blocking(
         )?;
     }
 
-    let command = format!(
-        r#"set -euo pipefail
+    let mut validation_attempt = 0_usize;
+    let validation = loop {
+        validation_attempt += 1;
+        if validation_attempt > NVIDIA_DEPENDENCY_LIMIT + 1 {
+            return Err("NVIDIA dependency validation exceeded its bounded retry limit.".into());
+        }
+        let dependency_arguments = dependency_installer_arguments(&inputs.packages)?;
+        let command = format!(
+            r#"set -euo pipefail
 WORK=/tmp/steamos-nvidia-offline-install
 TARGET=/dev/disk/by-id/virtio-steamos-target
 ROOT=/mnt/steamos-nvidia-target
@@ -8877,7 +9329,7 @@ if test ! -d "$ROOT/usr/lib/holo/pacmandb/local"; then
 fi
 sudo dnf install -y bsdtar gnupg2 python3 kmod pacman archlinux-keyring
 python3 "$WORK/support/bootstrap/prepare_nvidia_package_keyring.py" --source /usr/share/pacman/keyrings/archlinux.gpg --output "$WORK/approved-package-signers.gpg"
-sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-result.json"
+sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-result.json"{}
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
 sudo umount "$ROOT/var"
@@ -8888,54 +9340,81 @@ ROOT_MOUNTED=0
 ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
-        inputs.kernel_version
-    );
-    let execution_result = run_guest_command_logged(
-        &connection,
-        &command,
-        &connection.runtime_dir.join("nvidia-install.log"),
-        Some(&cancel),
-    );
-    let staged_result = connection.runtime_dir.join("nvidia-install-result.json");
-    let result_transfer = run_checked(
-        scp_command(&connection)?
-            .arg("builder@127.0.0.1:/tmp/steamos-nvidia-offline-install/install-result.json")
-            .arg(&staged_result),
-        "Could not copy the NVIDIA installer validation result from the x86 guest",
-    );
-    if let Err(transfer_error) = result_transfer {
-        return Err(execution_result.err().unwrap_or(transfer_error));
-    }
-    fs::copy(
-        &staged_result,
-        inputs
-            .image_runtime_dir
-            .join("nvidia-install-validation.json"),
-    )
-    .map_err(|e| format!("Could not preserve the NVIDIA installer result: {e}"))?;
-    let document: SupportInstallResult = serde_json::from_reader(
-        File::open(&staged_result)
-            .map_err(|e| format!("Could not read the NVIDIA installer result: {e}"))?,
-    )
-    .map_err(|e| format!("NVIDIA installer result is invalid JSON: {e}"))?;
-    if document.status == "failed" && document.reason == "target_space_insufficient" {
-        let message = validate_nvidia_storage_failure(&document, &inputs)?;
-        if execution_result.is_ok() {
-            return Err(
-                "Offline installer reported insufficient storage with a successful process exit."
-                    .into(),
-            );
+            inputs.kernel_version, dependency_arguments
+        );
+        let execution_result = run_guest_command_logged(
+            &connection,
+            &command,
+            &connection.runtime_dir.join("nvidia-install.log"),
+            Some(&cancel),
+        );
+        let staged_result = connection.runtime_dir.join("nvidia-install-result.json");
+        let result_transfer = run_checked(
+            scp_command(&connection)?
+                .arg("builder@127.0.0.1:/tmp/steamos-nvidia-offline-install/install-result.json")
+                .arg(&staged_result),
+            "Could not copy the NVIDIA installer validation result from the x86 guest",
+        );
+        if let Err(transfer_error) = result_transfer {
+            return Err(execution_result.err().unwrap_or(transfer_error));
         }
-        return Err(message);
-    }
-    let validation = validate_nvidia_install_result(
-        document,
-        &inputs,
-        "validated",
-        "validation_complete",
-        "validated",
-    )?;
-    execution_result?;
+        fs::copy(
+            &staged_result,
+            inputs.image_runtime_dir.join(format!(
+                "nvidia-install-validation-{validation_attempt}.json"
+            )),
+        )
+        .map_err(|e| format!("Could not preserve the NVIDIA installer result: {e}"))?;
+        fs::copy(
+            &staged_result,
+            inputs
+                .image_runtime_dir
+                .join("nvidia-install-validation.json"),
+        )
+        .map_err(|e| format!("Could not preserve the latest NVIDIA installer result: {e}"))?;
+        let document: SupportInstallResult = serde_json::from_reader(
+            File::open(&staged_result)
+                .map_err(|e| format!("Could not read the NVIDIA installer result: {e}"))?,
+        )
+        .map_err(|e| format!("NVIDIA installer result is invalid JSON: {e}"))?;
+        if let Some(missing) = missing_dependency_requests(&document, &inputs)? {
+            if execution_result.is_ok() {
+                return Err(
+                    "Offline installer reported missing dependencies with a successful process exit."
+                        .into(),
+                );
+            }
+            stage_missing_userspace_dependencies(
+                &app,
+                &image_manager_state,
+                &connection,
+                &cancel,
+                &mut inputs,
+                &missing.specifications,
+                missing.requested_by.as_deref(),
+            )?;
+            continue;
+        }
+        if document.status == "failed" && document.reason == "target_space_insufficient" {
+            let message = validate_nvidia_storage_failure(&document, &inputs)?;
+            if execution_result.is_ok() {
+                return Err(
+                    "Offline installer reported insufficient storage with a successful process exit."
+                        .into(),
+                );
+            }
+            return Err(message);
+        }
+        let validation = validate_nvidia_install_result(
+            document,
+            &inputs,
+            "validated",
+            "validation_complete",
+            "validated",
+        )?;
+        execution_result?;
+        break validation;
+    };
 
     {
         let mut manager = build_manager_state
@@ -9021,6 +9500,7 @@ fn install_nvidia_to_working_image_blocking(
         );
         (NvidiaBuildConnection::from(&*session), cancel)
     };
+    let dependency_arguments = dependency_installer_arguments(&inputs.packages)?;
     let command = format!(
         r#"set -euo pipefail
 WORK=/tmp/steamos-nvidia-offline-install
@@ -9110,7 +9590,7 @@ sudo mount -o rw "${{VAR_PARTS[0]}}" "$ROOT/var"
 VAR_MOUNTED=1
 sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/efi"
 EFI_MOUNTED=1
-sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-mutation-result.json"
+sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-mutation-result.json"{}
 INITRAMFS_OK=0
 while IFS= read -r INITRAMFS; do
   test -n "$INITRAMFS" || continue
@@ -9145,7 +9625,7 @@ fi
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 ! findmnt -rn -M "$TOP" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
-        inputs.kernel_version
+        inputs.kernel_version, dependency_arguments
     );
     let execution_result = run_guest_command_logged(
         &connection,
@@ -9991,6 +10471,30 @@ mod tests {
     }
 
     #[test]
+    fn selects_latest_signed_arch_dependency_and_rejects_unsafe_requests() {
+        let index = r#"
+            <a href="egl-wayland-1.1.9-2-x86_64.pkg.tar.zst">old</a>
+            <a href="egl-wayland-1.1.9-2-x86_64.pkg.tar.zst.sig">old signature</a>
+            <a href="egl-wayland-1.1.10-1-x86_64.pkg.tar.zst">new</a>
+            <a href="egl-wayland-1.1.10-1-x86_64.pkg.tar.zst.sig">new signature</a>
+            <a href="egl-wayland-99.0-1-x86_64.pkg.tar.zst">unsigned</a>
+        "#;
+        assert_eq!(
+            select_arch_dependency_package(index, "egl-wayland").unwrap(),
+            (
+                "egl-wayland-1.1.10-1-x86_64.pkg.tar.zst".into(),
+                "1.1.10-1".into()
+            )
+        );
+        assert_eq!(
+            arch_dependency_name("egl-wayland>=1.1.0").unwrap(),
+            "egl-wayland"
+        );
+        assert!(arch_dependency_name("../../unsafe>=1").is_err());
+        assert!(select_arch_dependency_package(index, "missing").is_err());
+    }
+
+    #[test]
     #[ignore = "queries the live Arch Linux Archive package indexes"]
     fn live_arch_userspace_package_selection() {
         let client = nvidia_http_client().expect("create HTTPS client");
@@ -10023,8 +10527,36 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "queries and downloads a signed dependency from the live Arch Linux Archive"]
+    fn live_arch_dependency_staging() {
+        let client = nvidia_http_client().expect("create HTTPS client");
+        let staging = std::env::temp_dir().join(format!(
+            "steamos-nvidia-egl-wayland-test-{}",
+            std::process::id()
+        ));
+        if staging.exists() {
+            fs::remove_dir_all(&staging).expect("remove abandoned dependency fixture");
+        }
+        fs::create_dir(&staging).expect("create dependency staging fixture");
+        let package = stage_arch_dependency_package(
+            &staging,
+            "egl-wayland",
+            &client,
+            &AtomicBool::new(false),
+            &|_, _, _| {},
+        )
+        .expect("stage signed egl-wayland dependency");
+        assert_eq!(package.name, "egl-wayland");
+        assert_eq!(package.role, "dependency");
+        assert_eq!(package.package_sha256.len(), 64);
+        assert!(Path::new(&package.package_path).is_file());
+        assert!(Path::new(&package.signature_path).is_file());
+        fs::remove_dir_all(staging).expect("clean dependency staging fixture");
+    }
+
+    #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 68_946);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 71_523);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 8);
         assert!(PINNED_INSTALLER_FILES
             .iter()
@@ -10173,6 +10705,7 @@ mod tests {
         let staged_package =
             |name: &str, release: &str, signer_digest: char| NvidiaUserspacePackage {
                 name: name.into(),
+                role: "nvidia-userspace".into(),
                 filename: format!("{name}-575.64.05-{release}-x86_64.pkg.tar.zst"),
                 full_version: format!("575.64.05-{release}"),
                 package_path: format!("/{name}.pkg.tar.zst"),
@@ -10202,6 +10735,7 @@ mod tests {
         let validated_package =
             |name: &str, release: &str, signer: &str, signer_digest: char| SupportInstallPackage {
                 name: name.into(),
+                role: "nvidia-userspace".into(),
                 full_version: format!("575.64.05-{release}"),
                 pkgver: "575.64.05".into(),
                 pkgrel: release.into(),
@@ -10314,6 +10848,50 @@ mod tests {
             "validated"
         )
         .is_err());
+        let mut dependency_inputs = inputs.clone();
+        dependency_inputs.packages.push(NvidiaUserspacePackage {
+            name: "egl-wayland".into(),
+            role: "dependency".into(),
+            filename: "egl-wayland-4.0.1-1-x86_64.pkg.tar.zst".into(),
+            full_version: "4.0.1-1".into(),
+            package_path: "/egl-wayland.pkg.tar.zst".into(),
+            signature_path: "/egl-wayland.pkg.tar.zst.sig".into(),
+            package_sha256: digest('f'),
+        });
+        let mut dependency_result = result.clone();
+        let dependency_validation = verified_validation(&mut dependency_result);
+        dependency_validation.packages.push(SupportInstallPackage {
+            name: "egl-wayland".into(),
+            role: "dependency".into(),
+            full_version: "4.0.1-1".into(),
+            pkgver: "4.0.1".into(),
+            pkgrel: "1".into(),
+            signer: "A".repeat(40),
+            sha256: digest('f'),
+        });
+        dependency_validation.storage.package_installed_bytes += 2_048;
+        dependency_validation.storage.package_compressed_bytes += 1_024;
+        dependency_validation.storage.root_required_bytes += 2_048;
+        let dependency_accepted = validate_nvidia_install_result(
+            dependency_result.clone(),
+            &dependency_inputs,
+            "validated",
+            "validation_complete",
+            "validated",
+        )
+        .expect("the exact authenticated dependency manifest should pass");
+        assert_eq!(dependency_accepted.packages.len(), 3);
+        verified_validation(&mut dependency_result)
+            .packages
+            .swap(1, 2);
+        assert!(validate_nvidia_install_result(
+            dependency_result,
+            &dependency_inputs,
+            "validated",
+            "validation_complete",
+            "validated",
+        )
+        .is_err());
         let accepted = validate_nvidia_install_result(
             result,
             &inputs,
@@ -10325,6 +10903,38 @@ mod tests {
         assert_eq!(accepted.root_partition_label, "rootfs-A");
         assert_eq!(accepted.boot_partition_label, "efi-A");
         assert!(accepted.mounts_released);
+
+        let dependency_failure = SupportInstallResult {
+            schema_version: 1,
+            status: "failed".into(),
+            reason: "package_dependency_unsatisfied".into(),
+            message: "no incoming or installed package satisfies egl-wayland".into(),
+            phase: "validation".into(),
+            target: SupportInstallTarget {
+                steamos_version: "unknown".into(),
+                kernel_version: inputs.kernel_version.clone(),
+                nvidia_version: "unknown".into(),
+                architecture: "x86_64".into(),
+            },
+            trust: "pending-validation".into(),
+            cleanup: SupportInstallCleanup {
+                mounts_released: true,
+            },
+            validation: Some(SupportInstallValidationDocument::Failed(
+                SupportInstallFailureValidation {
+                    storage: None,
+                    missing_dependencies: vec!["egl-wayland".into()],
+                    dependency_requested_by: Some("nvidia-utils".into()),
+                },
+            )),
+        };
+        assert_eq!(
+            missing_dependency_requests(&dependency_failure, &inputs).unwrap(),
+            Some(MissingDependencyRequest {
+                specifications: vec!["egl-wayland".into()],
+                requested_by: Some("nvidia-utils".into()),
+            })
+        );
 
         let insufficient_storage = SupportInstallStorage {
             root_available_bytes: 1,
@@ -10358,7 +10968,9 @@ mod tests {
             },
             validation: Some(SupportInstallValidationDocument::Failed(
                 SupportInstallFailureValidation {
-                    storage: insufficient_storage,
+                    storage: Some(insufficient_storage),
+                    missing_dependencies: Vec::new(),
+                    dependency_requested_by: None,
                 },
             )),
         };
