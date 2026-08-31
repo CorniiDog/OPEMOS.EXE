@@ -96,7 +96,7 @@ cannot provide alternate paths or promote them before the managed x86 installer
 checks the reviewed signer policy, package contents, and exact GSP firmware.
 
 The backend also stages the offline-root installer from immutable support commit
-`4b74490f77468e3c1c71cecf2609820f80ae4836`. Its seven required scripts,
+`8c11111787e064fc24d8c21652a8ffbfb08c9e5a`. Its eight required scripts,
 helpers, and signer-policy files have embedded byte counts and SHA-256 pins;
 every file must match before a versioned bundle manifest is recorded. The
 normal workflow therefore does not accept a user-selected support checkout or
@@ -107,14 +107,17 @@ provenance, exact userspace packages, and detached signatures into the x86
 worker. It prepares a minimal keyring from Fedora's trusted Arch key material,
 mounts uniquely identified `rootfs-A`, `var-A`, and `efi-A` read-only, and accepts only a
 schema-1 `validated/validation_complete` result whose target, trust, hashes,
-package-specific signers, and released-mount status all match Rust-owned state.
+package-specific signers, Holo database, EFI boot policy, and released-mount
+status all match Rust-owned state.
 Mutation mounts the Btrfs top level explicitly, identifies the current default
 root subvolume, temporarily clears only that subvolume's read-only property,
-mounts the matching `var-A` at `/var` and `efi-A` at `/boot`, and restores both Btrfs read-only and
-seed-device state afterward. The resulting raw candidate is reopened through a
+mounts the matching `var-A` at `/var` and `efi-A` at `/efi` without hiding
+rootfs `/boot`, and restores both Btrfs read-only and seed-device state
+afterward. The resulting raw candidate is reopened through a
 fresh appliance and checked for all five modules, matching package records and
-GSP firmware, configuration, provenance state, initramfs output, layout, and
-source immutability before finalization.
+GSP firmware, configuration, provenance state, initramfs output, exact
+nonduplicated GRUB kernel arguments, layout, and source immutability before
+finalization.
 
 The same immutable support commit supplies the canonical NVIDIA release
 publisher and its input validator under independent size and SHA-256 pins. The

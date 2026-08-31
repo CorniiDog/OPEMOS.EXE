@@ -34,17 +34,25 @@ const APPROVED_VALVE_SIGNER: &str = "889B5EBDDD505A683621900DAF1D2199EF0A3CCF";
 const RELEASES_RESPONSE_LIMIT: u64 = 4 * 1024 * 1024;
 const CHECKSUM_RESPONSE_LIMIT: u64 = 4 * 1024;
 const PROVENANCE_RESPONSE_LIMIT: u64 = 1024 * 1024;
-const NVIDIA_ARCHIVE_LIMIT: u64 = 512 * 1024 * 1024;
+const NVIDIA_ARCHIVE_LIMIT: u64 = 1024 * 1024 * 1024;
+const _: () = assert!(NVIDIA_ARCHIVE_LIMIT >= 700 * 1024 * 1024);
+const _: () = assert!(NVIDIA_ARCHIVE_LIMIT <= 2 * 1024 * 1024 * 1024);
 const ARCH_ARCHIVE_INDEX_LIMIT: u64 = 8 * 1024 * 1024;
 const NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 512 * 1024 * 1024;
 const LIB32_NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 128 * 1024 * 1024;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_SUPPORT_COMMIT: &str = "4b74490f77468e3c1c71cecf2609820f80ae4836";
+const NVIDIA_SUPPORT_COMMIT: &str = "8c11111787e064fc24d8c21652a8ffbfb08c9e5a";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_UTILS_SIGNER: &str = "05C7775A9E8B977407FE08E69D4C5AA15426DA0A";
 const LIB32_NVIDIA_UTILS_SIGNER: &str = "D2E95FEC015CF1F911AAAB0C3D4C5008BB5C8D29";
+const NVIDIA_REQUIRED_KERNEL_ARGUMENTS: [&str; 4] = [
+    "rd.driver.blacklist=nouveau",
+    "modprobe.blacklist=nouveau",
+    "nvidia-drm.modeset=1",
+    "nvidia-drm.fbdev=1",
+];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,11 +144,11 @@ struct PinnedInstallerFile {
     executable: bool,
 }
 
-const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 7] = [
+const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 8] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "f35349b228bede8c73a6c0511ac9ee8ab2f4ea4a1b4c5710c9e527b8aec80c6f",
-        bytes: 11_903,
+        sha256: "de1738970358d95b6c382b05f1c8b5cb5deb72120f3920ca9cec3b8d45032792",
+        bytes: 12_233,
         executable: true,
     },
     PinnedInstallerFile {
@@ -162,15 +170,21 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 7] = [
         executable: true,
     },
     PinnedInstallerFile {
+        path: "lib/update_grub_nvidia_args.py",
+        sha256: "b6615ca962dd3694fc48278f56ed8bf19301cbe696e2c8a46135cc8c476f480c",
+        bytes: 3_110,
+        executable: true,
+    },
+    PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "4f2ad25fb9ab90b367667372bf96683fe171427e5d0a210497becabbbfa87691",
-        bytes: 15_741,
+        sha256: "109cf815f9c95d1df519255eeac70cffc7fdefcd6d59b6e3e552d70d57d2e266",
+        bytes: 18_760,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "a0d66199d09f0ab0fea5901444461d25d9d443b3d01acdf3fdab34e83589f254",
-        bytes: 3_317,
+        sha256: "d82aeeb9d308270094c44c98531c1b7197f8bd48462141ae231decdc6d630585",
+        bytes: 3_417,
         executable: true,
     },
     PinnedInstallerFile {
@@ -184,14 +198,14 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 7] = [
 const PINNED_PUBLISHER_FILES: [PinnedInstallerFile; 2] = [
     PinnedInstallerFile {
         path: "bootstrap/publish_artifacts.sh",
-        sha256: "8667b4198eb0e0e2eb462df32b7814b8bffffd873f9a4b2686fc2560e9c90983",
-        bytes: 3_439,
+        sha256: "ce7cb271a73ab0f13f701965d49b103e6d228714e171ac16c22b89b776ba0cde",
+        bytes: 3_726,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/validate_publish_inputs.py",
-        sha256: "e5e0f1734231c47b0cf368735ee565c05246da22fbe78d3794a726e1bfa10e5f",
-        bytes: 7_047,
+        sha256: "2612d096d5ec0cc3f83f3b64efdd574c5fec1d35b97b4431b679bf4234e1d619",
+        bytes: 9_880,
         executable: true,
     },
 ];
@@ -535,6 +549,7 @@ struct SupportInstallCleanup {
 struct SupportInstallValidation {
     archive_sha256: String,
     pacman_database: SupportInstallPacmanDatabase,
+    boot: SupportInstallBoot,
     keyring: SupportInstallKeyring,
     packages: Vec<SupportInstallPackage>,
 }
@@ -544,6 +559,15 @@ struct SupportInstallValidation {
 struct SupportInstallPacmanDatabase {
     path: String,
     package_count: u64,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportInstallBoot {
+    rootfs_boot_path: String,
+    efi_mount_path: String,
+    grub_configuration: String,
+    required_kernel_arguments: Vec<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -583,6 +607,10 @@ struct NvidiaInstallHandoffResult {
     provenance_sha256: String,
     pacman_database_path: String,
     pacman_package_count: u64,
+    rootfs_boot_path: String,
+    efi_mount_path: String,
+    grub_configuration: String,
+    required_kernel_arguments: Vec<String>,
     keyring_sha256: String,
     packages: Vec<SupportInstallPackage>,
     mounts_released: bool,
@@ -6238,6 +6266,38 @@ done
 grep -qx 'blacklist nouveau' "$ROOT/etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf"
 grep -qx 'options nvidia-drm modeset=1 fbdev=1' "$ROOT/etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf"
 grep -qx 'MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)' "$ROOT/etc/mkinitcpio.conf.d/90-open-gpu-kernel-modules-steamos.conf"
+GRUB="$ROOT/efi/EFI/steamos/grub.cfg"
+test -f "$GRUB"
+test ! -L "$GRUB"
+awk '
+BEGIN {{
+  required[1]="rd.driver.blacklist=nouveau"
+  required[2]="modprobe.blacklist=nouveau"
+  required[3]="nvidia-drm.modeset=1"
+  required[4]="nvidia-drm.fbdev=1"
+  for (index=1; index<=4; index++) {{
+    key[index]=required[index]
+    sub(/=.*/, "", key[index])
+  }}
+}}
+/^[[:space:]]*(linux|linuxefi|linux16)[[:space:]]+/ {{
+  entries++
+  delete count
+  for (field=1; field<=NF; field++) {{
+    if ($field ~ /^#/) break
+    token_key=$field
+    sub(/=.*/, "", token_key)
+    for (index=1; index<=4; index++) {{
+      if (token_key == key[index]) {{
+        if ($field != required[index]) invalid=1
+        count[index]++
+      }}
+    }}
+  }}
+  for (index=1; index<=4; index++) if (count[index] != 1) invalid=1
+}}
+END {{ if (entries == 0 || invalid) exit 1 }}
+' "$GRUB"
 STATE="$ROOT/var/lib/open-gpu-kernel-modules-steamos-support/offline-install"
 test "$(cat "$STATE/kernel-version")" = "{}"
 test "$(cat "$STATE/nvidia-version")" = "{}"
@@ -8334,6 +8394,11 @@ fn validate_nvidia_install_result(
     if validation.archive_sha256 != inputs.archive_sha256
         || validation.pacman_database.path != "/usr/lib/holo/pacmandb"
         || !(1..=100_000).contains(&validation.pacman_database.package_count)
+        || validation.boot.rootfs_boot_path != "/boot"
+        || validation.boot.efi_mount_path != "/efi"
+        || validation.boot.grub_configuration != "/efi/EFI/steamos/grub.cfg"
+        || validation.boot.required_kernel_arguments
+            != NVIDIA_REQUIRED_KERNEL_ARGUMENTS.map(str::to_owned)
         || validation.keyring.name != "approved-package-signers.gpg"
         || validation.keyring.sha256.len() != 64
         || !validation
@@ -8388,6 +8453,10 @@ fn validate_nvidia_install_result(
         provenance_sha256: inputs.provenance_sha256.clone(),
         pacman_database_path: validation.pacman_database.path,
         pacman_package_count: validation.pacman_database.package_count,
+        rootfs_boot_path: validation.boot.rootfs_boot_path,
+        efi_mount_path: validation.boot.efi_mount_path,
+        grub_configuration: validation.boot.grub_configuration,
+        required_kernel_arguments: validation.boot.required_kernel_arguments,
         keyring_sha256: validation.keyring.sha256,
         packages: validation.packages,
         mounts_released: true,
@@ -9674,11 +9743,14 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 41_652);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 7);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 48_211);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 8);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/update_grub_nvidia_args.py" && file.executable));
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "trust/nvidia-userspace-package-signers.json" && !file.executable
         }));
@@ -9686,7 +9758,7 @@ mod tests {
 
     #[test]
     fn pinned_publisher_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_publisher_contract().unwrap(), 10_486);
+        assert_eq!(validate_pinned_publisher_contract().unwrap(), 13_606);
         assert_eq!(PINNED_PUBLISHER_FILES.len(), 2);
         assert!(PINNED_PUBLISHER_FILES
             .iter()
@@ -9845,6 +9917,14 @@ mod tests {
                     path: "/usr/lib/holo/pacmandb".into(),
                     package_count: 1_158,
                 },
+                boot: SupportInstallBoot {
+                    rootfs_boot_path: "/boot".into(),
+                    efi_mount_path: "/efi".into(),
+                    grub_configuration: "/efi/EFI/steamos/grub.cfg".into(),
+                    required_kernel_arguments: NVIDIA_REQUIRED_KERNEL_ARGUMENTS
+                        .map(str::to_owned)
+                        .to_vec(),
+                },
                 keyring: SupportInstallKeyring {
                     name: "approved-package-signers.gpg".into(),
                     sha256: digest('d'),
@@ -9885,6 +9965,21 @@ mod tests {
             "validated"
         )
         .is_err());
+        let mut wrong_boot_policy = result.clone();
+        wrong_boot_policy
+            .validation
+            .as_mut()
+            .expect("fixture validation")
+            .boot
+            .required_kernel_arguments[2] = "nvidia-drm.modeset=0".into();
+        assert!(validate_nvidia_install_result(
+            wrong_boot_policy,
+            &inputs,
+            "validated",
+            "validation_complete",
+            "validated"
+        )
+        .is_err());
         let accepted = validate_nvidia_install_result(
             result,
             &inputs,
@@ -9918,6 +10013,14 @@ mod tests {
                 pacman_database: SupportInstallPacmanDatabase {
                     path: "/usr/lib/holo/pacmandb".into(),
                     package_count: 1_158,
+                },
+                boot: SupportInstallBoot {
+                    rootfs_boot_path: "/boot".into(),
+                    efi_mount_path: "/efi".into(),
+                    grub_configuration: "/efi/EFI/steamos/grub.cfg".into(),
+                    required_kernel_arguments: NVIDIA_REQUIRED_KERNEL_ARGUMENTS
+                        .map(str::to_owned)
+                        .to_vec(),
                 },
                 keyring: SupportInstallKeyring {
                     name: "approved-package-signers.gpg".into(),
@@ -10222,6 +10325,10 @@ mod tests {
             provenance_sha256: "c".repeat(64),
             pacman_database_path: "/usr/lib/holo/pacmandb".into(),
             pacman_package_count: 1_158,
+            rootfs_boot_path: "/boot".into(),
+            efi_mount_path: "/efi".into(),
+            grub_configuration: "/efi/EFI/steamos/grub.cfg".into(),
+            required_kernel_arguments: NVIDIA_REQUIRED_KERNEL_ARGUMENTS.map(str::to_owned).to_vec(),
             keyring_sha256: "b".repeat(64),
             packages: Vec::new(),
             mounts_released: true,
