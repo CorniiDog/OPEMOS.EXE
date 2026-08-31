@@ -30,6 +30,8 @@ let builderSettings = {
   trackSteamosDriverUpdates: false,
 };
 let githubMaintainer = null;
+let githubLoginPoll = 0;
+let githubLoginPending = false;
 const mainWindow = getCurrentWebviewWindow();
 
 await mainWindow.listen("build-progress-ready", () => { progressReady = true; });
@@ -53,7 +55,9 @@ function renderSettings() {
   elements.autoReleaseNvidia.checked = builderSettings.autoReleaseVerifiedNvidia;
   elements.autoReleaseNvidia.disabled = !githubMaintainer?.authorized;
   elements.githubStatus.textContent = githubMaintainer?.message || "GitHub status has not been checked.";
-  elements.githubConnect.textContent = githubMaintainer?.authenticated ? "Reconnect" : "Connect GitHub";
+  elements.githubConnect.textContent = githubLoginPending
+    ? "Waiting for GitHub…"
+    : (githubMaintainer?.authenticated ? "Reconnect" : "Connect GitHub");
 }
 
 async function refreshGithubMaintainer() {
@@ -66,6 +70,38 @@ async function refreshGithubMaintainer() {
     elements.settingsMessage.className = "settings-message error";
   }
   renderSettings();
+}
+
+async function pollGithubMaintainer(poll) {
+  for (let attempt = 1; attempt <= 150 && poll === githubLoginPoll; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    if (poll !== githubLoginPoll) return;
+    try {
+      githubMaintainer = await invoke("get_github_maintainer_status");
+      renderSettings();
+      if (githubMaintainer.authenticated) {
+        githubLoginPending = false;
+        elements.settingsMessage.textContent = githubMaintainer.authorized
+          ? "Maintainer permission verified."
+          : "GitHub connected, but this account cannot publish to the support repository.";
+        elements.settingsMessage.className = githubMaintainer.authorized ? "settings-message" : "settings-message error";
+        elements.githubConnect.disabled = false;
+        renderSettings();
+        return;
+      }
+      elements.settingsMessage.textContent = `Waiting for GitHub authorization… ${attempt * 2}s`;
+    } catch (error) {
+      elements.settingsMessage.textContent = `Waiting for GitHub authorization: ${String(error)}`;
+      elements.settingsMessage.className = "settings-message error";
+    }
+  }
+  if (poll === githubLoginPoll) {
+    githubLoginPending = false;
+    elements.githubConnect.disabled = false;
+    elements.settingsMessage.textContent = "GitHub login is still pending. Finish it in Terminal, then reconnect to check again.";
+    elements.settingsMessage.className = "settings-message error";
+    renderSettings();
+  }
 }
 
 async function loadSettings() {
@@ -193,19 +229,22 @@ elements.autoReleaseNvidia.addEventListener("change", () => saveSettings({
   autoReleaseVerifiedNvidia: elements.autoReleaseNvidia.checked,
 }));
 elements.githubConnect.addEventListener("click", async () => {
+  const poll = ++githubLoginPoll;
+  githubLoginPending = true;
   elements.githubConnect.disabled = true;
-  elements.settingsMessage.textContent = "Complete GitHub authorization in the browser…";
+  renderSettings();
+  elements.settingsMessage.textContent = "Opening a visible GitHub login in Terminal…";
   elements.settingsMessage.className = "settings-message";
   try {
     githubMaintainer = await invoke("connect_github_maintainer");
-    elements.settingsMessage.textContent = githubMaintainer.authorized
-      ? "Maintainer permission verified."
-      : "Login completed, but this account cannot publish to the support repository.";
-    elements.settingsMessage.className = githubMaintainer.authorized ? "settings-message" : "settings-message error";
+    renderSettings();
+    elements.githubConnect.disabled = true;
+    elements.settingsMessage.textContent = githubMaintainer.message;
+    void pollGithubMaintainer(poll);
   } catch (error) {
+    githubLoginPending = false;
     elements.settingsMessage.textContent = String(error);
     elements.settingsMessage.className = "settings-message error";
-  } finally {
     elements.githubConnect.disabled = false;
     renderSettings();
   }

@@ -1,6 +1,6 @@
 # SteamOS NVIDIA Image Builder
 
-The main window includes a compact settings panel for durable, non-secret preferences. Settings use a versioned `settings.json`; GitHub credentials are never stored there. Maintainer release controls require a GitHub CLI browser login, a live permission check against `CorniiDog/open-gpu-kernel-modules-steamos-support`, and a second backend permission check immediately before publication.
+The main window includes a compact settings panel for durable, non-secret preferences. Settings use a versioned `settings.json`; GitHub credentials are never stored there. On macOS, maintainer connection opens the GitHub CLI browser flow in a visible Terminal window while the responsive settings panel polls for completion. Maintainer release controls require a live permission check against `CorniiDog/open-gpu-kernel-modules-steamos-support` and a second backend permission check immediately before publication.
 
 When an exact-kernel NVIDIA artifact is built locally and reaches `locally-built-verified`, maintainers who opted in receive a release confirmation naming the repository, tag, pinned support commit, trust classification, and archive hash. “No, keep local” is focused by default. The publisher refuses to overwrite an existing release and uploads only the NVIDIA archive, checksum, and provenance sidecar—never the recovery image or generated SteamOS image.
 

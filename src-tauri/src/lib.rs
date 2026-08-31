@@ -1543,25 +1543,41 @@ async fn connect_github_maintainer() -> Result<GithubMaintainerStatus, String> {
         let gh = find_binary("gh").ok_or(
             "GitHub CLI is not available. Install it for development; release packages will bundle it.",
         )?;
-        let status = Command::new(gh)
-            .args([
-                "auth",
-                "login",
-                "--hostname",
-                "github.com",
-                "--git-protocol",
-                "https",
-                "--web",
-                "--clipboard",
-                "--skip-ssh-key",
-            ])
-            .stdin(Stdio::null())
-            .status()
-            .map_err(|error| format!("Could not start GitHub browser login: {error}"))?;
-        if !status.success() {
-            return Err("GitHub browser login was cancelled or did not complete.".into());
+
+        #[cfg(target_os = "macos")]
+        {
+            let quoted_gh = format!("'{}'", gh.to_string_lossy().replace('\'', "'\\''"));
+            let terminal_command = format!(
+                "{quoted_gh} auth login --hostname github.com --git-protocol https --web --clipboard --skip-ssh-key"
+            );
+            let apple_script = r#"on run argv
+tell application "Terminal"
+    activate
+    do script (item 1 of argv)
+end tell
+end run"#;
+            let status = Command::new("/usr/bin/osascript")
+                .args(["-e", apple_script, "--", &terminal_command])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .status()
+                .map_err(|error| format!("Could not open GitHub login in Terminal: {error}"))?;
+            if !status.success() {
+                return Err("Could not open a visible GitHub login in Terminal.".into());
+            }
+            Ok(GithubMaintainerStatus {
+                gh_available: true,
+                authenticated: false,
+                authorized: false,
+                username: None,
+                permission: None,
+                message: "GitHub login opened in Terminal. Complete the browser authorization; this panel will detect it automatically.".into(),
+            })
         }
-        github_maintainer_status()
+
+        #[cfg(not(target_os = "macos"))]
+        Err("Visible GitHub login is currently implemented only for the macOS development application.".into())
     })
     .await
     .map_err(|error| format!("GitHub login worker failed: {error}"))?
