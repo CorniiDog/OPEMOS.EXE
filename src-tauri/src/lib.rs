@@ -35,6 +35,10 @@ const RELEASES_RESPONSE_LIMIT: u64 = 4 * 1024 * 1024;
 const CHECKSUM_RESPONSE_LIMIT: u64 = 4 * 1024;
 const PROVENANCE_RESPONSE_LIMIT: u64 = 1024 * 1024;
 const NVIDIA_ARCHIVE_LIMIT: u64 = 1024 * 1024 * 1024;
+const NVIDIA_ARCHIVE_MEMBER_LIMIT: u64 = 1024 * 1024 * 1024;
+const NVIDIA_ARCHIVE_EXPANDED_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
+const NVIDIA_HANDOFF_FREE_SPACE_RESERVE: u64 = 512 * 1024 * 1024;
+const NVIDIA_TARGET_FREE_SPACE_RESERVE: u64 = 512 * 1024 * 1024;
 const _: () = assert!(NVIDIA_ARCHIVE_LIMIT >= 700 * 1024 * 1024);
 const _: () = assert!(NVIDIA_ARCHIVE_LIMIT <= 2 * 1024 * 1024 * 1024);
 const ARCH_ARCHIVE_INDEX_LIMIT: u64 = 8 * 1024 * 1024;
@@ -417,6 +421,8 @@ struct NvidiaPublishedArtifact {
     build_info_path: Option<String>,
     provenance_path: String,
     archive_sha256: String,
+    archive_bytes: u64,
+    expanded_bytes: u64,
     trust: String,
 }
 
@@ -507,6 +513,8 @@ struct NvidiaInstallInputs {
     checksum: PathBuf,
     provenance: PathBuf,
     archive_sha256: String,
+    archive_bytes: u64,
+    expanded_bytes: u64,
     provenance_sha256: String,
     trust: String,
     steamos_version: String,
@@ -3245,11 +3253,23 @@ struct PublishedArchiveInspection {
     build_info: Vec<u8>,
     provenance: Vec<u8>,
     module_hashes: HashMap<String, String>,
+    archive_bytes: u64,
+    expanded_bytes: u64,
 }
 
 fn inspect_published_nvidia_archive(path: &Path) -> Result<PublishedArchiveInspection, String> {
     const METADATA_LIMIT: u64 = 1024 * 1024;
-    const UNCOMPRESSED_LIMIT: u64 = 256 * 1024 * 1024;
+    let archive_bytes = fs::symlink_metadata(path)
+        .map_err(|e| format!("Could not inspect the published NVIDIA archive: {e}"))
+        .and_then(|metadata| {
+            if !metadata.file_type().is_file() {
+                return Err("Published NVIDIA archive is not a safe regular file.".into());
+            }
+            if metadata.len() > NVIDIA_ARCHIVE_LIMIT {
+                return Err("Published NVIDIA archive exceeds the compressed safety limit.".into());
+            }
+            Ok(metadata.len())
+        })?;
     let file = File::open(path)
         .map_err(|e| format!("Could not open the published NVIDIA archive: {e}"))?;
     let decoder = flate2::read::GzDecoder::new(file);
@@ -3294,9 +3314,14 @@ fn inspect_published_nvidia_archive(path: &Path) -> Result<PublishedArchiveInspe
             ));
         }
         let size = entry.size();
+        if size > NVIDIA_ARCHIVE_MEMBER_LIMIT {
+            return Err(format!(
+                "Published NVIDIA archive member exceeds the safety limit: {name}."
+            ));
+        }
         total_size = total_size
             .checked_add(size)
-            .filter(|value| *value <= UNCOMPRESSED_LIMIT)
+            .filter(|value| *value <= NVIDIA_ARCHIVE_EXPANDED_LIMIT)
             .ok_or("Published NVIDIA archive expands beyond the safety limit.")?;
         if name == "BUILD-INFO.txt" || name == "PROVENANCE.json" {
             if size > METADATA_LIMIT {
@@ -3347,6 +3372,8 @@ fn inspect_published_nvidia_archive(path: &Path) -> Result<PublishedArchiveInspe
         build_info: build_info.ok_or("Published NVIDIA archive omitted BUILD-INFO.txt.")?,
         provenance: provenance.ok_or("Published NVIDIA archive omitted PROVENANCE.json.")?,
         module_hashes,
+        archive_bytes,
+        expanded_bytes: total_size,
     })
 }
 
@@ -3671,7 +3698,7 @@ fn validate_published_nvidia_artifact(
     provenance_path: &Path,
     identity: &PublishedReleaseIdentity,
     archive_sha256: &str,
-) -> Result<String, String> {
+) -> Result<(String, PublishedArchiveInspection), String> {
     let checksum = fs::read_to_string(checksum_path)
         .map_err(|e| format!("Could not read the published NVIDIA checksum: {e}"))?;
     let expected_sha256 = checksum
@@ -3734,7 +3761,7 @@ fn validate_published_nvidia_artifact(
     {
         return Err("Published NVIDIA build information does not match its publication.".into());
     }
-    Ok(provenance.trust)
+    Ok((provenance.trust, inspection))
 }
 
 fn resolve_published_nvidia_for_target(
@@ -3907,7 +3934,7 @@ fn resolve_published_nvidia_for_target(
         "downloading-nvidia-archive",
     )?;
     progress("validating-nvidia-artifact", 0, 1);
-    let trust = validate_published_nvidia_artifact(
+    let (trust, inspection) = validate_published_nvidia_artifact(
         &archive_path,
         &checksum_path,
         &provenance_path,
@@ -3935,6 +3962,8 @@ fn resolve_published_nvidia_for_target(
             build_info_path: None,
             provenance_path: provenance_path.to_string_lossy().into_owned(),
             archive_sha256,
+            archive_bytes: inspection.archive_bytes,
+            expanded_bytes: inspection.expanded_bytes,
             trust,
         }),
         build_plan: None,
@@ -7821,6 +7850,8 @@ fn collect_nvidia_install_inputs(
         checksum: PathBuf::from(&artifact.checksum_path),
         provenance: PathBuf::from(&artifact.provenance_path),
         archive_sha256: artifact.archive_sha256.clone(),
+        archive_bytes: artifact.archive_bytes,
+        expanded_bytes: artifact.expanded_bytes,
         provenance_sha256: String::new(),
         trust: artifact.trust.clone(),
         steamos_version,
@@ -8086,6 +8117,7 @@ async fn build_nvidia_target_on_demand(
                     .into(),
             );
         }
+        let inspection = inspect_published_nvidia_archive(Path::new(&artifact.archive_path))?;
         let resolution = NvidiaPublishedResolution {
             schema_version: NVIDIA_RESOLVER_SCHEMA,
             status: "compatible".into(),
@@ -8112,6 +8144,8 @@ async fn build_nvidia_target_on_demand(
                 build_info_path: Some(artifact.build_info_path),
                 provenance_path: artifact.provenance_path,
                 archive_sha256: artifact.archive_sha256,
+                archive_bytes: inspection.archive_bytes,
+                expanded_bytes: inspection.expanded_bytes,
                 trust: artifact.trust,
             }),
             build_plan: Some(plan),
@@ -8262,7 +8296,7 @@ async fn publish_on_demand_nvidia_release(
                 "External release build metadata no longer matches the validated archive.".into(),
             );
         }
-        let publish_trust = validate_published_nvidia_artifact(
+        let (publish_trust, inspection) = validate_published_nvidia_artifact(
             &archive,
             &checksum,
             &provenance,
@@ -8271,6 +8305,11 @@ async fn publish_on_demand_nvidia_release(
         )?;
         if publish_trust != "locally-built-verified" {
             return Err("Release artifact failed the final published-artifact trust contract.".into());
+        }
+        if inspection.archive_bytes != artifact.archive_bytes
+            || inspection.expanded_bytes != artifact.expanded_bytes
+        {
+            return Err("Release archive size accounting changed after validation.".into());
         }
         find_binary("python3").ok_or("Python 3 is required by the pinned support publisher.")?;
         find_binary("gh").ok_or("GitHub CLI disappeared before publication.")?;
@@ -8492,16 +8531,117 @@ fn stage_nvidia_handoff_checksum(
 ) -> Result<PathBuf, String> {
     let path = runtime_dir.join("nvidia-modules.tar.gz.sha256");
     let checksum = nvidia_handoff_checksum(archive_sha256)?;
-    let mut output = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&path)
-        .map_err(|error| format!("Could not stage the normalized NVIDIA checksum: {error}"))?;
+    let output = OpenOptions::new().create_new(true).write(true).open(&path);
+    let mut output = match output {
+        Ok(output) => output,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            let metadata = fs::symlink_metadata(&path).map_err(|inspect_error| {
+                format!(
+                    "Could not inspect the existing normalized NVIDIA checksum: {inspect_error}"
+                )
+            })?;
+            if !metadata.file_type().is_file() {
+                return Err(
+                    "Existing normalized NVIDIA checksum is not a safe regular file.".into(),
+                );
+            }
+            let existing = fs::read_to_string(&path).map_err(|read_error| {
+                format!("Could not read the existing normalized NVIDIA checksum: {read_error}")
+            })?;
+            if existing != checksum {
+                return Err(
+                    "Existing normalized NVIDIA checksum does not match this verified artifact."
+                        .into(),
+                );
+            }
+            return Ok(path);
+        }
+        Err(error) => {
+            return Err(format!(
+                "Could not stage the normalized NVIDIA checksum: {error}"
+            ));
+        }
+    };
     output
         .write_all(checksum.as_bytes())
         .and_then(|_| output.sync_all())
         .map_err(|error| format!("Could not finish the normalized NVIDIA checksum: {error}"))?;
     Ok(path)
+}
+
+fn safe_regular_file_size(path: &Path, description: &str) -> Result<u64, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not inspect {description}: {error}"))?;
+    if !metadata.file_type().is_file() {
+        return Err(format!("{description} is not a safe regular file."));
+    }
+    Ok(metadata.len())
+}
+
+fn checked_space_sum(parts: impl IntoIterator<Item = u64>) -> Result<u64, String> {
+    parts
+        .into_iter()
+        .try_fold(0_u64, |total, value| total.checked_add(value))
+        .ok_or_else(|| "NVIDIA free-space estimate overflowed.".into())
+}
+
+fn nvidia_install_space_requirements(
+    inputs: &NvidiaInstallInputs,
+    installer_archive: &Path,
+) -> Result<(u64, u64), String> {
+    let measured_archive = safe_regular_file_size(&inputs.archive, "NVIDIA module archive")?;
+    if measured_archive != inputs.archive_bytes {
+        return Err("NVIDIA module archive size changed after validation.".into());
+    }
+    let mut transfer_sizes = vec![
+        inputs.archive_bytes,
+        inputs.expanded_bytes,
+        safe_regular_file_size(installer_archive, "pinned offline installer archive")?,
+        safe_regular_file_size(&inputs.provenance, "NVIDIA provenance")?,
+        NVIDIA_HANDOFF_FREE_SPACE_RESERVE,
+    ];
+    let mut package_archive_bytes = 0_u64;
+    for package in &inputs.packages {
+        let package_bytes = safe_regular_file_size(
+            Path::new(&package.package_path),
+            &format!("{} package", package.name),
+        )?;
+        package_archive_bytes = package_archive_bytes
+            .checked_add(package_bytes)
+            .ok_or("NVIDIA package-size estimate overflowed.")?;
+        transfer_sizes.push(package_bytes);
+        transfer_sizes.push(safe_regular_file_size(
+            Path::new(&package.signature_path),
+            &format!("{} signature", package.name),
+        )?);
+    }
+    let appliance_required = checked_space_sum(transfer_sizes)?;
+    // Package installed-size metadata is verified by the support installer. Until that
+    // contract reports a total, reserve three times the compressed userspace size plus
+    // a fixed initramfs/pacman margin on the target root.
+    let target_required = checked_space_sum([
+        inputs.expanded_bytes,
+        package_archive_bytes
+            .checked_mul(3)
+            .ok_or("NVIDIA target-space estimate overflowed.")?,
+        NVIDIA_TARGET_FREE_SPACE_RESERVE,
+    ])?;
+    Ok((appliance_required, target_required))
+}
+
+fn require_guest_free_space(
+    connection: &impl GuestConnection,
+    path: &str,
+    required: u64,
+    description: &str,
+) -> Result<(), String> {
+    run_guest_command(
+        connection,
+        &format!(
+            "set -eu; AVAILABLE=$(df -B1 --output=avail {path} | tail -n 1 | tr -d ' '); case \"$AVAILABLE\" in ''|*[!0-9]*) echo 'Could not measure {description} free space.' >&2; exit 1;; esac; if test \"$AVAILABLE\" -lt {required}; then echo '{description} needs at least {required} free bytes; only '\"$AVAILABLE\"' are available.' >&2; exit 1; fi"
+        ),
+    )
+    .map(|_| ())
 }
 
 fn validate_nvidia_install_handoff_blocking(
@@ -8551,6 +8691,14 @@ fn validate_nvidia_install_handoff_blocking(
             .arg(&inputs.installer_root)
             .arg("."),
         "Could not package the pinned NVIDIA installer",
+    )?;
+    let (appliance_required, target_required) =
+        nvidia_install_space_requirements(&inputs, &installer_archive)?;
+    require_guest_free_space(
+        &connection,
+        "/tmp",
+        appliance_required,
+        "The x86 appliance NVIDIA handoff",
     )?;
     copy_install_input_to_guest(&connection, &installer_archive, "offline-installer.tar.gz")?;
     copy_install_input_to_guest(&connection, &inputs.archive, "nvidia-modules.tar.gz")?;
@@ -8633,6 +8781,12 @@ if test ! -d "$ROOT/usr/lib/holo/pacmandb/local"; then
   echo 'The selected SteamOS recovery root lacks its expected /usr/lib/holo/pacmandb/local package database; refusing NVIDIA mutation.' >&2
   exit 1
 fi
+AVAILABLE=$(df -B1 --output=avail "$ROOT" | tail -n 1 | tr -d ' ')
+case "$AVAILABLE" in ''|*[!0-9]*) echo 'Could not measure target root free space.' >&2; exit 1;; esac
+if test "$AVAILABLE" -lt {}; then
+  echo "The SteamOS target needs at least {} free bytes for NVIDIA installation; only $AVAILABLE are available." >&2
+  exit 1
+fi
 sudo dnf install -y bsdtar gnupg2 python3 kmod pacman archlinux-keyring
 python3 "$WORK/support/bootstrap/prepare_nvidia_package_keyring.py" --source /usr/share/pacman/keyrings/archlinux.gpg --output "$WORK/approved-package-signers.gpg"
 sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-result.json"
@@ -8646,7 +8800,7 @@ ROOT_MOUNTED=0
 ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
-        inputs.kernel_version
+        target_required, target_required, inputs.kernel_version
     );
     let execution_result = run_guest_command_logged(
         &connection,
@@ -8769,6 +8923,8 @@ fn install_nvidia_to_working_image_blocking(
         );
         (NvidiaBuildConnection::from(&*session), cancel)
     };
+    let installer_archive = connection.runtime_dir.join("offline-installer.tar.gz");
+    let (_, target_required) = nvidia_install_space_requirements(&inputs, &installer_archive)?;
 
     let command = format!(
         r#"set -euo pipefail
@@ -8859,6 +9015,12 @@ sudo mount -o rw "${{VAR_PARTS[0]}}" "$ROOT/var"
 VAR_MOUNTED=1
 sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/efi"
 EFI_MOUNTED=1
+AVAILABLE=$(df -B1 --output=avail "$ROOT" | tail -n 1 | tr -d ' ')
+case "$AVAILABLE" in ''|*[!0-9]*) echo 'Could not measure target root free space.' >&2; exit 1;; esac
+if test "$AVAILABLE" -lt {}; then
+  echo "The SteamOS target needs at least {} free bytes for NVIDIA installation; only $AVAILABLE are available." >&2
+  exit 1
+fi
 sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-mutation-result.json"
 INITRAMFS_OK=0
 while IFS= read -r INITRAMFS; do
@@ -8894,7 +9056,7 @@ fi
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 ! findmnt -rn -M "$TOP" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
-        inputs.kernel_version
+        target_required, target_required, inputs.kernel_version
     );
     let execution_result = run_guest_command_logged(
         &connection,
@@ -9810,6 +9972,26 @@ mod tests {
     }
 
     #[test]
+    fn archive_and_space_limits_match_the_pinned_support_contract() {
+        assert_eq!(NVIDIA_ARCHIVE_MEMBER_LIMIT, 1024 * 1024 * 1024);
+        assert_eq!(NVIDIA_ARCHIVE_EXPANDED_LIMIT, 2 * 1024 * 1024 * 1024);
+        assert_eq!(checked_space_sum([1, 2, 3]).unwrap(), 6);
+        assert!(checked_space_sum([u64::MAX, 1]).is_err());
+
+        let source = include_str!("lib.rs")
+            .split("#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests {")
+            .next()
+            .expect("production source");
+        assert_eq!(
+            source
+                .matches("Could not measure target root free space.")
+                .count(),
+            2
+        );
+        assert!(source.contains("NVIDIA module archive size changed after validation."));
+    }
+
+    #[test]
     fn support_publication_plan_must_match_rust_owned_identity_and_asset_order() {
         let identity = PublishedReleaseIdentity {
             steamos_version: "3.8.14".into(),
@@ -9920,6 +10102,8 @@ mod tests {
             checksum: "/modules.tar.gz.sha256".into(),
             provenance: "/modules.provenance.json".into(),
             archive_sha256: digest('a'),
+            archive_bytes: 700 * 1024 * 1024,
+            expanded_bytes: 900 * 1024 * 1024,
             provenance_sha256: digest('e'),
             trust: "certified-published".into(),
             steamos_version: "3.8.14".into(),
