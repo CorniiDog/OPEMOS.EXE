@@ -8421,11 +8421,9 @@ fn validate_nvidia_install_handoff_blocking(
 WORK=/tmp/steamos-nvidia-offline-install
 TARGET=/dev/disk/by-id/virtio-steamos-target
 ROOT=/mnt/steamos-nvidia-target
-sudo dnf install -y bsdtar gnupg2 python3 kmod pacman archlinux-keyring
 rm -rf "$WORK"
 mkdir -p "$WORK/support"
 tar -xzf /tmp/offline-installer.tar.gz -C "$WORK/support"
-python3 "$WORK/support/bootstrap/prepare_nvidia_package_keyring.py" --source /usr/share/pacman/keyrings/archlinux.gpg --output "$WORK/approved-package-signers.gpg"
 test -b "$TARGET"
 mapfile -t ROOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "rootfs-A" && $3 == "btrfs" {{print $1}}')
 mapfile -t BOOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "efi-A" && ($3 == "vfat" || $3 == "fat") {{print $1}}')
@@ -8461,7 +8459,17 @@ sudo mount -o ro "${{VAR_PARTS[0]}}" "$ROOT/var"
 VAR_MOUNTED=1
 sudo mount -o ro "${{BOOT_PARTS[0]}}" "$ROOT/boot"
 BOOT_MOUNTED=1
-sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-result.json"
+if test ! -d "$ROOT/usr/lib/holo/pacmandb/local"; then
+  echo 'The selected SteamOS recovery root lacks its expected /usr/lib/holo/pacmandb/local package database; refusing NVIDIA mutation.' >&2
+  exit 1
+fi
+if ! grep -Fq -- '--pacman-dbpath' "$WORK/support/bootstrap/install_to_root.sh"; then
+  echo 'The pinned support installer does not yet expose the reviewed --pacman-dbpath contract required for SteamOS /usr/lib/holo/pacmandb; refusing NVIDIA mutation.' >&2
+  exit 1
+fi
+sudo dnf install -y bsdtar gnupg2 python3 kmod pacman archlinux-keyring
+python3 "$WORK/support/bootstrap/prepare_nvidia_package_keyring.py" --source /usr/share/pacman/keyrings/archlinux.gpg --output "$WORK/approved-package-signers.gpg"
+sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --root "$ROOT" --pacman-dbpath /usr/lib/holo/pacmandb --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-result.json"
 sudo umount "$ROOT/boot"
 BOOT_MOUNTED=0
 sudo umount "$ROOT/var"
@@ -8683,7 +8691,7 @@ sudo mount -o rw "${{VAR_PARTS[0]}}" "$ROOT/var"
 VAR_MOUNTED=1
 sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/boot"
 BOOT_MOUNTED=1
-sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-mutation-result.json"
+sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --pacman-dbpath /usr/lib/holo/pacmandb --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-mutation-result.json"
 INITRAMFS_OK=0
 while IFS= read -r INITRAMFS; do
   test -n "$INITRAMFS" || continue
@@ -9684,6 +9692,12 @@ mod tests {
                 .count(),
             2
         );
+        assert_eq!(
+            source
+                .matches("--pacman-dbpath /usr/lib/holo/pacmandb")
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -10610,6 +10624,88 @@ mod tests {
         assert!(Path::new(&artifact.build_info_path).is_file());
         assert!(Path::new(&artifact.provenance_path).is_file());
         assert!(Path::new(&artifact.result_path).is_file());
+    }
+
+    #[test]
+    #[ignore = "requires STEAMOS_RECOVERY_IMAGE and launches the local Fedora/QEMU appliance"]
+    fn live_recovery_package_database_layout_report() {
+        let input = std::env::var_os("STEAMOS_RECOVERY_IMAGE")
+            .map(PathBuf::from)
+            .expect("set STEAMOS_RECOVERY_IMAGE to a Valve recovery image");
+        let mut session = prepare_session(Some(&input), None, None)
+            .expect("the recovery-image appliance session should start");
+        for _ in 0..160 {
+            assert_eq!(
+                session.child.try_wait().expect("QEMU status"),
+                None,
+                "QEMU exited before readiness"
+            );
+            if handshake(&session).ok().as_deref() == Some(READY_MARKER) {
+                session.state = "ready".into();
+                break;
+            }
+            thread::sleep(Duration::from_millis(750));
+        }
+        assert_eq!(session.state, "ready", "appliance did not become ready");
+        let report = run_guest_command(
+            &session,
+            r#"set -euo pipefail
+DISK=/dev/disk/by-id/virtio-steamos-user-input
+ROOT=/mnt/steamos-package-root
+VAR=/mnt/steamos-package-var
+mapfile -t ROOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$DISK" | awk '$2 == "rootfs-A" && $3 == "btrfs" {print $1}')
+mapfile -t VAR_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$DISK" | awk '$2 == "var-A" && $3 == "ext4" {print $1}')
+test "${#ROOT_PARTS[@]}" -eq 1
+test "${#VAR_PARTS[@]}" -eq 1
+sudo mkdir -p "$ROOT" "$VAR"
+ROOT_MOUNTED=0
+VAR_MOUNTED=0
+cleanup() {
+  rc=$?
+  if (( VAR_MOUNTED )); then sudo umount "$VAR" || rc=1; fi
+  if (( ROOT_MOUNTED )); then sudo umount "$ROOT" || rc=1; fi
+  exit "$rc"
+}
+trap cleanup EXIT
+sudo mount -o ro "${ROOT_PARTS[0]}" "$ROOT"
+ROOT_MOUNTED=1
+sudo mount -o ro "${VAR_PARTS[0]}" "$VAR"
+VAR_MOUNTED=1
+root_db=absent
+var_db=absent
+holo_db=absent
+test -d "$ROOT/var/lib/pacman" && root_db=present
+test -d "$VAR/lib/pacman" && var_db=present
+test -d "$ROOT/usr/lib/holo/pacmandb/local" && holo_db=present
+root_local=0
+var_local=0
+holo_local=0
+test ! -d "$ROOT/var/lib/pacman/local" || root_local=$(sudo find "$ROOT/var/lib/pacman/local" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+test ! -d "$VAR/lib/pacman/local" || var_local=$(sudo find "$VAR/lib/pacman/local" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+test ! -d "$ROOT/usr/lib/holo/pacmandb/local" || holo_local=$(sudo find "$ROOT/usr/lib/holo/pacmandb/local" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+printf 'root_pacman_db=%s\n' "$root_db"
+printf 'root_local_packages=%s\n' "$root_local"
+printf 'var_pacman_db=%s\n' "$var_db"
+printf 'var_local_packages=%s\n' "$var_local"
+printf 'holo_pacman_db=%s\n' "$holo_db"
+printf 'holo_local_packages=%s\n' "$holo_local"
+printf '%s\n' '--- root /etc/fstab ---'
+if test -f "$ROOT/etc/fstab"; then sudo sed -n '1,120p' "$ROOT/etc/fstab"; else printf '%s\n' '<absent>'; fi
+printf '%s\n' '--- var-A top-level ---'
+sudo find "$VAR" -mindepth 1 -maxdepth 2 -printf '%P\n' | LC_ALL=C sort | head -120
+sudo umount "$VAR"
+VAR_MOUNTED=0
+sudo umount "$ROOT"
+ROOT_MOUNTED=0
+trap - EXIT"#,
+        )
+        .expect("read-only package database layout inspection should pass");
+        println!("{report}");
+        assert!(report.contains("root_pacman_db=absent"));
+        assert!(report.contains("var_pacman_db=absent"));
+        assert!(report.contains("holo_pacman_db=present"));
+        assert!(report.contains("lib/overlays"));
+        stop_session(&mut session).expect("stop recovery-image appliance session");
     }
 
     #[test]

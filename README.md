@@ -143,6 +143,15 @@ without rebuilding or mutating it; a different requested NVIDIA version or
 target kernel is an explicit upgrade; incomplete or inconsistent state must
 fail closed instead of being guessed from the filename.
 
+The observed Valve SteamOS 3.8.14 recovery image has no pacman database at
+`/var/lib/pacman`, either in the selected Btrfs root or `var-A`; the latter
+contains only `lib/overlays`, and its recovery `fstab` leaves `/var` commented
+out. SteamOS instead keeps its package database under
+`/usr/lib/holo/pacmandb`. The builder now verifies that database exists and
+rejects the currently pinned support installer before mutation while it still
+hard-codes `/var/lib/pacman`. The reviewed installer contract must accept and
+validate the SteamOS database location rather than initializing an empty one.
+
 ## Architecture
 
 The Tauri frontend invokes a fixed set of Rust commands; it does not pass arbitrary shell commands to the host or guest. Rust owns the QEMU child process and creates a unique runtime directory containing an ephemeral SSH identity, cloud-init seed, qcow2 overlay, writable UEFI variables, and `qemu.log`. The pristine Fedora appliance remains unchanged.
