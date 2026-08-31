@@ -47,7 +47,7 @@ const NVIDIA_DEPENDENCY_ARCHIVE_LIMIT: u64 = 256 * 1024 * 1024;
 const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_SUPPORT_COMMIT: &str = "82a761622f682db62f58721e00bf329749ffb4a8";
+const NVIDIA_SUPPORT_COMMIT: &str = "2d3b9699d306d1443076c2e86940c806a020a16a";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_UTILS_SIGNER: &str = "05C7775A9E8B977407FE08E69D4C5AA15426DA0A";
@@ -152,8 +152,8 @@ struct PinnedInstallerFile {
 const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 8] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "d29c0fb58f631d1119f64ecafeb9a80ee0d671b1cbe924abfe990256106a9437",
-        bytes: 13_969,
+        sha256: "b50a9f00457eaf5fe30e93e6f5f5c76f888d0ae3bcc0b8e4b26f421060f7c987",
+        bytes: 14_512,
         executable: true,
     },
     PinnedInstallerFile {
@@ -182,20 +182,20 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 8] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "c89aa0343e58617b5a4ddf2bc7f5e5dc74c4a6ecff2bbc49506d53972d3c4cf5",
-        bytes: 39_580,
+        sha256: "e04c821600f1e4c6716987fc492f5a69bc82f2cbbea2214b6330a712273c5446",
+        bytes: 44_044,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "709b5c60b11f253e449f2d73c27c9c43207dbffdfcbfc1b283e0e9fd46f58d02",
-        bytes: 4_138,
+        sha256: "5aba2f13db8ab1e9eacac5c73b6fa2afbaec4c03918940538b1bb63bb491014e",
+        bytes: 4_194,
         executable: true,
     },
     PinnedInstallerFile {
         path: "trust/nvidia-userspace-package-signers.json",
-        sha256: "9ac4de749f4d881bb177f45eb42dbef718bebcfe1d8702a9f4a06abc0a2b53c5",
-        bytes: 584,
+        sha256: "0229899554dda46f502a72f9e1c6e95b5748e1c6dd5338a0ad4c535dea968375",
+        bytes: 879,
         executable: false,
     },
 ];
@@ -10592,7 +10592,7 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 71_523);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 76_881);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 8);
         assert!(PINNED_INSTALLER_FILES
             .iter()
