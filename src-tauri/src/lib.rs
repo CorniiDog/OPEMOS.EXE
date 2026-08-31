@@ -50,7 +50,7 @@ const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_SUPPORT_COMMIT: &str = "9bb16f4fc43a5d35eccc987899251d55c20d3d98";
+const NVIDIA_SUPPORT_COMMIT: &str = "bf2a6568755766e6af527c9b2cbb831e33d206b9";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 #[cfg(test)]
@@ -187,14 +187,14 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 9] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "54fd08b298af296300a7e3c5e64795e70fd2e1defd9b411e6a714d35074e8b1f",
-        bytes: 46_132,
+        sha256: "baca04bb516192605a42170056cb1e868f375ff54f384ece0a6458abf502e2f4",
+        bytes: 53_294,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "5aba2f13db8ab1e9eacac5c73b6fa2afbaec4c03918940538b1bb63bb491014e",
-        bytes: 4_194,
+        sha256: "eee2d85e63197283b041492c2d8b18db79fa738a64b694a7fca6f072f7bd942b",
+        bytes: 4_371,
         executable: true,
     },
     PinnedInstallerFile {
@@ -607,7 +607,7 @@ struct SupportInstallResult {
 #[serde(untagged)]
 enum SupportInstallValidationDocument {
     Verified(Box<SupportInstallValidation>),
-    Failed(SupportInstallFailureValidation),
+    Failed(Box<SupportInstallFailureValidation>),
 }
 
 #[derive(Clone, Deserialize)]
@@ -636,11 +636,40 @@ struct SupportInstallValidation {
     storage: SupportInstallStorage,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SupportInstallFailureValidation {
     #[serde(default)]
     storage: Option<SupportInstallStorage>,
+    #[serde(default)]
+    missing_dependencies: Vec<String>,
+    #[serde(default)]
+    dependency_requested_by: Option<String>,
+    #[serde(default)]
+    package_name: Option<String>,
+    #[serde(default)]
+    signer_fingerprint: Option<String>,
+    #[serde(default)]
+    missing_packages: Vec<String>,
+    #[serde(default)]
+    unexpected_packages: Vec<String>,
+    #[serde(default)]
+    duplicate_packages: Vec<String>,
+    #[serde(default)]
+    package_mismatches: Vec<SupportInstallPackageMismatch>,
+    #[serde(default)]
+    package_record: Option<String>,
+    #[serde(default)]
+    invalid_fields: Vec<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportInstallPackageMismatch {
+    package_name: String,
+    invalid_fields: Vec<String>,
+    expected: HashMap<String, serde_json::Value>,
+    actual: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -9315,6 +9344,101 @@ fn validate_nvidia_storage_failure(
     ))
 }
 
+fn concise_json_value(value: &serde_json::Value) -> String {
+    const LIMIT: usize = 160;
+    let rendered = serde_json::to_string(value).unwrap_or_else(|_| "<invalid>".into());
+    if rendered.chars().count() <= LIMIT {
+        return rendered;
+    }
+    let mut concise: String = rendered.chars().take(LIMIT).collect();
+    concise.push('…');
+    concise
+}
+
+fn support_install_failure_message(document: &SupportInstallResult) -> String {
+    let mut details = Vec::new();
+    if let Some(SupportInstallValidationDocument::Failed(validation)) = &document.validation {
+        if !validation.missing_packages.is_empty() {
+            details.push(format!(
+                "missing packages: {}",
+                validation.missing_packages.join(", ")
+            ));
+        }
+        if !validation.unexpected_packages.is_empty() {
+            details.push(format!(
+                "unexpected packages: {}",
+                validation.unexpected_packages.join(", ")
+            ));
+        }
+        if !validation.duplicate_packages.is_empty() {
+            details.push(format!(
+                "duplicate packages: {}",
+                validation.duplicate_packages.join(", ")
+            ));
+        }
+        for mismatch in &validation.package_mismatches {
+            let fields = mismatch
+                .invalid_fields
+                .iter()
+                .map(|field| {
+                    let expected = mismatch
+                        .expected
+                        .get(field)
+                        .map(concise_json_value)
+                        .unwrap_or_else(|| "<omitted>".into());
+                    let actual = mismatch
+                        .actual
+                        .get(field)
+                        .map(concise_json_value)
+                        .unwrap_or_else(|| "<omitted>".into());
+                    format!("{field}: expected {expected}, received {actual}")
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            details.push(format!("{} ({fields})", mismatch.package_name));
+        }
+        if !validation.missing_dependencies.is_empty() {
+            let requested_by = validation
+                .dependency_requested_by
+                .as_deref()
+                .map(|name| format!(" requested by {name}"))
+                .unwrap_or_default();
+            details.push(format!(
+                "missing dependencies{requested_by}: {}",
+                validation.missing_dependencies.join(", ")
+            ));
+        }
+        if let Some(record) = &validation.package_record {
+            details.push(format!(
+                "package database record {record} has invalid fields: {}",
+                validation.invalid_fields.join(", ")
+            ));
+        } else if !validation.invalid_fields.is_empty() {
+            details.push(format!(
+                "invalid fields: {}",
+                validation.invalid_fields.join(", ")
+            ));
+        }
+        if let Some(package) = &validation.package_name {
+            let signer = validation
+                .signer_fingerprint
+                .as_deref()
+                .map(|fingerprint| format!("; signer {fingerprint}"))
+                .unwrap_or_default();
+            details.push(format!("package: {package}{signer}"));
+        }
+    }
+    let summary = format!(
+        "Offline installer validation did not succeed: {} ({}): {}",
+        document.status, document.reason, document.message
+    );
+    if details.is_empty() {
+        summary
+    } else {
+        format!("{summary} Details: {}.", details.join("; "))
+    }
+}
+
 fn validate_nvidia_install_result(
     document: SupportInstallResult,
     inputs: &NvidiaInstallInputs,
@@ -9327,10 +9451,7 @@ fn validate_nvidia_install_result(
         || document.reason != expected_reason
         || document.phase != expected_phase
     {
-        return Err(format!(
-            "Offline installer validation did not succeed: {} ({}): {}",
-            document.status, document.reason, document.message
-        ));
+        return Err(support_install_failure_message(&document));
     }
     if document.target.steamos_version != inputs.steamos_version
         || document.target.kernel_version != inputs.kernel_version
@@ -11089,7 +11210,7 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 103_625);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 110_964);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 9);
         assert!(PINNED_INSTALLER_FILES
             .iter()
@@ -11521,15 +11642,58 @@ mod tests {
             cleanup: SupportInstallCleanup {
                 mounts_released: true,
             },
-            validation: Some(SupportInstallValidationDocument::Failed(
+            validation: Some(SupportInstallValidationDocument::Failed(Box::new(
                 SupportInstallFailureValidation {
                     storage: Some(insufficient_storage),
+                    ..Default::default()
                 },
-            )),
+            ))),
         };
         let message = validate_nvidia_storage_failure(&storage_failure, &inputs)
             .expect("authoritative storage failure should pass");
         assert!(message.contains("1 available bytes"));
+
+        let mut lock_failure = storage_failure.clone();
+        lock_failure.reason = "userspace_lock_mismatch".into();
+        lock_failure.message = "The incoming package set differs from the reviewed lock.".into();
+        lock_failure.validation = Some(SupportInstallValidationDocument::Failed(Box::new(
+            SupportInstallFailureValidation {
+                missing_packages: vec!["egl-gbm".into(), "egl-x11".into()],
+                unexpected_packages: vec!["placeholder".into()],
+                duplicate_packages: vec!["nvidia-utils".into()],
+                package_mismatches: vec![SupportInstallPackageMismatch {
+                    package_name: "egl-wayland".into(),
+                    invalid_fields: vec!["filename".into(), "signatureFilename".into()],
+                    expected: HashMap::from([
+                        ("filename".into(), serde_json::json!("reviewed.pkg.tar.zst")),
+                        (
+                            "signatureFilename".into(),
+                            serde_json::json!("reviewed.pkg.tar.zst.sig"),
+                        ),
+                    ]),
+                    actual: HashMap::from([
+                        ("filename".into(), serde_json::json!("renamed.pkg.tar.zst")),
+                        (
+                            "signatureFilename".into(),
+                            serde_json::json!("renamed.pkg.tar.zst.sig"),
+                        ),
+                    ]),
+                }],
+                ..Default::default()
+            },
+        )));
+        let detailed = support_install_failure_message(&lock_failure);
+        for required in [
+            "egl-gbm",
+            "egl-x11",
+            "placeholder",
+            "nvidia-utils",
+            "egl-wayland",
+            "filename: expected",
+            "signatureFilename: expected",
+        ] {
+            assert!(detailed.contains(required));
+        }
 
         let rejected = SupportInstallResult {
             schema_version: 1,
