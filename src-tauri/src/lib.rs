@@ -47,11 +47,19 @@ const NVIDIA_DEPENDENCY_ARCHIVE_LIMIT: u64 = 256 * 1024 * 1024;
 const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_SUPPORT_COMMIT: &str = "2d3b9699d306d1443076c2e86940c806a020a16a";
+const NVIDIA_SUPPORT_COMMIT: &str = "9bb16f4fc43a5d35eccc987899251d55c20d3d98";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
+#[cfg(test)]
 const NVIDIA_UTILS_SIGNER: &str = "05C7775A9E8B977407FE08E69D4C5AA15426DA0A";
+#[cfg(test)]
 const LIB32_NVIDIA_UTILS_SIGNER: &str = "D2E95FEC015CF1F911AAAB0C3D4C5008BB5C8D29";
+const NVIDIA_USERSPACE_LOCK_PATH: &str = "locks/userspace/steamos-3.8.14-nvidia-575.64.05.json";
+const NVIDIA_USERSPACE_KEYRING_PATH: &str =
+    "trust/keyrings/archlinux-nvidia-userspace-2025-08-01.gpg";
+const NVIDIA_USERSPACE_KEYRING_NAME: &str = "archlinux-nvidia-userspace-2025-08-01.gpg";
+const NVIDIA_USERSPACE_KEYRING_SHA256: &str =
+    "8a2657da58e7efe162cc9ee76f361b085c9f49daa62baa6e077831aa05ea0bd4";
 const NVIDIA_REQUIRED_KERNEL_ARGUMENTS: [&str; 4] = [
     "rd.driver.blacklist=nouveau",
     "modprobe.blacklist=nouveau",
@@ -149,17 +157,11 @@ struct PinnedInstallerFile {
     executable: bool,
 }
 
-const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 8] = [
+const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 9] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "b50a9f00457eaf5fe30e93e6f5f5c76f888d0ae3bcc0b8e4b26f421060f7c987",
-        bytes: 14_512,
-        executable: true,
-    },
-    PinnedInstallerFile {
-        path: "bootstrap/prepare_nvidia_package_keyring.py",
-        sha256: "4b0fb99452e95bca66cf1e1a1e94396f023946885dc04016795c5b532eefbb33",
-        bytes: 2_995,
+        sha256: "2d4906f0c9155b2ec9b9f73f341abf83cb8f98248009fe25dccbc239b030cbdc",
+        bytes: 14_670,
         executable: true,
     },
     PinnedInstallerFile {
@@ -182,8 +184,8 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 8] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "e04c821600f1e4c6716987fc492f5a69bc82f2cbbea2214b6330a712273c5446",
-        bytes: 44_044,
+        sha256: "54fd08b298af296300a7e3c5e64795e70fd2e1defd9b411e6a714d35074e8b1f",
+        bytes: 46_132,
         executable: true,
     },
     PinnedInstallerFile {
@@ -194,8 +196,20 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 8] = [
     },
     PinnedInstallerFile {
         path: "trust/nvidia-userspace-package-signers.json",
-        sha256: "0229899554dda46f502a72f9e1c6e95b5748e1c6dd5338a0ad4c535dea968375",
-        bytes: 879,
+        sha256: "dbe87b0e11cae8dca671be491ffbf24bcbb22ff3a1712c4156ef88c4b476db95",
+        bytes: 1_197,
+        executable: false,
+    },
+    PinnedInstallerFile {
+        path: NVIDIA_USERSPACE_KEYRING_PATH,
+        sha256: NVIDIA_USERSPACE_KEYRING_SHA256,
+        bytes: 21_552,
+        executable: false,
+    },
+    PinnedInstallerFile {
+        path: NVIDIA_USERSPACE_LOCK_PATH,
+        sha256: "a73dd0af6afbd4337c045ddc1ac827081b111ffd4a8c6a8f1efcbaf9d97002a7",
+        bytes: 5_623,
         executable: false,
     },
 ];
@@ -486,6 +500,45 @@ struct NvidiaUserspaceResolution {
     packages: Vec<NvidiaUserspacePackage>,
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewedUserspaceLock {
+    schema_version: u32,
+    status: String,
+    target: ReviewedUserspaceTarget,
+    keyring: ReviewedUserspaceKeyring,
+    missing_review: Vec<String>,
+    packages: Vec<ReviewedUserspacePackage>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewedUserspaceTarget {
+    steamos_version: String,
+    nvidia_version: String,
+    architecture: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct ReviewedUserspaceKeyring {
+    filename: String,
+    sha256: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewedUserspacePackage {
+    name: String,
+    version: String,
+    architecture: String,
+    filename: String,
+    signature_filename: String,
+    package_sha256: String,
+    signature_sha256: String,
+    signer_fingerprint: String,
+    installed_size: u64,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NvidiaInstallerBundleFile {
@@ -530,6 +583,7 @@ struct NvidiaInstallInputs {
     kernel_version: String,
     nvidia_version: String,
     packages: Vec<NvidiaUserspacePackage>,
+    userspace_lock: ReviewedUserspaceLock,
 }
 
 #[derive(Clone, Deserialize)]
@@ -584,16 +638,6 @@ struct SupportInstallValidation {
 struct SupportInstallFailureValidation {
     #[serde(default)]
     storage: Option<SupportInstallStorage>,
-    #[serde(default)]
-    missing_dependencies: Vec<String>,
-    #[serde(default)]
-    dependency_requested_by: Option<String>,
-}
-
-#[derive(Debug, PartialEq)]
-struct MissingDependencyRequest {
-    specifications: Vec<String>,
-    requested_by: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -4150,6 +4194,7 @@ fn arch_dependency_name(specification: &str) -> Result<&str, String> {
     Ok(name)
 }
 
+#[cfg(test)]
 fn natural_arch_version_cmp(left: &str, right: &str) -> std::cmp::Ordering {
     let left = left.as_bytes();
     let right = right.as_bytes();
@@ -4196,6 +4241,7 @@ fn natural_arch_version_cmp(left: &str, right: &str) -> std::cmp::Ordering {
     left.len().cmp(&right.len())
 }
 
+#[cfg(test)]
 fn select_arch_dependency_package(index: &str, package: &str) -> Result<(String, String), String> {
     arch_dependency_name(package)?;
     let hrefs = arch_index_hrefs(index);
@@ -4256,6 +4302,7 @@ fn arch_dependency_directory(package: &str) -> Result<String, String> {
     ))
 }
 
+#[cfg(test)]
 fn query_arch_dependency_package(
     client: &reqwest::blocking::Client,
     specification: &str,
@@ -4280,6 +4327,7 @@ fn query_arch_dependency_package(
     Ok((package.into(), directory, filename, full_version))
 }
 
+#[cfg(test)]
 fn stage_arch_dependency_package(
     staging_dir: &Path,
     specification: &str,
@@ -4544,6 +4592,222 @@ fn valid_prepared_userspace_packages(packages: &[NvidiaUserspacePackage]) -> boo
         }
     }
     names.contains("nvidia-utils") && names.contains("lib32-nvidia-utils")
+}
+
+fn exact_lower_hex(value: &str, length: usize) -> bool {
+    value.len() == length
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn load_reviewed_userspace_lock(
+    installer_root: &Path,
+    steamos_version: &str,
+    nvidia_version: &str,
+) -> Result<ReviewedUserspaceLock, String> {
+    let lock_path = installer_root.join(NVIDIA_USERSPACE_LOCK_PATH);
+    let keyring_path = installer_root.join(NVIDIA_USERSPACE_KEYRING_PATH);
+    for (path, description) in [
+        (&lock_path, "reviewed NVIDIA userspace lock"),
+        (&keyring_path, "reviewed NVIDIA userspace keyring"),
+    ] {
+        if !fs::symlink_metadata(path)
+            .map(|metadata| metadata.file_type().is_file())
+            .unwrap_or(false)
+        {
+            return Err(format!("Pinned {description} is not a safe regular file."));
+        }
+    }
+    if sha256_file(&keyring_path)? != NVIDIA_USERSPACE_KEYRING_SHA256 {
+        return Err("Pinned NVIDIA userspace keyring no longer matches its reviewed hash.".into());
+    }
+    let lock: ReviewedUserspaceLock = serde_json::from_reader(
+        File::open(&lock_path)
+            .map_err(|error| format!("Could not read reviewed NVIDIA userspace lock: {error}"))?,
+    )
+    .map_err(|error| format!("Reviewed NVIDIA userspace lock is invalid JSON: {error}"))?;
+    if lock.schema_version != 1
+        || lock.status != "reviewed"
+        || !lock.missing_review.is_empty()
+        || lock.target.steamos_version != steamos_version
+        || lock.target.nvidia_version != nvidia_version
+        || lock.target.architecture != "x86_64"
+        || lock.keyring.filename != NVIDIA_USERSPACE_KEYRING_NAME
+        || lock.keyring.sha256 != NVIDIA_USERSPACE_KEYRING_SHA256
+        || !(2..=2 + NVIDIA_DEPENDENCY_LIMIT).contains(&lock.packages.len())
+    {
+        return Err(format!(
+            "No complete reviewed userspace lock is pinned for SteamOS {steamos_version} and NVIDIA {nvidia_version}."
+        ));
+    }
+    let mut names = HashSet::new();
+    for package in &lock.packages {
+        let expected_filename = format!(
+            "{}-{}-{}.pkg.tar.zst",
+            package.name, package.version, package.architecture
+        );
+        if arch_dependency_name(&package.name)? != package.name
+            || !matches!(package.architecture.as_str(), "x86_64" | "any")
+            || package.filename != expected_filename
+            || package.signature_filename != format!("{}.sig", package.filename)
+            || !exact_lower_hex(&package.package_sha256, 64)
+            || !exact_lower_hex(&package.signature_sha256, 64)
+            || !package
+                .signer_fingerprint
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || package.signer_fingerprint.len() != 40
+            || package.installed_size == 0
+            || !names.insert(package.name.as_str())
+        {
+            return Err("Reviewed NVIDIA userspace lock contains an unsafe package record.".into());
+        }
+    }
+    if !names.contains("nvidia-utils") || !names.contains("lib32-nvidia-utils") {
+        return Err("Reviewed NVIDIA userspace lock omits a required NVIDIA seed package.".into());
+    }
+    Ok(lock)
+}
+
+fn validate_locked_userspace_package(
+    staged: &NvidiaUserspacePackage,
+    locked: &ReviewedUserspacePackage,
+) -> Result<(), String> {
+    let expected_role = if matches!(locked.name.as_str(), "nvidia-utils" | "lib32-nvidia-utils") {
+        "nvidia-userspace"
+    } else {
+        "dependency"
+    };
+    let package_path = Path::new(&staged.package_path);
+    let signature_path = Path::new(&staged.signature_path);
+    if staged.name != locked.name
+        || staged.role != expected_role
+        || staged.filename != locked.filename
+        || staged.full_version != locked.version
+        || package_path.file_name().and_then(|name| name.to_str()) != Some(locked.filename.as_str())
+        || signature_path.file_name().and_then(|name| name.to_str())
+            != Some(locked.signature_filename.as_str())
+        || !fs::symlink_metadata(package_path)
+            .map(|metadata| metadata.file_type().is_file())
+            .unwrap_or(false)
+        || !fs::symlink_metadata(signature_path)
+            .map(|metadata| metadata.file_type().is_file())
+            .unwrap_or(false)
+        || sha256_file(package_path)? != locked.package_sha256
+        || sha256_file(signature_path)? != locked.signature_sha256
+    {
+        return Err(format!(
+            "Staged {} does not exactly match the reviewed userspace lock.",
+            locked.name
+        ));
+    }
+    Ok(())
+}
+
+fn stage_reviewed_userspace_closure(
+    installer_root: &Path,
+    steamos_version: &str,
+    nvidia_version: &str,
+    staged: &[NvidiaUserspacePackage],
+    client: &reqwest::blocking::Client,
+    cancel: &AtomicBool,
+    progress: &impl Fn(&str, u64, u64),
+) -> Result<Vec<NvidiaUserspacePackage>, String> {
+    let lock = load_reviewed_userspace_lock(installer_root, steamos_version, nvidia_version)?;
+    let staging_dir = staged
+        .first()
+        .and_then(|package| Path::new(&package.package_path).parent())
+        .ok_or("NVIDIA userspace staging directory is unavailable.")?;
+    let staged_by_name: HashMap<&str, &NvidiaUserspacePackage> = staged
+        .iter()
+        .map(|package| (package.name.as_str(), package))
+        .collect();
+    if staged_by_name.len() != staged.len() {
+        return Err("Staged NVIDIA userspace inputs contain duplicate package names.".into());
+    }
+    if staged_by_name
+        .keys()
+        .any(|name| !lock.packages.iter().any(|package| package.name == *name))
+    {
+        return Err(
+            "Staged NVIDIA userspace inputs contain a package outside the reviewed lock.".into(),
+        );
+    }
+
+    let mut closure = Vec::with_capacity(lock.packages.len());
+    for (index, locked) in lock.packages.iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("Reviewed NVIDIA userspace closure staging cancelled.".into());
+        }
+        progress(
+            "staging-reviewed-userspace-closure",
+            index as u64,
+            lock.packages.len() as u64,
+        );
+        if let Some(existing) = staged_by_name.get(locked.name.as_str()) {
+            validate_locked_userspace_package(existing, locked)?;
+            closure.push((*existing).clone());
+            continue;
+        }
+        if matches!(locked.name.as_str(), "nvidia-utils" | "lib32-nvidia-utils") {
+            return Err(format!(
+                "Reviewed userspace closure is missing {}.",
+                locked.name
+            ));
+        }
+        let directory = arch_dependency_directory(&locked.name)?;
+        let package_path = staging_dir.join(&locked.filename);
+        let signature_path = staging_dir.join(&locked.signature_filename);
+        for path in [&package_path, &signature_path] {
+            if path.exists() {
+                fs::remove_file(path).map_err(|error| {
+                    format!("Could not replace an incomplete locked dependency: {error}")
+                })?;
+            }
+        }
+        let package_sha256 = download_arch_userspace_asset(
+            client,
+            &format!("{directory}/{}", locked.filename),
+            &package_path,
+            NVIDIA_DEPENDENCY_ARCHIVE_LIMIT,
+            cancel,
+            "downloading-locked-userspace-dependency",
+            progress,
+        )?;
+        let signature_sha256 = download_arch_userspace_asset(
+            client,
+            &format!("{directory}/{}", locked.signature_filename),
+            &signature_path,
+            ARCH_PACKAGE_SIGNATURE_LIMIT,
+            cancel,
+            "downloading-locked-userspace-signature",
+            progress,
+        )?;
+        if package_sha256 != locked.package_sha256 || signature_sha256 != locked.signature_sha256 {
+            let _ = fs::remove_file(&package_path);
+            let _ = fs::remove_file(&signature_path);
+            return Err(format!(
+                "Downloaded {} does not match the reviewed userspace lock.",
+                locked.name
+            ));
+        }
+        closure.push(NvidiaUserspacePackage {
+            name: locked.name.clone(),
+            role: "dependency".into(),
+            filename: locked.filename.clone(),
+            full_version: locked.version.clone(),
+            package_path: package_path.to_string_lossy().into_owned(),
+            signature_path: signature_path.to_string_lossy().into_owned(),
+            package_sha256,
+        });
+    }
+    progress(
+        "staging-reviewed-userspace-closure",
+        lock.packages.len() as u64,
+        lock.packages.len() as u64,
+    );
+    Ok(closure)
 }
 
 fn validate_pinned_support_files(files: &[PinnedInstallerFile]) -> Result<u64, String> {
@@ -8001,7 +8265,7 @@ async fn prepare_nvidia_installer_bundle(
 ) -> Result<NvidiaInstallerBundle, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let manager_state = app.state::<Mutex<ApplianceManager>>();
-        let (runtime_dir, cancel) = {
+        let (runtime_dir, cancel, steamos_version, nvidia_version, staged_packages, existing_bundle) = {
             let manager = manager_state
                 .lock()
                 .map_err(|_| "Appliance state lock is unavailable.")?;
@@ -8023,10 +8287,6 @@ async fn prepare_nvidia_installer_bundle(
                         && valid_prepared_userspace_packages(&userspace.packages)
                 })
                 .ok_or("Exact NVIDIA userspace packages must be staged first.")?;
-            if let Some(bundle) = session.nvidia_installer_bundle.as_ref() {
-                validate_staged_nvidia_installer_bundle(bundle)?;
-                return Ok(bundle.report.clone());
-            }
             let publication_version = session
                 .nvidia_resolution
                 .as_ref()
@@ -8038,9 +8298,18 @@ async fn prepare_nvidia_installer_bundle(
                     "Staged NVIDIA userspace version does not match the publication.".into(),
                 );
             }
+            let steamos_version = session
+                .target_system
+                .as_ref()
+                .and_then(|target| target.version_id.clone())
+                .ok_or("Target SteamOS version is unavailable.")?;
             (
                 session.runtime_dir.clone(),
                 manager.cancel_preparation.clone(),
+                steamos_version,
+                publication_version.to_owned(),
+                userspace.packages.clone(),
+                session.nvidia_installer_bundle.clone(),
             )
         };
         let report_progress = |stage: &str, processed_bytes: u64, total_bytes: u64| {
@@ -8054,13 +8323,28 @@ async fn prepare_nvidia_installer_bundle(
                 },
             );
         };
-        let bundle = prepare_pinned_nvidia_installer_bundle(
-            &runtime_dir,
-            &nvidia_http_client()?,
+        let client = nvidia_http_client()?;
+        let bundle = if let Some(bundle) = existing_bundle {
+            validate_staged_nvidia_installer_bundle(&bundle)?;
+            bundle
+        } else {
+            prepare_pinned_nvidia_installer_bundle(
+                &runtime_dir,
+                &client,
+                &cancel,
+                &report_progress,
+            )?
+        };
+        validate_staged_nvidia_installer_bundle(&bundle)?;
+        let packages = stage_reviewed_userspace_closure(
+            &bundle.root,
+            &steamos_version,
+            &nvidia_version,
+            &staged_packages,
+            &client,
             &cancel,
             &report_progress,
         )?;
-        validate_staged_nvidia_installer_bundle(&bundle)?;
         let report = bundle.report.clone();
         let mut manager = manager_state
             .lock()
@@ -8071,6 +8355,15 @@ async fn prepare_nvidia_installer_bundle(
             .filter(|session| session.runtime_dir == runtime_dir)
             .ok_or("Builder session ended before the NVIDIA installer could be recorded.")?;
         active.nvidia_installer_bundle = Some(bundle);
+        let userspace = active
+            .nvidia_userspace
+            .as_mut()
+            .ok_or("Builder session lost its NVIDIA userspace state.")?;
+        userspace.packages = packages;
+        userspace.reason = "reviewed_userspace_closure_staged".into();
+        userspace.message = format!(
+            "Staged the complete reviewed NVIDIA {nvidia_version} userspace closure for SteamOS {steamos_version}; signatures remain pending x86 appliance verification."
+        );
         Ok(report)
     })
     .await
@@ -8123,6 +8416,24 @@ fn collect_nvidia_install_inputs(
         .kernel_version
         .clone()
         .ok_or("NVIDIA resolution omitted the exact target kernel.")?;
+    let lock = load_reviewed_userspace_lock(
+        &installer.root,
+        &steamos_version,
+        &publication.nvidia_version,
+    )?;
+    if userspace.packages.len() != lock.packages.len() {
+        return Err("The complete reviewed NVIDIA userspace closure has not been staged.".into());
+    }
+    let mut ordered_packages = Vec::with_capacity(lock.packages.len());
+    for locked in &lock.packages {
+        let staged = userspace
+            .packages
+            .iter()
+            .find(|package| package.name == locked.name)
+            .ok_or_else(|| format!("Reviewed userspace closure is missing {}.", locked.name))?;
+        validate_locked_userspace_package(staged, locked)?;
+        ordered_packages.push(staged.clone());
+    }
     let mut inputs = NvidiaInstallInputs {
         image_runtime_dir: session.runtime_dir.clone(),
         working_image: session.working_image.clone(),
@@ -8138,7 +8449,8 @@ fn collect_nvidia_install_inputs(
         steamos_version,
         kernel_version,
         nvidia_version: publication.nvidia_version.clone(),
-        packages: userspace.packages.clone(),
+        packages: ordered_packages,
+        userspace_lock: lock,
     };
     for path in [
         &inputs.working_image,
@@ -8793,6 +9105,7 @@ fn validate_nvidia_install_result(
         }
     };
     validate_support_storage(&validation.storage, true)?;
+    let lock = &inputs.userspace_lock;
     if validation.archive_sha256 != inputs.archive_sha256
         || validation.pacman_database.path != "/usr/lib/holo/pacmandb"
         || !(1..=100_000).contains(&validation.pacman_database.package_count)
@@ -8801,14 +9114,10 @@ fn validate_nvidia_install_result(
         || validation.boot.grub_configuration != "/efi/EFI/steamos/grub.cfg"
         || validation.boot.required_kernel_arguments
             != NVIDIA_REQUIRED_KERNEL_ARGUMENTS.map(str::to_owned)
-        || validation.keyring.name != "approved-package-signers.gpg"
-        || validation.keyring.sha256.len() != 64
-        || !validation
-            .keyring
-            .sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
+        || validation.keyring.name != NVIDIA_USERSPACE_KEYRING_NAME
+        || validation.keyring.sha256 != NVIDIA_USERSPACE_KEYRING_SHA256
         || validation.packages.len() != inputs.packages.len()
+        || validation.packages.len() != lock.packages.len()
     {
         return Err(
             "Offline installer validation metadata does not match the staged inputs.".into(),
@@ -8822,37 +9131,57 @@ fn validate_nvidia_install_result(
     {
         return Err("Offline validation returned duplicate package identities.".into());
     }
-    for (expected, validated) in inputs.packages.iter().zip(&validation.packages) {
+    for validated in &validation.packages {
+        let expected = inputs
+            .packages
+            .iter()
+            .find(|package| package.name == validated.name)
+            .ok_or_else(|| {
+                format!(
+                    "Offline validation returned unlocked package {}.",
+                    validated.name
+                )
+            })?;
+        let locked = lock
+            .packages
+            .iter()
+            .find(|package| package.name == validated.name)
+            .ok_or_else(|| {
+                format!(
+                    "Offline validation returned package {} outside the reviewed lock.",
+                    validated.name
+                )
+            })?;
+        let expected_role = if matches!(locked.name.as_str(), "nvidia-utils" | "lib32-nvidia-utils")
+        {
+            "nvidia-userspace"
+        } else {
+            "dependency"
+        };
         if validated.name != expected.name
             || validated.full_version != expected.full_version
+            || validated.full_version != locked.version
             || validated.role != expected.role
+            || validated.role != expected_role
             || validated.sha256 != expected.package_sha256
+            || validated.sha256 != locked.package_sha256
             || validated.pkgrel.is_empty()
-            || validated.signer.len() != 40
-            || !validated
-                .signer
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
+            || validated.signer != locked.signer_fingerprint
         {
             return Err(format!(
                 "Offline validation metadata does not match staged {}.",
                 expected.name
             ));
         }
-        match expected.name.as_str() {
-            "nvidia-utils"
-                if validated.pkgver == inputs.nvidia_version
-                    && validated.signer == NVIDIA_UTILS_SIGNER => {}
-            "lib32-nvidia-utils"
-                if validated.pkgver == inputs.nvidia_version
-                    && validated.signer == LIB32_NVIDIA_UTILS_SIGNER => {}
+        match locked.name.as_str() {
+            "nvidia-utils" | "lib32-nvidia-utils" if validated.pkgver == inputs.nvidia_version => {}
             "nvidia-utils" | "lib32-nvidia-utils" => {
                 return Err(format!(
-                    "Offline validation returned an unapproved signer or version for {}.",
+                    "Offline validation returned an unapproved version for {}.",
                     expected.name
                 ));
             }
-            _ if expected.role == "dependency" => {}
+            _ if expected_role == "dependency" && !validated.pkgver.is_empty() => {}
             _ => return Err("Unexpected userspace package role in the handoff.".into()),
         }
     }
@@ -9040,167 +9369,11 @@ fn dependency_installer_arguments(packages: &[NvidiaUserspacePackage]) -> Result
     Ok(arguments)
 }
 
-fn missing_dependency_requests(
-    document: &SupportInstallResult,
-    inputs: &NvidiaInstallInputs,
-) -> Result<Option<MissingDependencyRequest>, String> {
-    if document.status != "failed" || document.reason != "package_dependency_unsatisfied" {
-        return Ok(None);
-    }
-    if document.schema_version != 1
-        || document.phase != "validation"
-        || document.target.architecture != "x86_64"
-        || document.target.kernel_version != inputs.kernel_version
-        || !document.cleanup.mounts_released
-    {
-        return Err("Offline installer returned an invalid dependency-closure failure.".into());
-    }
-    let failure = match document.validation.as_ref() {
-        Some(SupportInstallValidationDocument::Failed(validation)) => validation,
-        _ => {
-            return Err(
-                "Offline installer dependency failure omitted structured validation metadata."
-                    .into(),
-            )
-        }
-    };
-    if failure.missing_dependencies.is_empty()
-        || failure.missing_dependencies.len() > NVIDIA_DEPENDENCY_LIMIT
-    {
-        return Err("Offline installer returned an invalid missing-dependency set.".into());
-    }
-    let mut names = HashSet::new();
-    for specification in &failure.missing_dependencies {
-        let name = arch_dependency_name(specification)?;
-        if !names.insert(name) {
-            return Err("Offline installer returned duplicate missing dependencies.".into());
-        }
-    }
-    if failure
-        .dependency_requested_by
-        .as_deref()
-        .is_some_and(|requester| arch_dependency_name(requester) != Ok(requester))
-    {
-        return Err("Offline installer returned an invalid dependency requester.".into());
-    }
-    Ok(Some(MissingDependencyRequest {
-        specifications: failure.missing_dependencies.clone(),
-        requested_by: failure.dependency_requested_by.clone(),
-    }))
-}
-
-fn stage_missing_userspace_dependencies(
-    app: &tauri::AppHandle,
-    image_manager_state: &tauri::State<'_, Mutex<ApplianceManager>>,
-    connection: &NvidiaBuildConnection,
-    cancel: &AtomicBool,
-    inputs: &mut NvidiaInstallInputs,
-    specifications: &[String],
-    requested_by: Option<&str>,
-) -> Result<(), String> {
-    let dependency_count = inputs
-        .packages
-        .iter()
-        .filter(|package| package.role == "dependency")
-        .count();
-    if dependency_count
-        .checked_add(specifications.len())
-        .is_none_or(|count| count > NVIDIA_DEPENDENCY_LIMIT)
-    {
-        return Err("NVIDIA userspace dependency closure exceeds its safety limit.".into());
-    }
-    let staging_dir = inputs
-        .packages
-        .first()
-        .and_then(|package| Path::new(&package.package_path).parent())
-        .ok_or("NVIDIA userspace staging directory is unavailable.")?
-        .to_path_buf();
-    let client = nvidia_http_client()?;
-    let report_progress = |stage: &str, processed_bytes: u64, total_bytes: u64| {
-        let _ = app.emit_to(
-            "build-progress",
-            "nvidia-resolution-progress",
-            NvidiaResolutionProgress {
-                stage: stage.into(),
-                processed_bytes,
-                total_bytes,
-            },
-        );
-    };
-    for specification in specifications {
-        if cancel.load(Ordering::Relaxed) {
-            return Err("NVIDIA dependency staging cancelled.".into());
-        }
-        let name = arch_dependency_name(specification)?;
-        if inputs.packages.iter().any(|package| package.name == name) {
-            return Err(format!(
-                "The newest staged signed {name} package did not satisfy {specification}{}; refusing to guess another dependency version.",
-                requested_by
-                    .map(|requester| format!(" requested by {requester}"))
-                    .unwrap_or_default()
-            ));
-        }
-        let package = stage_arch_dependency_package(
-            &staging_dir,
-            specification,
-            &client,
-            cancel,
-            &report_progress,
-        )?;
-        let transfer_bytes = checked_space_sum([
-            safe_regular_file_size(Path::new(&package.package_path), "dependency package")?,
-            safe_regular_file_size(Path::new(&package.signature_path), "dependency signature")?,
-            64 * 1024 * 1024,
-        ])?;
-        require_guest_free_space(
-            connection,
-            "/tmp",
-            transfer_bytes,
-            &format!("Signed {name} dependency handoff"),
-        )?;
-        let index = inputs
-            .packages
-            .iter()
-            .filter(|candidate| candidate.role == "dependency")
-            .count();
-        let stem = guest_userspace_name(&package, index)?;
-        copy_install_input_to_guest(
-            connection,
-            Path::new(&package.package_path),
-            &format!("{stem}.pkg.tar.zst"),
-        )?;
-        copy_install_input_to_guest(
-            connection,
-            Path::new(&package.signature_path),
-            &format!("{stem}.pkg.tar.zst.sig"),
-        )?;
-        inputs.packages.push(package.clone());
-        let mut manager = image_manager_state
-            .lock()
-            .map_err(|_| "Appliance state lock is unavailable.")?;
-        let userspace = manager
-            .session
-            .as_mut()
-            .filter(|session| session.working_image == inputs.working_image)
-            .and_then(|session| session.nvidia_userspace.as_mut())
-            .ok_or("Builder session ended before dependency staging could be recorded.")?;
-        if userspace
-            .packages
-            .iter()
-            .any(|candidate| candidate.name == package.name)
-        {
-            return Err("Dependency staging attempted to record a duplicate package.".into());
-        }
-        userspace.packages.push(package);
-    }
-    Ok(())
-}
-
 fn validate_nvidia_install_handoff_blocking(
     app: tauri::AppHandle,
 ) -> Result<NvidiaInstallHandoffResult, String> {
     let image_manager_state = app.state::<Mutex<ApplianceManager>>();
-    let mut inputs = {
+    let inputs = {
         let manager = image_manager_state
             .lock()
             .map_err(|_| "Appliance state lock is unavailable.")?;
@@ -9283,12 +9456,8 @@ fn validate_nvidia_install_handoff_blocking(
         )?;
     }
 
-    let mut validation_attempt = 0_usize;
-    let validation = loop {
-        validation_attempt += 1;
-        if validation_attempt > NVIDIA_DEPENDENCY_LIMIT + 1 {
-            return Err("NVIDIA dependency validation exceeded its bounded retry limit.".into());
-        }
+    let validation_attempt = 1_usize;
+    let validation = {
         let dependency_arguments = dependency_installer_arguments(&inputs.packages)?;
         let command = format!(
             r#"set -euo pipefail
@@ -9339,9 +9508,10 @@ if test ! -d "$ROOT/usr/lib/holo/pacmandb/local"; then
   echo 'The selected SteamOS recovery root lacks its expected /usr/lib/holo/pacmandb/local package database; refusing NVIDIA mutation.' >&2
   exit 1
 fi
-sudo dnf install -y bsdtar gnupg2 python3 kmod pacman archlinux-keyring
-python3 "$WORK/support/bootstrap/prepare_nvidia_package_keyring.py" --source /usr/share/pacman/keyrings/archlinux.gpg --output "$WORK/approved-package-signers.gpg"
-sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --progress-attempt {validation_attempt} --result-json "$WORK/install-result.json"{}
+sudo dnf install -y bsdtar gnupg2 python3 kmod pacman
+test -f "$WORK/support/{keyring_path}"
+test -f "$WORK/support/{lock_path}"
+sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --progress-attempt {validation_attempt} --result-json "$WORK/install-result.json"{dependency_arguments}
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
 sudo umount "$ROOT/var"
@@ -9352,7 +9522,10 @@ ROOT_MOUNTED=0
 ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
-            inputs.kernel_version, dependency_arguments
+            keyring_path = NVIDIA_USERSPACE_KEYRING_PATH,
+            lock_path = NVIDIA_USERSPACE_LOCK_PATH,
+            kernel = inputs.kernel_version,
+            dependency_arguments = dependency_arguments,
         );
         let execution_result = run_guest_command_logged(
             &connection,
@@ -9389,24 +9562,6 @@ trap - EXIT INT TERM"#,
                 .map_err(|e| format!("Could not read the NVIDIA installer result: {e}"))?,
         )
         .map_err(|e| format!("NVIDIA installer result is invalid JSON: {e}"))?;
-        if let Some(missing) = missing_dependency_requests(&document, &inputs)? {
-            if execution_result.is_ok() {
-                return Err(
-                    "Offline installer reported missing dependencies with a successful process exit."
-                        .into(),
-                );
-            }
-            stage_missing_userspace_dependencies(
-                &app,
-                &image_manager_state,
-                &connection,
-                &cancel,
-                &mut inputs,
-                &missing.specifications,
-                missing.requested_by.as_deref(),
-            )?;
-            continue;
-        }
         if document.status == "failed" && document.reason == "target_space_insufficient" {
             let message = validate_nvidia_storage_failure(&document, &inputs)?;
             if execution_result.is_ok() {
@@ -9425,7 +9580,7 @@ trap - EXIT INT TERM"#,
             "validated",
         )?;
         execution_result?;
-        break validation;
+        validation
     };
 
     {
@@ -9521,7 +9676,8 @@ TOP=/mnt/steamos-nvidia-top
 ROOT=/mnt/steamos-nvidia-target
 test -b "$TARGET"
 test -d "$WORK/support"
-test -f "$WORK/approved-package-signers.gpg"
+test -f "$WORK/support/{keyring_path}"
+test -f "$WORK/support/{lock_path}"
 mapfile -t ROOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "rootfs-A" && $3 == "btrfs" {{print $1}}')
 mapfile -t BOOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "efi-A" && ($3 == "vfat" || $3 == "fat") {{print $1}}')
 mapfile -t VAR_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "var-A" && $3 == "ext4" {{print $1}}')
@@ -9602,7 +9758,7 @@ sudo mount -o rw "${{VAR_PARTS[0]}}" "$ROOT/var"
 VAR_MOUNTED=1
 sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/efi"
 EFI_MOUNTED=1
-sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-mutation-result.json"{}
+sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --result-json "$WORK/install-mutation-result.json"{dependency_arguments}
 INITRAMFS_OK=0
 while IFS= read -r INITRAMFS; do
   test -n "$INITRAMFS" || continue
@@ -9637,7 +9793,10 @@ fi
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 ! findmnt -rn -M "$TOP" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
-        inputs.kernel_version, dependency_arguments
+        keyring_path = NVIDIA_USERSPACE_KEYRING_PATH,
+        lock_path = NVIDIA_USERSPACE_LOCK_PATH,
+        kernel = inputs.kernel_version,
+        dependency_arguments = dependency_arguments,
     );
     let execution_result = run_guest_command_logged(
         &connection,
@@ -10592,8 +10751,8 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 76_881);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 8);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 103_625);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 9);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
@@ -10603,6 +10762,12 @@ mod tests {
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "trust/nvidia-userspace-package-signers.json" && !file.executable
         }));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == NVIDIA_USERSPACE_LOCK_PATH && !file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == NVIDIA_USERSPACE_KEYRING_PATH && !file.executable));
     }
 
     #[test]
@@ -10748,6 +10913,38 @@ mod tests {
                 signature_path: format!("/{name}.pkg.tar.zst.sig"),
                 package_sha256: digest(signer_digest),
             };
+        let locked_package = |name: &str, release: &str, signer: &str, package_digest: char| {
+            let filename = format!("{name}-575.64.05-{release}-x86_64.pkg.tar.zst");
+            ReviewedUserspacePackage {
+                name: name.into(),
+                version: format!("575.64.05-{release}"),
+                architecture: "x86_64".into(),
+                signature_filename: format!("{filename}.sig"),
+                filename,
+                package_sha256: digest(package_digest),
+                signature_sha256: digest('f'),
+                signer_fingerprint: signer.into(),
+                installed_size: 1,
+            }
+        };
+        let userspace_lock = ReviewedUserspaceLock {
+            schema_version: 1,
+            status: "reviewed".into(),
+            target: ReviewedUserspaceTarget {
+                steamos_version: "3.8.14".into(),
+                nvidia_version: "575.64.05".into(),
+                architecture: "x86_64".into(),
+            },
+            keyring: ReviewedUserspaceKeyring {
+                filename: NVIDIA_USERSPACE_KEYRING_NAME.into(),
+                sha256: NVIDIA_USERSPACE_KEYRING_SHA256.into(),
+            },
+            missing_review: Vec::new(),
+            packages: vec![
+                locked_package("nvidia-utils", "2", NVIDIA_UTILS_SIGNER, 'b'),
+                locked_package("lib32-nvidia-utils", "1", LIB32_NVIDIA_UTILS_SIGNER, 'c'),
+            ],
+        };
         let inputs = NvidiaInstallInputs {
             image_runtime_dir: "/image-runtime".into(),
             working_image: "/working.qcow2".into(),
@@ -10767,6 +10964,7 @@ mod tests {
                 staged_package("nvidia-utils", "2", 'b'),
                 staged_package("lib32-nvidia-utils", "1", 'c'),
             ],
+            userspace_lock,
         };
         let validated_package =
             |name: &str, release: &str, signer: &str, signer_digest: char| SupportInstallPackage {
@@ -10824,8 +11022,8 @@ mod tests {
                             .to_vec(),
                     },
                     keyring: SupportInstallKeyring {
-                        name: "approved-package-signers.gpg".into(),
-                        sha256: digest('d'),
+                        name: NVIDIA_USERSPACE_KEYRING_NAME.into(),
+                        sha256: NVIDIA_USERSPACE_KEYRING_SHA256.into(),
                     },
                     packages: vec![
                         validated_package("nvidia-utils", "2", NVIDIA_UTILS_SIGNER, 'b'),
@@ -10888,19 +11086,33 @@ mod tests {
         dependency_inputs.packages.push(NvidiaUserspacePackage {
             name: "egl-wayland".into(),
             role: "dependency".into(),
-            filename: "egl-wayland-4.0.1-1-x86_64.pkg.tar.zst".into(),
-            full_version: "4.0.1-1".into(),
+            filename: "egl-wayland-4:1.1.19-1-x86_64.pkg.tar.zst".into(),
+            full_version: "4:1.1.19-1".into(),
             package_path: "/egl-wayland.pkg.tar.zst".into(),
             signature_path: "/egl-wayland.pkg.tar.zst.sig".into(),
             package_sha256: digest('f'),
         });
+        dependency_inputs
+            .userspace_lock
+            .packages
+            .push(ReviewedUserspacePackage {
+                name: "egl-wayland".into(),
+                version: "4:1.1.19-1".into(),
+                architecture: "x86_64".into(),
+                filename: "egl-wayland-4:1.1.19-1-x86_64.pkg.tar.zst".into(),
+                signature_filename: "egl-wayland-4:1.1.19-1-x86_64.pkg.tar.zst.sig".into(),
+                package_sha256: digest('f'),
+                signature_sha256: digest('1'),
+                signer_fingerprint: "A".repeat(40),
+                installed_size: 1,
+            });
         let mut dependency_result = result.clone();
         let dependency_validation = verified_validation(&mut dependency_result);
         dependency_validation.packages.push(SupportInstallPackage {
             name: "egl-wayland".into(),
             role: "dependency".into(),
-            full_version: "4.0.1-1".into(),
-            pkgver: "4.0.1".into(),
+            full_version: "4:1.1.19-1".into(),
+            pkgver: "1.1.19".into(),
             pkgrel: "1".into(),
             signer: "A".repeat(40),
             sha256: digest('f'),
@@ -10908,6 +11120,9 @@ mod tests {
         dependency_validation.storage.package_installed_bytes += 2_048;
         dependency_validation.storage.package_compressed_bytes += 1_024;
         dependency_validation.storage.root_required_bytes += 2_048;
+        verified_validation(&mut dependency_result)
+            .packages
+            .swap(0, 2);
         let dependency_accepted = validate_nvidia_install_result(
             dependency_result.clone(),
             &dependency_inputs,
@@ -10915,11 +11130,9 @@ mod tests {
             "validation_complete",
             "validated",
         )
-        .expect("the exact authenticated dependency manifest should pass");
+        .expect("the complete reviewed dependency manifest should pass in any order");
         assert_eq!(dependency_accepted.packages.len(), 3);
-        verified_validation(&mut dependency_result)
-            .packages
-            .swap(1, 2);
+        verified_validation(&mut dependency_result).packages[0].signer = "B".repeat(40);
         assert!(validate_nvidia_install_result(
             dependency_result,
             &dependency_inputs,
@@ -10939,38 +11152,6 @@ mod tests {
         assert_eq!(accepted.root_partition_label, "rootfs-A");
         assert_eq!(accepted.boot_partition_label, "efi-A");
         assert!(accepted.mounts_released);
-
-        let dependency_failure = SupportInstallResult {
-            schema_version: 1,
-            status: "failed".into(),
-            reason: "package_dependency_unsatisfied".into(),
-            message: "no incoming or installed package satisfies egl-wayland".into(),
-            phase: "validation".into(),
-            target: SupportInstallTarget {
-                steamos_version: "unknown".into(),
-                kernel_version: inputs.kernel_version.clone(),
-                nvidia_version: "unknown".into(),
-                architecture: "x86_64".into(),
-            },
-            trust: "pending-validation".into(),
-            cleanup: SupportInstallCleanup {
-                mounts_released: true,
-            },
-            validation: Some(SupportInstallValidationDocument::Failed(
-                SupportInstallFailureValidation {
-                    storage: None,
-                    missing_dependencies: vec!["egl-wayland".into()],
-                    dependency_requested_by: Some("nvidia-utils".into()),
-                },
-            )),
-        };
-        assert_eq!(
-            missing_dependency_requests(&dependency_failure, &inputs).unwrap(),
-            Some(MissingDependencyRequest {
-                specifications: vec!["egl-wayland".into()],
-                requested_by: Some("nvidia-utils".into()),
-            })
-        );
 
         let insufficient_storage = SupportInstallStorage {
             root_available_bytes: 1,
@@ -11005,8 +11186,6 @@ mod tests {
             validation: Some(SupportInstallValidationDocument::Failed(
                 SupportInstallFailureValidation {
                     storage: Some(insufficient_storage),
-                    missing_dependencies: Vec::new(),
-                    dependency_requested_by: None,
                 },
             )),
         };
@@ -11046,8 +11225,8 @@ mod tests {
                             .to_vec(),
                     },
                     keyring: SupportInstallKeyring {
-                        name: "approved-package-signers.gpg".into(),
-                        sha256: digest('d'),
+                        name: NVIDIA_USERSPACE_KEYRING_NAME.into(),
+                        sha256: NVIDIA_USERSPACE_KEYRING_SHA256.into(),
                     },
                     packages: vec![
                         validated_package("nvidia-utils", "2", LIB32_NVIDIA_UTILS_SIGNER, 'b'),
@@ -11101,12 +11280,78 @@ mod tests {
         )
         .expect("download pinned installer bundle");
         validate_staged_nvidia_installer_bundle(&state).expect("validate staged installer");
+        let lock = load_reviewed_userspace_lock(&state.root, "3.8.14", "575.64.05")
+            .expect("validate reviewed userspace lock and minimal keyring");
+        assert_eq!(lock.packages.len(), 6);
+        assert!(lock.missing_review.is_empty());
         assert_eq!(state.report.status, "verified");
         assert_eq!(state.report.commit, NVIDIA_INSTALLER_COMMIT);
         assert_eq!(state.report.files.len(), PINNED_INSTALLER_FILES.len());
         assert!(state.root.join("installer-bundle.json").is_file());
         let serialized = serde_json::to_string(&state.report).expect("serialize installer report");
         assert!(!serialized.contains(&root.0.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    #[ignore = "downloads every non-seed package in the reviewed userspace lock"]
+    fn live_reviewed_nvidia_userspace_dependencies() {
+        struct TestDirectory(PathBuf);
+        impl Drop for TestDirectory {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TestDirectory(std::env::temp_dir().join(format!(
+            "steamos-builder-reviewed-userspace-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("test clock")
+                .as_nanos()
+        )));
+        fs::create_dir(&root.0).expect("create reviewed userspace test directory");
+        let cancel = AtomicBool::new(false);
+        let client = nvidia_http_client().expect("create HTTPS client");
+        let state =
+            prepare_pinned_nvidia_installer_bundle(&root.0, &client, &cancel, &|_, _, _| {})
+                .expect("download pinned installer bundle");
+        let lock = load_reviewed_userspace_lock(&state.root, "3.8.14", "575.64.05")
+            .expect("load reviewed userspace lock");
+        let dependencies: Vec<_> = lock
+            .packages
+            .iter()
+            .filter(|package| {
+                !matches!(package.name.as_str(), "nvidia-utils" | "lib32-nvidia-utils")
+            })
+            .collect();
+        assert_eq!(dependencies.len(), 4);
+        for package in dependencies {
+            let directory = arch_dependency_directory(&package.name).expect("archive directory");
+            let package_path = root.0.join(&package.filename);
+            let signature_path = root.0.join(&package.signature_filename);
+            let package_sha256 = download_arch_userspace_asset(
+                &client,
+                &format!("{directory}/{}", package.filename),
+                &package_path,
+                NVIDIA_DEPENDENCY_ARCHIVE_LIMIT,
+                &cancel,
+                "test-package",
+                &|_, _, _| {},
+            )
+            .expect("download reviewed dependency");
+            let signature_sha256 = download_arch_userspace_asset(
+                &client,
+                &format!("{directory}/{}", package.signature_filename),
+                &signature_path,
+                ARCH_PACKAGE_SIGNATURE_LIMIT,
+                &cancel,
+                "test-signature",
+                &|_, _, _| {},
+            )
+            .expect("download reviewed dependency signature");
+            assert_eq!(package_sha256, package.package_sha256);
+            assert_eq!(signature_sha256, package.signature_sha256);
+        }
     }
 
     #[test]

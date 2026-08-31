@@ -277,12 +277,12 @@ function showNvidiaResolutionProgress(progress) {
     setStatus("running", "Downloading 32-bit NVIDIA signature", "Staging the detached lib32-nvidia-utils signature for appliance verification.", 38, "Downloading");
   } else if (progress.stage === "downloading-nvidia-installer") {
     setStatus("running", "Preparing pinned NVIDIA installer", `Verified ${formatBytes(processed)} of ${formatBytes(total)} from the immutable support snapshot.`, 38 + ratio * 2, "Verifying", false, total > 0 ? ratio : null);
-  } else if (progress.stage === "querying-arch-dependency-index") {
-    setStatus("running", "Resolving signed userspace dependency", "The installer identified a missing dependency; locating its signed Arch Archive package before retrying validation.", 65, "Resolving");
-  } else if (progress.stage === "downloading-userspace-dependency") {
-    setStatus("running", "Downloading signed userspace dependency", `${formatBytes(processed)}${total ? ` of ${formatBytes(total)}` : ""} transferred before validation retries.`, 65 + ratio * 2, "Downloading", false, total > 0 ? ratio : null);
-  } else if (progress.stage === "downloading-userspace-dependency-signature") {
-    setStatus("running", "Downloading dependency signature", "Staging the paired detached signature for x86_64 keyring verification.", 67, "Downloading");
+  } else if (progress.stage === "staging-reviewed-userspace-closure") {
+    setStatus("running", "Staging reviewed userspace closure", `Preparing exact locked package ${Math.min(processed + 1, total)} of ${total}.`, 40 + ratio * 2, "Resolving", false, total > 0 ? ratio : null);
+  } else if (progress.stage === "downloading-locked-userspace-dependency") {
+    setStatus("running", "Downloading reviewed userspace dependency", `${formatBytes(processed)}${total ? ` of ${formatBytes(total)}` : ""} transferred from the pinned archive location.`, 41, "Downloading", false, total > 0 ? ratio : null);
+  } else if (progress.stage === "downloading-locked-userspace-signature") {
+    setStatus("running", "Downloading reviewed dependency signature", "Checking the paired detached signature against the support-owned lock.", 42, "Downloading", false, total > 0 ? ratio : null);
   }
 }
 

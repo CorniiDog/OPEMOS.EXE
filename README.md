@@ -97,18 +97,19 @@ not rejected. Packages and detached signatures are downloaded through bounded,
 cancellable streams, hashed while transferring, and retained only in backend
 session state. Their trust remains explicitly `pending-x86-validation`; the UI
 cannot provide alternate paths or promote them before the managed x86 installer
-checks the reviewed signer policy, package contents, and exact GSP firmware. If
-the installer reports `validation.missingDependencies`, Rust resolves each safe
-package identity from the Arch Linux Archive, stages its package and paired
-signature under generated guest filenames, and repeats read-only validation.
-The closure is bounded to 16 dependencies, rejects duplicate/unsatisfied
-versions rather than guessing, and is reused verbatim for mutation only after
-the support validator authenticates every package. Guest pacman remains fully
-offline throughout this process.
+checks the reviewed signer policy, package contents, and exact GSP firmware.
+For SteamOS 3.8.14 with NVIDIA 575.64.05, Rust now consumes the support-owned
+reviewed userspace lock and stages its complete six-package closure in one
+bounded pass. Every exact filename, version, package/signature hash, signer
+fingerprint, architecture, and minimal keyring hash must match; a missing lock
+or any drift is a maintainer compatibility gate rather than an end-user retry.
+The authenticated closure is reused verbatim for mutation, and guest pacman
+remains fully offline throughout this process.
 
 The backend also stages the offline-root installer from immutable support commit
-`82a761622f682db62f58721e00bf329749ffb4a8`. Its eight required scripts,
-helpers, and signer-policy files have embedded byte counts and SHA-256 pins;
+`9bb16f4fc43a5d35eccc987899251d55c20d3d98`. Its nine required scripts,
+helpers, signer-policy files, reviewed lock, and minimal binary keyring have
+embedded byte counts and SHA-256 pins;
 every file must match before a versioned bundle manifest is recorded. The
 normal workflow therefore does not accept a user-selected support checkout or
 follow a moving branch. Failed or cancelled downloads remove the entire partial
@@ -118,10 +119,10 @@ provenance, exact userspace packages, and detached signatures into the x86
 worker. Because the guest uses a fixed archive basename, Rust derives its guest
 checksum sidecar from the already verified archive digest with that exact fixed
 name; the pinned support validator then independently rehashes the transferred
-archive. It prepares a minimal keyring from Fedora's trusted Arch key material,
-mounts uniquely identified `rootfs-A`, `var-A`, and `efi-A` read-only, and accepts only a
-schema-1 `validated/validation_complete` result whose target, trust, hashes,
-complete ordered package set, signer fingerprints, Holo database, EFI boot
+archive. It passes the pinned minimal keyring and reviewed lock directly to the
+support installer, mounts uniquely identified `rootfs-A`, `var-A`, and `efi-A`
+read-only, and accepts only a schema-1 `validated/validation_complete` result
+whose target, trust, hashes, complete locked package set, signer fingerprints, Holo database, EFI boot
 policy, authoritative storage accounting, and released-mount status all match
 Rust-owned state. A dependency-closure failure never reaches mutation and is
 not interpreted as a storage shortage.
