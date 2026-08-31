@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 
 import {
   buildDiagnosticLog,
+  inferInstallerValidationProgress,
   inferNvidiaDiagnosticMilestone,
   redactDiagnosticSecrets,
+  stripInstallerProgressProtocol,
   stripTerminalFormatting,
 } from "../src/log-diagnostics.js";
 
@@ -29,6 +31,24 @@ test("NVIDIA log milestones advance build and installation progress", () => {
     inferNvidiaDiagnosticMilestone("mkinitcpio completed\ninstall_complete"),
     { progress: 84, label: "Validating installed NVIDIA image" },
   );
+});
+
+test("structured installer validation progress is strict and measurable", () => {
+  const prefix = "STEAMOS_NVIDIA_PROGRESS ";
+  const marker = `${prefix}{"schemaVersion":1,"operation":"offline-root-validation","stage":"archive-hash","attempt":2,"completed":3145728,"total":6291456,"unit":"bytes"}`;
+  assert.deepEqual(inferInstallerValidationProgress(`older log\n${marker}`), {
+    attempt: 2,
+    completed: 3145728,
+    label: "Hashing the NVIDIA module archive",
+    overallProgress: 65,
+    stage: "archive-hash",
+    stepProgress: 0.5,
+    total: 6291456,
+    unit: "bytes",
+  });
+  assert.equal(stripInstallerProgressProtocol(`before\n${marker}\nafter`), "before\nafter");
+  assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"operation":"offline-root-validation","stage":"unknown","attempt":1,"completed":null,"total":null,"unit":"none"}`), null);
+  assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"operation":"offline-root-validation","stage":"modules","attempt":1,"completed":6,"total":5,"unit":"items"}`), null);
 });
 
 test("credentials and host usernames are redacted", () => {

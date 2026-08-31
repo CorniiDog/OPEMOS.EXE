@@ -1,5 +1,18 @@
 const ANSI_CSI = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const ANSI_OSC = /\x1b\][^\x07]*(?:\x07|\x1b\\)/g;
+const INSTALLER_PROGRESS_PREFIX = "STEAMOS_NVIDIA_PROGRESS ";
+
+const INSTALLER_VALIDATION_STAGES = {
+  "target-layout": [63, "Inspecting SteamOS target layout"],
+  "package-database": [64, "Reading the Holo package database"],
+  "archive-hash": [65, "Hashing the NVIDIA module archive"],
+  "archive-layout": [66, "Inspecting the NVIDIA module archive"],
+  modules: [67, "Verifying exact-kernel NVIDIA modules"],
+  packages: [68, "Verifying signed userspace packages"],
+  dependencies: [69, "Resolving the package dependency closure"],
+  storage: [70, "Calculating target storage requirements"],
+  complete: [70, "Offline installer inputs validated"],
+};
 
 const ROUTINE_LINE = /^(?:\[\s*\d+(?:\.\d+)?\]\s|\[\s*OK\s*\]|\s*(?:Starting|Started|Stopping|Stopped|Finished|Reached target|Listening on|Mounted|Mounting|Found device|Expecting device|Created slice|Activated swap|Activating swap|Closed|Set up automount)\b|UEFI firmware|ArmTrngLib|Tpm2|BdsDxe:|Error: Image at|Image type X64|error: \.\.\/\.\.\/grub-core\/|(?:invalid\s+)?environment block\.|\s*(?:serial port|terminal)\s+|isn't found\.$|sparse file not$|allowed\.$|\s*Booting `Fedora Linux|Fedora Linux \d+|Kernel .* on |enp\d|Try contacting this VM|steamos-builder login:|qemu-system-|QEMU: Terminated|cloud-init\[|P\+q6E616D65|\[\*+\s*\]\s+Job |^[M\r]$|\[[^\]]+\]\s+(?:CC|LD|AR|BTF|MODPOST)\b|\s*(?:CC|LD|AR|BTF|MODPOST)\s+\[M\]|make\[\d+\]: (?:Entering|Leaving) directory|\s*\[\s*\d+\/\d+\]|\s*\(\d+\/\d+\)|Updating and loading repositories:|Repositories loaded\.|\s*Fedora .*100%|Package .* is already installed\.|Package\s+Arch\s+Version|\s*[A-Za-z0-9@._+:-]+\s+(?:x86_64|any|noarch)\s+|Downloading Packages:|Running transaction|Complete!$|Last metadata expiration check:|Dependencies resolved\.|Package\s+Architecture\s+Version|Transaction Summary|\s*(?:Installing|Upgrading|Verifying|Preparing)\s*:|Total (?:download )?size|Total size of inbound packages|After this operation|Installed size:|Replacing:|Importing OpenPGP key|UserID\s*:|Fingerprint:|From\s*:|The key was successfully imported|>>>|-+$|Is this ok \[y\/N\])/i;
 
@@ -33,6 +46,56 @@ export function inferNvidiaDiagnosticMilestone(value) {
     if (pattern.test(text) && progress >= result.progress) result = { progress, label };
   }
   return result;
+}
+
+export function inferInstallerValidationProgress(value) {
+  const lines = stripTerminalFormatting(value).split("\n");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index].trim();
+    if (!line.startsWith(INSTALLER_PROGRESS_PREFIX)) continue;
+    let document;
+    try {
+      document = JSON.parse(line.slice(INSTALLER_PROGRESS_PREFIX.length));
+    } catch {
+      continue;
+    }
+    const stage = INSTALLER_VALIDATION_STAGES[document.stage];
+    const attempt = Number(document.attempt);
+    const completed = document.completed === null ? null : Number(document.completed);
+    const total = document.total === null ? null : Number(document.total);
+    const unit = document.unit;
+    if (document.schemaVersion !== 1
+        || document.operation !== "offline-root-validation"
+        || !stage
+        || !Number.isSafeInteger(attempt) || attempt < 1 || attempt > 16
+        || !["bytes", "items", "none"].includes(unit)
+        || (completed !== null && (!Number.isSafeInteger(completed) || completed < 0))
+        || (total !== null && (!Number.isSafeInteger(total) || total <= 0))
+        || ((completed === null) !== (total === null))
+        || (completed !== null && completed > total)
+        || (unit === "none" && completed !== null)
+        || (unit !== "none" && completed === null)) {
+      continue;
+    }
+    return {
+      attempt,
+      completed,
+      label: stage[1],
+      overallProgress: stage[0],
+      stage: document.stage,
+      stepProgress: total === null ? null : completed / total,
+      total,
+      unit,
+    };
+  }
+  return null;
+}
+
+export function stripInstallerProgressProtocol(value) {
+  return stripTerminalFormatting(value)
+    .split("\n")
+    .filter((line) => !line.trim().startsWith(INSTALLER_PROGRESS_PREFIX))
+    .join("\n");
 }
 
 export function stripTerminalFormatting(value) {

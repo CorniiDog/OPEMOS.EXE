@@ -1,4 +1,10 @@
-import { buildDiagnosticLog, inferNvidiaDiagnosticMilestone, stripTerminalFormatting } from "./log-diagnostics.js";
+import {
+  buildDiagnosticLog,
+  inferInstallerValidationProgress,
+  inferNvidiaDiagnosticMilestone,
+  stripInstallerProgressProtocol,
+  stripTerminalFormatting,
+} from "./log-diagnostics.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
@@ -26,6 +32,8 @@ let nvidiaMilestoneProgress = 30;
 let activeNvidiaPhase = null;
 let currentProgress = 0;
 let currentStep = "";
+let lastInstallerProgressKey = "";
+let validationStartedAt = null;
 
 function normalizeTerminalText(text) {
   return text
@@ -367,18 +375,45 @@ function applianceLogDelta(previous, current) {
 function renderLogs(applianceLog, source = "native") {
   const normalizedLog = normalizeTerminalText(applianceLog);
   if (!normalizedLog) return;
+  let installerProgress = null;
   if (source === "nvidia") {
     nvidiaBuildSubphase = inferNvidiaBuildSubphase(normalizedLog);
-    if (running && activeNvidiaPhase === "validation" && nvidiaMilestoneProgress >= 63) {
-      setStatus("running", nvidiaBuildSubphase, "Following authenticated installer validation milestones from the managed x86_64 appliance.", nvidiaMilestoneProgress, "Validating");
+    installerProgress = inferInstallerValidationProgress(normalizedLog);
+    if (running && activeNvidiaPhase === "validation" && installerProgress) {
+      nvidiaMilestoneProgress = Math.max(nvidiaMilestoneProgress, installerProgress.overallProgress);
+      const amount = installerProgress.total === null
+        ? `Validation pass ${installerProgress.attempt} is active.`
+        : installerProgress.unit === "bytes"
+          ? `${formatBytes(installerProgress.completed)} of ${formatBytes(installerProgress.total)} checked during validation pass ${installerProgress.attempt}.`
+          : `${installerProgress.completed} of ${installerProgress.total} checked during validation pass ${installerProgress.attempt}.`;
+      setStatus(
+        "running",
+        installerProgress.label,
+        amount,
+        nvidiaMilestoneProgress,
+        "Validating",
+        false,
+        installerProgress.stepProgress,
+      );
+    } else if (running && activeNvidiaPhase === "validation" && nvidiaMilestoneProgress >= 63) {
+      const elapsed = validationStartedAt === null ? "" : ` for ${formatElapsed(Date.now() - validationStartedAt)}`;
+      setStatus("running", nvidiaBuildSubphase, `Authenticated validation is active${elapsed}; waiting for detailed appliance progress.`, nvidiaMilestoneProgress, "Validating");
     } else if (running && activeNvidiaPhase === "installation" && nvidiaMilestoneProgress >= 71) {
       setStatus("running", nvidiaBuildSubphase, "Following offline-root mutation milestones from the managed x86_64 appliance.", nvidiaMilestoneProgress, "Installing");
     }
   }
   const previous = source === "nvidia" ? lastNvidiaApplianceLog : lastApplianceLog;
   let delta = applianceLogDelta(previous, normalizedLog);
+  if (source === "nvidia") delta = stripInstallerProgressProtocol(delta);
   if (!previous && source === "nvidia") {
     delta = `\n\x1b[1;35m[x86_64 installer appliance]\x1b[0m\n${delta}`;
+  }
+  if (installerProgress) {
+    const progressKey = `${installerProgress.attempt}:${installerProgress.stage}`;
+    if (progressKey !== lastInstallerProgressKey) {
+      lastInstallerProgressKey = progressKey;
+      delta += `\n\x1b[36m[validator]\x1b[0m ${installerProgress.label} (pass ${installerProgress.attempt}).\n`;
+    }
   }
   if (source === "nvidia") lastNvidiaApplianceLog = normalizedLog;
   else lastApplianceLog = normalizedLog;
@@ -453,6 +488,8 @@ async function runBuild(request) {
   nvidiaMilestoneProgress = 30;
   activeNvidiaPhase = null;
   currentProgress = 0;
+  lastInstallerProgressKey = "";
+  validationStartedAt = null;
   followingLogs = true;
   elements.buildLog.replaceChildren();
   elements.logFollow.textContent = "Following live output";
@@ -679,12 +716,14 @@ async function runBuild(request) {
           if (cancelling) return;
         }
         activeNvidiaPhase = "validation";
+        validationStartedAt = Date.now();
         setStatus("running", "Validating offline NVIDIA install", "Mounting rootfs-A and efi-A read-only, authenticating userspace, and checking the exact-kernel installer contract.", 63, "Validating");
         let validation;
         try {
           validation = await invoke("validate_nvidia_install_handoff");
         } finally {
           activeNvidiaPhase = null;
+          validationStartedAt = null;
         }
         addStageLog(`NVIDIA offline validation: ${validation.message}`);
         addStageLog(`NVIDIA trust: ${validation.trust}; keyring SHA256 ${validation.keyringSha256}; mounts released=${validation.mountsReleased}.`);

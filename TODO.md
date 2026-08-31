@@ -1252,6 +1252,7 @@ Before calling the project **beta**, verify:
 * [x] Add a one-click diagnostic-log copy that keeps important build/failure context, removes routine repeated output, bounds clipboard size, and redacts host paths and common credentials without changing the full displayed log.
 * [x] Reweight progress around real workflow cost and advance the long NVIDIA compile/validation/install ranges from normalized diagnostic milestones without allowing backward movement.
 * [x] Split one shared rounded progress track into an overall upper half and per-step lower half: byte-counted work reports a real substep ratio, while validation and other unmeasurable phases use a restrained indeterminate animation.
+* [x] Define and consume strict schema-1 `STEAMOS_NVIDIA_PROGRESS` JSON lines for detailed offline-root validation phases, real byte/item ratios, bounded attempts, readable phase logs, and app-owned status wording. The pinned support validator still needs to emit this contract before live progress appears.
 * [ ] Advanced custom package injection framework only if it does not dilute the NVIDIA-focused safety model.
 
 ## Deferred settings, profiles, and maintainer automation
