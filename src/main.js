@@ -11,6 +11,8 @@ const elements = {
   selectionStatus: $("#selection-status"), buildCard: $("#build-card"), buildButton: $("#build-button"),
   nvidiaSource: $("#nvidia-source"), upstreamWarning: $("#upstream-warning"),
   allowUpstreamBuild: $("#allow-upstream-build"),
+  summaryInput: $("#summary-input"), summaryOutput: $("#summary-output"),
+  summaryAction: $("#summary-action"),
   resultMessage: $("#result-message"), environmentTitle: $("#environment-title"),
   environmentMessage: $("#environment-message"), environmentDetails: $("#environment-details"),
   environmentStatus: $("#environment-status"),
@@ -25,6 +27,7 @@ const elements = {
 
 let currentImage = null;
 let currentImageName = null;
+let plannedOutput = null;
 let hostReady = false;
 let progressReady = false;
 let builderSettings = {
@@ -62,6 +65,10 @@ function renderSourceWarning() {
   const upstreamSelected = elements.nvidiaSource.value.startsWith("upstream:");
   elements.upstreamWarning.classList.toggle("hidden", !upstreamSelected);
   if (!upstreamSelected) elements.allowUpstreamBuild.checked = false;
+  const selectedLabel = elements.nvidiaSource.selectedOptions[0]?.textContent || "Automatic";
+  elements.summaryAction.textContent = upstreamSelected
+    ? `${selectedLabel} will be built only after its exact source and userspace inputs pass validation.`
+    : `${selectedLabel} will prefer an exact trusted release, then use the isolated x86_64 builder when required.`;
   updateBuildButton();
 }
 
@@ -227,10 +234,16 @@ async function selectImage(path) {
   elements.dropMessage.textContent = "Validating the file path and supported format.";
   try {
     const info = await invoke("validate_image", { path });
+    const preview = await invoke("preview_image_output", { path: info.path });
     currentImage = info.path;
     currentImageName = info.name;
+    plannedOutput = preview.output_path;
     elements.selectedName.textContent = info.name;
     elements.selectedPath.textContent = info.path;
+    elements.summaryInput.textContent = preview.input_path;
+    elements.summaryInput.title = preview.input_path;
+    elements.summaryOutput.textContent = preview.output_path;
+    elements.summaryOutput.title = preview.output_path;
     elements.selectionStatus.textContent = "Ready";
     elements.selectionStatus.className = "status";
     elements.selectionCard.classList.remove("hidden");
@@ -239,6 +252,7 @@ async function selectImage(path) {
   } catch (error) {
     currentImage = null;
     currentImageName = null;
+    plannedOutput = null;
     elements.selectedName.textContent = path.split(/[\\/]/).pop();
     elements.selectedPath.textContent = path;
     elements.selectionStatus.textContent = "Unsupported";
@@ -327,6 +341,10 @@ elements.buildButton.addEventListener("click", async () => {
   elements.buildButton.disabled = true;
   elements.resultMessage.textContent = "Build progress opened in a separate window.";
   try {
+    const preview = await invoke("preview_image_output", { path: currentImage });
+    plannedOutput = preview.output_path;
+    elements.summaryOutput.textContent = plannedOutput;
+    elements.summaryOutput.title = plannedOutput;
     await invoke("open_progress_window");
     const windows = await getAllWebviewWindows();
     const progressWindow = windows.find((window) => window.label === "build-progress");

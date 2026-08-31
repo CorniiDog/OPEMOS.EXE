@@ -222,6 +222,12 @@ struct ImageInfo {
 }
 
 #[derive(Serialize)]
+struct ImageOutputPreview {
+    input_path: String,
+    output_path: String,
+}
+
+#[derive(Serialize)]
 struct BuilderEnvironment {
     ready: bool,
     host_os: String,
@@ -9901,6 +9907,26 @@ fn validate_image(path: String) -> Result<ImageInfo, String> {
 }
 
 #[tauri::command]
+fn preview_image_output(path: String) -> Result<ImageOutputPreview, String> {
+    let path = PathBuf::from(path);
+    if !path.is_file() {
+        return Err("The selected path is not a file.".into());
+    }
+    if !supported_image(&path) {
+        return Err(
+            "Select a SteamOS recovery image (.img, .img.bz2, .img.gz, or .img.xz).".into(),
+        );
+    }
+    let canonical = fs::canonicalize(&path)
+        .map_err(|e| format!("Could not resolve the selected image: {e}"))?;
+    let output = output_path_for_input(&canonical, true)?;
+    Ok(ImageOutputPreview {
+        input_path: canonical.to_string_lossy().into_owned(),
+        output_path: output.to_string_lossy().into_owned(),
+    })
+}
+
+#[tauri::command]
 fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(progress) = app.get_webview_window("build-progress") {
         progress
@@ -12100,6 +12126,7 @@ pub fn run() {
             stop_appliance,
             stop_nvidia_build_appliance,
             validate_image,
+            preview_image_output,
             open_progress_window,
         ])
         .build(tauri::generate_context!())

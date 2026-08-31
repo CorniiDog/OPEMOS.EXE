@@ -103,9 +103,9 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Add project icon/assets.
 * [x] Replace prototype text-output wording with marker-image export wording.
 * [x] Show distinct host, appliance, guest-handshake, input-image, export, validation, and output states.
-* [ ] Add a clear pre-build summary of exactly what will happen.
+* [x] Add a clear pre-build summary of exactly what will happen.
 * [x] Add a per-build NVIDIA source selector beside the build action with Automatic, Latest, and versioned project branches; pin the resolved branch commit before compilation.
-* [ ] Display original image path and chosen output location separately.
+* [x] Display original image path and planned non-overwriting output location separately.
 * [ ] Add user-selectable output path/name.
 * [ ] Warn before overwriting an existing output.
 * [x] Add cancel control for the current appliance/prototype workflow.
