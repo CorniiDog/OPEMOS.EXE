@@ -35,20 +35,33 @@ test("NVIDIA log milestones advance build and installation progress", () => {
 
 test("structured installer validation progress is strict and measurable", () => {
   const prefix = "STEAMOS_NVIDIA_PROGRESS ";
-  const marker = `${prefix}{"schemaVersion":1,"operation":"offline-root-validation","stage":"archive-hash","attempt":2,"completed":3145728,"total":6291456,"unit":"bytes"}`;
+  const marker = `${prefix}{"schemaVersion":1,"attempt":2,"phase":"hashing","indeterminate":false,"completed":3145728,"total":6291456,"unit":"bytes"}`;
   assert.deepEqual(inferInstallerValidationProgress(`older log\n${marker}`), {
     attempt: 2,
     completed: 3145728,
-    label: "Hashing the NVIDIA module archive",
+    label: "Hashing an authenticated installer input",
     overallProgress: 65,
-    stage: "archive-hash",
+    stage: "hashing",
     stepProgress: 0.5,
     total: 6291456,
     unit: "bytes",
   });
   assert.equal(stripInstallerProgressProtocol(`before\n${marker}\nafter`), "before\nafter");
-  assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"operation":"offline-root-validation","stage":"unknown","attempt":1,"completed":null,"total":null,"unit":"none"}`), null);
-  assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"operation":"offline-root-validation","stage":"modules","attempt":1,"completed":6,"total":5,"unit":"items"}`), null);
+  assert.deepEqual(
+    inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"attempt":0,"phase":"dependency_closure","indeterminate":true}`),
+    {
+      attempt: 0,
+      completed: null,
+      label: "Resolving the package dependency closure",
+      overallProgress: 69,
+      stage: "dependency_closure",
+      stepProgress: null,
+      total: null,
+      unit: "none",
+    },
+  );
+  assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"attempt":1,"phase":"unknown","indeterminate":true}`), null);
+  assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"attempt":1,"phase":"modules","indeterminate":false,"completed":6,"total":5,"unit":"items"}`), null);
 });
 
 test("credentials and host usernames are redacted", () => {
