@@ -39,15 +39,19 @@ body {
 .icon-button {
   width: 38px;
   height: 38px;
+  padding: 0;
   border: 1px solid #334057;
   border-radius: 12px;
   color: #dce5ff;
   background: rgba(24, 32, 45, .94);
   cursor: pointer;
   font: 700 22px/1 inherit;
+  display: grid;
+  place-items: center;
 }
 .app-header > .icon-button { position: absolute; top: 0; right: 2px; }
-#settings-button { font-size: 28px; }
+#settings-button .hamburger-icon { display: block; width: 25px; height: 25px; overflow: visible; }
+#settings-button .hamburger-icon path { fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; }
 .icon-button:hover { border-color: #667ba5; background: #252f41; }
 .icon-button.compact { width: 34px; height: 34px; font-size: 24px; }
 .eyebrow { margin: 0 0 4px; color: #9fb4ff; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
