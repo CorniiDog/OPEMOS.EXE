@@ -18,7 +18,7 @@ body {
 
 body {
   min-width: 760px;
-  min-height: 860px;
+  min-height: 900px;
   background: radial-gradient(circle at top left, rgba(68, 109, 255, .18), transparent 32rem), #0d1117;
 }
 
@@ -144,7 +144,7 @@ footer p { color: #aab4c5; }
 .result-message:empty { display: none; }
 .result-message.success { color: #7ee2a8; }
 .result-message.error { color: #ff9494; }
-footer { margin: 0; text-align: center; font-size: 11px; }
+footer { min-height: 18px; margin: 0; display: grid; place-items: center; text-align: center; font-size: 11px; }
 footer p { margin: 0; }
 .hidden { display: none !important; }
 
