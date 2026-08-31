@@ -98,7 +98,7 @@ cannot provide alternate paths or promote them before the managed x86 installer
 checks the reviewed signer policy, package contents, and exact GSP firmware.
 
 The backend also stages the offline-root installer from immutable support commit
-`11a3cd914cb5a05829f667214b27e4dd8e2e206d`. Its eight required scripts,
+`236b926c4cf29bdefbadad2b6fea85ef46c904dd`. Its eight required scripts,
 helpers, and signer-policy files have embedded byte counts and SHA-256 pins;
 every file must match before a versioned bundle manifest is recorded. The
 normal workflow therefore does not accept a user-selected support checkout or

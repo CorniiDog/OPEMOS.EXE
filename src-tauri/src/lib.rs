@@ -45,7 +45,7 @@ const NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 512 * 1024 * 1024;
 const LIB32_NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 128 * 1024 * 1024;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_SUPPORT_COMMIT: &str = "11a3cd914cb5a05829f667214b27e4dd8e2e206d";
+const NVIDIA_SUPPORT_COMMIT: &str = "236b926c4cf29bdefbadad2b6fea85ef46c904dd";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_UTILS_SIGNER: &str = "05C7775A9E8B977407FE08E69D4C5AA15426DA0A";
@@ -180,8 +180,8 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 8] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "83f984eb38605fa8a49648701f46016bebf2fce308d0cc5a93ed9333df35274a",
-        bytes: 36_568,
+        sha256: "8f3fdd19dfe7b70f57219d933d68df900eb809d2199d120f2c004bde5cc4769c",
+        bytes: 38_089,
         executable: true,
     },
     PinnedInstallerFile {
@@ -10024,7 +10024,7 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 67_425);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 68_946);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 8);
         assert!(PINNED_INSTALLER_FILES
             .iter()
