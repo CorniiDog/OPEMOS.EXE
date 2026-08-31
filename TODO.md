@@ -1243,12 +1243,26 @@ Before calling the project **beta**, verify:
 * [x] Define the first versioned, automatically saved JSON settings schema that can be reopened and validated safely. (Migration/reset UI remains.)
 * [x] Remember only non-secret preferences in the JSON profile, including driver-update and verified NVIDIA release prompts.
 * [x] Never store a plaintext SteamOS user password, reusable password hash, GitHub token, SSH key, or other credential in the profile JSON.
-* [ ] Add an optional SteamOS user-password setup flow so the generated image does not require a manual `passwd` step.
+* [ ] Add Raspberry Pi Imager-style optional first-boot provisioning for the SteamOS user password and Wi-Fi network so a generated image can avoid a manual `passwd`/network setup step while keeping both settings disabled/unchanged by default.
 * [ ] Keep password input masked and transient; use the operating-system credential store when persistence is explicitly requested, otherwise prompt for each build.
 * [ ] Generate the target Linux password representation inside the trusted Rust/backend path and prevent it from appearing in logs or manifests.
+* [ ] Treat a blank password or blank Wi-Fi selection as “do not modify this setting,” never as an empty password, open network, credential deletion, or request to overwrite an existing target configuration.
+* [ ] Allow Wi-Fi selection from a scanned list plus a manually entered/hidden SSID, record the intended security type, and validate that the selected SteamOS provisioning mechanism survives Valve installation rather than configuring only the recovery environment.
+* [ ] Keep Wi-Fi passphrases masked and transient; store them only in the host operating-system credential store when explicitly requested, and exclude all provisioning secrets from settings JSON, logs, manifests, command lines, cloud-init output, and build artifacts not strictly required for provisioning.
+* [ ] Confirm the target account and show a secret-free provisioning summary before building; verify the generated image contains only the intended password/Wi-Fi state and that cancellation removes every temporary secret-bearing file.
 * [ ] Add an opt-in “track SteamOS driver compatibility updates” setting; fail closed when no certified NVIDIA/Gamescope combination exists.
 * [ ] Never silently replace a certified driver with an unverified latest release solely because a newer SteamOS version is detected.
 * [ ] Add a maintainer-only workflow for building Gamescope/NVIDIA artifacts when the selected SteamOS version lacks a compatible published artifact.
+* [ ] Add a dedicated maintainer window opened from the hamburger menu; keep it permission-gated and visually separate from the normal recovery-image workflow.
+* [ ] In the maintainer window, select NVIDIA or Gamescope, the project repository or approved upstream repository, and an exact available version/branch/commit before creating a workspace.
+* [ ] Start an isolated architecture-correct development environment for that selection, expose only an ephemeral authenticated SSH endpoint, and offer an “Open in VS Code” action using VS Code Remote SSH with the selected checkout as its workspace.
+* [ ] Never reuse the image-mutation appliance as a general-purpose development host; use a disposable maintainer environment with explicit retention/destruction controls and no image/user credentials copied into it.
+* [ ] Detect repository changes inside the maintainer environment and enable reviewed Commit and Push actions only when the checkout, branch, remote, diff, maintainer authorization, and commit message pass backend validation.
+* [ ] Show a reviewable status/diff summary before commit or push, prevent generated artifacts and credentials from being committed accidentally, and require explicit confirmation before every remote mutation.
+* [ ] Add a Release action which performs the repository-owned clean build/test/compile/package/provenance pipeline, validates the resulting exact-version artifacts, presents a dry-run release manifest, and invokes the existing canonical publisher only after explicit confirmation.
+* [ ] Keep release publication fail-closed: never release a dirty, untested, mismatched, unverified, upstream-local-only, or ambiguously versioned build, and never reinterpret “release” as permission to upload Valve recovery images.
+* [ ] Offer an optional maintainer deployment workflow for a Steam Deck/SteamOS device over authenticated SSH: discover or manually enter the device, pin/confirm its host key, inspect exact OS/kernel/GPU compatibility, preview changes, and deploy only matching verified artifacts.
+* [ ] Make Deck deployment recoverable and auditable: preserve diagnostics, define rollback/reinstall behavior, avoid modifying inactive A/B slots accidentally, and require a fresh confirmation naming the target device before mutation or reboot.
 * [x] Authenticate through GitHub CLI's visible browser/Terminal flow without blocking the app, poll for completion, and verify effective repository role/maintainer access before enabling any upload or automated-release control. (Bundle the CLI for packaged releases; development currently discovers it on the host.)
 * [x] Re-check GitHub authorization in the backend immediately before every build upload, tag, release, or other remote mutation; do not trust the UI checkbox alone.
 * [ ] Keep Valve recovery images and generated SteamOS images out of GitHub uploads; publish only project-owned Gamescope/NVIDIA artifacts, manifests, checksums, and permitted sources.
