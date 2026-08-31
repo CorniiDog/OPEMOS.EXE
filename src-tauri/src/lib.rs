@@ -42,7 +42,7 @@ const NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 512 * 1024 * 1024;
 const LIB32_NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 128 * 1024 * 1024;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_SUPPORT_COMMIT: &str = "8c11111787e064fc24d8c21652a8ffbfb08c9e5a";
+const NVIDIA_SUPPORT_COMMIT: &str = "af36f43b2b1571d8c5c9a0d0379b094de7954715";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_UTILS_SIGNER: &str = "05C7775A9E8B977407FE08E69D4C5AA15426DA0A";
@@ -147,8 +147,8 @@ struct PinnedInstallerFile {
 const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 8] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "de1738970358d95b6c382b05f1c8b5cb5deb72120f3920ca9cec3b8d45032792",
-        bytes: 12_233,
+        sha256: "b98d52568073512be2c89b635946e41e3c3d2b9f1ec509fdede7a846c49524a7",
+        bytes: 12_886,
         executable: true,
     },
     PinnedInstallerFile {
@@ -171,14 +171,14 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 8] = [
     },
     PinnedInstallerFile {
         path: "lib/update_grub_nvidia_args.py",
-        sha256: "b6615ca962dd3694fc48278f56ed8bf19301cbe696e2c8a46135cc8c476f480c",
-        bytes: 3_110,
+        sha256: "035e97a9019087d8486dc9eebeb8def1d7365c88cc1b6638c511a1e5b137ee68",
+        bytes: 3_145,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "109cf815f9c95d1df519255eeac70cffc7fdefcd6d59b6e3e552d70d57d2e266",
-        bytes: 18_760,
+        sha256: "18545c870bdf8ff520f6c11c39c73596e7d0e23265be4d45e1191fcb17ecb12d",
+        bytes: 25_610,
         executable: true,
     },
     PinnedInstallerFile {
@@ -204,8 +204,8 @@ const PINNED_PUBLISHER_FILES: [PinnedInstallerFile; 2] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_publish_inputs.py",
-        sha256: "2612d096d5ec0cc3f83f3b64efdd574c5fec1d35b97b4431b679bf4234e1d619",
-        bytes: 9_880,
+        sha256: "c95d426c19f81985930115dcefe036f16c7aedf07ce7169b07834b84cb884f44",
+        bytes: 11_349,
         executable: true,
     },
 ];
@@ -9743,7 +9743,7 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 48_211);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 55_749);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 8);
         assert!(PINNED_INSTALLER_FILES
             .iter()
@@ -9758,7 +9758,7 @@ mod tests {
 
     #[test]
     fn pinned_publisher_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_publisher_contract().unwrap(), 13_606);
+        assert_eq!(validate_pinned_publisher_contract().unwrap(), 15_075);
         assert_eq!(PINNED_PUBLISHER_FILES.len(), 2);
         assert!(PINNED_PUBLISHER_FILES
             .iter()
