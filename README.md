@@ -135,6 +135,14 @@ installation plus independent payload inspection uses `-nvidia.img`. Existing
 trailing `-marker`/`-nvidia` suffixes are normalized first so repeated builds do
 not produce names such as `-nvidia-nvidia-marker.img`.
 
+That filename normalization is not yet full NVIDIA-install idempotency. A future
+repeat-build preflight must mount the selected rootfs and `var-A` read-only and
+validate the installer's recorded kernel, NVIDIA version, build information,
+and provenance. An exact verified match should be reported as already current
+without rebuilding or mutating it; a different requested NVIDIA version or
+target kernel is an explicit upgrade; incomplete or inconsistent state must
+fail closed instead of being guessed from the filename.
+
 ## Architecture
 
 The Tauri frontend invokes a fixed set of Rust commands; it does not pass arbitrary shell commands to the host or guest. Rust owns the QEMU child process and creates a unique runtime directory containing an ephemeral SSH identity, cloud-init seed, qcow2 overlay, writable UEFI variables, and `qemu.log`. The pristine Fedora appliance remains unchanged.

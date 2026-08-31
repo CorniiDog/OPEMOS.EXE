@@ -47,6 +47,7 @@ body {
   font: 700 22px/1 inherit;
 }
 .app-header > .icon-button { position: absolute; top: 0; right: 2px; }
+#settings-button { font-size: 28px; }
 .icon-button:hover { border-color: #667ba5; background: #252f41; }
 .icon-button.compact { width: 34px; height: 34px; font-size: 24px; }
 .eyebrow { margin: 0 0 4px; color: #9fb4ff; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
