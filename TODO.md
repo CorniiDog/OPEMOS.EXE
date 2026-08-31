@@ -472,7 +472,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Resolve exact signed `nvidia-utils` and `lib32-nvidia-utils` inputs from the Arch Linux Archive without requiring their package releases to match; stage them through bounded cancellable downloads and keep signature trust pending until x86 appliance validation.
 * [x] Immutably pin the support repository's offline installer and reviewed userspace signer policy for the normal workflow: exact support commit, seven required paths, byte counts, SHA-256 hashes, safe staging, cancellation cleanup, and a versioned bundle manifest are enforced without accepting a user-selected checkout or moving branch.
 * [x] Transfer the verified module/userspace inputs into the managed x86_64 appliance, prepare the minimal reviewed binary keyring, and consume the installer's structured validation result. Package-specific signer fingerprints, package versions/hashes, target identity, artifact trust/hash, mount cleanup, and schema/status are revalidated by Rust.
-* [x] Stop the native mutation appliance without deleting its working qcow2, attach that working layer only to the x86_64 installer appliance, and mount the uniquely recognized `rootfs-A` plus matching `efi-A` at `<root>/boot`; the first integrated pass mounts both read-only and runs `--validate-only`, never guesses an A/B slot, then releases both mounts before export.
+* [x] Stop the native mutation appliance without deleting its working qcow2, attach that working layer only to the x86_64 installer appliance, and mount the uniquely recognized `rootfs-A`, matching `var-A` at `<root>/var`, and matching `efi-A` at `<root>/boot`; validation mounts all three read-only, never guesses an A/B slot, and releases them before mutation or export.
 * [x] Prevent the handed-off SteamOS disk from participating in x86 firmware boot selection: boot Fedora alone, then QMP-hotplug the working qcow2 through a dedicated PCIe root port after readiness.
 * [x] Invoke the same pinned installer without `--validate-only` against the disposable overlay, require its structured `success/install_complete` result, verify NVIDIA-bearing initramfs contents, and discard the overlay after every failure or cancellation.
 * [ ] Run the newly integrated mutation path against the real SteamOS 3.8.14 recovery image and preserve the complete success/failure diagnostics.
@@ -482,7 +482,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Treat “no compatible published artifact” as a normal, non-destructive resolution result with a clear UI/log status; do not create an NVIDIA-labeled output or classify it as an application failure.
 * [ ] Keep Gamescope fallback policy independent from NVIDIA kernel-module fallback policy.
 * [x] Require exact target-kernel identity/vermagic for NVIDIA artifacts; never reuse the SteamOS 3.8.16 `valve24.5` modules for the observed 3.8.14 `valve24.4` kernel.
-* [ ] Connect the Rust-managed x86_64 Fedora build-appliance commands to the normal build workflow and progress UI on Apple Silicon; the isolated backend lifecycle exists, but the frontend does not invoke it yet.
+* [x] Connect the Rust-managed x86_64 Fedora build-appliance commands to the normal build workflow and progress UI on Apple Silicon, including boot, stable compiler subphases, elapsed-time guidance, live logs, cancellation, artifact retrieval, validation, and installation handoff.
 * [ ] Decide whether the Apple Silicon fallback uses a separately managed emulated x86_64 appliance or a trusted remote x86_64 build worker, accounting for performance and artifact provenance.
 * [ ] Consider a Gamescope 3.8.16 compatibility floor for earlier SteamOS 3.8.x images only after its binary dependencies and runtime behavior are explicitly validated on those releases.
 
@@ -721,6 +721,8 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Keep synthetic working-copy mutation retry-safe when the guest kernel temporarily reports a busy partition-table reread.
 * [x] Skip unchanged log redraws and keep progress-status geometry stable across message changes.
 * [x] Render ANSI SGR colors safely while normalizing unsupported terminal cursor/control sequences.
+* [x] Preserve overlap across bursty Fedora/compiler output with a bounded 256 KiB-per-source live window instead of dropping output at the former 32 KiB boundary.
+* [x] Use an honest indeterminate progress bar, stable log-derived subphases, elapsed time, and delayed long-build guidance for x86_64 compilation rather than inventing a linear ETA.
 * [ ] Add a “Copy diagnostics” action.
 * [x] Keep normal prototype success UX concise.
 
@@ -1254,7 +1256,7 @@ Before calling the project **beta**, verify:
 11. [x] Validate durable output and input immutability automatically against a full-size Valve recovery image.
 12. [x] Begin NVIDIA support-repo integration with target SteamOS identity, architecture, and kernel discovery.
 13. [ ] Validate the support repository's offline-target build end to end in x86_64 Fedora for the observed SteamOS 3.8.14 kernel.
-14. [ ] Connect the managed x86_64 build path to the workflow and expose appliance acquisition, boot, build, download, and validation progress through the existing progress window. (Isolated Rust lifecycle complete; workflow/UI integration remains.)
+14. [x] Connect the managed x86_64 build path to the workflow and expose appliance boot, build subphases, elapsed time, live logs, download, validation, and cancellation through the existing progress window.
 15. [ ] Invoke the support repository's machine-readable resolver/build contract from Rust without duplicating its compatibility policy.
 16. [ ] Install the resulting development artifact into only the disposable SteamOS working image, then verify modules, metadata, source immutability, and output manifest before export.
 

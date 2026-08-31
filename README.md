@@ -2,7 +2,7 @@
 
 The main window includes a compact settings panel for durable, non-secret preferences. Settings use a versioned `settings.json`; GitHub credentials are never stored there. On macOS, maintainer connection opens the GitHub CLI browser flow in a visible Terminal window while the responsive settings panel polls for completion. Maintainer release controls require a live permission check against `CorniiDog/open-gpu-kernel-modules-steamos-support` and a second backend permission check immediately before publication.
 
-When an exact-kernel NVIDIA artifact is built locally and reaches `locally-built-verified`, maintainers who opted in receive a release confirmation naming the repository, tag, pinned support commit, trust classification, and archive hash. “No, keep local” is focused by default. The publisher refuses to overwrite an existing release and uploads only the NVIDIA archive, checksum, and provenance sidecar—never the recovery image or generated SteamOS image.
+When an exact-kernel NVIDIA artifact is built locally and reaches `locally-built-verified`, maintainers who opted in receive a release confirmation naming the repository, tag, pinned support commit, trust classification, and archive hash. “No, keep local” is focused by default. The publisher refuses to overwrite an existing release and uploads only the NVIDIA archive, checksum, external build-info, and provenance sidecar—never the recovery image or generated SteamOS image.
 
 The main build card also exposes a per-build NVIDIA source selector. `Automatic` remains the default and follows the nearest compatible same-series release; `Latest` explicitly selects the newest available project branch; individual `nvidia/<version>` branches can be selected for controlled testing. Every choice is resolved to an exact source commit before the x86_64 build begins.
 
@@ -100,12 +100,12 @@ bundle, and repeated preparation revalidates and reuses the session-owned copy.
 The handoff transfers that bundle plus the verified module archive, checksum,
 provenance, exact userspace packages, and detached signatures into the x86
 worker. It prepares a minimal keyring from Fedora's trusted Arch key material,
-mounts uniquely identified `rootfs-A` and `efi-A` read-only, and accepts only a
+mounts uniquely identified `rootfs-A`, `var-A`, and `efi-A` read-only, and accepts only a
 schema-1 `validated/validation_complete` result whose target, trust, hashes,
 package-specific signers, and released-mount status all match Rust-owned state.
 Mutation mounts the Btrfs top level explicitly, identifies the current default
 root subvolume, temporarily clears only that subvolume's read-only property,
-mounts the matching `efi-A` at `/boot`, and restores both Btrfs read-only and
+mounts the matching `var-A` at `/var` and `efi-A` at `/boot`, and restores both Btrfs read-only and
 seed-device state afterward. The resulting raw candidate is reopened through a
 fresh appliance and checked for all five modules, matching package records and
 GSP firmware, configuration, provenance state, initramfs output, layout, and

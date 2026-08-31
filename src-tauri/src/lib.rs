@@ -351,6 +351,7 @@ struct NvidiaPublishedPublication {
 struct NvidiaPublishedArtifact {
     archive_path: String,
     checksum_path: String,
+    build_info_path: Option<String>,
     provenance_path: String,
     archive_sha256: String,
     trust: String,
@@ -3655,6 +3656,7 @@ fn resolve_published_nvidia_for_target(
         artifact: Some(NvidiaPublishedArtifact {
             archive_path: archive_path.to_string_lossy().into_owned(),
             checksum_path: checksum_path.to_string_lossy().into_owned(),
+            build_info_path: None,
             provenance_path: provenance_path.to_string_lossy().into_owned(),
             archive_sha256,
             trust,
@@ -6331,10 +6333,14 @@ async fn read_nvidia_build_appliance_log(app: tauri::AppHandle) -> Result<String
             };
             session.runtime_dir.clone()
         };
-        const LOG_LIMIT: usize = 32 * 1024;
+        // Fedora boot and compiler output can advance by substantially more than
+        // 32 KiB between UI polls under emulation. Keep a wide enough rolling
+        // window for the frontend to find overlap without repeatedly shipping
+        // the complete, unbounded logs.
+        const LOG_LIMIT: usize = 256 * 1024;
         let qemu_bytes = fs::read(runtime_dir.join("qemu.log"))
             .map_err(|e| format!("Could not read the x86 build-appliance log: {e}"))?;
-        let qemu_start = qemu_bytes.len().saturating_sub(LOG_LIMIT / 4);
+        let qemu_start = qemu_bytes.len().saturating_sub(LOG_LIMIT);
         let mut output = String::from_utf8_lossy(&qemu_bytes[qemu_start..]).into_owned();
         let build_log = runtime_dir.join("nvidia-build.log");
         if build_log.is_file() {
@@ -6653,7 +6659,7 @@ fn read_appliance_log_blocking(app: tauri::AppHandle) -> Result<String, String> 
         session.runtime_dir.join("qemu.log")
     };
     let bytes = fs::read(log_path).map_err(|e| format!("Could not read the appliance log: {e}"))?;
-    const LOG_LIMIT: usize = 32 * 1024;
+    const LOG_LIMIT: usize = 256 * 1024;
     let start = bytes.len().saturating_sub(LOG_LIMIT);
     Ok(String::from_utf8_lossy(&bytes[start..]).into_owned())
 }
@@ -7379,6 +7385,7 @@ async fn build_nvidia_target_on_demand(
             artifact: Some(NvidiaPublishedArtifact {
                 archive_path: artifact.archive_path,
                 checksum_path: artifact.checksum_path,
+                build_info_path: Some(artifact.build_info_path),
                 provenance_path: artifact.provenance_path,
                 archive_sha256: artifact.archive_sha256,
                 trust: artifact.trust,
@@ -7476,16 +7483,26 @@ async fn publish_on_demand_nvidia_release(
         };
         let expected_archive = published_asset_name(&identity);
         let expected_checksum = format!("{expected_archive}.sha256");
+        let expected_build_info = format!(
+            "{}.build-info.txt",
+            expected_archive.trim_end_matches(".tar.gz")
+        );
         let expected_provenance = format!(
             "{}.provenance.json",
             expected_archive.trim_end_matches(".tar.gz")
         );
         let archive = PathBuf::from(&artifact.archive_path);
         let checksum = PathBuf::from(&artifact.checksum_path);
+        let build_info = artifact
+            .build_info_path
+            .as_ref()
+            .map(PathBuf::from)
+            .ok_or("On-demand artifact omitted its external build-info file.")?;
         let provenance = PathBuf::from(&artifact.provenance_path);
         for (path, expected) in [
             (&archive, expected_archive.as_str()),
             (&checksum, expected_checksum.as_str()),
+            (&build_info, expected_build_info.as_str()),
             (&provenance, expected_provenance.as_str()),
         ] {
             if path.file_name().and_then(|name| name.to_str()) != Some(expected)
@@ -7498,6 +7515,21 @@ async fn publish_on_demand_nvidia_release(
         }
         if sha256_file(&archive)? != artifact.archive_sha256 {
             return Err("Release archive changed after on-demand validation.".into());
+        }
+        let archived_build_info = Command::new("tar")
+            .args(["-xOzf"])
+            .arg(&archive)
+            .arg("BUILD-INFO.txt")
+            .output()
+            .map_err(|error| format!("Could not re-open archived build metadata: {error}"))?;
+        if !archived_build_info.status.success()
+            || archived_build_info.stdout
+                != fs::read(&build_info)
+                    .map_err(|error| format!("Could not re-open release build metadata: {error}"))?
+        {
+            return Err(
+                "External release build metadata no longer matches the validated archive.".into(),
+            );
         }
         let publish_trust = validate_published_nvidia_artifact(
             &archive,
@@ -7529,8 +7561,8 @@ async fn publish_on_demand_nvidia_release(
             ));
         }
         let title = format!(
-            "NVIDIA {} for SteamOS {} ({})",
-            plan.nvidia_version, plan.steamos_version, plan.kernel_version
+            "open-gpu-kernel-modules-steamos - SteamOS {}",
+            plan.steamos_version
         );
         let notes = format!(
             "Exact-kernel NVIDIA open-module artifact built by SteamOS NVIDIA Image Builder.\n\nTrust: locally-built-verified\nSupport commit: {NVIDIA_SUPPORT_BUILD_COMMIT}\nSource branch: {}\nSource commit: {}\nBaseline release: {}\nArchive SHA-256: {}",
@@ -7540,6 +7572,7 @@ async fn publish_on_demand_nvidia_release(
             .args(["release", "create", &identity.tag])
             .arg(&archive)
             .arg(&checksum)
+            .arg(&build_info)
             .arg(&provenance)
             .args([
                 "--repo",
@@ -7762,17 +7795,24 @@ python3 "$WORK/support/bootstrap/prepare_nvidia_package_keyring.py" --source /us
 test -b "$TARGET"
 mapfile -t ROOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "rootfs-A" && $3 == "btrfs" {{print $1}}')
 mapfile -t BOOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "efi-A" && ($3 == "vfat" || $3 == "fat") {{print $1}}')
+mapfile -t VAR_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "var-A" && $3 == "ext4" {{print $1}}')
 test "${{#ROOT_PARTS[@]}}" -eq 1
 test "${{#BOOT_PARTS[@]}}" -eq 1
+test "${{#VAR_PARTS[@]}}" -eq 1
 test "${{ROOT_PARTS[0]}}" != "${{BOOT_PARTS[0]}}"
+test "${{ROOT_PARTS[0]}}" != "${{VAR_PARTS[0]}}"
+test "${{BOOT_PARTS[0]}}" != "${{VAR_PARTS[0]}}"
 sudo mkdir -p "$ROOT"
 ROOT_MOUNTED=0
+VAR_MOUNTED=0
 BOOT_MOUNTED=0
 cleanup() {{
   rc=$?
   if (( BOOT_MOUNTED )); then sudo umount "$ROOT/boot" || rc=1; fi
+  if (( VAR_MOUNTED )); then sudo umount "$ROOT/var" || rc=1; fi
   if (( ROOT_MOUNTED )); then sudo umount "$ROOT" || rc=1; fi
   ! findmnt -rn -M "$ROOT/boot" >/dev/null 2>&1 || rc=1
+  ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1 || rc=1
   ! findmnt -rn -M "$ROOT" >/dev/null 2>&1 || rc=1
   exit "$rc"
 }}
@@ -7781,14 +7821,21 @@ sudo mount -o ro "${{ROOT_PARTS[0]}}" "$ROOT"
 ROOT_MOUNTED=1
 test -d "$ROOT/boot"
 test ! -L "$ROOT/boot"
+test -d "$ROOT/var"
+test ! -L "$ROOT/var"
+sudo mount -o ro "${{VAR_PARTS[0]}}" "$ROOT/var"
+VAR_MOUNTED=1
 sudo mount -o ro "${{BOOT_PARTS[0]}}" "$ROOT/boot"
 BOOT_MOUNTED=1
 sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-result.json"
 sudo umount "$ROOT/boot"
 BOOT_MOUNTED=0
+sudo umount "$ROOT/var"
+VAR_MOUNTED=0
 sudo umount "$ROOT"
 ROOT_MOUNTED=0
 ! findmnt -rn -M "$ROOT/boot" >/dev/null 2>&1
+! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
         inputs.kernel_version
@@ -7926,13 +7973,18 @@ test -d "$WORK/support"
 test -f "$WORK/approved-package-signers.gpg"
 mapfile -t ROOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "rootfs-A" && $3 == "btrfs" {{print $1}}')
 mapfile -t BOOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "efi-A" && ($3 == "vfat" || $3 == "fat") {{print $1}}')
+mapfile -t VAR_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "var-A" && $3 == "ext4" {{print $1}}')
 test "${{#ROOT_PARTS[@]}}" -eq 1
 test "${{#BOOT_PARTS[@]}}" -eq 1
+test "${{#VAR_PARTS[@]}}" -eq 1
 test "${{ROOT_PARTS[0]}}" != "${{BOOT_PARTS[0]}}"
+test "${{ROOT_PARTS[0]}}" != "${{VAR_PARTS[0]}}"
+test "${{BOOT_PARTS[0]}}" != "${{VAR_PARTS[0]}}"
 sudo mkdir -p "$TOP" "$ROOT"
 TOP_MOUNTED=0
 ROOT_MOUNTED=0
 ROOT_IS_TOP=0
+VAR_MOUNTED=0
 BOOT_MOUNTED=0
 RESTORE_ROOT_RO=0
 WAS_SEEDING=0
@@ -7942,6 +7994,7 @@ cleanup() {{
   rc=$?
   trap - EXIT INT TERM
   if (( BOOT_MOUNTED )); then sudo umount "$ROOT/boot" || rc=1; fi
+  if (( VAR_MOUNTED )); then sudo umount "$ROOT/var" || rc=1; fi
   if (( ROOT_MOUNTED )); then sudo umount "$ROOT" || rc=1; fi
   if (( RESTORE_ROOT_RO )) && (( TOP_MOUNTED )) && test -n "$SOURCE_ROOT"; then
     sudo btrfs property set -f -ts "$SOURCE_ROOT" ro true || rc=1
@@ -7951,6 +8004,7 @@ cleanup() {{
     sudo btrfstune -f -S 1 "${{ROOT_PARTS[0]}}" || rc=1
   fi
   ! findmnt -rn -M "$ROOT/boot" >/dev/null 2>&1 || rc=1
+  ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1 || rc=1
   ! findmnt -rn -M "$ROOT" >/dev/null 2>&1 || rc=1
   ! findmnt -rn -M "$TOP" >/dev/null 2>&1 || rc=1
   exit "$rc"
@@ -7989,6 +8043,10 @@ fi
 findmnt -rn -M "$ROOT" -o OPTIONS | tr ',' '\n' | grep -qx rw
 test -d "$ROOT/boot"
 test ! -L "$ROOT/boot"
+test -d "$ROOT/var"
+test ! -L "$ROOT/var"
+sudo mount -o rw "${{VAR_PARTS[0]}}" "$ROOT/var"
+VAR_MOUNTED=1
 sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/boot"
 BOOT_MOUNTED=1
 sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-mutation-result.json"
@@ -8008,6 +8066,8 @@ test "$INITRAMFS_OK" = 1
 sync
 sudo umount "$ROOT/boot"
 BOOT_MOUNTED=0
+sudo umount "$ROOT/var"
+VAR_MOUNTED=0
 if (( ROOT_MOUNTED )); then sudo umount "$ROOT"; ROOT_MOUNTED=0; fi
 if (( RESTORE_ROOT_RO )); then
   sudo btrfs property set -f -ts "$SOURCE_ROOT" ro true
@@ -8020,6 +8080,7 @@ if (( WAS_SEEDING )); then
   SEEDING_RESTORED=1
 fi
 ! findmnt -rn -M "$ROOT/boot" >/dev/null 2>&1
+! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 ! findmnt -rn -M "$TOP" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
@@ -8771,6 +8832,33 @@ mod tests {
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "trust/nvidia-userspace-package-signers.json" && !file.executable
         }));
+    }
+
+    #[test]
+    fn offline_handoff_mounts_the_separate_var_partition() {
+        let source = include_str!("lib.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+        assert_eq!(source.matches("mapfile -t VAR_PARTS").count(), 2);
+        assert_eq!(
+            source
+                .matches(r#"sudo mount -o ro "${{VAR_PARTS[0]}}" "$ROOT/var""#)
+                .count(),
+            1
+        );
+        assert_eq!(
+            source
+                .matches(r#"sudo mount -o rw "${{VAR_PARTS[0]}}" "$ROOT/var""#)
+                .count(),
+            1
+        );
+        assert_eq!(
+            source
+                .matches(r#"if (( VAR_MOUNTED )); then sudo umount "$ROOT/var""#)
+                .count(),
+            2
+        );
     }
 
     #[test]

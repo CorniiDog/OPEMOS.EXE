@@ -4,7 +4,7 @@ const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 const $ = (selector) => document.querySelector(selector);
 const elements = {
   inputName: $("#input-name"), statusTitle: $("#status-title"), statusMessage: $("#status-message"),
-  statusBadge: $("#status-badge"), progressBar: $("#progress-bar"), buildLog: $("#build-log"),
+  statusBadge: $("#status-badge"), progressTrack: $("#progress-track"), progressBar: $("#progress-bar"), buildLog: $("#build-log"),
   logFollow: $("#log-follow"), cancelBuild: $("#cancel-build"), closeWindow: $("#close-window"),
   releaseDialog: $("#release-dialog"), releaseSummary: $("#release-summary"),
   releaseCancel: $("#release-cancel"), releaseConfirm: $("#release-confirm"),
@@ -17,6 +17,7 @@ let lastNvidiaApplianceLog = "";
 let pendingLogChunks = [];
 let followingLogs = true;
 let refreshingLogs = false;
+let nvidiaBuildSubphase = "Preparing the isolated build environment";
 
 function normalizeTerminalText(text) {
   return text
@@ -93,12 +94,55 @@ function appendAnsiText(parent, text, state) {
   appendChunk(text.slice(offset));
 }
 
-function setStatus(state, title, message, progress, activity = "Working") {
+function setStatus(state, title, message, progress, activity = "Working", indeterminate = false) {
   elements.statusTitle.textContent = title;
   elements.statusMessage.textContent = message;
   elements.statusBadge.textContent = state === "complete" ? "Complete" : state === "failed" ? "Failed" : state === "cancelled" ? "Cancelled" : activity;
   elements.statusBadge.className = `status ${state === "complete" ? "" : state === "failed" || state === "cancelled" ? "failed" : "pending"}`;
+  elements.progressTrack.classList.toggle("indeterminate", indeterminate);
   elements.progressBar.style.width = `${progress}%`;
+}
+
+function formatElapsed(milliseconds) {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return minutes ? `${minutes}m ${String(remainder).padStart(2, "0")}s` : `${remainder}s`;
+}
+
+function inferNvidiaBuildSubphase(log) {
+  if (log.includes("Offline-target NVIDIA artifact created.")) return "Packaging and validating the finished artifact";
+  if (/(?:MODPOST|LD \[M\]|BTF \[M\])/.test(log)) return "Linking and validating all five kernel modules";
+  if (log.includes("[ nvidia") && log.includes(" CC ")) return "Compiling the NVIDIA core under x86_64 emulation";
+  if (log.includes("Building NVIDIA ")) return "Preparing the exact-kernel NVIDIA module build";
+  if (log.includes("Downloading Valve headers-package signature")) return "Authenticating the exact Valve headers";
+  if (log.includes("Downloading exact Valve headers")) return "Downloading the exact Valve headers";
+  if (log.includes("Discovering exact Valve headers package")) return "Locating the exact Valve headers package";
+  if (log.includes("Installing Fedora offline-target build dependencies")) return "Installing the isolated x86_64 build toolchain";
+  return nvidiaBuildSubphase;
+}
+
+function startNvidiaBuildProgress() {
+  const started = Date.now();
+  const update = () => {
+    const elapsed = Date.now() - started;
+    const patience = elapsed >= 30000 ? " This may take some time under Apple Silicon emulation." : "";
+    setStatus(
+      "running",
+      "Building exact-kernel NVIDIA modules",
+      `${nvidiaBuildSubphase}. Elapsed ${formatElapsed(elapsed)}.${patience}`,
+      96,
+      "Compiling",
+      true,
+    );
+  };
+  update();
+  return setInterval(update, 1000);
+}
+
+function stopNvidiaBuildProgress(timer) {
+  clearInterval(timer);
+  elements.progressTrack.classList.remove("indeterminate");
 }
 
 function addStageLog(message) {
@@ -238,6 +282,7 @@ function applianceLogDelta(previous, current) {
 function renderLogs(applianceLog, source = "native") {
   const normalizedLog = normalizeTerminalText(applianceLog);
   if (!normalizedLog) return;
+  if (source === "nvidia") nvidiaBuildSubphase = inferNvidiaBuildSubphase(normalizedLog);
   const previous = source === "nvidia" ? lastNvidiaApplianceLog : lastApplianceLog;
   let delta = applianceLogDelta(previous, normalizedLog);
   if (!previous && source === "nvidia") {
@@ -311,6 +356,7 @@ async function runBuild(request) {
   lastNvidiaApplianceLog = "";
   pendingLogChunks = [];
   ansiState = freshAnsiState();
+  nvidiaBuildSubphase = "Preparing the isolated build environment";
   followingLogs = true;
   elements.buildLog.replaceChildren();
   elements.logFollow.textContent = "Following live output";
@@ -459,8 +505,12 @@ async function runBuild(request) {
           }
           if (cancelling) return;
           x86ApplianceReady = true;
-          setStatus("running", "Building exact-kernel NVIDIA modules", "Downloading authenticated Valve headers and compiling all five modules in isolated x86_64 Fedora. Live compiler output is shown below.", 96, "Compiling");
-          nvidiaResolution = await invoke("build_nvidia_target_on_demand");
+          const nvidiaBuildTimer = startNvidiaBuildProgress();
+          try {
+            nvidiaResolution = await invoke("build_nvidia_target_on_demand");
+          } finally {
+            stopNvidiaBuildProgress(nvidiaBuildTimer);
+          }
           const builtArtifact = nvidiaResolution.artifact;
           addStageLog(`NVIDIA on-demand artifact: trust=${builtArtifact.trust}; SHA256 ${builtArtifact.archiveSha256}.`);
           addStageLog("On-demand artifact passed exact-target, compiler, header-signature, provenance, vermagic, architecture, and module-hash validation.");
