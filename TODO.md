@@ -1247,6 +1247,8 @@ Before calling the project **beta**, verify:
 * [ ] Make the future updater honor manifest source policy: rebuild a pinned NVIDIA version for each exact new kernel or pause for an explicit switch to Automatic/another version.
 * [ ] Recovery-image comparison/diff tooling.
 * [ ] GUI diagnostics viewer.
+* [x] Add a one-click diagnostic-log copy that keeps important build/failure context, removes routine repeated output, bounds clipboard size, and redacts host paths and common credentials without changing the full displayed log.
+* [x] Reweight progress around real workflow cost and advance the long NVIDIA compile/validation/install ranges from normalized diagnostic milestones without allowing backward movement.
 * [ ] Advanced custom package injection framework only if it does not dilute the NVIDIA-focused safety model.
 
 ## Deferred settings, profiles, and maintainer automation
