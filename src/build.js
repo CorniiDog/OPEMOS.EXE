@@ -6,7 +6,8 @@ const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 const $ = (selector) => document.querySelector(selector);
 const elements = {
   inputName: $("#input-name"), statusTitle: $("#status-title"), statusMessage: $("#status-message"),
-  statusBadge: $("#status-badge"), progressTrack: $("#progress-track"), progressBar: $("#progress-bar"), buildLog: $("#build-log"),
+  statusBadge: $("#status-badge"), progressTrack: $("#progress-track"), progressBar: $("#progress-bar"),
+  stepProgressTrack: $("#step-progress-track"), stepProgressBar: $("#step-progress-bar"), buildLog: $("#build-log"),
   logFollow: $("#log-follow"), cancelBuild: $("#cancel-build"), copyDiagnosticLog: $("#copy-diagnostic-log"), closeWindow: $("#close-window"),
   releaseDialog: $("#release-dialog"), releaseSummary: $("#release-summary"),
   releaseCancel: $("#release-cancel"), releaseConfirm: $("#release-confirm"),
@@ -24,6 +25,7 @@ let nvidiaBuildSubphase = "Preparing the isolated build environment";
 let nvidiaMilestoneProgress = 30;
 let activeNvidiaPhase = null;
 let currentProgress = 0;
+let currentStep = "";
 
 function normalizeTerminalText(text) {
   return text
@@ -100,7 +102,29 @@ function appendAnsiText(parent, text, state) {
   appendChunk(text.slice(offset));
 }
 
-function setStatus(state, title, message, progress, activity = "Working", indeterminate = false) {
+function setStepProgress(state, step, progress) {
+  if (state !== "running") {
+    currentStep = "";
+    elements.stepProgressTrack.classList.remove("indeterminate");
+    elements.stepProgressBar.style.width = state === "complete" ? "100%" : "0";
+    return;
+  }
+  const bounded = Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : null;
+  if (bounded !== null) {
+    currentStep = step;
+    elements.stepProgressTrack.classList.remove("indeterminate");
+    elements.stepProgressBar.style.width = `${bounded * 100}%`;
+    return;
+  }
+  if (currentStep === step && elements.stepProgressTrack.classList.contains("indeterminate")) return;
+  currentStep = step;
+  elements.stepProgressTrack.classList.remove("indeterminate");
+  elements.stepProgressBar.style.width = "24%";
+  void elements.stepProgressTrack.offsetWidth;
+  elements.stepProgressTrack.classList.add("indeterminate");
+}
+
+function setStatus(state, title, message, progress, activity = "Working", indeterminate = false, stepProgress = null) {
   const requestedProgress = Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : currentProgress;
   currentProgress = state === "running" ? Math.max(currentProgress, requestedProgress) : requestedProgress;
   elements.statusTitle.textContent = title;
@@ -109,6 +133,7 @@ function setStatus(state, title, message, progress, activity = "Working", indete
   elements.statusBadge.className = `status ${state === "complete" ? "" : state === "failed" || state === "cancelled" ? "failed" : "pending"}`;
   elements.progressTrack.classList.toggle("indeterminate", indeterminate);
   elements.progressBar.style.width = `${currentProgress}%`;
+  setStepProgress(state, `${activity}:${title}`, stepProgress);
 }
 
 function formatElapsed(milliseconds) {
@@ -199,21 +224,21 @@ function showInputProgress(progress) {
   const ratio = Math.min(progress.processedBytes / progress.totalBytes, 1);
   const amount = `${formatBytes(progress.processedBytes)} of ${formatBytes(progress.totalBytes)}`;
   if (progress.stage === "hashing-source") {
-    setStatus("running", "Verifying source image", `Computing the original input SHA-256: ${amount}.`, 1 + ratio * 2, "Hashing");
+    setStatus("running", "Verifying source image", `Computing the original input SHA-256: ${amount}.`, 1 + ratio * 2, "Hashing", false, ratio);
   } else if (progress.stage === "decompressing") {
-    setStatus("running", "Normalizing compressed image", `Read ${amount} of the compressed input.`, 3 + ratio * 4, "Unzipping");
+    setStatus("running", "Normalizing compressed image", `Read ${amount} of the compressed input.`, 3 + ratio * 4, "Unzipping", false, ratio);
   } else if (progress.stage === "hashing-image") {
-    setStatus("running", "Verifying normalized image", `Computing the disposable raw-image SHA-256: ${amount}.`, 7 + ratio * 3, "Hashing");
+    setStatus("running", "Verifying normalized image", `Computing the disposable raw-image SHA-256: ${amount}.`, 7 + ratio * 3, "Hashing", false, ratio);
   } else if (progress.stage === "verifying-source-after") {
-    setStatus("running", "Verifying source integrity", `Confirming the original input remains unchanged: ${amount}.`, 20 + ratio, "Hashing");
+    setStatus("running", "Verifying source integrity", `Confirming the original input remains unchanged: ${amount}.`, 20 + ratio, "Hashing", false, ratio);
   } else if (progress.stage === "verifying-image-after") {
-    setStatus("running", "Verifying image integrity", `Confirming the attached raw image remains unchanged: ${amount}.`, 21 + ratio, "Hashing");
+    setStatus("running", "Verifying image integrity", `Confirming the attached raw image remains unchanged: ${amount}.`, 21 + ratio, "Hashing", false, ratio);
   } else if (progress.stage === "exporting-image") {
-    setStatus("running", "Exporting raw image", `Flattening the verified working layer: ${amount}.`, 86 + ratio * 6, "Exporting");
+    setStatus("running", "Exporting raw image", `Flattening the verified working layer: ${amount}.`, 86 + ratio * 6, "Exporting", false, ratio);
   } else if (progress.stage === "hashing-output") {
-    setStatus("running", "Validating exported image", `Hashing the independently attached raw output: ${amount}.`, 94 + ratio * 3, "Validating");
+    setStatus("running", "Validating exported image", `Hashing the independently attached raw output: ${amount}.`, 94 + ratio * 3, "Validating", false, ratio);
   } else if (progress.stage === "verifying-source-after-export") {
-    setStatus("running", "Rechecking original image", `Confirming the original input remains unchanged: ${amount}.`, 97 + ratio * 2, "Hashing");
+    setStatus("running", "Rechecking original image", `Confirming the original input remains unchanged: ${amount}.`, 97 + ratio * 2, "Hashing", false, ratio);
   }
 }
 
@@ -229,25 +254,25 @@ function showNvidiaResolutionProgress(progress) {
   } else if (progress.stage === "downloading-nvidia-provenance") {
     setStatus("running", "Downloading NVIDIA provenance", "Retrieving the structured trust and module record.", 28, "Downloading");
   } else if (progress.stage === "downloading-nvidia-archive") {
-    setStatus("running", "Downloading compatible NVIDIA modules", `${formatBytes(processed)} of ${formatBytes(total)} transferred.`, 28 + ratio * 4, "Downloading");
+    setStatus("running", "Downloading compatible NVIDIA modules", `${formatBytes(processed)} of ${formatBytes(total)} transferred.`, 28 + ratio * 4, "Downloading", false, total > 0 ? ratio : null);
   } else if (progress.stage === "validating-nvidia-artifact") {
     setStatus("running", "Validating NVIDIA artifact", "Checking GitHub digests, checksum, embedded provenance, exact vermagic, and all five module hashes.", 32 + ratio * 2, "Validating");
   } else if (progress.stage === "querying-arch-package-index") {
     setStatus("running", "Resolving NVIDIA userspace", "Finding exact signed nvidia-utils packages in the Arch Linux Archive.", 34, "Resolving");
   } else if (progress.stage === "downloading-nvidia-utils") {
-    setStatus("running", "Downloading NVIDIA userspace", `${formatBytes(processed)}${total ? ` of ${formatBytes(total)}` : ""} transferred.`, 34 + ratio * 2, "Downloading");
+    setStatus("running", "Downloading NVIDIA userspace", `${formatBytes(processed)}${total ? ` of ${formatBytes(total)}` : ""} transferred.`, 34 + ratio * 2, "Downloading", false, total > 0 ? ratio : null);
   } else if (progress.stage === "downloading-nvidia-utils-signature") {
     setStatus("running", "Downloading NVIDIA signature", "Staging the detached nvidia-utils signature for appliance verification.", 36, "Downloading");
   } else if (progress.stage === "downloading-lib32-nvidia-utils") {
-    setStatus("running", "Downloading 32-bit NVIDIA userspace", `${formatBytes(processed)}${total ? ` of ${formatBytes(total)}` : ""} transferred.`, 36 + ratio * 2, "Downloading");
+    setStatus("running", "Downloading 32-bit NVIDIA userspace", `${formatBytes(processed)}${total ? ` of ${formatBytes(total)}` : ""} transferred.`, 36 + ratio * 2, "Downloading", false, total > 0 ? ratio : null);
   } else if (progress.stage === "downloading-lib32-nvidia-utils-signature") {
     setStatus("running", "Downloading 32-bit NVIDIA signature", "Staging the detached lib32-nvidia-utils signature for appliance verification.", 38, "Downloading");
   } else if (progress.stage === "downloading-nvidia-installer") {
-    setStatus("running", "Preparing pinned NVIDIA installer", `Verified ${formatBytes(processed)} of ${formatBytes(total)} from the immutable support snapshot.`, 38 + ratio * 2, "Verifying");
+    setStatus("running", "Preparing pinned NVIDIA installer", `Verified ${formatBytes(processed)} of ${formatBytes(total)} from the immutable support snapshot.`, 38 + ratio * 2, "Verifying", false, total > 0 ? ratio : null);
   } else if (progress.stage === "querying-arch-dependency-index") {
     setStatus("running", "Resolving signed userspace dependency", "The installer identified a missing dependency; locating its signed Arch Archive package before retrying validation.", 65, "Resolving");
   } else if (progress.stage === "downloading-userspace-dependency") {
-    setStatus("running", "Downloading signed userspace dependency", `${formatBytes(processed)}${total ? ` of ${formatBytes(total)}` : ""} transferred before validation retries.`, 65 + ratio * 2, "Downloading");
+    setStatus("running", "Downloading signed userspace dependency", `${formatBytes(processed)}${total ? ` of ${formatBytes(total)}` : ""} transferred before validation retries.`, 65 + ratio * 2, "Downloading", false, total > 0 ? ratio : null);
   } else if (progress.stage === "downloading-userspace-dependency-signature") {
     setStatus("running", "Downloading dependency signature", "Staging the paired detached signature for x86_64 keyring verification.", 67, "Downloading");
   }

@@ -3433,6 +3433,7 @@ version = "0.1.0"
 dependencies = [
  "bzip2",
  "flate2",
+ "percent-encoding",
  "reqwest",
  "serde",
  "serde_json",

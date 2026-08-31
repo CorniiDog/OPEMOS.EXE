@@ -491,6 +491,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Extend the support resolver/installer contract to return and accept the complete missing signed Arch dependency package set (beginning with `egl-wayland`), including exact filenames, versions, hashes, paired signatures, authenticated signer identities, declared installed sizes, and recursive dependency/provides metadata.
 * [x] Generalize the Rust userspace handoff and result validation from exactly two NVIDIA packages to two required NVIDIA packages plus the resolver-owned dependency set; transfer every package/signature explicitly, require the same validated manifest at mutation, and never let target pacman fetch an unpinned dependency from the network.
 * [x] Repin support commit `82a761622f682db62f58721e00bf329749ffb4a8`, verify all eight immutable installer files live, and exercise a bounded live host download of signed `egl-wayland` plus its detached signature.
+* [x] Percent-decode safe Arch Archive path components before dependency version selection so epoch-bearing releases such as `egl-wayland` `4:1.1.21-1` outrank obsolete non-epoch packages and retain their matching reviewed signatures.
 * [ ] Include every newly installed dependency and replacement in `validation.storage`, then rerun the real 3.8.14 validation before choosing trimming, minimal userspace packaging, or layout changes.
 * [x] Normalize the verified archive checksum sidecar to the builder's fixed guest archive basename before handoff, while retaining the Rust-owned digest and requiring the pinned support validator to independently rehash the transferred bytes.
 * [x] Harden the support installer against hostile/corrupt target-root symlinks for every mutation destination (`usr/lib/modules`, firmware, `/etc` policy, Holo database, `/boot`, and persistent state), and require the `/efi` mount to be a distinct expected FAT filesystem before mutation.
@@ -1250,6 +1251,7 @@ Before calling the project **beta**, verify:
 * [ ] GUI diagnostics viewer.
 * [x] Add a one-click diagnostic-log copy that keeps important build/failure context, removes routine repeated output, bounds clipboard size, and redacts host paths and common credentials without changing the full displayed log.
 * [x] Reweight progress around real workflow cost and advance the long NVIDIA compile/validation/install ranges from normalized diagnostic milestones without allowing backward movement.
+* [x] Add a thin per-step progress line beneath the overall build bar: byte-counted work reports a real ratio, while validation and other unmeasurable phases use a restrained indeterminate animation.
 * [ ] Advanced custom package injection framework only if it does not dilute the NVIDIA-focused safety model.
 
 ## Deferred settings, profiles, and maintainer automation

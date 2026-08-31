@@ -4034,11 +4034,17 @@ fn arch_package_release_key(value: &str) -> Option<Vec<u64>> {
         .collect()
 }
 
-fn arch_index_hrefs(index: &str) -> HashSet<&str> {
+fn arch_index_hrefs(index: &str) -> HashSet<String> {
     index
         .split("href=\"")
         .skip(1)
         .filter_map(|rest| rest.split_once('"').map(|(href, _)| href))
+        .filter_map(|href| {
+            percent_encoding::percent_decode_str(href)
+                .decode_utf8()
+                .ok()
+                .map(|decoded| decoded.into_owned())
+        })
         .collect()
 }
 
@@ -4069,7 +4075,7 @@ fn select_arch_userspace_package(
         if !hrefs.contains(format!("{href}.sig").as_str()) {
             continue;
         }
-        candidates.push((release_key, release.to_string(), (*href).to_string()));
+        candidates.push((release_key, release.to_string(), href.to_string()));
     }
     candidates.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
     let Some((highest_key, highest_release, highest_filename)) = candidates.pop() else {
@@ -4214,7 +4220,7 @@ fn select_arch_dependency_package(index: &str, package: &str) -> Result<(String,
         {
             continue;
         }
-        candidates.push((full_version.to_string(), architecture, (*href).to_string()));
+        candidates.push((full_version.to_string(), architecture, href.to_string()));
     }
     candidates.sort_by(|left, right| {
         natural_arch_version_cmp(&left.0, &right.0)
@@ -10477,13 +10483,15 @@ mod tests {
             <a href="egl-wayland-1.1.9-2-x86_64.pkg.tar.zst.sig">old signature</a>
             <a href="egl-wayland-1.1.10-1-x86_64.pkg.tar.zst">new</a>
             <a href="egl-wayland-1.1.10-1-x86_64.pkg.tar.zst.sig">new signature</a>
+            <a href="egl-wayland-4%3A1.1.21-1-x86_64.pkg.tar.zst">epoch release</a>
+            <a href="egl-wayland-4%3A1.1.21-1-x86_64.pkg.tar.zst.sig">epoch signature</a>
             <a href="egl-wayland-99.0-1-x86_64.pkg.tar.zst">unsigned</a>
         "#;
         assert_eq!(
             select_arch_dependency_package(index, "egl-wayland").unwrap(),
             (
-                "egl-wayland-1.1.10-1-x86_64.pkg.tar.zst".into(),
-                "1.1.10-1".into()
+                "egl-wayland-4:1.1.21-1-x86_64.pkg.tar.zst".into(),
+                "4:1.1.21-1".into()
             )
         );
         assert_eq!(
@@ -10548,6 +10556,8 @@ mod tests {
         .expect("stage signed egl-wayland dependency");
         assert_eq!(package.name, "egl-wayland");
         assert_eq!(package.role, "dependency");
+        assert!(package.filename.contains(':'));
+        assert!(package.full_version.contains(':'));
         assert_eq!(package.package_sha256.len(), 64);
         assert!(Path::new(&package.package_path).is_file());
         assert!(Path::new(&package.signature_path).is_file());
