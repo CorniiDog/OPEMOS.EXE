@@ -694,6 +694,10 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Keep network retrieval logic centralized and auditable.
 * [ ] Record provenance in build manifest.
 * [ ] Add an offline mode once required artifacts can be pre-cached safely.
+* [ ] Preserve small supply-chain trust material in Git: reviewed signer fingerprints/public keys, upstream URLs, exact hashes, detached-signature metadata, keyring provenance, reviewed userspace locks, and signed release manifests; require reviewed updates rather than runtime trust expansion.
+* [ ] Add a content-addressed project backup for authenticated upstream inputs that may disappear (Arch packages/signatures/repository databases and Valve headers/signatures), using GitHub release assets or separate object storage rather than committing large binaries to Git; mirror only when redistribution terms permit.
+* [ ] Treat a project mirror only as an availability fallback, never as a new trust root: every restored byte must still match the Git-pinned hash, detached signature, exact package identity, and reviewed signer policy, with no closest-version substitution.
+* [ ] Add a maintainer command that exports/imports a complete audited offline bundle and inventory so reviewed locks remain reproducible if an upstream archive is temporarily unavailable.
 
 ---
 
