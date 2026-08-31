@@ -70,6 +70,11 @@ struct GithubMaintainerStatus {
     message: String,
 }
 
+#[derive(Deserialize)]
+struct GithubRepositoryPermission {
+    permission: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NvidiaReleasePublication {
@@ -1477,22 +1482,19 @@ fn github_maintainer_status() -> Result<GithubMaintainerStatus, String> {
     }
     let endpoint = format!("repos/{NVIDIA_SUPPORT_REPOSITORY}/collaborators/{username}/permission");
     let permission_output = Command::new(&gh)
-        .args(["api", &endpoint, "--jq", ".user.permission"])
+        .args(["api", &endpoint])
         .output()
         .map_err(|error| format!("Could not verify repository permission: {error}"))?;
     let permission = if permission_output.status.success() {
-        Some(
-            String::from_utf8(permission_output.stdout)
-                .map_err(|_| "GitHub returned a non-UTF-8 permission.".to_string())?
-                .trim()
-                .to_string(),
-        )
+        Some(parse_github_repository_permission(
+            &permission_output.stdout,
+        )?)
     } else {
         None
     };
     let authorized = permission
         .as_deref()
-        .is_some_and(|value| matches!(value, "admin" | "maintain" | "push"));
+        .is_some_and(github_permission_can_publish);
     Ok(GithubMaintainerStatus {
         gh_available: true,
         authenticated: true,
@@ -1507,6 +1509,24 @@ fn github_maintainer_status() -> Result<GithubMaintainerStatus, String> {
             )
         },
     })
+}
+
+fn parse_github_repository_permission(response: &[u8]) -> Result<String, String> {
+    let permission: GithubRepositoryPermission = serde_json::from_slice(response)
+        .map_err(|error| format!("GitHub returned an invalid permission response: {error}"))?;
+    let permission = permission.permission.trim();
+    if permission.is_empty()
+        || !permission
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+    {
+        return Err("GitHub returned an invalid repository permission.".into());
+    }
+    Ok(permission.to_string())
+}
+
+fn github_permission_can_publish(permission: &str) -> bool {
+    matches!(permission, "admin" | "maintain" | "write" | "push")
 }
 
 #[tauri::command]
@@ -8320,6 +8340,23 @@ mod tests {
         for forbidden in ["token", "password", "secret", "ssh"] {
             assert!(!serialized.to_ascii_lowercase().contains(forbidden));
         }
+    }
+
+    #[test]
+    fn reads_top_level_github_repository_permission() {
+        let response = br#"{
+            "permission": "admin",
+            "role_name": "admin",
+            "user": { "login": "CorniiDog" }
+        }"#;
+        let permission = parse_github_repository_permission(response).unwrap();
+        assert_eq!(permission, "admin");
+        assert!(github_permission_can_publish(&permission));
+        assert!(github_permission_can_publish("maintain"));
+        assert!(github_permission_can_publish("write"));
+        assert!(!github_permission_can_publish("triage"));
+        assert!(!github_permission_can_publish("read"));
+        assert!(parse_github_repository_permission(br#"{"user":{"permission":"admin"}}"#).is_err());
     }
 
     #[test]
