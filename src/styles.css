@@ -189,6 +189,11 @@ footer p { margin: 0; }
 .settings-message { display: block; margin: 5px 0 0; color: #8f9bae; font-size: 12px; line-height: 1.42; }
 .setting-row input { flex: none; width: 18px; height: 18px; margin-top: 2px; accent-color: #6688ff; }
 .setting-row input:disabled { opacity: .42; cursor: not-allowed; }
+.setting-row.pending { color: #778296; cursor: wait; }
+.setting-row.pending strong { color: #a4adbc; }
+.setting-status:empty { display: none; }
+.setting-status.confirmed { color: #7ee2a8; }
+.setting-status.error { color: #ff9494; }
 .settings-divider { height: 1px; margin: 4px 0 12px; background: #273142; }
 .github-setting { align-items: center; padding-bottom: 8px; }
 .github-setting > div { min-width: 0; }

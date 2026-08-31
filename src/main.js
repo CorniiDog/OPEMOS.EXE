@@ -16,6 +16,7 @@ const elements = {
   settingsButton: $("#settings-button"), settingsClose: $("#settings-close"),
   settingsPanel: $("#settings-panel"), settingsScrim: $("#settings-scrim"),
   trackDriverUpdates: $("#track-driver-updates"), autoReleaseNvidia: $("#auto-release-nvidia"),
+  autoReleaseSetting: $("#auto-release-setting"), autoReleaseStatus: $("#auto-release-status"),
   githubStatus: $("#github-status"), githubConnect: $("#github-connect"),
   settingsMessage: $("#settings-message"),
 };
@@ -32,6 +33,7 @@ let builderSettings = {
 let githubMaintainer = null;
 let githubLoginPoll = 0;
 let githubLoginPending = false;
+let autoReleaseVerificationPending = false;
 const mainWindow = getCurrentWebviewWindow();
 
 await mainWindow.listen("build-progress-ready", () => { progressReady = true; });
@@ -53,7 +55,8 @@ function updateBuildButton() {
 function renderSettings() {
   elements.trackDriverUpdates.checked = builderSettings.trackSteamosDriverUpdates;
   elements.autoReleaseNvidia.checked = builderSettings.autoReleaseVerifiedNvidia;
-  elements.autoReleaseNvidia.disabled = !githubMaintainer?.authorized;
+  elements.autoReleaseNvidia.disabled = autoReleaseVerificationPending || !githubMaintainer?.authorized;
+  elements.autoReleaseSetting.classList.toggle("pending", autoReleaseVerificationPending);
   elements.githubStatus.textContent = githubMaintainer?.message || "GitHub status has not been checked.";
   elements.githubConnect.textContent = githubLoginPending
     ? "Waiting for GitHub…"
@@ -225,9 +228,27 @@ elements.settingsScrim.addEventListener("click", () => setSettingsOpen(false));
 elements.trackDriverUpdates.addEventListener("change", () => saveSettings({
   trackSteamosDriverUpdates: elements.trackDriverUpdates.checked,
 }));
-elements.autoReleaseNvidia.addEventListener("change", () => saveSettings({
-  autoReleaseVerifiedNvidia: elements.autoReleaseNvidia.checked,
-}));
+elements.autoReleaseNvidia.addEventListener("change", async () => {
+  const previous = builderSettings;
+  const enabled = elements.autoReleaseNvidia.checked;
+  builderSettings = { ...builderSettings, autoReleaseVerifiedNvidia: enabled, schemaVersion: 1 };
+  autoReleaseVerificationPending = true;
+  elements.autoReleaseStatus.textContent = enabled ? "Checking maintainer permission…" : "Saving…";
+  elements.autoReleaseStatus.className = "setting-status";
+  renderSettings();
+  try {
+    builderSettings = await invoke("update_builder_settings", { settings: builderSettings });
+    elements.autoReleaseStatus.textContent = enabled ? "Confirmed" : "Disabled";
+    elements.autoReleaseStatus.className = enabled ? "setting-status confirmed" : "setting-status";
+  } catch (error) {
+    builderSettings = previous;
+    elements.autoReleaseStatus.textContent = String(error);
+    elements.autoReleaseStatus.className = "setting-status error";
+  } finally {
+    autoReleaseVerificationPending = false;
+    renderSettings();
+  }
+});
 elements.githubConnect.addEventListener("click", async () => {
   const poll = ++githubLoginPoll;
   githubLoginPending = true;

@@ -64,10 +64,11 @@
                 <button id="github-connect" class="secondary" type="button">Connect GitHub</button>
             </div>
 
-            <label class="setting-row">
+            <label id="auto-release-setting" class="setting-row">
                 <span>
                     <strong>Offer automated NVIDIA release</strong>
                     <small>After a locally-built artifact passes every trust check, ask before publishing it. Defaults to No every time.</small>
+                    <small id="auto-release-status" class="setting-status" aria-live="polite"></small>
                 </span>
                 <input id="auto-release-nvidia" type="checkbox" disabled>
             </label>
