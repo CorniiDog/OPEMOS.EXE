@@ -1233,10 +1233,12 @@ Before calling the project **beta**, verify:
 * [x] Re-check GitHub authorization in the backend immediately before every build upload, tag, release, or other remote mutation; do not trust the UI checkbox alone.
 * [ ] Keep Valve recovery images and generated SteamOS images out of GitHub uploads; publish only project-owned Gamescope/NVIDIA artifacts, manifests, checksums, and permitted sources.
 * [x] Present an explicit yes/no confirmation before every automated NVIDIA release, defaulting to “No” and naming the repository, tag, support commit, trust, and artifact hash.
+* [x] Delegate NVIDIA release formatting and upload semantics to the hash-pinned canonical support publisher; cross-check its dry-run plan and invoke only create-only mode.
 * [ ] Prefer draft releases plus a reviewable dry-run manifest before allowing a maintainer to publish automatically.
 * [x] Record maintainer automation actions and artifact provenance without logging credentials or private host paths.
 * [x] Begin the settings/maintainer surface after durable image export, independent output validation, and exact-kernel artifact validation were established.
 * [ ] Bundle and verify a platform-appropriate GitHub CLI binary for packaged macOS, Windows, and Linux applications.
+* [ ] Bundle the shell/Python runtime required by the canonical support publisher, or add a reviewed native launcher that preserves its exact validation and release-format contract, so packaged apps never depend on host-installed tools.
 * [ ] Add an equivalent reviewed Gamescope artifact publisher after the Gamescope build contract is integrated.
 
 ---

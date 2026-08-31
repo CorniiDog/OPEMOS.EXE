@@ -531,7 +531,7 @@ async function runBuild(request) {
                 `SHA-256: ${builtArtifact.archiveSha256}`
               );
               if (publishApproved) {
-                setStatus("running", "Publishing verified NVIDIA artifact", "Rechecking GitHub maintainer access, release identity, hashes, and collision policy before upload.", 96.35, "Publishing");
+                setStatus("running", "Publishing verified NVIDIA artifact", "Validating the pinned support publisher's dry-run plan, then rechecking maintainer access before a create-only upload.", 96.35, "Publishing");
                 const release = await invoke("publish_on_demand_nvidia_release");
                 addStageLog(`NVIDIA release: ${release.message}`);
                 if (release.url) addStageLog(`NVIDIA release URL: ${release.url}`);

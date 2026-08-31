@@ -36,8 +36,9 @@ const NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 512 * 1024 * 1024;
 const LIB32_NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 128 * 1024 * 1024;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_INSTALLER_COMMIT: &str = "064b540d32dc22070a953724366e14b78a8b3460";
-const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_INSTALLER_COMMIT;
+const NVIDIA_SUPPORT_COMMIT: &str = "4b74490f77468e3c1c71cecf2609820f80ae4836";
+const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
+const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_UTILS_SIGNER: &str = "05C7775A9E8B977407FE08E69D4C5AA15426DA0A";
 const LIB32_NVIDIA_UTILS_SIGNER: &str = "D2E95FEC015CF1F911AAAB0C3D4C5008BB5C8D29";
 
@@ -83,6 +84,19 @@ struct NvidiaReleasePublication {
     tag: String,
     url: String,
     message: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportPublicationPlan {
+    schema_version: u32,
+    status: String,
+    repository: String,
+    tag: String,
+    target_commit: String,
+    trust: String,
+    archive_sha256: String,
+    assets: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -153,6 +167,21 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 7] = [
         sha256: "9ac4de749f4d881bb177f45eb42dbef718bebcfe1d8702a9f4a06abc0a2b53c5",
         bytes: 584,
         executable: false,
+    },
+];
+
+const PINNED_PUBLISHER_FILES: [PinnedInstallerFile; 2] = [
+    PinnedInstallerFile {
+        path: "bootstrap/publish_artifacts.sh",
+        sha256: "8667b4198eb0e0e2eb462df32b7814b8bffffd873f9a4b2686fc2560e9c90983",
+        bytes: 3_439,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/validate_publish_inputs.py",
+        sha256: "e5e0f1734231c47b0cf368735ee565c05246da22fbe78d3794a726e1bfa10e5f",
+        bytes: 7_047,
+        executable: true,
     },
 ];
 
@@ -3938,17 +3967,17 @@ fn resolve_nvidia_userspace_for_version(
     Ok(resolution)
 }
 
-fn validate_pinned_installer_contract() -> Result<u64, String> {
-    if NVIDIA_INSTALLER_COMMIT.len() != 40
-        || !NVIDIA_INSTALLER_COMMIT
+fn validate_pinned_support_files(files: &[PinnedInstallerFile]) -> Result<u64, String> {
+    if NVIDIA_SUPPORT_COMMIT.len() != 40
+        || !NVIDIA_SUPPORT_COMMIT
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit())
     {
-        return Err("Pinned NVIDIA installer commit is invalid.".into());
+        return Err("Pinned NVIDIA support commit is invalid.".into());
     }
     let mut paths = HashSet::new();
     let mut total = 0_u64;
-    for file in &PINNED_INSTALLER_FILES {
+    for file in files {
         let path = Path::new(file.path);
         if file.path.is_empty()
             || path
@@ -3959,13 +3988,21 @@ fn validate_pinned_installer_contract() -> Result<u64, String> {
             || !file.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
             || file.bytes == 0
         {
-            return Err("Pinned NVIDIA installer file contract is invalid.".into());
+            return Err("Pinned NVIDIA support-file contract is invalid.".into());
         }
         total = total
             .checked_add(file.bytes)
-            .ok_or("Pinned NVIDIA installer size overflowed.")?;
+            .ok_or("Pinned NVIDIA support-file size overflowed.")?;
     }
     Ok(total)
+}
+
+fn validate_pinned_installer_contract() -> Result<u64, String> {
+    validate_pinned_support_files(&PINNED_INSTALLER_FILES)
+}
+
+fn validate_pinned_publisher_contract() -> Result<u64, String> {
+    validate_pinned_support_files(&PINNED_PUBLISHER_FILES)
 }
 
 fn download_pinned_installer_file(
@@ -3979,28 +4016,28 @@ fn download_pinned_installer_file(
 ) -> Result<(), String> {
     if destination.exists() {
         return Err(format!(
-            "Refusing to overwrite a staged NVIDIA installer file: {}",
+            "Refusing to overwrite a staged NVIDIA support file: {}",
             destination.display()
         ));
     }
     let parent = destination
         .parent()
-        .ok_or("Pinned NVIDIA installer path has no parent.")?;
+        .ok_or("Pinned NVIDIA support-file path has no parent.")?;
     fs::create_dir_all(parent)
-        .map_err(|e| format!("Could not create NVIDIA installer directory: {e}"))?;
+        .map_err(|e| format!("Could not create NVIDIA support-file directory: {e}"))?;
     let partial = destination.with_file_name(format!(
         ".{}.partial",
         destination
             .file_name()
             .and_then(|name| name.to_str())
-            .ok_or("Pinned NVIDIA installer filename is invalid.")?
+            .ok_or("Pinned NVIDIA support filename is invalid.")?
     ));
     let mut partial_guard = PartialOutputGuard {
         path: partial.clone(),
         armed: true,
     };
     let url = format!(
-        "https://raw.githubusercontent.com/{NVIDIA_SUPPORT_REPOSITORY}/{NVIDIA_INSTALLER_COMMIT}/{}",
+        "https://raw.githubusercontent.com/{NVIDIA_SUPPORT_REPOSITORY}/{NVIDIA_SUPPORT_COMMIT}/{}",
         file.path
     );
     let mut response = client
@@ -4008,18 +4045,13 @@ fn download_pinned_installer_file(
         .header("Accept", "application/octet-stream")
         .send()
         .and_then(reqwest::blocking::Response::error_for_status)
-        .map_err(|e| {
-            format!(
-                "Could not download pinned installer file {}: {e}",
-                file.path
-            )
-        })?;
+        .map_err(|e| format!("Could not download pinned support file {}: {e}", file.path))?;
     if response
         .content_length()
         .is_some_and(|length| length != file.bytes)
     {
         return Err(format!(
-            "Pinned installer file {} has an unexpected download size.",
+            "Pinned support file {} has an unexpected download size.",
             file.path
         ));
     }
@@ -4027,27 +4059,27 @@ fn download_pinned_installer_file(
         .write(true)
         .create_new(true)
         .open(&partial)
-        .map_err(|e| format!("Could not stage pinned installer file {}: {e}", file.path))?;
+        .map_err(|e| format!("Could not stage pinned support file {}: {e}", file.path))?;
     let mut hasher = Sha256::new();
     let mut downloaded = 0_u64;
     let mut buffer = [0_u8; 32 * 1024];
     loop {
         if cancel.load(Ordering::Relaxed) {
-            return Err("NVIDIA installer bundle download cancelled.".into());
+            return Err("NVIDIA support-file download cancelled.".into());
         }
         let count = response
             .read(&mut buffer)
-            .map_err(|e| format!("Could not read pinned installer file {}: {e}", file.path))?;
+            .map_err(|e| format!("Could not read pinned support file {}: {e}", file.path))?;
         if count == 0 {
             break;
         }
         downloaded = downloaded
             .checked_add(count as u64)
             .filter(|value| *value <= file.bytes)
-            .ok_or_else(|| format!("Pinned installer file {} is too large.", file.path))?;
+            .ok_or_else(|| format!("Pinned support file {} is too large.", file.path))?;
         output
             .write_all(&buffer[..count])
-            .map_err(|e| format!("Could not write pinned installer file {}: {e}", file.path))?;
+            .map_err(|e| format!("Could not write pinned support file {}: {e}", file.path))?;
         hasher.update(&buffer[..count]);
         progress(
             "downloading-nvidia-installer",
@@ -4057,26 +4089,22 @@ fn download_pinned_installer_file(
     }
     if downloaded != file.bytes {
         return Err(format!(
-            "Pinned installer file {} downloaded {downloaded} bytes; expected {}.",
+            "Pinned support file {} downloaded {downloaded} bytes; expected {}.",
             file.path, file.bytes
         ));
     }
     let digest = format!("{:x}", hasher.finalize());
     if digest != file.sha256 {
         return Err(format!(
-            "Pinned installer file {} failed SHA-256 verification.",
+            "Pinned support file {} failed SHA-256 verification.",
             file.path
         ));
     }
     output
         .flush()
-        .map_err(|e| format!("Could not finish pinned installer file {}: {e}", file.path))?;
-    fs::rename(&partial, destination).map_err(|e| {
-        format!(
-            "Could not finalize pinned installer file {}: {e}",
-            file.path
-        )
-    })?;
+        .map_err(|e| format!("Could not finish pinned support file {}: {e}", file.path))?;
+    fs::rename(&partial, destination)
+        .map_err(|e| format!("Could not finalize pinned support file {}: {e}", file.path))?;
     partial_guard.armed = false;
     Ok(())
 }
@@ -4140,6 +4168,101 @@ fn prepare_pinned_nvidia_installer_bundle(
     Ok(NvidiaInstallerBundleState { root, report })
 }
 
+fn validate_staged_pinned_files(root: &Path, files: &[PinnedInstallerFile]) -> Result<(), String> {
+    for pinned in files {
+        let path = root.join(pinned.path);
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|e| format!("Could not inspect pinned file {}: {e}", pinned.path))?;
+        if !metadata.file_type().is_file()
+            || metadata.len() != pinned.bytes
+            || sha256_file(&path)? != pinned.sha256
+        {
+            return Err(format!(
+                "Staged support file no longer matches its pin: {}.",
+                pinned.path
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn prepare_pinned_nvidia_publisher(runtime_dir: &Path) -> Result<PathBuf, String> {
+    let total_bytes = validate_pinned_publisher_contract()?;
+    let root = runtime_dir.join(format!("nvidia-publisher-{NVIDIA_SUPPORT_COMMIT}"));
+    if root.is_dir() {
+        validate_staged_pinned_files(&root, &PINNED_PUBLISHER_FILES)?;
+        return Ok(root);
+    }
+    fs::create_dir(&root)
+        .map_err(|e| format!("Could not create pinned NVIDIA publisher staging: {e}"))?;
+    let mut root_guard = StagingDirectoryGuard {
+        path: root.clone(),
+        armed: true,
+    };
+    let client = nvidia_http_client()?;
+    let cancel = AtomicBool::new(false);
+    let mut completed = 0_u64;
+    for file in &PINNED_PUBLISHER_FILES {
+        download_pinned_installer_file(
+            &client,
+            file,
+            &root.join(file.path),
+            completed,
+            total_bytes,
+            &cancel,
+            &|_, _, _| {},
+        )?;
+        completed += file.bytes;
+    }
+    validate_staged_pinned_files(&root, &PINNED_PUBLISHER_FILES)?;
+    root_guard.armed = false;
+    Ok(root)
+}
+
+fn validate_support_publication_plan(
+    plan: &SupportPublicationPlan,
+    identity: &PublishedReleaseIdentity,
+    archive_sha256: &str,
+    expected_assets: &[String; 4],
+) -> Result<(), String> {
+    if plan.schema_version != 1
+        || plan.status != "ready"
+        || plan.repository != NVIDIA_SUPPORT_REPOSITORY
+        || plan.tag != identity.tag
+        || plan.target_commit != NVIDIA_SUPPORT_BUILD_COMMIT
+        || plan.trust != "locally-built-verified"
+        || plan.archive_sha256 != archive_sha256
+        || plan.assets.as_slice() != expected_assets
+    {
+        return Err(
+            "Pinned support publisher returned a plan that does not match the verified artifact."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+fn support_publisher_command(
+    publisher: &Path,
+    archive: &Path,
+    checksum: &Path,
+    build_info: &Path,
+    provenance: &Path,
+) -> Command {
+    let mut command = Command::new("bash");
+    command
+        .arg(publisher)
+        .arg("--archive")
+        .arg(archive)
+        .arg("--checksum")
+        .arg(checksum)
+        .arg("--build-info")
+        .arg(build_info)
+        .arg("--provenance")
+        .arg(provenance);
+    command
+}
+
 fn validate_staged_nvidia_installer_bundle(
     state: &NvidiaInstallerBundleState,
 ) -> Result<(), String> {
@@ -4153,25 +4276,7 @@ fn validate_staged_nvidia_installer_bundle(
             "Staged NVIDIA installer manifest no longer matches the pinned contract.".into(),
         );
     }
-    for pinned in &PINNED_INSTALLER_FILES {
-        let path = state.root.join(pinned.path);
-        let metadata = fs::symlink_metadata(&path).map_err(|e| {
-            format!(
-                "Could not inspect staged installer file {}: {e}",
-                pinned.path
-            )
-        })?;
-        if !metadata.file_type().is_file()
-            || metadata.len() != pinned.bytes
-            || sha256_file(&path)? != pinned.sha256
-        {
-            return Err(format!(
-                "Staged NVIDIA installer file no longer matches its pin: {}.",
-                pinned.path
-            ));
-        }
-    }
-    Ok(())
+    validate_staged_pinned_files(&state.root, &PINNED_INSTALLER_FILES)
 }
 
 fn nvidia_development_asset_name(spec: &NvidiaTargetBuildSpec) -> String {
@@ -7424,7 +7529,7 @@ async fn publish_on_demand_nvidia_release(
         if !maintainer.authorized {
             return Err("GitHub maintainer permission could not be re-verified immediately before publication.".into());
         }
-        let (publication, artifact, plan) = {
+        let (publication, artifact, plan, runtime_dir) = {
             let manager_state = app.state::<Mutex<ApplianceManager>>();
             let manager = manager_state
                 .lock()
@@ -7454,6 +7559,7 @@ async fn publish_on_demand_nvidia_release(
                     .build_plan
                     .clone()
                     .ok_or("On-demand artifact omitted its pinned build plan.")?,
+                session.runtime_dir.clone(),
             )
         };
         if artifact.trust != "locally-built-verified"
@@ -7541,61 +7647,88 @@ async fn publish_on_demand_nvidia_release(
         if publish_trust != "locally-built-verified" {
             return Err("Release artifact failed the final published-artifact trust contract.".into());
         }
-        let gh = find_binary("gh").ok_or("GitHub CLI disappeared before publication.")?;
-        let existing = Command::new(&gh)
-            .args([
-                "release",
-                "view",
-                &identity.tag,
-                "--repo",
-                NVIDIA_SUPPORT_REPOSITORY,
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|error| format!("Could not check the target GitHub release: {error}"))?;
-        if existing.success() {
-            return Err(format!(
-                "Release {} already exists. The app will not overwrite it automatically.",
-                identity.tag
-            ));
+        find_binary("python3").ok_or("Python 3 is required by the pinned support publisher.")?;
+        find_binary("gh").ok_or("GitHub CLI disappeared before publication.")?;
+        let publisher_root = prepare_pinned_nvidia_publisher(&runtime_dir)?;
+        let publisher = publisher_root.join("bootstrap/publish_artifacts.sh");
+        let canonical_asset = |path: &Path| {
+            fs::canonicalize(path)
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|error| format!("Could not resolve a release input path: {error}"))
+        };
+        let expected_assets = [
+            canonical_asset(&archive)?,
+            canonical_asset(&checksum)?,
+            canonical_asset(&build_info)?,
+            canonical_asset(&provenance)?,
+        ];
+        let dry_run = support_publisher_command(
+            &publisher,
+            &archive,
+            &checksum,
+            &build_info,
+            &provenance,
+        )
+        .arg("--dry-run")
+        .output()
+        .map_err(|error| format!("Could not run the pinned support publisher dry-run: {error}"))?;
+        if !dry_run.status.success() {
+            let detail = String::from_utf8_lossy(&dry_run.stderr).trim().to_string();
+            return Err(if detail.is_empty() {
+                "Pinned support publisher rejected the release inputs.".into()
+            } else {
+                format!("Pinned support publisher rejected the release inputs: {detail}")
+            });
         }
-        let title = format!(
-            "open-gpu-kernel-modules-steamos - SteamOS {}",
-            plan.steamos_version
-        );
-        let notes = format!(
-            "Exact-kernel NVIDIA open-module artifact built by SteamOS NVIDIA Image Builder.\n\nTrust: locally-built-verified\nSupport commit: {NVIDIA_SUPPORT_BUILD_COMMIT}\nSource branch: {}\nSource commit: {}\nBaseline release: {}\nArchive SHA-256: {}",
-            plan.source_branch, plan.source_commit, plan.baseline_release, artifact.archive_sha256
-        );
-        let output = Command::new(&gh)
-            .args(["release", "create", &identity.tag])
-            .arg(&archive)
-            .arg(&checksum)
-            .arg(&build_info)
-            .arg(&provenance)
-            .args([
-                "--repo",
-                NVIDIA_SUPPORT_REPOSITORY,
-                "--target",
-                NVIDIA_SUPPORT_BUILD_COMMIT,
-                "--title",
-                &title,
-                "--notes",
-                &notes,
-            ])
-            .output()
-            .map_err(|error| format!("Could not create the GitHub release: {error}"))?;
+        let publication_plan: SupportPublicationPlan = serde_json::from_slice(&dry_run.stdout)
+            .map_err(|error| {
+                format!("Pinned support publisher returned an invalid dry-run plan: {error}")
+            })?;
+        validate_support_publication_plan(
+            &publication_plan,
+            &identity,
+            &artifact.archive_sha256,
+            &expected_assets,
+        )?;
+
+        let maintainer = github_maintainer_status()?;
+        if !maintainer.authorized {
+            return Err("GitHub maintainer permission expired before publication.".into());
+        }
+        let output = support_publisher_command(
+            &publisher,
+            &archive,
+            &checksum,
+            &build_info,
+            &provenance,
+        )
+        .arg("--create-only")
+        .output()
+        .map_err(|error| format!("Could not run the pinned support publisher: {error}"))?;
         if !output.status.success() {
-            return Err("GitHub rejected the release. No existing release was modified.".into());
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if detail.is_empty() {
+                "The pinned support publisher rejected the release. No existing release was modified."
+                    .into()
+            } else {
+                format!(
+                    "The pinned support publisher rejected the release; no existing release was modified: {detail}"
+                )
+            });
         }
-        let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let url = format!(
+            "https://github.com/{NVIDIA_SUPPORT_REPOSITORY}/releases/tag/{}",
+            identity.tag
+        );
         Ok(NvidiaReleasePublication {
             status: "published".into(),
             repository: NVIDIA_SUPPORT_REPOSITORY.into(),
             tag: identity.tag.clone(),
             url,
-            message: format!("Published verified NVIDIA artifact as {}.", identity.tag),
+            message: format!(
+                "Published verified NVIDIA artifact as {} through the pinned canonical support publisher.",
+                identity.tag
+            ),
         })
     })
     .await
@@ -8835,6 +8968,58 @@ mod tests {
     }
 
     #[test]
+    fn pinned_publisher_contract_is_safe_and_versioned() {
+        assert_eq!(validate_pinned_publisher_contract().unwrap(), 10_486);
+        assert_eq!(PINNED_PUBLISHER_FILES.len(), 2);
+        assert!(PINNED_PUBLISHER_FILES
+            .iter()
+            .any(|file| file.path == "bootstrap/publish_artifacts.sh" && file.executable));
+        assert!(PINNED_PUBLISHER_FILES
+            .iter()
+            .any(|file| file.path == "lib/validate_publish_inputs.py" && file.executable));
+    }
+
+    #[test]
+    fn support_publication_plan_must_match_rust_owned_identity_and_asset_order() {
+        let identity = PublishedReleaseIdentity {
+            steamos_version: "3.8.14".into(),
+            kernel_version: "6.16.12-valve24.4-1-neptune-616-gfe145653a794".into(),
+            nvidia_version: "575.64.05".into(),
+            tag: "steamos-3.8.14-nvidia-575.64.05-k6.16.12-valve24.4-1-neptune-616-gfe145653a794"
+                .into(),
+        };
+        let assets = [
+            "/tmp/nvidia.tar.gz".into(),
+            "/tmp/nvidia.tar.gz.sha256".into(),
+            "/tmp/nvidia.build-info.txt".into(),
+            "/tmp/nvidia.provenance.json".into(),
+        ];
+        let mut plan = SupportPublicationPlan {
+            schema_version: 1,
+            status: "ready".into(),
+            repository: NVIDIA_SUPPORT_REPOSITORY.into(),
+            tag: identity.tag.clone(),
+            target_commit: NVIDIA_SUPPORT_BUILD_COMMIT.into(),
+            trust: "locally-built-verified".into(),
+            archive_sha256: "a".repeat(64),
+            assets: assets.to_vec(),
+        };
+        assert!(
+            validate_support_publication_plan(&plan, &identity, &"a".repeat(64), &assets).is_ok()
+        );
+
+        plan.assets.swap(0, 1);
+        assert!(
+            validate_support_publication_plan(&plan, &identity, &"a".repeat(64), &assets).is_err()
+        );
+        plan.assets.swap(0, 1);
+        plan.target_commit = "b".repeat(40);
+        assert!(
+            validate_support_publication_plan(&plan, &identity, &"a".repeat(64), &assets).is_err()
+        );
+    }
+
+    #[test]
     fn offline_handoff_mounts_the_separate_var_partition() {
         let source = include_str!("lib.rs")
             .split("#[cfg(test)]")
@@ -9012,6 +9197,36 @@ mod tests {
         assert!(state.root.join("installer-bundle.json").is_file());
         let serialized = serde_json::to_string(&state.report).expect("serialize installer report");
         assert!(!serialized.contains(&root.0.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    #[ignore = "downloads and verifies the immutable support publisher snapshot"]
+    fn live_pinned_nvidia_publisher() {
+        struct TestDirectory(PathBuf);
+        impl Drop for TestDirectory {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TestDirectory(std::env::temp_dir().join(format!(
+            "steamos-builder-pinned-publisher-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("test clock")
+                .as_nanos()
+        )));
+        fs::create_dir(&root.0).expect("create pinned publisher test directory");
+        let publisher_root =
+            prepare_pinned_nvidia_publisher(&root.0).expect("download pinned publisher");
+        validate_staged_pinned_files(&publisher_root, &PINNED_PUBLISHER_FILES)
+            .expect("validate staged publisher");
+        assert!(publisher_root
+            .join("bootstrap/publish_artifacts.sh")
+            .is_file());
+        assert!(publisher_root
+            .join("lib/validate_publish_inputs.py")
+            .is_file());
     }
 
     #[test]

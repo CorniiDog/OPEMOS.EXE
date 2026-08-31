@@ -2,7 +2,7 @@
 
 The main window includes a compact settings panel for durable, non-secret preferences. Settings use a versioned `settings.json`; GitHub credentials are never stored there. On macOS, maintainer connection opens the GitHub CLI browser flow in a visible Terminal window while the responsive settings panel polls for completion. Maintainer release controls require a live permission check against `CorniiDog/open-gpu-kernel-modules-steamos-support` and a second backend permission check immediately before publication.
 
-When an exact-kernel NVIDIA artifact is built locally and reaches `locally-built-verified`, maintainers who opted in receive a release confirmation naming the repository, tag, pinned support commit, trust classification, and archive hash. “No, keep local” is focused by default. The publisher refuses to overwrite an existing release and uploads only the NVIDIA archive, checksum, external build-info, and provenance sidecar—never the recovery image or generated SteamOS image.
+When an exact-kernel NVIDIA artifact is built locally and reaches `locally-built-verified`, maintainers who opted in receive a release confirmation naming the repository, tag, pinned support commit, trust classification, and archive hash. “No, keep local” is focused by default. Publication uses the support repository's hash-pinned canonical publisher: Rust cross-checks its dry-run JSON and then invokes only its create-only mode. It refuses to overwrite an existing release and uploads only the NVIDIA archive, checksum, external build-info, and provenance sidecar—never the recovery image or generated SteamOS image.
 
 The main build card also exposes a per-build NVIDIA source selector. `Automatic` remains the default and follows the nearest compatible same-series release; `Latest` explicitly selects the newest available project branch; individual `nvidia/<version>` branches can be selected for controlled testing. Every choice is resolved to an exact source commit before the x86_64 build begins.
 
@@ -91,7 +91,7 @@ cannot provide alternate paths or promote them before the managed x86 installer
 checks the reviewed signer policy, package contents, and exact GSP firmware.
 
 The backend also stages the offline-root installer from immutable support commit
-`064b540d32dc22070a953724366e14b78a8b3460`. Its seven required scripts,
+`4b74490f77468e3c1c71cecf2609820f80ae4836`. Its seven required scripts,
 helpers, and signer-policy files have embedded byte counts and SHA-256 pins;
 every file must match before a versioned bundle manifest is recorded. The
 normal workflow therefore does not accept a user-selected support checkout or
@@ -110,6 +110,13 @@ seed-device state afterward. The resulting raw candidate is reopened through a
 fresh appliance and checked for all five modules, matching package records and
 GSP firmware, configuration, provenance state, initramfs output, layout, and
 source immutability before finalization.
+
+The same immutable support commit supplies the canonical NVIDIA release
+publisher and its input validator under independent size and SHA-256 pins. The
+app first requires a schema-1 dry-run plan whose repository, tag, target commit,
+trust, archive hash, and ordered asset paths exactly match Rust-owned state. It
+then rechecks maintainer permission and invokes `--create-only`; the app never
+uses the publisher's release-edit or asset-clobber path.
 
 The older `steamos-nvidia-installer` project remains a useful reference for the
 later recovery-media contract: an install-ready result also needs the `home`
