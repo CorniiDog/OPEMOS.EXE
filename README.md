@@ -14,7 +14,7 @@ The first target is macOS. The desktop shell provides drag-and-drop, file picker
 
 The Rust backend prepares a disposable Fedora session, launches QEMU in the background, polls the guest's SSH readiness marker, reports lifecycle states, and performs graceful shutdown with a forced-stop fallback. When no exact published NVIDIA artifact exists, the resolver can now offer a long on-demand x86_64 build using the exact image kernel and a same-series publication only as the NVIDIA-version baseline. Declining that build still exports the harmless `-marker.img`; no mismatched published modules are reused. A compatible published or locally-built-verified target proceeds through authenticated userspace installation and reserves `-nvidia.img` for a successful structured install plus independent read-only output inspection. A versioned `.img.manifest.json` sidecar records filenames (never full host paths), formats, sizes, hashes, layout, modified paths, NVIDIA target/trust metadata, validation status, and the automatic-versus-pinned source policy. Automatic builds may follow a newer compatible verified profile later; an explicit project or upstream selection remains pinned to that NVIDIA version and requires an exact-kernel rebuild after a SteamOS kernel change. Gamescope and recovery-media installer integration are still separate gates, so an NVIDIA-mutated output is not yet classified as install-ready.
 
-Canonical NVIDIA archives are checked against the pinned support contract (at most 1 GiB per member and 2 GiB expanded in total) while retaining exact membership, path, hash, and provenance checks. The verified compressed and expanded sizes feed conservative appliance and target-root free-space preflights before inputs are transferred or mutation begins; a size change after validation is rejected.
+Canonical NVIDIA archives are checked against the pinned support contract (at most 1 GiB per member and 2 GiB expanded in total) while retaining exact membership, path, hash, and provenance checks. The verified compressed and expanded sizes feed a conservative appliance-staging preflight before inputs are transferred; a size change after validation is rejected. Target admission comes only from the pinned support installer's authenticated package metadata, existing replacement sizes, module/initramfs requirements, and separate root/var/EFI free-space measurements. Rust validates that accounting and treats `target_space_insufficient` as an authoritative non-mutating failure; it never automatically resizes partitions.
 
 On Apple Silicon, the normal inspection/mutation appliance remains native
 aarch64 with HVF acceleration. Development tooling can acquire and launch a
@@ -98,7 +98,7 @@ cannot provide alternate paths or promote them before the managed x86 installer
 checks the reviewed signer policy, package contents, and exact GSP firmware.
 
 The backend also stages the offline-root installer from immutable support commit
-`af36f43b2b1571d8c5c9a0d0379b094de7954715`. Its eight required scripts,
+`11a3cd914cb5a05829f667214b27e4dd8e2e206d`. Its eight required scripts,
 helpers, and signer-policy files have embedded byte counts and SHA-256 pins;
 every file must match before a versioned bundle manifest is recorded. The
 normal workflow therefore does not accept a user-selected support checkout or

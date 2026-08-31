@@ -38,7 +38,6 @@ const NVIDIA_ARCHIVE_LIMIT: u64 = 1024 * 1024 * 1024;
 const NVIDIA_ARCHIVE_MEMBER_LIMIT: u64 = 1024 * 1024 * 1024;
 const NVIDIA_ARCHIVE_EXPANDED_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 const NVIDIA_HANDOFF_FREE_SPACE_RESERVE: u64 = 512 * 1024 * 1024;
-const NVIDIA_TARGET_FREE_SPACE_RESERVE: u64 = 512 * 1024 * 1024;
 const _: () = assert!(NVIDIA_ARCHIVE_LIMIT >= 700 * 1024 * 1024);
 const _: () = assert!(NVIDIA_ARCHIVE_LIMIT <= 2 * 1024 * 1024 * 1024);
 const ARCH_ARCHIVE_INDEX_LIMIT: u64 = 8 * 1024 * 1024;
@@ -46,7 +45,7 @@ const NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 512 * 1024 * 1024;
 const LIB32_NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 128 * 1024 * 1024;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_SUPPORT_COMMIT: &str = "af36f43b2b1571d8c5c9a0d0379b094de7954715";
+const NVIDIA_SUPPORT_COMMIT: &str = "11a3cd914cb5a05829f667214b27e4dd8e2e206d";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_UTILS_SIGNER: &str = "05C7775A9E8B977407FE08E69D4C5AA15426DA0A";
@@ -151,8 +150,8 @@ struct PinnedInstallerFile {
 const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 8] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "b98d52568073512be2c89b635946e41e3c3d2b9f1ec509fdede7a846c49524a7",
-        bytes: 12_886,
+        sha256: "efef1d2cae77110be925e8bb1c0e6987ae957cca4a1db77d82c3b5ee4a51e3ec",
+        bytes: 12_990,
         executable: true,
     },
     PinnedInstallerFile {
@@ -181,14 +180,14 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 8] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "18545c870bdf8ff520f6c11c39c73596e7d0e23265be4d45e1191fcb17ecb12d",
-        bytes: 25_610,
+        sha256: "83f984eb38605fa8a49648701f46016bebf2fce308d0cc5a93ed9333df35274a",
+        bytes: 36_568,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "d82aeeb9d308270094c44c98531c1b7197f8bd48462141ae231decdc6d630585",
-        bytes: 3_417,
+        sha256: "dd2a3e3b673e5f8037cf2d47c3bab25f837209d1af17b3dca7a4725e4c63af4e",
+        bytes: 4_031,
         executable: true,
     },
     PinnedInstallerFile {
@@ -534,7 +533,14 @@ struct SupportInstallResult {
     target: SupportInstallTarget,
     trust: String,
     cleanup: SupportInstallCleanup,
-    validation: Option<SupportInstallValidation>,
+    validation: Option<SupportInstallValidationDocument>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(untagged)]
+enum SupportInstallValidationDocument {
+    Verified(Box<SupportInstallValidation>),
+    Failed(SupportInstallFailureValidation),
 }
 
 #[derive(Clone, Deserialize)]
@@ -560,6 +566,30 @@ struct SupportInstallValidation {
     boot: SupportInstallBoot,
     keyring: SupportInstallKeyring,
     packages: Vec<SupportInstallPackage>,
+    storage: SupportInstallStorage,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportInstallFailureValidation {
+    storage: SupportInstallStorage,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportInstallStorage {
+    root_available_bytes: u64,
+    root_required_bytes: u64,
+    var_available_bytes: u64,
+    var_required_bytes: u64,
+    efi_available_bytes: u64,
+    efi_required_bytes: u64,
+    package_installed_bytes: u64,
+    package_compressed_bytes: u64,
+    package_replaced_bytes: u64,
+    module_installed_bytes: u64,
+    module_replaced_bytes: u64,
+    initramfs_reserve_bytes: u64,
 }
 
 #[derive(Clone, Deserialize)]
@@ -621,6 +651,7 @@ struct NvidiaInstallHandoffResult {
     required_kernel_arguments: Vec<String>,
     keyring_sha256: String,
     packages: Vec<SupportInstallPackage>,
+    storage: SupportInstallStorage,
     mounts_released: bool,
 }
 
@@ -8399,6 +8430,78 @@ async fn publish_on_demand_nvidia_release(
     .map_err(|error| format!("NVIDIA release worker failed: {error}"))?
 }
 
+fn validate_support_storage(
+    storage: &SupportInstallStorage,
+    expect_sufficient: bool,
+) -> Result<(), String> {
+    const ROOT_METADATA_RESERVE: u64 = 64 * 1024 * 1024;
+    const MIN_INITRAMFS_RESERVE: u64 = 64 * 1024 * 1024;
+    const VAR_RESERVE: u64 = 16 * 1024 * 1024;
+    const MIN_EFI_RESERVE: u64 = 1024 * 1024;
+    if storage.package_compressed_bytes == 0
+        || storage.package_installed_bytes == 0
+        || storage.module_installed_bytes == 0
+        || storage.package_replaced_bytes > storage.package_installed_bytes
+        || storage.module_replaced_bytes > storage.module_installed_bytes
+        || storage.initramfs_reserve_bytes < MIN_INITRAMFS_RESERVE
+        || storage.var_required_bytes != VAR_RESERVE
+        || storage.efi_required_bytes < MIN_EFI_RESERVE
+    {
+        return Err("Offline installer returned invalid storage accounting.".into());
+    }
+    let expected_root = checked_space_sum([
+        storage.package_installed_bytes - storage.package_replaced_bytes,
+        storage.module_installed_bytes - storage.module_replaced_bytes,
+        storage.initramfs_reserve_bytes,
+        ROOT_METADATA_RESERVE,
+    ])?;
+    if storage.root_required_bytes != expected_root {
+        return Err("Offline installer root-space accounting is internally inconsistent.".into());
+    }
+    let sufficient = storage.root_available_bytes >= storage.root_required_bytes
+        && storage.var_available_bytes >= storage.var_required_bytes
+        && storage.efi_available_bytes >= storage.efi_required_bytes;
+    if sufficient != expect_sufficient {
+        return Err("Offline installer storage status does not match its byte accounting.".into());
+    }
+    Ok(())
+}
+
+fn validate_nvidia_storage_failure(
+    document: &SupportInstallResult,
+    inputs: &NvidiaInstallInputs,
+) -> Result<String, String> {
+    if document.schema_version != 1
+        || document.status != "failed"
+        || document.reason != "target_space_insufficient"
+        || document.target.kernel_version != inputs.kernel_version
+        || document.target.steamos_version != "unknown"
+        || document.target.nvidia_version != "unknown"
+        || document.target.architecture != "x86_64"
+        || !document.cleanup.mounts_released
+    {
+        return Err("Offline installer returned an invalid storage-failure result.".into());
+    }
+    let storage = match document.validation.as_ref() {
+        Some(SupportInstallValidationDocument::Failed(validation)) => &validation.storage,
+        _ => {
+            return Err(
+                "Offline installer storage failure omitted authoritative accounting.".into(),
+            )
+        }
+    };
+    validate_support_storage(storage, false)?;
+    Ok(format!(
+        "SteamOS target storage is insufficient: root {} required / {} available bytes; var {} / {}; EFI {} / {}. No mutation began.",
+        storage.root_required_bytes,
+        storage.root_available_bytes,
+        storage.var_required_bytes,
+        storage.var_available_bytes,
+        storage.efi_required_bytes,
+        storage.efi_available_bytes,
+    ))
+}
+
 fn validate_nvidia_install_result(
     document: SupportInstallResult,
     inputs: &NvidiaInstallInputs,
@@ -8427,9 +8530,15 @@ fn validate_nvidia_install_result(
             "Offline installer validation result does not match the handoff target.".into(),
         );
     }
-    let validation = document
-        .validation
-        .ok_or("Offline installer validation result omitted verified input metadata.")?;
+    let validation = match document.validation {
+        Some(SupportInstallValidationDocument::Verified(validation)) => validation,
+        _ => {
+            return Err(
+                "Offline installer validation result omitted verified input metadata.".into(),
+            );
+        }
+    };
+    validate_support_storage(&validation.storage, true)?;
     if validation.archive_sha256 != inputs.archive_sha256
         || validation.pacman_database.path != "/usr/lib/holo/pacmandb"
         || !(1..=100_000).contains(&validation.pacman_database.package_count)
@@ -8498,6 +8607,7 @@ fn validate_nvidia_install_result(
         required_kernel_arguments: validation.boot.required_kernel_arguments,
         keyring_sha256: validation.keyring.sha256,
         packages: validation.packages,
+        storage: validation.storage,
         mounts_released: true,
     })
 }
@@ -8585,10 +8695,10 @@ fn checked_space_sum(parts: impl IntoIterator<Item = u64>) -> Result<u64, String
         .ok_or_else(|| "NVIDIA free-space estimate overflowed.".into())
 }
 
-fn nvidia_install_space_requirements(
+fn nvidia_handoff_space_requirement(
     inputs: &NvidiaInstallInputs,
     installer_archive: &Path,
-) -> Result<(u64, u64), String> {
+) -> Result<u64, String> {
     let measured_archive = safe_regular_file_size(&inputs.archive, "NVIDIA module archive")?;
     if measured_archive != inputs.archive_bytes {
         return Err("NVIDIA module archive size changed after validation.".into());
@@ -8600,33 +8710,18 @@ fn nvidia_install_space_requirements(
         safe_regular_file_size(&inputs.provenance, "NVIDIA provenance")?,
         NVIDIA_HANDOFF_FREE_SPACE_RESERVE,
     ];
-    let mut package_archive_bytes = 0_u64;
     for package in &inputs.packages {
         let package_bytes = safe_regular_file_size(
             Path::new(&package.package_path),
             &format!("{} package", package.name),
         )?;
-        package_archive_bytes = package_archive_bytes
-            .checked_add(package_bytes)
-            .ok_or("NVIDIA package-size estimate overflowed.")?;
         transfer_sizes.push(package_bytes);
         transfer_sizes.push(safe_regular_file_size(
             Path::new(&package.signature_path),
             &format!("{} signature", package.name),
         )?);
     }
-    let appliance_required = checked_space_sum(transfer_sizes)?;
-    // Package installed-size metadata is verified by the support installer. Until that
-    // contract reports a total, reserve three times the compressed userspace size plus
-    // a fixed initramfs/pacman margin on the target root.
-    let target_required = checked_space_sum([
-        inputs.expanded_bytes,
-        package_archive_bytes
-            .checked_mul(3)
-            .ok_or("NVIDIA target-space estimate overflowed.")?,
-        NVIDIA_TARGET_FREE_SPACE_RESERVE,
-    ])?;
-    Ok((appliance_required, target_required))
+    checked_space_sum(transfer_sizes)
 }
 
 fn require_guest_free_space(
@@ -8692,8 +8787,7 @@ fn validate_nvidia_install_handoff_blocking(
             .arg("."),
         "Could not package the pinned NVIDIA installer",
     )?;
-    let (appliance_required, target_required) =
-        nvidia_install_space_requirements(&inputs, &installer_archive)?;
+    let appliance_required = nvidia_handoff_space_requirement(&inputs, &installer_archive)?;
     require_guest_free_space(
         &connection,
         "/tmp",
@@ -8781,12 +8875,6 @@ if test ! -d "$ROOT/usr/lib/holo/pacmandb/local"; then
   echo 'The selected SteamOS recovery root lacks its expected /usr/lib/holo/pacmandb/local package database; refusing NVIDIA mutation.' >&2
   exit 1
 fi
-AVAILABLE=$(df -B1 --output=avail "$ROOT" | tail -n 1 | tr -d ' ')
-case "$AVAILABLE" in ''|*[!0-9]*) echo 'Could not measure target root free space.' >&2; exit 1;; esac
-if test "$AVAILABLE" -lt {}; then
-  echo "The SteamOS target needs at least {} free bytes for NVIDIA installation; only $AVAILABLE are available." >&2
-  exit 1
-fi
 sudo dnf install -y bsdtar gnupg2 python3 kmod pacman archlinux-keyring
 python3 "$WORK/support/bootstrap/prepare_nvidia_package_keyring.py" --source /usr/share/pacman/keyrings/archlinux.gpg --output "$WORK/approved-package-signers.gpg"
 sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-result.json"
@@ -8800,7 +8888,7 @@ ROOT_MOUNTED=0
 ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
-        target_required, target_required, inputs.kernel_version
+        inputs.kernel_version
     );
     let execution_result = run_guest_command_logged(
         &connection,
@@ -8830,6 +8918,16 @@ trap - EXIT INT TERM"#,
             .map_err(|e| format!("Could not read the NVIDIA installer result: {e}"))?,
     )
     .map_err(|e| format!("NVIDIA installer result is invalid JSON: {e}"))?;
+    if document.status == "failed" && document.reason == "target_space_insufficient" {
+        let message = validate_nvidia_storage_failure(&document, &inputs)?;
+        if execution_result.is_ok() {
+            return Err(
+                "Offline installer reported insufficient storage with a successful process exit."
+                    .into(),
+            );
+        }
+        return Err(message);
+    }
     let validation = validate_nvidia_install_result(
         document,
         &inputs,
@@ -8923,9 +9021,6 @@ fn install_nvidia_to_working_image_blocking(
         );
         (NvidiaBuildConnection::from(&*session), cancel)
     };
-    let installer_archive = connection.runtime_dir.join("offline-installer.tar.gz");
-    let (_, target_required) = nvidia_install_space_requirements(&inputs, &installer_archive)?;
-
     let command = format!(
         r#"set -euo pipefail
 WORK=/tmp/steamos-nvidia-offline-install
@@ -9015,12 +9110,6 @@ sudo mount -o rw "${{VAR_PARTS[0]}}" "$ROOT/var"
 VAR_MOUNTED=1
 sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/efi"
 EFI_MOUNTED=1
-AVAILABLE=$(df -B1 --output=avail "$ROOT" | tail -n 1 | tr -d ' ')
-case "$AVAILABLE" in ''|*[!0-9]*) echo 'Could not measure target root free space.' >&2; exit 1;; esac
-if test "$AVAILABLE" -lt {}; then
-  echo "The SteamOS target needs at least {} free bytes for NVIDIA installation; only $AVAILABLE are available." >&2
-  exit 1
-fi
 sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {} --nvidia-utils /tmp/nvidia-utils.pkg.tar.zst --nvidia-utils-signature /tmp/nvidia-utils.pkg.tar.zst.sig --lib32-nvidia-utils /tmp/lib32-nvidia-utils.pkg.tar.zst --lib32-nvidia-utils-signature /tmp/lib32-nvidia-utils.pkg.tar.zst.sig --package-keyring "$WORK/approved-package-signers.gpg" --result-json "$WORK/install-mutation-result.json"
 INITRAMFS_OK=0
 while IFS= read -r INITRAMFS; do
@@ -9056,7 +9145,7 @@ fi
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 ! findmnt -rn -M "$TOP" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
-        target_required, target_required, inputs.kernel_version
+        inputs.kernel_version
     );
     let execution_result = run_guest_command_logged(
         &connection,
@@ -9935,7 +10024,7 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 55_749);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 67_425);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 8);
         assert!(PINNED_INSTALLER_FILES
             .iter()
@@ -9982,12 +10071,8 @@ mod tests {
             .split("#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests {")
             .next()
             .expect("production source");
-        assert_eq!(
-            source
-                .matches("Could not measure target root free space.")
-                .count(),
-            2
-        );
+        assert!(!source.contains("Could not measure target root free space."));
+        assert!(source.contains("validate_nvidia_storage_failure"));
         assert!(source.contains("NVIDIA module archive size changed after validation."));
     }
 
@@ -10123,6 +10208,20 @@ mod tests {
                 signer: signer.into(),
                 sha256: digest(signer_digest),
             };
+        let storage = SupportInstallStorage {
+            root_available_bytes: 256 * 1024 * 1024,
+            root_required_bytes: 128 * 1024 * 1024 + 3_000,
+            var_available_bytes: 32 * 1024 * 1024,
+            var_required_bytes: 16 * 1024 * 1024,
+            efi_available_bytes: 2 * 1024 * 1024,
+            efi_required_bytes: 1024 * 1024,
+            package_installed_bytes: 1_000,
+            package_compressed_bytes: 500,
+            package_replaced_bytes: 0,
+            module_installed_bytes: 2_000,
+            module_replaced_bytes: 0,
+            initramfs_reserve_bytes: 64 * 1024 * 1024,
+        };
         let result = SupportInstallResult {
             schema_version: 1,
             status: "validated".into(),
@@ -10139,35 +10238,48 @@ mod tests {
             cleanup: SupportInstallCleanup {
                 mounts_released: true,
             },
-            validation: Some(SupportInstallValidation {
-                archive_sha256: digest('a'),
-                pacman_database: SupportInstallPacmanDatabase {
-                    path: "/usr/lib/holo/pacmandb".into(),
-                    package_count: 1_158,
+            validation: Some(SupportInstallValidationDocument::Verified(Box::new(
+                SupportInstallValidation {
+                    archive_sha256: digest('a'),
+                    pacman_database: SupportInstallPacmanDatabase {
+                        path: "/usr/lib/holo/pacmandb".into(),
+                        package_count: 1_158,
+                    },
+                    boot: SupportInstallBoot {
+                        rootfs_boot_path: "/boot".into(),
+                        efi_mount_path: "/efi".into(),
+                        grub_configuration: "/efi/EFI/steamos/grub.cfg".into(),
+                        required_kernel_arguments: NVIDIA_REQUIRED_KERNEL_ARGUMENTS
+                            .map(str::to_owned)
+                            .to_vec(),
+                    },
+                    keyring: SupportInstallKeyring {
+                        name: "approved-package-signers.gpg".into(),
+                        sha256: digest('d'),
+                    },
+                    packages: vec![
+                        validated_package("nvidia-utils", "2", NVIDIA_UTILS_SIGNER, 'b'),
+                        validated_package(
+                            "lib32-nvidia-utils",
+                            "1",
+                            LIB32_NVIDIA_UTILS_SIGNER,
+                            'c',
+                        ),
+                    ],
+                    storage: storage.clone(),
                 },
-                boot: SupportInstallBoot {
-                    rootfs_boot_path: "/boot".into(),
-                    efi_mount_path: "/efi".into(),
-                    grub_configuration: "/efi/EFI/steamos/grub.cfg".into(),
-                    required_kernel_arguments: NVIDIA_REQUIRED_KERNEL_ARGUMENTS
-                        .map(str::to_owned)
-                        .to_vec(),
-                },
-                keyring: SupportInstallKeyring {
-                    name: "approved-package-signers.gpg".into(),
-                    sha256: digest('d'),
-                },
-                packages: vec![
-                    validated_package("nvidia-utils", "2", NVIDIA_UTILS_SIGNER, 'b'),
-                    validated_package("lib32-nvidia-utils", "1", LIB32_NVIDIA_UTILS_SIGNER, 'c'),
-                ],
-            }),
+            ))),
         };
+        fn verified_validation(
+            document: &mut SupportInstallResult,
+        ) -> &mut SupportInstallValidation {
+            match document.validation.as_mut().expect("fixture validation") {
+                SupportInstallValidationDocument::Verified(validation) => validation,
+                SupportInstallValidationDocument::Failed(_) => panic!("expected verified fixture"),
+            }
+        }
         let mut wrong_database = result.clone();
-        wrong_database
-            .validation
-            .as_mut()
-            .expect("fixture validation")
+        verified_validation(&mut wrong_database)
             .pacman_database
             .path = "/var/lib/pacman".into();
         assert!(validate_nvidia_install_result(
@@ -10179,10 +10291,7 @@ mod tests {
         )
         .is_err());
         let mut empty_database = result.clone();
-        empty_database
-            .validation
-            .as_mut()
-            .expect("fixture validation")
+        verified_validation(&mut empty_database)
             .pacman_database
             .package_count = 0;
         assert!(validate_nvidia_install_result(
@@ -10194,10 +10303,7 @@ mod tests {
         )
         .is_err());
         let mut wrong_boot_policy = result.clone();
-        wrong_boot_policy
-            .validation
-            .as_mut()
-            .expect("fixture validation")
+        verified_validation(&mut wrong_boot_policy)
             .boot
             .required_kernel_arguments[2] = "nvidia-drm.modeset=0".into();
         assert!(validate_nvidia_install_result(
@@ -10220,6 +10326,46 @@ mod tests {
         assert_eq!(accepted.boot_partition_label, "efi-A");
         assert!(accepted.mounts_released);
 
+        let insufficient_storage = SupportInstallStorage {
+            root_available_bytes: 1,
+            root_required_bytes: 128 * 1024 * 1024 + 3_000,
+            var_available_bytes: 32 * 1024 * 1024,
+            var_required_bytes: 16 * 1024 * 1024,
+            efi_available_bytes: 2 * 1024 * 1024,
+            efi_required_bytes: 1024 * 1024,
+            package_installed_bytes: 1_000,
+            package_compressed_bytes: 500,
+            package_replaced_bytes: 0,
+            module_installed_bytes: 2_000,
+            module_replaced_bytes: 0,
+            initramfs_reserve_bytes: 64 * 1024 * 1024,
+        };
+        let storage_failure = SupportInstallResult {
+            schema_version: 1,
+            status: "failed".into(),
+            reason: "target_space_insufficient".into(),
+            message: "insufficient conservative free space on: root".into(),
+            phase: "validation".into(),
+            target: SupportInstallTarget {
+                steamos_version: "unknown".into(),
+                kernel_version: inputs.kernel_version.clone(),
+                nvidia_version: "unknown".into(),
+                architecture: "x86_64".into(),
+            },
+            trust: "certified-published".into(),
+            cleanup: SupportInstallCleanup {
+                mounts_released: true,
+            },
+            validation: Some(SupportInstallValidationDocument::Failed(
+                SupportInstallFailureValidation {
+                    storage: insufficient_storage,
+                },
+            )),
+        };
+        let message = validate_nvidia_storage_failure(&storage_failure, &inputs)
+            .expect("authoritative storage failure should pass");
+        assert!(message.contains("1 available bytes"));
+
         let rejected = SupportInstallResult {
             schema_version: 1,
             status: "validated".into(),
@@ -10236,29 +10382,37 @@ mod tests {
             cleanup: SupportInstallCleanup {
                 mounts_released: true,
             },
-            validation: Some(SupportInstallValidation {
-                archive_sha256: digest('a'),
-                pacman_database: SupportInstallPacmanDatabase {
-                    path: "/usr/lib/holo/pacmandb".into(),
-                    package_count: 1_158,
+            validation: Some(SupportInstallValidationDocument::Verified(Box::new(
+                SupportInstallValidation {
+                    archive_sha256: digest('a'),
+                    pacman_database: SupportInstallPacmanDatabase {
+                        path: "/usr/lib/holo/pacmandb".into(),
+                        package_count: 1_158,
+                    },
+                    boot: SupportInstallBoot {
+                        rootfs_boot_path: "/boot".into(),
+                        efi_mount_path: "/efi".into(),
+                        grub_configuration: "/efi/EFI/steamos/grub.cfg".into(),
+                        required_kernel_arguments: NVIDIA_REQUIRED_KERNEL_ARGUMENTS
+                            .map(str::to_owned)
+                            .to_vec(),
+                    },
+                    keyring: SupportInstallKeyring {
+                        name: "approved-package-signers.gpg".into(),
+                        sha256: digest('d'),
+                    },
+                    packages: vec![
+                        validated_package("nvidia-utils", "2", LIB32_NVIDIA_UTILS_SIGNER, 'b'),
+                        validated_package(
+                            "lib32-nvidia-utils",
+                            "1",
+                            LIB32_NVIDIA_UTILS_SIGNER,
+                            'c',
+                        ),
+                    ],
+                    storage,
                 },
-                boot: SupportInstallBoot {
-                    rootfs_boot_path: "/boot".into(),
-                    efi_mount_path: "/efi".into(),
-                    grub_configuration: "/efi/EFI/steamos/grub.cfg".into(),
-                    required_kernel_arguments: NVIDIA_REQUIRED_KERNEL_ARGUMENTS
-                        .map(str::to_owned)
-                        .to_vec(),
-                },
-                keyring: SupportInstallKeyring {
-                    name: "approved-package-signers.gpg".into(),
-                    sha256: digest('d'),
-                },
-                packages: vec![
-                    validated_package("nvidia-utils", "2", LIB32_NVIDIA_UTILS_SIGNER, 'b'),
-                    validated_package("lib32-nvidia-utils", "1", LIB32_NVIDIA_UTILS_SIGNER, 'c'),
-                ],
-            }),
+            ))),
         };
         assert!(validate_nvidia_install_result(
             rejected,
@@ -10559,6 +10713,20 @@ mod tests {
             required_kernel_arguments: NVIDIA_REQUIRED_KERNEL_ARGUMENTS.map(str::to_owned).to_vec(),
             keyring_sha256: "b".repeat(64),
             packages: Vec::new(),
+            storage: SupportInstallStorage {
+                root_available_bytes: 256 * 1024 * 1024,
+                root_required_bytes: 128 * 1024 * 1024 + 3_000,
+                var_available_bytes: 32 * 1024 * 1024,
+                var_required_bytes: 16 * 1024 * 1024,
+                efi_available_bytes: 2 * 1024 * 1024,
+                efi_required_bytes: 1024 * 1024,
+                package_installed_bytes: 1_000,
+                package_compressed_bytes: 500,
+                package_replaced_bytes: 0,
+                module_installed_bytes: 2_000,
+                module_replaced_bytes: 0,
+                initramfs_reserve_bytes: 64 * 1024 * 1024,
+            },
             mounts_released: true,
         };
         let nvidia_manifest = marker_build_manifest(MarkerManifestData {

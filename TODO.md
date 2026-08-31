@@ -485,11 +485,15 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Mount `efi-A` at `<root>/efi` across validation, mutation, and independent output verification; never hide rootfs `/boot` with the EFI filesystem before target `mkinitcpio` runs.
 * [x] Update the pinned support installer to require the recovery EFI partition at `<root>/efi` while leaving rootfs `/boot` visible; add the required NVIDIA kernel command-line policy to `EFI/steamos/grub.cfg` without duplicating arguments on repeat runs, reject any structured-result policy drift, and independently verify every exported Linux entry contains each exact argument once.
 * [x] Pin support commit `af36f43b2b1571d8c5c9a0d0379b094de7954715` after its validator and updater learned Valve's observed `steamenv_boot linux ...` GRUB entries, preserved that prefix on repeat runs, and adopted bounded limits compatible with the observed 632.5 MB project artifact.
+* [x] Repin support commit `11a3cd914cb5a05829f667214b27e4dd8e2e206d` and consume its authoritative non-mutating storage contract: authenticated package installed sizes/dependency closure, replacement credit, module/initramfs requirements, root/var/EFI availability, Btrfs compression context, and stable `target_space_insufficient` failure.
 * [x] Normalize the verified archive checksum sidecar to the builder's fixed guest archive basename before handoff, while retaining the Rust-owned digest and requiring the pinned support validator to independently rehash the transferred bytes.
 * [x] Harden the support installer against hostile/corrupt target-root symlinks for every mutation destination (`usr/lib/modules`, firmware, `/etc` policy, Holo database, `/boot`, and persistent state), and require the `/efi` mount to be a distinct expected FAT filesystem before mutation.
 * [x] Bound decompressed module/member sizes and reject every noncanonical extra archive member during support publication, builder ingestion, and installation; keep the builder aligned with the pinned support contract (1 GiB/member, 2 GiB total) so an accepted canonical artifact is not rejected by a stale lower limit.
-* [x] Carry verified compressed/expanded archive sizes into the x86 handoff, reject post-validation size changes, and preflight conservative free-space requirements in both the appliance staging area and mounted SteamOS target before transfer/mutation.
-* [ ] Make the support installer expose and verify the complete package dependency closure and installed-size total for `nvidia-utils` and `lib32-nvidia-utils`; then replace the builder's conservative compressed-size multiplier with that authenticated machine-readable total.
+* [x] Carry verified compressed/expanded archive sizes into the x86 handoff, reject post-validation size changes, and preflight conservative appliance staging space before transfer.
+* [x] Replace the builder's heuristic target multiplier with the support installer's authenticated dependency closure, package/replacement/module/initramfs totals, and structured partition-specific storage result; do not mutate or automatically resize after an authoritative failure.
+* [ ] If the real-image authoritative result is insufficient, produce a package-owned size inventory and define an explicit NVIDIA-only space profile; never reclaim space by deleting arbitrary package files.
+* [ ] Evaluate removing only AMD-specific firmware/Vulkan packages through target pacman while retaining shared Mesa/DRM components and a proven recovery graphics path; verify Valve installation, A/B updates, rollback, and hardware boot before enabling that profile.
+* [ ] Compare trimming against a project-owned minimal NVIDIA userspace package and a separately reviewed A/B root-layout/update strategy; select the smallest maintainable option rather than automatically resizing the recovery partition.
 * [x] Validate real Holo package-record contents (including known SteamOS base records), not only a nonzero count of confined regular `desc` files.
 * [ ] Add a read-only repeat-build preflight that mounts both the selected rootfs and `var-A`, validates the offline install state (`kernel-version`, `nvidia-version`, `BUILD-INFO.txt`, and `PROVENANCE.json`), and never infers installed state from an `-nvidia` filename.
 * [ ] Treat a fully verified identical SteamOS/kernel/NVIDIA/artifact state as `already_current`: skip download, compilation, publication, package installation, module replacement, and initramfs regeneration, while still independently validating the selected image.
@@ -706,7 +710,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 
 # 30. Large-file and disk-space management
 
-* [ ] Estimate required disk space before the entire build. (The NVIDIA x86 handoff and target-root mutation now have bounded preflights; host image normalization/export remain.)
+* [ ] Estimate required disk space before the entire build. (The NVIDIA x86 handoff and authoritative target-root validation now have bounded preflights; host image normalization/export remain.)
 * [ ] Account for compressed input size.
 * [ ] Account for decompressed image size.
 * [ ] Account for working copy.
