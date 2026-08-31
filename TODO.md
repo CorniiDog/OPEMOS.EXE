@@ -458,6 +458,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Exercise the support repository's offline-root installer with real recursive `/dev`, `/proc`, and `/sys` bind trees, real Arch package signatures/keyring preparation, and real process-group cancellation during validation and initramfs mutation; all mounts, children, and temporary validation files were released.
 * [x] Consume the offline-root installer's fail-closed requirements: exact explicit root/kernel, archive/checksum/provenance, independently released matching userspace packages, detached signatures, reviewed binary keyring, GSP firmware, target-root pacman, depmod, and target mkinitcpio.
 * [x] Consume the support repository's reviewed, hash-pinned Valve keyring manifest, require the exact header package's detached signature during development builds, and reject metadata that does not confirm pinned-keyring verification. Certification still requires the remaining compiler, provenance, and hardware gates.
+* [x] Exercise an official NVIDIA upstream tag end to end through a lightweight managed x86_64 Fedora preflight: matching userspace indexes, exact tag commit, pinned support commit, source-repository URL propagation, and exact schema-1 target plan all agree before a long build is allowed (`148.57s`, NVIDIA `575.64.05`, SteamOS `3.8.14`).
 * [ ] Reproduce Valve's GCC 15.1.1 kernel compiler for certified builds, or define and validate a documented compiler-mismatch policy; Fedora 44 currently supplies GCC 16.2.1 and the real development builds emit NVIDIA's mismatch warning. Support commit `e5d183e` fixes the tab-separated Valve compiler parser and its focused local contract test passes; confirm the corrected `15.1.1`/major-mismatch provenance on the next full build.
 * [ ] Complete provenance identity across the appliance boundary. The support repo now emits and the image builder preserves/validates the structured provenance sidecar, but the image builder safely excludes `.git` from guest transfers, so the support commit/dirty fields remain `unknown`; add explicit, validated provenance inputs rather than copying Git credentials/hooks. Builder-appliance version/hash also remains to be recorded.
 
@@ -465,7 +466,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Define and consume a versioned machine-readable target-build result interface from the support repo; certified target resolution and offline-root installation remain separate contracts.
 * [x] Resolve SteamOS version/kernel compatibility from the image contents rather than the host.
 * [x] Resolve the appropriate published NVIDIA release for the target SteamOS image without promoting its provenance trust classification.
-* [ ] Preserve development/upstream modes as explicit advanced workflows rather than default end-user behavior.
+* [x] Preserve development/upstream modes as explicit advanced workflows rather than default end-user behavior.
 * [x] Consume published release artifacts in the normal path; retain the support-repository Fedora build as an explicit future development fallback when no compatible publication exists.
 * [x] Prefer published, provenance-bearing artifacts for normal users.
 * [x] Before allowing future injection, verify GitHub asset digests, the archive checksum, byte-identical embedded/external provenance, pinned Valve header-signature identity, exact module hashes, architecture, version, and vermagic.
@@ -972,7 +973,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 
 * [ ] Default normal users to certified NVIDIA support only.
 * [ ] Add explicit advanced development mode for project-patched NVIDIA source/artifacts.
-* [ ] Add explicit pristine-upstream control mode if useful for image-level testing.
+* [x] Add explicit pristine-upstream control mode for image-level testing, kept off by default and guarded by a per-build warning acknowledgement.
 * [ ] Keep development outputs visibly labeled as non-certified.
 * [ ] Embed development source identifiers in manifest.
 * [ ] Prevent accidental publication of a development image as a stable build.

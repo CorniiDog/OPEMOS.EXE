@@ -4714,6 +4714,127 @@ struct NvidiaSourcePin<'a> {
     commit: &'a str,
 }
 
+#[cfg(test)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NvidiaSourceContractPreflight {
+    schema_version: u32,
+    status: String,
+    architecture: String,
+    support_repository: String,
+    support_commit: String,
+    source_repository: String,
+    source_reference: String,
+    source_commit: String,
+    source_repository_url: String,
+    plan: serde_json::Value,
+}
+
+#[cfg(test)]
+fn preflight_nvidia_source_contract(
+    session: &impl GuestConnection,
+    pin: &NvidiaSourcePin<'_>,
+    spec: &NvidiaTargetBuildSpec,
+) -> Result<NvidiaSourceContractPreflight, String> {
+    validate_nvidia_target_build_spec(spec)?;
+    if !valid_nvidia_source_identity(
+        pin.origin,
+        pin.repository,
+        pin.reference,
+        &spec.nvidia_version,
+    ) || pin.commit.len() != 40
+        || !pin.commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(
+            "Pinned NVIDIA source origin/reference/commit does not match the requested version."
+                .into(),
+        );
+    }
+
+    let command = format!(
+        r#"set -eu
+rm -rf /tmp/steamos-nvidia-contract-support /tmp/steamos-nvidia-contract-source
+sudo dnf install -y git-core
+git clone --quiet https://github.com/{NVIDIA_SUPPORT_REPOSITORY}.git /tmp/steamos-nvidia-contract-support
+git -C /tmp/steamos-nvidia-contract-support checkout --quiet --detach {NVIDIA_SUPPORT_BUILD_COMMIT}
+test "$(git -C /tmp/steamos-nvidia-contract-support rev-parse HEAD)" = "{NVIDIA_SUPPORT_BUILD_COMMIT}"
+test -z "$(git -C /tmp/steamos-nvidia-contract-support status --porcelain)"
+mkdir -p /tmp/steamos-nvidia-contract-source
+git -C /tmp/steamos-nvidia-contract-source init --quiet
+git -C /tmp/steamos-nvidia-contract-source remote add origin https://github.com/{source_repository}.git
+git -C /tmp/steamos-nvidia-contract-source fetch --quiet --depth 1 origin refs/tags/{source_reference}
+test "$(git -C /tmp/steamos-nvidia-contract-source rev-parse 'FETCH_HEAD^{{commit}}')" = "{source_commit}"
+git -C /tmp/steamos-nvidia-contract-source checkout --quiet --detach {source_commit}
+test "$(git -C /tmp/steamos-nvidia-contract-source rev-parse HEAD)" = "{source_commit}"
+test -z "$(git -C /tmp/steamos-nvidia-contract-source status --porcelain)"
+test -d /tmp/steamos-nvidia-contract-source/kernel-open
+source_repository_url="$(SOURCE_REPO={source_repository} bash -c 'source /tmp/steamos-nvidia-contract-support/lib/common.sh; printf %s "$SOURCE_REPO_URL"')"
+test "$source_repository_url" = "https://github.com/{source_repository}.git"
+plan="$(bash /tmp/steamos-nvidia-contract-support/bootstrap/build_for_target.sh --resolve-only --steamos {steamos_version} --kernel {kernel_version} --nvidia {nvidia_version} --architecture x86_64)"
+python3 - "$plan" "$source_repository_url" <<'PY'
+import json
+import platform
+import sys
+
+plan = json.loads(sys.argv[1])
+expected = {{
+    "steamosVersion": "{steamos_version}",
+    "kernelVersion": "{kernel_version}",
+    "nvidiaVersion": "{nvidia_version}",
+    "architecture": "x86_64",
+}}
+assert plan.get("schemaVersion") == 1
+assert plan.get("status") == "ready"
+assert all(plan["target"].get(key) == value for key, value in expected.items())
+print(json.dumps({{
+    "schemaVersion": 1,
+    "status": "ready",
+    "architecture": platform.machine(),
+    "supportRepository": "{support_repository}",
+    "supportCommit": "{support_commit}",
+    "sourceRepository": "{source_repository}",
+    "sourceReference": "{source_reference}",
+    "sourceCommit": "{source_commit}",
+    "sourceRepositoryUrl": sys.argv[2],
+    "plan": plan,
+}}, sort_keys=True, separators=(",", ":")))
+PY"#,
+        support_repository = NVIDIA_SUPPORT_REPOSITORY,
+        support_commit = NVIDIA_SUPPORT_BUILD_COMMIT,
+        source_repository = pin.repository,
+        source_reference = pin.reference,
+        source_commit = pin.commit.to_ascii_lowercase(),
+        steamos_version = spec.steamos_version,
+        kernel_version = spec.kernel_version,
+        nvidia_version = spec.nvidia_version,
+    );
+    let output = run_guest_command(session, &command)?;
+    let structured_output = output
+        .lines()
+        .rev()
+        .find(|line| line.trim_start().starts_with('{'))
+        .ok_or("NVIDIA source-contract preflight did not return structured JSON.")?;
+    let report: NvidiaSourceContractPreflight = serde_json::from_str(structured_output)
+        .map_err(|e| format!("NVIDIA source-contract preflight returned invalid JSON: {e}"))?;
+    let expected_commit = pin.commit.to_ascii_lowercase();
+    if report.schema_version != 1
+        || report.status != "ready"
+        || report.architecture != "x86_64"
+        || report.support_repository != NVIDIA_SUPPORT_REPOSITORY
+        || report.support_commit != NVIDIA_SUPPORT_BUILD_COMMIT
+        || report.source_repository != pin.repository
+        || report.source_reference != pin.reference
+        || report.source_commit.to_ascii_lowercase() != expected_commit
+        || report.source_repository_url != format!("https://github.com/{}.git", pin.repository)
+        || report.plan.get("status").and_then(|value| value.as_str()) != Some("ready")
+    {
+        return Err(
+            "The x86 NVIDIA source/build-plan contract did not match its pinned inputs.".into(),
+        );
+    }
+    Ok(report)
+}
+
 fn build_nvidia_for_target_from_source(
     session: &impl GuestConnection,
     support_source: NvidiaSupportSource<'_>,
@@ -9034,6 +9155,65 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "launches x86_64 Fedora and checks pinned upstream/support repositories over the network"]
+    fn live_upstream_nvidia_source_contract_in_x86_appliance() {
+        let client = nvidia_http_client().expect("create HTTPS client");
+        let source = fetch_upstream_nvidia_tags(&client)
+            .expect("fetch upstream tags")
+            .into_iter()
+            .find(|tag| tag.version == "575.64.05")
+            .expect("NVIDIA upstream 575.64.05 tag should remain available");
+        let packages =
+            preflight_nvidia_userspace(&client, &source.version).expect("preflight userspace");
+        assert_eq!(packages.len(), 2);
+
+        let mut session =
+            prepare_nvidia_build_session(None).expect("the x86 build appliance should start");
+        let deadline = Instant::now() + NVIDIA_BUILD_BOOT_TIMEOUT;
+        loop {
+            assert_eq!(
+                session.child.try_wait().expect("x86 QEMU status"),
+                None,
+                "x86 QEMU exited before readiness"
+            );
+            if handshake(&session).as_deref() == Ok(READY_MARKER) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "x86 build-appliance handshake timed out"
+            );
+            thread::sleep(Duration::from_secs(1));
+        }
+        let health = collect_guest_health(&session).expect("x86 guest health should pass");
+        assert_eq!(health.architecture, "x86_64");
+
+        let spec = NvidiaTargetBuildSpec {
+            steamos_version: "3.8.14".into(),
+            kernel_version: "6.16.12-valve24.4-1-neptune-616-gfe145653a794".into(),
+            nvidia_version: source.version.clone(),
+        };
+        let pin = NvidiaSourcePin {
+            origin: &source.origin,
+            repository: &source.repository,
+            reference: &source.name,
+            commit: &source.commit,
+        };
+        let connection = NvidiaBuildConnection::from(&session);
+        let preflight = preflight_nvidia_source_contract(&connection, &pin, &spec);
+        let stop_result = stop_nvidia_build_session(&mut session);
+        let preflight = preflight.expect("the pinned upstream source contract should pass");
+        stop_result.expect("the x86 build appliance should stop cleanly");
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&preflight.plan).expect("serialize support build plan")
+        );
+        assert_eq!(preflight.source_commit, source.commit.to_ascii_lowercase());
+        assert_eq!(preflight.source_reference, "575.64.05");
+    }
+
+    #[test]
     fn selects_isolated_x86_build_acceleration_by_host() {
         assert_eq!(
             nvidia_build_qemu_spec("aarch64").unwrap(),
@@ -9482,7 +9662,7 @@ mod tests {
     #[test]
     fn offline_handoff_mounts_the_separate_var_partition() {
         let source = include_str!("lib.rs")
-            .split("#[cfg(test)]")
+            .split("#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests {")
             .next()
             .expect("production source");
         assert_eq!(source.matches("mapfile -t VAR_PARTS").count(), 2);

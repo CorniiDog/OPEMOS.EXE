@@ -57,6 +57,11 @@ differs from the GCC 15.1.1 reported by the kernel build, and the safe checkout
 transfer does not expose `.git` provenance to the guest. The full run used
 support commit `d6a43f5`; the following `e5d183e` compiler-parser fix passes its
 focused local contract test but has not repeated the hour-long compilation.
+An additional 148-second managed-appliance preflight now covers experimental
+upstream selection without compiling modules: it resolves matching userspace,
+checks out NVIDIA's `575.64.05` tag at the exact API-resolved commit, checks out
+the pinned support commit, verifies the support repository's upstream source
+URL contract, and accepts only the exact schema-1 SteamOS 3.8.14 target plan.
 
 The normal progress flow now assesses the discovered offline target and consumes
 the support repository's schema-2 published-release policy. It permits NVIDIA
