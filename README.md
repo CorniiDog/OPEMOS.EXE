@@ -254,3 +254,10 @@ The current guest protocol exposes only fixed Rust-owned operations. Protocol ve
 npm install
 npm run dev
 ```
+
+`npm run test:package-headless` first builds the macOS `.app`, then uses only
+bounded command-line `hdiutil` operations to create and verify a compressed DMG
+from a disposable payload. It emits one schema-1 JSON result and never launches
+Finder, AppleScript, or a mounted host-disk workflow. This separates an
+application compile/bundle failure from a host DMG-tool failure; the normal
+decorated `npm run build` path may still require an interactive Finder session.
