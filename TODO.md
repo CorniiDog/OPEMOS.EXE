@@ -155,10 +155,12 @@ boundary is useful; do not split files merely to chase a line-count target.
   versioned `BuilderError` containing a stable code, operation/phase, safe user
   message, bounded maintainer detail, responsibility, retryability, and source
   chain. Serialize it only at the Tauri boundary.
-* [ ] Make settings writes durable and concurrency-safe: use a unique confined
-  temporary file, restrictive permissions, flush/sync where appropriate,
-  atomic replacement, migration tests, and recovery from an interrupted or
-  malformed write without losing the previous valid profile.
+* [x] Make settings writes durable and concurrency-safe: use unique confined
+  temporary files, restrictive permissions, flush/sync plus atomic replacement,
+  and a bounded OS advisory lock spanning each load/migrate/update/write
+  transaction. Real subprocess regressions cover independent concurrent updates,
+  contention timeout, killed-writer lock release, complete JSON, mode 0600,
+  symlink refusal, recovery, and temporary-file cleanup.
 
 ## Support-installer boundary audit
 

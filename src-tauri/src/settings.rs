@@ -2,11 +2,95 @@ use super::*;
 
 static SETTINGS_WRITE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static SETTINGS_TRANSACTION_LOCK: Mutex<()> = Mutex::new(());
+const SETTINGS_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+const SETTINGS_LOCK_RETRY: Duration = Duration::from_millis(20);
+const MAX_SETTINGS_BYTES: u64 = 1024 * 1024;
 
-fn settings_transaction_lock() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+pub(crate) fn settings_transaction_lock() -> Result<std::sync::MutexGuard<'static, ()>, String> {
     SETTINGS_TRANSACTION_LOCK
         .lock()
         .map_err(|_| "The settings transaction lock is unavailable.".into())
+}
+
+pub(crate) struct SettingsFileLock {
+    file: File,
+}
+
+impl Drop for SettingsFileLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
+fn validate_settings_parent(path: &Path) -> Result<&Path, String> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or("Settings path has no parent directory.")?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create the settings directory: {error}"))?;
+    let metadata = fs::symlink_metadata(parent)
+        .map_err(|error| format!("Could not inspect the settings directory: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("The settings directory must be a real directory, not a link.".into());
+    }
+    Ok(parent)
+}
+
+pub(crate) fn acquire_settings_file_lock(
+    path: &Path,
+    timeout: Duration,
+) -> Result<SettingsFileLock, String> {
+    let parent = validate_settings_parent(path)?;
+    let lock_path = parent.join(".settings.json.lock");
+    if let Ok(metadata) = fs::symlink_metadata(&lock_path) {
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err("The settings lock must be a regular file, not a link.".into());
+        }
+    }
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let file = options
+        .open(&lock_path)
+        .map_err(|error| format!("Could not open the settings transaction lock: {error}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Could not inspect the settings transaction lock: {error}"))?;
+    if !metadata.is_file() {
+        return Err("The settings transaction lock is not a regular file.".into());
+    }
+    #[cfg(unix)]
+    {
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode != 0o600 {
+            file.set_permissions(fs::Permissions::from_mode(0o600))
+                .map_err(|error| {
+                    format!("Could not secure the settings transaction lock: {error}")
+                })?;
+        }
+    }
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or("The settings lock deadline overflowed.")?;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(SettingsFileLock { file }),
+            Err(std::fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                thread::sleep(SETTINGS_LOCK_RETRY);
+            }
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err("Timed out waiting for another application process to finish updating settings.".into());
+            }
+            Err(std::fs::TryLockError::Error(error)) => {
+                return Err(format!("Could not lock the settings transaction: {error}"));
+            }
+        }
+    }
 }
 
 pub(crate) fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -18,25 +102,69 @@ pub(crate) fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 pub(crate) fn load_builder_settings(app: &tauri::AppHandle) -> Result<BuilderSettings, String> {
     let _guard = settings_transaction_lock()?;
-    load_builder_settings_unlocked(app)
+    let path = settings_path(app)?;
+    let _file_guard = acquire_settings_file_lock(&path, SETTINGS_LOCK_TIMEOUT)?;
+    load_builder_settings_path_unlocked(&path)
 }
 
 fn load_builder_settings_unlocked(app: &tauri::AppHandle) -> Result<BuilderSettings, String> {
     let path = settings_path(app)?;
-    if !path.exists() {
-        return Ok(BuilderSettings::default());
+    load_builder_settings_path_unlocked(&path)
+}
+
+pub(crate) fn load_builder_settings_path_unlocked(path: &Path) -> Result<BuilderSettings, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(BuilderSettings::default())
+        }
+        Err(error) => return Err(format!("Could not inspect settings.json: {error}")),
+    };
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > MAX_SETTINGS_BYTES
+    {
+        return Err("settings.json must be a nonempty bounded regular file, not a link.".into());
     }
-    let mut settings: BuilderSettings = serde_json::from_reader(
-        File::open(&path).map_err(|error| format!("Could not open settings.json: {error}"))?,
-    )
-    .map_err(|error| format!("settings.json is invalid: {error}"))?;
+    #[cfg(unix)]
+    if metadata.permissions().mode() & 0o777 != 0o600 {
+        return Err("settings.json permissions must be 0600.".into());
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let file = options
+        .open(path)
+        .map_err(|error| format!("Could not open settings.json: {error}"))?;
+    let opened = file
+        .metadata()
+        .map_err(|error| format!("Could not inspect opened settings.json: {error}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if metadata.dev() != opened.dev()
+            || metadata.ino() != opened.ino()
+            || metadata.mode() != opened.mode()
+            || metadata.len() != opened.len()
+        {
+            return Err("settings.json changed while it was being opened.".into());
+        }
+    }
+    #[cfg(not(unix))]
+    if metadata.len() != opened.len() || !opened.is_file() {
+        return Err("settings.json changed while it was being opened.".into());
+    }
+    let mut settings: BuilderSettings = serde_json::from_reader(file)
+        .map_err(|error| format!("settings.json is invalid: {error}"))?;
     if matches!(settings.schema_version, 1 | 2) {
         if settings.schema_version == 1 {
             settings.include_upstream_nvidia_releases = false;
         }
         settings.schema_version = BUILDER_SETTINGS_SCHEMA;
         settings.omit_optional_cuda = false;
-        save_builder_settings_path_unlocked(&settings_path(app)?, &settings)?;
+        save_builder_settings_path_unlocked(path, &settings)?;
     } else if settings.schema_version != BUILDER_SETTINGS_SCHEMA {
         return Err(format!(
             "Unsupported settings schema {}; expected {}.",
@@ -52,10 +180,11 @@ pub(crate) fn save_builder_settings_path(
     settings: &BuilderSettings,
 ) -> Result<(), String> {
     let _guard = settings_transaction_lock()?;
+    let _file_guard = acquire_settings_file_lock(path, SETTINGS_LOCK_TIMEOUT)?;
     save_builder_settings_path_unlocked(path, settings)
 }
 
-fn save_builder_settings_path_unlocked(
+pub(crate) fn save_builder_settings_path_unlocked(
     path: &Path,
     settings: &BuilderSettings,
 ) -> Result<(), String> {
@@ -64,11 +193,7 @@ fn save_builder_settings_path_unlocked(
             "Only settings schema {BUILDER_SETTINGS_SCHEMA} can be saved."
         ));
     }
-    let parent = path
-        .parent()
-        .ok_or("Settings path has no parent directory.")?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("Could not create the settings directory: {error}"))?;
+    let parent = validate_settings_parent(path)?;
     let sequence = SETTINGS_WRITE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let temporary = parent.join(format!(
         ".settings.json.{}.{}.tmp",
@@ -230,6 +355,8 @@ pub(crate) async fn update_builder_settings(
 ) -> Result<BuilderSettings, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = settings_transaction_lock()?;
+        let path = settings_path(&app)?;
+        let _file_guard = acquire_settings_file_lock(&path, SETTINGS_LOCK_TIMEOUT)?;
         let current = load_builder_settings_unlocked(&app)?;
         let mut settings = settings;
         settings.schema_version = BUILDER_SETTINGS_SCHEMA;
@@ -247,7 +374,7 @@ pub(crate) async fn update_builder_settings(
                     .into(),
             );
         }
-        save_builder_settings_path_unlocked(&settings_path(&app)?, &settings)?;
+        save_builder_settings_path_unlocked(&path, &settings)?;
         Ok(settings)
     })
     .await

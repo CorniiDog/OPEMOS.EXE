@@ -216,6 +216,170 @@ mod tests {
         fs::remove_dir_all(root).expect("remove settings fixture");
     }
 
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "subprocess helper for settings advisory-lock regressions"]
+    fn settings_process_helper() {
+        let path = PathBuf::from(std::env::var_os("SETTINGS_HELPER_PATH").expect("helper path"));
+        let mode = std::env::var("SETTINGS_HELPER_MODE").expect("helper mode");
+        let _guard = settings_transaction_lock().expect("helper in-process lock");
+        let _file_guard = acquire_settings_file_lock(&path, Duration::from_secs(4))
+            .expect("helper file lock");
+        if mode == "hold" {
+            fs::write(
+                std::env::var_os("SETTINGS_HELPER_READY").expect("ready path"),
+                b"locked\n",
+            )
+            .expect("record held lock");
+            thread::sleep(Duration::from_secs(30));
+            return;
+        }
+        let mut settings = load_builder_settings_path_unlocked(&path).expect("helper load");
+        match mode.as_str() {
+            "track" => settings.track_steamos_driver_updates = true,
+            "upstream" => settings.include_upstream_nvidia_releases = true,
+            "recover" => settings.auto_release_verified_nvidia = false,
+            _ => panic!("unknown settings helper mode"),
+        }
+        thread::sleep(Duration::from_millis(100));
+        save_builder_settings_path_unlocked(&path, &settings).expect("helper save");
+    }
+
+    #[cfg(unix)]
+    fn spawn_settings_helper(path: &Path, mode: &str, ready: Option<&Path>) -> std::process::Child {
+        let mut command = Command::new(std::env::current_exe().expect("current test executable"));
+        command
+            .args([
+                "--exact",
+                "tests::settings_process_helper",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("SETTINGS_HELPER_PATH", path)
+            .env("SETTINGS_HELPER_MODE", mode)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        if let Some(ready) = ready {
+            command.env("SETTINGS_HELPER_READY", ready);
+        }
+        command.spawn().expect("spawn settings helper")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn settings_transactions_serialize_across_processes_and_recover_after_crash() {
+        let root = std::env::temp_dir().join(format!(
+            "steamos-settings-processes-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("settings fixture clock")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("create process settings fixture");
+        let path = root.join("settings.json");
+        save_builder_settings_path(&path, &BuilderSettings::default())
+            .expect("seed process settings");
+
+        let mut first = spawn_settings_helper(&path, "track", None);
+        let mut second = spawn_settings_helper(&path, "upstream", None);
+        assert!(first.wait().expect("wait for first writer").success());
+        assert!(second.wait().expect("wait for second writer").success());
+        let merged = load_builder_settings_path_unlocked(&path).expect("load merged settings");
+        assert!(merged.track_steamos_driver_updates);
+        assert!(merged.include_upstream_nvidia_releases);
+
+        let ready = root.join("holder-ready");
+        let mut holder = spawn_settings_helper(&path, "hold", Some(&ready));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !ready.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(ready.exists(), "holder never acquired the advisory lock");
+        let timeout = acquire_settings_file_lock(&path, Duration::from_millis(100))
+            .err()
+            .expect("contention should time out");
+        assert!(timeout.contains("Timed out"));
+        holder.kill().expect("terminate lock holder");
+        holder.wait().expect("reap lock holder");
+
+        let mut recovery = spawn_settings_helper(&path, "recover", None);
+        assert!(recovery.wait().expect("wait for recovery writer").success());
+        let recovered = load_builder_settings_path_unlocked(&path).expect("load recovered settings");
+        assert!(recovered.track_steamos_driver_updates);
+        assert!(recovered.include_upstream_nvidia_releases);
+        assert_eq!(
+            fs::metadata(&path).expect("settings metadata").permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(root.join(".settings.json.lock"))
+                .expect("lock metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert!(fs::read_dir(&root).expect("list process settings fixture").all(|entry| {
+            !entry
+                .expect("settings entry")
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")
+        }));
+        fs::remove_dir_all(root).expect("remove process settings fixture");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn settings_transactions_reject_links_and_insecure_settings_modes() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "steamos-settings-safety-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("settings safety clock")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("create settings safety fixture");
+        let real = root.join("real");
+        fs::create_dir(&real).expect("create real settings directory");
+        let linked = root.join("linked");
+        symlink(&real, &linked).expect("link settings directory");
+        assert!(save_builder_settings_path(
+            &linked.join("settings.json"),
+            &BuilderSettings::default()
+        )
+        .expect_err("linked parent must fail")
+        .contains("real directory"));
+
+        let path = real.join("settings.json");
+        save_builder_settings_path(&path, &BuilderSettings::default())
+            .expect("seed secure settings");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644))
+            .expect("weaken fixture settings mode");
+        assert!(load_builder_settings_path_unlocked(&path)
+            .expect_err("insecure settings mode must fail")
+            .contains("0600"));
+        fs::remove_file(&path).expect("remove insecure settings");
+        let target = real.join("target.json");
+        fs::write(&target, b"{}\n").expect("write symlink target");
+        symlink(&target, &path).expect("link settings file");
+        assert!(load_builder_settings_path_unlocked(&path).is_err());
+        fs::remove_file(&path).expect("remove linked settings");
+
+        let lock = real.join(".settings.json.lock");
+        fs::remove_file(&lock).expect("remove regular lock");
+        symlink(&target, &lock).expect("link settings lock");
+        assert!(save_builder_settings_path(&path, &BuilderSettings::default())
+            .expect_err("linked lock must fail")
+            .contains("regular file"));
+        fs::remove_dir_all(root).expect("remove settings safety fixture");
+    }
+
     #[test]
     fn appliance_cloud_init_requires_ephemeral_key_authentication() {
         let user_data = include_str!("../../builder/appliance/cloud-init/user-data");
