@@ -1119,6 +1119,7 @@ pub(crate) struct UsbWritePreflightSession {
     pub(crate) device_identifier: String,
     pub(crate) device_node: String,
     pub(crate) image_sha256: String,
+    pub(crate) identity_token: String,
     pub(crate) expires_at_unix_ms: u128,
     pub(crate) writes_allowed: bool,
     pub(crate) message: String,
@@ -1139,6 +1140,9 @@ pub(crate) struct UsbWritePreflightStatus {
     pub(crate) active: bool,
     pub(crate) expires_in_ms: u128,
     pub(crate) writes_allowed: bool,
+    pub(crate) device_identifier: Option<String>,
+    pub(crate) image_sha256: Option<String>,
+    pub(crate) identity_token: Option<String>,
     pub(crate) message: String,
 }
 

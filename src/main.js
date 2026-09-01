@@ -530,8 +530,21 @@ elements.checkUsbPreflight.addEventListener("click", async () => {
     const status = await invoke("get_usb_write_preflight_status", {
       sessionToken: usbPreflightSession.sessionToken,
     });
+    const identityMatches =
+      status.deviceIdentifier === usbPreflightSession.deviceIdentifier &&
+      status.imageSha256 === usbPreflightSession.imageSha256 &&
+      status.identityToken === usbPreflightSession.identityToken;
+    if (status.active && !identityMatches) {
+      usbPreflightSession = null;
+      elements.checkUsbPreflight.classList.add("hidden");
+      elements.cancelUsbPreflight.classList.add("hidden");
+      throw new Error("USB intent status no longer matches the confirmed device and image. Revalidate before continuing.");
+    }
     const remaining = status.active ? ` ${Math.ceil(Number(status.expiresInMs) / 1000)} seconds remain.` : "";
-    elements.usbMessage.textContent = `${status.message}${remaining}`;
+    const identity = status.deviceIdentifier && status.imageSha256
+      ? ` Target /dev/${status.deviceIdentifier}; image SHA-256 ${status.imageSha256.slice(0, 12)}….`
+      : "";
+    elements.usbMessage.textContent = `${status.message}${identity}${remaining}`;
     elements.usbMessage.className = "result-message";
     if (!status.active) {
       usbPreflightSession = null;

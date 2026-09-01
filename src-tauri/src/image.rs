@@ -1612,6 +1612,9 @@ pub(crate) const USB_PREFLIGHT_TTL: Duration = Duration::from_secs(60);
 struct ArmedUsbPreflight {
     session_token: String,
     expires_at: Instant,
+    device_identifier: String,
+    image_sha256: String,
+    identity_token: String,
 }
 
 #[derive(Default)]
@@ -1625,11 +1628,21 @@ impl UsbPreparationManager {
         self.armed = None;
     }
 
-    pub(crate) fn arm(&mut self, session_token: String, now: Instant) {
+    pub(crate) fn arm(
+        &mut self,
+        session_token: String,
+        device_identifier: String,
+        image_sha256: String,
+        identity_token: String,
+        now: Instant,
+    ) {
         self.generation = self.generation.wrapping_add(1).max(1);
         self.armed = Some(ArmedUsbPreflight {
             session_token,
             expires_at: now + USB_PREFLIGHT_TTL,
+            device_identifier,
+            image_sha256,
+            identity_token,
         });
     }
 
@@ -1658,12 +1671,22 @@ impl UsbPreparationManager {
         if let Some(armed) = self.armed.as_ref() {
             if now >= armed.expires_at {
                 let matching_token = session_token == armed.session_token;
+                let identity = matching_token.then(|| {
+                    (
+                        armed.device_identifier.clone(),
+                        armed.image_sha256.clone(),
+                        armed.identity_token.clone(),
+                    )
+                });
                 self.armed = None;
                 return UsbWritePreflightStatus {
                     status: if matching_token { "expired" } else { "stale-token" }.into(),
                     active: false,
                     expires_in_ms: 0,
                     writes_allowed: false,
+                    device_identifier: identity.as_ref().map(|value| value.0.clone()),
+                    image_sha256: identity.as_ref().map(|value| value.1.clone()),
+                    identity_token: identity.map(|value| value.2),
                     message: if matching_token {
                         "The USB intent session expired. Revalidate the image and target before confirming again."
                     } else {
@@ -1678,6 +1701,9 @@ impl UsbPreparationManager {
                     active: false,
                     expires_in_ms: 0,
                     writes_allowed: false,
+                    device_identifier: None,
+                    image_sha256: None,
+                    identity_token: None,
                     message: "This USB intent token does not identify the active session.".into(),
                 };
             }
@@ -1686,6 +1712,9 @@ impl UsbPreparationManager {
                 active: true,
                 expires_in_ms: armed.expires_at.duration_since(now).as_millis(),
                 writes_allowed: false,
+                device_identifier: Some(armed.device_identifier.clone()),
+                image_sha256: Some(armed.image_sha256.clone()),
+                identity_token: Some(armed.identity_token.clone()),
                 message: "The confirmed USB intent session is active, but raw-device writing remains disabled.".into(),
             };
         }
@@ -1694,6 +1723,9 @@ impl UsbPreparationManager {
             active: false,
             expires_in_ms: 0,
             writes_allowed: false,
+            device_identifier: None,
+            image_sha256: None,
+            identity_token: None,
             message: "No USB intent session is active.".into(),
         }
     }
@@ -1970,13 +2002,20 @@ pub(crate) async fn arm_usb_write_preflight(
         now.as_nanos()
     );
     let session_token = format!("{:x}", Sha256::digest(session_identity.as_bytes()));
-    manager.arm(session_token.clone(), Instant::now());
+    manager.arm(
+        session_token.clone(),
+        target.device_identifier.clone(),
+        image_sha256.clone(),
+        target.identity_token.clone(),
+        Instant::now(),
+    );
     Ok(UsbWritePreflightSession {
         status: "confirmed-read-only".into(),
         session_token,
         device_identifier: target.device_identifier,
         device_node: target.device_node,
         image_sha256,
+        identity_token: target.identity_token,
         expires_at_unix_ms,
         writes_allowed: false,
         message: format!(

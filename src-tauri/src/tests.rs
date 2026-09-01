@@ -339,35 +339,59 @@ mod tests {
     fn usb_preflight_state_replaces_cancels_and_expires_sessions() {
         let now = Instant::now();
         let mut manager = UsbPreparationManager::default();
-        manager.arm("first".into(), now);
+        let fixture_image_sha = "b".repeat(64);
+        let fixture_identity = "c".repeat(64);
+        let arm = |manager: &mut UsbPreparationManager, token: &str| {
+            manager.arm(
+                token.into(),
+                "disk7".into(),
+                fixture_image_sha.clone(),
+                fixture_identity.clone(),
+                now,
+            );
+        };
+        arm(&mut manager, "first");
         assert!(manager.is_armed());
         let active = manager.status("first", now + Duration::from_secs(1));
         assert!(active.active);
         assert_eq!(active.status, "armed-read-only");
         assert!(active.expires_in_ms > 0);
         assert!(!active.writes_allowed);
+        assert_eq!(active.device_identifier.as_deref(), Some("disk7"));
+        assert_eq!(active.image_sha256.as_deref(), Some(fixture_image_sha.as_str()));
+        assert_eq!(active.identity_token.as_deref(), Some(fixture_identity.as_str()));
         let stale = manager.status("wrong", now + Duration::from_secs(1));
         assert!(!stale.active);
         assert_eq!(stale.status, "stale-token");
+        assert!(stale.device_identifier.is_none());
+        assert!(stale.image_sha256.is_none());
+        assert!(stale.identity_token.is_none());
         assert!(manager.is_armed());
         assert!(!manager.cancel(Some("wrong"), now));
         assert!(manager.is_armed());
 
-        manager.arm("second".into(), now);
+        arm(&mut manager, "second");
+        let replaced = manager.status("first", now + Duration::from_secs(1));
+        assert_eq!(replaced.status, "stale-token");
+        assert!(replaced.device_identifier.is_none());
+        assert!(replaced.image_sha256.is_none());
+        assert!(replaced.identity_token.is_none());
+        assert!(manager.is_armed());
         assert!(!manager.cancel(Some("first"), now));
         assert!(manager.cancel(Some("second"), now));
         assert!(!manager.is_armed());
 
-        manager.arm("expired".into(), now);
+        arm(&mut manager, "expired");
         let expired = manager.status("expired", now + USB_PREFLIGHT_TTL);
         assert_eq!(expired.status, "expired");
         assert!(!expired.active);
+        assert_eq!(expired.device_identifier.as_deref(), Some("disk7"));
         assert!(!manager.is_armed());
 
         let missing = manager.status("expired", now + USB_PREFLIGHT_TTL);
         assert_eq!(missing.status, "not-armed");
 
-        manager.arm("cancel-any".into(), now);
+        arm(&mut manager, "cancel-any");
         assert!(manager.cancel(None, now));
         assert!(!manager.is_armed());
     }

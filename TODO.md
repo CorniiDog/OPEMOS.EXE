@@ -1392,6 +1392,7 @@ Before calling the project **beta**, verify:
 * [x] Add a short-lived, cancellation-safe USB intent session that rehashes the image, immediately revalidates exact device identity/capacity, requires typing `ERASE diskN`, and still keeps raw-device writes disabled.
 * [x] Make the USB image/manifest and destructive-intent boundaries independently fixture-testable without Disk Arbitration; cover content/manifest drift, phrase, exact node, capacity, and identity-token mismatch.
 * [x] Expose truthful read-only USB intent-session status with exact-token active/expired/stale/not-armed states and remaining lifetime; never imply cancellation succeeded when no matching session existed.
+* [x] Bind USB intent status to the exact device identifier, device identity token, and image SHA-256; reveal that identity only to the matching session token so stale tokens cannot observe a replacement session.
 * [ ] Automatic detection/download assistance for current official Valve recovery image without redistributing it.
 * [ ] Local artifact cache manager.
 * [ ] Offline build mode.
