@@ -913,56 +913,53 @@ pub(crate) fn bounded_git_mutation(
     let mut child = command
         .spawn()
         .map_err(|error| format!("Could not {description}: {error}"))?;
+    let cleanup = |child: &mut Child| {
+        #[cfg(unix)]
+        {
+            let _ = Command::new("kill")
+                .args(["-KILL", &format!("-{}", child.id())])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    };
     if let Some(bytes) = input {
-        child
-            .stdin
-            .take()
-            .ok_or_else(|| format!("Could not open {description} input."))?
-            .write_all(bytes)
-            .map_err(|error| format!("Could not provide {description} input: {error}"))?;
+        let Some(mut stdin) = child.stdin.take() else {
+            cleanup(&mut child);
+            return Err(format!("Could not open {description} input."));
+        };
+        if let Err(error) = stdin.write_all(bytes) {
+            cleanup(&mut child);
+            return Err(format!("Could not provide {description} input: {error}"));
+        }
     }
     drop(child.stdin.take());
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| format!("Could not read {description} output."))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| format!("Could not read {description} errors."))?;
-    let drain = move |mut stream: Box<dyn Read + Send>| {
-        let mut kept = Vec::new();
-        let mut buffer = [0_u8; 8192];
-        loop {
-            match stream.read(&mut buffer) {
-                Ok(0) | Err(_) => break,
-                Ok(count) => {
-                    let remaining = limit.saturating_add(1).saturating_sub(kept.len());
-                    kept.extend_from_slice(&buffer[..count.min(remaining)]);
-                }
-            }
-        }
-        kept
+    let Some(stdout) = child.stdout.take() else {
+        cleanup(&mut child);
+        return Err(format!("Could not read {description} output."));
     };
-    let stdout_thread = thread::spawn(move || drain(Box::new(stdout)));
-    let stderr_thread = thread::spawn(move || drain(Box::new(stderr)));
+    let Some(stderr) = child.stderr.take() else {
+        cleanup(&mut child);
+        return Err(format!("Could not read {description} errors."));
+    };
+    let stdout_thread = thread::spawn(move || read_bounded_git_stream(stdout, limit));
+    let stderr_thread = thread::spawn(move || read_bounded_git_stream(stderr, limit));
     let deadline = Instant::now() + timeout;
     let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("Could not inspect {description}: {error}"))?
-        {
-            break status;
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(error) => {
+                cleanup(&mut child);
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(format!("Could not inspect {description}: {error}"));
+            }
         }
         if Instant::now() >= deadline {
-            #[cfg(unix)]
-            {
-                let _ = Command::new("kill")
-                    .args(["-KILL", &format!("-{}", child.id())])
-                    .status();
-            }
-            let _ = child.kill();
-            let _ = child.wait();
+            cleanup(&mut child);
             let _ = stdout_thread.join();
             let _ = stderr_thread.join();
             return Err(format!(
@@ -971,12 +968,15 @@ pub(crate) fn bounded_git_mutation(
         }
         thread::sleep(Duration::from_millis(10));
     };
+    cleanup(&mut child);
     let stdout = stdout_thread
         .join()
-        .map_err(|_| format!("Could not collect {description} output."))?;
+        .map_err(|_| format!("Could not collect {description} output."))?
+        .map_err(|error| format!("Could not read {description} output: {error}"))?;
     let stderr = stderr_thread
         .join()
-        .map_err(|_| format!("Could not collect {description} errors."))?;
+        .map_err(|_| format!("Could not collect {description} errors."))?
+        .map_err(|error| format!("Could not read {description} errors: {error}"))?;
     if stdout.len() > limit || stderr.len() > limit {
         return Err(format!(
             "Could not {description}; Git output exceeded the safe limit."
@@ -987,6 +987,20 @@ pub(crate) fn bounded_git_mutation(
         return Err(format!("Could not {description}: {}", detail.trim()));
     }
     Ok(stdout)
+}
+
+pub(crate) fn read_bounded_git_stream(mut stream: impl Read, limit: usize) -> io::Result<Vec<u8>> {
+    let mut kept = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let count = stream.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        let remaining = limit.saturating_add(1).saturating_sub(kept.len());
+        kept.extend_from_slice(&buffer[..count.min(remaining)]);
+    }
+    Ok(kept)
 }
 
 fn vscode_binary() -> Option<PathBuf> {

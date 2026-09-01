@@ -343,7 +343,10 @@ mod tests {
 mode=$(cat "$2/mode")
 case "$mode" in
   overflow) dd if=/dev/zero bs=1024 count=2 2>/dev/null ;;
+  stderr-overflow) dd if=/dev/zero bs=1024 count=2 1>&2 2>/dev/null ;;
   timeout) printf partial; sleep 30 ;;
+  broken-pipe) exec 0<&-; sleep 30 ;;
+  descendant) sleep 30 & echo $! > "$2/descendant.pid"; exit 0 ;;
   nonutf8) printf '\377' ;;
   failure) printf partial-error >&2; exit 7 ;;
   success) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
@@ -355,13 +358,30 @@ esac
             bounded_git_mutation(&binary, &root.0, &["commit-tree"], Some(b"message"), timeout, 64, "test Git mutation")
         };
         assert!(run("overflow", Duration::from_secs(1)).unwrap_err().contains("safe limit"));
+        assert!(run("stderr-overflow", Duration::from_secs(1)).unwrap_err().contains("safe limit"));
+        fs::write(root.0.join("mode"), "broken-pipe").expect("select broken pipe");
+        assert!(bounded_git_mutation(&binary, &root.0, &["commit-tree"], Some(&vec![b'x'; 1024 * 1024]),
+            Duration::from_secs(1), 64, "test broken Git input").is_err());
         let started = Instant::now();
         assert!(run("timeout", Duration::from_millis(100)).unwrap_err().contains("time limit"));
         assert!(started.elapsed() < Duration::from_secs(2));
+        run("descendant", Duration::from_secs(1)).expect("clean descendant mode");
+        let descendant = fs::read_to_string(root.0.join("descendant.pid")).expect("descendant pid");
+        let alive = Command::new("kill").args(["-0", descendant.trim()])
+            .stdout(Stdio::null()).stderr(Stdio::null()).status().expect("inspect descendant");
+        assert!(!alive.success(), "bounded runner left a descendant alive");
         let non_utf8 = run("nonutf8", Duration::from_secs(1)).expect("capture non-UTF8 bytes");
         assert!(String::from_utf8(non_utf8).is_err());
         assert!(run("failure", Duration::from_secs(1)).unwrap_err().contains("partial-error"));
         assert_eq!(run("success", Duration::from_secs(1)).expect("successful bounded Git"), b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n");
+        struct FailingReader(bool);
+        impl Read for FailingReader {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                if self.0 { return Err(io::Error::other("injected read failure")); }
+                self.0 = true; buffer[0] = b'x'; Ok(1)
+            }
+        }
+        assert!(read_bounded_git_stream(FailingReader(false), 64).is_err());
 
         let repository = root.0.join("repository");
         fs::create_dir(&repository).expect("create atomic-ref repository");
