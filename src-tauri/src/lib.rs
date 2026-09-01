@@ -30,6 +30,12 @@ const NVIDIA_SOURCE_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamo
 const NVIDIA_UPSTREAM_TAGS_API: &str =
     "https://api.github.com/repos/NVIDIA/open-gpu-kernel-modules/tags?per_page=100";
 const NVIDIA_UPSTREAM_REPOSITORY: &str = "NVIDIA/open-gpu-kernel-modules";
+const GAMESCOPE_SOURCE_BRANCHES_API: &str =
+    "https://api.github.com/repos/CorniiDog/gamescope-nvidia/branches?per_page=100";
+const GAMESCOPE_SOURCE_REPOSITORY: &str = "CorniiDog/gamescope-nvidia";
+const GAMESCOPE_UPSTREAM_TAGS_API: &str =
+    "https://api.github.com/repos/ValveSoftware/gamescope/tags?per_page=100";
+const GAMESCOPE_UPSTREAM_REPOSITORY: &str = "ValveSoftware/gamescope";
 const NVIDIA_RESOLVER_SCHEMA: u32 = 2;
 const BUILDER_SETTINGS_SCHEMA: u32 = 3;
 const APPROVED_VALVE_SIGNER: &str = "889B5EBDDD505A683621900DAF1D2199EF0A3CCF";
@@ -158,6 +164,37 @@ struct NvidiaSourceBranch {
     repository: String,
     selection: String,
     experimental: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MaintainerWorkspaceSource {
+    component: String,
+    origin: String,
+    repository: String,
+    reference: String,
+    commit: String,
+    label: String,
+    experimental: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MaintainerWorkspacePlan {
+    schema_version: u32,
+    status: String,
+    plan_id: String,
+    component: String,
+    origin: String,
+    repository: String,
+    reference: String,
+    commit: String,
+    architecture: String,
+    isolation: String,
+    maintainer: String,
+    permission: String,
+    remote_mutation_allowed: bool,
+    message: String,
 }
 
 struct PinnedInstallerFile {
@@ -2009,18 +2046,7 @@ fn github_maintainer_status() -> Result<GithubMaintainerStatus, String> {
     {
         return Err("GitHub returned an invalid account name.".into());
     }
-    let endpoint = format!("repos/{NVIDIA_SUPPORT_REPOSITORY}/collaborators/{username}/permission");
-    let permission_output = Command::new(&gh)
-        .args(["api", &endpoint])
-        .output()
-        .map_err(|error| format!("Could not verify repository permission: {error}"))?;
-    let permission = if permission_output.status.success() {
-        Some(parse_github_repository_permission(
-            &permission_output.stdout,
-        )?)
-    } else {
-        None
-    };
+    let permission = github_repository_permission(&gh, &username, NVIDIA_SUPPORT_REPOSITORY)?;
     let authorized = permission
         .as_deref()
         .is_some_and(github_permission_can_publish);
@@ -2052,6 +2078,33 @@ fn parse_github_repository_permission(response: &[u8]) -> Result<String, String>
         return Err("GitHub returned an invalid repository permission.".into());
     }
     Ok(permission.to_string())
+}
+
+fn github_repository_permission(
+    gh: &Path,
+    username: &str,
+    repository: &str,
+) -> Result<Option<String>, String> {
+    if username.is_empty()
+        || !username
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        || !matches!(
+            repository,
+            NVIDIA_SUPPORT_REPOSITORY | NVIDIA_SOURCE_REPOSITORY | GAMESCOPE_SOURCE_REPOSITORY
+        )
+    {
+        return Err("Refusing to query permission for an unapproved repository identity.".into());
+    }
+    let endpoint = format!("repos/{repository}/collaborators/{username}/permission");
+    let output = Command::new(gh)
+        .args(["api", &endpoint])
+        .output()
+        .map_err(|error| format!("Could not verify {repository} permission: {error}"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    parse_github_repository_permission(&output.stdout).map(Some)
 }
 
 fn github_permission_can_publish(permission: &str) -> bool {
@@ -3885,6 +3938,264 @@ fn valid_nvidia_source_identity(
         }
         _ => false,
     }
+}
+
+fn valid_maintainer_git_reference(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && !value.starts_with(['.', '/'])
+        && !value.ends_with(['.', '/'])
+        && !value.ends_with(".lock")
+        && !value.contains("..")
+        && !value.contains("//")
+        && !value.contains("@{")
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'/' | b'-'))
+}
+
+fn valid_git_commit(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn fetch_maintainer_branches(
+    client: &reqwest::blocking::Client,
+    api: &str,
+    component: &str,
+    repository: &str,
+) -> Result<Vec<MaintainerWorkspaceSource>, String> {
+    let response = client
+        .get(api)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .map_err(|error| format!("Could not query {component} project branches: {error}"))?;
+    let bytes = read_http_response_limited(
+        response,
+        RELEASES_RESPONSE_LIMIT,
+        &format!("{component} project branch metadata"),
+    )?;
+    let branches: Vec<GithubBranch> = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("{component} branch metadata is invalid JSON: {error}"))?;
+    let mut result = Vec::new();
+    for branch in branches {
+        if !valid_maintainer_git_reference(&branch.name) || !valid_git_commit(&branch.commit.sha) {
+            continue;
+        }
+        result.push(MaintainerWorkspaceSource {
+            component: component.into(),
+            origin: "project".into(),
+            repository: repository.into(),
+            reference: branch.name.clone(),
+            commit: branch.commit.sha.to_ascii_lowercase(),
+            label: branch.name,
+            experimental: false,
+        });
+    }
+    if result.is_empty() {
+        return Err(format!(
+            "The approved {component} project repository exposed no safe branches."
+        ));
+    }
+    result.sort_by(|left, right| left.reference.cmp(&right.reference));
+    Ok(result)
+}
+
+fn fetch_maintainer_gamescope_tags(
+    client: &reqwest::blocking::Client,
+) -> Result<Vec<MaintainerWorkspaceSource>, String> {
+    let response = client
+        .get(GAMESCOPE_UPSTREAM_TAGS_API)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .map_err(|error| format!("Could not query upstream Gamescope tags: {error}"))?;
+    let bytes = read_http_response_limited(
+        response,
+        RELEASES_RESPONSE_LIMIT,
+        "upstream Gamescope tag metadata",
+    )?;
+    let tags: Vec<GithubBranch> = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Upstream Gamescope tag metadata is invalid JSON: {error}"))?;
+    let mut result = Vec::new();
+    for tag in tags {
+        if numeric_version(&tag.name, 2..=4).is_none() || !valid_git_commit(&tag.commit.sha) {
+            continue;
+        }
+        result.push(MaintainerWorkspaceSource {
+            component: "gamescope".into(),
+            origin: "upstream".into(),
+            repository: GAMESCOPE_UPSTREAM_REPOSITORY.into(),
+            reference: tag.name.clone(),
+            commit: tag.commit.sha.to_ascii_lowercase(),
+            label: tag.name,
+            experimental: true,
+        });
+    }
+    if result.is_empty() {
+        return Err("The approved Gamescope upstream exposed no numeric release tags.".into());
+    }
+    result.sort_by(|left, right| {
+        let left_version = numeric_version(&left.reference, 2..=4).expect("validated tag");
+        let right_version = numeric_version(&right.reference, 2..=4).expect("validated tag");
+        right_version.cmp(&left_version)
+    });
+    Ok(result)
+}
+
+fn fetch_maintainer_workspace_sources(
+    client: &reqwest::blocking::Client,
+) -> Result<Vec<MaintainerWorkspaceSource>, String> {
+    let (nvidia_project, nvidia_upstream, gamescope_project, gamescope_upstream) =
+        thread::scope(|scope| {
+            let nvidia_project = scope.spawn(|| fetch_nvidia_source_branches(client));
+            let nvidia_upstream = scope.spawn(|| fetch_upstream_nvidia_tags(client));
+            let gamescope_project = scope.spawn(|| {
+                fetch_maintainer_branches(
+                    client,
+                    GAMESCOPE_SOURCE_BRANCHES_API,
+                    "gamescope",
+                    GAMESCOPE_SOURCE_REPOSITORY,
+                )
+            });
+            let gamescope_upstream = scope.spawn(|| fetch_maintainer_gamescope_tags(client));
+            Ok::<_, String>((
+                nvidia_project
+                    .join()
+                    .map_err(|_| "NVIDIA project source query panicked.")??,
+                nvidia_upstream
+                    .join()
+                    .map_err(|_| "NVIDIA upstream source query panicked.")??,
+                gamescope_project
+                    .join()
+                    .map_err(|_| "Gamescope project source query panicked.")??,
+                gamescope_upstream
+                    .join()
+                    .map_err(|_| "Gamescope upstream source query panicked.")??,
+            ))
+        })?;
+    let mut result = nvidia_project
+        .into_iter()
+        .map(|source| MaintainerWorkspaceSource {
+            component: "nvidia".into(),
+            origin: source.origin,
+            repository: source.repository,
+            reference: source.name,
+            commit: source.commit,
+            label: source.version,
+            experimental: source.experimental,
+        })
+        .collect::<Vec<_>>();
+    result.extend(
+        nvidia_upstream
+            .into_iter()
+            .map(|source| MaintainerWorkspaceSource {
+                component: "nvidia".into(),
+                origin: source.origin,
+                repository: source.repository,
+                reference: source.name,
+                commit: source.commit,
+                label: source.version,
+                experimental: source.experimental,
+            }),
+    );
+    result.extend(gamescope_project);
+    result.extend(gamescope_upstream);
+    Ok(result)
+}
+
+fn require_maintainer_authorization() -> Result<GithubMaintainerStatus, String> {
+    let status = github_maintainer_status()?;
+    if !status.authorized {
+        return Err(
+            "Maintainer workspace access requires a fresh verified GitHub repository permission check."
+                .into(),
+        );
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+async fn list_maintainer_workspace_sources() -> Result<Vec<MaintainerWorkspaceSource>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        require_maintainer_authorization()?;
+        fetch_maintainer_workspace_sources(&nvidia_http_client()?)
+    })
+    .await
+    .map_err(|error| format!("Maintainer source-list worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn plan_maintainer_workspace(
+    component: String,
+    origin: String,
+    reference: String,
+    commit: String,
+) -> Result<MaintainerWorkspacePlan, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let authorization = require_maintainer_authorization()?;
+        let matches = fetch_maintainer_workspace_sources(&nvidia_http_client()?)?
+            .into_iter()
+            .filter(|source| {
+                source.component == component
+                    && source.origin == origin
+                    && source.reference == reference
+                    && source.commit == commit
+            })
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Err(
+                "The selected maintainer source changed or is no longer an exact approved reference. Refresh and select it again."
+                    .into(),
+            );
+        }
+        let source = &matches[0];
+        let maintainer = authorization
+            .username
+            .ok_or("GitHub maintainer identity disappeared during planning.")?;
+        let permission = if source.origin == "project" {
+            let gh = find_binary("gh").ok_or("GitHub CLI disappeared during planning.")?;
+            let permission = github_repository_permission(&gh, &maintainer, &source.repository)?
+                .ok_or_else(|| {
+                    format!(
+                        "Maintainer access to {} could not be verified.",
+                        source.repository
+                    )
+                })?;
+            if !github_permission_can_publish(&permission) {
+                return Err(format!(
+                    "The connected account has {permission} access to {}; write access is required before a project workspace can be prepared.",
+                    source.repository
+                ));
+            }
+            permission
+        } else {
+            "approved-upstream-read-only".into()
+        };
+        let identity = format!(
+            "{}\0{}\0{}\0{}\0{}",
+            source.component, source.origin, source.repository, source.reference, source.commit
+        );
+        let plan_id = format!("{:x}", Sha256::digest(identity.as_bytes()));
+        Ok(MaintainerWorkspacePlan {
+            schema_version: 1,
+            status: "planned".into(),
+            plan_id,
+            component: source.component.clone(),
+            origin: source.origin.clone(),
+            repository: source.repository.clone(),
+            reference: source.reference.clone(),
+            commit: source.commit.clone(),
+            architecture: "x86_64".into(),
+            isolation: "disposable-maintainer-appliance".into(),
+            maintainer,
+            permission,
+            remote_mutation_allowed: false,
+            message: "Exact source identity verified. Workspace creation, credentials, and every remote mutation remain separate confirmation gates.".into(),
+        })
+    })
+    .await
+    .map_err(|error| format!("Maintainer workspace planner failed: {error}"))?
 }
 
 fn fetch_nvidia_source_branches(
@@ -10918,6 +11229,47 @@ fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("Could not focus the build progress window: {e}"))
 }
 
+#[tauri::command]
+async fn open_maintainer_window(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(require_maintainer_authorization)
+        .await
+        .map_err(|error| format!("Maintainer permission worker failed: {error}"))??;
+    if let Some(window) = app.get_webview_window("maintainer-workspace") {
+        window
+            .show()
+            .map_err(|error| format!("Could not show the maintainer window: {error}"))?;
+        window
+            .set_focus()
+            .map_err(|error| format!("Could not focus the maintainer window: {error}"))?;
+        return Ok(());
+    }
+    let main = app
+        .get_webview_window("main")
+        .ok_or("The main application window is unavailable.")?;
+    let window = tauri::WebviewWindowBuilder::new(
+        &app,
+        "maintainer-workspace",
+        tauri::WebviewUrl::App("maintainer.html".into()),
+    )
+    .title("SteamOS NVIDIA Builder — Maintainer Workspace")
+    .inner_size(900.0, 720.0)
+    .min_inner_size(820.0, 640.0)
+    .resizable(true)
+    .theme(Some(tauri::Theme::Dark))
+    .background_color(Color(13, 17, 23, 255))
+    .visible(false)
+    .parent(&main)
+    .map_err(|error| format!("Could not couple the maintainer window: {error}"))?
+    .build()
+    .map_err(|error| format!("Could not create the maintainer window: {error}"))?;
+    window
+        .show()
+        .map_err(|error| format!("Could not show the maintainer window: {error}"))?;
+    window
+        .set_focus()
+        .map_err(|error| format!("Could not focus the maintainer window: {error}"))
+}
+
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
@@ -11043,6 +11395,32 @@ mod tests {
             "580.159.04",
             "580.159.04"
         ));
+    }
+
+    #[test]
+    fn maintainer_workspace_accepts_only_confined_git_references() {
+        for valid in ["master", "nvidia/575.64.05", "3.16.23.6", "feature_safe-1"] {
+            assert!(valid_maintainer_git_reference(valid));
+        }
+        for invalid in [
+            "",
+            ".hidden",
+            "/absolute",
+            "ends/",
+            "feature..other",
+            "feature//other",
+            "feature@{old}",
+            "refs.lock",
+            "branch with space",
+            "branch;touch",
+        ] {
+            assert!(!valid_maintainer_git_reference(invalid), "{invalid}");
+        }
+        assert!(valid_git_commit(&"a".repeat(40)));
+        assert!(!valid_git_commit(&"a".repeat(39)));
+        assert!(!valid_git_commit(&format!("{}g", "a".repeat(39))));
+        assert_eq!(GAMESCOPE_SOURCE_REPOSITORY, "CorniiDog/gamescope-nvidia");
+        assert_eq!(GAMESCOPE_UPSTREAM_REPOSITORY, "ValveSoftware/gamescope");
     }
 
     #[test]
@@ -13568,6 +13946,8 @@ pub fn run() {
             get_github_maintainer_status,
             connect_github_maintainer,
             list_nvidia_source_branches,
+            list_maintainer_workspace_sources,
+            plan_maintainer_workspace,
             start_appliance,
             start_nvidia_build_appliance,
             get_appliance_status,
@@ -13598,6 +13978,7 @@ pub fn run() {
             validate_image,
             preview_image_output,
             open_progress_window,
+            open_maintainer_window,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SteamOS NVIDIA Image Builder");

@@ -13,6 +13,15 @@ licenses and distribution terms.
 
 The main window includes a compact settings panel for durable, non-secret preferences. Settings use a versioned `settings.json`; GitHub credentials are never stored there. On macOS, maintainer connection opens the GitHub CLI browser flow in a visible Terminal window while the responsive settings panel polls for completion. Maintainer release controls require a live permission check against `CorniiDog/open-gpu-kernel-modules-steamos-support` and a second backend permission check immediately before publication.
 
+Verified maintainers can open a separate workspace-planning window from that
+panel. It queries only the approved NVIDIA and Gamescope project/upstream
+repositories, filters unsafe references, displays the exact 40-character commit,
+and asks the backend to re-resolve the complete identity before issuing a
+schema-1 plan hash. Development-host creation, VS Code Remote SSH, commit, push,
+release, and Deck deployment controls remain explicitly disabled until their
+isolated-environment, review, credential, confirmation, and rollback contracts
+are implemented; planning never grants remote-mutation authority.
+
 When an exact-kernel NVIDIA artifact is built locally and reaches `locally-built-verified`, maintainers who opted in receive a release confirmation naming the repository, tag, pinned support commit, trust classification, and archive hash. “No, keep local” is focused by default. Publication uses the support repository's hash-pinned canonical publisher: Rust cross-checks its dry-run JSON and then invokes only its create-only mode. It refuses to overwrite an existing release and uploads only the NVIDIA archive, checksum, external build-info, and provenance sidecar—never the recovery image or generated SteamOS image.
 
 The main build card also exposes a per-build NVIDIA source selector. `Automatic` remains the default and follows the nearest compatible same-series release; `Latest` explicitly selects the newest available project branch; individual `nvidia/<version>` branches can be selected for controlled testing. An off-by-default setting can additionally expose numeric tags from NVIDIA's official `NVIDIA/open-gpu-kernel-modules` repository in a separate experimental group. Upstream selections require a transient per-build acknowledgement, are re-resolved to an exact tag commit, must have matching Arch Archive userspace inputs before the long build begins, and are never offered to the automated publisher. Every source choice is pinned to an exact commit before the x86_64 build begins.

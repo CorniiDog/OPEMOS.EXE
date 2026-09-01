@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <style>html, body { background: #0d1117; color: #f5f7fb; }</style>
+    <title>Maintainer Workspace</title>
+    <link rel="stylesheet" href="/maintainer.css">
+</head>
+<body>
+    <main class="maintainer-shell">
+        <header>
+            <div>
+                <p class="eyebrow">Permission-gated development</p>
+                <h1>Maintainer Workspace</h1>
+                <p class="lead">Pin an approved repository reference to an exact commit before any development environment or remote action is allowed.</p>
+            </div>
+            <span id="permission-status" class="status pending">Checking permission</span>
+        </header>
+
+        <section class="card source-card">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">Workspace source</p>
+                    <h2>Select an immutable checkout</h2>
+                </div>
+                <button id="refresh-sources" class="secondary" type="button">Refresh</button>
+            </div>
+
+            <div class="selector-grid">
+                <label>
+                    <span>Component</span>
+                    <select id="component">
+                        <option value="nvidia">NVIDIA open modules</option>
+                        <option value="gamescope">Gamescope NVIDIA</option>
+                    </select>
+                </label>
+                <label>
+                    <span>Repository</span>
+                    <select id="origin">
+                        <option value="project">Project repository</option>
+                        <option value="upstream">Approved upstream</option>
+                    </select>
+                </label>
+                <label class="wide">
+                    <span>Exact branch or release</span>
+                    <select id="source-reference"></select>
+                </label>
+            </div>
+
+            <dl class="identity">
+                <div><dt>Repository</dt><dd id="repository">—</dd></div>
+                <div><dt>Reference</dt><dd id="reference">—</dd></div>
+                <div><dt>Commit</dt><dd id="commit">—</dd></div>
+            </dl>
+
+            <div id="upstream-notice" class="notice hidden">
+                Upstream work is experimental. It can be inspected and built locally, but cannot use the project’s normal automated-release path.
+            </div>
+
+            <button id="plan-workspace" class="primary" type="button" disabled>Verify Workspace Plan</button>
+            <p id="workspace-message" class="message" aria-live="polite"></p>
+        </section>
+
+        <section class="card plan-card">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">Validated plan</p>
+                    <h2 id="plan-title">No workspace prepared</h2>
+                </div>
+                <span id="plan-status" class="status">Idle</span>
+            </div>
+            <div class="plan-summary">
+                <div><span>Plan identity</span><strong id="plan-id">—</strong></div>
+                <div><span>Architecture</span><strong id="architecture">x86_64</strong></div>
+                <div><span>Isolation</span><strong id="isolation">Disposable appliance</strong></div>
+                <div><span>Remote mutation</span><strong id="remote-mutation">Blocked</strong></div>
+            </div>
+        </section>
+
+        <section class="card actions-card">
+            <div>
+                <p class="eyebrow">Maintainer actions</p>
+                <h2>Explicit gates</h2>
+                <p class="section-copy">These controls stay unavailable until the isolated checkout, change review, credentials, clean build, and target-device contracts are implemented and independently verified.</p>
+            </div>
+            <div class="action-grid">
+                <button type="button" disabled><strong>Open in VS Code</strong><small>Requires an ephemeral Remote SSH workspace.</small></button>
+                <button type="button" disabled><strong>Review changes</strong><small>Requires a bounded, secret-screened diff.</small></button>
+                <button type="button" disabled><strong>Commit</strong><small>Requires a reviewed message and exact checkout.</small></button>
+                <button type="button" disabled><strong>Push</strong><small>Requires fresh repository permission and confirmation.</small></button>
+                <button type="button" disabled><strong>Build &amp; Release</strong><small>Must delegate to the repository-owned clean pipeline.</small></button>
+                <button type="button" disabled><strong>Deploy to Deck</strong><small>Requires pinned host identity and compatibility inspection.</small></button>
+            </div>
+        </section>
+
+        <footer>No credentials, recovery images, or generated SteamOS images enter this workspace plan.</footer>
+    </main>
+    <script type="module" src="/maintainer.js"></script>
+</body>
+</html>

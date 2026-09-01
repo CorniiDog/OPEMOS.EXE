@@ -1,0 +1,58 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  color: #f5f7fb;
+  background: #0d1117;
+}
+* { box-sizing: border-box; }
+html, body { width: 100%; min-width: 820px; min-height: 640px; margin: 0; }
+body {
+  background: radial-gradient(circle at top left, rgba(68, 109, 255, .17), transparent 34rem), #0d1117;
+  overflow: auto;
+  overscroll-behavior: none;
+}
+button, select { font: inherit; }
+.maintainer-shell { width: min(1040px, calc(100% - 48px)); margin: 0 auto; padding: 24px 0 18px; display: grid; gap: 14px; }
+header, .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; }
+h1 { margin: 0; font-size: 30px; line-height: 1.1; }
+h2 { margin: 0; font-size: 18px; }
+.eyebrow { margin: 0 0 4px; color: #9fb4ff; font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.lead, .section-copy { color: #aab4c5; line-height: 1.4; }
+.lead { max-width: 690px; margin: 7px 0 0; font-size: 14px; }
+.section-copy { margin: 5px 0 0; font-size: 12px; }
+.card { border: 1px solid #293548; border-radius: 17px; background: rgba(18, 24, 34, .92); padding: 16px; }
+.status { flex: none; padding: 7px 10px; border-radius: 999px; background: #243044; color: #bdc9dd; font-size: 11px; font-weight: 750; }
+.status.pending { background: #302b17; color: #f2d477; }
+.status.ready { background: #183322; color: #7ee2a8; }
+.status.failed { background: #3d2020; color: #ff9494; }
+.primary, .secondary { border: 0; border-radius: 10px; color: #fff; cursor: pointer; }
+.primary { width: 100%; padding: 10px 14px; background: #4169e1; font-weight: 750; }
+.secondary { padding: 8px 12px; background: #252f41; color: #dce5ff; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+.selector-grid { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 11px 14px; }
+.selector-grid label { min-width: 0; }
+.selector-grid label.wide { grid-column: 1 / -1; }
+.selector-grid span { display: block; margin: 0 0 5px; color: #8f9bae; font-size: 11px; font-weight: 650; }
+select { width: 100%; padding: 9px 34px 9px 10px; border: 1px solid #36445c; border-radius: 10px; color: #dce5ff; background: #202a3a; }
+.identity { margin: 13px 0; padding: 10px 12px; border: 1px solid #2d394c; border-radius: 11px; background: rgba(13, 18, 26, .62); display: grid; grid-template-columns: 1fr 1fr 1.25fr; gap: 12px; }
+.identity div { min-width: 0; }
+.identity dt { color: #8490a3; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+.identity dd { margin: 3px 0 0; overflow: hidden; color: #d6deea; font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.notice { margin: 0 0 12px; padding: 9px 11px; border: 1px solid #765f2d; border-radius: 10px; color: #ddc985; background: rgba(80, 59, 18, .35); font-size: 11px; line-height: 1.4; }
+.hidden { display: none !important; }
+.message { min-height: 17px; margin: 7px 2px 0; color: #9fb4ff; font-size: 12px; }
+.message.error { color: #ff9494; }
+.plan-summary { margin-top: 13px; display: grid; grid-template-columns: 1.4fr .7fr 1fr .8fr; gap: 10px; }
+.plan-summary div { min-width: 0; padding: 9px 10px; border-radius: 10px; background: #101721; }
+.plan-summary span { display: block; color: #8490a3; font-size: 9px; text-transform: uppercase; letter-spacing: .05em; }
+.plan-summary strong { display: block; margin-top: 4px; overflow: hidden; color: #dce5ff; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.actions-card { display: grid; grid-template-columns: .75fr 1.7fr; gap: 16px; align-items: start; }
+.action-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+.action-grid button { min-height: 66px; padding: 9px 10px; border: 1px solid #344056; border-radius: 10px; color: #d3dbea; background: #1c2431; text-align: left; }
+.action-grid strong, .action-grid small { display: block; }
+.action-grid strong { font-size: 12px; }
+.action-grid small { margin-top: 4px; color: #8f9bae; font-size: 9px; line-height: 1.3; }
+footer { color: #7f8999; font-size: 10px; text-align: center; }
+@media (max-width: 880px) {
+  .actions-card { grid-template-columns: 1fr; }
+  .plan-summary { grid-template-columns: 1fr 1fr; }
+}

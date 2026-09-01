@@ -23,6 +23,7 @@ const elements = {
   autoReleaseNvidia: $("#auto-release-nvidia"),
   autoReleaseSetting: $("#auto-release-setting"), autoReleaseStatus: $("#auto-release-status"),
   githubStatus: $("#github-status"), githubConnect: $("#github-connect"),
+  openMaintainer: $("#open-maintainer"),
   settingsMessage: $("#settings-message"),
 };
 
@@ -93,6 +94,7 @@ function renderSettings() {
   elements.githubConnect.textContent = githubLoginPending
     ? "Waiting for GitHub…"
     : (githubMaintainer?.authenticated ? "Reconnect" : "Connect GitHub");
+  elements.openMaintainer.disabled = !githubMaintainer?.authorized;
 }
 
 async function refreshGithubMaintainer() {
@@ -337,6 +339,22 @@ elements.githubConnect.addEventListener("click", async () => {
     elements.settingsMessage.textContent = String(error);
     elements.settingsMessage.className = "settings-message error";
     elements.githubConnect.disabled = false;
+    renderSettings();
+  }
+});
+
+elements.openMaintainer.addEventListener("click", async () => {
+  elements.openMaintainer.disabled = true;
+  elements.settingsMessage.textContent = "Rechecking permission and opening the maintainer workspace…";
+  elements.settingsMessage.className = "settings-message";
+  try {
+    await waitForPaint();
+    await invoke("open_maintainer_window");
+    setSettingsOpen(false);
+  } catch (error) {
+    elements.settingsMessage.textContent = String(error);
+    elements.settingsMessage.className = "settings-message error";
+  } finally {
     renderSettings();
   }
 });

@@ -207,6 +207,7 @@ footer p { margin: 0; }
 }
 .settings-heading,
 .github-setting,
+.maintainer-setting,
 .setting-row {
   display: flex;
   align-items: flex-start;
@@ -217,9 +218,11 @@ footer p { margin: 0; }
 .setting-row { padding: 12px 0; cursor: pointer; }
 .setting-row span { min-width: 0; }
 .setting-row strong,
-.github-setting strong { display: block; color: #f5f7fb; font-size: 14px; }
+.github-setting strong,
+.maintainer-setting strong { display: block; color: #f5f7fb; font-size: 14px; }
 .setting-row small,
 .github-setting p,
+.maintainer-setting p,
 .settings-security,
 .settings-message { display: block; margin: 5px 0 0; color: #8f9bae; font-size: 12px; line-height: 1.42; }
 .setting-row input { flex: none; width: 18px; height: 18px; margin-top: 2px; accent-color: #6688ff; }
@@ -233,8 +236,11 @@ footer p { margin: 0; }
 .setting-status.error { color: #ff9494; }
 .settings-divider { height: 1px; margin: 4px 0 12px; background: #273142; }
 .github-setting { align-items: center; padding-bottom: 8px; }
-.github-setting > div { min-width: 0; }
-.github-setting .secondary { flex: none; }
+.maintainer-setting { align-items: center; padding: 8px 0 10px; }
+.github-setting > div,
+.maintainer-setting > div { min-width: 0; }
+.github-setting .secondary,
+.maintainer-setting .secondary { flex: none; }
 .settings-message { min-height: 17px; color: #9fb4ff; }
 .settings-message.error { color: #ff9494; }
 .settings-security { padding-top: 12px; border-top: 1px solid #273142; }
