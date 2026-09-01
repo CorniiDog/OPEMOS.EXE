@@ -560,9 +560,10 @@ elements.checkUsbPreflight.addEventListener("click", async () => {
 });
 
 elements.cancelUsbPreflight.addEventListener("click", async () => {
+  if (!usbPreflightSession?.sessionToken) return;
   let cancellationCompleted = false;
   try {
-    const result = await invoke("cancel_usb_write_preflight", { sessionToken: usbPreflightSession?.sessionToken || null });
+    const result = await invoke("cancel_usb_write_preflight", { sessionToken: usbPreflightSession.sessionToken });
     cancellationCompleted = true;
     elements.usbMessage.textContent = result.cancelled
       ? "USB preparation cancelled. No disk was opened or changed."

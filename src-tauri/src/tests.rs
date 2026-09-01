@@ -367,7 +367,7 @@ mod tests {
         assert!(stale.image_sha256.is_none());
         assert!(stale.identity_token.is_none());
         assert!(manager.is_armed());
-        assert!(!manager.cancel(Some("wrong"), now));
+        assert!(!manager.cancel("wrong", now));
         assert!(manager.is_armed());
 
         arm(&mut manager, "second");
@@ -377,8 +377,8 @@ mod tests {
         assert!(replaced.image_sha256.is_none());
         assert!(replaced.identity_token.is_none());
         assert!(manager.is_armed());
-        assert!(!manager.cancel(Some("first"), now));
-        assert!(manager.cancel(Some("second"), now));
+        assert!(!manager.cancel("first", now));
+        assert!(manager.cancel("second", now));
         assert!(!manager.is_armed());
 
         arm(&mut manager, "expired");
@@ -391,9 +391,19 @@ mod tests {
         let missing = manager.status("expired", now + USB_PREFLIGHT_TTL);
         assert_eq!(missing.status, "not-armed");
 
-        arm(&mut manager, "cancel-any");
-        assert!(manager.cancel(None, now));
+        arm(&mut manager, "cancel-all");
+        manager.cancel_all();
         assert!(!manager.is_armed());
+    }
+
+    #[test]
+    fn usb_preflight_session_tokens_are_exact_hex_digests() {
+        assert!(valid_usb_preflight_session_token(&"a".repeat(64)));
+        assert!(valid_usb_preflight_session_token(&"A0".repeat(32)));
+        assert!(!valid_usb_preflight_session_token(""));
+        assert!(!valid_usb_preflight_session_token(&"a".repeat(63)));
+        assert!(!valid_usb_preflight_session_token(&"a".repeat(65)));
+        assert!(!valid_usb_preflight_session_token(&format!("{}g", "a".repeat(63))));
     }
 
     #[test]

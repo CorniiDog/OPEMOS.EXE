@@ -1646,7 +1646,7 @@ impl UsbPreparationManager {
         });
     }
 
-    pub(crate) fn cancel(&mut self, session_token: Option<&str>, now: Instant) -> bool {
+    pub(crate) fn cancel(&mut self, session_token: &str, now: Instant) -> bool {
         if self
             .armed
             .as_ref()
@@ -1657,10 +1657,7 @@ impl UsbPreparationManager {
         let cancelled = self
             .armed
             .as_ref()
-            .is_some_and(|armed| match session_token {
-                Some(token) => token == armed.session_token,
-                None => true,
-            });
+            .is_some_and(|armed| session_token == armed.session_token);
         if cancelled {
             self.armed = None;
         }
@@ -1738,6 +1735,10 @@ impl UsbPreparationManager {
     pub(crate) fn is_armed(&self) -> bool {
         self.armed.is_some()
     }
+}
+
+pub(crate) fn valid_usb_preflight_session_token(session_token: &str) -> bool {
+    session_token.len() == 64 && session_token.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 #[cfg(target_os = "macos")]
@@ -2028,13 +2029,16 @@ pub(crate) async fn arm_usb_write_preflight(
 #[tauri::command]
 pub(crate) fn cancel_usb_write_preflight(
     app: tauri::AppHandle,
-    session_token: Option<String>,
+    session_token: String,
 ) -> Result<UsbWritePreflightCancellation, String> {
+    if !valid_usb_preflight_session_token(&session_token) {
+        return Err("The USB intent session token is invalid.".into());
+    }
     let manager_state = app.state::<Mutex<UsbPreparationManager>>();
     let mut manager = manager_state
         .lock()
         .map_err(|_| "USB preparation state is unavailable.")?;
-    let cancelled = manager.cancel(session_token.as_deref(), Instant::now());
+    let cancelled = manager.cancel(&session_token, Instant::now());
     Ok(UsbWritePreflightCancellation {
         status: if cancelled { "cancelled" } else { "not-armed" }.into(),
         cancelled,
@@ -2047,7 +2051,7 @@ pub(crate) fn get_usb_write_preflight_status(
     app: tauri::AppHandle,
     session_token: String,
 ) -> Result<UsbWritePreflightStatus, String> {
-    if session_token.len() != 64 || !session_token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if !valid_usb_preflight_session_token(&session_token) {
         return Err("The USB intent session token is invalid.".into());
     }
     let manager_state = app.state::<Mutex<UsbPreparationManager>>();
