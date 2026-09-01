@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, symlink } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
+import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -57,6 +57,42 @@ test("host state validation rejects symlinked runtime directories", async () => 
     assert.match(result.stderr, /refuses unsafe runtime\/result state/);
   } finally {
     await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("host state validation detects work and result replacement after validation", async () => {
+  for (const replacedName of ["work", "results"]) {
+    const fixture = await mkdtemp(join(tmpdir(), `steamos-headless-replace-${replacedName}-`));
+    const redirected = join(fixture, "redirected");
+    await mkdir(redirected);
+    try {
+      const child = spawn("bash", [new URL("./headless-vm/run.sh", import.meta.url).pathname], {
+        env: {
+          ...process.env,
+          STEAMOS_HEADLESS_VM_STATE_ROOT: fixture,
+          STEAMOS_HEADLESS_VM_STATE_CHECK_ONLY: "1",
+          STEAMOS_HEADLESS_VM_LIFECYCLE_TEST: "1",
+          STEAMOS_HEADLESS_VM_TEST_PHASE: "validated",
+        },
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        try { await readFile(join(fixture, "test-phase")); break; } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      await rename(join(fixture, replacedName), join(fixture, `${replacedName}-original`));
+      await symlink(redirected, join(fixture, replacedName));
+      await writeFile(join(fixture, "test-continue"), "continue\n");
+      const status = await new Promise((resolve) => child.once("close", resolve));
+      assert.notEqual(status, 0);
+      assert.match(stderr, /detected replaced runtime\/result state/);
+      assert.deepEqual(await readFile(join(fixture, "test-phase"), "utf8"), "validated\n");
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
   }
 });
 

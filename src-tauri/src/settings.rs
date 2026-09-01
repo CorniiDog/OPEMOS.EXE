@@ -14,6 +14,37 @@ pub(crate) fn settings_transaction_lock() -> Result<std::sync::MutexGuard<'stati
 
 pub(crate) struct SettingsFileLock {
     file: File,
+    path: PathBuf,
+}
+
+impl SettingsFileLock {
+    pub(crate) fn verify(&self) -> Result<(), String> {
+        let path_metadata = fs::symlink_metadata(&self.path).map_err(|error| {
+            format!("Could not revalidate the settings transaction lock: {error}")
+        })?;
+        let opened_metadata = self
+            .file
+            .metadata()
+            .map_err(|error| format!("Could not revalidate the opened settings lock: {error}"))?;
+        if path_metadata.file_type().is_symlink()
+            || !path_metadata.is_file()
+            || !opened_metadata.is_file()
+        {
+            return Err("The settings transaction lock identity changed.".into());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            if path_metadata.dev() != opened_metadata.dev()
+                || path_metadata.ino() != opened_metadata.ino()
+                || path_metadata.mode() & 0o777 != 0o600
+                || opened_metadata.mode() & 0o777 != 0o600
+            {
+                return Err("The settings transaction lock identity or mode changed.".into());
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Drop for SettingsFileLock {
@@ -43,7 +74,8 @@ pub(crate) fn acquire_settings_file_lock(
 ) -> Result<SettingsFileLock, String> {
     let parent = validate_settings_parent(path)?;
     let lock_path = parent.join(".settings.json.lock");
-    if let Ok(metadata) = fs::symlink_metadata(&lock_path) {
+    let before = fs::symlink_metadata(&lock_path).ok();
+    if let Some(metadata) = &before {
         if metadata.file_type().is_symlink() || !metadata.is_file() {
             return Err("The settings lock must be a regular file, not a link.".into());
         }
@@ -66,6 +98,13 @@ pub(crate) fn acquire_settings_file_lock(
     }
     #[cfg(unix)]
     {
+        use std::os::unix::fs::MetadataExt as _;
+        if before
+            .as_ref()
+            .is_some_and(|before| before.dev() != metadata.dev() || before.ino() != metadata.ino())
+        {
+            return Err("The settings transaction lock changed while it was being opened.".into());
+        }
         let mode = metadata.permissions().mode() & 0o777;
         if mode != 0o600 {
             file.set_permissions(fs::Permissions::from_mode(0o600))
@@ -79,7 +118,14 @@ pub(crate) fn acquire_settings_file_lock(
         .ok_or("The settings lock deadline overflowed.")?;
     loop {
         match file.try_lock() {
-            Ok(()) => return Ok(SettingsFileLock { file }),
+            Ok(()) => {
+                let guard = SettingsFileLock {
+                    file,
+                    path: lock_path,
+                };
+                guard.verify()?;
+                return Ok(guard);
+            }
             Err(std::fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
                 thread::sleep(SETTINGS_LOCK_RETRY);
             }
@@ -103,8 +149,10 @@ pub(crate) fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 pub(crate) fn load_builder_settings(app: &tauri::AppHandle) -> Result<BuilderSettings, String> {
     let _guard = settings_transaction_lock()?;
     let path = settings_path(app)?;
-    let _file_guard = acquire_settings_file_lock(&path, SETTINGS_LOCK_TIMEOUT)?;
-    load_builder_settings_path_unlocked(&path)
+    let file_guard = acquire_settings_file_lock(&path, SETTINGS_LOCK_TIMEOUT)?;
+    let result = load_builder_settings_path_unlocked(&path)?;
+    file_guard.verify()?;
+    Ok(result)
 }
 
 fn load_builder_settings_unlocked(app: &tauri::AppHandle) -> Result<BuilderSettings, String> {
@@ -180,8 +228,9 @@ pub(crate) fn save_builder_settings_path(
     settings: &BuilderSettings,
 ) -> Result<(), String> {
     let _guard = settings_transaction_lock()?;
-    let _file_guard = acquire_settings_file_lock(path, SETTINGS_LOCK_TIMEOUT)?;
-    save_builder_settings_path_unlocked(path, settings)
+    let file_guard = acquire_settings_file_lock(path, SETTINGS_LOCK_TIMEOUT)?;
+    save_builder_settings_path_unlocked(path, settings)?;
+    file_guard.verify()
 }
 
 pub(crate) fn save_builder_settings_path_unlocked(
@@ -356,7 +405,7 @@ pub(crate) async fn update_builder_settings(
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = settings_transaction_lock()?;
         let path = settings_path(&app)?;
-        let _file_guard = acquire_settings_file_lock(&path, SETTINGS_LOCK_TIMEOUT)?;
+        let file_guard = acquire_settings_file_lock(&path, SETTINGS_LOCK_TIMEOUT)?;
         let current = load_builder_settings_unlocked(&app)?;
         let mut settings = settings;
         settings.schema_version = BUILDER_SETTINGS_SCHEMA;
@@ -375,6 +424,7 @@ pub(crate) async fn update_builder_settings(
             );
         }
         save_builder_settings_path_unlocked(&path, &settings)?;
+        file_guard.verify()?;
         Ok(settings)
     })
     .await

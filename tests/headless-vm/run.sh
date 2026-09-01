@@ -11,6 +11,34 @@ RESULT_PATH="$RESULT_ROOT/latest.json"
 TIMEOUT_SECONDS="${STEAMOS_HEADLESS_VM_TIMEOUT_SECONDS:-180}"
 SYNTHETIC_BYTES=$((64 * 1024 * 1024))
 
+state_identity()
+{
+    if stat -f '%d:%i:%Lp' -- "$1" >/dev/null 2>&1; then
+        stat -f '%d:%i:%Lp' -- "$1"
+    else
+        stat -c '%d:%i:%a' -- "$1"
+    fi
+}
+
+require_state_identity()
+{
+    local path="$1"
+    local expected="$2"
+    if [[ -L "$path" || ! -d "$path" || "$(state_identity "$path" 2>/dev/null || true)" != "$expected" ]]; then
+        printf 'Headless VM harness detected replaced runtime/result state: %s\n' "$path" >&2
+        return 1
+    fi
+}
+
+lifecycle_checkpoint()
+{
+    local phase="$1"
+    if [[ "${STEAMOS_HEADLESS_VM_LIFECYCLE_TEST:-0}" == 1 && "${STEAMOS_HEADLESS_VM_TEST_PHASE:-}" == "$phase" ]]; then
+        printf '%s\n' "$phase" > "$STATE_ROOT/test-phase"
+        while [[ ! -e "$STATE_ROOT/test-continue" ]]; do sleep 1; done
+    fi
+}
+
 if ! command -v node >/dev/null 2>&1; then
     printf 'Headless VM harness requires node for machine-readable result validation.\n' >&2
     exit 2
@@ -28,6 +56,9 @@ for state_directory in "$WORK_ROOT" "$RESULT_ROOT"; do
         mkdir -m 0700 -- "$state_directory"
     fi
 done
+WORK_IDENTITY="$(state_identity "$WORK_ROOT")"
+RESULT_IDENTITY="$(state_identity "$RESULT_ROOT")"
+lifecycle_checkpoint validated
 if [[ ! "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || (( TIMEOUT_SECONDS < 30 || TIMEOUT_SECONDS > 900 )); then
     printf 'STEAMOS_HEADLESS_VM_TIMEOUT_SECONDS must be an integer from 30 through 900.\n' >&2
     exit 2
@@ -38,6 +69,7 @@ atomic_result()
     local status="$1"
     local reason="$2"
     local staged_result
+    require_state_identity "$RESULT_ROOT" "$RESULT_IDENTITY"
     staged_result="$(mktemp "$RESULT_ROOT/.latest.XXXXXX")"
     node -e '
 const fs = require("fs");
@@ -49,11 +81,15 @@ fs.writeFileSync(path, `${JSON.stringify({schemaVersion: 1, status, reason})}\n`
 }
 
 if [[ "${STEAMOS_HEADLESS_VM_STATE_CHECK_ONLY:-0}" == 1 ]]; then
+    require_state_identity "$WORK_ROOT" "$WORK_IDENTITY"
+    require_state_identity "$RESULT_ROOT" "$RESULT_IDENTITY"
     atomic_result passed "runtime and result state boundaries are safe"
     exit 0
 fi
 
+require_state_identity "$WORK_ROOT" "$WORK_IDENTITY"
 RUNTIME="$(mktemp -d "$WORK_ROOT/run.XXXXXX")"
+RUNTIME_IDENTITY="$(state_identity "$RUNTIME")"
 QEMU_PID=""
 RUN_COMPLETE=0
 
@@ -64,7 +100,11 @@ cleanup()
         kill "$QEMU_PID" 2>/dev/null || true
         wait "$QEMU_PID" 2>/dev/null || true
     fi
-    rm -rf -- "$RUNTIME"
+    if [[ -n "${RUNTIME_IDENTITY:-}" ]] && require_state_identity "$RUNTIME" "$RUNTIME_IDENTITY"; then
+        rm -rf -- "$RUNTIME"
+    else
+        exit_status=1
+    fi
     if (( RUN_COMPLETE == 0 )); then
         atomic_result failed "headless VM harness aborted before a final guest result" || true
     fi
@@ -102,6 +142,10 @@ UEFI_VARS="$RUNTIME/uefi-vars.fd"
 mkdir -p "$SEED_DIR"
 cp "$SCRIPT_DIR/user-data" "$SEED_DIR/user-data"
 cp "$SCRIPT_DIR/meta-data" "$SEED_DIR/meta-data"
+lifecycle_checkpoint seed
+require_state_identity "$WORK_ROOT" "$WORK_IDENTITY"
+require_state_identity "$RESULT_ROOT" "$RESULT_IDENTITY"
+require_state_identity "$RUNTIME" "$RUNTIME_IDENTITY"
 
 if command -v xorriso >/dev/null 2>&1; then
     xorriso -as mkisofs -quiet -output "$SEED_ISO" -volid cidata -joliet -rock "$SEED_DIR"
@@ -160,6 +204,10 @@ qemu-system-x86_64 \
     -device "virtio-blk-pci,drive=unexpected,serial=STEAMOS_WRONG_V1" \
     -drive "if=virtio,media=cdrom,format=raw,readonly=on,file=$SEED_ISO" &
 QEMU_PID="$!"
+lifecycle_checkpoint qemu
+require_state_identity "$WORK_ROOT" "$WORK_IDENTITY"
+require_state_identity "$RESULT_ROOT" "$RESULT_IDENTITY"
+require_state_identity "$RUNTIME" "$RUNTIME_IDENTITY"
 
 deadline=$((SECONDS + TIMEOUT_SECONDS))
 while kill -0 "$QEMU_PID" 2>/dev/null; do
@@ -181,6 +229,10 @@ GUEST_RESULT="$RUNTIME/guest-result.json"
 printf '%s\n' "${RESULT_LINE#STEAMOS_HEADLESS_RESULT }" > "$GUEST_RESULT"
 grep -ao 'STEAMOS_HEADLESS_PROGRESS {[^}]*}' "$SERIAL_LOG" | sed 's/^STEAMOS_HEADLESS_PROGRESS //' > "$RUNTIME/progress.jsonl"
 node "$SCRIPT_DIR/validate-result.mjs" "$GUEST_RESULT" "$RUNTIME/progress.jsonl"
+lifecycle_checkpoint result
+require_state_identity "$WORK_ROOT" "$WORK_IDENTITY"
+require_state_identity "$RESULT_ROOT" "$RESULT_IDENTITY"
+require_state_identity "$RUNTIME" "$RUNTIME_IDENTITY"
 STAGED_RESULT="$(mktemp "$RESULT_ROOT/.latest.XXXXXX")"
 cp "$GUEST_RESULT" "$STAGED_RESULT"
 chmod 0600 "$STAGED_RESULT"

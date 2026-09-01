@@ -259,6 +259,9 @@ mod tests {
             return;
         }
         let mut settings = load_builder_settings_path_unlocked(&path).expect("helper load");
+        if mode == "migrate" {
+            return;
+        }
         match mode.as_str() {
             "track" => settings.track_steamos_driver_updates = true,
             "upstream" => settings.include_upstream_nvidia_releases = true,
@@ -352,6 +355,25 @@ mod tests {
                 .to_string_lossy()
                 .ends_with(".tmp")
         }));
+
+        fs::write(
+            &path,
+            b"{\n  \"schemaVersion\": 1,\n  \"autoReleaseVerifiedNvidia\": false,\n  \"trackSteamosDriverUpdates\": true\n}\n",
+        )
+        .expect("stage schema-one settings");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            .expect("secure schema-one settings");
+        let mut migrator = spawn_settings_helper(&path, "migrate", None);
+        let mut migration_writer = spawn_settings_helper(&path, "upstream", None);
+        assert!(migrator.wait().expect("wait for migrator").success());
+        assert!(migration_writer
+            .wait()
+            .expect("wait for migration writer")
+            .success());
+        let migrated = load_builder_settings_path_unlocked(&path).expect("load migrated settings");
+        assert_eq!(migrated.schema_version, BUILDER_SETTINGS_SCHEMA);
+        assert!(migrated.track_steamos_driver_updates);
+        assert!(migrated.include_upstream_nvidia_releases);
         fs::remove_dir_all(root).expect("remove process settings fixture");
     }
 
@@ -401,6 +423,28 @@ mod tests {
         assert!(save_builder_settings_path(&path, &BuilderSettings::default())
             .expect_err("linked lock must fail")
             .contains("regular file"));
+        fs::remove_file(&lock).expect("remove linked lock");
+        fs::write(&lock, b"persistent-lock-sentinel\n").expect("seed lock sentinel");
+        fs::set_permissions(&lock, fs::Permissions::from_mode(0o600))
+            .expect("secure lock sentinel");
+        let guard = acquire_settings_file_lock(&path, Duration::from_secs(1))
+            .expect("acquire persistent lock");
+        assert_eq!(
+            fs::read(&lock).expect("read lock sentinel"),
+            b"persistent-lock-sentinel\n"
+        );
+        fs::set_permissions(&lock, fs::Permissions::from_mode(0o644))
+            .expect("drift lock mode");
+        assert!(guard.verify().is_err(), "lock mode drift must fail closed");
+        fs::set_permissions(&lock, fs::Permissions::from_mode(0o600))
+            .expect("restore lock mode");
+        let replaced = real.join("replaced.lock");
+        fs::rename(&lock, &replaced).expect("replace held lock path");
+        fs::write(&lock, b"replacement\n").expect("create replacement lock");
+        fs::set_permissions(&lock, fs::Permissions::from_mode(0o600))
+            .expect("secure replacement lock");
+        assert!(guard.verify().is_err(), "lock inode replacement must fail closed");
+        drop(guard);
         fs::remove_dir_all(root).expect("remove settings safety fixture");
     }
 
