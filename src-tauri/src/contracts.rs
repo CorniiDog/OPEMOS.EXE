@@ -725,13 +725,42 @@ pub(crate) struct SupportInstallResult {
     pub(crate) initramfs_verification: Option<SupportInitramfsVerification>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SupportInitramfsVerification {
     pub(crate) schema_version: u32,
     pub(crate) status: String,
     pub(crate) kernel_version: String,
-    pub(crate) images: Vec<serde_json::Value>,
+    pub(crate) tools: SupportInitramfsTools,
+    pub(crate) config: SupportInitramfsFileIdentity,
+    pub(crate) images: Vec<SupportInitramfsImage>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportInitramfsTools {
+    pub(crate) mkinitcpio: SupportInitramfsFileIdentity,
+    pub(crate) lsinitcpio: SupportInitramfsFileIdentity,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportInitramfsFileIdentity {
+    pub(crate) path: String,
+    pub(crate) size_bytes: u64,
+    pub(crate) sha256: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportInitramfsImage {
+    pub(crate) filename: String,
+    pub(crate) size_bytes: u64,
+    pub(crate) sha256: String,
+    pub(crate) listing_sha256: String,
+    pub(crate) entries: u64,
+    pub(crate) modules: HashMap<String, String>,
+    pub(crate) config_path: String,
 }
 
 #[derive(Clone, Deserialize)]
@@ -1020,6 +1049,8 @@ pub(crate) struct NvidiaInstallHandoffResult {
     pub(crate) grub_configuration: String,
     pub(crate) required_kernel_arguments: Vec<String>,
     pub(crate) keyring_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) initramfs_verification: Option<SupportInitramfsVerification>,
     pub(crate) packages: Vec<SupportInstallPackage>,
     pub(crate) storage: SupportInstallStorage,
     pub(crate) compression: SupportInstallCompression,

@@ -1176,6 +1176,111 @@ pub(crate) fn support_install_failure_message(document: &SupportInstallResult) -
     }
 }
 
+fn exact_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn safe_initramfs_path(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 1024
+        && !value.starts_with('/')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii() && !byte.is_ascii_control())
+        && !value
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+}
+
+pub(crate) fn validate_support_initramfs_verification(
+    verification: &SupportInitramfsVerification,
+    expected_kernel: &str,
+) -> Result<(), String> {
+    const CONFIG_PATH: &str = "/etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf";
+    const ARCHIVE_CONFIG_PATH: &str = "etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf";
+    const MODULES: [&str; 5] = [
+        "nvidia.ko",
+        "nvidia-drm.ko",
+        "nvidia-modeset.ko",
+        "nvidia-peermem.ko",
+        "nvidia-uvm.ko",
+    ];
+    const COMPRESSION_SUFFIXES: [&str; 6] = ["", ".gz", ".xz", ".zst", ".lz4", ".lzo"];
+
+    if verification.schema_version != 1
+        || verification.status != "verified"
+        || verification.kernel_version != expected_kernel
+        || !(1..=32).contains(&verification.images.len())
+    {
+        return Err("Offline installer returned invalid initramfs verification metadata.".into());
+    }
+    for (name, identity, expected_path, maximum) in [
+        (
+            "mkinitcpio",
+            &verification.tools.mkinitcpio,
+            "/usr/bin/mkinitcpio",
+            8 * 1024 * 1024,
+        ),
+        (
+            "lsinitcpio",
+            &verification.tools.lsinitcpio,
+            "/usr/bin/lsinitcpio",
+            8 * 1024 * 1024,
+        ),
+        ("config", &verification.config, CONFIG_PATH, 1024 * 1024),
+    ] {
+        if identity.path != expected_path
+            || !(1..=maximum).contains(&identity.size_bytes)
+            || !exact_sha256(&identity.sha256)
+        {
+            return Err(format!(
+                "Offline installer returned an invalid initramfs {name} snapshot identity."
+            ));
+        }
+    }
+
+    let mut filenames = std::collections::HashSet::new();
+    for image in &verification.images {
+        if image.filename.len() > 255
+            || !image.filename.starts_with("initramfs-")
+            || !image.filename.ends_with(".img")
+            || image.filename.contains('/')
+            || image.filename.contains('\\')
+            || image.filename == "."
+            || image.filename == ".."
+            || !filenames.insert(image.filename.as_str())
+            || !(1..=2 * 1024 * 1024 * 1024).contains(&image.size_bytes)
+            || !(1..=200_000).contains(&image.entries)
+            || !exact_sha256(&image.sha256)
+            || !exact_sha256(&image.listing_sha256)
+            || image.config_path != ARCHIVE_CONFIG_PATH
+            || image.modules.len() != MODULES.len()
+        {
+            return Err("Offline installer returned invalid initramfs image metadata.".into());
+        }
+        let mut module_paths = std::collections::HashSet::new();
+        for module in MODULES {
+            let path = image.modules.get(module).ok_or_else(|| {
+                "Offline installer initramfs metadata omitted an NVIDIA module.".to_owned()
+            })?;
+            let prefix = format!("usr/lib/modules/{expected_kernel}/");
+            let expected_names = COMPRESSION_SUFFIXES.map(|suffix| format!("{module}{suffix}"));
+            let basename = path.rsplit('/').next().unwrap_or_default();
+            if !safe_initramfs_path(path)
+                || !path.starts_with(&prefix)
+                || !expected_names.iter().any(|name| name == basename)
+                || !module_paths.insert(path.as_str())
+            {
+                return Err("Offline installer returned invalid initramfs module metadata.".into());
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_nvidia_install_result(
     document: SupportInstallResult,
     inputs: &NvidiaInstallInputs,
@@ -1204,20 +1309,13 @@ pub(crate) fn validate_nvidia_install_result(
             "Offline installer validation result does not match the handoff target.".into(),
         );
     }
+    let initramfs_verification = document.initramfs_verification.clone();
     if expected_status == "success" {
         let initramfs = document
             .initramfs_verification
             .as_ref()
             .ok_or("Offline installer success omitted exact initramfs verification metadata.")?;
-        if initramfs.schema_version != 1
-            || initramfs.status != "verified"
-            || initramfs.kernel_version != inputs.kernel_version
-            || !(1..=32).contains(&initramfs.images.len())
-        {
-            return Err(
-                "Offline installer returned invalid initramfs verification metadata.".into(),
-            );
-        }
+        validate_support_initramfs_verification(initramfs, &inputs.kernel_version)?;
     }
     let validation = match document.validation {
         Some(SupportInstallValidationDocument::Verified(validation)) => validation,
@@ -1437,6 +1535,7 @@ pub(crate) fn validate_nvidia_install_result(
         grub_configuration: validation.boot.grub_configuration,
         required_kernel_arguments: validation.boot.required_kernel_arguments,
         keyring_sha256: validation.keyring.sha256,
+        initramfs_verification,
         packages: validation.packages,
         storage: validation.storage,
         compression: validation.compression,

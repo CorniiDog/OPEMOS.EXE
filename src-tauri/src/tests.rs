@@ -3,6 +3,101 @@
 mod tests {
     use super::*;
 
+    fn initramfs_verification_fixture() -> serde_json::Value {
+        let kernel = "6.16.12-valve-fixture";
+        let module_path = |name: &str| format!("usr/lib/modules/{kernel}/kernel/nvidia/{name}.zst");
+        serde_json::json!({
+            "schemaVersion": 1,
+            "status": "verified",
+            "kernelVersion": kernel,
+            "tools": {
+                "mkinitcpio": {"path": "/usr/bin/mkinitcpio", "sizeBytes": 4096, "sha256": "a".repeat(64)},
+                "lsinitcpio": {"path": "/usr/bin/lsinitcpio", "sizeBytes": 4096, "sha256": "b".repeat(64)}
+            },
+            "config": {
+                "path": "/etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf",
+                "sizeBytes": 128,
+                "sha256": "c".repeat(64)
+            },
+            "images": [{
+                "filename": "initramfs-linux.img",
+                "sizeBytes": 1024,
+                "sha256": "d".repeat(64),
+                "listingSha256": "e".repeat(64),
+                "entries": 23,
+                "modules": {
+                    "nvidia.ko": module_path("nvidia.ko"),
+                    "nvidia-drm.ko": module_path("nvidia-drm.ko"),
+                    "nvidia-modeset.ko": module_path("nvidia-modeset.ko"),
+                    "nvidia-peermem.ko": module_path("nvidia-peermem.ko"),
+                    "nvidia-uvm.ko": module_path("nvidia-uvm.ko")
+                },
+                "configPath": "etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf"
+            }]
+        })
+    }
+
+    fn parse_initramfs_fixture(value: serde_json::Value) -> SupportInitramfsVerification {
+        serde_json::from_value(value).expect("typed initramfs verification fixture")
+    }
+
+    #[test]
+    fn validates_bounded_initramfs_verification_contract() {
+        let kernel = "6.16.12-valve-fixture";
+        let exact = parse_initramfs_fixture(initramfs_verification_fixture());
+        validate_support_initramfs_verification(&exact, kernel)
+            .expect("exact initramfs verification should pass");
+
+        let mut additive = initramfs_verification_fixture();
+        additive["futureTopLevel"] = serde_json::json!({"schema": 1});
+        additive["tools"]["mkinitcpio"]["futureIdentity"] = serde_json::json!(true);
+        additive["images"][0]["futureImage"] = serde_json::json!("ignored");
+        validate_support_initramfs_verification(&parse_initramfs_fixture(additive), kernel)
+            .expect("schema-1 additions must remain forward compatible");
+
+        let mut cases = Vec::new();
+        let mut wrong_tool = initramfs_verification_fixture();
+        wrong_tool["tools"]["mkinitcpio"]["path"] = serde_json::json!("/tmp/mkinitcpio");
+        cases.push(wrong_tool);
+        let mut oversized_tool = initramfs_verification_fixture();
+        oversized_tool["tools"]["lsinitcpio"]["sizeBytes"] = serde_json::json!(8 * 1024 * 1024 + 1);
+        cases.push(oversized_tool);
+        let mut uppercase_hash = initramfs_verification_fixture();
+        uppercase_hash["config"]["sha256"] = serde_json::json!("A".repeat(64));
+        cases.push(uppercase_hash);
+        let mut wrong_kernel = initramfs_verification_fixture();
+        wrong_kernel["kernelVersion"] = serde_json::json!("6.16.12-other");
+        cases.push(wrong_kernel);
+        let mut duplicate_image = initramfs_verification_fixture();
+        let image = duplicate_image["images"][0].clone();
+        duplicate_image["images"].as_array_mut().unwrap().push(image);
+        cases.push(duplicate_image);
+        let mut oversized_image = initramfs_verification_fixture();
+        oversized_image["images"][0]["sizeBytes"] = serde_json::json!(2_u64 * 1024 * 1024 * 1024 + 1);
+        cases.push(oversized_image);
+        let mut escaped_module = initramfs_verification_fixture();
+        escaped_module["images"][0]["modules"]["nvidia.ko"] = serde_json::json!("../nvidia.ko");
+        cases.push(escaped_module);
+        let mut duplicate_module_path = initramfs_verification_fixture();
+        duplicate_module_path["images"][0]["modules"]["nvidia-drm.ko"] =
+            duplicate_module_path["images"][0]["modules"]["nvidia.ko"].clone();
+        cases.push(duplicate_module_path);
+        let mut missing_module = initramfs_verification_fixture();
+        missing_module["images"][0]["modules"]
+            .as_object_mut()
+            .unwrap()
+            .remove("nvidia-uvm.ko");
+        cases.push(missing_module);
+        let mut wrong_config = initramfs_verification_fixture();
+        wrong_config["images"][0]["configPath"] = serde_json::json!("etc/modprobe.d/hostile.conf");
+        cases.push(wrong_config);
+
+        for hostile in cases {
+            let hostile = parse_initramfs_fixture(hostile);
+            assert!(validate_support_initramfs_verification(&hostile, kernel).is_err());
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn qemu_watchdog_terminates_its_exact_child_when_keepalive_closes() {
@@ -2062,6 +2157,40 @@ esac
             "validated",
         )
         .is_err());
+        let mut successful = result.clone();
+        successful.status = "success".into();
+        successful.reason = "install_complete".into();
+        successful.phase = "complete".into();
+        let mut initramfs = initramfs_verification_fixture();
+        initramfs["kernelVersion"] = serde_json::json!(inputs.kernel_version.clone());
+        for path in initramfs["images"][0]["modules"]
+            .as_object_mut()
+            .expect("module fixture")
+            .values_mut()
+        {
+            *path = serde_json::json!(path
+                .as_str()
+                .expect("module path")
+                .replace("6.16.12-valve-fixture", &inputs.kernel_version));
+        }
+        successful.initramfs_verification = Some(parse_initramfs_fixture(initramfs));
+        let installed = validate_nvidia_install_result(
+            successful,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )
+        .expect("a success with exact initramfs evidence should pass");
+        assert_eq!(
+            installed
+                .initramfs_verification
+                .as_ref()
+                .expect("retained initramfs verification")
+                .images
+                .len(),
+            1
+        );
         let accepted = validate_nvidia_install_result(
             result,
             &inputs,
@@ -2772,6 +2901,7 @@ esac
             grub_configuration: "/efi/EFI/steamos/grub.cfg".into(),
             required_kernel_arguments: NVIDIA_REQUIRED_KERNEL_ARGUMENTS.map(str::to_owned).to_vec(),
             keyring_sha256: "b".repeat(64),
+            initramfs_verification: None,
             packages: Vec::new(),
             storage: SupportInstallStorage {
                 root_available_bytes: 256 * 1024 * 1024,
