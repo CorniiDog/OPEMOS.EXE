@@ -199,6 +199,8 @@ pub(crate) fn collect_nvidia_install_inputs(
         archive_bytes: artifact.archive_bytes,
         expanded_bytes: artifact.expanded_bytes,
         provenance_sha256: String::new(),
+        input_source_mode: "direct".into(),
+        input_bundle_cache_id: None,
         trust: artifact.trust.clone(),
         steamos_version,
         kernel_version,
@@ -1350,6 +1352,13 @@ pub(crate) fn validate_nvidia_install_result(
             );
         }
     };
+    if validation.input_source.mode != inputs.input_source_mode
+        || input_bundle_cache_id != inputs.input_bundle_cache_id
+    {
+        return Err(
+            "Offline installer input-source provenance does not match the staged handoff.".into(),
+        );
+    }
     if validation.archive_sha256 != inputs.archive_sha256
         || validation.provenance_sha256 != inputs.provenance_sha256
         || validation.userspace_lock.name
@@ -1545,7 +1554,7 @@ pub(crate) fn validate_nvidia_install_result(
         trust: inputs.trust.clone(),
         archive_sha256: inputs.archive_sha256.clone(),
         provenance_sha256: inputs.provenance_sha256.clone(),
-        input_source_mode: validation.input_source.mode,
+        input_source_mode: inputs.input_source_mode.clone(),
         input_bundle_cache_id,
         pacman_database_path: validation.pacman_database.path,
         pacman_package_count: validation.pacman_database.package_count,

@@ -2186,6 +2186,8 @@ esac
             archive_bytes: 700 * 1024 * 1024,
             expanded_bytes: 900 * 1024 * 1024,
             provenance_sha256: digest('e'),
+            input_source_mode: "direct".into(),
+            input_bundle_cache_id: None,
             trust: "certified-published".into(),
             steamos_version: "3.8.14".into(),
             kernel_version: "6.16.12-valve24.4-1-neptune-616-gfe145653a794".into(),
@@ -2604,6 +2606,9 @@ esac
         assert_eq!(installed.input_source_mode, "direct");
         assert!(installed.input_bundle_cache_id.is_none());
 
+        let mut authenticated_inputs = inputs.clone();
+        authenticated_inputs.input_source_mode = "authenticated-bundle".into();
+        authenticated_inputs.input_bundle_cache_id = Some(digest('9'));
         let mut authenticated = successful;
         verified_validation(&mut authenticated).input_source = SupportInstallInputSource {
             mode: "authenticated-bundle".into(),
@@ -2611,7 +2616,7 @@ esac
         };
         let authenticated = validate_nvidia_install_result(
             authenticated,
-            &inputs,
+            &authenticated_inputs,
             "success",
             "install_complete",
             "complete",
@@ -2619,6 +2624,22 @@ esac
         .expect("authenticated bundle provenance should pass");
         assert_eq!(authenticated.input_source_mode, "authenticated-bundle");
         assert_eq!(authenticated.input_bundle_cache_id, Some(digest('9')));
+
+        let mut unexpected_cache = result.clone();
+        verified_validation(&mut unexpected_cache).input_source = SupportInstallInputSource {
+            mode: "authenticated-bundle".into(),
+            bundle_cache_id: Some(digest('8')),
+        };
+        assert!(validate_nvidia_install_result(
+            unexpected_cache,
+            &authenticated_inputs,
+            "validated",
+            "validation_complete",
+            "validated",
+        )
+        .err()
+        .expect("well-formed but stale cache identity must fail")
+        .contains("staged handoff"));
 
         for (mode, cache_id) in [
             ("authenticated-bundle", None),

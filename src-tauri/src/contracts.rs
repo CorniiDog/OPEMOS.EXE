@@ -714,6 +714,8 @@ pub(crate) struct NvidiaInstallInputs {
     pub(crate) archive_bytes: u64,
     pub(crate) expanded_bytes: u64,
     pub(crate) provenance_sha256: String,
+    pub(crate) input_source_mode: String,
+    pub(crate) input_bundle_cache_id: Option<String>,
     pub(crate) trust: String,
     pub(crate) steamos_version: String,
     pub(crate) kernel_version: String,
