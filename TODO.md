@@ -379,6 +379,7 @@ boundary is useful; do not split files merely to chase a line-count target.
 * [x] Version the initial guest control contract as protocol `1`.
 * [ ] Provision required image-manipulation tools explicitly instead of relying on Fedora defaults.
 * [x] Add a Rust-owned guest health/self-test operation.
+* [x] Add a repository-local one-command headless VM harness using a disposable qcow2 overlay, exact synthetic virtio disk, NoCloud seed control, serial JSON result, no network/GUI/SSH, and nested ignored runtime state.
 
 ---
 

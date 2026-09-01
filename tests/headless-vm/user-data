@@ -1,0 +1,32 @@
+#cloud-config
+write_files:
+  - path: /usr/local/sbin/steamos-headless-harness
+    permissions: '0700'
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      result='failed'
+      reason='unexpected guest failure'
+      finish() {
+        printf 'STEAMOS_HEADLESS_RESULT {"schemaVersion":1,"status":"%s","reason":"%s"}\n' "$result" "$reason" > /dev/ttyS0
+        sync
+        poweroff -f
+      }
+      trap finish EXIT
+      disk='/dev/disk/by-id/virtio-STEAMOS_SYNTH_V1'
+      [[ -b "$disk" ]] || { reason='synthetic virtio disk missing'; exit 1; }
+      root_source="$(findmnt -n -o SOURCE /)"
+      root_device="$(readlink -f "$root_source" 2>/dev/null || printf '%s' "$root_source")"
+      test_device="$(readlink -f "$disk")"
+      [[ "$root_device" != "$test_device" ]] || { reason='synthetic disk resolved to guest root'; exit 1; }
+      [[ "$(blockdev --getsize64 "$test_device")" = '67108864' ]] || { reason='synthetic disk size mismatch'; exit 1; }
+      dd if=/dev/zero of="$test_device" bs=1M count=1 conv=fsync status=none
+      digest="$(dd if="$test_device" bs=1M count=1 status=none | sha256sum | awk '{print $1}')"
+      expected='30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58'
+      [[ "$digest" = "$expected" ]] || { reason='synthetic disk readback mismatch'; exit 1; }
+      result='passed'
+      reason='serial-controlled synthetic virtio disk write and readback succeeded'
+runcmd:
+  - [ /usr/local/sbin/steamos-headless-harness ]
+final_message: STEAMOS_HEADLESS_CLOUD_INIT_COMPLETE
