@@ -814,6 +814,154 @@ pub(crate) async fn plan_maintainer_workspace(
     .map_err(|error| format!("Maintainer workspace planner failed: {error}"))?
 }
 
+pub(crate) fn repository_from_remote(remote: &str) -> Option<String> {
+    let trimmed = remote.trim().trim_end_matches('/').trim_end_matches(".git");
+    let path = trimmed
+        .strip_prefix("https://github.com/")
+        .or_else(|| trimmed.strip_prefix("http://github.com/"))
+        .or_else(|| trimmed.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| trimmed.strip_prefix("git@github.com:"))?;
+    let mut parts = path.split('/');
+    let owner = parts.next()?;
+    let repository = parts.next()?;
+    if owner.is_empty() || repository.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    Some(format!("{owner}/{repository}"))
+}
+
+fn git_output(path: &Path, args: &[&str], description: &str) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .output()
+        .map_err(|error| format!("Could not {description}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Could not {description}; the selected folder is not a usable Git worktree."
+        ));
+    }
+    String::from_utf8(output.stdout)
+        .map(|value| value.trim().to_owned())
+        .map_err(|_| format!("Could not {description}; Git returned non-UTF-8 output."))
+}
+
+fn vscode_binary() -> Option<PathBuf> {
+    find_binary("code").or_else(|| {
+        let candidate =
+            PathBuf::from("/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code");
+        candidate.is_file().then_some(candidate)
+    })
+}
+
+fn inspect_maintainer_worktree_blocking(
+    path: String,
+    repository: String,
+) -> Result<MaintainerLocalWorktree, String> {
+    require_maintainer_authorization()?;
+    if ![
+        NVIDIA_SOURCE_REPOSITORY,
+        NVIDIA_UPSTREAM_REPOSITORY,
+        GAMESCOPE_SOURCE_REPOSITORY,
+        GAMESCOPE_UPSTREAM_REPOSITORY,
+    ]
+    .contains(&repository.as_str())
+    {
+        return Err("The planned repository is not an approved maintainer source.".into());
+    }
+    let selected = fs::canonicalize(&path)
+        .map_err(|error| format!("Could not resolve the selected worktree: {error}"))?;
+    if !selected.is_dir() {
+        return Err("The selected worktree is not a directory.".into());
+    }
+    let root = PathBuf::from(git_output(
+        &selected,
+        &["rev-parse", "--show-toplevel"],
+        "resolve the Git worktree root",
+    )?);
+    let root = fs::canonicalize(root)
+        .map_err(|error| format!("Could not resolve the Git worktree root: {error}"))?;
+    if root != selected {
+        return Err(
+            "Select the root folder of the Git worktree, not one of its subfolders.".into(),
+        );
+    }
+    let remote = git_output(
+        &root,
+        &["remote", "get-url", "origin"],
+        "read the origin remote",
+    )?;
+    let actual_repository = repository_from_remote(&remote)
+        .ok_or("The worktree origin is not a recognized GitHub repository URL.")?;
+    if !actual_repository.eq_ignore_ascii_case(&repository) {
+        return Err(format!(
+            "This worktree belongs to {actual_repository}, but the verified plan requires {repository}."
+        ));
+    }
+    let head = git_output(&root, &["rev-parse", "HEAD"], "read the worktree HEAD")?;
+    if !valid_git_commit(&head) {
+        return Err("The worktree HEAD is not a valid 40-character Git commit.".into());
+    }
+    let branch = git_output(
+        &root,
+        &["branch", "--show-current"],
+        "read the worktree branch",
+    )?;
+    let status = git_output(
+        &root,
+        &["status", "--porcelain=v1", "--untracked-files=all"],
+        "inspect worktree changes",
+    )?;
+    let changed_files = status.lines().take(10_001).count();
+    if changed_files > 10_000 {
+        return Err(
+            "The worktree has more than 10,000 changed paths; review it outside the app.".into(),
+        );
+    }
+    Ok(MaintainerLocalWorktree {
+        path: root.to_string_lossy().into_owned(),
+        repository: actual_repository,
+        head: head.to_ascii_lowercase(),
+        branch: (!branch.is_empty()).then_some(branch),
+        changed_files,
+        vscode_available: vscode_binary().is_some(),
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn inspect_maintainer_worktree(
+    path: String,
+    repository: String,
+) -> Result<MaintainerLocalWorktree, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        inspect_maintainer_worktree_blocking(path, repository)
+    })
+    .await
+    .map_err(|error| format!("Maintainer worktree inspector failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn open_maintainer_worktree_in_vscode(
+    path: String,
+    repository: String,
+) -> Result<MaintainerLocalWorktree, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let worktree = inspect_maintainer_worktree_blocking(path, repository)?;
+        let code = vscode_binary().ok_or(
+            "VS Code's command-line launcher is unavailable. Install VS Code or add the 'code' command to PATH.",
+        )?;
+        Command::new(code)
+            .arg("--reuse-window")
+            .arg(&worktree.path)
+            .spawn()
+            .map_err(|error| format!("Could not open the selected worktree in VS Code: {error}"))?;
+        Ok(worktree)
+    })
+    .await
+    .map_err(|error| format!("VS Code launcher worker failed: {error}"))?
+}
+
 pub(crate) fn fetch_nvidia_source_branches(
     client: &reqwest::blocking::Client,
 ) -> Result<Vec<NvidiaSourceBranch>, String> {

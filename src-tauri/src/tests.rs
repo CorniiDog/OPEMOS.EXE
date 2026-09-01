@@ -180,6 +180,24 @@ mod tests {
     }
 
     #[test]
+    fn maintainer_worktree_remote_parser_accepts_only_github_repository_roots() {
+        assert_eq!(
+            repository_from_remote("https://github.com/CorniiDog/gamescope-nvidia.git"),
+            Some("CorniiDog/gamescope-nvidia".into())
+        );
+        assert_eq!(
+            repository_from_remote("git@github.com:CorniiDog/gamescope-nvidia.git"),
+            Some("CorniiDog/gamescope-nvidia".into())
+        );
+        assert_eq!(
+            repository_from_remote("ssh://git@github.com/ValveSoftware/gamescope"),
+            Some("ValveSoftware/gamescope".into())
+        );
+        assert_eq!(repository_from_remote("https://example.com/owner/repository"), None);
+        assert_eq!(repository_from_remote("https://github.com/owner/repository/extra"), None);
+    }
+
+    #[test]
     fn explicit_upstream_source_is_pinned_and_never_treated_as_automatic() {
         let target =
             ready_published_target("3.8.14", "6.16.12-valve24.4-1-neptune-616-gfe145653a794");

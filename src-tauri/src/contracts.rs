@@ -117,6 +117,17 @@ pub(crate) struct MaintainerWorkspacePlan {
     pub(crate) message: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerLocalWorktree {
+    pub(crate) path: String,
+    pub(crate) repository: String,
+    pub(crate) head: String,
+    pub(crate) branch: Option<String>,
+    pub(crate) changed_files: usize,
+    pub(crate) vscode_available: bool,
+}
+
 pub(crate) struct PinnedInstallerFile {
     pub(crate) path: &'static str,
     pub(crate) sha256: &'static str,

@@ -79,6 +79,25 @@
             </div>
         </section>
 
+        <section id="local-worktree-card" class="card plan-card hidden">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">Local editor target</p>
+                    <h2>Select a matching Git worktree</h2>
+                </div>
+                <button id="choose-worktree" class="secondary" type="button">Choose Folder</button>
+            </div>
+            <p class="section-copy">The folder must be a worktree root whose GitHub origin matches the verified repository. No checkout or remote is changed.</p>
+            <dl class="identity worktree-identity">
+                <div><dt>Folder</dt><dd id="worktree-path">—</dd></div>
+                <div><dt>Branch</dt><dd id="worktree-branch">—</dd></div>
+                <div><dt>HEAD</dt><dd id="worktree-head">—</dd></div>
+                <div><dt>Changes</dt><dd id="worktree-changes">—</dd></div>
+            </dl>
+            <button id="open-vscode" class="primary" type="button" disabled>Open Selected Worktree in VS Code</button>
+            <p id="worktree-message" class="message" aria-live="polite"></p>
+        </section>
+
         <section class="card actions-card">
             <div>
                 <p class="eyebrow">Maintainer actions</p>
@@ -86,7 +105,7 @@
                 <p class="section-copy">These controls stay unavailable until the isolated checkout, change review, credentials, clean build, and target-device contracts are implemented and independently verified.</p>
             </div>
             <div class="action-grid">
-                <button type="button" disabled><strong>Open in VS Code</strong><small>Requires an ephemeral Remote SSH workspace.</small></button>
+                <button type="button" disabled><strong>Change checkout</strong><small>Requires a selected clean worktree and explicit target.</small></button>
                 <button type="button" disabled><strong>Review changes</strong><small>Requires a bounded, secret-screened diff.</small></button>
                 <button type="button" disabled><strong>Commit</strong><small>Requires a reviewed message and exact checkout.</small></button>
                 <button type="button" disabled><strong>Push</strong><small>Requires fresh repository permission and confirmation.</small></button>

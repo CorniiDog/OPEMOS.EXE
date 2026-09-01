@@ -1,4 +1,5 @@
 const { invoke } = window.__TAURI__.core;
+const openFolder = (options) => invoke("plugin:dialog|open", { options });
 const $ = (selector) => document.querySelector(selector);
 
 const elements = {
@@ -8,11 +9,17 @@ const elements = {
   upstreamNotice: $("#upstream-notice"), planButton: $("#plan-workspace"),
   message: $("#workspace-message"), planTitle: $("#plan-title"), planStatus: $("#plan-status"),
   planId: $("#plan-id"), architecture: $("#architecture"), isolation: $("#isolation"),
-  remoteMutation: $("#remote-mutation"),
+  remoteMutation: $("#remote-mutation"), worktreeCard: $("#local-worktree-card"),
+  chooseWorktree: $("#choose-worktree"), worktreePath: $("#worktree-path"),
+  worktreeBranch: $("#worktree-branch"), worktreeHead: $("#worktree-head"),
+  worktreeChanges: $("#worktree-changes"), openVscode: $("#open-vscode"),
+  worktreeMessage: $("#worktree-message"),
 };
 
 let sources = [];
 let loading = false;
+let plannedRepository = null;
+let localWorktree = null;
 
 function selectedSource() {
   const commit = elements.referenceSelect.value;
@@ -44,11 +51,15 @@ function renderSelection() {
 }
 
 function resetPlan() {
+  plannedRepository = null;
+  localWorktree = null;
   elements.planTitle.textContent = "No workspace prepared";
   elements.planStatus.textContent = "Idle";
   elements.planStatus.className = "status";
   elements.planId.textContent = "—";
   elements.remoteMutation.textContent = "Blocked";
+  elements.worktreeCard.classList.add("hidden");
+  elements.openVscode.disabled = true;
 }
 
 async function loadSources() {
@@ -112,6 +123,8 @@ elements.planButton.addEventListener("click", async () => {
     elements.architecture.textContent = plan.architecture;
     elements.isolation.textContent = plan.isolation.replaceAll("-", " ");
     elements.remoteMutation.textContent = plan.remoteMutationAllowed ? "Allowed" : "Blocked pending confirmation";
+    plannedRepository = plan.repository;
+    elements.worktreeCard.classList.remove("hidden");
     elements.message.textContent = plan.message;
   } catch (error) {
     resetPlan();
@@ -122,6 +135,53 @@ elements.planButton.addEventListener("click", async () => {
   } finally {
     loading = false;
     renderSelection();
+  }
+});
+
+function renderWorktree(worktree) {
+  localWorktree = worktree;
+  elements.worktreePath.textContent = worktree?.path || "—";
+  elements.worktreePath.title = worktree?.path || "";
+  elements.worktreeBranch.textContent = worktree?.branch || (worktree ? "Detached HEAD" : "—");
+  elements.worktreeHead.textContent = worktree?.head || "—";
+  elements.worktreeHead.title = worktree?.head || "";
+  elements.worktreeChanges.textContent = worktree ? `${worktree.changedFiles} changed path${worktree.changedFiles === 1 ? "" : "s"}` : "—";
+  elements.openVscode.disabled = !worktree?.vscodeAvailable;
+}
+
+elements.chooseWorktree.addEventListener("click", async () => {
+  if (!plannedRepository) return;
+  const path = await openFolder({ directory: true, multiple: false, title: "Select matching Git worktree" });
+  if (!path) return;
+  elements.worktreeMessage.textContent = "Validating the worktree root, origin, HEAD, and change state…";
+  elements.worktreeMessage.className = "message";
+  renderWorktree(null);
+  try {
+    const worktree = await invoke("inspect_maintainer_worktree", { path, repository: plannedRepository });
+    renderWorktree(worktree);
+    elements.worktreeMessage.textContent = worktree.vscodeAvailable
+      ? "Valid local target. VS Code can reuse its current window for this worktree."
+      : "Valid local target, but the VS Code command-line launcher was not found.";
+  } catch (error) {
+    elements.worktreeMessage.textContent = String(error);
+    elements.worktreeMessage.className = "message error";
+  }
+});
+
+elements.openVscode.addEventListener("click", async () => {
+  if (!localWorktree || !plannedRepository) return;
+  elements.openVscode.disabled = true;
+  elements.worktreeMessage.textContent = "Revalidating and opening the selected worktree in VS Code…";
+  try {
+    const refreshed = await invoke("open_maintainer_worktree_in_vscode", {
+      path: localWorktree.path, repository: plannedRepository,
+    });
+    renderWorktree(refreshed);
+    elements.worktreeMessage.textContent = "Opened the validated worktree in VS Code.";
+  } catch (error) {
+    elements.worktreeMessage.textContent = String(error);
+    elements.worktreeMessage.className = "message error";
+    elements.openVscode.disabled = false;
   }
 });
 
