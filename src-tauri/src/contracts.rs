@@ -1037,6 +1037,7 @@ pub(crate) struct UsbTargetCandidate {
     pub(crate) media_name: String,
     pub(crate) bus_protocol: String,
     pub(crate) bytes: u64,
+    pub(crate) identity_token: String,
 }
 
 #[derive(Serialize)]

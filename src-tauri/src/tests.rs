@@ -211,25 +211,27 @@ mod tests {
             "MediaName": "Test USB",
             "BusProtocol": "USB"
         });
-        let candidate = usb_candidate_from_diskutil_info(&removable, 32_000_000_000)
+        let candidate = usb_candidate_from_diskutil_info(&removable, 32_000_000_000, Some("disk7"))
             .expect("safe removable disk");
         assert_eq!(candidate.device_identifier, "disk7");
         assert_eq!(candidate.device_node, "/dev/disk7");
 
         let mut internal = removable.clone();
         internal["Internal"] = serde_json::json!(true);
-        assert!(usb_candidate_from_diskutil_info(&internal, 32_000_000_000).is_none());
+        assert!(usb_candidate_from_diskutil_info(&internal, 32_000_000_000, Some("disk7")).is_none());
 
         let mut virtual_disk = removable.clone();
         virtual_disk["VirtualOrPhysical"] = serde_json::json!("Virtual");
-        assert!(usb_candidate_from_diskutil_info(&virtual_disk, 32_000_000_000).is_none());
+        assert!(usb_candidate_from_diskutil_info(&virtual_disk, 32_000_000_000, Some("disk7")).is_none());
 
-        assert!(usb_candidate_from_diskutil_info(&removable, 128_000_000_000).is_none());
+        assert!(usb_candidate_from_diskutil_info(&removable, 128_000_000_000, Some("disk7")).is_none());
+
+        assert!(usb_candidate_from_diskutil_info(&removable, 32_000_000_000, Some("disk8")).is_none());
 
         let mut partition = removable;
         partition["DeviceIdentifier"] = serde_json::json!("disk7s1");
         partition["DeviceNode"] = serde_json::json!("/dev/disk7s1");
-        assert!(usb_candidate_from_diskutil_info(&partition, 32_000_000_000).is_none());
+        assert!(usb_candidate_from_diskutil_info(&partition, 32_000_000_000, Some("disk7s1")).is_none());
     }
 
     #[test]

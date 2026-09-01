@@ -1538,9 +1538,13 @@ pub(crate) fn preview_image_output(path: String) -> Result<ImageOutputPreview, S
 pub(crate) fn usb_candidate_from_diskutil_info(
     info: &serde_json::Value,
     image_bytes: u64,
+    expected_identifier: Option<&str>,
 ) -> Option<UsbTargetCandidate> {
     let object = info.as_object()?;
     let identifier = object.get("DeviceIdentifier")?.as_str()?;
+    if expected_identifier.is_some_and(|expected| expected != identifier) {
+        return None;
+    }
     if !identifier.starts_with("disk")
         || identifier.len() <= 4
         || !identifier[4..].bytes().all(|byte| byte.is_ascii_digit())
@@ -1572,24 +1576,34 @@ pub(crate) fn usb_candidate_from_diskutil_info(
     if device_node != format!("/dev/{identifier}") {
         return None;
     }
+    let media_name: String = object
+        .get("MediaName")
+        .and_then(|value| value.as_str())
+        .unwrap_or("External removable media")
+        .chars()
+        .take(120)
+        .collect();
+    let bus_protocol: String = object
+        .get("BusProtocol")
+        .and_then(|value| value.as_str())
+        .unwrap_or("Unknown")
+        .chars()
+        .take(40)
+        .collect();
+    let device_tree_path = object
+        .get("DeviceTreePath")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let identity = format!(
+        "{identifier}\0{device_node}\0{bytes}\0{media_name}\0{bus_protocol}\0{device_tree_path}"
+    );
     Some(UsbTargetCandidate {
         device_identifier: identifier.into(),
         device_node: device_node.into(),
-        media_name: object
-            .get("MediaName")
-            .and_then(|value| value.as_str())
-            .unwrap_or("External removable media")
-            .chars()
-            .take(120)
-            .collect(),
-        bus_protocol: object
-            .get("BusProtocol")
-            .and_then(|value| value.as_str())
-            .unwrap_or("Unknown")
-            .chars()
-            .take(40)
-            .collect(),
+        media_name,
+        bus_protocol,
         bytes,
+        identity_token: format!("{:x}", Sha256::digest(identity.as_bytes())),
     })
 }
 
@@ -1655,7 +1669,8 @@ fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, Str
         let mut info_command = Command::new("/usr/sbin/diskutil");
         info_command.args(["info", "-plist", identifier]);
         let info = plist_command_json(info_command, "inspect an external disk")?;
-        if let Some(target) = usb_candidate_from_diskutil_info(&info, image_bytes) {
+        if let Some(target) = usb_candidate_from_diskutil_info(&info, image_bytes, Some(identifier))
+        {
             targets.push(target);
         }
     }
@@ -1703,6 +1718,10 @@ pub(crate) async fn inspect_usb_targets(image_path: String) -> Result<UsbTargetP
             || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
         {
             return Err("The image and adjacent build manifest do not have a valid matching output identity.".into());
+        }
+        let actual_sha256 = sha256_file(&image)?;
+        if !actual_sha256.eq_ignore_ascii_case(sha256) {
+            return Err("The completed image changed after its build manifest was written.".into());
         }
         let targets = discover_usb_targets(metadata.len())?;
         Ok(UsbTargetPreflight {

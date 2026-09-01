@@ -239,6 +239,12 @@ async function loadNvidiaSourceBranches() {
 }
 
 async function selectImage(path) {
+  completedOutput = null;
+  elements.usbCard.classList.add("hidden");
+  elements.usbTarget.replaceChildren(new Option("No target selected", ""));
+  elements.usbTarget.disabled = true;
+  elements.usbTargetDetail.textContent = "Connect a USB drive, then refresh.";
+  elements.usbMessage.textContent = "";
   elements.dropZone.classList.add("processing");
   elements.chooseImage.disabled = true;
   elements.dropTitle.textContent = "Checking selected image…";

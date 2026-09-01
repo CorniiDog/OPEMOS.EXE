@@ -21,10 +21,16 @@ let loading = false;
 let plannedRepository = null;
 let localWorktree = null;
 
+function sourceKey(source) {
+  return JSON.stringify([
+    source.component, source.origin, source.repository, source.reference, source.commit,
+  ]);
+}
+
 function selectedSource() {
-  const commit = elements.referenceSelect.value;
+  const key = elements.referenceSelect.value;
   return sources.find((source) => source.component === elements.component.value
-    && source.origin === elements.origin.value && source.commit === commit) || null;
+    && source.origin === elements.origin.value && sourceKey(source) === key) || null;
 }
 
 function renderSelection() {
@@ -34,11 +40,11 @@ function renderSelection() {
   elements.referenceSelect.replaceChildren();
   for (const source of matches) {
     const option = document.createElement("option");
-    option.value = source.commit;
+    option.value = sourceKey(source);
     option.textContent = `${source.label} · ${source.commit.slice(0, 12)}`;
     elements.referenceSelect.append(option);
   }
-  if (matches.some((source) => source.commit === previous)) elements.referenceSelect.value = previous;
+  if (matches.some((source) => sourceKey(source) === previous)) elements.referenceSelect.value = previous;
   const selected = selectedSource();
   elements.repository.textContent = selected?.repository || "—";
   elements.repository.title = selected?.repository || "";
@@ -60,6 +66,13 @@ function resetPlan() {
   elements.remoteMutation.textContent = "Blocked";
   elements.worktreeCard.classList.add("hidden");
   elements.openVscode.disabled = true;
+}
+
+function disableSourceControls(disabled) {
+  elements.refresh.disabled = disabled;
+  elements.component.disabled = disabled;
+  elements.origin.disabled = disabled;
+  elements.referenceSelect.disabled = disabled;
 }
 
 async function loadSources() {
@@ -103,6 +116,7 @@ elements.planButton.addEventListener("click", async () => {
   const source = selectedSource();
   if (!source) return;
   loading = true;
+  disableSourceControls(true);
   renderSelection();
   elements.message.textContent = "Rechecking permission and resolving the selected reference…";
   elements.message.className = "message";
@@ -115,6 +129,11 @@ elements.planButton.addEventListener("click", async () => {
       reference: source.reference,
       commit: source.commit,
     });
+    const current = selectedSource();
+    if (!current || current.repository !== source.repository || current.reference !== source.reference
+      || current.commit !== source.commit) {
+      throw new Error("The source selection changed while the plan was being verified. Verify it again.");
+    }
     elements.planTitle.textContent = `${plan.component === "nvidia" ? "NVIDIA" : "Gamescope"} workspace identity verified`;
     elements.planStatus.textContent = "Planned";
     elements.planStatus.className = "status ready";
@@ -134,6 +153,7 @@ elements.planButton.addEventListener("click", async () => {
     elements.message.className = "message error";
   } finally {
     loading = false;
+    disableSourceControls(false);
     renderSelection();
   }
 });
