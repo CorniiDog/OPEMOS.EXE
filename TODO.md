@@ -8,7 +8,12 @@ Below is the consolidated project checklist based on the current repository stat
 
 The desktop shell, macOS development bootstrap, Fedora appliance bootstrap, disposable Rust-managed QEMU runtime, cloud-init provisioning, fixed guest operations, synthetic mutation proof, and raw user-image inspection path are working.
 
-The next major transition is to validate inspection against an actual Valve recovery image, normalize compressed inputs, and then create the first harmless working-copy mutation without writing to the source.
+The current transition is from a proven disposable image-mutation pipeline to a
+fully verified NVIDIA recovery image. Real SteamOS 3.8.14 inspection,
+normalization, exact-kernel artifact resolution/building, authenticated
+userspace closure validation, and module mutation now work. The latest real run
+reached target `mkinitcpio` and failed closed because the recovery target could
+not create its `/var/tmp` workspace; no output image was accepted.
 
 The project is not yet producing a bootable modified SteamOS image.
 
@@ -34,13 +39,13 @@ The project is not yet producing a bootable modified SteamOS image.
 3. [x] Add bounded readiness polling and distinguish booting, ready, failed, timed out, and stopped states.
 4. [x] Add controlled guest command execution from Rust.
 5. [x] Add graceful guest shutdown and reliable forced cleanup fallback.
-6. [ ] Keep each appliance session disposable and verify no state leaks between builds.
+6. [x] Keep each appliance session disposable and verify no state leaks between builds.
 7. [x] Pass a harmless host file into the guest, return it, and verify identical bytes.
 8. [x] Pass a user-selected raw SteamOS image to the guest as a host-level read-only block device without booting it.
 9. [x] Detect compression/container format and prepare a disposable writable qcow2 working layer.
 10. [x] Inspect a selected raw image read-only without mounting and return structured partition/filesystem metadata. (Real Valve-image validation remains in the immediate sequence.)
 11. [x] Implement the first deterministic marker-only mutation on the selected image's disposable working overlay.
-12. [ ] Integrate NVIDIA support from `open-gpu-kernel-modules-steamos-support` only after the generic image-mutation path is proven.
+12. [x] Integrate NVIDIA support from `open-gpu-kernel-modules-steamos-support` only after the generic image-mutation path is proven.
 
 ---
 
@@ -69,6 +74,138 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Define explicit responsibility boundaries among UI, Rust host backend, Fedora appliance, and NVIDIA support repo.
 * [x] Document the architecture and link it from the main README.
 * [x] Add an architecture/data-flow diagram.
+
+---
+
+## Backend decomposition and maintainability audit
+
+The Rust backend has grown to roughly 14,800 lines in one `lib.rs`, including
+about 3,000 lines of inline tests. It currently combines Tauri IPC, settings,
+GitHub authorization, release resolution, package acquisition, support-schema
+validation, QEMU/QMP/SSH lifecycle management, image manipulation, publication,
+window management, and generated guest shell programs. Refactor it
+incrementally, with the full local suite passing after every extraction; do not
+combine this work with installer behavior changes.
+
+* [ ] Replace source-text tests that `include_str!("lib.rs")` with behavioral
+  tests or tests against the extracted module/template they actually govern, so
+  moving code cannot silently weaken coverage.
+* [ ] Extract pure shared types and versioned external contracts first:
+  `contracts/{support_build,support_install,progress,manifest}.rs`. Keep strict
+  deserialization and validation beside each contract, with minimal
+  `pub(crate)` visibility.
+* [ ] Extract host/platform functionality into focused modules such as
+  `host/{paths,process,resources,hashing,network}.rs` and
+  `platform/{macos,windows,linux}.rs`; keep platform-specific command discovery
+  and GUI launching behind explicit traits or narrow functions.
+* [ ] Extract appliance orchestration into
+  `appliance/{manager,runtime,qemu,qmp,ssh,transfer}.rs`, with one owner for
+  child processes, watchdogs, credentials, ports, and abandoned-session cleanup.
+* [ ] Extract image work into
+  `image/{input,normalization,layout,working_copy,export,verification}.rs`,
+  keeping source immutability and finalization invariants independent of Tauri.
+* [ ] Extract NVIDIA work into
+  `nvidia/{resolver,artifacts,userspace,support_bundle,installer,publication}.rs`
+  so compatibility resolution, authenticated downloads, installation, and
+  maintainer publication are separate review boundaries.
+* [ ] Extract settings, GitHub maintainer authorization, window construction,
+  and Tauri commands into their own modules. Reduce `lib.rs` to application
+  state construction, plugin/command registration, lifecycle events, and
+  intentional re-exports.
+* [ ] Move large generated guest shell programs out of Rust function bodies
+  into versioned template/assets or small typed command builders. Validate every
+  substitution, preserve fixed-operation semantics, and add argument-injection
+  and exact-rendering tests.
+* [ ] Split the inline Rust test module so pure unit tests live beside their
+  modules and multi-component/live appliance tests live under `tests/`. Keep
+  network and proprietary-image tests explicit and ignored by default.
+* [ ] After the module split is stable, evaluate a small Cargo workspace with a
+  pure `builder-core` crate and a Tauri application crate. Do this only if it
+  materially improves compile isolation, contract testing, or reuse; Rust
+  modules alone improve ownership but do not guarantee much lower total compile
+  time.
+* [ ] Remove the superseded `src-tauri/src/main.js` and
+  `src-tauri/src/style.css` prototype files after a repository-wide reference
+  check and packaged-app smoke test prove they are unused.
+
+## State, concurrency, and error-model audit
+
+* [ ] Replace stringly typed appliance/build states and ad-hoc status tokens
+  with enums plus one validated transition layer. Reject impossible transitions
+  such as `ready` directly to `exported` or a stale worker completing a newer
+  session.
+* [ ] Give every build, image session, x86 worker, handoff, and async command a
+  generation/session identifier. Require it before committing worker results to
+  shared state so cancellation/restart cannot let an old task overwrite a new
+  build.
+* [ ] Define and enforce one lock-order policy for image and x86 managers; avoid
+  holding either mutex across process I/O, network I/O, guest commands, or
+  waits. Add a concurrency test that exercises cancellation, status polling,
+  and close handling together.
+* [ ] Add a cross-process exclusive lock for each selected source image,
+  working qcow2, output reservation, and target handoff. Hold the working-image
+  lock across native-to-x86-to-validation handoffs and release it only after
+  QEMU, mounts, and partial-output cleanup finish.
+* [ ] Consolidate duplicate application-exit cleanup into one idempotent,
+  bounded shutdown coordinator used by main-window close, application exit,
+  cancellation, panic/failure recovery, and the next-launch abandoned-runtime
+  audit.
+* [ ] Replace backend `Result<T, String>` boundaries incrementally with a
+  versioned `BuilderError` containing a stable code, operation/phase, safe user
+  message, bounded maintainer detail, responsibility, retryability, and source
+  chain. Serialize it only at the Tauri boundary.
+* [ ] Make settings writes durable and concurrency-safe: use a unique confined
+  temporary file, restrictive permissions, flush/sync where appropriate,
+  atomic replacement, migration tests, and recovery from an interrupted or
+  malformed write without losing the previous valid profile.
+
+## Support-installer boundary audit
+
+* [ ] Repin the support installer only after its immutable-input snapshot,
+  lifecycle lock, target `/var/tmp` scratch mount, mount-identity checks, and
+  mandatory post-install verification contracts pass its complete Fedora suite.
+* [ ] Create one private content-addressed handoff snapshot containing every
+  support helper, module archive/checksum/provenance file, userspace package and
+  signature, keyring, lock, and optional profile. Rehash the same snapshot
+  before transfer, `--validate-only`, mutation, and final result acceptance.
+* [ ] Record the working disk GUID, partition GUID/PARTUUID, filesystem UUID,
+  Btrfs subvolume identity, EFI identity, expected read/write policy, and qcow2
+  backing identity. Revalidate them at every appliance handoff and before and
+  after each destructive phase.
+* [ ] Extend the Rust support-result contracts with mandatory
+  `moduleVerification`, `userspaceVerification`, and `initramfsVerification`.
+  Reject a successful support result when any record is absent, malformed,
+  inconsistent with validated inputs, or not independently verified.
+* [ ] Cross-check all three support verification records against the builder's
+  independent final-image module, package, firmware, pacman-database, and
+  `lsinitcpio` inspection; never treat support self-reporting as a replacement
+  for final-image verification.
+* [ ] Independently validate the final Holo pacman database's exact package
+  records, ownership, dependencies/providers, database consistency, and
+  agreement with the support userspace-verification result.
+* [ ] Consume support-owned schema fixtures covering valid schema 1, absent
+  mandatory fields, safe additive fields, unsupported future major versions,
+  malformed records, oversized inputs, and contradictory success/failure data.
+* [ ] Require an exact validated-snapshot/document identity across the separate
+  validation and mutation calls; a merely equivalent freshly resolved package
+  set is not the same authorization.
+* [ ] Consume bounded pacman/mkinitcpio heartbeats as indeterminate liveness,
+  retain unknown-phase forward compatibility, and detect a stale guest with a
+  conservative phase-specific timeout without inventing percentage progress.
+* [ ] Run a real x86 phase/fault matrix for pacman hooks, userspace verification,
+  module extraction/compression/copy/verification, GRUB, depmod, mkinitcpio,
+  state writing, compression restoration, and recursive cleanup. At every
+  failure/cancellation point require source immutability, overlay rejection,
+  stopped workers, released locks/mounts, and no trusted partial result.
+* [ ] Define recovery-image authenticity honestly. A builder-generated layout
+  report is an inspection attestation, not proof of an official Valve image;
+  cryptographic `official` status requires Valve-signed metadata or a reviewed
+  exact-image manifest. Bind any target executable/hook allowlist to that trust
+  root and otherwise retain an explicit unverified classification.
+* [ ] Consume a machine-readable hardware-certification attestation before
+  accepting `certified-published`; bind it to exact artifact hashes, GPU IDs,
+  SteamOS/kernel versions, test date/result, and maintainer identity, and
+  preserve it in the output manifest and UI explanation.
 
 ---
 
@@ -107,6 +244,13 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Add cancel control for the current appliance/prototype workflow.
 * [ ] Keep advanced diagnostics hidden by default but accessible.
 * [x] Ensure normal users never need Fedora, QEMU, SSH, cloud-init, or partitioning terminology to complete the current workflow.
+* [ ] Split `build.js` into testable progress-state/workflow, terminal-rendering,
+  diagnostics, and window-lifecycle modules; split `main.js` into image
+  selection, settings/maintainer state, and build-launch modules without adding
+  a framework solely for file organization.
+* [ ] Model frontend workflow state explicitly and render from state rather than
+  allowing event handlers to independently mutate related controls. Add Node
+  tests for build/cancel/retry, stale events, window close, and support progress.
 
 ---
 
@@ -703,6 +847,18 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Audit temp-file permissions.
 * [x] Create runtime SSH private keys with confined permissions and test their ephemeral lifecycle.
 * [x] Remove runtime credentials with disposable session cleanup and exclude them from shareable diagnostics/manifests.
+* [ ] Enable a restrictive production Content Security Policy for the local
+  frontend and test all three windows under it; `csp: null` must not ship.
+* [ ] Replace broad `dialog:default` and `opener:default` grants with the minimum
+  per-window permissions and URL/path scopes. Prefer fixed backend-owned actions
+  for the Valve download page and output reveal operation.
+* [ ] Give the normal, progress, and maintainer windows separate Tauri
+  capabilities. Explicitly include the dynamically created maintainer window,
+  but expose maintainer operations only there and continue reauthorizing every
+  remote mutation in Rust.
+* [ ] Evaluate removing `withGlobalTauri` after frontend modules are organized;
+  use explicit API imports/build tooling if the security and packaging benefit
+  justifies the change.
 
 ---
 
@@ -810,6 +966,15 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Test bounded backend-owned command/argument construction for support handoff and maintainer plans.
 * [x] Test build-manifest serialization, versioning, and host-path exclusion.
 * [ ] Test error mapping.
+* [ ] Add pure contract tests that do not initialize Tauri for every support
+  build/install/progress schema and every stable `BuilderError` mapping.
+* [ ] Add state-transition and stale-generation tests for overlapping status,
+  cancellation, shutdown, retry, and worker-completion events.
+* [ ] Add tests for the source/working/output cross-process lock, including a
+  second application instance and abandoned-lock recovery without PID reuse
+  mistakes.
+* [ ] Add CSP and per-window capability smoke tests proving the main, progress,
+  and maintainer windows have only their intended access.
 
 ## Appliance tests
 
@@ -1064,7 +1229,9 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Add a repository check rejecting private-key filenames and PEM markers.
 * [x] Keep generated SteamOS output images out of Git through global image-extension ignores and the repository check.
 * [x] Keep build logs/diagnostics out of Git unless they use the explicit sanitized test-fixture convention.
-* [ ] Remove stale prototype assets/code when real implementation supersedes them.
+* [ ] Remove stale prototype assets/code when real implementation supersedes
+  them, beginning with the apparently unreferenced
+  `src-tauri/src/{main.js,style.css}` after packaged-app verification.
 
 ---
 
@@ -1295,10 +1462,15 @@ Before calling the project **beta**, verify:
 10. [x] Produce first modified Valve-image working copy containing only a harmless marker.
 11. [x] Validate durable output and input immutability automatically against a full-size Valve recovery image.
 12. [x] Begin NVIDIA support-repo integration with target SteamOS identity, architecture, and kernel discovery.
-13. [ ] Validate the support repository's offline-target build end to end in x86_64 Fedora for the observed SteamOS 3.8.14 kernel.
+13. [x] Validate the support repository's offline-target build end to end in x86_64 Fedora for the observed SteamOS 3.8.14 kernel.
 14. [x] Connect the managed x86_64 build path to the workflow and expose appliance boot, build subphases, elapsed time, live logs, download, validation, and cancellation through the existing progress window.
 15. [ ] Invoke the support repository's machine-readable resolver/build contract from Rust without duplicating its compatibility policy.
-16. [ ] Install the resulting development artifact into only the disposable SteamOS working image, then verify modules, metadata, source immutability, and output manifest before export.
+16. [ ] Complete installation of the resulting artifact into only the disposable
+    SteamOS working image. The real path now passes authenticated userspace and
+    five-module installation/verification but remains blocked on support-owned
+    target `/var/tmp` scratch handling for `mkinitcpio`; after repinning, verify
+    initramfs, metadata, source immutability, cleanup, repeat execution, and the
+    output manifest before export.
 
 ---
 
