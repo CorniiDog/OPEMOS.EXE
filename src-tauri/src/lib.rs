@@ -50,7 +50,7 @@ const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_SUPPORT_COMMIT: &str = "bf2a6568755766e6af527c9b2cbb831e33d206b9";
+const NVIDIA_SUPPORT_COMMIT: &str = "fc3cdc54a5256470da50b81f9b38aca150afcc42";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 #[cfg(test)]
@@ -63,6 +63,10 @@ const NVIDIA_USERSPACE_KEYRING_PATH: &str =
 const NVIDIA_USERSPACE_KEYRING_NAME: &str = "archlinux-nvidia-userspace-2025-08-01.gpg";
 const NVIDIA_USERSPACE_KEYRING_SHA256: &str =
     "8a2657da58e7efe162cc9ee76f361b085c9f49daa62baa6e077831aa05ea0bd4";
+const NVIDIA_USERSPACE_LOCK_SHA256: &str =
+    "a73dd0af6afbd4337c045ddc1ac827081b111ffd4a8c6a8f1efcbaf9d97002a7";
+const NVIDIA_COMPRESSION_PROFILE: &str = "btrfs-zstd3";
+const NVIDIA_COMPRESSION_WRITE_POLICY: &str = "compress-force=zstd:3";
 const NVIDIA_REQUIRED_KERNEL_ARGUMENTS: [&str; 4] = [
     "rd.driver.blacklist=nouveau",
     "modprobe.blacklist=nouveau",
@@ -160,17 +164,17 @@ struct PinnedInstallerFile {
     executable: bool,
 }
 
-const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 9] = [
+const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 10] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "2d4906f0c9155b2ec9b9f73f341abf83cb8f98248009fe25dccbc239b030cbdc",
-        bytes: 14_670,
+        sha256: "ec0b3d962e1840be053e9d5751c40a88671ba4191eb409b31d44609f487e8f5d",
+        bytes: 18_595,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/common.sh",
-        sha256: "fa66c6d7d6569bfc95d7d7b971e4f7ba3bc5ac454294c42faf7e48fe28c63ec2",
-        bytes: 6_862,
+        sha256: "484390ce35347c8783258b79ad9e1e54aad3c59e5247a60562876981adb4e9be",
+        bytes: 7_129,
         executable: false,
     },
     PinnedInstallerFile {
@@ -187,14 +191,20 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 9] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "baca04bb516192605a42170056cb1e868f375ff54f384ece0a6458abf502e2f4",
-        bytes: 53_294,
+        sha256: "ee50d18d86135cbe450452f9afe6bd82093dd82f1a0097db3f5553e3e0d6f97e",
+        bytes: 67_317,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "eee2d85e63197283b041492c2d8b18db79fa738a64b694a7fca6f072f7bd942b",
-        bytes: 4_371,
+        sha256: "408a671785d5d364c0311d7a21fec035ef68a3c8b1b69cb52ae36b81177223c0",
+        bytes: 15_612,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/measure_btrfs_payload.py",
+        sha256: "e5f209c2c06980b8248a12a5fa6a2d0752fd39607bbe835100d2b6f89060ea28",
+        bytes: 11_708,
         executable: true,
     },
     PinnedInstallerFile {
@@ -211,7 +221,7 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 9] = [
     },
     PinnedInstallerFile {
         path: NVIDIA_USERSPACE_LOCK_PATH,
-        sha256: "a73dd0af6afbd4337c045ddc1ac827081b111ffd4a8c6a8f1efcbaf9d97002a7",
+        sha256: NVIDIA_USERSPACE_LOCK_SHA256,
         bytes: 5_623,
         executable: false,
     },
@@ -540,6 +550,8 @@ struct ReviewedUserspacePackage {
     signature_sha256: String,
     signer_fingerprint: String,
     installed_size: u64,
+    dependencies: Vec<String>,
+    provides: Vec<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -629,10 +641,14 @@ struct SupportInstallCleanup {
 #[serde(rename_all = "camelCase")]
 struct SupportInstallValidation {
     archive_sha256: String,
+    provenance_sha256: String,
+    userspace_lock: SupportInstallPinnedIdentity,
     pacman_database: SupportInstallPacmanDatabase,
     boot: SupportInstallBoot,
     keyring: SupportInstallKeyring,
     packages: Vec<SupportInstallPackage>,
+    package_dependency_closure: Vec<SupportInstallDependency>,
+    compression: SupportInstallCompression,
     storage: SupportInstallStorage,
 }
 
@@ -641,6 +657,8 @@ struct SupportInstallValidation {
 struct SupportInstallFailureValidation {
     #[serde(default)]
     storage: Option<SupportInstallStorage>,
+    #[serde(default)]
+    compression: Option<SupportInstallCompression>,
     #[serde(default)]
     missing_dependencies: Vec<String>,
     #[serde(default)]
@@ -687,6 +705,74 @@ struct SupportInstallStorage {
     module_installed_bytes: u64,
     module_replaced_bytes: u64,
     initramfs_reserve_bytes: u64,
+    #[serde(default)]
+    root_conservative_required_bytes: Option<u64>,
+    #[serde(default)]
+    root_measured_required_bytes: Option<u64>,
+    #[serde(default)]
+    compression_payload_allocated_bytes: Option<u64>,
+    #[serde(default)]
+    compression_filesystem_overhead_bytes: Option<u64>,
+    #[serde(default)]
+    compression_safety_reserve_bytes: Option<u64>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportInstallPinnedIdentity {
+    name: String,
+    sha256: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct SupportInstallDependency {
+    name: String,
+    version: String,
+    source: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportInstallCompressionMeasurement {
+    schema_version: u32,
+    status: String,
+    profile: String,
+    write_policy: String,
+    measurement_method: String,
+    declared_payload_bytes: u64,
+    scratch_filesystem_bytes: u64,
+    payload_allocated_bytes: u64,
+    data_allocated_bytes: u64,
+    metadata_allocated_bytes: u64,
+    system_allocated_bytes: u64,
+    filesystem_overhead_bytes: u64,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportInstallCompression {
+    filesystem: String,
+    enabled: bool,
+    options: Vec<String>,
+    admission_basis: String,
+    compression_savings_credited_bytes: u64,
+    declared_package_bytes: u64,
+    package_archive_bytes: u64,
+    package_archive_savings_bytes: u64,
+    declared_sizes_likely_conservative: bool,
+    assessment: String,
+    #[serde(default)]
+    requested_profile: Option<String>,
+    #[serde(default)]
+    write_policy: Option<String>,
+    #[serde(default)]
+    measurement: Option<SupportInstallCompressionMeasurement>,
+    #[serde(default)]
+    measured_payload_savings_bytes: Option<u64>,
+    #[serde(default)]
+    admission_authorized: Option<bool>,
+    #[serde(default)]
+    mutation_profile_implemented: Option<bool>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -716,11 +802,18 @@ struct SupportInstallKeyring {
 struct SupportInstallPackage {
     name: String,
     role: String,
+    filename: String,
+    signature_filename: String,
     full_version: String,
     pkgver: String,
     pkgrel: String,
+    architecture: String,
     signer: String,
     sha256: String,
+    signature_sha256: String,
+    installed_size: u64,
+    dependencies: Vec<String>,
+    provides: Vec<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -750,6 +843,7 @@ struct NvidiaInstallHandoffResult {
     keyring_sha256: String,
     packages: Vec<SupportInstallPackage>,
     storage: SupportInstallStorage,
+    compression: SupportInstallCompression,
     mounts_released: bool,
 }
 
@@ -4855,6 +4949,13 @@ fn load_reviewed_userspace_lock(
                 .all(|byte| byte.is_ascii_hexdigit())
             || package.signer_fingerprint.len() != 40
             || package.installed_size == 0
+            || package.dependencies.len() > 64
+            || package.provides.len() > 64
+            || package
+                .dependencies
+                .iter()
+                .chain(&package.provides)
+                .any(|relation| relation.is_empty() || relation.len() > 256)
             || !names.insert(package.name.as_str())
         {
             return Err("Reviewed NVIDIA userspace lock contains an unsafe package record.".into());
@@ -9270,6 +9371,7 @@ async fn publish_on_demand_nvidia_release(
 
 fn validate_support_storage(
     storage: &SupportInstallStorage,
+    compression: &SupportInstallCompression,
     expect_sufficient: bool,
 ) -> Result<(), String> {
     const ROOT_METADATA_RESERVE: u64 = 64 * 1024 * 1024;
@@ -9287,19 +9389,94 @@ fn validate_support_storage(
     {
         return Err("Offline installer returned invalid storage accounting.".into());
     }
-    let expected_root = checked_space_sum([
+    let conservative_root = checked_space_sum([
         storage.package_installed_bytes - storage.package_replaced_bytes,
         storage.module_installed_bytes - storage.module_replaced_bytes,
         storage.initramfs_reserve_bytes,
         ROOT_METADATA_RESERVE,
     ])?;
-    if storage.root_required_bytes != expected_root {
-        return Err("Offline installer root-space accounting is internally inconsistent.".into());
+    if compression.declared_package_bytes != storage.package_installed_bytes
+        || compression.package_archive_bytes != storage.package_compressed_bytes
+        || compression.package_archive_savings_bytes
+            != storage
+                .package_installed_bytes
+                .saturating_sub(storage.package_compressed_bytes)
+    {
+        return Err(
+            "Offline installer compression context does not match package accounting.".into(),
+        );
+    }
+    if compression.requested_profile.as_deref() == Some(NVIDIA_COMPRESSION_PROFILE) {
+        let measurement = compression
+            .measurement
+            .as_ref()
+            .ok_or("Offline installer omitted its Btrfs payload measurement.")?;
+        let declared_payload = checked_space_sum([
+            storage.package_installed_bytes,
+            storage.module_installed_bytes,
+        ])?;
+        let measured_root = checked_space_sum([
+            measurement.payload_allocated_bytes,
+            storage.initramfs_reserve_bytes,
+            ROOT_METADATA_RESERVE,
+        ])?;
+        if compression.filesystem != "btrfs"
+            || compression.write_policy.as_deref() != Some(NVIDIA_COMPRESSION_WRITE_POLICY)
+            || compression.admission_basis != "scratch-btrfs-allocated-physical-bytes-plus-reserves"
+            || compression.assessment != "measured-profile-validation-only"
+            || measurement.schema_version != 1
+            || measurement.status != "measured"
+            || measurement.profile != NVIDIA_COMPRESSION_PROFILE
+            || measurement.write_policy != NVIDIA_COMPRESSION_WRITE_POLICY
+            || measurement.measurement_method != "scratch-btrfs-filesystem-usage-used-delta"
+            || measurement.declared_payload_bytes != declared_payload
+            || measurement.payload_allocated_bytes == 0
+            || measurement.data_allocated_bytes == 0
+            || measurement.data_allocated_bytes > measurement.payload_allocated_bytes
+            || measurement.filesystem_overhead_bytes
+                != measurement
+                    .payload_allocated_bytes
+                    .saturating_sub(measurement.data_allocated_bytes)
+            || measurement.scratch_filesystem_bytes < declared_payload
+            || storage.root_conservative_required_bytes != Some(conservative_root)
+            || storage.root_measured_required_bytes != Some(measured_root)
+            || storage.root_required_bytes != measured_root
+            || storage.compression_payload_allocated_bytes
+                != Some(measurement.payload_allocated_bytes)
+            || storage.compression_filesystem_overhead_bytes
+                != Some(measurement.filesystem_overhead_bytes)
+            || storage.compression_safety_reserve_bytes != Some(ROOT_METADATA_RESERVE)
+            || compression.measured_payload_savings_bytes
+                != Some(declared_payload.saturating_sub(measurement.payload_allocated_bytes))
+            || compression.compression_savings_credited_bytes
+                != conservative_root.saturating_sub(measured_root)
+            || compression.mutation_profile_implemented != Some(false)
+        {
+            return Err(
+                "Offline installer returned inconsistent Btrfs measurement metadata.".into(),
+            );
+        }
+    } else if compression.requested_profile.is_none() {
+        if storage.root_required_bytes != conservative_root
+            || compression.admission_basis != "logical-uncompressed-conservative"
+            || compression.compression_savings_credited_bytes != 0
+            || compression.measurement.is_some()
+        {
+            return Err(
+                "Offline installer conservative storage accounting is inconsistent.".into(),
+            );
+        }
+    } else {
+        return Err("Offline installer returned an unsupported compression profile.".into());
     }
     let sufficient = storage.root_available_bytes >= storage.root_required_bytes
         && storage.var_available_bytes >= storage.var_required_bytes
         && storage.efi_available_bytes >= storage.efi_required_bytes;
-    if sufficient != expect_sufficient {
+    if sufficient != expect_sufficient
+        || compression
+            .admission_authorized
+            .is_some_and(|authorized| authorized != sufficient)
+    {
         return Err("Offline installer storage status does not match its byte accounting.".into());
     }
     Ok(())
@@ -9332,7 +9509,16 @@ fn validate_nvidia_storage_failure(
                 )
             }
         };
-    validate_support_storage(storage, false)?;
+    let compression = match document.validation.as_ref() {
+        Some(SupportInstallValidationDocument::Failed(validation)) => validation
+            .compression
+            .as_ref()
+            .ok_or("Offline installer storage failure omitted compression accounting.")?,
+        _ => {
+            return Err("Offline installer storage failure omitted compression accounting.".into())
+        }
+    };
+    validate_support_storage(storage, compression, false)?;
     let root_shortfall = storage
         .root_required_bytes
         .saturating_sub(storage.root_available_bytes);
@@ -9507,9 +9693,16 @@ fn validate_nvidia_install_result(
             );
         }
     };
-    validate_support_storage(&validation.storage, true)?;
+    validate_support_storage(&validation.storage, &validation.compression, true)?;
     let lock = &inputs.userspace_lock;
     if validation.archive_sha256 != inputs.archive_sha256
+        || validation.provenance_sha256 != inputs.provenance_sha256
+        || validation.userspace_lock.name
+            != Path::new(NVIDIA_USERSPACE_LOCK_PATH)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+        || validation.userspace_lock.sha256 != NVIDIA_USERSPACE_LOCK_SHA256
         || validation.pacman_database.path != "/usr/lib/holo/pacmandb"
         || !(1..=100_000).contains(&validation.pacman_database.package_count)
         || validation.boot.rootfs_boot_path != "/boot"
@@ -9562,12 +9755,19 @@ fn validate_nvidia_install_result(
             "dependency"
         };
         if validated.name != expected.name
+            || validated.filename != expected.filename
+            || validated.signature_filename != locked.signature_filename
             || validated.full_version != expected.full_version
             || validated.full_version != locked.version
             || validated.role != expected.role
             || validated.role != expected_role
+            || validated.architecture != locked.architecture
             || validated.sha256 != expected.package_sha256
             || validated.sha256 != locked.package_sha256
+            || validated.signature_sha256 != locked.signature_sha256
+            || validated.installed_size != locked.installed_size
+            || validated.dependencies != locked.dependencies
+            || validated.provides != locked.provides
             || validated.pkgrel.is_empty()
             || validated.signer != locked.signer_fingerprint
         {
@@ -9586,6 +9786,38 @@ fn validate_nvidia_install_result(
             }
             _ if expected_role == "dependency" && !validated.pkgver.is_empty() => {}
             _ => return Err("Unexpected userspace package role in the handoff.".into()),
+        }
+    }
+    if validation.package_dependency_closure.is_empty()
+        || validation.package_dependency_closure.len() > 4_096
+    {
+        return Err("Offline validation returned an invalid package dependency closure.".into());
+    }
+    let mut closure_names = HashSet::new();
+    for dependency in &validation.package_dependency_closure {
+        if arch_dependency_name(&dependency.name)? != dependency.name
+            || dependency.version.is_empty()
+            || dependency.version.len() > 256
+            || !matches!(dependency.source.as_str(), "incoming" | "installed")
+            || !closure_names.insert(dependency.name.as_str())
+        {
+            return Err("Offline validation returned an unsafe package dependency closure.".into());
+        }
+    }
+    for package in &validation.packages {
+        if !validation
+            .package_dependency_closure
+            .iter()
+            .any(|dependency| {
+                dependency.name == package.name
+                    && dependency.version == package.full_version
+                    && dependency.source == "incoming"
+            })
+        {
+            return Err(format!(
+                "Offline validation dependency closure omitted incoming {}.",
+                package.name
+            ));
         }
     }
     Ok(NvidiaInstallHandoffResult {
@@ -9613,6 +9845,7 @@ fn validate_nvidia_install_result(
         keyring_sha256: validation.keyring.sha256,
         packages: validation.packages,
         storage: validation.storage,
+        compression: validation.compression,
         mounts_released: true,
     })
 }
@@ -9935,7 +10168,7 @@ fi
 sudo dnf install -y bsdtar gnupg2 python3 kmod pacman
 test -f "$WORK/support/{keyring_path}"
 test -f "$WORK/support/{lock_path}"
-sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --progress-attempt {validation_attempt} --result-json "$WORK/install-result.json"
+sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --compression-profile {compression_profile} --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --progress-attempt {validation_attempt} --result-json "$WORK/install-result.json"
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
 sudo umount "$ROOT/var"
@@ -9950,6 +10183,7 @@ trap - EXIT INT TERM"#,
             lock_path = NVIDIA_USERSPACE_LOCK_PATH,
             kernel = inputs.kernel_version,
             userspace_arguments = userspace_arguments,
+            compression_profile = NVIDIA_COMPRESSION_PROFILE,
         );
         let execution_result = run_guest_command_logged(
             &connection,
@@ -11245,14 +11479,17 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 110_964);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 9);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 152_128);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 10);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/update_grub_nvidia_args.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/measure_btrfs_payload.py" && file.executable));
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "trust/nvidia-userspace-package-signers.json" && !file.executable
         }));
@@ -11301,6 +11538,8 @@ mod tests {
         assert!(!source.contains("Could not measure target root free space."));
         assert!(source.contains("validate_nvidia_storage_failure"));
         assert!(source.contains("NVIDIA module archive size changed after validation."));
+        assert!(source.contains("--validate-only --compression-profile {compression_profile}"));
+        assert!(source.contains("compression.mutation_profile_implemented != Some(false)"));
     }
 
     #[test]
@@ -11397,6 +11636,28 @@ mod tests {
     #[test]
     fn accepts_only_exact_offline_installer_validation_results() {
         let digest = |byte: char| byte.to_string().repeat(64);
+        fn conservative_compression(storage: &SupportInstallStorage) -> SupportInstallCompression {
+            SupportInstallCompression {
+                filesystem: "btrfs".into(),
+                enabled: false,
+                options: Vec::new(),
+                admission_basis: "logical-uncompressed-conservative".into(),
+                compression_savings_credited_bytes: 0,
+                declared_package_bytes: storage.package_installed_bytes,
+                package_archive_bytes: storage.package_compressed_bytes,
+                package_archive_savings_bytes: storage
+                    .package_installed_bytes
+                    .saturating_sub(storage.package_compressed_bytes),
+                declared_sizes_likely_conservative: false,
+                assessment: "informational-package-archive-proxy-not-admission-credit".into(),
+                requested_profile: None,
+                write_policy: None,
+                measurement: None,
+                measured_payload_savings_bytes: None,
+                admission_authorized: None,
+                mutation_profile_implemented: None,
+            }
+        }
         let staged_package =
             |name: &str, release: &str, signer_digest: char| NvidiaUserspacePackage {
                 name: name.into(),
@@ -11419,6 +11680,8 @@ mod tests {
                 signature_sha256: digest('f'),
                 signer_fingerprint: signer.into(),
                 installed_size: 1,
+                dependencies: Vec::new(),
+                provides: Vec::new(),
             }
         };
         let userspace_lock = ReviewedUserspaceLock {
@@ -11464,11 +11727,18 @@ mod tests {
             |name: &str, release: &str, signer: &str, signer_digest: char| SupportInstallPackage {
                 name: name.into(),
                 role: "nvidia-userspace".into(),
+                filename: format!("{name}-575.64.05-{release}-x86_64.pkg.tar.zst"),
+                signature_filename: format!("{name}-575.64.05-{release}-x86_64.pkg.tar.zst.sig"),
                 full_version: format!("575.64.05-{release}"),
                 pkgver: "575.64.05".into(),
                 pkgrel: release.into(),
+                architecture: "x86_64".into(),
                 signer: signer.into(),
                 sha256: digest(signer_digest),
+                signature_sha256: digest('f'),
+                installed_size: 1,
+                dependencies: Vec::new(),
+                provides: Vec::new(),
             };
         let storage = SupportInstallStorage {
             root_available_bytes: 256 * 1024 * 1024,
@@ -11483,7 +11753,13 @@ mod tests {
             module_installed_bytes: 2_000,
             module_replaced_bytes: 0,
             initramfs_reserve_bytes: 64 * 1024 * 1024,
+            root_conservative_required_bytes: None,
+            root_measured_required_bytes: None,
+            compression_payload_allocated_bytes: None,
+            compression_filesystem_overhead_bytes: None,
+            compression_safety_reserve_bytes: None,
         };
+        let compression = conservative_compression(&storage);
         let result = SupportInstallResult {
             schema_version: 1,
             status: "validated".into(),
@@ -11503,6 +11779,15 @@ mod tests {
             validation: Some(SupportInstallValidationDocument::Verified(Box::new(
                 SupportInstallValidation {
                     archive_sha256: digest('a'),
+                    provenance_sha256: digest('e'),
+                    userspace_lock: SupportInstallPinnedIdentity {
+                        name: Path::new(NVIDIA_USERSPACE_LOCK_PATH)
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned(),
+                        sha256: NVIDIA_USERSPACE_LOCK_SHA256.into(),
+                    },
                     pacman_database: SupportInstallPacmanDatabase {
                         path: "/usr/lib/holo/pacmandb".into(),
                         package_count: 1_158,
@@ -11528,6 +11813,19 @@ mod tests {
                             'c',
                         ),
                     ],
+                    package_dependency_closure: vec![
+                        SupportInstallDependency {
+                            name: "nvidia-utils".into(),
+                            version: "575.64.05-2".into(),
+                            source: "incoming".into(),
+                        },
+                        SupportInstallDependency {
+                            name: "lib32-nvidia-utils".into(),
+                            version: "575.64.05-1".into(),
+                            source: "incoming".into(),
+                        },
+                    ],
+                    compression: compression.clone(),
                     storage: storage.clone(),
                 },
             ))),
@@ -11599,21 +11897,39 @@ mod tests {
                 signature_sha256: digest('1'),
                 signer_fingerprint: "A".repeat(40),
                 installed_size: 1,
+                dependencies: Vec::new(),
+                provides: Vec::new(),
             });
         let mut dependency_result = result.clone();
         let dependency_validation = verified_validation(&mut dependency_result);
         dependency_validation.packages.push(SupportInstallPackage {
             name: "egl-wayland".into(),
             role: "dependency".into(),
+            filename: "egl-wayland-4:1.1.19-1-x86_64.pkg.tar.zst".into(),
+            signature_filename: "egl-wayland-4:1.1.19-1-x86_64.pkg.tar.zst.sig".into(),
             full_version: "4:1.1.19-1".into(),
             pkgver: "1.1.19".into(),
             pkgrel: "1".into(),
+            architecture: "x86_64".into(),
             signer: "A".repeat(40),
             sha256: digest('f'),
+            signature_sha256: digest('1'),
+            installed_size: 1,
+            dependencies: Vec::new(),
+            provides: Vec::new(),
         });
+        dependency_validation
+            .package_dependency_closure
+            .push(SupportInstallDependency {
+                name: "egl-wayland".into(),
+                version: "4:1.1.19-1".into(),
+                source: "incoming".into(),
+            });
         dependency_validation.storage.package_installed_bytes += 2_048;
         dependency_validation.storage.package_compressed_bytes += 1_024;
         dependency_validation.storage.root_required_bytes += 2_048;
+        dependency_validation.compression =
+            conservative_compression(&dependency_validation.storage);
         verified_validation(&mut dependency_result)
             .packages
             .swap(0, 2);
@@ -11635,6 +11951,62 @@ mod tests {
             "validated",
         )
         .is_err());
+        let mut measured_result = result.clone();
+        let measured_validation = verified_validation(&mut measured_result);
+        measured_validation.storage.root_conservative_required_bytes =
+            Some(128 * 1024 * 1024 + 3_000);
+        measured_validation.storage.root_measured_required_bytes = Some(128 * 1024 * 1024 + 1_500);
+        measured_validation.storage.root_required_bytes = 128 * 1024 * 1024 + 1_500;
+        measured_validation
+            .storage
+            .compression_payload_allocated_bytes = Some(1_500);
+        measured_validation
+            .storage
+            .compression_filesystem_overhead_bytes = Some(300);
+        measured_validation.storage.compression_safety_reserve_bytes = Some(64 * 1024 * 1024);
+        measured_validation.compression = SupportInstallCompression {
+            filesystem: "btrfs".into(),
+            enabled: false,
+            options: Vec::new(),
+            admission_basis: "scratch-btrfs-allocated-physical-bytes-plus-reserves".into(),
+            compression_savings_credited_bytes: 1_500,
+            declared_package_bytes: 1_000,
+            package_archive_bytes: 500,
+            package_archive_savings_bytes: 500,
+            declared_sizes_likely_conservative: true,
+            assessment: "measured-profile-validation-only".into(),
+            requested_profile: Some(NVIDIA_COMPRESSION_PROFILE.into()),
+            write_policy: Some(NVIDIA_COMPRESSION_WRITE_POLICY.into()),
+            measurement: Some(SupportInstallCompressionMeasurement {
+                schema_version: 1,
+                status: "measured".into(),
+                profile: NVIDIA_COMPRESSION_PROFILE.into(),
+                write_policy: NVIDIA_COMPRESSION_WRITE_POLICY.into(),
+                measurement_method: "scratch-btrfs-filesystem-usage-used-delta".into(),
+                declared_payload_bytes: 3_000,
+                scratch_filesystem_bytes: 2 * 1024 * 1024 * 1024,
+                payload_allocated_bytes: 1_500,
+                data_allocated_bytes: 1_200,
+                metadata_allocated_bytes: 200,
+                system_allocated_bytes: 100,
+                filesystem_overhead_bytes: 300,
+            }),
+            measured_payload_savings_bytes: Some(1_500),
+            admission_authorized: Some(true),
+            mutation_profile_implemented: Some(false),
+        };
+        let measured = validate_nvidia_install_result(
+            measured_result,
+            &inputs,
+            "validated",
+            "validation_complete",
+            "validated",
+        )
+        .expect("the exact measured Btrfs storage contract should pass");
+        assert_eq!(
+            measured.compression.requested_profile.as_deref(),
+            Some(NVIDIA_COMPRESSION_PROFILE)
+        );
         let accepted = validate_nvidia_install_result(
             result,
             &inputs,
@@ -11660,7 +12032,13 @@ mod tests {
             module_installed_bytes: 2_000,
             module_replaced_bytes: 0,
             initramfs_reserve_bytes: 64 * 1024 * 1024,
+            root_conservative_required_bytes: None,
+            root_measured_required_bytes: None,
+            compression_payload_allocated_bytes: None,
+            compression_filesystem_overhead_bytes: None,
+            compression_safety_reserve_bytes: None,
         };
+        let insufficient_compression = conservative_compression(&insufficient_storage);
         let storage_failure = SupportInstallResult {
             schema_version: 1,
             status: "failed".into(),
@@ -11680,6 +12058,7 @@ mod tests {
             validation: Some(SupportInstallValidationDocument::Failed(Box::new(
                 SupportInstallFailureValidation {
                     storage: Some(insufficient_storage),
+                    compression: Some(insufficient_compression),
                     ..Default::default()
                 },
             ))),
@@ -11751,6 +12130,15 @@ mod tests {
             validation: Some(SupportInstallValidationDocument::Verified(Box::new(
                 SupportInstallValidation {
                     archive_sha256: digest('a'),
+                    provenance_sha256: digest('e'),
+                    userspace_lock: SupportInstallPinnedIdentity {
+                        name: Path::new(NVIDIA_USERSPACE_LOCK_PATH)
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned(),
+                        sha256: NVIDIA_USERSPACE_LOCK_SHA256.into(),
+                    },
                     pacman_database: SupportInstallPacmanDatabase {
                         path: "/usr/lib/holo/pacmandb".into(),
                         package_count: 1_158,
@@ -11776,6 +12164,19 @@ mod tests {
                             'c',
                         ),
                     ],
+                    package_dependency_closure: vec![
+                        SupportInstallDependency {
+                            name: "nvidia-utils".into(),
+                            version: "575.64.05-2".into(),
+                            source: "incoming".into(),
+                        },
+                        SupportInstallDependency {
+                            name: "lib32-nvidia-utils".into(),
+                            version: "575.64.05-1".into(),
+                            source: "incoming".into(),
+                        },
+                    ],
+                    compression: compression.clone(),
                     storage,
                 },
             ))),
@@ -12219,6 +12620,29 @@ mod tests {
                 module_installed_bytes: 2_000,
                 module_replaced_bytes: 0,
                 initramfs_reserve_bytes: 64 * 1024 * 1024,
+                root_conservative_required_bytes: None,
+                root_measured_required_bytes: None,
+                compression_payload_allocated_bytes: None,
+                compression_filesystem_overhead_bytes: None,
+                compression_safety_reserve_bytes: None,
+            },
+            compression: SupportInstallCompression {
+                filesystem: "btrfs".into(),
+                enabled: false,
+                options: Vec::new(),
+                admission_basis: "logical-uncompressed-conservative".into(),
+                compression_savings_credited_bytes: 0,
+                declared_package_bytes: 1_000,
+                package_archive_bytes: 500,
+                package_archive_savings_bytes: 500,
+                declared_sizes_likely_conservative: false,
+                assessment: "informational-package-archive-proxy-not-admission-credit".into(),
+                requested_profile: None,
+                write_policy: None,
+                measurement: None,
+                measured_payload_savings_bytes: None,
+                admission_authorized: None,
+                mutation_profile_implemented: None,
             },
             mounts_released: true,
         };

@@ -118,7 +118,7 @@ The authenticated closure is reused verbatim for mutation, and guest pacman
 remains fully offline throughout this process.
 
 The backend also stages the offline-root installer from immutable support commit
-`9bb16f4fc43a5d35eccc987899251d55c20d3d98`. Its nine required scripts,
+`fc3cdc54a5256470da50b81f9b38aca150afcc42`. Its ten required scripts,
 helpers, signer-policy files, reviewed lock, and minimal binary keyring have
 embedded byte counts and SHA-256 pins; every file must match before a versioned
 bundle manifest is recorded. The
@@ -133,15 +133,16 @@ name; the pinned support validator then independently rehashes the transferred
 archive. It passes the pinned minimal keyring and reviewed lock directly to the
 support installer, mounts uniquely identified `rootfs-A`, `var-A`, and `efi-A`
 read-only, and accepts only a schema-1 `validated/validation_complete` result
-whose target, trust, hashes, complete locked package set, signer fingerprints,
-Holo database, EFI boot policy, authoritative storage accounting, and
-released-mount status all match Rust-owned state. A dependency-closure failure
-never reaches mutation and is not interpreted as a storage shortage.
-Mutation mounts the Btrfs top level explicitly, identifies the current default
-root subvolume, temporarily clears only that subvolume's read-only property,
-mounts the matching `var-A` at `/var` and `efi-A` at `/efi` without hiding
-rootfs `/boot`, and restores both Btrfs read-only and seed-device state
-afterward. The resulting raw candidate is reopened through a
+whose provenance, reviewed lock, complete package records, dependency closure,
+and storage accounting exactly match Rust-owned inputs. The current pin requests
+the validation-only `btrfs-zstd3` profile and independently checks its measured
+physical allocation and reserves. It intentionally stops before mutation while
+the support result reports that compressed mutation is not implemented.
+After the support installer authorizes compressed mutation, the backend will
+mount the Btrfs top level explicitly, identify the current default root
+subvolume, mount matching `var-A` and `efi-A` without hiding rootfs `/boot`, and
+require exact restoration of Btrfs read-only, seed-device, and compression
+state. The resulting raw candidate will be reopened through a
 fresh appliance and checked for all five modules, matching package records and
 GSP firmware, configuration, provenance state, initramfs output, exact
 nonduplicated GRUB kernel arguments, layout, and source immutability before

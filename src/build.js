@@ -733,6 +733,17 @@ async function runBuild(request) {
         }
         const storage = validation.storage;
         addStageLog(`NVIDIA storage validation: root ${storage.rootRequiredBytes} required / ${storage.rootAvailableBytes} available bytes; var ${storage.varRequiredBytes} / ${storage.varAvailableBytes}; EFI ${storage.efiRequiredBytes} / ${storage.efiAvailableBytes}.`);
+        const compression = validation.compression;
+        if (compression?.requestedProfile === "btrfs-zstd3") {
+          const margin = Math.max(0, storage.rootAvailableBytes - storage.rootRequiredBytes);
+          addStageLog(`Measured Btrfs zstd:3 payload: ${formatBytes(storage.compressionPayloadAllocatedBytes)} allocated; ${formatBytes(storage.rootRequiredBytes)} required with reserves; ${formatBytes(margin)} projected free margin.`);
+          if (!compression.admissionAuthorized) {
+            throw new Error("Measured Btrfs compression still does not leave enough target-root space. No mutation began.");
+          }
+          if (!compression.mutationProfileImplemented) {
+            throw new Error("Measured Btrfs compression fits, but the pinned support installer currently authorizes validation only. Compressed mutation and final-root restoration checks are still being implemented; no mutation began.");
+          }
+        }
         activeNvidiaPhase = "installation";
         setStatus("running", "Installing NVIDIA into working image", "Applying authenticated userspace, exact-kernel modules, firmware, depmod, and SteamOS initramfs changes only to the disposable overlay.", 71, "Installing");
         let installation;
