@@ -216,6 +216,30 @@ mod tests {
         fs::remove_dir_all(root).expect("remove settings fixture");
     }
 
+    #[test]
+    fn settings_mutex_poisoning_does_not_permanently_disable_persistence() {
+        let poisoned = thread::spawn(|| {
+            let _guard = settings_transaction_lock().expect("acquire settings lock to poison");
+            panic!("intentional settings lock poison");
+        });
+        assert!(poisoned.join().is_err());
+        let root = std::env::temp_dir().join(format!(
+            "steamos-settings-poison-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("settings poison clock")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("create poison recovery fixture");
+        let path = root.join("settings.json");
+        save_builder_settings_path(&path, &BuilderSettings::default())
+            .expect("persist settings after recovering poisoned mutex");
+        load_builder_settings_path_unlocked(&path)
+            .expect("load settings after recovering poisoned mutex");
+        fs::remove_dir_all(root).expect("remove poison recovery fixture");
+    }
+
     #[cfg(unix)]
     #[test]
     #[ignore = "subprocess helper for settings advisory-lock regressions"]

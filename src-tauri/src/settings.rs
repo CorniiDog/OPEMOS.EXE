@@ -7,9 +7,9 @@ const SETTINGS_LOCK_RETRY: Duration = Duration::from_millis(20);
 const MAX_SETTINGS_BYTES: u64 = 1024 * 1024;
 
 pub(crate) fn settings_transaction_lock() -> Result<std::sync::MutexGuard<'static, ()>, String> {
-    SETTINGS_TRANSACTION_LOCK
+    Ok(SETTINGS_TRANSACTION_LOCK
         .lock()
-        .map_err(|_| "The settings transaction lock is unavailable.".into())
+        .unwrap_or_else(std::sync::PoisonError::into_inner))
 }
 
 pub(crate) struct SettingsFileLock {
