@@ -19,6 +19,7 @@ const elements = {
   usbMessage: $("#usb-message"), usbConfirmationRow: $("#usb-confirmation-row"),
   usbConfirmation: $("#usb-confirmation"), usbConfirmationHelp: $("#usb-confirmation-help"),
   armUsbPreflight: $("#arm-usb-preflight"), cancelUsbPreflight: $("#cancel-usb-preflight"),
+  checkUsbPreflight: $("#check-usb-preflight"),
   environmentMessage: $("#environment-message"), environmentDetails: $("#environment-details"),
   environmentStatus: $("#environment-status"),
   settingsButton: $("#settings-button"), settingsClose: $("#settings-close"),
@@ -257,6 +258,7 @@ async function selectImage(path) {
   elements.usbConfirmationRow.classList.add("hidden");
   elements.armUsbPreflight.classList.add("hidden");
   elements.cancelUsbPreflight.classList.add("hidden");
+  elements.checkUsbPreflight.classList.add("hidden");
   elements.dropZone.classList.add("processing");
   elements.chooseImage.disabled = true;
   elements.dropTitle.textContent = "Checking selected image…";
@@ -432,6 +434,7 @@ elements.refreshUsbTargets.addEventListener("click", async () => {
     usbPreflightSession = null;
   }
   elements.cancelUsbPreflight.classList.add("hidden");
+  elements.checkUsbPreflight.classList.add("hidden");
   elements.refreshUsbTargets.disabled = true;
   elements.usbTarget.disabled = true;
   elements.usbMessage.textContent = "Inspecting whole external physical disks without opening them for writing…";
@@ -471,6 +474,7 @@ elements.usbTarget.addEventListener("change", async () => {
   }
   usbPreflightSession = null;
   elements.cancelUsbPreflight.classList.add("hidden");
+  elements.checkUsbPreflight.classList.add("hidden");
   elements.usbConfirmation.value = "";
   const identifier = elements.usbTarget.value;
   elements.usbConfirmationRow.classList.toggle("hidden", !identifier);
@@ -509,6 +513,7 @@ elements.armUsbPreflight.addEventListener("click", async () => {
     }
     elements.usbMessage.textContent = usbPreflightSession.message;
     elements.cancelUsbPreflight.classList.remove("hidden");
+    elements.checkUsbPreflight.classList.remove("hidden");
   } catch (error) {
     if (generation !== usbContextGeneration) return;
     usbPreflightSession = null;
@@ -518,15 +523,48 @@ elements.armUsbPreflight.addEventListener("click", async () => {
   }
 });
 
-elements.cancelUsbPreflight.addEventListener("click", async () => {
+elements.checkUsbPreflight.addEventListener("click", async () => {
+  if (!usbPreflightSession?.sessionToken) return;
+  elements.checkUsbPreflight.disabled = true;
   try {
-    await invoke("cancel_usb_write_preflight", { sessionToken: usbPreflightSession?.sessionToken || null });
-  } finally {
-    usbPreflightSession = null;
-    elements.cancelUsbPreflight.classList.add("hidden");
-    elements.armUsbPreflight.disabled = elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
-    elements.usbMessage.textContent = "USB preparation cancelled. No disk was opened or changed.";
+    const status = await invoke("get_usb_write_preflight_status", {
+      sessionToken: usbPreflightSession.sessionToken,
+    });
+    const remaining = status.active ? ` ${Math.ceil(Number(status.expiresInMs) / 1000)} seconds remain.` : "";
+    elements.usbMessage.textContent = `${status.message}${remaining}`;
     elements.usbMessage.className = "result-message";
+    if (!status.active) {
+      usbPreflightSession = null;
+      elements.checkUsbPreflight.classList.add("hidden");
+      elements.cancelUsbPreflight.classList.add("hidden");
+    }
+  } catch (error) {
+    elements.usbMessage.textContent = String(error);
+    elements.usbMessage.className = "result-message error";
+  } finally {
+    elements.checkUsbPreflight.disabled = false;
+  }
+});
+
+elements.cancelUsbPreflight.addEventListener("click", async () => {
+  let cancellationCompleted = false;
+  try {
+    const result = await invoke("cancel_usb_write_preflight", { sessionToken: usbPreflightSession?.sessionToken || null });
+    cancellationCompleted = true;
+    elements.usbMessage.textContent = result.cancelled
+      ? "USB preparation cancelled. No disk was opened or changed."
+      : "No matching USB preparation was active; no disk was opened or changed.";
+    elements.usbMessage.className = "result-message";
+  } catch (error) {
+    elements.usbMessage.textContent = `Could not confirm USB preparation cancellation: ${error}`;
+    elements.usbMessage.className = "result-message error";
+  } finally {
+    if (cancellationCompleted) {
+      usbPreflightSession = null;
+      elements.cancelUsbPreflight.classList.add("hidden");
+      elements.checkUsbPreflight.classList.add("hidden");
+      elements.armUsbPreflight.disabled = elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
+    }
   }
 });
 

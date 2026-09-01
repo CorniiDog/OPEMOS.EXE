@@ -87,6 +87,7 @@ pub fn run() {
             inspect_usb_targets,
             arm_usb_write_preflight,
             cancel_usb_write_preflight,
+            get_usb_write_preflight_status,
             windows::open_progress_window,
             windows::open_maintainer_window,
         ])

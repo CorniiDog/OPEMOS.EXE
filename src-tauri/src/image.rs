@@ -1654,6 +1654,50 @@ impl UsbPreparationManager {
         cancelled
     }
 
+    pub(crate) fn status(&mut self, session_token: &str, now: Instant) -> UsbWritePreflightStatus {
+        if let Some(armed) = self.armed.as_ref() {
+            if now >= armed.expires_at {
+                let matching_token = session_token == armed.session_token;
+                self.armed = None;
+                return UsbWritePreflightStatus {
+                    status: if matching_token { "expired" } else { "stale-token" }.into(),
+                    active: false,
+                    expires_in_ms: 0,
+                    writes_allowed: false,
+                    message: if matching_token {
+                        "The USB intent session expired. Revalidate the image and target before confirming again."
+                    } else {
+                        "This USB intent token does not identify the active session."
+                    }
+                    .into(),
+                };
+            }
+            if session_token != armed.session_token {
+                return UsbWritePreflightStatus {
+                    status: "stale-token".into(),
+                    active: false,
+                    expires_in_ms: 0,
+                    writes_allowed: false,
+                    message: "This USB intent token does not identify the active session.".into(),
+                };
+            }
+            return UsbWritePreflightStatus {
+                status: "armed-read-only".into(),
+                active: true,
+                expires_in_ms: armed.expires_at.duration_since(now).as_millis(),
+                writes_allowed: false,
+                message: "The confirmed USB intent session is active, but raw-device writing remains disabled.".into(),
+            };
+        }
+        UsbWritePreflightStatus {
+            status: "not-armed".into(),
+            active: false,
+            expires_in_ms: 0,
+            writes_allowed: false,
+            message: "No USB intent session is active.".into(),
+        }
+    }
+
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
@@ -1957,4 +2001,19 @@ pub(crate) fn cancel_usb_write_preflight(
         cancelled,
         writes_allowed: false,
     })
+}
+
+#[tauri::command]
+pub(crate) fn get_usb_write_preflight_status(
+    app: tauri::AppHandle,
+    session_token: String,
+) -> Result<UsbWritePreflightStatus, String> {
+    if session_token.len() != 64 || !session_token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("The USB intent session token is invalid.".into());
+    }
+    let manager_state = app.state::<Mutex<UsbPreparationManager>>();
+    let mut manager = manager_state
+        .lock()
+        .map_err(|_| "USB preparation state is unavailable.")?;
+    Ok(manager.status(&session_token, Instant::now()))
 }

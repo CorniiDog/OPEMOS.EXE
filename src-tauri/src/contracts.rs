@@ -1132,6 +1132,16 @@ pub(crate) struct UsbWritePreflightCancellation {
     pub(crate) writes_allowed: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UsbWritePreflightStatus {
+    pub(crate) status: String,
+    pub(crate) active: bool,
+    pub(crate) expires_in_ms: u128,
+    pub(crate) writes_allowed: bool,
+    pub(crate) message: String,
+}
+
 pub(crate) struct MarkerManifestData<'a> {
     pub(crate) input: &'a Path,
     pub(crate) output: &'a Path,

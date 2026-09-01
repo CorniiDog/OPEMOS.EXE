@@ -341,6 +341,15 @@ mod tests {
         let mut manager = UsbPreparationManager::default();
         manager.arm("first".into(), now);
         assert!(manager.is_armed());
+        let active = manager.status("first", now + Duration::from_secs(1));
+        assert!(active.active);
+        assert_eq!(active.status, "armed-read-only");
+        assert!(active.expires_in_ms > 0);
+        assert!(!active.writes_allowed);
+        let stale = manager.status("wrong", now + Duration::from_secs(1));
+        assert!(!stale.active);
+        assert_eq!(stale.status, "stale-token");
+        assert!(manager.is_armed());
         assert!(!manager.cancel(Some("wrong"), now));
         assert!(manager.is_armed());
 
@@ -350,8 +359,13 @@ mod tests {
         assert!(!manager.is_armed());
 
         manager.arm("expired".into(), now);
-        assert!(!manager.cancel(Some("expired"), now + USB_PREFLIGHT_TTL));
+        let expired = manager.status("expired", now + USB_PREFLIGHT_TTL);
+        assert_eq!(expired.status, "expired");
+        assert!(!expired.active);
         assert!(!manager.is_armed());
+
+        let missing = manager.status("expired", now + USB_PREFLIGHT_TTL);
+        assert_eq!(missing.status, "not-armed");
 
         manager.arm("cancel-any".into(), now);
         assert!(manager.cancel(None, now));
