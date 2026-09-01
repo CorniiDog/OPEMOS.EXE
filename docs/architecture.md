@@ -17,6 +17,28 @@ Valve image.
 | NVIDIA source repository | Versioned project patches and exact source commits | Image mutation, release authorization, or runtime credentials |
 | Gamescope repository | Gamescope-specific source/artifact policy | NVIDIA kernel-module fallback policy |
 
+## Host backend module layout
+
+The Tauri crate root intentionally contains only shared policy constants,
+module wiring, and the public application entry point. Backend responsibilities
+are separated as follows:
+
+| Rust module | Responsibility |
+| --- | --- |
+| `app.rs` | Tauri construction, fixed command registration, and application shutdown events |
+| `appliance.rs` | QEMU/QMP/SSH processes, disposable runtimes, host preparation, health, and workflow command orchestration |
+| `contracts.rs` | Versioned support/build/install/manifest data and pinned support-file identities |
+| `image.rs` | Input validation, layout inspection, working-copy mutation, space checks, export, and independent verification |
+| `nvidia.rs` | NVIDIA/source resolution, authenticated downloads, reviewed userspace closure, exact builds, and publication |
+| `installer.rs` | Offline-root handoff, structured support-result validation, storage policy, and target mutation |
+| `settings.rs` | Versioned preferences and GitHub maintainer authentication/authorization |
+| `windows.rs` | Native progress and maintainer child-window construction |
+| `tests.rs` | Default and explicitly ignored live integration tests |
+
+The frontend follows the same boundary: diagnostic compaction lives in
+`log-diagnostics.js`, while ANSI/control parsing and safe DOM rendering live in
+`terminal-renderer.js`. Compatibility and command construction remain in Rust.
+
 ## Data flow
 
     user recovery image (read-only)

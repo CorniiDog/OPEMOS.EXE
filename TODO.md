@@ -79,54 +79,55 @@ The project is not yet producing a bootable modified SteamOS image.
 
 ## Backend decomposition and maintainability audit
 
-The Rust backend has grown to roughly 14,800 lines in one `lib.rs`, including
-about 3,000 lines of inline tests. It currently combines Tauri IPC, settings,
-GitHub authorization, release resolution, package acquisition, support-schema
-validation, QEMU/QMP/SSH lifecycle management, image manipulation, publication,
-window management, and generated guest shell programs. Refactor it
-incrementally, with the full local suite passing after every extraction; do not
-combine this work with installer behavior changes.
+The audit began with roughly 14,800 lines in one `lib.rs`, including about
+3,000 lines of inline tests. The first behavior-preserving decomposition is now
+complete: `lib.rs` is a small crate root, while application lifecycle,
+appliance/workflow orchestration, contracts, image work, NVIDIA resolution and
+publication, offline installation, settings, native windows, and tests have
+separate files. Continue subdividing only where the resulting review or test
+boundary is useful; do not split files merely to chase a line-count target.
 
 * [ ] Replace source-text tests that `include_str!("lib.rs")` with behavioral
   tests or tests against the extracted module/template they actually govern, so
   moving code cannot silently weaken coverage.
-* [ ] Extract pure shared types and versioned external contracts first:
-  `contracts/{support_build,support_install,progress,manifest}.rs`. Keep strict
-  deserialization and validation beside each contract, with minimal
-  `pub(crate)` visibility.
+* [x] Extract shared types and versioned external contracts into `contracts.rs`
+  with crate-confined visibility, preserving strict serde contracts and every
+  pinned support-file record. Subdivide this file by schema family later only
+  when shared fixtures or independent ownership justify it.
 * [ ] Extract host/platform functionality into focused modules such as
   `host/{paths,process,resources,hashing,network}.rs` and
   `platform/{macos,windows,linux}.rs`; keep platform-specific command discovery
   and GUI launching behind explicit traits or narrow functions.
-* [ ] Extract appliance orchestration into
-  `appliance/{manager,runtime,qemu,qmp,ssh,transfer}.rs`, with one owner for
-  child processes, watchdogs, credentials, ports, and abandoned-session cleanup.
-* [ ] Extract image work into
-  `image/{input,normalization,layout,working_copy,export,verification}.rs`,
-  keeping source immutability and finalization invariants independent of Tauri.
-* [ ] Extract NVIDIA work into
-  `nvidia/{resolver,artifacts,userspace,support_bundle,installer,publication}.rs`
-  so compatibility resolution, authenticated downloads, installation, and
-  maintainer publication are separate review boundaries.
-* [ ] Extract settings, GitHub maintainer authorization, window construction,
-  and Tauri commands into their own modules. Reduce `lib.rs` to application
-  state construction, plugin/command registration, lifecycle events, and
-  intentional re-exports.
+* [x] Extract appliance/process/workflow orchestration into `appliance.rs`, with
+  one module owning child processes, watchdogs, credentials, ports, QMP/SSH,
+  abandoned-session cleanup, and the fixed-operation command bridge. Further
+  submodules remain optional maintainability work.
+* [x] Extract image inspection, mutation, output naming, space checks, export,
+  and independent verification into `image.rs`, keeping source immutability and
+  finalization invariants separate from NVIDIA resolution.
+* [x] Extract NVIDIA release resolution, authenticated artifact/userspace
+  acquisition, source preflight/building, support-bundle preparation, and
+  publication into `nvidia.rs`; keep offline-root result validation and mutation
+  orchestration separately in `installer.rs`.
+* [x] Extract settings/GitHub authorization, native window construction, and
+  application bootstrap/lifecycle into `settings.rs`, `windows.rs`, and
+  `app.rs`. Reduce `lib.rs` to imports, module wiring, shared policy constants,
+  the public `run` re-export, and the test include.
 * [ ] Move large generated guest shell programs out of Rust function bodies
   into versioned template/assets or small typed command builders. Validate every
   substitution, preserve fixed-operation semantics, and add argument-injection
   and exact-rendering tests.
-* [ ] Split the inline Rust test module so pure unit tests live beside their
-  modules and multi-component/live appliance tests live under `tests/`. Keep
-  network and proprietary-image tests explicit and ignored by default.
+* [x] Remove the 2,900-line inline test body from `lib.rs` into `tests.rs` while
+  retaining all existing default/ignored behavior. A later cleanup may move
+  pure tests beside modules and live multi-component tests under `tests/`.
 * [ ] After the module split is stable, evaluate a small Cargo workspace with a
   pure `builder-core` crate and a Tauri application crate. Do this only if it
   materially improves compile isolation, contract testing, or reuse; Rust
   modules alone improve ownership but do not guarantee much lower total compile
   time.
-* [ ] Remove the superseded `src-tauri/src/main.js` and
-  `src-tauri/src/style.css` prototype files after a repository-wide reference
-  check and packaged-app smoke test prove they are unused.
+* [x] Remove the superseded, repository-unreferenced
+  `src-tauri/src/{main.js,style.css}` prototype files; the active frontend
+  remains under top-level `src/`.
 
 ## State, concurrency, and error-model audit
 
@@ -146,10 +147,10 @@ combine this work with installer behavior changes.
   working qcow2, output reservation, and target handoff. Hold the working-image
   lock across native-to-x86-to-validation handoffs and release it only after
   QEMU, mounts, and partial-output cleanup finish.
-* [ ] Consolidate duplicate application-exit cleanup into one idempotent,
-  bounded shutdown coordinator used by main-window close, application exit,
-  cancellation, panic/failure recovery, and the next-launch abandoned-runtime
-  audit.
+* [x] Consolidate the duplicated main-window-close and `ExitRequested` worker
+  cleanup into one shutdown coordinator in `app.rs`.
+* [ ] Route cancellation, panic/failure recovery, and the next-launch
+  abandoned-runtime audit through the same idempotent bounded cleanup contract.
 * [ ] Replace backend `Result<T, String>` boundaries incrementally with a
   versioned `BuilderError` containing a stable code, operation/phase, safe user
   message, bounded maintainer detail, responsibility, retryability, and source
@@ -248,6 +249,9 @@ combine this work with installer behavior changes.
   diagnostics, and window-lifecycle modules; split `main.js` into image
   selection, settings/maintainer state, and build-launch modules without adding
   a framework solely for file organization.
+* [x] Extract ANSI/control normalization and safe terminal rendering from
+  `build.js` into `terminal-renderer.js`, with deterministic Node coverage for
+  control filtering, state isolation, and ANSI 256-color boundaries.
 * [ ] Model frontend workflow state explicitly and render from state rather than
   allowing event handlers to independently mutate related controls. Add Node
   tests for build/cancel/retry, stale events, window close, and support progress.
@@ -1229,9 +1233,9 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Add a repository check rejecting private-key filenames and PEM markers.
 * [x] Keep generated SteamOS output images out of Git through global image-extension ignores and the repository check.
 * [x] Keep build logs/diagnostics out of Git unless they use the explicit sanitized test-fixture convention.
-* [ ] Remove stale prototype assets/code when real implementation supersedes
-  them, beginning with the apparently unreferenced
-  `src-tauri/src/{main.js,style.css}` after packaged-app verification.
+* [x] Remove the stale, repository-unreferenced
+  `src-tauri/src/{main.js,style.css}` prototype frontend after confirming the
+  active application uses top-level `src/`.
 
 ---
 
