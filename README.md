@@ -127,12 +127,15 @@ The authenticated closure is reused verbatim for mutation, and guest pacman
 remains fully offline throughout this process.
 
 The backend also stages the offline-root installer from immutable support commit
-`2a6d97ec08d8767d738b815d15e5b6660d89f02f`. Its fifteen required scripts,
+`f8c569c72fc6c1ecfba3d1a87235886f09baaa63`. Its fifteen required scripts,
 helpers, signer-policy files, reviewed lock, and minimal binary keyring have
 embedded byte counts and SHA-256 pins; every file must match before a versioned
 bundle manifest is recorded. Required executable/data modes are applied and
 verified on Unix hosts, then enforced again after extraction in the managed
 Fedora appliance so host archive-mode behavior cannot disable a helper. The
+support validator also launches its Python measurement helper through the
+running interpreter and returns a bounded, sanitized operating-system error if
+the launch itself fails. The
 normal workflow therefore does not accept a user-selected support checkout or
 follow a moving branch. Failed or cancelled downloads remove the entire partial
 bundle, and repeated preparation revalidates and reuses the session-owned copy.
