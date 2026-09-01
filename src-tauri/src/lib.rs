@@ -1,7 +1,13 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(unix)]
+use std::os::fd::OwnedFd;
+#[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
@@ -1314,6 +1320,7 @@ struct LsblkNode {
 
 struct ApplianceSession {
     child: Child,
+    watchdog: QemuWatchdog,
     runtime_dir: PathBuf,
     ssh_key: PathBuf,
     ssh_port: u16,
@@ -1338,6 +1345,7 @@ struct ApplianceSession {
 
 struct NvidiaBuildSession {
     child: Child,
+    watchdog: QemuWatchdog,
     runtime_dir: PathBuf,
     ssh_key: PathBuf,
     ssh_port: u16,
@@ -1581,6 +1589,71 @@ struct StagingDirectoryGuard {
     armed: bool,
 }
 
+struct QemuWatchdog {
+    #[cfg(unix)]
+    child: Child,
+    #[cfg(unix)]
+    keepalive: Option<UnixStream>,
+}
+
+impl QemuWatchdog {
+    fn finish(&mut self) {
+        #[cfg(unix)]
+        {
+            self.keepalive.take();
+            for _ in 0..30 {
+                if self.child.try_wait().ok().flatten().is_some() {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+impl Drop for QemuWatchdog {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
+fn isolate_process_group(command: &mut Command) {
+    #[cfg(unix)]
+    command.process_group(0);
+    #[cfg(not(unix))]
+    let _ = command;
+}
+
+#[cfg(unix)]
+fn spawn_qemu_watchdog(qemu_pid: u32) -> Result<QemuWatchdog, String> {
+    let (reader, writer) = UnixStream::pair()
+        .map_err(|error| format!("Could not create the QEMU lifecycle watchdog: {error}"))?;
+    let reader: OwnedFd = reader.into();
+    let child = Command::new("/bin/sh")
+        .args([
+            "-c",
+            "cat >/dev/null; kill -TERM -- \"-$1\" 2>/dev/null || exit 0; i=0; while kill -0 -- \"-$1\" 2>/dev/null && test \"$i\" -lt 20; do sleep 0.1; i=$((i + 1)); done; kill -KILL -- \"-$1\" 2>/dev/null || true",
+            "steamos-qemu-watchdog",
+            &qemu_pid.to_string(),
+        ])
+        .stdin(Stdio::from(reader))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("Could not start the QEMU lifecycle watchdog: {error}"))?;
+    Ok(QemuWatchdog {
+        child,
+        keepalive: Some(writer),
+    })
+}
+
+#[cfg(not(unix))]
+fn spawn_qemu_watchdog(_qemu_pid: u32) -> Result<QemuWatchdog, String> {
+    Ok(QemuWatchdog {})
+}
+
 impl Drop for PartialOutputGuard {
     fn drop(&mut self) {
         if self.armed && self.path.is_file() {
@@ -1619,6 +1692,7 @@ impl Drop for ApplianceSession {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
+        self.watchdog.finish();
         if self.runtime_dir.is_dir() {
             let _ = archive_and_remove_runtime(&self.runtime_dir);
         }
@@ -1631,6 +1705,7 @@ impl Drop for NvidiaBuildSession {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
+        self.watchdog.finish();
         if self.runtime_dir.is_dir() {
             let _ = archive_and_remove_nvidia_build_runtime(&self.runtime_dir);
         }
@@ -1936,7 +2011,8 @@ fn qemu_version(path: &Path) -> Option<String> {
 }
 
 fn smoke_test_qemu(path: &Path) -> Result<(), String> {
-    let mut child = Command::new(path)
+    let mut command = Command::new(path);
+    command
         .args([
             "-machine",
             "none",
@@ -1951,9 +2027,19 @@ fn smoke_test_qemu(path: &Path) -> Result<(), String> {
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    isolate_process_group(&mut command);
+    let mut child = command
         .spawn()
         .map_err(|e| format!("Could not start QEMU: {e}"))?;
+    let mut watchdog = match spawn_qemu_watchdog(child.id()) {
+        Ok(watchdog) => watchdog,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
     thread::sleep(Duration::from_millis(350));
     if child
         .try_wait()
@@ -1966,8 +2052,10 @@ fn smoke_test_qemu(path: &Path) -> Result<(), String> {
         child
             .wait()
             .map_err(|e| format!("Could not finish QEMU smoke test: {e}"))?;
+        watchdog.finish();
         Ok(())
     } else {
+        watchdog.finish();
         use std::io::Read;
         let mut detail = String::new();
         if let Some(mut stderr) = child.stderr.take() {
@@ -2778,7 +2866,8 @@ fn prepare_session(
 
     let guest_vcpus = resources.guest_vcpus.to_string();
     let guest_memory_mib = resources.guest_memory_mib.to_string();
-    let mut child = Command::new(qemu)
+    let mut command = Command::new(qemu);
+    command
         .args([
             "-name",
             "SteamOS NVIDIA Builder",
@@ -2861,7 +2950,9 @@ fn prepare_session(
         .args(["-display", "none", "-monitor", "none", "-serial", "stdio"])
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
-        .stderr(Stdio::from(log_err))
+        .stderr(Stdio::from(log_err));
+    isolate_process_group(&mut command);
+    let mut child = command
         .spawn()
         .map_err(|e| format!("Could not start the Fedora builder appliance: {e}"))?;
     if let Err(error) = fs::write(runtime_dir.join("qemu.pid"), child.id().to_string()) {
@@ -2871,10 +2962,19 @@ fn prepare_session(
             "Could not record the appliance process ID: {error}"
         ));
     }
+    let watchdog = match spawn_qemu_watchdog(child.id()) {
+        Ok(watchdog) => watchdog,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
 
     runtime_guard.armed = false;
     Ok(ApplianceSession {
         child,
+        watchdog,
         runtime_dir,
         ssh_key,
         ssh_port,
@@ -3083,6 +3183,7 @@ fn prepare_nvidia_build_session(
             "file={},if=virtio,format=raw,readonly=on",
             seed_image.display()
         ));
+    isolate_process_group(&mut qemu_command);
     let mut child = qemu_command
         .args([
             "-device",
@@ -3109,10 +3210,19 @@ fn prepare_nvidia_build_session(
             "Could not record the x86 build-appliance process ID: {error}"
         ));
     }
+    let watchdog = match spawn_qemu_watchdog(child.id()) {
+        Ok(watchdog) => watchdog,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
 
     runtime_guard.armed = false;
     Ok(NvidiaBuildSession {
         child,
+        watchdog,
         runtime_dir,
         ssh_key,
         ssh_port,
@@ -11208,6 +11318,7 @@ fn stop_session_process(session: &mut ApplianceSession) -> Result<(), String> {
                 .map_err(|e| format!("Could not finish appliance shutdown: {e}"))?;
         }
     }
+    session.watchdog.finish();
     Ok(())
 }
 
@@ -11253,6 +11364,7 @@ fn stop_nvidia_build_session(session: &mut NvidiaBuildSession) -> Result<Option<
                 .map_err(|e| format!("Could not finish x86 build-appliance shutdown: {e}"))?;
         }
     }
+    session.watchdog.finish();
     archive_and_remove_nvidia_build_runtime(&session.runtime_dir)
 }
 
@@ -11448,6 +11560,34 @@ async fn open_maintainer_window(app: tauri::AppHandle) -> Result<(), String> {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn qemu_watchdog_terminates_its_exact_child_when_keepalive_closes() {
+        let mut target = Command::new("/bin/sh");
+        target
+            .args(["-c", "exec sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        isolate_process_group(&mut target);
+        let mut target = target.spawn().expect("start watchdog target");
+        let watchdog = spawn_qemu_watchdog(target.id()).expect("start lifecycle watchdog");
+        drop(watchdog);
+        let exit = target.try_wait().expect("inspect watchdog target");
+        if exit.is_none() {
+            let _ = target.kill();
+            let _ = target.wait();
+        }
+        assert!(exit.is_some(), "watchdog left its target running");
+    }
+
+    #[test]
+    #[ignore = "launches a local QEMU smoke process and verifies watchdog cleanup"]
+    fn live_qemu_smoke_watchdog_exits_cleanly() {
+        smoke_test_qemu(&find_qemu().expect("QEMU is required"))
+            .expect("QEMU smoke process should start and stop cleanly");
+    }
 
     #[test]
     fn preserves_reviewed_userspace_filenames_across_guest_handoff() {

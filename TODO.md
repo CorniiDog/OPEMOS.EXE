@@ -1136,6 +1136,8 @@ Support-repository readiness (tracked here because it gates image-builder integr
 
 * [x] Make main-window quit equivalent to safe appliance cancellation for the current prototype workflow.
 * [x] Stop the managed QEMU child when application state is dropped on exit.
+* [x] Give every Unix-hosted QEMU process an exact-PID keepalive watchdog so Dock Quit, `pkill`, crashes, and force-quit cannot leave an orphaned native or x86 appliance.
+* [ ] Before enabling Windows builds, place every QEMU process in a kill-on-close Windows Job Object equivalent to the Unix watchdog.
 * [x] Clean the session overlay and ephemeral SSH credentials on app exit.
 * [x] Detect inactive stale runtime state on next launch.
 * [x] Automatically clean abandoned inactive workspace data while archiving QEMU logs.
