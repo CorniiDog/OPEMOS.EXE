@@ -62,7 +62,7 @@ const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_SUPPORT_COMMIT: &str = "f8c569c72fc6c1ecfba3d1a87235886f09baaa63";
+const NVIDIA_SUPPORT_COMMIT: &str = "6d02c3167f115044b72bc8feb81724574d6be3c1";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 #[cfg(test)]
@@ -210,11 +210,11 @@ struct PinnedInstallerFile {
     executable: bool,
 }
 
-const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 15] = [
+const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 16] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "731765273a355270c25c13c45a341d7e3c7354c87331e548d8d3ee1404077c81",
-        bytes: 22_373,
+        sha256: "d50a9c50e055a1f069864ba866b2870068007cb34812cde4c91e3d234496f9b9",
+        bytes: 26_096,
         executable: true,
     },
     PinnedInstallerFile {
@@ -237,14 +237,14 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 15] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "2b411a3846109146c1a49ba2be1ec553a0c1f8b4ebb8c8416e6db3aee63e9cd6",
-        bytes: 84_674,
+        sha256: "ae98ef5072308a8186dffda3249b41e2849d637877dea79b39895b6570ae9863",
+        bytes: 85_059,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "9113cb701047865b7fda330cd64aa76e0c1ededcd7240402594a881da123783c",
-        bytes: 26_819,
+        sha256: "f13b8dc403885f8b90dc937849c64fa8fffc6dd5028d863da9368d239c68c8bc",
+        bytes: 27_332,
         executable: true,
     },
     PinnedInstallerFile {
@@ -258,6 +258,12 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 15] = [
         sha256: "4182f1e1fab6ed5a9ebe59a40250335774b46354a64fbb7b00c7429ea8b4cc05",
         bytes: 1_117,
         executable: false,
+    },
+    PinnedInstallerFile {
+        path: "lib/prepare_pacman_config.py",
+        sha256: "60c20abd7444a07ef191bd6ef5fe7c7863fd9a89328fcf507f1f2a3558982f64",
+        bytes: 2_962,
+        executable: true,
     },
     PinnedInstallerFile {
         path: "lib/gaming_payload_profiles.py",
@@ -895,6 +901,8 @@ struct SupportInstallCompression {
     measured_payload_savings_bytes: Option<u64>,
     #[serde(default)]
     admission_authorized: Option<bool>,
+    pacman_check_space_bypass_authorized: bool,
+    pacman_check_space_policy: String,
     #[serde(default)]
     mutation_profile_implemented: Option<bool>,
     #[serde(default)]
@@ -10103,6 +10111,13 @@ fn validate_support_storage(
             || compression.all_payload_destinations_on_root_filesystem != Some(true)
             || compression.replacement_credit_policy.as_deref() != Some("exact-payload-noop-only")
             || compression.module_payload_noop.is_none()
+            || compression.pacman_check_space_bypass_authorized != expect_sufficient
+            || compression.pacman_check_space_policy
+                != if expect_sufficient {
+                    "temporary-config-disable-after-live-revalidation"
+                } else {
+                    "preserve"
+                }
         {
             return Err(
                 "Offline installer returned inconsistent Btrfs measurement metadata.".into(),
@@ -10113,6 +10128,8 @@ fn validate_support_storage(
             || compression.admission_basis != "logical-uncompressed-conservative"
             || compression.compression_savings_credited_bytes != 0
             || compression.measurement.is_some()
+            || compression.pacman_check_space_bypass_authorized
+            || compression.pacman_check_space_policy != "preserve"
         {
             return Err(
                 "Offline installer conservative storage accounting is inconsistent.".into(),
@@ -12376,8 +12393,8 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 221_058);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 15);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 228_641);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 16);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
@@ -12390,6 +12407,9 @@ mod tests {
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/atomic_output.py" && !file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/prepare_pacman_config.py" && file.executable));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/gaming_payload_profiles.py" && file.executable));
@@ -12414,6 +12434,7 @@ mod tests {
         let guest_permissions = pinned_installer_guest_permissions().unwrap();
         assert!(guest_permissions.contains("chmod 0755 "));
         assert!(guest_permissions.contains("\"$WORK/support/lib/measure_btrfs_payload.py\""));
+        assert!(guest_permissions.contains("\"$WORK/support/lib/prepare_pacman_config.py\""));
         assert!(guest_permissions.contains("chmod 0644 "));
         assert!(guest_permissions.contains("\"$WORK/support/lib/atomic_output.py\""));
     }
@@ -12600,6 +12621,8 @@ mod tests {
                 measurement: None,
                 measured_payload_savings_bytes: None,
                 admission_authorized: None,
+                pacman_check_space_bypass_authorized: false,
+                pacman_check_space_policy: "preserve".into(),
                 mutation_profile_implemented: None,
                 compression_ratio: None,
                 all_payload_destinations_on_root_filesystem: None,
@@ -13002,6 +13025,8 @@ mod tests {
             }),
             measured_payload_savings_bytes: Some(1_500),
             admission_authorized: Some(true),
+            pacman_check_space_bypass_authorized: true,
+            pacman_check_space_policy: "temporary-config-disable-after-live-revalidation".into(),
             mutation_profile_implemented: Some(true),
             compression_ratio: Some("0.500000".into()),
             all_payload_destinations_on_root_filesystem: Some(true),
@@ -13748,6 +13773,8 @@ mod tests {
                 measurement: None,
                 measured_payload_savings_bytes: None,
                 admission_authorized: None,
+                pacman_check_space_bypass_authorized: false,
+                pacman_check_space_policy: "preserve".into(),
                 mutation_profile_implemented: None,
                 compression_ratio: None,
                 all_payload_destinations_on_root_filesystem: None,

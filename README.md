@@ -131,7 +131,7 @@ The authenticated closure is reused verbatim for mutation, and guest pacman
 remains fully offline throughout this process.
 
 The backend also stages the offline-root installer from immutable support commit
-`f8c569c72fc6c1ecfba3d1a87235886f09baaa63`. Its fifteen required scripts,
+`6d02c3167f115044b72bc8feb81724574d6be3c1`. Its sixteen required scripts,
 helpers, signer-policy files, reviewed lock, and minimal binary keyring have
 embedded byte counts and SHA-256 pins; every file must match before a versioned
 bundle manifest is recorded. Required executable/data modes are applied and
@@ -158,7 +158,11 @@ measurement files never share the appliance's 2 GiB RAM-backed `/tmp`) and
 independently checks its measured physical
 allocation, exact no-op credits, reserves, and admission decision. Mutation uses
 that same profile and must report both released mounts and restoration of the
-original compression option before Rust accepts the result. Bounded structured
+original compression option before Rust accepts the result. The structured
+admission also carries an explicit pacman `CheckSpace` policy: the builder only
+accepts the scoped bypass authorization when measured space is sufficient and
+requires ordinary or insufficient-space results to preserve `CheckSpace`.
+Bounded structured
 measurement failures retain their phase, approved command identity, exit status,
 and safe stderr excerpt so a missing tool, mount failure, parse failure, or
 ENOSPC condition is visible instead of collapsing into one generic error. The
