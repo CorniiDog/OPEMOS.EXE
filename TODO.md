@@ -55,9 +55,6 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Keep NVIDIA source history and project patch branches in:
 
   * `CorniiDog/open-gpu-kernel-modules-steamos`
-* [x] Keep Gamescope NVIDIA work in:
-
-  * `CorniiDog/gamescope-nvidia`
 * [x] Treat the user-provided Valve recovery image as input data, never as project source content.
 * [x] Do not redistribute Valve recovery images from this repository.
 * [x] Modify a working copy rather than mutating the user’s original image in place.
@@ -69,7 +66,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Use QEMU as the virtualization boundary.
 * [x] Allow Apple Silicon to run an aarch64 Fedora guest while manipulating x86_64 SteamOS images as data.
 * [x] Establish a versioned fixed-operation host↔guest protocol without arbitrary UI-originated shell strings.
-* [x] Define explicit responsibility boundaries among UI, Rust host backend, Fedora appliance, NVIDIA support repo, and Gamescope repo.
+* [x] Define explicit responsibility boundaries among UI, Rust host backend, Fedora appliance, and NVIDIA support repo.
 * [x] Document the architecture and link it from the main README.
 * [x] Add an architecture/data-flow diagram.
 
@@ -526,11 +523,9 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Record selected SteamOS/kernel target and artifact trust classification in the NVIDIA-mutation build manifest.
 * [x] Fail closed when no compatible published release exists; the normal workflow never silently enters development build mode.
 * [x] Treat “no compatible published artifact” as a normal, non-destructive resolution result with a clear UI/log status; do not create an NVIDIA-labeled output or classify it as an application failure.
-* [ ] Keep Gamescope fallback policy independent from NVIDIA kernel-module fallback policy.
 * [x] Require exact target-kernel identity/vermagic for NVIDIA artifacts; never reuse the SteamOS 3.8.16 `valve24.5` modules for the observed 3.8.14 `valve24.4` kernel.
 * [x] Connect the Rust-managed x86_64 Fedora build-appliance commands to the normal build workflow and progress UI on Apple Silicon, including boot, stable compiler subphases, elapsed-time guidance, live logs, cancellation, artifact retrieval, validation, and installation handoff.
 * [ ] Decide whether the Apple Silicon fallback uses a separately managed emulated x86_64 appliance or a trusted remote x86_64 build worker, accounting for performance and artifact provenance.
-* [ ] Consider a Gamescope 3.8.16 compatibility floor for earlier SteamOS 3.8.x images only after its binary dependencies and runtime behavior are explicitly validated on those releases.
 
 ---
 
@@ -557,25 +552,10 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Keep userspace and kernel-module NVIDIA versions matched through preflight and final result validation.
 * [ ] Verify EGL/GLX/Vulkan loader integration.
 * [ ] Verify Vulkan ICD files.
-* [ ] Verify GBM/EGL paths used by Gamescope.
+* [ ] Verify NVIDIA GBM/EGL loader paths.
 * [ ] Avoid overwriting unrelated Mesa/AMD/Intel userspace unnecessarily.
 * [ ] Preserve the ability for the resulting SteamOS image to run on the intended NVIDIA system without requiring network access during first boot.
 * [ ] Document whether the generated image remains multi-GPU-capable.
-
----
-
-# 21. Gamescope NVIDIA integration
-
-* [ ] Define how `gamescope-nvidia` artifacts are selected for a target SteamOS release.
-* [ ] Keep Gamescope patch selection separate from NVIDIA kernel-module selection.
-* [ ] Record Gamescope source/release identifier in build manifest.
-* [ ] Apply only the patches required for NVIDIA compatibility.
-* [ ] Preserve a path to pristine Valve Gamescope for control testing.
-* [ ] Verify Gamescope launches on NVIDIA after generated-image install.
-* [ ] Verify Xwayland launches and renders correctly.
-* [ ] Verify Steam Gaming Mode renders without severe corruption/artifacts.
-* [ ] Test compositor startup, resolution changes, refresh-rate changes, suspend/resume, and game launch/exit.
-* [ ] Track known 580-series graphical issues independently of generic image-builder correctness.
 
 ---
 
@@ -598,7 +578,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Ensure NVIDIA setup occurs before first Gaming Mode launch.
 * [ ] Verify first boot without manual TTY intervention.
 * [ ] Verify first boot without network access if all required artifacts are embedded.
-* [ ] After installing from generated media, boot without the recovery USB and verify NVIDIA modules, Gamescope, boot arguments, updater integration, desktop account state, and A/B update behavior on the installed disk.
+* [ ] After installing from generated media, boot without the recovery USB and verify NVIDIA modules, boot arguments, updater integration, desktop account state, and A/B update behavior on the installed disk.
 * [ ] Verify rollback/recovery path if NVIDIA initialization fails.
 
 ---
@@ -611,7 +591,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Compute final SHA256.
 * [x] Write a versioned marker/NVIDIA-mutation sidecar build manifest atomically beside the output.
 * [ ] Distinguish `mutation-valid` output from `install-ready` output; require verified `rootfs-A`, `efi-A`, and `home` installer assets before using the latter status.
-* [ ] Include input hash, app version, appliance version, SteamOS version, NVIDIA version, Gamescope version, and modification summary. (NVIDIA mutation now records hashes, app version, SteamOS/kernel identity, NVIDIA version/trust, support commit, packages/signers, and modified paths; appliance provenance and Gamescope remain.)
+* [ ] Include input hash, app version, appliance version, SteamOS version, NVIDIA version, and modification summary. (NVIDIA mutation now records hashes, app version, SteamOS/kernel identity, NVIDIA version/trust, support commit, packages/signers, modified paths, and appliance provenance.)
 * [ ] Never embed the user’s full host path or username into the output image unless explicitly needed.
 * [x] Verify the candidate raw image's GPT/filesystem roles before atomic finalization.
 * [ ] Verify output can be opened by standard flashing tools.
@@ -625,7 +605,6 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Re-run conservative Valve partition discovery.
 * [x] Verify all five required NVIDIA kernel modules exist in the independently attached candidate.
 * [x] Verify matching userspace package records and exact-version GSP firmware exist in the independently attached candidate.
-* [ ] Verify Gamescope modification exists when selected.
 * [x] Verify NVIDIA-bearing initramfs contents before export and independently verify the persisted mkinitcpio configuration plus nonempty initramfs output afterward.
 * [x] Verify all installer, Btrfs-top-level, root, EFI, and independent-validation mounts are released.
 * [ ] Verify no runtime SSH keys or Fedora guest secrets leaked into SteamOS output.
@@ -660,7 +639,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Verify `nvidia-smi`.
 * [ ] Verify `modinfo`.
 * [ ] Verify `/proc/driver/nvidia/version`.
-* [ ] Verify Gamescope uses NVIDIA GPU.
+* [ ] Verify Gaming Mode uses the NVIDIA GPU.
 * [ ] Verify Xwayland/Steam use NVIDIA GPU.
 * [ ] Verify Gaming Mode.
 * [ ] Verify Desktop Mode.
@@ -760,7 +739,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Avoid fake linear percentages for operations with unknown duration.
 * [ ] Show bytes processed during copy/decompression/compression.
 * [x] Show appliance startup separately from prototype output creation.
-* [ ] Show NVIDIA/Gamescope integration steps separately.
+* [ ] Show NVIDIA integration steps separately.
 * [x] Preserve and display the current session's QEMU/serial log through completion.
 * [x] Auto-follow live logs only while the viewer remains at the bottom; preserve manual scroll position otherwise.
 * [x] Freeze visual log updates while the user scrolls through active output, then catch up once when live following resumes.
@@ -822,7 +801,6 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Record input and normalized-image checksums.
 * [x] Record the recognized SteamOS layout and target-system discovery result.
 * [x] Record selected NVIDIA trust/certification and exact target identity.
-* [ ] Record selected Gamescope build/patch identifier.
 * [ ] Capture guest command exit statuses.
 * [x] Capture QEMU stderr/serial logs.
 * [x] Redact private keys, credentials, usernames, and sensitive host paths from user-shareable diagnostic summaries while retaining the full local log.
@@ -974,7 +952,6 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Define prepare-working-image command.
 * [ ] Define the general working-image marker command. (Structured synthetic marker mutation is complete.)
 * [ ] Define integrate-NVIDIA command.
-* [ ] Define integrate-Gamescope command.
 * [ ] Define validate-output command.
 * [ ] Return structured JSON instead of parsing human shell output.
 * [ ] Include machine-readable progress events.
@@ -994,7 +971,6 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Include detected target kernel(s) in the manifest.
 * [x] Include NVIDIA version, trust, support commit, and automatic-versus-pinned source policy.
 * [x] Include NVIDIA archive, provenance, keyring, and package checksums through the structured installation result.
-* [ ] Include Gamescope version/artifact checksums.
 * [x] Include all modified target paths for the marker milestone.
 * [x] Include final image SHA256.
 * [ ] Include build timestamp only where nondeterminism is acceptable.
@@ -1012,7 +988,6 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Define supported NVIDIA GPU generations.
 * [ ] Define unsupported legacy/proprietary-driver-only cases.
 * [ ] Define behavior for newer unknown Valve images.
-* [ ] Define behavior when no Gamescope patch is available.
 * [ ] Display compatibility result before starting expensive mutation.
 
 ---
@@ -1040,7 +1015,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Reject block/character device output paths and any destination that appears before atomic finalization.
 * [ ] Verify sufficient space before starting.
 * [ ] Preserve recoverable logs after failure.
-* [ ] Make experimental NVIDIA/Gamescope status visible before user flashes an image.
+* [ ] Make experimental NVIDIA status visible before user flashes an image.
 
 ---
 
@@ -1062,7 +1037,6 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Confirm the repository's MIT license and link it from the README without implying that it relicenses third-party components.
 * [ ] Audit third-party licenses for bundled QEMU/firmware/Fedora components.
 * [ ] Audit licenses for any redistributed NVIDIA-related artifacts.
-* [ ] Audit Gamescope patch/build redistribution requirements.
 * [ ] Include required notices in packaged application.
 * [ ] Keep Valve image content outside project distribution boundary.
 
@@ -1185,7 +1159,6 @@ Before calling the project **alpha**, verify all of the following:
 * [ ] App produces a separate modified output image.
 * [ ] Output modification is deterministic and validated.
 * [ ] NVIDIA kernel modules/userspace are integrated through the intended support-repo path.
-* [ ] Required Gamescope NVIDIA changes are integrated or explicitly not required for the tested configuration.
 * [ ] Generated image installs/boots on the primary RTX 2060 test system.
 * [ ] Gaming Mode reaches a usable graphical state.
 * [ ] Build failure never damages input image.
@@ -1217,7 +1190,7 @@ Before calling the project **beta**, verify:
 * [ ] Packaged runtime is self-contained or automatically managed.
 * [ ] Application signing/notarization complete where required.
 * [ ] Builder appliance is versioned and verified.
-* [ ] NVIDIA/Gamescope artifacts are verified.
+* [ ] NVIDIA artifacts are verified.
 * [ ] Diagnostics are exportable.
 * [ ] Major failure modes have actionable user messages.
 * [ ] Output validation is automatic.
@@ -1261,7 +1234,7 @@ Before calling the project **beta**, verify:
 * [ ] Local artifact cache manager.
 * [ ] Offline build mode.
 * [ ] Multiple certified NVIDIA profiles.
-* [ ] Experimental driver/Gamescope profiles.
+* [ ] Experimental NVIDIA driver profiles.
 * [x] Add an off-by-default experimental NVIDIA-upstream source catalog with separate grouping, exact tag/commit resolution, matching-userspace preflight, and transient per-build acknowledgement.
 * [x] Keep experimental upstream builds local-only and reject them from the canonical automated publisher until source-origin-aware release identities exist.
 * [x] Record automatic-versus-pinned NVIDIA source policy in generated image manifests.
@@ -1292,14 +1265,14 @@ Before calling the project **beta**, verify:
 * [ ] Allow Wi-Fi selection from a scanned list plus a manually entered/hidden SSID, record the intended security type, and validate that the selected SteamOS provisioning mechanism survives Valve installation rather than configuring only the recovery environment.
 * [ ] Keep Wi-Fi passphrases masked and transient; store them only in the host operating-system credential store when explicitly requested, and exclude all provisioning secrets from settings JSON, logs, manifests, command lines, cloud-init output, and build artifacts not strictly required for provisioning.
 * [ ] Confirm the target account and show a secret-free provisioning summary before building; verify the generated image contains only the intended password/Wi-Fi state and that cancellation removes every temporary secret-bearing file.
-* [ ] Add an opt-in “track SteamOS driver compatibility updates” setting; fail closed when no certified NVIDIA/Gamescope combination exists.
+* [ ] Add an opt-in “track SteamOS driver compatibility updates” setting; fail closed when no certified NVIDIA target exists.
 * [ ] Never silently replace a certified driver with an unverified latest release solely because a newer SteamOS version is detected.
-* [ ] Add a maintainer-only workflow for building Gamescope/NVIDIA artifacts when the selected SteamOS version lacks a compatible published artifact.
+* [ ] Add a maintainer-only workflow for building NVIDIA artifacts when the selected SteamOS version lacks a compatible published artifact.
 * [ ] Add an off-by-default, maintainer-permission-gated “Audit unreviewed Arch signers” setting after the support repository exposes the non-mutating full-closure audit contract; require a fresh per-run warning/confirmation and never describe cryptographically authenticated but project-unreviewed package signers as trusted production inputs.
 * [ ] In signer-audit mode, allow continuation only when every package signature validates against the pinned authenticated full Arch keyring; collect all package-specific mappings missing from project review in one candidate report, but never bypass an invalid signature, missing authoritative key, unsafe package, unresolved dependency, or hash mismatch.
 * [ ] Mark every signer-audit result and any optional development image `development-unverified`, disable automated release/certified cache insertion, record the candidate lock hash and unreviewed signer set in its manifest, and keep normal builds fail-closed regardless of the saved checkbox state.
 * [x] Add a dedicated maintainer window opened from the hamburger menu; keep it permission-gated and visually separate from the normal recovery-image workflow.
-* [x] In the maintainer window, select NVIDIA or Gamescope, the project repository or approved upstream repository, and an exact available version/branch/commit before creating a workspace; re-resolve the selection and derive a schema-1 immutable plan identity in the backend.
+* [x] In the maintainer window, select the project NVIDIA repository or approved upstream repository and an exact available version/branch/commit before creating a workspace; re-resolve the selection and derive a schema-1 immutable plan identity in the backend.
 * [ ] Start an isolated architecture-correct development environment for that selection, expose only an ephemeral authenticated SSH endpoint, and offer an “Open in VS Code” action using VS Code Remote SSH with the selected checkout as its workspace.
 * [ ] Never reuse the image-mutation appliance as a general-purpose development host; use a disposable maintainer environment with explicit retention/destruction controls and no image/user credentials copied into it.
 * [ ] Detect repository changes inside the maintainer environment and enable reviewed Commit and Push actions only when the checkout, branch, remote, diff, maintainer authorization, and commit message pass backend validation.
@@ -1310,7 +1283,7 @@ Before calling the project **beta**, verify:
 * [ ] Make Deck deployment recoverable and auditable: preserve diagnostics, define rollback/reinstall behavior, avoid modifying inactive A/B slots accidentally, and require a fresh confirmation naming the target device before mutation or reboot.
 * [x] Authenticate through GitHub CLI's visible browser/Terminal flow without blocking the app, poll for completion, and verify effective repository role/maintainer access before enabling any upload or automated-release control. (Bundle the CLI for packaged releases; development currently discovers it on the host.)
 * [x] Re-check GitHub authorization in the backend immediately before every build upload, tag, release, or other remote mutation; do not trust the UI checkbox alone.
-* [ ] Keep Valve recovery images and generated SteamOS images out of GitHub uploads; publish only project-owned Gamescope/NVIDIA artifacts, manifests, checksums, and permitted sources.
+* [ ] Keep Valve recovery images and generated SteamOS images out of GitHub uploads; publish only project-owned NVIDIA artifacts, manifests, checksums, and permitted sources.
 * [x] Present an explicit yes/no confirmation before every automated NVIDIA release, defaulting to “No” and naming the repository, tag, support commit, trust, and artifact hash.
 * [x] Delegate NVIDIA release formatting and upload semantics to the hash-pinned canonical support publisher; cross-check its dry-run plan and invoke only create-only mode.
 * [ ] Prefer draft releases plus a reviewable dry-run manifest before allowing a maintainer to publish automatically.
@@ -1318,7 +1291,6 @@ Before calling the project **beta**, verify:
 * [x] Begin the settings/maintainer surface after durable image export, independent output validation, and exact-kernel artifact validation were established.
 * [ ] Bundle and verify a platform-appropriate GitHub CLI binary for packaged macOS, Windows, and Linux applications.
 * [ ] Bundle the shell/Python runtime required by the canonical support publisher, or add a reviewed native launcher that preserves its exact validation and release-format contract, so packaged apps never depend on host-installed tools.
-* [ ] Add an equivalent reviewed Gamescope artifact publisher after the Gamescope build contract is integrated.
 
 ---
 
@@ -1353,7 +1325,7 @@ The stable target workflow should eventually be approximately:
 4. App validates the image and compatibility.
 5. App prepares its managed Fedora/QEMU builder environment automatically.
 6. App creates a separate working copy.
-7. App injects the certified NVIDIA/Gamescope support required for that SteamOS image.
+7. App injects the certified NVIDIA support required for that SteamOS image.
 8. App validates the modified filesystem and image structure.
 9. App writes a separate output image and manifest.
 10. App reveals the output file.
