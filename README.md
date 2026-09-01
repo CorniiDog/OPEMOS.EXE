@@ -135,7 +135,9 @@ support installer, mounts uniquely identified `rootfs-A`, `var-A`, and `efi-A`
 read-only, and accepts only a schema-1 `validated/validation_complete` result
 whose provenance, reviewed lock, complete package records, dependency closure,
 and storage accounting exactly match Rust-owned inputs. The current pin requests
-the `btrfs-zstd3` profile and independently checks its measured physical
+the `btrfs-zstd3` profile from disk-backed appliance temporary storage (large
+measurement files never share the appliance's 2 GiB RAM-backed `/tmp`) and
+independently checks its measured physical
 allocation, exact no-op credits, reserves, and admission decision. Mutation uses
 that same profile and must restore the original compression option before Rust
 accepts the result. The backend mounts the Btrfs top level explicitly, identifies the current default root

@@ -10292,9 +10292,11 @@ if test ! -d "$ROOT/usr/lib/holo/pacmandb/local"; then
   exit 1
 fi
 sudo dnf install -y bsdtar gnupg2 python3 kmod pacman
+test -d /var/tmp
+test "$(findmnt -rn -T /var/tmp -o FSTYPE)" != tmpfs
 test -f "$WORK/support/{keyring_path}"
 test -f "$WORK/support/{lock_path}"
-sudo bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --compression-profile {compression_profile} --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --progress-attempt {validation_attempt} --result-json "$WORK/install-result.json"
+sudo env TMPDIR=/var/tmp bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --compression-profile {compression_profile} --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --progress-attempt {validation_attempt} --result-json "$WORK/install-result.json"
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
 sudo umount "$ROOT/var"
@@ -10547,7 +10549,9 @@ sudo mount -o rw "${{VAR_PARTS[0]}}" "$ROOT/var"
 VAR_MOUNTED=1
 sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/efi"
 EFI_MOUNTED=1
-sudo bash "$WORK/support/bootstrap/install_to_root.sh" --compression-profile {compression_profile} --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --result-json "$WORK/install-mutation-result.json"
+test -d /var/tmp
+test "$(findmnt -rn -T /var/tmp -o FSTYPE)" != tmpfs
+sudo env TMPDIR=/var/tmp bash "$WORK/support/bootstrap/install_to_root.sh" --compression-profile {compression_profile} --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --result-json "$WORK/install-mutation-result.json"
 test "$(root_compression_option)" = "$ORIGINAL_ROOT_COMPRESSION"
 INITRAMFS_OK=0
 while IFS= read -r INITRAMFS; do
