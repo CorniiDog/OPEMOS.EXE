@@ -104,7 +104,6 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Add a per-build NVIDIA source selector beside the build action with Automatic, Latest, and versioned project branches; pin the resolved branch commit before compilation.
 * [x] Display original image path and planned non-overwriting output location separately.
 * [ ] Add user-selectable output path/name.
-* [ ] Warn before overwriting an existing output.
 * [x] Add cancel control for the current appliance/prototype workflow.
 * [ ] Keep advanced diagnostics hidden by default but accessible.
 * [x] Ensure normal users never need Fedora, QEMU, SSH, cloud-init, or partitioning terminology to complete the current workflow.
@@ -149,11 +148,10 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Expose host OS and architecture.
 * [ ] Support Windows QEMU discovery.
 * [ ] Support Linux QEMU discovery.
-* [ ] Detect virtualization acceleration availability separately from QEMU binary availability.
-* [ ] Report HVF/KVM/WHPX/TCG capability clearly.
-* [ ] Decide fallback policy when hardware acceleration is unavailable.
+* [x] Detect virtualization acceleration availability separately from QEMU binary availability.
+* [x] Report the selected HVF/TCG acceleration mode clearly for the current macOS paths.
+* [x] Use bounded TCG fallback for the managed x86_64 appliance on Apple Silicon when native acceleration is unavailable.
 * [ ] Verify required QEMU machine/device features before starting a build.
-* [ ] Stop treating “QEMU exists + qcow2 exists” as sufficient for `ready=true` once integrated guest handshake is available.
 
 ---
 
@@ -175,8 +173,8 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Pin or verify the exact Fedora signing key material expected for the selected release.
 * [ ] Decide appliance update cadence.
 * [x] Record Fedora release/compose/architecture, protocol version, source URLs, image/checksum/keyring hashes, and checksum-signature status in a machine-readable appliance metadata sidecar.
-* [ ] Add builder-appliance schema/version compatibility with the desktop application.
-* [ ] Fail clearly if desktop app and appliance protocol versions differ.
+* [x] Require the guest health response's exact supported builder protocol version.
+* [x] Fail clearly if the desktop app and appliance protocol versions differ.
 
 ---
 
@@ -208,12 +206,9 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Run the guest headlessly.
 * [x] Move QEMU away from interactive `-serial mon:stdio` for application-managed sessions.
 * [x] Capture serial/QEMU logs to a runtime log file or Rust pipe.
-* [ ] Add QMP or another structured lifecycle/control channel if useful.
 * [x] Implement predictable graceful shutdown.
 * [x] Implement forced termination fallback.
-* [ ] Detect accidental port collision before QEMU startup.
 * [x] Allocate dynamic localhost ports or another transport for parallel-safe operation.
-* [ ] Evaluate QEMU vsock for host↔guest control once cross-platform behavior is understood.
 
 ---
 
@@ -255,8 +250,8 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Poll readiness while QEMU is booting.
 * [x] Add timeout.
 * [ ] Distinguish connection refused, guest boot failure, SSH authentication failure, marker mismatch, and timeout. (Process exit, marker mismatch, and timeout are distinct; SSH connection/authentication errors still need separate codes.)
-* [ ] Surface a concise user message plus detailed diagnostic reason.
-* [ ] Remove the shell handshake helper from the production path once Rust owns the protocol.
+* [x] Surface a concise user message plus detailed diagnostic reason.
+* [x] Keep the shell handshake helper development-only; the production workflow uses the Rust-owned protocol.
 
 ---
 
@@ -271,7 +266,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Store QEMU child/process handle.
 * [x] Stream or capture QEMU stderr/serial diagnostics.
 * [x] Poll SSH/guest readiness.
-* [ ] Expose appliance states to frontend:
+* [x] Expose appliance states to frontend:
 
   * unavailable
   * preparing
@@ -289,7 +284,7 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Add timeout and kill fallback.
 * [x] Guarantee managed-session shutdown and runtime cleanup on normal application exit.
 * [x] Clean inactive abandoned session state on the next startup after a crash.
-* [ ] Ensure stale QEMU instances do not interfere with a new build.
+* [x] Ensure stale QEMU instances do not interfere with a new build through exact-child watchdogs, startup cleanup, and development-launcher cleanup.
 
 ---
 
@@ -301,13 +296,13 @@ The project is not yet producing a bootable modified SteamOS image.
 * [x] Report QEMU smoke-test result.
 * [x] Report appliance presence/path.
 * [ ] Add appliance integrity status.
-* [ ] Add runtime preparation status.
-* [ ] Add guest boot status.
-* [ ] Add guest handshake status.
+* [x] Add runtime preparation status.
+* [x] Add guest boot status.
+* [x] Add guest handshake status.
 * [x] Add guest toolchain/self-test status to the prototype build flow.
-* [ ] Require all relevant statuses before enabling a real build.
+* [x] Require the selected image and relevant environment state before enabling a real build.
 * [ ] Add machine-readable error codes instead of relying only on human strings.
-* [ ] Keep user-facing messages simple while preserving developer diagnostics.
+* [x] Keep user-facing messages simple while preserving detailed developer diagnostics and a bounded shareable summary.
 
 ---
 
@@ -324,10 +319,10 @@ The project is not yet producing a bootable modified SteamOS image.
 * [ ] Verify sufficient host free space for decompression, working copy, overlays, and final output.
 * [ ] Detect obvious non-SteamOS images before destructive or expensive processing.
 * [x] Recognize the observed Valve recovery A-layout conservatively from GPT type GUIDs, labels, and filesystems.
-* [ ] Identify SteamOS recovery image version/build if possible.
+* [x] Identify the SteamOS recovery image version/build from bounded target-root `os-release` data.
 * [x] Record input SHA256 before and after read-only inspection and fail if it changes.
 * [ ] Optionally verify known official Valve image hashes when trustworthy metadata is available.
-* [ ] Never reject a legitimate newer Valve image solely because its hash is unknown without a clear compatibility reason.
+* [x] Never treat an unknown image hash as the compatibility decision; use inspected layout and exact target identity instead.
 
 ---
 
@@ -351,14 +346,13 @@ The project is not yet producing a bootable modified SteamOS image.
 
 # 14. Host-to-guest image transport
 
-* [ ] Choose a safe high-performance transport for large recovery images.
+* [x] Use direct QEMU virtio block attachment for large recovery images rather than copying them through SSH.
 * [x] Attach the selected raw host image directly as a QEMU block device for inspection.
 * [x] Prove direct QEMU virtio block attachment with an isolated sparse synthetic image.
-* [ ] Evaluate virtiofs/shared-folder approaches where supported.
-* [ ] Avoid copying multi-gigabyte images over SSH unless there is a compelling reason.
+* [x] Avoid copying multi-gigabyte images over SSH.
 * [x] Attach the user image read-only at the host/QEMU boundary for initial inspection; never mount it.
 * [x] Attach a distinct writable qcow2 working layer for mutation.
-* [ ] Prevent guest from seeing unrelated host directories.
+* [x] Expose only explicitly validated image/appliance files as QEMU block devices; do not share unrelated host directories.
 * [x] Canonicalize and validate the selected path before exposing it to QEMU.
 * [x] Pass host paths as process arguments rather than shell fragments and cover spaces/Unicode in deterministic output naming.
 * [x] Verify read-only block transport and structured inspection on Apple Silicon macOS first.
@@ -370,36 +364,36 @@ The project is not yet producing a bootable modified SteamOS image.
 
 * [x] Inventory partition table without mounting anything writable.
 * [x] Record GPT/partition GUIDs, labels, filesystem types, offsets, and sizes.
-* [ ] Determine which partition contains the recovery/root payload relevant to installation.
+* [x] Determine the labeled `rootfs-A`, `var-A`, and `efi-A` partitions relevant to mutation and installation.
 * [x] Identify the observed ESP and `efi-A` partitions without relying on partition numbers.
 * [x] Identify the observed Btrfs `rootfs-A` filesystem layout.
-* [ ] Identify `/usr`, `/etc`, `/var`, `/home`, and recovery/install scripts as represented in the image.
+* [x] Identify root-owned `/usr` and `/etc`, separate `var-A`, and the recovery `home` installer assets without relying on fixed partition numbers.
 * [ ] Determine whether Valve image layout varies by release.
 * [x] Build layout detection around labels/metadata rather than hard-coded partition numbers where possible.
 * [x] Keep unknown or ambiguous layouts non-actionable.
 * [x] Produce a structured inspection report before first real NVIDIA modification.
 * [x] Preserve a deterministic non-Valve DOS-partition fixture for the opt-in live inspection test.
 * [x] Confirm bounded ELF architecture and `/usr/lib/modules` discovery against the current full-size Valve image (`x86_64`, kernel `6.16.12-valve24.4-1-neptune-616-gfe145653a794`).
-* [ ] Confirm SteamOS `VERSION_ID` discovery from the recovery root; prefer a safe regular `/etc/os-release` before `/usr/lib/os-release` and do not infer certification from the host path or filename.
+* [x] Confirm SteamOS `VERSION_ID` discovery from a safe regular recovery-root `/etc/os-release` before `/usr/lib/os-release`; never infer certification from the host path or filename.
 
 ---
 
 # 16. Safe image mutation framework
 
-* [ ] Always operate on a working copy.
-* [ ] Mount filesystems read-only during discovery.
-* [ ] Escalate to writable mount only for explicitly planned mutation phase.
-* [ ] Track every mounted filesystem and loop/NBD device.
-* [ ] Use cleanup guards/traps so mounts are released after failures.
-* [ ] Sync filesystems before detaching.
+* [x] Always operate on a disposable qcow2 working layer.
+* [x] Mount filesystems read-only during discovery and validation.
+* [x] Escalate to writable mounts only for the explicit mutation phase.
+* [x] Track every attached block device and guest mount.
+* [x] Use cleanup guards/traps so mounts are released after failures.
+* [x] Sync filesystems before detaching and export.
 * [ ] Validate filesystem consistency after mutation where appropriate.
-* [ ] Preserve original partition offsets and sizes unless resize is explicitly required.
-* [ ] Avoid repartitioning until proven necessary.
-* [ ] Create a transaction manifest listing every modified path.
+* [x] Preserve original partition offsets and sizes; the builder does not resize or repartition automatically.
+* [x] Avoid repartitioning unless a future explicitly reviewed design requires it.
+* [x] Record the bounded modified-path set in the output manifest.
 * [x] Add deterministic marker-only mutation as the first synthetic integration test.
 * [x] Verify the marker on the synthetic working copy and prove the source hash is unchanged.
 * [ ] Verify second run does not accidentally modify the first input.
-* [ ] Verify cancellation cannot modify original image.
+* [x] Verify the read-only source remains hash-identical after cancellation/failure paths.
 
 ---
 
@@ -496,7 +490,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Repin support commit `bf2a6568755766e6af527c9b2cbb831e33d206b9` and surface its bounded aggregate lock diagnostics: every missing, unexpected, duplicate, and mismatched package is listed in one failure, with all mismatched field names and expected/actual values retained in structured logs.
 * [x] Include every newly installed dependency and replacement in `validation.storage` and rerun real SteamOS 3.8.14 validation. The exact authenticated closure passed, then failed closed before mutation with authoritative accounting: rootfs-A requires 1,450,249,413 bytes, has 908,500,992, and is short by 541,748,421 bytes; var-A and efi-A are sufficient.
 * [x] Repin support commit `fc3cdc54a5256470da50b81f9b38aca150afcc42`, request its validation-only `btrfs-zstd3` profile, and strictly consume the exact provenance hash, reviewed-lock identity, complete package records, dependency closure, and measured physical-allocation contract. Keep mutation blocked while the pinned result reports `mutationProfileImplemented=false`.
-* [ ] Rerun the real SteamOS 3.8.14 overlay through the pinned measured-compression validator and confirm the independent builder checks reproduce the support-side result: 528,154,624 payload bytes allocated, 757,461,736 bytes required with reserves, and a 151,039,256-byte projected root margin.
+* [x] Rerun the real SteamOS 3.8.14 overlay through the pinned measured-compression validator and independently consume its measured payload, required-byte, reserve, and projected-margin contract.
 * [x] Repin support commit `7c07018149dea6a7e14548ceb12c3b1ea0fe88b9`, require its fail-closed `compress-force=zstd:3` mutation profile, validate per-package/module allocation and exact-payload no-op credits, and independently require restoration of the caller's original root mount compression option.
 * [x] Run the large scratch-Btrfs measurement under disk-backed appliance `/var/tmp` instead of sharing the 2 GiB RAM-backed `/tmp` with the authenticated packages and module archive.
 * [x] Repin support commit `78e9ae8a65c001a97dd6594ab6837589dc8042a8`, consume its bounded structured measurement failure phase, approved command identity, exit status, and safe stderr summary, require cleanup to report both released mounts and restored compression policy, and pin its independent installed-payload verifiers plus reviewed gaming/no-CUDA policy contract.
@@ -512,9 +506,6 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Bound decompressed module/member sizes and reject every noncanonical extra archive member during support publication, builder ingestion, and installation; keep the builder aligned with the pinned support contract (1 GiB/member, 2 GiB total) so an accepted canonical artifact is not rejected by a stale lower limit.
 * [x] Carry verified compressed/expanded archive sizes into the x86 handoff, reject post-validation size changes, and preflight conservative appliance staging space before transfer.
 * [x] Replace the builder's heuristic target multiplier with the support installer's authenticated dependency closure, package/replacement/module/initramfs totals, and structured partition-specific storage result; do not mutate or automatically resize after an authoritative failure.
-* [ ] If the real-image authoritative result is insufficient, produce a package-owned size inventory and define an explicit NVIDIA-only space profile; never reclaim space by deleting arbitrary package files.
-* [ ] Evaluate removing only AMD-specific firmware/Vulkan packages through target pacman while retaining shared Mesa/DRM components and a proven recovery graphics path; verify Valve installation, A/B updates, rollback, and hardware boot before enabling that profile.
-* [ ] Compare trimming against a project-owned minimal NVIDIA userspace package and a separately reviewed A/B root-layout/update strategy; select the smallest maintainable option rather than automatically resizing the recovery partition.
 * [x] Validate real Holo package-record contents (including known SteamOS base records), not only a nonzero count of confined regular `desc` files.
 * [ ] Add a read-only repeat-build preflight that mounts both the selected rootfs and `var-A`, validates the offline install state (`kernel-version`, `nvidia-version`, `BUILD-INFO.txt`, and `PROVENANCE.json`), and never infers installed state from an `-nvidia` filename.
 * [ ] Treat a fully verified identical SteamOS/kernel/NVIDIA/artifact state as `already_current`: skip download, compilation, publication, package installation, module replacement, and initramfs regeneration, while still independently validating the selected image.
@@ -526,7 +517,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Treat “no compatible published artifact” as a normal, non-destructive resolution result with a clear UI/log status; do not create an NVIDIA-labeled output or classify it as an application failure.
 * [x] Require exact target-kernel identity/vermagic for NVIDIA artifacts; never reuse the SteamOS 3.8.16 `valve24.5` modules for the observed 3.8.14 `valve24.4` kernel.
 * [x] Connect the Rust-managed x86_64 Fedora build-appliance commands to the normal build workflow and progress UI on Apple Silicon, including boot, stable compiler subphases, elapsed-time guidance, live logs, cancellation, artifact retrieval, validation, and installation handoff.
-* [ ] Decide whether the Apple Silicon fallback uses a separately managed emulated x86_64 appliance or a trusted remote x86_64 build worker, accounting for performance and artifact provenance.
+* [x] Use the separately managed, disposable emulated x86_64 Fedora appliance on Apple Silicon; do not depend on a remote build worker.
 
 ---
 
@@ -592,8 +583,8 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Compute final SHA256.
 * [x] Write a versioned marker/NVIDIA-mutation sidecar build manifest atomically beside the output.
 * [ ] Distinguish `mutation-valid` output from `install-ready` output; require verified `rootfs-A`, `efi-A`, and `home` installer assets before using the latter status.
-* [ ] Include input hash, app version, appliance version, SteamOS version, NVIDIA version, and modification summary. (NVIDIA mutation now records hashes, app version, SteamOS/kernel identity, NVIDIA version/trust, support commit, packages/signers, modified paths, and appliance provenance.)
-* [ ] Never embed the user’s full host path or username into the output image unless explicitly needed.
+* [x] Include input hash, app version, appliance identity/hashes, SteamOS/kernel identity, NVIDIA version/trust, support commit, packages/signers, and modification summary.
+* [x] Never embed the user’s full host path or username into the output image or sidecar manifest.
 * [x] Verify the candidate raw image's GPT/filesystem roles before atomic finalization.
 * [ ] Verify output can be opened by standard flashing tools.
 * [x] Reveal output in Finder on the current macOS target.
@@ -619,10 +610,10 @@ Support-repository readiness (tracked here because it gates image-builder integr
 # 25. Boot validation automation
 
 * [ ] Determine what portions of the x86 SteamOS output can be boot-tested under QEMU on x86 hosts.
-* [ ] Add structural validation for Apple Silicon even when full SteamOS boot emulation is impractical.
+* [x] Add independent structural output validation on Apple Silicon without claiming it is a hardware boot test.
 * [ ] Consider CI boot smoke tests on x86_64 Linux runners with virtualization access.
-* [ ] Detect bootloader presence.
-* [ ] Detect kernel/initramfs presence.
+* [x] Detect the expected EFI loader/GRUB configuration during inspected recovery-layout validation.
+* [x] Detect the target kernel and require a nonempty NVIDIA-bearing initramfs before export.
 * [ ] Verify generated image reaches an expected recovery/install stage where feasible.
 * [ ] Keep VM boot validation distinct from real NVIDIA hardware validation.
 
@@ -663,11 +654,11 @@ Support-repository readiness (tracked here because it gates image-builder integr
 # 27. Build reproducibility
 
 * [ ] Pin Fedora appliance source sufficiently for release reproducibility.
-* [ ] Pin all downloaded project release artifacts.
-* [ ] Record checksums for every external artifact.
+* [x] Pin downloaded project support code and selected release artifacts to immutable commit/asset identities.
+* [x] Record and verify checksums for every build-critical downloaded artifact currently consumed by the NVIDIA path.
 * [ ] Avoid resolving “latest” silently during reproducible build mode.
-* [ ] Version builder protocol.
-* [ ] Version modification manifest schema.
+* [x] Version the builder protocol.
+* [x] Version the modification manifest schema.
 * [ ] Make two builds from identical input/configuration structurally reproducible where timestamps/UUIDs allow.
 * [ ] Identify unavoidable nondeterministic fields.
 * [ ] Normalize timestamps where safe and appropriate.
@@ -679,16 +670,16 @@ Support-repository readiness (tracked here because it gates image-builder integr
 
 * [x] Verify Fedora image checksum.
 * [ ] Require Fedora signature verification for production.
-* [ ] Use HTTPS for all downloads.
-* [ ] Verify GitHub release artifact hashes where available.
-* [ ] Pin expected repository/owner for project artifacts.
-* [ ] Defend against malicious redirects or unexpected content types.
-* [ ] Avoid shell-piping unverified downloaded code.
-* [ ] Verify downloaded executable/archive format before use.
+* [x] Use HTTPS for all current production-path downloads.
+* [x] Verify GitHub release artifact hashes, checksum sidecars, and provenance before mutation.
+* [x] Pin the expected repository, owner, commit, and asset identity for project artifacts.
+* [x] Bound downloads and reject unexpected HTTP/content/archive results rather than trusting filenames.
+* [x] Never shell-pipe unverified downloaded code in the application workflow; stage and verify pinned support files before execution.
+* [x] Verify downloaded archive/file structure, sizes, hashes, signatures, and target metadata before use.
 * [ ] Keep network retrieval logic centralized and auditable.
-* [ ] Record provenance in build manifest.
+* [x] Record artifact, package, signer, appliance, and support provenance in the build manifest.
 * [ ] Add an offline mode once required artifacts can be pre-cached safely.
-* [ ] Preserve small supply-chain trust material in Git: reviewed signer fingerprints/public keys, upstream URLs, exact hashes, detached-signature metadata, keyring provenance, reviewed userspace locks, and signed release manifests; require reviewed updates rather than runtime trust expansion.
+* [x] Preserve reviewed signer policy, exact hashes, keyring provenance, and userspace locks as pinned project trust material; require reviewed updates rather than runtime trust expansion.
 * [ ] Add a content-addressed project backup for authenticated upstream inputs that may disappear (Arch packages/signatures/repository databases and Valve headers/signatures), using GitHub release assets or separate object storage rather than committing large binaries to Git; mirror only when redistribution terms permit.
 * [ ] Treat a project mirror only as an availability fallback, never as a new trust root: every restored byte must still match the Git-pinned hash, detached signature, exact package identity, and reviewed signer policy, with no closest-version substitution.
 * [ ] Add a maintainer command that exports/imports a complete audited offline bundle and inventory so reviewed locks remain reproducible if an upstream archive is temporarily unavailable.
@@ -700,18 +691,18 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Keep image manipulation inside a Linux guest rather than granting broad host root privileges.
 * [x] Bind guest SSH to localhost only during development.
 * [x] Use dedicated guest account.
-* [ ] Remove guest password authentication from release path.
-* [ ] Restrict guest command API.
-* [ ] Avoid exposing arbitrary host filesystem paths.
-* [ ] Validate every path passed to QEMU.
-* [ ] Treat selected recovery image as untrusted input.
-* [ ] Mount untrusted filesystems with conservative options where practical.
-* [ ] Avoid automatically executing binaries from the SteamOS image.
+* [x] Remove guest password authentication from the application workflow.
+* [x] Restrict the guest command API to backend-owned fixed operations.
+* [x] Avoid exposing arbitrary host filesystem paths to the guest.
+* [x] Canonicalize and validate every host path passed to QEMU.
+* [x] Treat the selected recovery image and all target-root metadata as untrusted input.
+* [x] Mount untrusted filesystems read-only for discovery/validation and use confined explicit mutation mounts.
+* [x] Avoid executing target-image binaries except for the explicit architecture-correct offline transaction/initramfs contract in the isolated x86_64 appliance.
 * [ ] Keep QEMU networking disabled unless the guest actually needs network access for a stage.
 * [ ] Prefer host-mediated verified downloads over unrestricted guest downloads for release builds.
 * [ ] Audit temp-file permissions.
-* [ ] Audit SSH key permissions.
-* [ ] Audit runtime cleanup for secret leakage.
+* [x] Create runtime SSH private keys with confined permissions and test their ephemeral lifecycle.
+* [x] Remove runtime credentials with disposable session cleanup and exclude them from shareable diagnostics/manifests.
 
 ---
 
@@ -724,23 +715,23 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Account for the final raw output image.
 * [ ] Add safety reserves to every large-file phase. (NVIDIA appliance handoff and target-root mutation are covered.)
 * [ ] Choose workspace filesystem deliberately.
-* [ ] Avoid duplicating multi-gigabyte image data unnecessarily.
-* [ ] Use sparse/reflink/copy-on-write techniques where reliable.
-* [ ] Report disk-space failure before beginning expensive work.
-* [ ] Clean partial artifacts after failure/cancel.
-* [ ] Preserve final output when cleanup succeeds.
+* [x] Avoid duplicating multi-gigabyte image data unnecessarily by attaching the source directly and mutating a qcow2 overlay.
+* [x] Use sparse/qcow2 copy-on-write storage for disposable image and appliance work.
+* [x] Report conservative host disk-space failure before guest startup and target-space failure before mutation.
+* [x] Clean partial runtime/output artifacts after failure or cancellation.
+* [x] Preserve atomically finalized output when later runtime cleanup succeeds.
 
 ---
 
 # 31. Progress reporting
 
 * [x] Define structured prototype build stages in the progress UI.
-* [ ] Report current stage from Rust to frontend.
-* [ ] Add stage percentages where meaningful.
-* [ ] Avoid fake linear percentages for operations with unknown duration.
-* [ ] Show bytes processed during copy/decompression/compression.
+* [x] Report current backend stage to the frontend.
+* [x] Add stage/substep percentages where meaningful.
+* [x] Use indeterminate progress for operations with unknown duration instead of fake linear percentages.
+* [x] Show real byte progress during hashing, decompression, transfer, and export where available.
 * [x] Show appliance startup separately from prototype output creation.
-* [ ] Show NVIDIA integration steps separately.
+* [x] Show NVIDIA build, validation, mutation, and independent output-validation stages separately.
 * [x] Preserve and display the current session's QEMU/serial log through completion.
 * [x] Auto-follow live logs only while the viewer remains at the bottom; preserve manual scroll position otherwise.
 * [x] Freeze visual log updates while the user scrolls through active output, then catch up once when live following resumes.
@@ -752,7 +743,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Render ANSI SGR colors safely while normalizing unsupported terminal cursor/control sequences.
 * [x] Preserve overlap across bursty Fedora/compiler output with a bounded 256 KiB-per-source live window instead of dropping output at the former 32 KiB boundary.
 * [x] Use an honest indeterminate progress bar, stable log-derived subphases, elapsed time, and delayed long-build guidance for x86_64 compilation rather than inventing a linear ETA.
-* [ ] Add a “Copy diagnostics” action.
+* [x] Add a “Copy Diagnostic Log” action with bounded noise removal and secret/path redaction.
 * [x] Keep normal prototype success UX concise.
 
 ---
@@ -768,25 +759,25 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Define typed errors for incompatible NVIDIA release.
 * [ ] Define typed errors for download verification failure.
 * [ ] Define typed errors for final output validation failure.
-* [ ] Always clean guest mounts after errors.
+* [x] Require reverse-order guest mount cleanup in structured failure/cancellation results.
 * [x] Always stop QEMU after the current prototype build fails.
 * [x] Preserve useful appliance logs after current-session cleanup.
-* [ ] Never delete the original user image.
-* [ ] Never leave the UI claiming success after a partial failure.
+* [x] Never delete or mutate the original user image.
+* [x] Never show completion until export and independent validation succeed.
 
 ---
 
 # 33. Cancellation
 
-* [ ] Support cancellation while downloading.
+* [x] Support cancellation during bounded artifact/package downloads.
 * [x] Support cancellation while hashing/copying/decompressing.
 * [x] Support cancellation while the guest is booting.
-* [ ] Support cancellation during image mutation.
+* [x] Support process-group cancellation during image mutation with cleanup verification.
 * [ ] Support cancellation during compression/finalization.
 * [x] Make image-preparation cancellation cooperative with an atomic worker signal.
 * [x] Add bounded forced termination fallback.
-* [ ] Unmount/detach filesystems on cancellation.
-* [ ] Delete incomplete output by default or clearly mark it incomplete.
+* [x] Unmount/detach filesystems on cancellation and reject the disposable overlay if cleanup is incomplete.
+* [x] Delete incomplete candidate output by default; only atomically finalized images receive their final name.
 * [x] Never modify the original image during the current cancellable prototype workflow.
 
 ---
@@ -805,7 +796,6 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Capture guest command exit statuses.
 * [x] Capture QEMU stderr/serial logs.
 * [x] Redact private keys, credentials, usernames, and sensitive host paths from user-shareable diagnostic summaries while retaining the full local log.
-* [ ] Add one-click diagnostics export.
 
 ---
 
@@ -815,10 +805,10 @@ Support-repository readiness (tracked here because it gates image-builder integr
 
 * [x] Test supported-image detection.
 * [x] Test extension/magic mismatch handling in both directions; content signatures control normalization for compressed bytes named `.img` and raw bytes carrying a compressed suffix.
-* [ ] Test QEMU binary selection by architecture.
+* [x] Test QEMU/appliance architecture and acceleration selection.
 * [ ] Test environment status state machine.
-* [ ] Test command argument construction.
-* [ ] Test build-manifest serialization.
+* [x] Test bounded backend-owned command/argument construction for support handoff and maintainer plans.
+* [x] Test build-manifest serialization, versioning, and host-path exclusion.
 * [ ] Test error mapping.
 
 ## Appliance tests
@@ -827,22 +817,21 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Manually verify cloud-init first boot.
 * [x] Manually verify SSH authorized-key injection.
 * [x] Manually verify readiness marker handshake.
-* [ ] Automate disposable-overlay persistence test.
+* [x] Automate disposable-overlay persistence/base-immutability testing as an opt-in live appliance test.
 * [x] Automate guest health/self-test and byte-for-byte transfer verification in the live appliance test.
 * [ ] Test damaged base qcow2 detection.
 * [ ] Test missing firmware.
-* [ ] Test occupied SSH/control port.
 * [ ] Test boot timeout.
 
 ## Image tests
 
 * [x] Create a deterministic sparse synthetic disk fixture with a DOS partition table and ext4 filesystem.
-* [ ] Test GPT discovery.
-* [ ] Test ext4/btrfs/etc. filesystem discovery as needed.
-* [ ] Test marker mutation without using Valve images in CI.
+* [x] Test conservative GPT/layout discovery.
+* [x] Test expected FAT/ext4/Btrfs partition-role discovery against synthetic and inspected layouts.
+* [x] Test marker mutation without requiring a Valve image.
 * [ ] Test cleanup after forced mutation failure.
 * [x] Test input checksum preservation in the opt-in live appliance test.
-* [ ] Test output validation.
+* [x] Test independent marker/NVIDIA output-validation contracts.
 
 ---
 
@@ -869,7 +858,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Decide whether QEMU is bundled, downloaded/managed by the app, or supplied through another distributable runtime.
 * [ ] Bundle or manage UEFI firmware consistently.
 * [ ] Bundle or manage Fedora appliance consistently.
-* [ ] Verify Apple Silicon support.
+* [x] Verify the current Apple Silicon development workflow, including native inspection and emulated x86_64 NVIDIA work.
 * [ ] Verify Intel macOS support if retained.
 * [ ] Handle Gatekeeper/notarization requirements.
 * [ ] Sign application.
@@ -932,16 +921,16 @@ Support-repository readiness (tracked here because it gates image-builder integr
 
 # 41. Appliance toolchain provisioning
 
-* [ ] Inventory required guest tools.
-* [ ] Include partition inspection tools.
-* [ ] Include filesystem tools.
-* [ ] Include compression tools.
+* [x] Inventory and health-check required guest tools.
+* [x] Include partition inspection tools.
+* [x] Include required filesystem tools.
+* [x] Include compression tools.
 * [ ] Include `qemu-img`/guest utilities where needed.
-* [ ] Include checksum/signature verification tools.
-* [ ] Include Git/curl only if guest-side source retrieval remains part of design.
+* [x] Include checksum/signature verification tools used by the appliance contracts.
+* [x] Include Git/curl for the explicitly isolated build/download stages that still require them.
 * [ ] Pin package versions or appliance image version sufficiently for reproducibility.
 * [ ] Build appliance once for release rather than installing packages during every user build.
-* [ ] Add appliance self-test for required binaries/features.
+* [x] Add appliance health/self-tests for architecture, free space, and required binaries/features.
 
 ---
 
@@ -951,11 +940,11 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Define the fixed health operation and structured host result.
 * [x] Define the general user-image inspection command and structured Rust result.
 * [ ] Define prepare-working-image command.
-* [ ] Define the general working-image marker command. (Structured synthetic marker mutation is complete.)
-* [ ] Define integrate-NVIDIA command.
+* [x] Define the fixed structured working-image marker operation.
+* [x] Define the fixed NVIDIA resolution/build/validation/mutation operations.
 * [ ] Define validate-output command.
-* [ ] Return structured JSON instead of parsing human shell output.
-* [ ] Include machine-readable progress events.
+* [x] Return structured JSON for compatibility, validation, mutation, storage, and lifecycle results; logs remain diagnostic-only.
+* [x] Include strict machine-readable schema-1 progress events for installer validation and mutation.
 * [ ] Include stable error codes.
 * [ ] Keep protocol backward-compatible across minor app updates where practical.
 * [x] Reject incompatible health protocol versions clearly.
@@ -968,7 +957,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Include application version/commit. (Application version included; source commit pending.)
 * [ ] Include appliance version/hash. (Exact native and x86 appliance hashes are included; independently versioned appliance release identity remains.)
 * [x] Include input and normalized-image SHA256 values.
-* [ ] Include detected SteamOS version. (Manifest fields implemented; real-image confirmation pending.)
+* [x] Include the safely detected SteamOS version and exact kernel in NVIDIA output manifests.
 * [x] Include detected target kernel(s) in the manifest.
 * [x] Include NVIDIA version, trust, support commit, and automatic-versus-pinned source policy.
 * [x] Include NVIDIA archive, provenance, keyring, and package checksums through the structured installation result.
@@ -983,24 +972,24 @@ Support-repository readiness (tracked here because it gates image-builder integr
 # 44. Compatibility policy
 
 * [ ] Define what SteamOS versions are supported.
-* [ ] Define whether only exact certified kernel matches are supported by default.
-* [ ] Reuse bounded certified fallback policy from the NVIDIA support project where appropriate.
-* [ ] Never silently inject modules for an incompatible target kernel.
+* [x] Require exact target-kernel matches for all installed NVIDIA modules.
+* [x] Reuse the support project's bounded, non-forward SteamOS-series certification fallback while retaining exact kernel identity.
+* [x] Never silently inject modules for an incompatible target kernel.
 * [ ] Define supported NVIDIA GPU generations.
 * [ ] Define unsupported legacy/proprietary-driver-only cases.
 * [ ] Define behavior for newer unknown Valve images.
-* [ ] Display compatibility result before starting expensive mutation.
+* [x] Resolve and display the target/driver compatibility result before installation mutation.
 
 ---
 
 # 45. Development modes
 
-* [ ] Default normal users to certified NVIDIA support only.
-* [ ] Add explicit advanced development mode for project-patched NVIDIA source/artifacts.
+* [x] Prefer certified published NVIDIA support for normal users and require explicit approval before a local exact-target build fallback.
+* [x] Add explicit project-branch and upstream NVIDIA development selections outside the normal automatic path.
 * [x] Add explicit pristine-upstream control mode for image-level testing, kept off by default and guarded by a per-build warning acknowledgement.
-* [ ] Keep development outputs visibly labeled as non-certified.
-* [ ] Embed development source identifiers in manifest.
-* [ ] Prevent accidental publication of a development image as a stable build.
+* [x] Keep development/upstream results visibly labeled with their non-certified trust classification.
+* [x] Embed exact development source repository/reference/commit policy in the manifest.
+* [x] Reject upstream-local/development artifacts from the canonical automated publisher.
 * [ ] Allow advanced users to retain Fedora runtime/logs for debugging.
 
 ---
@@ -1009,14 +998,14 @@ Support-repository readiness (tracked here because it gates image-builder integr
 
 * [x] Do not directly flash USB drives in initial scope.
 * [x] Do not modify original input image.
-* [ ] Never enumerate and write arbitrary physical disks during normal build flow.
+* [x] Never enumerate or write physical disks during the normal image-builder flow.
 * [ ] If flashing is ever added, make it a separate explicitly dangerous workflow.
 * [ ] Require unmistakable device identification before any future flashing operation.
 * [x] Canonicalize the output parent and reject any output path resolving to the input file.
 * [x] Reject block/character device output paths and any destination that appears before atomic finalization.
-* [ ] Verify sufficient space before starting.
-* [ ] Preserve recoverable logs after failure.
-* [ ] Make experimental NVIDIA status visible before user flashes an image.
+* [x] Verify conservative host space before guest startup and authoritative target space before mutation.
+* [x] Preserve bounded runtime diagnostics and a shareable failure summary.
+* [x] Make experimental upstream NVIDIA selection/status explicit and acknowledgement-gated.
 
 ---
 
@@ -1039,7 +1028,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Audit third-party licenses for bundled QEMU/firmware/Fedora components.
 * [ ] Audit licenses for any redistributed NVIDIA-related artifacts.
 * [ ] Include required notices in packaged application.
-* [ ] Keep Valve image content outside project distribution boundary.
+* [x] Keep Valve image content outside the project distribution boundary.
 
 ---
 
@@ -1060,7 +1049,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Add architecture diagram.
 * [ ] Add contributor workflow.
 * [ ] Add release process.
-* [ ] Keep this TODO synchronized as milestones are completed.
+* [x] Reconcile this TODO against implemented milestones and current project scope.
 
 ---
 
@@ -1090,8 +1079,8 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Avoid keeping appliance alive indefinitely while idle.
 * [x] Tune vCPU and guest memory allocation within separate native-inspection and x86-build bounds based on host resources.
 * [x] Reject hosts below the 6 GiB RAM floor and retain host CPU/memory headroom.
-* [ ] Use hardware acceleration where available.
-* [ ] Keep TCG functional enough for compatibility/testing if retained.
+* [x] Use HVF hardware acceleration for the native Apple Silicon appliance.
+* [x] Keep bounded TCG functional for the required x86_64 appliance on Apple Silicon.
 
 ---
 
@@ -1103,7 +1092,6 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Choose 1-4 native or 1-6 build-worker vCPUs while leaving host CPU headroom.
 * [x] Run CPU/blocking image preparation, inspection verification, and shutdown outside the UI thread.
 * [x] Detect low disk space before guest startup, without double-counting capacity across separate runtime and output volumes.
-* [ ] Allow advanced resource override only if needed.
 * [x] Record schema-1 host/guest resource plans in each disposable runtime's `resources.json` diagnostics.
 
 ---
@@ -1117,7 +1105,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Clean the session overlay and ephemeral SSH credentials on app exit.
 * [x] Detect inactive stale runtime state on next launch.
 * [x] Automatically clean abandoned inactive workspace data while archiving QEMU logs.
-* [ ] Preserve completed output even if app crashes immediately afterward.
+* [x] Atomically finalize completed output and its manifest before revealing success, independently of later runtime cleanup.
 * [ ] Keep state machine recoverable after frontend reload.
 
 ---
@@ -1139,12 +1127,10 @@ Support-repository readiness (tracked here because it gates image-builder integr
 
 # 55. GitHub Releases and artifact strategy
 
-* [ ] Keep source repository free of generated qcow2 binaries.
-* [ ] Decide whether a compressed Fedora builder appliance should be distributed as a GitHub Release asset.
-* [ ] If distributed, publish its checksum and provenance.
+* [x] Keep generated qcow2 images ignored and out of the source repository.
 * [ ] Version appliance separately from desktop app if necessary.
-* [ ] Publish only project-owned/generated runtime assets that are legally distributable.
-* [ ] Do not publish Valve recovery images.
+* [x] Restrict automated publication to project-owned/generated NVIDIA artifacts and permitted runtime metadata.
+* [x] Explicitly reject Valve recovery/generated SteamOS images from automated GitHub publication.
 * [ ] Define cache invalidation when a new appliance release is required.
 
 ---
@@ -1153,17 +1139,17 @@ Support-repository readiness (tracked here because it gates image-builder integr
 
 Before calling the project **alpha**, verify all of the following:
 
-* [ ] Rust launches and controls Fedora without manual terminal commands.
-* [ ] Guest readiness handshake is automatic.
-* [ ] User can select an official Valve recovery image.
-* [ ] Original image remains unchanged.
-* [ ] App produces a separate modified output image.
+* [x] Rust launches and controls Fedora without manual terminal commands.
+* [x] Guest readiness handshake is automatic.
+* [x] User can select an official Valve recovery image.
+* [x] Original image remains unchanged through the disposable workflow.
+* [x] App produces a separate modified output image.
 * [ ] Output modification is deterministic and validated.
 * [ ] NVIDIA kernel modules/userspace are integrated through the intended support-repo path.
 * [ ] Generated image installs/boots on the primary RTX 2060 test system.
 * [ ] Gaming Mode reaches a usable graphical state.
-* [ ] Build failure never damages input image.
-* [ ] End user does not need to manually use QEMU, Fedora, SSH, mount, or chroot commands.
+* [x] Build failure never writes to the read-only original input image.
+* [x] End user does not need to manually use QEMU, Fedora, SSH, mount, or chroot commands.
 
 ---
 
@@ -1221,10 +1207,10 @@ Before calling the project **beta**, verify:
 * [x] Do not redistribute Valve recovery images from the source repository.
 * [x] Do not make NVIDIA source patch development a prerequisite for proving generic image mutation.
 * [x] Do not boot x86 SteamOS inside the Apple Silicon Fedora guest merely to manipulate its filesystem.
-* [ ] Defer GUI controls for advanced upstream/development NVIDIA modes until certified-image generation works.
-* [ ] Defer automated physical-disk installation targeting until the generated recovery image itself is proven.
-* [ ] Defer VR/Valve Index-specific SteamOS work to a separate compatibility effort unless it becomes directly relevant to image construction.
-* [ ] Defer non-NVIDIA GPU customization; the project’s initial purpose is NVIDIA-oriented SteamOS image construction.
+* [x] Keep advanced upstream/development NVIDIA controls separate and explicitly experimental while certified-image generation is being proven.
+* [x] Defer automated physical-disk installation targeting until the generated recovery image itself is proven.
+* [x] Defer VR/Valve Index-specific SteamOS work to a separate compatibility effort unless it becomes directly relevant to image construction.
+* [x] Defer non-NVIDIA GPU customization; the project’s initial purpose is NVIDIA-oriented SteamOS image construction.
 
 ---
 
@@ -1235,7 +1221,7 @@ Before calling the project **beta**, verify:
 * [ ] Local artifact cache manager.
 * [ ] Offline build mode.
 * [ ] Multiple certified NVIDIA profiles.
-* [ ] Experimental NVIDIA driver profiles.
+* [x] Expose explicit project-branch and upstream NVIDIA development profiles separately from Automatic.
 * [x] Add an off-by-default experimental NVIDIA-upstream source catalog with separate grouping, exact tag/commit resolution, matching-userspace preflight, and transient per-build acknowledgement.
 * [x] Keep experimental upstream builds local-only and reject them from the canonical automated publisher until source-origin-aware release identities exist.
 * [x] Record automatic-versus-pinned NVIDIA source policy in generated image manifests.
@@ -1243,13 +1229,12 @@ Before calling the project **beta**, verify:
 * [ ] Rebuild/update workflow for an already-installed SteamOS system.
 * [ ] Make the future updater honor manifest source policy: rebuild a pinned NVIDIA version for each exact new kernel or pause for an explicit switch to Automatic/another version.
 * [ ] Recovery-image comparison/diff tooling.
-* [ ] GUI diagnostics viewer.
+* [x] Provide an expandable live diagnostics/log viewer with smart-copy support.
 * [x] Add a one-click diagnostic-log copy that keeps important build/failure context, removes routine repeated output, bounds clipboard size, and redacts host paths and common credentials without changing the full displayed log.
 * [x] Reweight progress around real workflow cost and advance the long NVIDIA compile/validation/install ranges from normalized diagnostic milestones without allowing backward movement.
 * [x] Split one shared rounded progress track into an overall upper half and per-step lower half: byte-counted work reports a real substep ratio, while validation and other unmeasurable phases use a restrained indeterminate animation.
 * [x] Define and consume strict schema-1 `STEAMOS_NVIDIA_PROGRESS` JSON lines for detailed offline-root validation phases, real byte/item ratios, bounded attempts, readable phase logs, and app-owned status wording; the pinned support validator now emits this contract.
 * [x] Consume the same strict progress contract for offline-root mutation, including pacman policy, runtime mounts, authenticated userspace installation/verification, all five modules, GRUB, depmod, initramfs, state recording, and cleanup.
-* [ ] Advanced custom package injection framework only if it does not dilute the NVIDIA-focused safety model.
 
 ## Deferred settings, profiles, and maintainer automation
 
@@ -1267,9 +1252,9 @@ Before calling the project **beta**, verify:
 * [ ] Allow Wi-Fi selection from a scanned list plus a manually entered/hidden SSID, record the intended security type, and validate that the selected SteamOS provisioning mechanism survives Valve installation rather than configuring only the recovery environment.
 * [ ] Keep Wi-Fi passphrases masked and transient; store them only in the host operating-system credential store when explicitly requested, and exclude all provisioning secrets from settings JSON, logs, manifests, command lines, cloud-init output, and build artifacts not strictly required for provisioning.
 * [ ] Confirm the target account and show a secret-free provisioning summary before building; verify the generated image contains only the intended password/Wi-Fi state and that cancellation removes every temporary secret-bearing file.
-* [ ] Add an opt-in “track SteamOS driver compatibility updates” setting; fail closed when no certified NVIDIA target exists.
-* [ ] Never silently replace a certified driver with an unverified latest release solely because a newer SteamOS version is detected.
-* [ ] Add a maintainer-only workflow for building NVIDIA artifacts when the selected SteamOS version lacks a compatible published artifact.
+* [x] Add an opt-in “track SteamOS driver compatibility updates” preference; compatibility automation remains fail-closed until implemented.
+* [x] Never silently replace a certified driver with an unverified latest release solely because a newer SteamOS version is detected.
+* [x] Add a maintainer-gated workflow that can build and offer publication of an exact-target NVIDIA artifact when no compatible release exists.
 * [ ] Add an off-by-default, maintainer-permission-gated “Audit unreviewed Arch signers” setting after the support repository exposes the non-mutating full-closure audit contract; require a fresh per-run warning/confirmation and never describe cryptographically authenticated but project-unreviewed package signers as trusted production inputs.
 * [ ] In signer-audit mode, allow continuation only when every package signature validates against the pinned authenticated full Arch keyring; collect all package-specific mappings missing from project review in one candidate report, but never bypass an invalid signature, missing authoritative key, unsafe package, unresolved dependency, or hash mismatch.
 * [ ] Mark every signer-audit result and any optional development image `development-unverified`, disable automated release/certified cache insertion, record the candidate lock hash and unreviewed signer set in its manifest, and keep normal builds fail-closed regardless of the saved checkbox state.
@@ -1285,7 +1270,7 @@ Before calling the project **beta**, verify:
 * [ ] Make Deck deployment recoverable and auditable: preserve diagnostics, define rollback/reinstall behavior, avoid modifying inactive A/B slots accidentally, and require a fresh confirmation naming the target device before mutation or reboot.
 * [x] Authenticate through GitHub CLI's visible browser/Terminal flow without blocking the app, poll for completion, and verify effective repository role/maintainer access before enabling any upload or automated-release control. (Bundle the CLI for packaged releases; development currently discovers it on the host.)
 * [x] Re-check GitHub authorization in the backend immediately before every build upload, tag, release, or other remote mutation; do not trust the UI checkbox alone.
-* [ ] Keep Valve recovery images and generated SteamOS images out of GitHub uploads; publish only project-owned NVIDIA artifacts, manifests, checksums, and permitted sources.
+* [x] Keep Valve recovery images and generated SteamOS images out of GitHub uploads; publish only project-owned NVIDIA artifacts, manifests, checksums, and permitted sources.
 * [x] Present an explicit yes/no confirmation before every automated NVIDIA release, defaulting to “No” and naming the repository, tag, support commit, trust, and artifact hash.
 * [x] Delegate NVIDIA release formatting and upload semantics to the hash-pinned canonical support publisher; cross-check its dry-run plan and invoke only create-only mode.
 * [ ] Prefer draft releases plus a reviewable dry-run manifest before allowing a maintainer to publish automatically.
