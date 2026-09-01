@@ -100,6 +100,21 @@ mod tests {
         let loaded: BuilderSettings = serde_json::from_slice(&fs::read(&path).expect("read settings"))
             .expect("parse settings");
         assert!(loaded.track_steamos_driver_updates);
+        let shared = Arc::new(path.clone());
+        let writers = (0..8).map(|index| {
+            let path = Arc::clone(&shared);
+            thread::spawn(move || {
+                let settings = BuilderSettings {
+                    track_steamos_driver_updates: index % 2 == 0,
+                    include_upstream_nvidia_releases: index % 3 == 0,
+                    ..Default::default()
+                };
+                save_builder_settings_path(&path, &settings)
+            })
+        }).collect::<Vec<_>>();
+        for writer in writers { writer.join().expect("settings writer thread").expect("serialized settings write"); }
+        serde_json::from_slice::<BuilderSettings>(&fs::read(&path).expect("read concurrent settings"))
+            .expect("concurrent settings remain complete JSON");
         #[cfg(unix)] assert_eq!(fs::metadata(&path).expect("settings metadata").permissions().mode() & 0o777, 0o600);
         assert!(fs::read_dir(&root).expect("list settings fixture")
             .all(|entry| !entry.expect("settings entry").file_name().to_string_lossy().ends_with(".tmp")));

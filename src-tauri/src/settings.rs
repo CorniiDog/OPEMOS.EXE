@@ -1,6 +1,13 @@
 use super::*;
 
 static SETTINGS_WRITE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static SETTINGS_TRANSACTION_LOCK: Mutex<()> = Mutex::new(());
+
+fn settings_transaction_lock() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    SETTINGS_TRANSACTION_LOCK
+        .lock()
+        .map_err(|_| "The settings transaction lock is unavailable.".into())
+}
 
 pub(crate) fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
@@ -10,6 +17,11 @@ pub(crate) fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 pub(crate) fn load_builder_settings(app: &tauri::AppHandle) -> Result<BuilderSettings, String> {
+    let _guard = settings_transaction_lock()?;
+    load_builder_settings_unlocked(app)
+}
+
+fn load_builder_settings_unlocked(app: &tauri::AppHandle) -> Result<BuilderSettings, String> {
     let path = settings_path(app)?;
     if !path.exists() {
         return Ok(BuilderSettings::default());
@@ -24,7 +36,7 @@ pub(crate) fn load_builder_settings(app: &tauri::AppHandle) -> Result<BuilderSet
         }
         settings.schema_version = BUILDER_SETTINGS_SCHEMA;
         settings.omit_optional_cuda = false;
-        save_builder_settings(app, &settings)?;
+        save_builder_settings_path_unlocked(&settings_path(app)?, &settings)?;
     } else if settings.schema_version != BUILDER_SETTINGS_SCHEMA {
         return Err(format!(
             "Unsupported settings schema {}; expected {}.",
@@ -34,19 +46,16 @@ pub(crate) fn load_builder_settings(app: &tauri::AppHandle) -> Result<BuilderSet
     Ok(settings)
 }
 
-pub(crate) fn save_builder_settings(
-    app: &tauri::AppHandle,
+#[cfg(test)]
+pub(crate) fn save_builder_settings_path(
+    path: &Path,
     settings: &BuilderSettings,
 ) -> Result<(), String> {
-    if settings.schema_version != BUILDER_SETTINGS_SCHEMA {
-        return Err(format!(
-            "Only settings schema {BUILDER_SETTINGS_SCHEMA} can be saved."
-        ));
-    }
-    save_builder_settings_path(&settings_path(app)?, settings)
+    let _guard = settings_transaction_lock()?;
+    save_builder_settings_path_unlocked(path, settings)
 }
 
-pub(crate) fn save_builder_settings_path(
+fn save_builder_settings_path_unlocked(
     path: &Path,
     settings: &BuilderSettings,
 ) -> Result<(), String> {
@@ -220,7 +229,8 @@ pub(crate) async fn update_builder_settings(
     settings: BuilderSettings,
 ) -> Result<BuilderSettings, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let current = load_builder_settings(&app)?;
+        let _guard = settings_transaction_lock()?;
+        let current = load_builder_settings_unlocked(&app)?;
         let mut settings = settings;
         settings.schema_version = BUILDER_SETTINGS_SCHEMA;
         if settings.omit_optional_cuda {
@@ -237,7 +247,7 @@ pub(crate) async fn update_builder_settings(
                     .into(),
             );
         }
-        save_builder_settings(&app, &settings)?;
+        save_builder_settings_path_unlocked(&settings_path(&app)?, &settings)?;
         Ok(settings)
     })
     .await
