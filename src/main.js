@@ -19,6 +19,7 @@ const elements = {
   settingsButton: $("#settings-button"), settingsClose: $("#settings-close"),
   settingsPanel: $("#settings-panel"), settingsScrim: $("#settings-scrim"),
   trackDriverUpdates: $("#track-driver-updates"), includeUpstreamNvidia: $("#include-upstream-nvidia"),
+  omitOptionalCuda: $("#omit-optional-cuda"), omitCudaStatus: $("#omit-cuda-status"),
   autoReleaseNvidia: $("#auto-release-nvidia"),
   autoReleaseSetting: $("#auto-release-setting"), autoReleaseStatus: $("#auto-release-status"),
   githubStatus: $("#github-status"), githubConnect: $("#github-connect"),
@@ -31,10 +32,11 @@ let plannedOutput = null;
 let hostReady = false;
 let progressReady = false;
 let builderSettings = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   autoReleaseVerifiedNvidia: false,
   trackSteamosDriverUpdates: false,
   includeUpstreamNvidiaReleases: false,
+  omitOptionalCuda: false,
 };
 let githubMaintainer = null;
 let githubLoginPoll = 0;
@@ -81,6 +83,9 @@ function renderSettings() {
   elements.trackDriverUpdates.disabled = settingsSavePending;
   elements.includeUpstreamNvidia.checked = builderSettings.includeUpstreamNvidiaReleases;
   elements.includeUpstreamNvidia.disabled = settingsSavePending;
+  elements.omitOptionalCuda.checked = builderSettings.omitOptionalCuda;
+  elements.omitOptionalCuda.disabled = true;
+  elements.omitCudaStatus.textContent = "Awaiting a reviewed support-repository payload profile";
   elements.autoReleaseNvidia.checked = builderSettings.autoReleaseVerifiedNvidia;
   elements.autoReleaseNvidia.disabled = settingsSavePending || !githubMaintainer?.authorized;
   elements.autoReleaseSetting.classList.toggle("pending", autoReleaseVerificationPending);
@@ -148,7 +153,7 @@ async function loadSettings() {
 
 async function saveSettings(next) {
   const previous = builderSettings;
-  builderSettings = { ...builderSettings, ...next, schemaVersion: 2 };
+  builderSettings = { ...builderSettings, ...next, schemaVersion: 3 };
   settingsSavePending = true;
   elements.settingsMessage.textContent = "Saving…";
   elements.settingsMessage.className = "settings-message";
@@ -293,7 +298,7 @@ elements.allowUpstreamBuild.addEventListener("change", updateBuildButton);
 elements.autoReleaseNvidia.addEventListener("change", async () => {
   const previous = builderSettings;
   const enabled = elements.autoReleaseNvidia.checked;
-  builderSettings = { ...builderSettings, autoReleaseVerifiedNvidia: enabled, schemaVersion: 2 };
+  builderSettings = { ...builderSettings, autoReleaseVerifiedNvidia: enabled, schemaVersion: 3 };
   autoReleaseVerificationPending = true;
   settingsSavePending = true;
   elements.autoReleaseStatus.textContent = enabled ? "Checking maintainer permission…" : "Saving…";

@@ -226,6 +226,8 @@ footer p { margin: 0; }
 .setting-row input:disabled { opacity: .42; cursor: not-allowed; }
 .setting-row.pending { color: #778296; cursor: wait; }
 .setting-row.pending strong { color: #a4adbc; }
+.setting-row.unavailable { cursor: default; }
+.setting-row.unavailable strong { color: #b8c0ce; }
 .setting-status:empty { display: none; }
 .setting-status.confirmed { color: #7ee2a8; }
 .setting-status.error { color: #ff9494; }

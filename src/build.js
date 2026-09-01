@@ -736,7 +736,7 @@ async function runBuild(request) {
         const compression = validation.compression;
         if (compression?.requestedProfile === "btrfs-zstd3") {
           const margin = Math.max(0, storage.rootAvailableBytes - storage.rootRequiredBytes);
-          addStageLog(`Measured Btrfs zstd:3 payload: ${formatBytes(storage.compressionPayloadAllocatedBytes)} allocated; ${formatBytes(storage.rootRequiredBytes)} required with reserves; ${formatBytes(margin)} projected free margin.`);
+          addStageLog(`Measured Btrfs zstd:3 payload: ${formatBytes(storage.compressionPayloadAllocatedBytes)} allocated (${compression.compressionRatio} of declared size); ${formatBytes(storage.replacementCreditBytes || 0)} exact no-op credit; ${formatBytes(storage.rootRequiredBytes)} required with reserves; ${formatBytes(margin)} projected free margin.`);
           if (!compression.admissionAuthorized) {
             throw new Error("Measured Btrfs compression still does not leave enough target-root space. No mutation began.");
           }

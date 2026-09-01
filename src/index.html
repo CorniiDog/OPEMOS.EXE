@@ -66,6 +66,15 @@
                 <input id="include-upstream-nvidia" type="checkbox">
             </label>
 
+            <label id="omit-cuda-setting" class="setting-row unavailable">
+                <span>
+                    <strong>Omit optional CUDA to save storage</strong>
+                    <small>Allow a reviewed gaming-only NVIDIA payload when the complete driver does not fit. Graphics, Vulkan, video, and recovery components remain required.</small>
+                    <small id="omit-cuda-status" class="setting-status">Awaiting a reviewed support-repository payload profile</small>
+                </span>
+                <input id="omit-optional-cuda" type="checkbox" disabled>
+            </label>
+
             <div class="settings-divider"></div>
 
             <div class="github-setting">

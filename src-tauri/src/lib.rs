@@ -31,7 +31,7 @@ const NVIDIA_UPSTREAM_TAGS_API: &str =
     "https://api.github.com/repos/NVIDIA/open-gpu-kernel-modules/tags?per_page=100";
 const NVIDIA_UPSTREAM_REPOSITORY: &str = "NVIDIA/open-gpu-kernel-modules";
 const NVIDIA_RESOLVER_SCHEMA: u32 = 2;
-const BUILDER_SETTINGS_SCHEMA: u32 = 2;
+const BUILDER_SETTINGS_SCHEMA: u32 = 3;
 const APPROVED_VALVE_SIGNER: &str = "889B5EBDDD505A683621900DAF1D2199EF0A3CCF";
 const RELEASES_RESPONSE_LIMIT: u64 = 4 * 1024 * 1024;
 const CHECKSUM_RESPONSE_LIMIT: u64 = 4 * 1024;
@@ -50,7 +50,7 @@ const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_SUPPORT_COMMIT: &str = "fc3cdc54a5256470da50b81f9b38aca150afcc42";
+const NVIDIA_SUPPORT_COMMIT: &str = "7c07018149dea6a7e14548ceb12c3b1ea0fe88b9";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 #[cfg(test)]
@@ -82,6 +82,8 @@ struct BuilderSettings {
     track_steamos_driver_updates: bool,
     #[serde(default)]
     include_upstream_nvidia_releases: bool,
+    #[serde(default)]
+    omit_optional_cuda: bool,
 }
 
 impl Default for BuilderSettings {
@@ -91,6 +93,7 @@ impl Default for BuilderSettings {
             auto_release_verified_nvidia: false,
             track_steamos_driver_updates: false,
             include_upstream_nvidia_releases: false,
+            omit_optional_cuda: false,
         }
     }
 }
@@ -167,8 +170,8 @@ struct PinnedInstallerFile {
 const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 10] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "ec0b3d962e1840be053e9d5751c40a88671ba4191eb409b31d44609f487e8f5d",
-        bytes: 18_595,
+        sha256: "e7cbed9691c870ab80c3e4148183dd21848871f7d833d3c0b6e10211aefa70b5",
+        bytes: 21_421,
         executable: true,
     },
     PinnedInstallerFile {
@@ -191,20 +194,20 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 10] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "ee50d18d86135cbe450452f9afe6bd82093dd82f1a0097db3f5553e3e0d6f97e",
-        bytes: 67_317,
+        sha256: "068eab5fef12baaec6d3f74b3cd58c10cf331cfeeb846b433659ad8a7284d3a7",
+        bytes: 76_987,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "408a671785d5d364c0311d7a21fec035ef68a3c8b1b69cb52ae36b81177223c0",
-        bytes: 15_612,
+        sha256: "ce4fac4e3af36d9f4b89cc58a1b679213af802d01f94f2e06a6759274745f205",
+        bytes: 19_302,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/measure_btrfs_payload.py",
-        sha256: "e5f209c2c06980b8248a12a5fa6a2d0752fd39607bbe835100d2b6f89060ea28",
-        bytes: 11_708,
+        sha256: "e66097052b65cc78c5ae817b142cd3b1a850adb8c37c1a48763c724fcf5d510b",
+        bytes: 12_293,
         executable: true,
     },
     PinnedInstallerFile {
@@ -710,11 +713,29 @@ struct SupportInstallStorage {
     #[serde(default)]
     root_measured_required_bytes: Option<u64>,
     #[serde(default)]
+    root_logical_required_bytes: Option<u64>,
+    #[serde(default)]
+    measured_payload_allocated_bytes: Option<u64>,
+    #[serde(default)]
     compression_payload_allocated_bytes: Option<u64>,
     #[serde(default)]
     compression_filesystem_overhead_bytes: Option<u64>,
     #[serde(default)]
     compression_safety_reserve_bytes: Option<u64>,
+    #[serde(default)]
+    compression_reserve_bytes: Option<u64>,
+    #[serde(default)]
+    replacement_candidate_logical_bytes: Option<u64>,
+    #[serde(default)]
+    replacement_credit_bytes: Option<u64>,
+    #[serde(default)]
+    package_noop_credit_bytes: Option<u64>,
+    #[serde(default)]
+    module_noop_credit_bytes: Option<u64>,
+    #[serde(default)]
+    root_final_margin_bytes: Option<i64>,
+    #[serde(default)]
+    root_shortfall_bytes: Option<u64>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -746,6 +767,15 @@ struct SupportInstallCompressionMeasurement {
     metadata_allocated_bytes: u64,
     system_allocated_bytes: u64,
     filesystem_overhead_bytes: u64,
+    package_measurements: Vec<SupportInstallPackageMeasurement>,
+    module_allocated_bytes: u64,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportInstallPackageMeasurement {
+    filename: String,
+    allocated_bytes: u64,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -773,6 +803,14 @@ struct SupportInstallCompression {
     admission_authorized: Option<bool>,
     #[serde(default)]
     mutation_profile_implemented: Option<bool>,
+    #[serde(default)]
+    compression_ratio: Option<String>,
+    #[serde(default)]
+    all_payload_destinations_on_root_filesystem: Option<bool>,
+    #[serde(default)]
+    replacement_credit_policy: Option<String>,
+    #[serde(default)]
+    module_payload_noop: Option<bool>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -1884,9 +1922,12 @@ fn load_builder_settings(app: &tauri::AppHandle) -> Result<BuilderSettings, Stri
         File::open(&path).map_err(|error| format!("Could not open settings.json: {error}"))?,
     )
     .map_err(|error| format!("settings.json is invalid: {error}"))?;
-    if settings.schema_version == 1 {
+    if matches!(settings.schema_version, 1 | 2) {
+        if settings.schema_version == 1 {
+            settings.include_upstream_nvidia_releases = false;
+        }
         settings.schema_version = BUILDER_SETTINGS_SCHEMA;
-        settings.include_upstream_nvidia_releases = false;
+        settings.omit_optional_cuda = false;
         save_builder_settings(app, &settings)?;
     } else if settings.schema_version != BUILDER_SETTINGS_SCHEMA {
         return Err(format!(
@@ -2031,6 +2072,12 @@ async fn update_builder_settings(
         let current = load_builder_settings(&app)?;
         let mut settings = settings;
         settings.schema_version = BUILDER_SETTINGS_SCHEMA;
+        if settings.omit_optional_cuda {
+            return Err(
+                "Optional CUDA omission is unavailable until the pinned support repository provides a reviewed gaming payload profile."
+                    .into(),
+            );
+        }
         let enabling_auto_release =
             settings.auto_release_verified_nvidia && !current.auto_release_verified_nvidia;
         if enabling_auto_release && !github_maintainer_status()?.authorized {
@@ -9415,15 +9462,57 @@ fn validate_support_storage(
             storage.package_installed_bytes,
             storage.module_installed_bytes,
         ])?;
+        let replacement_credit = storage
+            .replacement_credit_bytes
+            .ok_or("Offline installer omitted its measured replacement credit.")?;
+        let package_noop_credit = storage
+            .package_noop_credit_bytes
+            .ok_or("Offline installer omitted its package no-op credit.")?;
+        let module_noop_credit = storage
+            .module_noop_credit_bytes
+            .ok_or("Offline installer omitted its module no-op credit.")?;
+        let combined_noop_credit = checked_space_sum([package_noop_credit, module_noop_credit])?;
+        let compression_reserve =
+            checked_space_sum([storage.initramfs_reserve_bytes, ROOT_METADATA_RESERVE])?;
         let measured_root = checked_space_sum([
-            measurement.payload_allocated_bytes,
-            storage.initramfs_reserve_bytes,
-            ROOT_METADATA_RESERVE,
+            measurement
+                .payload_allocated_bytes
+                .checked_sub(replacement_credit)
+                .ok_or("Offline installer replacement credit exceeds measured allocation.")?,
+            compression_reserve,
         ])?;
+        let logical_root = checked_space_sum([declared_payload, compression_reserve])?;
+        let replacement_candidate = checked_space_sum([
+            storage.package_replaced_bytes,
+            storage.module_replaced_bytes,
+        ])?;
+        let package_measurement_total = checked_space_sum(
+            measurement
+                .package_measurements
+                .iter()
+                .map(|item| item.allocated_bytes)
+                .chain(std::iter::once(measurement.module_allocated_bytes)),
+        )?;
+        let expected_ratio_millionths = u128::from(measurement.payload_allocated_bytes) * 1_000_000
+            / u128::from(declared_payload);
+        let expected_ratio = format!(
+            "{}.{:06}",
+            expected_ratio_millionths / 1_000_000,
+            expected_ratio_millionths % 1_000_000
+        );
+        let final_margin = i128::from(storage.root_available_bytes) - i128::from(measured_root);
+        let final_margin = i64::try_from(final_margin)
+            .map_err(|_| "Offline installer returned an excessive root-space margin.")?;
+        let root_shortfall = if final_margin < 0 {
+            final_margin.unsigned_abs()
+        } else {
+            0
+        };
         if compression.filesystem != "btrfs"
             || compression.write_policy.as_deref() != Some(NVIDIA_COMPRESSION_WRITE_POLICY)
-            || compression.admission_basis != "scratch-btrfs-allocated-physical-bytes-plus-reserves"
-            || compression.assessment != "measured-profile-validation-only"
+            || compression.admission_basis
+                != "scratch-btrfs-allocated-physical-bytes-minus-noop-credit-plus-reserves"
+            || compression.assessment != "measured-profile-admission-ready"
             || measurement.schema_version != 1
             || measurement.status != "measured"
             || measurement.profile != NVIDIA_COMPRESSION_PROFILE
@@ -9433,24 +9522,42 @@ fn validate_support_storage(
             || measurement.payload_allocated_bytes == 0
             || measurement.data_allocated_bytes == 0
             || measurement.data_allocated_bytes > measurement.payload_allocated_bytes
+            || package_measurement_total > measurement.payload_allocated_bytes
             || measurement.filesystem_overhead_bytes
                 != measurement
                     .payload_allocated_bytes
                     .saturating_sub(measurement.data_allocated_bytes)
             || measurement.scratch_filesystem_bytes < declared_payload
             || storage.root_conservative_required_bytes != Some(conservative_root)
+            || storage.root_logical_required_bytes != Some(logical_root)
             || storage.root_measured_required_bytes != Some(measured_root)
             || storage.root_required_bytes != measured_root
+            || storage.measured_payload_allocated_bytes != Some(measurement.payload_allocated_bytes)
             || storage.compression_payload_allocated_bytes
                 != Some(measurement.payload_allocated_bytes)
             || storage.compression_filesystem_overhead_bytes
                 != Some(measurement.filesystem_overhead_bytes)
             || storage.compression_safety_reserve_bytes != Some(ROOT_METADATA_RESERVE)
+            || storage.compression_reserve_bytes != Some(compression_reserve)
+            || storage.replacement_candidate_logical_bytes != Some(replacement_candidate)
+            || replacement_credit != combined_noop_credit
+            || storage.module_noop_credit_bytes
+                != Some(if compression.module_payload_noop == Some(true) {
+                    measurement.module_allocated_bytes
+                } else {
+                    0
+                })
+            || storage.root_final_margin_bytes != Some(final_margin)
+            || storage.root_shortfall_bytes != Some(root_shortfall)
             || compression.measured_payload_savings_bytes
                 != Some(declared_payload.saturating_sub(measurement.payload_allocated_bytes))
             || compression.compression_savings_credited_bytes
                 != conservative_root.saturating_sub(measured_root)
-            || compression.mutation_profile_implemented != Some(false)
+            || compression.mutation_profile_implemented != Some(true)
+            || compression.compression_ratio.as_deref() != Some(expected_ratio.as_str())
+            || compression.all_payload_destinations_on_root_filesystem != Some(true)
+            || compression.replacement_credit_policy.as_deref() != Some("exact-payload-noop-only")
+            || compression.module_payload_noop.is_none()
         {
             return Err(
                 "Offline installer returned inconsistent Btrfs measurement metadata.".into(),
@@ -9786,6 +9893,25 @@ fn validate_nvidia_install_result(
             }
             _ if expected_role == "dependency" && !validated.pkgver.is_empty() => {}
             _ => return Err("Unexpected userspace package role in the handoff.".into()),
+        }
+    }
+    if validation.compression.requested_profile.is_some() {
+        let measurements = validation
+            .compression
+            .measurement
+            .as_ref()
+            .ok_or("Offline validation omitted measured package allocation details.")?;
+        if measurements.package_measurements.len() != validation.packages.len()
+            || measurements
+                .package_measurements
+                .iter()
+                .zip(&validation.packages)
+                .any(|(measurement, package)| measurement.filename != package.filename)
+        {
+            return Err(
+                "Offline validation package allocation identities do not match the locked payload."
+                    .into(),
+            );
         }
     }
     if validation.package_dependency_closure.is_empty()
@@ -10406,6 +10532,11 @@ if ! (( ROOT_IS_TOP )); then
   ROOT_MOUNTED=1
 fi
 findmnt -rn -M "$ROOT" -o OPTIONS | tr ',' '\n' | grep -qx rw
+root_compression_option() {{
+  option=$(findmnt -rn -M "$ROOT" -o OPTIONS | tr ',' '\n' | awk '/^compress(=|-force=)/ {{ if (found) exit 2; found=$0 }} END {{ print found }}')
+  case "$option" in compress=no) printf '\n' ;; *) printf '%s\n' "$option" ;; esac
+}}
+ORIGINAL_ROOT_COMPRESSION=$(root_compression_option)
 test -d "$ROOT/boot"
 test ! -L "$ROOT/boot"
 test -d "$ROOT/efi"
@@ -10416,7 +10547,8 @@ sudo mount -o rw "${{VAR_PARTS[0]}}" "$ROOT/var"
 VAR_MOUNTED=1
 sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/efi"
 EFI_MOUNTED=1
-sudo bash "$WORK/support/bootstrap/install_to_root.sh" --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --result-json "$WORK/install-mutation-result.json"
+sudo bash "$WORK/support/bootstrap/install_to_root.sh" --compression-profile {compression_profile} --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --result-json "$WORK/install-mutation-result.json"
+test "$(root_compression_option)" = "$ORIGINAL_ROOT_COMPRESSION"
 INITRAMFS_OK=0
 while IFS= read -r INITRAMFS; do
   test -n "$INITRAMFS" || continue
@@ -10455,6 +10587,7 @@ trap - EXIT INT TERM"#,
         lock_path = NVIDIA_USERSPACE_LOCK_PATH,
         kernel = inputs.kernel_version,
         userspace_arguments = userspace_arguments,
+        compression_profile = NVIDIA_COMPRESSION_PROFILE,
     );
     let execution_result = run_guest_command_logged(
         &connection,
@@ -10833,11 +10966,13 @@ mod tests {
             auto_release_verified_nvidia: true,
             track_steamos_driver_updates: true,
             include_upstream_nvidia_releases: true,
+            omit_optional_cuda: false,
         })
         .unwrap();
         assert!(serialized.contains("autoReleaseVerifiedNvidia"));
         assert!(serialized.contains("trackSteamosDriverUpdates"));
         assert!(serialized.contains("includeUpstreamNvidiaReleases"));
+        assert!(serialized.contains("omitOptionalCuda"));
         for forbidden in ["token", "password", "secret", "ssh"] {
             assert!(!serialized.to_ascii_lowercase().contains(forbidden));
         }
@@ -11479,7 +11614,7 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 152_128);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 168_899);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 10);
         assert!(PINNED_INSTALLER_FILES
             .iter()
@@ -11539,7 +11674,7 @@ mod tests {
         assert!(source.contains("validate_nvidia_storage_failure"));
         assert!(source.contains("NVIDIA module archive size changed after validation."));
         assert!(source.contains("--validate-only --compression-profile {compression_profile}"));
-        assert!(source.contains("compression.mutation_profile_implemented != Some(false)"));
+        assert!(source.contains("compression.mutation_profile_implemented != Some(true)"));
     }
 
     #[test]
@@ -11656,6 +11791,10 @@ mod tests {
                 measured_payload_savings_bytes: None,
                 admission_authorized: None,
                 mutation_profile_implemented: None,
+                compression_ratio: None,
+                all_payload_destinations_on_root_filesystem: None,
+                replacement_credit_policy: None,
+                module_payload_noop: None,
             }
         }
         let staged_package =
@@ -11755,9 +11894,18 @@ mod tests {
             initramfs_reserve_bytes: 64 * 1024 * 1024,
             root_conservative_required_bytes: None,
             root_measured_required_bytes: None,
+            root_logical_required_bytes: None,
+            measured_payload_allocated_bytes: None,
             compression_payload_allocated_bytes: None,
             compression_filesystem_overhead_bytes: None,
             compression_safety_reserve_bytes: None,
+            compression_reserve_bytes: None,
+            replacement_candidate_logical_bytes: None,
+            replacement_credit_bytes: None,
+            package_noop_credit_bytes: None,
+            module_noop_credit_bytes: None,
+            root_final_margin_bytes: None,
+            root_shortfall_bytes: None,
         };
         let compression = conservative_compression(&storage);
         let result = SupportInstallResult {
@@ -11955,8 +12103,10 @@ mod tests {
         let measured_validation = verified_validation(&mut measured_result);
         measured_validation.storage.root_conservative_required_bytes =
             Some(128 * 1024 * 1024 + 3_000);
+        measured_validation.storage.root_logical_required_bytes = Some(128 * 1024 * 1024 + 3_000);
         measured_validation.storage.root_measured_required_bytes = Some(128 * 1024 * 1024 + 1_500);
         measured_validation.storage.root_required_bytes = 128 * 1024 * 1024 + 1_500;
+        measured_validation.storage.measured_payload_allocated_bytes = Some(1_500);
         measured_validation
             .storage
             .compression_payload_allocated_bytes = Some(1_500);
@@ -11964,17 +12114,27 @@ mod tests {
             .storage
             .compression_filesystem_overhead_bytes = Some(300);
         measured_validation.storage.compression_safety_reserve_bytes = Some(64 * 1024 * 1024);
+        measured_validation.storage.compression_reserve_bytes = Some(128 * 1024 * 1024);
+        measured_validation
+            .storage
+            .replacement_candidate_logical_bytes = Some(0);
+        measured_validation.storage.replacement_credit_bytes = Some(0);
+        measured_validation.storage.package_noop_credit_bytes = Some(0);
+        measured_validation.storage.module_noop_credit_bytes = Some(0);
+        measured_validation.storage.root_final_margin_bytes = Some(134_216_228);
+        measured_validation.storage.root_shortfall_bytes = Some(0);
         measured_validation.compression = SupportInstallCompression {
             filesystem: "btrfs".into(),
             enabled: false,
             options: Vec::new(),
-            admission_basis: "scratch-btrfs-allocated-physical-bytes-plus-reserves".into(),
+            admission_basis:
+                "scratch-btrfs-allocated-physical-bytes-minus-noop-credit-plus-reserves".into(),
             compression_savings_credited_bytes: 1_500,
             declared_package_bytes: 1_000,
             package_archive_bytes: 500,
             package_archive_savings_bytes: 500,
             declared_sizes_likely_conservative: true,
-            assessment: "measured-profile-validation-only".into(),
+            assessment: "measured-profile-admission-ready".into(),
             requested_profile: Some(NVIDIA_COMPRESSION_PROFILE.into()),
             write_policy: Some(NVIDIA_COMPRESSION_WRITE_POLICY.into()),
             measurement: Some(SupportInstallCompressionMeasurement {
@@ -11990,10 +12150,25 @@ mod tests {
                 metadata_allocated_bytes: 200,
                 system_allocated_bytes: 100,
                 filesystem_overhead_bytes: 300,
+                package_measurements: vec![
+                    SupportInstallPackageMeasurement {
+                        filename: "nvidia-utils-575.64.05-2-x86_64.pkg.tar.zst".into(),
+                        allocated_bytes: 400,
+                    },
+                    SupportInstallPackageMeasurement {
+                        filename: "lib32-nvidia-utils-575.64.05-1-x86_64.pkg.tar.zst".into(),
+                        allocated_bytes: 400,
+                    },
+                ],
+                module_allocated_bytes: 700,
             }),
             measured_payload_savings_bytes: Some(1_500),
             admission_authorized: Some(true),
-            mutation_profile_implemented: Some(false),
+            mutation_profile_implemented: Some(true),
+            compression_ratio: Some("0.500000".into()),
+            all_payload_destinations_on_root_filesystem: Some(true),
+            replacement_credit_policy: Some("exact-payload-noop-only".into()),
+            module_payload_noop: Some(false),
         };
         let measured = validate_nvidia_install_result(
             measured_result,
@@ -12034,9 +12209,18 @@ mod tests {
             initramfs_reserve_bytes: 64 * 1024 * 1024,
             root_conservative_required_bytes: None,
             root_measured_required_bytes: None,
+            root_logical_required_bytes: None,
+            measured_payload_allocated_bytes: None,
             compression_payload_allocated_bytes: None,
             compression_filesystem_overhead_bytes: None,
             compression_safety_reserve_bytes: None,
+            compression_reserve_bytes: None,
+            replacement_candidate_logical_bytes: None,
+            replacement_credit_bytes: None,
+            package_noop_credit_bytes: None,
+            module_noop_credit_bytes: None,
+            root_final_margin_bytes: None,
+            root_shortfall_bytes: None,
         };
         let insufficient_compression = conservative_compression(&insufficient_storage);
         let storage_failure = SupportInstallResult {
@@ -12622,9 +12806,18 @@ mod tests {
                 initramfs_reserve_bytes: 64 * 1024 * 1024,
                 root_conservative_required_bytes: None,
                 root_measured_required_bytes: None,
+                root_logical_required_bytes: None,
+                measured_payload_allocated_bytes: None,
                 compression_payload_allocated_bytes: None,
                 compression_filesystem_overhead_bytes: None,
                 compression_safety_reserve_bytes: None,
+                compression_reserve_bytes: None,
+                replacement_candidate_logical_bytes: None,
+                replacement_credit_bytes: None,
+                package_noop_credit_bytes: None,
+                module_noop_credit_bytes: None,
+                root_final_margin_bytes: None,
+                root_shortfall_bytes: None,
             },
             compression: SupportInstallCompression {
                 filesystem: "btrfs".into(),
@@ -12643,6 +12836,10 @@ mod tests {
                 measured_payload_savings_bytes: None,
                 admission_authorized: None,
                 mutation_profile_implemented: None,
+                compression_ratio: None,
+                all_payload_destinations_on_root_filesystem: None,
+                replacement_credit_policy: None,
+                module_payload_noop: None,
             },
             mounts_released: true,
         };

@@ -118,7 +118,7 @@ The authenticated closure is reused verbatim for mutation, and guest pacman
 remains fully offline throughout this process.
 
 The backend also stages the offline-root installer from immutable support commit
-`fc3cdc54a5256470da50b81f9b38aca150afcc42`. Its ten required scripts,
+`7c07018149dea6a7e14548ceb12c3b1ea0fe88b9`. Its ten required scripts,
 helpers, signer-policy files, reviewed lock, and minimal binary keyring have
 embedded byte counts and SHA-256 pins; every file must match before a versioned
 bundle manifest is recorded. The
@@ -135,11 +135,10 @@ support installer, mounts uniquely identified `rootfs-A`, `var-A`, and `efi-A`
 read-only, and accepts only a schema-1 `validated/validation_complete` result
 whose provenance, reviewed lock, complete package records, dependency closure,
 and storage accounting exactly match Rust-owned inputs. The current pin requests
-the validation-only `btrfs-zstd3` profile and independently checks its measured
-physical allocation and reserves. It intentionally stops before mutation while
-the support result reports that compressed mutation is not implemented.
-After the support installer authorizes compressed mutation, the backend will
-mount the Btrfs top level explicitly, identify the current default root
+the `btrfs-zstd3` profile and independently checks its measured physical
+allocation, exact no-op credits, reserves, and admission decision. Mutation uses
+that same profile and must restore the original compression option before Rust
+accepts the result. The backend mounts the Btrfs top level explicitly, identifies the current default root
 subvolume, mount matching `var-A` and `efi-A` without hiding rootfs `/boot`, and
 require exact restoration of Btrfs read-only, seed-device, and compression
 state. The resulting raw candidate will be reopened through a
@@ -147,6 +146,14 @@ fresh appliance and checked for all five modules, matching package records and
 GSP firmware, configuration, provenance state, initramfs output, exact
 nonduplicated GRUB kernel arguments, layout, and source immutability before
 finalization.
+
+Settings also show a disabled, off-by-default “Omit optional CUDA” preference.
+It remains unavailable until the support repository defines a reviewed,
+package-owned gaming payload profile; the application will not delete arbitrary
+files from `nvidia-utils`. Deterministic repacking of an existing raw-module
+publication into `.ko.zst` assets likewise belongs to the canonical support
+publisher so hashes, provenance, release revisions, and create-only semantics
+remain authoritative.
 
 The same immutable support commit supplies the canonical NVIDIA release
 publisher and its input validator under independent size and SHA-256 pins. The
