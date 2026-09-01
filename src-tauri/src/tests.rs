@@ -298,6 +298,66 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn maintainer_git_mutations_bound_output_encoding_failure_and_lifetime() {
+        use std::os::unix::fs::PermissionsExt;
+        struct Fixture(PathBuf);
+        impl Drop for Fixture { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+        let root = Fixture(std::env::temp_dir().join(format!("steamos-fake-git-{}", std::process::id())));
+        let _ = fs::remove_dir_all(&root.0);
+        fs::create_dir_all(&root.0).expect("create fake Git fixture");
+        let binary = root.0.join("git");
+        fs::write(&binary, r#"#!/bin/sh
+mode=$(cat "$2/mode")
+case "$mode" in
+  overflow) dd if=/dev/zero bs=1024 count=2 2>/dev/null ;;
+  timeout) printf partial; sleep 30 ;;
+  nonutf8) printf '\377' ;;
+  failure) printf partial-error >&2; exit 7 ;;
+  success) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
+esac
+"#).expect("write fake Git");
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).expect("chmod fake Git");
+        let run = |mode: &str, timeout| {
+            fs::write(root.0.join("mode"), mode).expect("select fake Git mode");
+            bounded_git_mutation(&binary, &root.0, &["commit-tree"], Some(b"message"), timeout, 64, "test Git mutation")
+        };
+        assert!(run("overflow", Duration::from_secs(1)).unwrap_err().contains("safe limit"));
+        let started = Instant::now();
+        assert!(run("timeout", Duration::from_millis(100)).unwrap_err().contains("time limit"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let non_utf8 = run("nonutf8", Duration::from_secs(1)).expect("capture non-UTF8 bytes");
+        assert!(String::from_utf8(non_utf8).is_err());
+        assert!(run("failure", Duration::from_secs(1)).unwrap_err().contains("partial-error"));
+        assert_eq!(run("success", Duration::from_secs(1)).expect("successful bounded Git"), b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n");
+
+        let repository = root.0.join("repository");
+        fs::create_dir(&repository).expect("create atomic-ref repository");
+        let git = |args: &[&str]| {
+            let output = Command::new("git").arg("-C").arg(&repository).args(args)
+                .output().expect("run real fixture Git");
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            String::from_utf8(output.stdout).expect("UTF-8 fixture Git").trim().to_owned()
+        };
+        git(&["init", "--quiet"]); git(&["config", "user.name", "Local Test"]);
+        git(&["config", "user.email", "local@example.invalid"]);
+        fs::write(repository.join("file"), "one").expect("write atomic fixture");
+        git(&["add", "file"]); git(&["commit", "--quiet", "-m", "initial"]);
+        let old = git(&["rev-parse", "HEAD"]); let tree = git(&["write-tree"]);
+        let created = bounded_git_mutation(Path::new("git"), &repository,
+            &["commit-tree", &tree, "-p", &old], Some(b"bounded commit"), Duration::from_secs(2), 64 * 1024,
+            "create fixture commit").expect("bounded commit-tree");
+        let created = String::from_utf8(created).expect("commit identity UTF-8").trim().to_owned();
+        bounded_git_mutation(Path::new("git"), &repository,
+            &["update-ref", "HEAD", &created, &old], None, Duration::from_secs(2), 64 * 1024,
+            "atomically attach fixture commit").expect("atomic update-ref");
+        assert_eq!(git(&["rev-parse", "HEAD"]), created);
+        assert!(bounded_git_mutation(Path::new("git"), &repository,
+            &["update-ref", "HEAD", &old, &old], None, Duration::from_secs(2), 64 * 1024,
+            "reject stale fixture HEAD").is_err());
+    }
+
     #[test]
     fn usb_candidate_parser_rejects_internal_virtual_and_undersized_disks() {
         let removable = serde_json::json!({

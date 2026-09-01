@@ -888,6 +888,107 @@ fn git_output(path: &Path, args: &[&str], description: &str) -> Result<String, S
         .map_err(|_| format!("Could not {description}; Git returned non-UTF-8 output."))
 }
 
+pub(crate) fn bounded_git_mutation(
+    binary: &Path,
+    path: &Path,
+    args: &[&str],
+    input: Option<&[u8]>,
+    timeout: Duration,
+    limit: usize,
+    description: &str,
+) -> Result<Vec<u8>, String> {
+    let mut command = Command::new(binary);
+    command
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    isolate_process_group(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Could not {description}: {error}"))?;
+    if let Some(bytes) = input {
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| format!("Could not open {description} input."))?
+            .write_all(bytes)
+            .map_err(|error| format!("Could not provide {description} input: {error}"))?;
+    }
+    drop(child.stdin.take());
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("Could not read {description} output."))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("Could not read {description} errors."))?;
+    let drain = move |mut stream: Box<dyn Read + Send>| {
+        let mut kept = Vec::new();
+        let mut buffer = [0_u8; 8192];
+        loop {
+            match stream.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => {
+                    let remaining = limit.saturating_add(1).saturating_sub(kept.len());
+                    kept.extend_from_slice(&buffer[..count.min(remaining)]);
+                }
+            }
+        }
+        kept
+    };
+    let stdout_thread = thread::spawn(move || drain(Box::new(stdout)));
+    let stderr_thread = thread::spawn(move || drain(Box::new(stderr)));
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("Could not inspect {description}: {error}"))?
+        {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            #[cfg(unix)]
+            {
+                let _ = Command::new("kill")
+                    .args(["-KILL", &format!("-{}", child.id())])
+                    .status();
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
+            return Err(format!(
+                "Could not {description}; Git exceeded the safe time limit."
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let stdout = stdout_thread
+        .join()
+        .map_err(|_| format!("Could not collect {description} output."))?;
+    let stderr = stderr_thread
+        .join()
+        .map_err(|_| format!("Could not collect {description} errors."))?;
+    if stdout.len() > limit || stderr.len() > limit {
+        return Err(format!(
+            "Could not {description}; Git output exceeded the safe limit."
+        ));
+    }
+    if !status.success() {
+        let detail = String::from_utf8_lossy(&stderr);
+        return Err(format!("Could not {description}: {}", detail.trim()));
+    }
+    Ok(stdout)
+}
+
 fn vscode_binary() -> Option<PathBuf> {
     find_binary("code").or_else(|| {
         let candidate =
@@ -1240,44 +1341,19 @@ pub(crate) async fn create_maintainer_local_commit(
         {
             return Err("HEAD, the staged tree, or its reviewed patch changed after review. Review the commit again.".into());
         }
-        let mut child = Command::new("git")
-            .arg("-C")
-            .arg(&review.path)
-            .args(["commit-tree", &review.index_tree, "-p", &review.head])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("Could not create the exact local commit object: {error}"))?;
-        child
-            .stdin
-            .take()
-            .ok_or("Could not open the local commit message input.")?
-            .write_all(review.message.as_bytes())
-            .map_err(|error| format!("Could not provide the local commit message: {error}"))?;
-        let output = child
-            .wait_with_output()
-            .map_err(|error| format!("Could not finish the local commit object: {error}"))?;
-        if !output.status.success() {
-            let detail = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Git could not create the local commit: {}", detail.trim()));
-        }
-        let commit = String::from_utf8(output.stdout)
+        let output = bounded_git_mutation(Path::new("git"), Path::new(&review.path),
+            &["commit-tree", &review.index_tree, "-p", &review.head], Some(review.message.as_bytes()),
+            Duration::from_secs(15), 64 * 1024, "create the exact local commit object")?;
+        let commit = String::from_utf8(output)
             .map_err(|_| "Git returned a non-UTF-8 local commit identity.")?
             .trim()
             .to_owned();
         if !valid_git_commit(&commit) {
             return Err("Git returned an invalid local commit identity.".into());
         }
-        let update = Command::new("git")
-            .arg("-C")
-            .arg(&review.path)
-            .args(["update-ref", "-m", "commit: maintainer workspace", "HEAD", &commit, &review.head])
-            .output()
-            .map_err(|error| format!("Could not attach the local commit atomically: {error}"))?;
-        if !update.status.success() {
-            return Err("The branch changed before the local commit could be attached. No branch was updated.".into());
-        }
+        bounded_git_mutation(Path::new("git"), Path::new(&review.path),
+            &["update-ref", "-m", "commit: maintainer workspace", "HEAD", &commit, &review.head], None,
+            Duration::from_secs(15), 64 * 1024, "attach the local commit atomically")?;
         Ok(MaintainerLocalCommit {
             repository: review.repository,
             path: review.path,
