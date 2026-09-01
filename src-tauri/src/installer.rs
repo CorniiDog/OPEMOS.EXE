@@ -1,18 +1,125 @@
 use super::*;
+use serde::de::DeserializeSeed as _;
 
 const MAX_SUPPORT_INSTALL_RESULT_BYTES: u64 = 32 * 1024 * 1024;
 
+struct UniqueJson;
+
+impl<'de> serde::de::DeserializeSeed<'de> for UniqueJson {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<(), D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(UniqueJsonVisitor)
+    }
+}
+
+struct UniqueJsonVisitor;
+
+impl<'de> serde::de::Visitor<'de> for UniqueJsonVisitor {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("JSON without duplicate object keys")
+    }
+
+    fn visit_bool<E>(self, _: bool) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_i64<E>(self, _: i64) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_u64<E>(self, _: u64) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_f64<E>(self, _: f64) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_str<E>(self, _: &str) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_string<E>(self, _: String) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_none<E>(self) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_unit<E>(self) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_some<D>(self, deserializer: D) -> Result<(), D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        UniqueJson.deserialize(deserializer)
+    }
+    fn visit_seq<A>(self, mut sequence: A) -> Result<(), A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        while sequence.next_element_seed(UniqueJson)?.is_some() {}
+        Ok(())
+    }
+    fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        let mut keys = HashSet::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if !keys.insert(key) {
+                return Err(serde::de::Error::custom("duplicate JSON key"));
+            }
+            map.next_value_seed(UniqueJson)?;
+        }
+        Ok(())
+    }
+}
+
+fn reject_duplicate_json_keys(bytes: &[u8]) -> Result<(), String> {
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    UniqueJson
+        .deserialize(&mut deserializer)
+        .map_err(|error| format!("NVIDIA installer result is invalid JSON: {error}"))?;
+    deserializer
+        .end()
+        .map_err(|error| format!("NVIDIA installer result is invalid JSON: {error}"))
+}
+
 pub(crate) fn read_support_install_result(path: &Path) -> Result<SupportInstallResult, String> {
-    let metadata = fs::symlink_metadata(path)
+    let path_metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("Could not inspect the NVIDIA installer result: {error}"))?;
-    if !metadata.file_type().is_file()
-        || metadata.len() == 0
-        || metadata.len() > MAX_SUPPORT_INSTALL_RESULT_BYTES
+    if !path_metadata.file_type().is_file()
+        || path_metadata.len() == 0
+        || path_metadata.len() > MAX_SUPPORT_INSTALL_RESULT_BYTES
     {
         return Err("NVIDIA installer result is linked, empty, or exceeds 32 MiB.".into());
     }
-    let bytes = fs::read(path)
+    let file = File::open(path)
+        .map_err(|error| format!("Could not open the NVIDIA installer result: {error}"))?;
+    let opened_metadata = file.metadata().map_err(|error| {
+        format!("Could not inspect the opened NVIDIA installer result: {error}")
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if path_metadata.dev() != opened_metadata.dev()
+            || path_metadata.ino() != opened_metadata.ino()
+        {
+            return Err("NVIDIA installer result changed while being opened.".into());
+        }
+    }
+    let mut bytes = Vec::with_capacity(opened_metadata.len() as usize);
+    file.take(MAX_SUPPORT_INSTALL_RESULT_BYTES + 1)
+        .read_to_end(&mut bytes)
         .map_err(|error| format!("Could not read the NVIDIA installer result: {error}"))?;
+    if bytes.len() as u64 != opened_metadata.len()
+        || bytes.len() as u64 > MAX_SUPPORT_INSTALL_RESULT_BYTES
+    {
+        return Err("NVIDIA installer result changed size while being read.".into());
+    }
+    reject_duplicate_json_keys(&bytes)?;
     serde_json::from_slice(&bytes)
         .map_err(|error| format!("NVIDIA installer result is invalid JSON: {error}"))
 }

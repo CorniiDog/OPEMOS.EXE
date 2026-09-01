@@ -1296,7 +1296,7 @@ mod tests {
     }
 
     #[test]
-    fn installer_result_reader_rejects_empty_truncated_and_excessive_documents() {
+    fn installer_result_reader_rejects_empty_truncated_duplicate_and_excessive_documents() {
         let root = std::env::temp_dir().join(format!(
             "steamos-installer-result-{}",
             std::process::id()
@@ -1308,6 +1308,12 @@ mod tests {
         assert!(read_support_install_result(&path).is_err());
         fs::write(&path, br#"{"schemaVersion":1,"status":"success""#)
             .expect("write truncated result");
+        assert!(read_support_install_result(&path).is_err());
+        fs::write(&path, br#"{"schemaVersion":1,"schemaVersion":1}"#)
+            .expect("write duplicate top-level result");
+        assert!(read_support_install_result(&path).is_err());
+        fs::write(&path, br#"{"schemaVersion":1,"cleanup":{"mountsReleased":true,"mountsReleased":false}}"#)
+            .expect("write duplicate nested result");
         assert!(read_support_install_result(&path).is_err());
         let file = File::create(&path).expect("create excessive result");
         file.set_len(32 * 1024 * 1024 + 1)
