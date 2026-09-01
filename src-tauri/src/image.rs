@@ -1534,3 +1534,186 @@ pub(crate) fn preview_image_output(path: String) -> Result<ImageOutputPreview, S
         output_path: output.to_string_lossy().into_owned(),
     })
 }
+
+pub(crate) fn usb_candidate_from_diskutil_info(
+    info: &serde_json::Value,
+    image_bytes: u64,
+) -> Option<UsbTargetCandidate> {
+    let object = info.as_object()?;
+    let identifier = object.get("DeviceIdentifier")?.as_str()?;
+    if !identifier.starts_with("disk")
+        || identifier.len() <= 4
+        || !identifier[4..].bytes().all(|byte| byte.is_ascii_digit())
+        || object.get("Whole").and_then(|value| value.as_bool()) != Some(true)
+        || object.get("Internal").and_then(|value| value.as_bool()) != Some(false)
+        || object
+            .get("VirtualOrPhysical")
+            .and_then(|value| value.as_str())
+            != Some("Physical")
+    {
+        return None;
+    }
+    let removable = object
+        .get("RemovableMedia")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let ejectable = object
+        .get("Ejectable")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if !removable && !ejectable {
+        return None;
+    }
+    let bytes = object.get("TotalSize")?.as_u64()?;
+    if bytes < image_bytes || bytes > 2 * 1024 * 1024 * 1024 * 1024 {
+        return None;
+    }
+    let device_node = object.get("DeviceNode")?.as_str()?;
+    if device_node != format!("/dev/{identifier}") {
+        return None;
+    }
+    Some(UsbTargetCandidate {
+        device_identifier: identifier.into(),
+        device_node: device_node.into(),
+        media_name: object
+            .get("MediaName")
+            .and_then(|value| value.as_str())
+            .unwrap_or("External removable media")
+            .chars()
+            .take(120)
+            .collect(),
+        bus_protocol: object
+            .get("BusProtocol")
+            .and_then(|value| value.as_str())
+            .unwrap_or("Unknown")
+            .chars()
+            .take(40)
+            .collect(),
+        bytes,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn plist_command_json(
+    mut command: Command,
+    description: &str,
+) -> Result<serde_json::Value, String> {
+    let plist = command
+        .output()
+        .map_err(|error| format!("Could not {description}: {error}"))?;
+    if !plist.status.success() || plist.stdout.len() > 4 * 1024 * 1024 {
+        return Err(format!(
+            "Could not {description}; diskutil returned an invalid response."
+        ));
+    }
+    let mut child = Command::new("/usr/bin/plutil")
+        .args(["-convert", "json", "-o", "-", "--", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("Could not start the property-list parser: {error}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or("Could not open the property-list parser input.")?
+        .write_all(&plist.stdout)
+        .map_err(|error| format!("Could not provide disk metadata to the parser: {error}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("Could not read parsed disk metadata: {error}"))?;
+    if !output.status.success() || output.stdout.len() > 4 * 1024 * 1024 {
+        return Err("macOS returned malformed disk metadata.".into());
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("Could not decode disk metadata: {error}"))
+}
+
+#[cfg(target_os = "macos")]
+fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
+    let mut list_command = Command::new("/usr/sbin/diskutil");
+    list_command.args(["list", "external", "physical", "-plist"]);
+    let list = plist_command_json(list_command, "list external physical disks")?;
+    let identifiers = list
+        .get("WholeDisks")
+        .and_then(|value| value.as_array())
+        .ok_or("macOS did not return a whole-disk list.")?;
+    if identifiers.len() > 64 {
+        return Err("macOS returned too many external disks to inspect safely.".into());
+    }
+    let mut targets = Vec::new();
+    for identifier in identifiers {
+        let Some(identifier) = identifier.as_str() else {
+            continue;
+        };
+        if !identifier.starts_with("disk")
+            || identifier.len() <= 4
+            || !identifier[4..].bytes().all(|byte| byte.is_ascii_digit())
+        {
+            continue;
+        }
+        let mut info_command = Command::new("/usr/sbin/diskutil");
+        info_command.args(["info", "-plist", identifier]);
+        let info = plist_command_json(info_command, "inspect an external disk")?;
+        if let Some(target) = usb_candidate_from_diskutil_info(&info, image_bytes) {
+            targets.push(target);
+        }
+    }
+    targets.sort_by(|left, right| left.device_identifier.cmp(&right.device_identifier));
+    Ok(targets)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn discover_usb_targets(_image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
+    Err("Read-only USB target discovery is currently implemented only for macOS.".into())
+}
+
+#[tauri::command]
+pub(crate) async fn inspect_usb_targets(image_path: String) -> Result<UsbTargetPreflight, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let image = fs::canonicalize(&image_path)
+            .map_err(|error| format!("Could not resolve the completed image: {error}"))?;
+        if image.extension().and_then(|value| value.to_str()) != Some("img") {
+            return Err("USB preparation requires a raw .img output.".into());
+        }
+        let metadata = fs::metadata(&image)
+            .map_err(|error| format!("Could not inspect the completed image: {error}"))?;
+        if !metadata.is_file() {
+            return Err("The completed image is not a regular file.".into());
+        }
+        let manifest_path = manifest_path_for_output(&image);
+        let manifest_bytes = fs::read(&manifest_path)
+            .map_err(|error| format!("Could not read the adjacent build manifest: {error}"))?;
+        if manifest_bytes.len() > 1024 * 1024 {
+            return Err("The adjacent build manifest is unexpectedly large.".into());
+        }
+        let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)
+            .map_err(|error| format!("Could not parse the adjacent build manifest: {error}"))?;
+        let output = manifest
+            .get("output")
+            .and_then(|value| value.as_object())
+            .ok_or("The adjacent build manifest has no output identity.")?;
+        let filename = image.file_name().and_then(|value| value.to_str()).unwrap_or("");
+        let manifest_bytes = output.get("bytes").and_then(|value| value.as_u64());
+        let sha256 = output.get("sha256").and_then(|value| value.as_str()).unwrap_or("");
+        if output.get("filename").and_then(|value| value.as_str()) != Some(filename)
+            || output.get("format").and_then(|value| value.as_str()) != Some("raw")
+            || manifest_bytes != Some(metadata.len())
+            || sha256.len() != 64
+            || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err("The image and adjacent build manifest do not have a valid matching output identity.".into());
+        }
+        let targets = discover_usb_targets(metadata.len())?;
+        Ok(UsbTargetPreflight {
+            image_path: image.to_string_lossy().into_owned(),
+            image_bytes: metadata.len(),
+            image_sha256: sha256.to_ascii_lowercase(),
+            targets,
+            writes_allowed: false,
+            message: "Read-only discovery complete. Direct disk writes remain disabled; select a target only for review.".into(),
+        })
+    })
+    .await
+    .map_err(|error| format!("USB target discovery worker failed: {error}"))?
+}

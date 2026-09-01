@@ -383,11 +383,11 @@ async function refreshLogs() {
   finally { refreshingLogs = false; }
 }
 
-async function finish(state, message) {
+async function finish(state, message, output = null) {
   running = false;
   elements.cancelBuild.disabled = true;
   elements.closeWindow.classList.remove("hidden");
-  await progressWindow.emitTo("main", "build-finished", { state, message });
+  await progressWindow.emitTo("main", "build-finished", { state, message, output });
 }
 
 async function stopAllWorkers() {
@@ -710,7 +710,7 @@ async function runBuild(request) {
     addStageLog(`Export validation: marker=${output.markerPath}; SHA256 ${output.sha256}.`);
     addStageLog(`Source safety: original SHA256 ${output.sourceSha256}; unchanged=true.`);
     setStatus("complete", nvidiaInstalled ? "NVIDIA mutation complete" : "Marker image complete", "Finder opened the validated raw image.", 100);
-    await finish("complete", `${nvidiaInstalled ? "NVIDIA-mutated image" : "Marker image"} created: ${output.path}`);
+    await finish("complete", `${nvidiaInstalled ? "NVIDIA-mutated image" : "Marker image"} created: ${output.path}`, output);
   } catch (error) {
     if (cancelling) return;
     addStageLog(`ERROR: ${error}`);

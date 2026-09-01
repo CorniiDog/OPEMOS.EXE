@@ -75,6 +75,7 @@ pub fn run() {
             stop_nvidia_build_appliance,
             validate_image,
             preview_image_output,
+            inspect_usb_targets,
             windows::open_progress_window,
             windows::open_maintainer_window,
         ])

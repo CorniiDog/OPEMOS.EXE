@@ -136,6 +136,22 @@
             </span>
         </section>
 
+        <section id="usb-card" class="build-card hidden">
+            <div class="build-summary">
+                <div>
+                    <span>Image to USB</span>
+                    <strong>Review a removable target</strong>
+                </div>
+                <p>Read-only discovery accepts only whole external physical media large enough for this manifest-bound image. Disk writing remains disabled.</p>
+            </div>
+            <label class="source-choice" for="usb-target">
+                <span><strong>Removable target</strong><small id="usb-target-detail">Connect a USB drive, then refresh.</small></span>
+                <select id="usb-target" disabled><option value="">No target selected</option></select>
+            </label>
+            <button id="refresh-usb-targets" class="primary" type="button">Refresh Removable Drives</button>
+            <p id="usb-message" class="result-message"></p>
+        </section>
+
         <section
             id="drop-zone"
             class="drop-zone"

@@ -198,6 +198,41 @@ mod tests {
     }
 
     #[test]
+    fn usb_candidate_parser_rejects_internal_virtual_and_undersized_disks() {
+        let removable = serde_json::json!({
+            "DeviceIdentifier": "disk7",
+            "DeviceNode": "/dev/disk7",
+            "Whole": true,
+            "Internal": false,
+            "VirtualOrPhysical": "Physical",
+            "RemovableMedia": true,
+            "Ejectable": true,
+            "TotalSize": 64_000_000_000_u64,
+            "MediaName": "Test USB",
+            "BusProtocol": "USB"
+        });
+        let candidate = usb_candidate_from_diskutil_info(&removable, 32_000_000_000)
+            .expect("safe removable disk");
+        assert_eq!(candidate.device_identifier, "disk7");
+        assert_eq!(candidate.device_node, "/dev/disk7");
+
+        let mut internal = removable.clone();
+        internal["Internal"] = serde_json::json!(true);
+        assert!(usb_candidate_from_diskutil_info(&internal, 32_000_000_000).is_none());
+
+        let mut virtual_disk = removable.clone();
+        virtual_disk["VirtualOrPhysical"] = serde_json::json!("Virtual");
+        assert!(usb_candidate_from_diskutil_info(&virtual_disk, 32_000_000_000).is_none());
+
+        assert!(usb_candidate_from_diskutil_info(&removable, 128_000_000_000).is_none());
+
+        let mut partition = removable;
+        partition["DeviceIdentifier"] = serde_json::json!("disk7s1");
+        partition["DeviceNode"] = serde_json::json!("/dev/disk7s1");
+        assert!(usb_candidate_from_diskutil_info(&partition, 32_000_000_000).is_none());
+    }
+
+    #[test]
     fn explicit_upstream_source_is_pinned_and_never_treated_as_automatic() {
         let target =
             ready_published_target("3.8.14", "6.16.12-valve24.4-1-neptune-616-gfe145653a794");

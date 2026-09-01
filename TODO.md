@@ -1388,6 +1388,7 @@ Before calling the project **beta**, verify:
 # 61. Long-term possibilities
 
 * [ ] Optional direct USB flashing with extremely strong device-selection safeguards.
+* [x] Add a read-only macOS USB preflight that accepts only a manifest-bound raw output and discovers whole, physical, external, removable/ejectable disks large enough for the image; keep all raw-device writes disabled.
 * [ ] Automatic detection/download assistance for current official Valve recovery image without redistributing it.
 * [ ] Local artifact cache manager.
 * [ ] Offline build mode.

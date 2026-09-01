@@ -14,6 +14,9 @@ const elements = {
   summaryInput: $("#summary-input"), summaryOutput: $("#summary-output"),
   summaryAction: $("#summary-action"),
   resultMessage: $("#result-message"), environmentTitle: $("#environment-title"),
+  usbCard: $("#usb-card"), usbTarget: $("#usb-target"),
+  usbTargetDetail: $("#usb-target-detail"), refreshUsbTargets: $("#refresh-usb-targets"),
+  usbMessage: $("#usb-message"),
   environmentMessage: $("#environment-message"), environmentDetails: $("#environment-details"),
   environmentStatus: $("#environment-status"),
   settingsButton: $("#settings-button"), settingsClose: $("#settings-close"),
@@ -30,6 +33,7 @@ const elements = {
 let currentImage = null;
 let currentImageName = null;
 let plannedOutput = null;
+let completedOutput = null;
 let hostReady = false;
 let progressReady = false;
 let builderSettings = {
@@ -388,10 +392,50 @@ elements.buildButton.addEventListener("click", async () => {
 });
 
 await mainWindow.listen("build-finished", (event) => {
-  const { state, message } = event.payload;
+  const { state, message, output } = event.payload;
   elements.resultMessage.textContent = message;
   elements.resultMessage.className = `result-message ${state === "complete" ? "success" : state === "failed" ? "error" : ""}`;
   updateBuildButton();
+  if (state === "complete" && output?.path) {
+    completedOutput = output;
+    elements.usbCard.classList.remove("hidden");
+    elements.usbMessage.textContent = "The image is ready for read-only removable-drive discovery.";
+  }
+});
+
+elements.refreshUsbTargets.addEventListener("click", async () => {
+  if (!completedOutput?.path) return;
+  elements.refreshUsbTargets.disabled = true;
+  elements.usbTarget.disabled = true;
+  elements.usbMessage.textContent = "Inspecting whole external physical disks without opening them for writing…";
+  elements.usbMessage.className = "result-message";
+  try {
+    const preflight = await invoke("inspect_usb_targets", { imagePath: completedOutput.path });
+    elements.usbTarget.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = preflight.targets.length ? "Select a removable drive for review" : "No eligible removable drives found";
+    elements.usbTarget.append(placeholder);
+    for (const target of preflight.targets) {
+      const option = document.createElement("option");
+      option.value = target.deviceIdentifier;
+      option.textContent = `${target.mediaName} · ${target.deviceNode} · ${(target.bytes / 1_000_000_000).toFixed(1)} GB`;
+      option.dataset.detail = `${target.busProtocol}; whole physical removable disk; writing disabled`;
+      elements.usbTarget.append(option);
+    }
+    elements.usbTarget.disabled = !preflight.targets.length;
+    elements.usbMessage.textContent = preflight.message;
+  } catch (error) {
+    elements.usbMessage.textContent = String(error);
+    elements.usbMessage.className = "result-message error";
+  } finally {
+    elements.refreshUsbTargets.disabled = false;
+  }
+});
+
+elements.usbTarget.addEventListener("change", () => {
+  elements.usbTargetDetail.textContent = elements.usbTarget.selectedOptions[0]?.dataset.detail
+    || "Connect a USB drive, then refresh.";
 });
 
 await mainWindow.onDragDropEvent(async (event) => {
@@ -410,6 +454,7 @@ header.after(downloadCard);
 elements.dropZone.after(environmentCard);
 environmentCard.after(elements.selectionCard);
 elements.selectionCard.after(elements.buildCard);
+elements.buildCard.after(elements.usbCard);
 await checkEnvironment();
 await loadSettings();
 await loadNvidiaSourceBranches();

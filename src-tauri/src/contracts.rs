@@ -1029,6 +1029,27 @@ pub(crate) struct ExportedImage {
     pub(crate) marker_path: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UsbTargetCandidate {
+    pub(crate) device_identifier: String,
+    pub(crate) device_node: String,
+    pub(crate) media_name: String,
+    pub(crate) bus_protocol: String,
+    pub(crate) bytes: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UsbTargetPreflight {
+    pub(crate) image_path: String,
+    pub(crate) image_bytes: u64,
+    pub(crate) image_sha256: String,
+    pub(crate) targets: Vec<UsbTargetCandidate>,
+    pub(crate) writes_allowed: bool,
+    pub(crate) message: String,
+}
+
 pub(crate) struct MarkerManifestData<'a> {
     pub(crate) input: &'a Path,
     pub(crate) output: &'a Path,
