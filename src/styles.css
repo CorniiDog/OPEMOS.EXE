@@ -129,6 +129,23 @@ footer p { color: #aab4c5; }
 .status.pending { background: #302b17; color: #f2d477; }
 .status.failed { background: #3d2020; color: #ff9494; }
 .build-card { padding: 10px 14px; }
+#usb-card {
+  position: fixed;
+  z-index: 30;
+  top: 50%;
+  left: 50%;
+  width: min(620px, calc(100vw - 48px));
+  max-height: min(700px, calc(100vh - 48px));
+  overflow-y: auto;
+  transform: translate(-50%, -50%);
+  padding: 18px;
+  border-color: #52678d;
+  background: #121a27;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .7);
+}
+#usb-card .usb-close { position: absolute; top: 12px; right: 12px; }
+#usb-card .build-summary { padding-right: 42px; }
+#review-usb-target { width: 100%; margin: -2px 0 9px; }
 .source-choice { margin-bottom: 9px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .source-choice span { min-width: 0; }
 .source-choice strong { display: block; font-size: 14px; }

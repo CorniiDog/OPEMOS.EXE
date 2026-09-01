@@ -1097,6 +1097,7 @@ pub(crate) struct UsbTargetCandidate {
     pub(crate) media_name: String,
     pub(crate) bus_protocol: String,
     pub(crate) bytes: u64,
+    pub(crate) block_size: u64,
     pub(crate) identity_token: String,
 }
 
@@ -1143,6 +1144,28 @@ pub(crate) struct UsbWritePreflightStatus {
     pub(crate) device_identifier: Option<String>,
     pub(crate) image_sha256: Option<String>,
     pub(crate) identity_token: Option<String>,
+    pub(crate) message: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UsbWriteProgress {
+    pub(crate) phase: String,
+    pub(crate) bytes_completed: u64,
+    pub(crate) bytes_total: u64,
+    pub(crate) message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UsbWriteResult {
+    pub(crate) status: String,
+    pub(crate) device_identifier: String,
+    pub(crate) device_node: String,
+    pub(crate) bytes_written: u64,
+    pub(crate) image_sha256: String,
+    pub(crate) verified_sha256: String,
+    pub(crate) ejected: bool,
     pub(crate) message: String,
 }
 

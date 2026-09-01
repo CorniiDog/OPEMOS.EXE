@@ -1256,7 +1256,10 @@ pub(crate) fn wait_for_ready(
     }
 }
 
-pub(crate) fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, String> {
+pub(crate) fn export_marker_image_blocking(
+    app: tauri::AppHandle,
+    reveal_in_finder: bool,
+) -> Result<ExportedImage, String> {
     let manager_state = app.state::<Mutex<ApplianceManager>>();
     let (mut session, cancel) = {
         let mut manager = manager_state
@@ -1467,7 +1470,9 @@ pub(crate) fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<Expo
         partial_guard.armed = false;
         manifest_guard.armed = false;
         #[cfg(target_os = "macos")]
-        let _ = Command::new("open").arg("-R").arg(&final_path).spawn();
+        if reveal_in_finder {
+            let _ = Command::new("open").arg("-R").arg(&final_path).spawn();
+        }
         Ok(ExportedImage {
             path: final_path.to_string_lossy().into_owned(),
             manifest_path: final_manifest_path.to_string_lossy().into_owned(),
@@ -1485,10 +1490,15 @@ pub(crate) fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<Expo
 }
 
 #[tauri::command]
-pub(crate) async fn export_marker_image(app: tauri::AppHandle) -> Result<ExportedImage, String> {
-    tauri::async_runtime::spawn_blocking(move || export_marker_image_blocking(app))
-        .await
-        .map_err(|error| format!("Image export worker failed: {error}"))?
+pub(crate) async fn export_marker_image(
+    app: tauri::AppHandle,
+    reveal_in_finder: Option<bool>,
+) -> Result<ExportedImage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        export_marker_image_blocking(app, reveal_in_finder.unwrap_or(true))
+    })
+    .await
+    .map_err(|error| format!("Image export worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -1550,6 +1560,7 @@ pub(crate) fn usb_candidate_from_diskutil_info(
         || !identifier[4..].bytes().all(|byte| byte.is_ascii_digit())
         || object.get("Whole").and_then(|value| value.as_bool()) != Some(true)
         || object.get("Internal").and_then(|value| value.as_bool()) != Some(false)
+        || object.get("Writable").and_then(|value| value.as_bool()) != Some(true)
         || object
             .get("VirtualOrPhysical")
             .and_then(|value| value.as_str())
@@ -1593,9 +1604,13 @@ pub(crate) fn usb_candidate_from_diskutil_info(
     let device_tree_path = object
         .get("DeviceTreePath")
         .and_then(|value| value.as_str())
-        .unwrap_or("");
+        .filter(|value| !value.is_empty())?;
+    let block_size = object.get("DeviceBlockSize")?.as_u64()?;
+    if !matches!(block_size, 512 | 1024 | 2048 | 4096) || !image_bytes.is_multiple_of(block_size) {
+        return None;
+    }
     let identity = format!(
-        "{identifier}\0{device_node}\0{bytes}\0{media_name}\0{bus_protocol}\0{device_tree_path}"
+        "{identifier}\0{device_node}\0{bytes}\0{block_size}\0{media_name}\0{bus_protocol}\0{device_tree_path}"
     );
     Some(UsbTargetCandidate {
         device_identifier: identifier.into(),
@@ -1603,12 +1618,14 @@ pub(crate) fn usb_candidate_from_diskutil_info(
         media_name,
         bus_protocol,
         bytes,
+        block_size,
         identity_token: format!("{:x}", Sha256::digest(identity.as_bytes())),
     })
 }
 
 pub(crate) const USB_PREFLIGHT_TTL: Duration = Duration::from_secs(60);
 
+#[derive(Clone)]
 struct ArmedUsbPreflight {
     session_token: String,
     expires_at: Instant,
@@ -1621,11 +1638,17 @@ struct ArmedUsbPreflight {
 pub(crate) struct UsbPreparationManager {
     generation: u64,
     armed: Option<ArmedUsbPreflight>,
+    active_token: Option<String>,
+    cancel_write: Option<Arc<AtomicBool>>,
 }
 
 impl UsbPreparationManager {
     pub(crate) fn cancel_all(&mut self) {
         self.armed = None;
+        if let Some(cancel) = self.cancel_write.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        self.active_token = None;
     }
 
     pub(crate) fn arm(
@@ -1654,17 +1677,72 @@ impl UsbPreparationManager {
         {
             self.armed = None;
         }
-        let cancelled = self
+        let mut cancelled = self
             .armed
             .as_ref()
             .is_some_and(|armed| session_token == armed.session_token);
         if cancelled {
             self.armed = None;
         }
+        if self.active_token.as_deref() == Some(session_token) {
+            if let Some(cancel) = &self.cancel_write {
+                cancel.store(true, Ordering::Relaxed);
+            }
+            cancelled = true;
+        }
         cancelled
     }
 
+    fn is_writing(&self, session_token: &str) -> bool {
+        self.active_token.as_deref() == Some(session_token)
+    }
+
+    fn armed(&mut self, session_token: &str, now: Instant) -> Option<ArmedUsbPreflight> {
+        if self
+            .armed
+            .as_ref()
+            .is_some_and(|armed| now >= armed.expires_at)
+        {
+            self.armed = None;
+        }
+        self.armed
+            .as_ref()
+            .filter(|armed| armed.session_token == session_token)
+            .cloned()
+    }
+
+    fn begin_write(&mut self, session_token: &str, now: Instant) -> Option<Arc<AtomicBool>> {
+        self.armed(session_token, now)?;
+        if self.active_token.is_some() {
+            return None;
+        }
+        self.armed = None;
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.active_token = Some(session_token.into());
+        self.cancel_write = Some(cancel.clone());
+        Some(cancel)
+    }
+
+    fn finish_write(&mut self, session_token: &str) {
+        if self.active_token.as_deref() == Some(session_token) {
+            self.active_token = None;
+            self.cancel_write = None;
+        }
+    }
+
     pub(crate) fn status(&mut self, session_token: &str, now: Instant) -> UsbWritePreflightStatus {
+        if self.active_token.as_deref() == Some(session_token) {
+            return UsbWritePreflightStatus {
+                status: "writing".into(),
+                active: true,
+                expires_in_ms: 0,
+                writes_allowed: true,
+                device_identifier: None,
+                image_sha256: None,
+                identity_token: None,
+                message: "The confirmed image is being written to the selected USB device.".into(),
+            };
+        }
         if let Some(armed) = self.armed.as_ref() {
             if now >= armed.expires_at {
                 let matching_token = session_token == armed.session_token;
@@ -1705,14 +1783,14 @@ impl UsbPreparationManager {
                 };
             }
             return UsbWritePreflightStatus {
-                status: "armed-read-only".into(),
+                status: "armed".into(),
                 active: true,
                 expires_in_ms: armed.expires_at.duration_since(now).as_millis(),
-                writes_allowed: false,
+                writes_allowed: true,
                 device_identifier: Some(armed.device_identifier.clone()),
                 image_sha256: Some(armed.image_sha256.clone()),
                 identity_token: Some(armed.identity_token.clone()),
-                message: "The confirmed USB intent session is active, but raw-device writing remains disabled.".into(),
+                message: "The confirmed USB intent session is active and can be consumed once to start writing.".into(),
             };
         }
         UsbWritePreflightStatus {
@@ -1735,6 +1813,107 @@ impl UsbPreparationManager {
     pub(crate) fn is_armed(&self) -> bool {
         self.armed.is_some()
     }
+}
+
+pub(crate) fn copy_and_verify_usb_image(
+    image: &Path,
+    target: &mut File,
+    image_bytes: u64,
+    expected_sha256: &str,
+    cancel: &AtomicBool,
+    mut progress: impl FnMut(UsbWriteProgress),
+) -> Result<String, String> {
+    const BUFFER_BYTES: usize = 4 * 1024 * 1024;
+    let mut input = BufReader::with_capacity(
+        BUFFER_BYTES,
+        File::open(image)
+            .map_err(|error| format!("Could not open the completed image: {error}"))?,
+    );
+    target
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| format!("Could not seek the selected USB device: {error}"))?;
+    let mut buffer = vec![0_u8; BUFFER_BYTES];
+    let mut written = 0_u64;
+    progress(UsbWriteProgress {
+        phase: "writing".into(),
+        bytes_completed: 0,
+        bytes_total: image_bytes,
+        message: "Writing the validated image to USB.".into(),
+    });
+    while written < image_bytes {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("USB writing was cancelled. The partially written device is not bootable and must be rewritten.".into());
+        }
+        let remaining = image_bytes - written;
+        let requested = usize::try_from(remaining.min(BUFFER_BYTES as u64))
+            .map_err(|_| "USB write size overflowed.")?;
+        input
+            .read_exact(&mut buffer[..requested])
+            .map_err(|error| format!("Could not read the completed image: {error}"))?;
+        target
+            .write_all(&buffer[..requested])
+            .map_err(|error| format!("Could not write the selected USB device: {error}"))?;
+        written = written
+            .checked_add(requested as u64)
+            .ok_or("USB write progress overflowed.")?;
+        progress(UsbWriteProgress {
+            phase: "writing".into(),
+            bytes_completed: written,
+            bytes_total: image_bytes,
+            message: "Writing the validated image to USB.".into(),
+        });
+    }
+    if let Err(error) = target.sync_all() {
+        #[cfg(target_os = "macos")]
+        if error.raw_os_error() == Some(25) {
+            let status = Command::new("/bin/sync").status().map_err(|sync_error| {
+                format!("Could not flush the selected USB device: {sync_error}")
+            })?;
+            if !status.success() {
+                return Err("macOS could not flush the selected USB device.".into());
+            }
+        } else {
+            return Err(format!("Could not flush the selected USB device: {error}"));
+        }
+        #[cfg(not(target_os = "macos"))]
+        return Err(format!("Could not flush the selected USB device: {error}"));
+    }
+    target
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| format!("Could not rewind the selected USB device: {error}"))?;
+    let mut verified = 0_u64;
+    let mut hasher = Sha256::new();
+    while verified < image_bytes {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(
+                "USB verification was cancelled. The device write was not accepted as verified."
+                    .into(),
+            );
+        }
+        let remaining = image_bytes - verified;
+        let requested = usize::try_from(remaining.min(BUFFER_BYTES as u64))
+            .map_err(|_| "USB verification size overflowed.")?;
+        target
+            .read_exact(&mut buffer[..requested])
+            .map_err(|error| format!("Could not verify the selected USB device: {error}"))?;
+        hasher.update(&buffer[..requested]);
+        verified = verified
+            .checked_add(requested as u64)
+            .ok_or("USB verification progress overflowed.")?;
+        progress(UsbWriteProgress {
+            phase: "verifying".into(),
+            bytes_completed: verified,
+            bytes_total: image_bytes,
+            message: "Reading the USB device back and verifying SHA-256.".into(),
+        });
+    }
+    let actual = format!("{:x}", hasher.finalize());
+    if !actual.eq_ignore_ascii_case(expected_sha256) {
+        return Err(
+            "USB verification failed: the bytes read back do not match the built image.".into(),
+        );
+    }
+    Ok(actual)
 }
 
 pub(crate) fn valid_usb_preflight_session_token(session_token: &str) -> bool {
@@ -1854,6 +2033,11 @@ pub(crate) fn validate_usb_image_identity(
     if !metadata.is_file() {
         return Err("The completed image is not a regular file.".into());
     }
+    if metadata.len() == 0 || metadata.len() % 512 != 0 {
+        return Err(
+            "USB preparation requires a non-empty raw image aligned to 512-byte sectors.".into(),
+        );
+    }
     let manifest_path = manifest_path_for_output(&image);
     let manifest_bytes = fs::read(&manifest_path)
         .map_err(|error| format!("Could not read the adjacent build manifest: {error}"))?;
@@ -1930,6 +2114,11 @@ pub(crate) fn validate_usb_write_intent(
     if target.bytes < image_bytes {
         return Err("The selected disk is no longer large enough for the completed image.".into());
     }
+    if image_bytes == 0 || !image_bytes.is_multiple_of(target.block_size) {
+        return Err(
+            "The completed image is not aligned to the selected disk's logical block size.".into(),
+        );
+    }
     Ok(())
 }
 
@@ -1945,6 +2134,43 @@ pub(crate) async fn inspect_usb_targets(image_path: String) -> Result<UsbTargetP
             targets,
             writes_allowed: false,
             message: "Read-only discovery complete. Direct disk writes remain disabled; select a target only for review.".into(),
+        })
+    })
+    .await
+    .map_err(|error| format!("USB target discovery worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn inspect_usb_targets_for_build(
+    input_path: String,
+) -> Result<UsbTargetPreflight, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let input = fs::canonicalize(&input_path)
+            .map_err(|error| format!("Could not resolve the selected image: {error}"))?;
+        let metadata = fs::metadata(&input)
+            .map_err(|error| format!("Could not inspect the selected image: {error}"))?;
+        if !metadata.is_file() {
+            return Err("The selected image is not a regular file.".into());
+        }
+        let format = detect_input_format(&input)?;
+        let minimum_bytes = if format == InputFormat::Raw {
+            metadata.len()
+        } else {
+            0
+        };
+        let targets = discover_usb_targets(minimum_bytes)?;
+        Ok(UsbTargetPreflight {
+            image_path: input.to_string_lossy().into_owned(),
+            image_bytes: minimum_bytes,
+            image_sha256: String::new(),
+            targets,
+            writes_allowed: false,
+            message: if format == InputFormat::Raw {
+                "Eligible removable drives are shown. Exact image identity and capacity will be checked again after the build."
+            } else {
+                "Eligible removable drives are shown. The compressed input's final raw size will be checked after export before writing."
+            }
+            .into(),
         })
     })
     .await
@@ -2011,16 +2237,16 @@ pub(crate) async fn arm_usb_write_preflight(
         Instant::now(),
     );
     Ok(UsbWritePreflightSession {
-        status: "confirmed-read-only".into(),
+        status: "armed".into(),
         session_token,
         device_identifier: target.device_identifier,
         device_node: target.device_node,
         image_sha256,
         identity_token: target.identity_token,
         expires_at_unix_ms,
-        writes_allowed: false,
+        writes_allowed: true,
         message: format!(
-            "Intent confirmed for {}. Raw-device writing remains disabled; this preflight expires in 60 seconds.",
+            "Intent confirmed for {}. The one-time write authorization expires in 60 seconds.",
             image.display()
         ),
     })
@@ -2038,9 +2264,17 @@ pub(crate) fn cancel_usb_write_preflight(
     let mut manager = manager_state
         .lock()
         .map_err(|_| "USB preparation state is unavailable.")?;
+    let writing = manager.is_writing(&session_token);
     let cancelled = manager.cancel(&session_token, Instant::now());
     Ok(UsbWritePreflightCancellation {
-        status: if cancelled { "cancelled" } else { "not-armed" }.into(),
+        status: if writing && cancelled {
+            "cancellation-requested"
+        } else if cancelled {
+            "cancelled"
+        } else {
+            "not-armed"
+        }
+        .into(),
         cancelled,
         writes_allowed: false,
     })
@@ -2059,4 +2293,164 @@ pub(crate) fn get_usb_write_preflight_status(
         .lock()
         .map_err(|_| "USB preparation state is unavailable.")?;
     Ok(manager.status(&session_token, Instant::now()))
+}
+
+#[cfg(target_os = "macos")]
+fn unmount_usb_target(identifier: &str) -> Result<(), String> {
+    let output = Command::new("/usr/sbin/diskutil")
+        .args(["unmountDisk", identifier])
+        .output()
+        .map_err(|error| {
+            format!("Could not ask macOS to unmount the selected USB disk: {error}")
+        })?;
+    if !output.status.success() {
+        return Err("macOS could not unmount every volume on the selected USB disk. Close files using it and try again.".into());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn eject_usb_target(identifier: &str) -> bool {
+    Command::new("/usr/sbin/diskutil")
+        .args(["eject", identifier])
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(target_os = "macos")]
+fn open_usb_raw_device(target: &UsbTargetCandidate) -> Result<File, String> {
+    let raw_node = PathBuf::from(format!("/dev/r{}", target.device_identifier));
+    let metadata = fs::symlink_metadata(&raw_node)
+        .map_err(|error| format!("Could not inspect {}: {error}", raw_node.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_char_device() {
+        return Err("The selected raw USB node is not a direct character device.".into());
+    }
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&raw_node)
+        .map_err(|error| {
+            if error.kind() == io::ErrorKind::PermissionDenied {
+                "macOS denied raw USB access. A signed privileged-helper installation is required before packaged builds can flash physical media.".into()
+            } else {
+                format!("Could not open the selected raw USB device: {error}")
+            }
+        })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn unmount_usb_target(_identifier: &str) -> Result<(), String> {
+    Err("USB writing is currently implemented only for macOS.".into())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn eject_usb_target(_identifier: &str) -> bool {
+    false
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_usb_raw_device(_target: &UsbTargetCandidate) -> Result<File, String> {
+    Err("USB writing is currently implemented only for macOS.".into())
+}
+
+#[tauri::command]
+pub(crate) async fn write_image_to_usb(
+    app: tauri::AppHandle,
+    session_token: String,
+    image_path: String,
+) -> Result<UsbWriteResult, String> {
+    if !valid_usb_preflight_session_token(&session_token) {
+        return Err("The USB intent session token is invalid.".into());
+    }
+    let manager_state = app.state::<Mutex<UsbPreparationManager>>();
+    let armed = {
+        let mut manager = manager_state
+            .lock()
+            .map_err(|_| "USB preparation state is unavailable.")?;
+        manager.armed(&session_token, Instant::now()).ok_or(
+            "The USB intent session expired or was replaced. Revalidate the image and device.",
+        )?
+    };
+    let (image, image_bytes, image_sha256) =
+        tauri::async_runtime::spawn_blocking(move || validate_usb_image_identity(&image_path))
+            .await
+            .map_err(|error| format!("USB image revalidation worker failed: {error}"))??;
+    if image_sha256 != armed.image_sha256 {
+        return Err("The completed image identity changed after USB confirmation.".into());
+    }
+    let target_identifier = armed.device_identifier.clone();
+    let target = tauri::async_runtime::spawn_blocking(move || {
+        revalidate_usb_target(&target_identifier, image_bytes)
+    })
+    .await
+    .map_err(|error| format!("USB device revalidation worker failed: {error}"))??;
+    if target.identity_token != armed.identity_token {
+        return Err("The selected removable device was replaced after confirmation.".into());
+    }
+    let cancel = {
+        let mut manager = manager_state
+            .lock()
+            .map_err(|_| "USB preparation state is unavailable.")?;
+        manager
+            .begin_write(&session_token, Instant::now())
+            .ok_or("The USB intent session is no longer available for writing.")?
+    };
+    let app_for_progress = app.clone();
+    let device_identifier = target.device_identifier.clone();
+    let device_node = target.device_node.clone();
+    let expected_sha256 = image_sha256.clone();
+    let worker = tauri::async_runtime::spawn_blocking(move || {
+        unmount_usb_target(&target.device_identifier)?;
+        let revalidated = revalidate_usb_target(&target.device_identifier, image_bytes)?;
+        if revalidated.identity_token != target.identity_token {
+            let _ = eject_usb_target(&target.device_identifier);
+            return Err("The selected removable device changed while it was being unmounted.".into());
+        }
+        let mut device = match open_usb_raw_device(&revalidated) {
+            Ok(device) => device,
+            Err(error) => {
+                let _ = eject_usb_target(&revalidated.device_identifier);
+                return Err(error);
+            }
+        };
+        let copy_result = copy_and_verify_usb_image(
+            &image,
+            &mut device,
+            image_bytes,
+            &expected_sha256,
+            &cancel,
+            |progress| {
+                let _ = app_for_progress.emit("usb-write-progress", progress);
+            },
+        );
+        drop(device);
+        let verified_sha256 = match copy_result {
+            Ok(sha256) => sha256,
+            Err(error) => {
+                let _ = eject_usb_target(&revalidated.device_identifier);
+                return Err(error);
+            }
+        };
+        let ejected = eject_usb_target(&revalidated.device_identifier);
+        Ok(UsbWriteResult {
+            status: "verified".into(),
+            device_identifier,
+            device_node,
+            bytes_written: image_bytes,
+            image_sha256: expected_sha256,
+            verified_sha256,
+            ejected,
+            message: if ejected {
+                "USB writing and byte-for-byte verification completed; the device was ejected safely."
+            } else {
+                "USB writing and byte-for-byte verification completed. macOS could not eject the device automatically."
+            }
+            .into(),
+        })
+    })
+    .await;
+    if let Ok(mut manager) = manager_state.lock() {
+        manager.finish_write(&session_token);
+    }
+    worker.map_err(|error| format!("USB writer worker failed: {error}"))?
 }

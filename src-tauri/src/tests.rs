@@ -308,9 +308,12 @@ mod tests {
             "VirtualOrPhysical": "Physical",
             "RemovableMedia": true,
             "Ejectable": true,
+            "Writable": true,
             "TotalSize": 64_000_000_000_u64,
+            "DeviceBlockSize": 512,
             "MediaName": "Test USB",
-            "BusProtocol": "USB"
+            "BusProtocol": "USB",
+            "DeviceTreePath": "IODeviceTree:/fixture/usb@1"
         });
         let candidate = usb_candidate_from_diskutil_info(&removable, 32_000_000_000, Some("disk7"))
             .expect("safe removable disk");
@@ -354,9 +357,9 @@ mod tests {
         assert!(manager.is_armed());
         let active = manager.status("first", now + Duration::from_secs(1));
         assert!(active.active);
-        assert_eq!(active.status, "armed-read-only");
+        assert_eq!(active.status, "armed");
         assert!(active.expires_in_ms > 0);
-        assert!(!active.writes_allowed);
+        assert!(active.writes_allowed);
         assert_eq!(active.device_identifier.as_deref(), Some("disk7"));
         assert_eq!(active.image_sha256.as_deref(), Some(fixture_image_sha.as_str()));
         assert_eq!(active.identity_token.as_deref(), Some(fixture_identity.as_str()));
@@ -424,9 +427,9 @@ mod tests {
         )));
         fs::create_dir(&root.0).expect("create USB identity fixture");
         let image = root.0.join("completed.img");
-        let original = b"validated-image";
-        fs::write(&image, original).expect("write image fixture");
-        let sha256 = format!("{:x}", Sha256::digest(original));
+        let original = vec![0x3c_u8; 4096];
+        fs::write(&image, &original).expect("write image fixture");
+        let sha256 = format!("{:x}", Sha256::digest(&original));
         let manifest = manifest_path_for_output(&image);
         let write_manifest = |filename: &str, bytes: u64, hash: &str| {
             fs::write(
@@ -451,10 +454,10 @@ mod tests {
         assert_eq!(bytes, original.len() as u64);
         assert_eq!(actual, sha256);
 
-        fs::write(&image, b"tampered-image!").expect("tamper image fixture");
+        fs::write(&image, vec![0x7a_u8; original.len()]).expect("tamper image fixture");
         assert!(validate_usb_image_identity(image.to_str().unwrap()).is_err());
 
-        fs::write(&image, original).expect("restore image fixture");
+        fs::write(&image, &original).expect("restore image fixture");
         write_manifest("different.img", original.len() as u64, &sha256);
         assert!(validate_usb_image_identity(image.to_str().unwrap()).is_err());
 
@@ -470,6 +473,7 @@ mod tests {
             media_name: "Fixture USB".into(),
             bus_protocol: "USB".into(),
             bytes: 64_000_000_000,
+            block_size: 512,
             identity_token: "a".repeat(64),
         };
         assert!(validate_usb_write_intent(
@@ -512,6 +516,150 @@ mod tests {
             "ERASE disk7"
         )
         .is_err());
+    }
+
+    #[test]
+    fn usb_copy_engine_writes_verifies_and_cancels_synthetic_media() {
+        struct TemporaryUsbDirectory(PathBuf);
+        impl Drop for TemporaryUsbDirectory {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TemporaryUsbDirectory(std::env::temp_dir().join(format!(
+            "steamos-usb-copy-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        )));
+        fs::create_dir(&root.0).expect("create USB copy fixture");
+        let image = root.0.join("source.img");
+        let target = root.0.join("target.media");
+        let mut payload = vec![0_u8; 9 * 1024 * 1024 + 37];
+        for (index, byte) in payload.iter_mut().enumerate() {
+            *byte = ((index * 31 + 17) % 251) as u8;
+        }
+        fs::write(&image, &payload).expect("write source image");
+        fs::write(&target, vec![0xa5; payload.len() + 4096]).expect("prepare target media");
+        let expected = format!("{:x}", Sha256::digest(&payload));
+        let cancel = AtomicBool::new(false);
+        let mut phases = Vec::new();
+        let mut target_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&target)
+            .expect("open target media");
+        let verified = copy_and_verify_usb_image(
+            &image,
+            &mut target_file,
+            payload.len() as u64,
+            &expected,
+            &cancel,
+            |progress| phases.push(progress.phase),
+        )
+        .expect("write and verify synthetic media");
+        assert_eq!(verified, expected);
+        assert!(phases.iter().any(|phase| phase == "writing"));
+        assert!(phases.iter().any(|phase| phase == "verifying"));
+        let written = fs::read(&target).expect("read target media");
+        assert_eq!(&written[..payload.len()], payload.as_slice());
+        assert_eq!(&written[payload.len()..], &[0xa5; 4096]);
+
+        fs::write(&target, vec![0_u8; payload.len()]).expect("reset target media");
+        let cancel = AtomicBool::new(false);
+        let mut target_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&target)
+            .expect("reopen target media");
+        let result = copy_and_verify_usb_image(
+            &image,
+            &mut target_file,
+            payload.len() as u64,
+            &expected,
+            &cancel,
+            |progress| {
+                if progress.phase == "writing" && progress.bytes_completed > 0 {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        assert!(result.expect_err("cancelled write must fail").contains("cancelled"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "attaches a small disposable macOS virtual disk and writes its raw device"]
+    fn live_usb_copy_engine_writes_virtual_macos_media() {
+        struct AttachedImage {
+            root: PathBuf,
+            device: Option<String>,
+        }
+        impl Drop for AttachedImage {
+            fn drop(&mut self) {
+                if let Some(device) = self.device.take() {
+                    let _ = Command::new("/usr/bin/hdiutil")
+                        .args(["detach", "-force", &device])
+                        .status();
+                }
+                let _ = fs::remove_dir_all(&self.root);
+            }
+        }
+        let root = std::env::temp_dir().join(format!(
+            "steamos-usb-virtual-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("create virtual USB fixture");
+        let image_path = root.join("media.sparseimage");
+        let create = Command::new("/usr/bin/hdiutil")
+            .args(["create", "-size", "16m", "-type", "SPARSE", "-layout", "NONE"])
+            .arg(&image_path)
+            .output()
+            .expect("create sparse virtual disk");
+        assert!(create.status.success(), "hdiutil create failed");
+        let attached = Command::new("/usr/bin/hdiutil")
+            .args(["attach", "-nomount"])
+            .arg(&image_path)
+            .output()
+            .expect("attach sparse virtual disk");
+        assert!(attached.status.success(), "hdiutil attach failed");
+        let device = String::from_utf8(attached.stdout)
+            .expect("UTF-8 hdiutil output")
+            .lines()
+            .find_map(|line| line.split_whitespace().next())
+            .filter(|value| value.starts_with("/dev/disk"))
+            .expect("attached disk node")
+            .to_string();
+        let fixture = AttachedImage {
+            root,
+            device: Some(device.clone()),
+        };
+        let raw_device = device.replacen("/dev/disk", "/dev/rdisk", 1);
+        let payload_path = fixture.root.join("payload.img");
+        let payload = vec![0x5a_u8; 6 * 1024 * 1024];
+        fs::write(&payload_path, &payload).expect("write virtual USB payload");
+        let expected = format!("{:x}", Sha256::digest(&payload));
+        let mut raw = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&raw_device)
+            .expect("open virtual raw disk");
+        let verified = copy_and_verify_usb_image(
+            &payload_path,
+            &mut raw,
+            payload.len() as u64,
+            &expected,
+            &AtomicBool::new(false),
+            |_| {},
+        )
+        .expect("write and verify virtual raw disk");
+        assert_eq!(verified, expected);
     }
 
     #[test]

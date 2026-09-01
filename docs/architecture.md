@@ -133,7 +133,13 @@ keys, and output images must remain untracked.
 - NVIDIA mutation can be structurally validated, but the result is not yet
   classified as install-ready. Valve installer propagation, Gamescope changes,
   A/B update behavior, and NVIDIA hardware boot remain separate gates.
-- The application does not flash physical drives.
+- The application has a fail-closed macOS USB writer and independently tested
+  raw-device copy/read-back engine. It accepts only a manifest-bound,
+  sector-aligned raw output and a repeatedly validated whole external physical
+  removable disk, then requires a short-lived one-use token and explicit final
+  confirmation. Normal packaged physical writes remain unavailable until a
+  signed least-privilege helper is installed; running the GUI as root is not a
+  supported workaround.
 
 ## Troubleshooting boundary
 

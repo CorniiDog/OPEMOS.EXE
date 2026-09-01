@@ -709,13 +709,21 @@ async function runBuild(request) {
     if (cancelling) return;
 
     setStatus("running", "Exporting raw image", "Stopping the mutation VM, flattening its working layer, and validating the result in a fresh appliance.", 85, "Exporting");
-    const output = await invoke("export_marker_image");
+    const output = await invoke("export_marker_image", {
+      revealInFinder: request.exportMode !== "usb",
+    });
     addStageLog(`Exported image: ${output.path}; ${output.bytes} bytes; raw layout=${output.layoutScheme}.`);
     addStageLog(`Build manifest: ${output.manifestPath}.`);
     addStageLog(`Export validation: marker=${output.markerPath}; SHA256 ${output.sha256}.`);
     addStageLog(`Source safety: original SHA256 ${output.sourceSha256}; unchanged=true.`);
-    setStatus("complete", nvidiaInstalled ? "NVIDIA mutation complete" : "Marker image complete", "Finder opened the validated raw image.", 100);
-    await finish("complete", `${nvidiaInstalled ? "NVIDIA-mutated image" : "Marker image"} created: ${output.path}`, output);
+    const usbRequested = request.exportMode === "usb" || request.exportMode === "both";
+    const completionMessage = usbRequested
+      ? "Validated staging image ready. Return to the main window to revalidate and write the selected USB device."
+      : "Finder opened the validated raw image.";
+    setStatus("complete", nvidiaInstalled ? "NVIDIA mutation complete" : "Marker image complete", completionMessage, 100);
+    await finish("complete", usbRequested
+      ? `${nvidiaInstalled ? "NVIDIA-mutated image" : "Marker image"} is ready for USB export: ${output.path}`
+      : `${nvidiaInstalled ? "NVIDIA-mutated image" : "Marker image"} created: ${output.path}`, output);
   } catch (error) {
     if (cancelling) return;
     addStageLog(`ERROR: ${error}`);

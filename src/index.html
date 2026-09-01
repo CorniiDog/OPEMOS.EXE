@@ -137,12 +137,13 @@
         </section>
 
         <section id="usb-card" class="build-card hidden">
+            <button id="close-usb-menu" class="icon-button compact usb-close" type="button" aria-label="Close USB menu">×</button>
             <div class="build-summary">
                 <div>
                     <span>Image to USB</span>
                     <strong>Review a removable target</strong>
                 </div>
-                <p>Read-only discovery accepts only whole external physical media large enough for this manifest-bound image. Disk writing remains disabled.</p>
+                <p>Only whole external physical media are eligible. The final image and device identity are revalidated immediately before writing.</p>
             </div>
             <label class="source-choice" for="usb-target">
                 <span><strong>Removable target</strong><small id="usb-target-detail">Connect a USB drive, then refresh.</small></span>
@@ -154,6 +155,7 @@
                 <input id="usb-confirmation" type="text" autocomplete="off" spellcheck="false">
             </label>
             <button id="arm-usb-preflight" class="primary hidden" type="button" disabled>Revalidate Target &amp; Confirm Intent</button>
+            <button id="write-usb-image" class="primary hidden" type="button">Write &amp; Verify USB</button>
             <button id="check-usb-preflight" class="secondary hidden" type="button">Check Preparation Status</button>
             <button id="cancel-usb-preflight" class="secondary hidden" type="button">Cancel USB Preparation</button>
             <p id="usb-message" class="result-message"></p>
@@ -248,6 +250,19 @@
             id="build-card"
             class="build-card hidden"
         >
+            <label class="source-choice" for="export-mode">
+                <span>
+                    <strong>Export destination</strong>
+                    <small>USB modes still create a validated staging image before any removable disk is changed.</small>
+                </span>
+                <select id="export-mode">
+                    <option value="image">Export as image (Recommended)</option>
+                    <option value="usb">Export to USB</option>
+                    <option value="both">Export image and USB</option>
+                </select>
+            </label>
+            <button id="review-usb-target" class="secondary hidden" type="button">Select or Review USB…</button>
+
             <label class="source-choice" for="nvidia-source">
                 <span>
                     <strong>NVIDIA source</strong>

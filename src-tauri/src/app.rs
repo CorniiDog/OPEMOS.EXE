@@ -85,9 +85,11 @@ pub fn run() {
             validate_image,
             preview_image_output,
             inspect_usb_targets,
+            inspect_usb_targets_for_build,
             arm_usb_write_preflight,
             cancel_usb_write_preflight,
             get_usb_write_preflight_status,
+            write_image_to_usb,
             windows::open_progress_window,
             windows::open_maintainer_window,
         ])

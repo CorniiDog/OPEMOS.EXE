@@ -1395,6 +1395,12 @@ Before calling the project **beta**, verify:
 * [x] Bind USB intent status to the exact device identifier, device identity token, and image SHA-256; reveal that identity only to the matching session token so stale tokens cannot observe a replacement session.
 * [x] Require an exact valid session token for public USB intent cancellation; keep tokenless cancellation backend-only so a stale UI cannot cancel an unrelated replacement session.
 * [x] Bind asynchronous USB arm/status/cancel and VS Code-open completions to their initiating UI context so stale responses cannot overwrite or resurrect replacement state.
+* [x] Add a pre-build Image / USB / Both destination selector and allow read-only removable-target selection before the long build; require final manifest identity and capacity revalidation afterward.
+* [x] Add a one-use USB writer state transition with 4 MiB bounded writes, live byte progress, safe-boundary cancellation, full written-range SHA-256 read-back, and best-effort eject on success or failure.
+* [x] Exercise the same writer against regular-file fixtures and an opt-in 16 MiB macOS virtual raw disk while continuing to reject virtual disks from real target discovery.
+* [ ] Install and authenticate a signed, least-privilege macOS privileged helper so normal packaged applications can open only the exact revalidated raw device without running the Tauri GUI as root.
+* [ ] Validate the complete workflow against a sacrificial physical USB device, including unplug/replug identity drift, busy volumes, cancellation during write and verification, read errors, eject failure, sleep/wake, and power loss.
+* [ ] Define a recoverable post-verification cleanup action for USB-only mode; until then retain the validated staging image rather than automatically deleting multi-gigabyte user output.
 * [ ] Automatic detection/download assistance for current official Valve recovery image without redistributing it.
 * [ ] Local artifact cache manager.
 * [ ] Offline build mode.
