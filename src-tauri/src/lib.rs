@@ -52,6 +52,8 @@ const NVIDIA_ARCHIVE_LIMIT: u64 = 1024 * 1024 * 1024;
 const NVIDIA_ARCHIVE_MEMBER_LIMIT: u64 = 1024 * 1024 * 1024;
 const NVIDIA_ARCHIVE_EXPANDED_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 const NVIDIA_HANDOFF_FREE_SPACE_RESERVE: u64 = 512 * 1024 * 1024;
+const HOST_RUNTIME_FREE_SPACE_RESERVE: u64 = 4 * 1024 * 1024 * 1024;
+const HOST_OUTPUT_FREE_SPACE_RESERVE: u64 = 64 * 1024 * 1024;
 const _: () = assert!(NVIDIA_ARCHIVE_LIMIT >= 700 * 1024 * 1024);
 const _: () = assert!(NVIDIA_ARCHIVE_LIMIT <= 2 * 1024 * 1024 * 1024);
 const ARCH_ARCHIVE_INDEX_LIMIT: u64 = 8 * 1024 * 1024;
@@ -2895,6 +2897,7 @@ fn prepare_session(
             MAX_NORMALIZED_IMAGE_BYTES
         ));
     }
+    preflight_host_build_space(&runtime_dir, &input_image, image_bytes)?;
     let attached_sha256_before = if attached_image == input_image {
         input_sha256_before.clone()
     } else {
@@ -7610,31 +7613,94 @@ fn output_path_for_input(input: &Path, nvidia_installed: bool) -> Result<PathBuf
     Err("Could not choose an unused output filename.".into())
 }
 
-fn host_available_bytes(path: &Path) -> Result<u64, String> {
+#[derive(Debug, PartialEq, Eq)]
+struct HostVolumeSpace {
+    filesystem: String,
+    available_bytes: u64,
+}
+
+fn host_volume_space(path: &Path) -> Result<HostVolumeSpace, String> {
     let output = Command::new("df")
         .args(["-P", "-k"])
         .arg(path)
         .output()
-        .map_err(|error| format!("Could not measure host output space: {error}"))?;
+        .map_err(|error| format!("Could not measure host filesystem space: {error}"))?;
     if !output.status.success() {
-        return Err("Could not measure host output space with df.".into());
+        return Err("Could not measure host filesystem space with df.".into());
     }
     let stdout = String::from_utf8(output.stdout)
-        .map_err(|_| "Host output-space report was not valid UTF-8.")?;
+        .map_err(|_| "Host filesystem-space report was not valid UTF-8.")?;
     let fields: Vec<_> = stdout
         .lines()
         .rfind(|line| !line.trim().is_empty())
-        .ok_or("Host output-space report was empty.")?
+        .ok_or("Host filesystem-space report was empty.")?
         .split_whitespace()
         .collect();
     if fields.len() < 6 {
-        return Err("Host output-space report had an unexpected format.".into());
+        return Err("Host filesystem-space report had an unexpected format.".into());
     }
-    fields[fields.len() - 3]
+    let available_bytes = fields[fields.len() - 3]
         .parse::<u64>()
         .ok()
         .and_then(|blocks| blocks.checked_mul(1024))
-        .ok_or_else(|| "Host output-space report contained an invalid byte count.".into())
+        .ok_or_else(|| {
+            "Host filesystem-space report contained an invalid byte count.".to_string()
+        })?;
+    Ok(HostVolumeSpace {
+        filesystem: fields[0].to_string(),
+        available_bytes,
+    })
+}
+
+fn host_available_bytes(path: &Path) -> Result<u64, String> {
+    Ok(host_volume_space(path)?.available_bytes)
+}
+
+fn require_host_space(available: u64, required: u64, purpose: &str) -> Result<(), String> {
+    if available >= required {
+        return Ok(());
+    }
+    Err(format!(
+        "Host disk-space preflight failed before guest startup: {purpose} needs at least {} ({required} bytes) free, but only {} ({available} bytes) is available.",
+        human_bytes(required),
+        human_bytes(available),
+    ))
+}
+
+fn preflight_host_build_space(
+    runtime_dir: &Path,
+    input_image: &Path,
+    image_bytes: u64,
+) -> Result<(), String> {
+    let output_parent = input_image
+        .parent()
+        .ok_or("Could not determine the future output folder.")?;
+    let output_parent = fs::canonicalize(output_parent)
+        .map_err(|error| format!("Could not resolve the future output folder: {error}"))?;
+    let runtime = host_volume_space(runtime_dir)?;
+    let output = host_volume_space(&output_parent)?;
+    let runtime_required = checked_space_sum([image_bytes, HOST_RUNTIME_FREE_SPACE_RESERVE])?;
+    let output_required = checked_space_sum([image_bytes, HOST_OUTPUT_FREE_SPACE_RESERVE])?;
+
+    if runtime.filesystem == output.filesystem {
+        let required = checked_space_sum([runtime_required, output_required])?;
+        require_host_space(
+            runtime.available_bytes,
+            required,
+            "the shared runtime/output volume",
+        )
+    } else {
+        require_host_space(
+            runtime.available_bytes,
+            runtime_required,
+            "the runtime volume (working overlay and temporary build data)",
+        )?;
+        require_host_space(
+            output.available_bytes,
+            output_required,
+            "the output volume (final raw image and export reserve)",
+        )
+    }
 }
 
 fn validate_output_destination(
@@ -10841,7 +10907,7 @@ fn checked_space_sum(parts: impl IntoIterator<Item = u64>) -> Result<u64, String
     parts
         .into_iter()
         .try_fold(0_u64, |total, value| total.checked_add(value))
-        .ok_or_else(|| "NVIDIA free-space estimate overflowed.".into())
+        .ok_or_else(|| "Free-space estimate overflowed.".into())
 }
 
 fn nvidia_handoff_space_requirement(
@@ -13716,6 +13782,25 @@ mod tests {
                 .contains("needs at least")
         );
         fs::remove_dir_all(root).expect("remove output-safety test directory");
+    }
+
+    #[test]
+    fn enforces_host_build_space_reserves_without_overflow() {
+        let required = checked_space_sum([
+            8 * 1024 * 1024 * 1024,
+            HOST_RUNTIME_FREE_SPACE_RESERVE,
+            8 * 1024 * 1024 * 1024,
+            HOST_OUTPUT_FREE_SPACE_RESERVE,
+        ])
+        .expect("calculate shared-volume requirement");
+        assert_eq!(required, 20 * 1024 * 1024 * 1024 + 64 * 1024 * 1024);
+        assert!(require_host_space(required, required, "test volume").is_ok());
+        let error = require_host_space(required - 1, required, "test volume")
+            .expect_err("one-byte shortfall must fail");
+        assert!(error.contains("before guest startup"));
+        assert!(error.contains(&format!("{required} bytes")));
+        assert!(error.contains(&format!("{} bytes", required - 1)));
+        assert!(checked_space_sum([u64::MAX, 1]).is_err());
     }
 
     #[test]

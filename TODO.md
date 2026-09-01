@@ -739,10 +739,9 @@ Support-repository readiness (tracked here because it gates image-builder integr
 
 * [ ] Estimate required disk space before the entire build. (The NVIDIA x86 handoff and authoritative target-root validation now have bounded preflights; host image normalization/export remain.)
 * [ ] Account for compressed input size.
-* [ ] Account for decompressed image size.
-* [ ] Account for working copy.
-* [ ] Account for qcow2 runtime overlay.
-* [ ] Account for final output.
+* [x] Account for decompressed image size after normalization and before guest startup.
+* [x] Account conservatively for worst-case qcow2 working-overlay growth.
+* [x] Account for the final raw output image.
 * [ ] Add safety reserves to every large-file phase. (NVIDIA appliance handoff and target-root mutation are covered.)
 * [ ] Choose workspace filesystem deliberately.
 * [ ] Avoid duplicating multi-gigabyte image data unnecessarily.
@@ -1128,7 +1127,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Detect host logical CPU count.
 * [x] Choose 1-4 native or 1-6 build-worker vCPUs while leaving host CPU headroom.
 * [x] Run CPU/blocking image preparation, inspection verification, and shutdown outside the UI thread.
-* [ ] Detect low disk space before guest startup.
+* [x] Detect low disk space before guest startup, without double-counting capacity across separate runtime and output volumes.
 * [ ] Allow advanced resource override only if needed.
 * [x] Record schema-1 host/guest resource plans in each disposable runtime's `resources.json` diagnostics.
 
