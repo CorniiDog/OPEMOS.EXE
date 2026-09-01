@@ -9333,15 +9333,50 @@ fn validate_nvidia_storage_failure(
             }
         };
     validate_support_storage(storage, false)?;
+    let root_shortfall = storage
+        .root_required_bytes
+        .saturating_sub(storage.root_available_bytes);
+    let package_growth = storage
+        .package_installed_bytes
+        .saturating_sub(storage.package_replaced_bytes);
+    let module_growth = storage
+        .module_installed_bytes
+        .saturating_sub(storage.module_replaced_bytes);
+    let metadata_reserve = storage
+        .root_required_bytes
+        .saturating_sub(package_growth)
+        .saturating_sub(module_growth)
+        .saturating_sub(storage.initramfs_reserve_bytes);
     Ok(format!(
-        "SteamOS target storage is insufficient: root {} required / {} available bytes; var {} / {}; EFI {} / {}. No mutation began.",
-        storage.root_required_bytes,
-        storage.root_available_bytes,
-        storage.var_required_bytes,
-        storage.var_available_bytes,
-        storage.efi_required_bytes,
-        storage.efi_available_bytes,
+        "SteamOS rootfs-A needs {} but has {} available—a {} shortfall. Root accounting: {} userspace growth, {} module growth, {} initramfs reserve, and {} metadata/safety reserve. var-A needs {} / has {}; efi-A needs {} / has {}. No mutation began.",
+        human_bytes(storage.root_required_bytes),
+        human_bytes(storage.root_available_bytes),
+        human_bytes(root_shortfall),
+        human_bytes(package_growth),
+        human_bytes(module_growth),
+        human_bytes(storage.initramfs_reserve_bytes),
+        human_bytes(metadata_reserve),
+        human_bytes(storage.var_required_bytes),
+        human_bytes(storage.var_available_bytes),
+        human_bytes(storage.efi_required_bytes),
+        human_bytes(storage.efi_available_bytes),
     ))
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let value = bytes as f64;
+    if value >= GIB {
+        format!("{:.2} GiB", value / GIB)
+    } else if value >= MIB {
+        format!("{:.1} MiB", value / MIB)
+    } else if value >= KIB {
+        format!("{:.1} KiB", value / KIB)
+    } else {
+        format!("{bytes} bytes")
+    }
 }
 
 fn concise_json_value(value: &serde_json::Value) -> String {
@@ -11651,7 +11686,9 @@ mod tests {
         };
         let message = validate_nvidia_storage_failure(&storage_failure, &inputs)
             .expect("authoritative storage failure should pass");
-        assert!(message.contains("1 available bytes"));
+        assert!(message.contains("128.0 MiB"));
+        assert!(message.contains("shortfall"));
+        assert!(message.contains("userspace growth"));
 
         let mut lock_failure = storage_failure.clone();
         lock_failure.reason = "userspace_lock_mismatch".into();
