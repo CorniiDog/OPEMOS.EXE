@@ -64,6 +64,10 @@ test("structured installer validation progress is strict and measurable", () => 
   );
   assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"attempt":1,"phase":"unknown","indeterminate":true}`), null);
   assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"attempt":1,"phase":"modules","indeterminate":false,"completed":6,"total":5,"unit":"items"}`), null);
+  assert.equal(inferInstallerValidationProgress(`${marker}\n${prefix}{"schemaVersion":1,`), null);
+  assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"schemaVersion":1,"attempt":1,"phase":"hashing","indeterminate":true}`), null);
+  assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"attempt":2,"phase":"hashing","indeterminate":false,"completed":4,"total":5,"unit":"items"}\n${prefix}{"schemaVersion":1,"attempt":2,"phase":"hashing","indeterminate":false,"completed":3,"total":5,"unit":"items"}`), null);
+  assert.notEqual(inferInstallerValidationProgress(marker.replace(/}$/, ',"future":{"accepted":true}}')), null);
 });
 
 test("structured installer mutation progress reports real package and module work", () => {

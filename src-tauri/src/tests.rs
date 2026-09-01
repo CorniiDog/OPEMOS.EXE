@@ -1292,6 +1292,27 @@ mod tests {
     }
 
     #[test]
+    fn installer_result_reader_rejects_empty_truncated_and_excessive_documents() {
+        let root = std::env::temp_dir().join(format!(
+            "steamos-installer-result-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create installer-result fixture");
+        let path = root.join("result.json");
+        fs::write(&path, []).expect("write empty result");
+        assert!(read_support_install_result(&path).is_err());
+        fs::write(&path, br#"{"schemaVersion":1,"status":"success""#)
+            .expect("write truncated result");
+        assert!(read_support_install_result(&path).is_err());
+        let file = File::create(&path).expect("create excessive result");
+        file.set_len(32 * 1024 * 1024 + 1)
+            .expect("size excessive result");
+        assert!(read_support_install_result(&path).is_err());
+        fs::remove_dir_all(root).expect("remove installer-result fixture");
+    }
+
+    #[test]
     fn pinned_publisher_contract_is_safe_and_versioned() {
         assert_eq!(validate_pinned_publisher_contract().unwrap(), 19_984);
         assert_eq!(PINNED_PUBLISHER_FILES.len(), 2);
@@ -1620,6 +1641,8 @@ mod tests {
             trust: "certified-published".into(),
             cleanup: SupportInstallCleanup {
                 mounts_released: true,
+                runtime_mounts_expected: 4,
+                runtime_mounts_released: 4,
                 compression_policy_restored: true,
             },
             validation: Some(SupportInstallValidationDocument::Verified(Box::new(
@@ -1971,6 +1994,8 @@ mod tests {
             trust: "certified-published".into(),
             cleanup: SupportInstallCleanup {
                 mounts_released: true,
+                runtime_mounts_expected: 4,
+                runtime_mounts_released: 4,
                 compression_policy_restored: true,
             },
             validation: Some(SupportInstallValidationDocument::Failed(Box::new(
@@ -2079,6 +2104,8 @@ mod tests {
             trust: "certified-published".into(),
             cleanup: SupportInstallCleanup {
                 mounts_released: true,
+                runtime_mounts_expected: 4,
+                runtime_mounts_released: 4,
                 compression_policy_restored: true,
             },
             validation: Some(SupportInstallValidationDocument::Verified(Box::new(

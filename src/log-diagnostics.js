@@ -58,15 +58,22 @@ export function inferNvidiaDiagnosticMilestone(value) {
 }
 
 export function inferInstallerValidationProgress(value) {
-  const lines = stripTerminalFormatting(value).split("\n");
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index].trim();
+  const normalized = stripTerminalFormatting(value);
+  if (new TextEncoder().encode(normalized).length > 16 * 1024 * 1024) return null;
+  const records = [];
+  const previous = new Map();
+  for (const rawLine of normalized.split("\n")) {
+    const line = rawLine.trim();
     if (!line.startsWith(INSTALLER_PROGRESS_PREFIX)) continue;
+    if (new TextEncoder().encode(line).length > 4096) return null;
+    const payload = line.slice(INSTALLER_PROGRESS_PREFIX.length);
+    const keys = [...payload.matchAll(/"((?:\\.|[^"\\])*)"\s*:/g)].map((match) => match[1]);
+    if (new Set(keys).size !== keys.length) return null;
     let document;
     try {
-      document = JSON.parse(line.slice(INSTALLER_PROGRESS_PREFIX.length));
+      document = JSON.parse(payload);
     } catch {
-      continue;
+      return null;
     }
     const stage = INSTALLER_PROGRESS_STAGES[document.phase];
     const attempt = Number(document.attempt);
@@ -83,9 +90,15 @@ export function inferInstallerValidationProgress(value) {
         || (total !== null && (!Number.isSafeInteger(total) || total <= 0))
         || ((completed === null) !== (total === null))
         || (completed !== null && completed > total)) {
-      continue;
+      return null;
     }
-    return {
+    if (!indeterminate) {
+      const key = `${attempt}\0${document.phase}`;
+      const prior = previous.get(key);
+      if (prior && (completed < prior.completed || total !== prior.total || unit !== prior.unit)) return null;
+      previous.set(key, { completed, total, unit });
+    }
+    records.push({
       attempt,
       completed,
       kind: stage[2],
@@ -95,9 +108,9 @@ export function inferInstallerValidationProgress(value) {
       stepProgress: total === null ? null : completed / total,
       total,
       unit: indeterminate ? "none" : unit,
-    };
+    });
   }
-  return null;
+  return records.at(-1) ?? null;
 }
 
 export function stripInstallerProgressProtocol(value) {

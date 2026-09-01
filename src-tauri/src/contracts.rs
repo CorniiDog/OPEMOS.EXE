@@ -726,6 +726,8 @@ pub(crate) struct SupportInstallTarget {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SupportInstallCleanup {
     pub(crate) mounts_released: bool,
+    pub(crate) runtime_mounts_expected: u64,
+    pub(crate) runtime_mounts_released: u64,
     pub(crate) compression_policy_restored: bool,
 }
 

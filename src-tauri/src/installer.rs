@@ -1,5 +1,22 @@
 use super::*;
 
+const MAX_SUPPORT_INSTALL_RESULT_BYTES: u64 = 32 * 1024 * 1024;
+
+pub(crate) fn read_support_install_result(path: &Path) -> Result<SupportInstallResult, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not inspect the NVIDIA installer result: {error}"))?;
+    if !metadata.file_type().is_file()
+        || metadata.len() == 0
+        || metadata.len() > MAX_SUPPORT_INSTALL_RESULT_BYTES
+    {
+        return Err("NVIDIA installer result is linked, empty, or exceeds 32 MiB.".into());
+    }
+    let bytes = fs::read(path)
+        .map_err(|error| format!("Could not read the NVIDIA installer result: {error}"))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("NVIDIA installer result is invalid JSON: {error}"))
+}
+
 pub(crate) fn collect_nvidia_install_inputs(
     session: &ApplianceSession,
 ) -> Result<NvidiaInstallInputs, String> {
@@ -1072,6 +1089,8 @@ pub(crate) fn validate_nvidia_install_result(
         || document.target.architecture != "x86_64"
         || document.trust != inputs.trust
         || !document.cleanup.mounts_released
+        || document.cleanup.runtime_mounts_expected > 64
+        || document.cleanup.runtime_mounts_expected != document.cleanup.runtime_mounts_released
         || !document.cleanup.compression_policy_restored
     {
         return Err(
@@ -1678,11 +1697,7 @@ trap - EXIT INT TERM"#,
                 .join("nvidia-install-validation.json"),
         )
         .map_err(|e| format!("Could not preserve the latest NVIDIA installer result: {e}"))?;
-        let document: SupportInstallResult = serde_json::from_reader(
-            File::open(&staged_result)
-                .map_err(|e| format!("Could not read the NVIDIA installer result: {e}"))?,
-        )
-        .map_err(|e| format!("NVIDIA installer result is invalid JSON: {e}"))?;
+        let document = read_support_install_result(&staged_result)?;
         if document.status == "failed" && document.reason == "target_space_insufficient" {
             let message = validate_nvidia_storage_failure(&document, &inputs)?;
             if execution_result.is_ok() {
@@ -1955,11 +1970,7 @@ trap - EXIT INT TERM"#,
             .join("nvidia-install-mutation-result.json"),
     )
     .map_err(|e| format!("Could not preserve the NVIDIA installation result: {e}"))?;
-    let document: SupportInstallResult = serde_json::from_reader(
-        File::open(&staged_result)
-            .map_err(|e| format!("Could not read the NVIDIA installation result: {e}"))?,
-    )
-    .map_err(|e| format!("NVIDIA installation result is invalid JSON: {e}"))?;
+    let document = read_support_install_result(&staged_result)?;
     let installation = validate_nvidia_install_result(
         document,
         &inputs,
