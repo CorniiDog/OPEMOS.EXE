@@ -1117,6 +1117,33 @@ struct MarkerManifestData<'a> {
     nvidia_installation: Option<&'a NvidiaInstallHandoffResult>,
     nvidia_resolution: Option<&'a NvidiaPublishedResolution>,
     nvidia_source_selection: Option<&'a str>,
+    runtime: &'a BuildRuntimeProvenance,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeExecutableProvenance {
+    filename: String,
+    version: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeFileProvenance {
+    filename: String,
+    bytes: u64,
+    sha256: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildRuntimeProvenance {
+    host_os: String,
+    host_architecture: String,
+    native_qemu: RuntimeExecutableProvenance,
+    x86_installer_qemu: Option<RuntimeExecutableProvenance>,
+    native_appliance: RuntimeFileProvenance,
+    x86_installer_appliance: Option<RuntimeFileProvenance>,
 }
 
 fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json::Value {
@@ -1189,6 +1216,7 @@ fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json::Value {
             "commit": null
         },
         "builderProtocolVersion": "1",
+        "runtime": data.runtime,
         "input": {
             "filename": data.input.file_name().and_then(|value| value.to_str()).unwrap_or("unknown"),
             "sourceFormat": data.input_preparation.source_format,
@@ -2015,6 +2043,82 @@ fn qemu_version(path: &Path) -> Option<String> {
             .unwrap_or_default()
             .trim()
             .to_string()
+    })
+}
+
+fn runtime_executable_provenance(path: &Path) -> Result<RuntimeExecutableProvenance, String> {
+    let filename = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty() && value.len() <= 128)
+        .ok_or("QEMU executable filename is invalid for build provenance.")?;
+    let version = qemu_version(path)
+        .filter(|value| !value.is_empty() && value.len() <= 256)
+        .ok_or("QEMU version is unavailable for build provenance.")?;
+    Ok(RuntimeExecutableProvenance {
+        filename: filename.into(),
+        version,
+    })
+}
+
+fn runtime_file_provenance(
+    path: &Path,
+    stage: &str,
+    progress: Option<&ProgressCallback<'_>>,
+    cancel: Option<&AtomicBool>,
+) -> Result<RuntimeFileProvenance, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not inspect builder appliance provenance: {error}"))?;
+    if !metadata.file_type().is_file() || metadata.len() == 0 {
+        return Err("Builder appliance provenance requires a non-empty regular file.".into());
+    }
+    let filename = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty() && value.len() <= 128)
+        .ok_or("Builder appliance filename is invalid for build provenance.")?;
+    Ok(RuntimeFileProvenance {
+        filename: filename.into(),
+        bytes: metadata.len(),
+        sha256: sha256_file_with_progress(path, stage, progress, cancel)?,
+    })
+}
+
+fn collect_build_runtime_provenance(
+    nvidia_installed: bool,
+    progress: Option<&ProgressCallback<'_>>,
+    cancel: Option<&AtomicBool>,
+) -> Result<BuildRuntimeProvenance, String> {
+    let native_qemu_path = find_qemu().ok_or("Native QEMU is unavailable for build provenance.")?;
+    let native_qemu = runtime_executable_provenance(&native_qemu_path)?;
+    let native_appliance = runtime_file_provenance(
+        &appliance_path(),
+        "hashing-native-appliance",
+        progress,
+        cancel,
+    )?;
+    let (x86_installer_qemu, x86_installer_appliance) = if nvidia_installed {
+        let qemu = find_binary("qemu-system-x86_64")
+            .ok_or("x86_64 QEMU is unavailable for build provenance.")?;
+        (
+            Some(runtime_executable_provenance(&qemu)?),
+            Some(runtime_file_provenance(
+                &nvidia_build_appliance_path(),
+                "hashing-x86-appliance",
+                progress,
+                cancel,
+            )?),
+        )
+    } else {
+        (None, None)
+    };
+    Ok(BuildRuntimeProvenance {
+        host_os: std::env::consts::OS.into(),
+        host_architecture: std::env::consts::ARCH.into(),
+        native_qemu,
+        x86_installer_qemu,
+        native_appliance,
+        x86_installer_appliance,
     })
 }
 
@@ -8092,6 +8196,11 @@ fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, 
             ));
         }
         let partial_manifest_path = manifest_path_for_output(&partial_path);
+        let runtime_provenance = collect_build_runtime_provenance(
+            nvidia_installation.is_some(),
+            Some(&report_progress),
+            Some(&cancel),
+        )?;
         let manifest = marker_build_manifest(MarkerManifestData {
             input: &session.input_image,
             output: &final_path,
@@ -8108,6 +8217,7 @@ fn export_marker_image_blocking(app: tauri::AppHandle) -> Result<ExportedImage, 
             nvidia_installation: nvidia_installation.as_ref(),
             nvidia_resolution: session.nvidia_resolution.as_ref(),
             nvidia_source_selection: session.nvidia_source_selection.as_deref(),
+            runtime: &runtime_provenance,
         });
         let mut manifest_guard = PartialOutputGuard {
             path: partial_manifest_path.clone(),
@@ -13677,6 +13787,21 @@ mod tests {
             architecture: "x86_64".into(),
             kernel_versions: vec!["6.11.11-valve1-neptune-611".into()],
         };
+        let runtime = BuildRuntimeProvenance {
+            host_os: "macos".into(),
+            host_architecture: "aarch64".into(),
+            native_qemu: RuntimeExecutableProvenance {
+                filename: "qemu-system-aarch64".into(),
+                version: "QEMU emulator version 11.1.1".into(),
+            },
+            x86_installer_qemu: None,
+            native_appliance: RuntimeFileProvenance {
+                filename: "fedora-builder.qcow2".into(),
+                bytes: 528_154_624,
+                sha256: "a".repeat(64),
+            },
+            x86_installer_appliance: None,
+        };
         let manifest = marker_build_manifest(MarkerManifestData {
             input,
             output,
@@ -13690,6 +13815,7 @@ mod tests {
             nvidia_installation: None,
             nvidia_resolution: None,
             nvidia_source_selection: None,
+            runtime: &runtime,
         });
         assert_eq!(manifest["schemaVersion"], 1);
         assert_eq!(manifest["resultClass"], "mutation-valid");
@@ -13697,6 +13823,16 @@ mod tests {
         assert_eq!(manifest["input"]["filename"], "recovery.img.bz2");
         assert_eq!(manifest["output"]["filename"], "recovery-marker.img");
         assert_eq!(manifest["steamos"]["architecture"], "x86_64");
+        assert_eq!(manifest["runtime"]["hostOs"], "macos");
+        assert_eq!(manifest["runtime"]["hostArchitecture"], "aarch64");
+        assert_eq!(
+            manifest["runtime"]["nativeQemu"]["filename"],
+            "qemu-system-aarch64"
+        );
+        assert_eq!(
+            manifest["runtime"]["nativeAppliance"]["sha256"],
+            "a".repeat(64)
+        );
         assert_eq!(
             manifest["steamos"]["targetKernels"][0],
             "6.11.11-valve1-neptune-611"
@@ -13797,6 +13933,7 @@ mod tests {
             nvidia_installation: Some(&installation),
             nvidia_resolution: None,
             nvidia_source_selection: Some("project:nvidia/575.64.05"),
+            runtime: &runtime,
         });
         assert_eq!(nvidia_manifest["resultClass"], "nvidia-mutation-valid");
         assert_eq!(
@@ -13835,6 +13972,25 @@ mod tests {
             raw
         );
 
+        let raw_with_compressed_suffix = root.join("raw-content.img.gz");
+        fs::write(&raw_with_compressed_suffix, PAYLOAD).expect("write mismatched raw fixture");
+        assert!(supported_image(&raw_with_compressed_suffix));
+        assert_eq!(
+            detect_input_format(&raw_with_compressed_suffix).unwrap(),
+            InputFormat::Raw
+        );
+        assert_eq!(
+            normalize_input(
+                &raw_with_compressed_suffix,
+                &root,
+                InputFormat::Raw,
+                None,
+                None
+            )
+            .unwrap(),
+            raw_with_compressed_suffix
+        );
+
         let bzip_source = root.join("compressed-but-named.img");
         let mut bzip = bzip2::write::BzEncoder::new(
             File::create(&bzip_source).expect("create bzip fixture"),
@@ -13846,6 +14002,7 @@ mod tests {
             detect_input_format(&bzip_source).unwrap(),
             InputFormat::Bzip2
         );
+        assert!(supported_image(&bzip_source));
         let bzip_runtime = root.join("bzip-runtime");
         fs::create_dir(&bzip_runtime).unwrap();
         let reports = Mutex::new(Vec::new());

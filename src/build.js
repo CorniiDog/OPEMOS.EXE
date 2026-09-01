@@ -247,6 +247,10 @@ function showInputProgress(progress) {
     setStatus("running", "Validating exported image", `Hashing the independently attached raw output: ${amount}.`, 94 + ratio * 3, "Validating", false, ratio);
   } else if (progress.stage === "verifying-source-after-export") {
     setStatus("running", "Rechecking original image", `Confirming the original input remains unchanged: ${amount}.`, 97 + ratio * 2, "Hashing", false, ratio);
+  } else if (progress.stage === "hashing-native-appliance") {
+    setStatus("running", "Recording runtime provenance", `Hashing the native Fedora appliance: ${amount}.`, 99, "Provenance", false, ratio);
+  } else if (progress.stage === "hashing-x86-appliance") {
+    setStatus("running", "Recording runtime provenance", `Hashing the x86_64 Fedora installer appliance: ${amount}.`, 99, "Provenance", false, ratio);
   }
 }
 

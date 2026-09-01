@@ -815,18 +815,18 @@ Support-repository readiness (tracked here because it gates image-builder integr
 # 34. Logging and diagnostics
 
 * [x] Create a unique per-build runtime/diagnostic directory.
-* [ ] Record app version.
-* [ ] Record host OS/architecture.
-* [ ] Record QEMU version.
-* [ ] Record appliance version.
-* [ ] Record input filename without requiring full private path in exported reports.
-* [ ] Record input checksum.
-* [ ] Record SteamOS layout detection result.
-* [ ] Record selected NVIDIA certification.
+* [x] Record the application version in the output manifest. (Source commit remains a separate provenance task.)
+* [x] Record host OS/architecture without including private host paths.
+* [x] Record the basename and version of every QEMU executable used by the build.
+* [ ] Record appliance version. (Exact appliance filename, size, and SHA-256 are recorded; a separately versioned appliance protocol/release identity remains.)
+* [x] Record the input filename without its full private host path in the output manifest.
+* [x] Record input and normalized-image checksums.
+* [x] Record the recognized SteamOS layout and target-system discovery result.
+* [x] Record selected NVIDIA trust/certification and exact target identity.
 * [ ] Record selected Gamescope build/patch identifier.
 * [ ] Capture guest command exit statuses.
 * [x] Capture QEMU stderr/serial logs.
-* [ ] Redact private keys and sensitive host paths from user-shareable diagnostics.
+* [x] Redact private keys, credentials, usernames, and sensitive host paths from user-shareable diagnostic summaries while retaining the full local log.
 * [ ] Add one-click diagnostics export.
 
 ---
@@ -836,7 +836,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 ## Rust/unit tests
 
 * [x] Test supported-image detection.
-* [ ] Test extension/magic mismatch handling.
+* [x] Test extension/magic mismatch handling in both directions; content signatures control normalization for compressed bytes named `.img` and raw bytes carrying a compressed suffix.
 * [ ] Test QEMU binary selection by architecture.
 * [ ] Test environment status state machine.
 * [ ] Test command argument construction.
@@ -989,12 +989,12 @@ Support-repository readiness (tracked here because it gates image-builder integr
 
 * [x] Define marker-manifest schema version 1 with an explicit `mutation-valid` result class.
 * [ ] Include application version/commit. (Application version included; source commit pending.)
-* [ ] Include appliance version/hash.
+* [ ] Include appliance version/hash. (Exact native and x86 appliance hashes are included; independently versioned appliance release identity remains.)
 * [x] Include input and normalized-image SHA256 values.
 * [ ] Include detected SteamOS version. (Manifest fields implemented; real-image confirmation pending.)
 * [x] Include detected target kernel(s) in the manifest.
-* [ ] Include NVIDIA version/release source.
-* [ ] Include NVIDIA artifact checksums.
+* [x] Include NVIDIA version, trust, support commit, and automatic-versus-pinned source policy.
+* [x] Include NVIDIA archive, provenance, keyring, and package checksums through the structured installation result.
 * [ ] Include Gamescope version/artifact checksums.
 * [x] Include all modified target paths for the marker milestone.
 * [x] Include final image SHA256.
