@@ -1,5 +1,7 @@
 use super::*;
 
+static SETTINGS_WRITE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub(crate) fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
@@ -41,19 +43,55 @@ pub(crate) fn save_builder_settings(
             "Only settings schema {BUILDER_SETTINGS_SCHEMA} can be saved."
         ));
     }
-    let path = settings_path(app)?;
+    save_builder_settings_path(&settings_path(app)?, settings)
+}
+
+pub(crate) fn save_builder_settings_path(
+    path: &Path,
+    settings: &BuilderSettings,
+) -> Result<(), String> {
+    if settings.schema_version != BUILDER_SETTINGS_SCHEMA {
+        return Err(format!(
+            "Only settings schema {BUILDER_SETTINGS_SCHEMA} can be saved."
+        ));
+    }
     let parent = path
         .parent()
         .ok_or("Settings path has no parent directory.")?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("Could not create the settings directory: {error}"))?;
-    let temporary = parent.join(format!(".settings.json.{}.tmp", std::process::id()));
+    let sequence = SETTINGS_WRITE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(
+        ".settings.json.{}.{}.tmp",
+        std::process::id(),
+        sequence
+    ));
     let bytes = serde_json::to_vec_pretty(settings)
         .map_err(|error| format!("Could not serialize settings: {error}"))?;
-    fs::write(&temporary, bytes)
-        .map_err(|error| format!("Could not stage settings.json: {error}"))?;
-    fs::rename(&temporary, &path)
-        .map_err(|error| format!("Could not finalize settings.json: {error}"))
+    let staged = (|| {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&temporary)
+            .map_err(|error| format!("Could not stage settings.json: {error}"))?;
+        file.write_all(&bytes)
+            .map_err(|error| format!("Could not write settings.json: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("Could not sync settings.json: {error}"))?;
+        fs::rename(&temporary, path)
+            .map_err(|error| format!("Could not finalize settings.json: {error}"))?;
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("Could not sync the settings directory: {error}"))
+    })();
+    if staged.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    staged
 }
 
 pub(crate) fn github_maintainer_status() -> Result<GithubMaintainerStatus, String> {

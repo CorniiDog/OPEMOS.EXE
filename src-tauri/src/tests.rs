@@ -91,6 +91,22 @@ mod tests {
     }
 
     #[test]
+    fn settings_writes_are_unique_atomic_durable_and_leave_no_temporary_files() {
+        let root = std::env::temp_dir().join(format!("steamos-settings-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root); fs::create_dir_all(&root).expect("create settings fixture");
+        let path = root.join("settings.json");
+        let settings = BuilderSettings { track_steamos_driver_updates: true, ..Default::default() };
+        save_builder_settings_path(&path, &settings).expect("save settings atomically");
+        let loaded: BuilderSettings = serde_json::from_slice(&fs::read(&path).expect("read settings"))
+            .expect("parse settings");
+        assert!(loaded.track_steamos_driver_updates);
+        #[cfg(unix)] assert_eq!(fs::metadata(&path).expect("settings metadata").permissions().mode() & 0o777, 0o600);
+        assert!(fs::read_dir(&root).expect("list settings fixture")
+            .all(|entry| !entry.expect("settings entry").file_name().to_string_lossy().ends_with(".tmp")));
+        fs::remove_dir_all(root).expect("remove settings fixture");
+    }
+
+    #[test]
     fn appliance_cloud_init_requires_ephemeral_key_authentication() {
         let user_data = include_str!("../../builder/appliance/cloud-init/user-data");
         assert!(user_data.contains("    lock_passwd: true\n"));
