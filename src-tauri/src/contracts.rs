@@ -195,11 +195,11 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 19] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 20] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "1766391d1811aedcc07245776acb16f1f64e4595b894fe4f10522231456414ce",
-        bytes: 44_563,
+        sha256: "0bf8a08be325fae8af877461d73580287333e25556f6455b8e46f062a7ea5250",
+        bytes: 44_762,
         executable: true,
     },
     PinnedInstallerFile {
@@ -213,6 +213,12 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 19] = [
         sha256: "06ada2883b18e40a8114861644e03bf59bc10b9bd8174a5437e47fc77a3f177f",
         bytes: 250,
         executable: false,
+    },
+    PinnedInstallerFile {
+        path: "lib/verify_bind_mount.py",
+        sha256: "c5a6a21274cfcdffa14407db64b2825289ab616d6538738dd10e3717b520a6d8",
+        bytes: 2_640,
+        executable: true,
     },
     PinnedInstallerFile {
         path: "lib/update_grub_nvidia_args.py",
