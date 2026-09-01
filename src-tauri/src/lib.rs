@@ -56,7 +56,7 @@ const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_SUPPORT_COMMIT: &str = "78e9ae8a65c001a97dd6594ab6837589dc8042a8";
+const NVIDIA_SUPPORT_COMMIT: &str = "2a6d97ec08d8767d738b815d15e5b6660d89f02f";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 #[cfg(test)]
@@ -204,7 +204,7 @@ struct PinnedInstallerFile {
     executable: bool,
 }
 
-const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 14] = [
+const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 15] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
         sha256: "731765273a355270c25c13c45a341d7e3c7354c87331e548d8d3ee1404077c81",
@@ -231,21 +231,27 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 14] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "dcea4dd9d0b7cc871590e53b788506d3e198924a3a1fec21f2a1b1187e491e62",
-        bytes: 84_775,
+        sha256: "fa57412218b2fa76937c1ac5e5fc93e0537daa3ca6157bdcf3fc7bc650d1d09f",
+        bytes: 84_560,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "b299e08dfdc3158efa876379de06cf7dac007619f010b93a96aac55abdd121b3",
-        bytes: 26_944,
+        sha256: "9113cb701047865b7fda330cd64aa76e0c1ededcd7240402594a881da123783c",
+        bytes: 26_819,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/measure_btrfs_payload.py",
-        sha256: "4bc5ae114d4f8e5e52a4f301e95568311464278f8883147390882efe909d593b",
-        bytes: 23_520,
+        sha256: "04c2ad0779257961981609bb4c120760dd79838c000a466cfd9394cb5973eddc",
+        bytes: 24_592,
         executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/atomic_output.py",
+        sha256: "4182f1e1fab6ed5a9ebe59a40250335774b46354a64fbb7b00c7429ea8b4cc05",
+        bytes: 1_117,
+        executable: false,
     },
     PinnedInstallerFile {
         path: "lib/gaming_payload_profiles.py",
@@ -300,8 +306,8 @@ const PINNED_PUBLISHER_FILES: [PinnedInstallerFile; 2] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_publish_inputs.py",
-        sha256: "725cf6915fed970f1e2d676b93e84d770477f8d3cf92c5dd5117e897f9edaf7b",
-        bytes: 14_029,
+        sha256: "a45c6ed32154a1fb4961e91396c3b5ca0392bcd7853d80026d752486fe0bdb87",
+        bytes: 16_258,
         executable: true,
     },
 ];
@@ -12120,8 +12126,8 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 219_095);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 14);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 220_944);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 15);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
@@ -12131,6 +12137,9 @@ mod tests {
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/measure_btrfs_payload.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/atomic_output.py" && !file.executable));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/gaming_payload_profiles.py" && file.executable));
@@ -12156,7 +12165,7 @@ mod tests {
 
     #[test]
     fn pinned_publisher_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_publisher_contract().unwrap(), 17_755);
+        assert_eq!(validate_pinned_publisher_contract().unwrap(), 19_984);
         assert_eq!(PINNED_PUBLISHER_FILES.len(), 2);
         assert!(PINNED_PUBLISHER_FILES
             .iter()

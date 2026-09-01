@@ -127,7 +127,7 @@ The authenticated closure is reused verbatim for mutation, and guest pacman
 remains fully offline throughout this process.
 
 The backend also stages the offline-root installer from immutable support commit
-`78e9ae8a65c001a97dd6594ab6837589dc8042a8`. Its fourteen required scripts,
+`2a6d97ec08d8767d738b815d15e5b6660d89f02f`. Its fifteen required scripts,
 helpers, signer-policy files, reviewed lock, and minimal binary keyring have
 embedded byte counts and SHA-256 pins; every file must match before a versioned
 bundle manifest is recorded. The
@@ -178,7 +178,10 @@ publisher and its input validator under independent size and SHA-256 pins. The
 app first requires a schema-1 dry-run plan whose repository, tag, target commit,
 trust, archive hash, and ordered asset paths exactly match Rust-owned state. It
 then rechecks maintainer permission and invokes `--create-only`; the app never
-uses the publisher's release-edit or asset-clobber path.
+uses the publisher's release-edit or asset-clobber path. The current validator
+streams compressed module representations through bounded temporary files,
+rejects empty or changed metadata, and retains separate representation and
+decoded-payload hash checks without holding multi-gigabyte artifacts in memory.
 
 The older `steamos-nvidia-installer` project remains a useful reference for the
 later recovery-media contract: an install-ready result also needs the `home`
