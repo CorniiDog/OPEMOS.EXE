@@ -16,7 +16,9 @@ const elements = {
   resultMessage: $("#result-message"), environmentTitle: $("#environment-title"),
   usbCard: $("#usb-card"), usbTarget: $("#usb-target"),
   usbTargetDetail: $("#usb-target-detail"), refreshUsbTargets: $("#refresh-usb-targets"),
-  usbMessage: $("#usb-message"),
+  usbMessage: $("#usb-message"), usbConfirmationRow: $("#usb-confirmation-row"),
+  usbConfirmation: $("#usb-confirmation"), usbConfirmationHelp: $("#usb-confirmation-help"),
+  armUsbPreflight: $("#arm-usb-preflight"), cancelUsbPreflight: $("#cancel-usb-preflight"),
   environmentMessage: $("#environment-message"), environmentDetails: $("#environment-details"),
   environmentStatus: $("#environment-status"),
   settingsButton: $("#settings-button"), settingsClose: $("#settings-close"),
@@ -34,6 +36,7 @@ let currentImage = null;
 let currentImageName = null;
 let plannedOutput = null;
 let completedOutput = null;
+let usbPreflightSession = null;
 let hostReady = false;
 let progressReady = false;
 let builderSettings = {
@@ -239,12 +242,19 @@ async function loadNvidiaSourceBranches() {
 }
 
 async function selectImage(path) {
+  if (usbPreflightSession) {
+    await invoke("cancel_usb_write_preflight", { sessionToken: usbPreflightSession.sessionToken }).catch(() => {});
+  }
   completedOutput = null;
+  usbPreflightSession = null;
   elements.usbCard.classList.add("hidden");
   elements.usbTarget.replaceChildren(new Option("No target selected", ""));
   elements.usbTarget.disabled = true;
   elements.usbTargetDetail.textContent = "Connect a USB drive, then refresh.";
   elements.usbMessage.textContent = "";
+  elements.usbConfirmationRow.classList.add("hidden");
+  elements.armUsbPreflight.classList.add("hidden");
+  elements.cancelUsbPreflight.classList.add("hidden");
   elements.dropZone.classList.add("processing");
   elements.chooseImage.disabled = true;
   elements.dropTitle.textContent = "Checking selected image…";
@@ -411,6 +421,11 @@ await mainWindow.listen("build-finished", (event) => {
 
 elements.refreshUsbTargets.addEventListener("click", async () => {
   if (!completedOutput?.path) return;
+  if (usbPreflightSession) {
+    await invoke("cancel_usb_write_preflight", { sessionToken: usbPreflightSession.sessionToken }).catch(() => {});
+    usbPreflightSession = null;
+  }
+  elements.cancelUsbPreflight.classList.add("hidden");
   elements.refreshUsbTargets.disabled = true;
   elements.usbTarget.disabled = true;
   elements.usbMessage.textContent = "Inspecting whole external physical disks without opening them for writing…";
@@ -427,6 +442,8 @@ elements.refreshUsbTargets.addEventListener("click", async () => {
       option.value = target.deviceIdentifier;
       option.textContent = `${target.mediaName} · ${target.deviceNode} · ${(target.bytes / 1_000_000_000).toFixed(1)} GB`;
       option.dataset.detail = `${target.busProtocol}; whole physical removable disk; writing disabled`;
+      option.dataset.identityToken = target.identityToken;
+      option.dataset.bytes = String(target.bytes);
       elements.usbTarget.append(option);
     }
     elements.usbTarget.disabled = !preflight.targets.length;
@@ -439,9 +456,61 @@ elements.refreshUsbTargets.addEventListener("click", async () => {
   }
 });
 
-elements.usbTarget.addEventListener("change", () => {
+elements.usbTarget.addEventListener("change", async () => {
+  if (usbPreflightSession) {
+    await invoke("cancel_usb_write_preflight", { sessionToken: usbPreflightSession.sessionToken }).catch(() => {});
+  }
+  usbPreflightSession = null;
+  elements.cancelUsbPreflight.classList.add("hidden");
+  elements.usbConfirmation.value = "";
+  const identifier = elements.usbTarget.value;
+  elements.usbConfirmationRow.classList.toggle("hidden", !identifier);
+  elements.armUsbPreflight.classList.toggle("hidden", !identifier);
+  elements.armUsbPreflight.disabled = true;
+  elements.usbConfirmationHelp.textContent = identifier
+    ? `Type ERASE ${identifier} exactly. This confirms intent only; writing stays disabled.`
+    : "Select a target first.";
   elements.usbTargetDetail.textContent = elements.usbTarget.selectedOptions[0]?.dataset.detail
     || "Connect a USB drive, then refresh.";
+});
+
+elements.usbConfirmation.addEventListener("input", () => {
+  elements.armUsbPreflight.disabled = elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
+});
+
+elements.armUsbPreflight.addEventListener("click", async () => {
+  const option = elements.usbTarget.selectedOptions[0];
+  if (!completedOutput?.path || !option?.value || !option.dataset.identityToken) return;
+  elements.armUsbPreflight.disabled = true;
+  elements.usbMessage.textContent = "Rehashing the image and immediately revalidating the selected disk identity…";
+  elements.usbMessage.className = "result-message";
+  try {
+    usbPreflightSession = await invoke("arm_usb_write_preflight", {
+      imagePath: completedOutput.path,
+      deviceIdentifier: option.value,
+      identityToken: option.dataset.identityToken,
+      confirmation: elements.usbConfirmation.value,
+    });
+    elements.usbMessage.textContent = usbPreflightSession.message;
+    elements.cancelUsbPreflight.classList.remove("hidden");
+  } catch (error) {
+    usbPreflightSession = null;
+    elements.usbMessage.textContent = String(error);
+    elements.usbMessage.className = "result-message error";
+    elements.armUsbPreflight.disabled = false;
+  }
+});
+
+elements.cancelUsbPreflight.addEventListener("click", async () => {
+  try {
+    await invoke("cancel_usb_write_preflight", { sessionToken: usbPreflightSession?.sessionToken || null });
+  } finally {
+    usbPreflightSession = null;
+    elements.cancelUsbPreflight.classList.add("hidden");
+    elements.armUsbPreflight.disabled = elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
+    elements.usbMessage.textContent = "USB preparation cancelled. No disk was opened or changed.";
+    elements.usbMessage.className = "result-message";
+  }
 });
 
 await mainWindow.onDragDropEvent(async (event) => {

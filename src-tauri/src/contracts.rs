@@ -1051,6 +1051,27 @@ pub(crate) struct UsbTargetPreflight {
     pub(crate) message: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UsbWritePreflightSession {
+    pub(crate) status: String,
+    pub(crate) session_token: String,
+    pub(crate) device_identifier: String,
+    pub(crate) device_node: String,
+    pub(crate) image_sha256: String,
+    pub(crate) expires_at_unix_ms: u128,
+    pub(crate) writes_allowed: bool,
+    pub(crate) message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UsbWritePreflightCancellation {
+    pub(crate) status: String,
+    pub(crate) cancelled: bool,
+    pub(crate) writes_allowed: bool,
+}
+
 pub(crate) struct MarkerManifestData<'a> {
     pub(crate) input: &'a Path,
     pub(crate) output: &'a Path,

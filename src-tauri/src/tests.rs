@@ -235,6 +235,29 @@ mod tests {
     }
 
     #[test]
+    fn usb_preflight_state_replaces_cancels_and_expires_sessions() {
+        let now = Instant::now();
+        let mut manager = UsbPreparationManager::default();
+        manager.arm("first".into(), now);
+        assert!(manager.is_armed());
+        assert!(!manager.cancel(Some("wrong"), now));
+        assert!(manager.is_armed());
+
+        manager.arm("second".into(), now);
+        assert!(!manager.cancel(Some("first"), now));
+        assert!(manager.cancel(Some("second"), now));
+        assert!(!manager.is_armed());
+
+        manager.arm("expired".into(), now);
+        assert!(!manager.cancel(Some("expired"), now + USB_PREFLIGHT_TTL));
+        assert!(!manager.is_armed());
+
+        manager.arm("cancel-any".into(), now);
+        assert!(manager.cancel(None, now));
+        assert!(!manager.is_armed());
+    }
+
+    #[test]
     fn explicit_upstream_source_is_pinned_and_never_treated_as_automatic() {
         let target =
             ready_published_target("3.8.14", "6.16.12-valve24.4-1-neptune-616-gfe145653a794");

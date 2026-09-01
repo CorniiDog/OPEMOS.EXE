@@ -1607,6 +1607,63 @@ pub(crate) fn usb_candidate_from_diskutil_info(
     })
 }
 
+pub(crate) const USB_PREFLIGHT_TTL: Duration = Duration::from_secs(60);
+
+struct ArmedUsbPreflight {
+    session_token: String,
+    expires_at: Instant,
+}
+
+#[derive(Default)]
+pub(crate) struct UsbPreparationManager {
+    generation: u64,
+    armed: Option<ArmedUsbPreflight>,
+}
+
+impl UsbPreparationManager {
+    pub(crate) fn cancel_all(&mut self) {
+        self.armed = None;
+    }
+
+    pub(crate) fn arm(&mut self, session_token: String, now: Instant) {
+        self.generation = self.generation.wrapping_add(1).max(1);
+        self.armed = Some(ArmedUsbPreflight {
+            session_token,
+            expires_at: now + USB_PREFLIGHT_TTL,
+        });
+    }
+
+    pub(crate) fn cancel(&mut self, session_token: Option<&str>, now: Instant) -> bool {
+        if self
+            .armed
+            .as_ref()
+            .is_some_and(|armed| now >= armed.expires_at)
+        {
+            self.armed = None;
+        }
+        let cancelled = self
+            .armed
+            .as_ref()
+            .is_some_and(|armed| match session_token {
+                Some(token) => token == armed.session_token,
+                None => true,
+            });
+        if cancelled {
+            self.armed = None;
+        }
+        cancelled
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_armed(&self) -> bool {
+        self.armed.is_some()
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn plist_command_json(
     mut command: Command,
@@ -1678,56 +1735,94 @@ fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, Str
     Ok(targets)
 }
 
+#[cfg(target_os = "macos")]
+fn revalidate_usb_target(identifier: &str, image_bytes: u64) -> Result<UsbTargetCandidate, String> {
+    if !identifier.starts_with("disk")
+        || identifier.len() <= 4
+        || !identifier[4..].bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err("The selected device identifier is invalid.".into());
+    }
+    let mut info_command = Command::new("/usr/sbin/diskutil");
+    info_command.args(["info", "-plist", identifier]);
+    let info = plist_command_json(info_command, "revalidate the selected external disk")?;
+    usb_candidate_from_diskutil_info(&info, image_bytes, Some(identifier)).ok_or_else(|| {
+        "The selected disk is no longer the same eligible whole removable device.".into()
+    })
+}
+
 #[cfg(not(target_os = "macos"))]
 fn discover_usb_targets(_image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
     Err("Read-only USB target discovery is currently implemented only for macOS.".into())
 }
 
+#[cfg(not(target_os = "macos"))]
+fn revalidate_usb_target(
+    _identifier: &str,
+    _image_bytes: u64,
+) -> Result<UsbTargetCandidate, String> {
+    Err("Read-only USB target revalidation is currently implemented only for macOS.".into())
+}
+
+fn validate_usb_image_identity(image_path: &str) -> Result<(PathBuf, u64, String), String> {
+    let image = fs::canonicalize(image_path)
+        .map_err(|error| format!("Could not resolve the completed image: {error}"))?;
+    if image.extension().and_then(|value| value.to_str()) != Some("img") {
+        return Err("USB preparation requires a raw .img output.".into());
+    }
+    let metadata = fs::metadata(&image)
+        .map_err(|error| format!("Could not inspect the completed image: {error}"))?;
+    if !metadata.is_file() {
+        return Err("The completed image is not a regular file.".into());
+    }
+    let manifest_path = manifest_path_for_output(&image);
+    let manifest_bytes = fs::read(&manifest_path)
+        .map_err(|error| format!("Could not read the adjacent build manifest: {error}"))?;
+    if manifest_bytes.len() > 1024 * 1024 {
+        return Err("The adjacent build manifest is unexpectedly large.".into());
+    }
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)
+        .map_err(|error| format!("Could not parse the adjacent build manifest: {error}"))?;
+    let output = manifest
+        .get("output")
+        .and_then(|value| value.as_object())
+        .ok_or("The adjacent build manifest has no output identity.")?;
+    let filename = image
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    let declared_bytes = output.get("bytes").and_then(|value| value.as_u64());
+    let sha256 = output
+        .get("sha256")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if output.get("filename").and_then(|value| value.as_str()) != Some(filename)
+        || output.get("format").and_then(|value| value.as_str()) != Some("raw")
+        || declared_bytes != Some(metadata.len())
+        || sha256.len() != 64
+        || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(
+            "The image and adjacent build manifest do not have a valid matching output identity."
+                .into(),
+        );
+    }
+    let actual_sha256 = sha256_file(&image)?;
+    if !actual_sha256.eq_ignore_ascii_case(sha256) {
+        return Err("The completed image changed after its build manifest was written.".into());
+    }
+    Ok((image, metadata.len(), actual_sha256))
+}
+
 #[tauri::command]
 pub(crate) async fn inspect_usb_targets(image_path: String) -> Result<UsbTargetPreflight, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let image = fs::canonicalize(&image_path)
-            .map_err(|error| format!("Could not resolve the completed image: {error}"))?;
-        if image.extension().and_then(|value| value.to_str()) != Some("img") {
-            return Err("USB preparation requires a raw .img output.".into());
-        }
-        let metadata = fs::metadata(&image)
-            .map_err(|error| format!("Could not inspect the completed image: {error}"))?;
-        if !metadata.is_file() {
-            return Err("The completed image is not a regular file.".into());
-        }
-        let manifest_path = manifest_path_for_output(&image);
-        let manifest_bytes = fs::read(&manifest_path)
-            .map_err(|error| format!("Could not read the adjacent build manifest: {error}"))?;
-        if manifest_bytes.len() > 1024 * 1024 {
-            return Err("The adjacent build manifest is unexpectedly large.".into());
-        }
-        let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)
-            .map_err(|error| format!("Could not parse the adjacent build manifest: {error}"))?;
-        let output = manifest
-            .get("output")
-            .and_then(|value| value.as_object())
-            .ok_or("The adjacent build manifest has no output identity.")?;
-        let filename = image.file_name().and_then(|value| value.to_str()).unwrap_or("");
-        let manifest_bytes = output.get("bytes").and_then(|value| value.as_u64());
-        let sha256 = output.get("sha256").and_then(|value| value.as_str()).unwrap_or("");
-        if output.get("filename").and_then(|value| value.as_str()) != Some(filename)
-            || output.get("format").and_then(|value| value.as_str()) != Some("raw")
-            || manifest_bytes != Some(metadata.len())
-            || sha256.len() != 64
-            || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
-        {
-            return Err("The image and adjacent build manifest do not have a valid matching output identity.".into());
-        }
-        let actual_sha256 = sha256_file(&image)?;
-        if !actual_sha256.eq_ignore_ascii_case(sha256) {
-            return Err("The completed image changed after its build manifest was written.".into());
-        }
-        let targets = discover_usb_targets(metadata.len())?;
+        let (image, image_bytes, image_sha256) = validate_usb_image_identity(&image_path)?;
+        let targets = discover_usb_targets(image_bytes)?;
         Ok(UsbTargetPreflight {
             image_path: image.to_string_lossy().into_owned(),
-            image_bytes: metadata.len(),
-            image_sha256: sha256.to_ascii_lowercase(),
+            image_bytes,
+            image_sha256,
             targets,
             writes_allowed: false,
             message: "Read-only discovery complete. Direct disk writes remain disabled; select a target only for review.".into(),
@@ -1735,4 +1830,85 @@ pub(crate) async fn inspect_usb_targets(image_path: String) -> Result<UsbTargetP
     })
     .await
     .map_err(|error| format!("USB target discovery worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn arm_usb_write_preflight(
+    app: tauri::AppHandle,
+    image_path: String,
+    device_identifier: String,
+    identity_token: String,
+    confirmation: String,
+) -> Result<UsbWritePreflightSession, String> {
+    let (image, image_bytes, image_sha256) =
+        tauri::async_runtime::spawn_blocking(move || validate_usb_image_identity(&image_path))
+            .await
+            .map_err(|error| format!("USB image revalidation worker failed: {error}"))??;
+    let expected_confirmation = format!("ERASE {device_identifier}");
+    if confirmation != expected_confirmation {
+        return Err(format!(
+            "Type {expected_confirmation} exactly to confirm the selected whole disk."
+        ));
+    }
+    let target_identifier = device_identifier.clone();
+    let target = tauri::async_runtime::spawn_blocking(move || {
+        revalidate_usb_target(&target_identifier, image_bytes)
+    })
+    .await
+    .map_err(|error| format!("USB device revalidation worker failed: {error}"))??;
+    if target.identity_token != identity_token {
+        return Err("The selected disk identity changed after discovery. Refresh removable drives and select it again.".into());
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "The system clock is earlier than the Unix epoch.")?;
+    let expires_at_unix_ms = now
+        .checked_add(USB_PREFLIGHT_TTL)
+        .ok_or("USB preflight expiration overflowed.")?
+        .as_millis();
+    let manager_state = app.state::<Mutex<UsbPreparationManager>>();
+    let mut manager = manager_state
+        .lock()
+        .map_err(|_| "USB preparation state is unavailable.")?;
+    let generation = manager.generation().wrapping_add(1).max(1);
+    let session_identity = format!(
+        "{}\0{}\0{}\0{}\0{}",
+        generation,
+        image_sha256,
+        target.identity_token,
+        target.device_identifier,
+        now.as_nanos()
+    );
+    let session_token = format!("{:x}", Sha256::digest(session_identity.as_bytes()));
+    manager.arm(session_token.clone(), Instant::now());
+    Ok(UsbWritePreflightSession {
+        status: "confirmed-read-only".into(),
+        session_token,
+        device_identifier: target.device_identifier,
+        device_node: target.device_node,
+        image_sha256,
+        expires_at_unix_ms,
+        writes_allowed: false,
+        message: format!(
+            "Intent confirmed for {}. Raw-device writing remains disabled; this preflight expires in 60 seconds.",
+            image.display()
+        ),
+    })
+}
+
+#[tauri::command]
+pub(crate) fn cancel_usb_write_preflight(
+    app: tauri::AppHandle,
+    session_token: Option<String>,
+) -> Result<UsbWritePreflightCancellation, String> {
+    let manager_state = app.state::<Mutex<UsbPreparationManager>>();
+    let mut manager = manager_state
+        .lock()
+        .map_err(|_| "USB preparation state is unavailable.")?;
+    let cancelled = manager.cancel(session_token.as_deref(), Instant::now());
+    Ok(UsbWritePreflightCancellation {
+        status: if cancelled { "cancelled" } else { "not-armed" }.into(),
+        cancelled,
+        writes_allowed: false,
+    })
 }

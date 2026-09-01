@@ -1,6 +1,9 @@
 use super::*;
 
 fn cleanup_managed_workers(app: &tauri::AppHandle) {
+    if let Ok(mut manager) = app.state::<Mutex<UsbPreparationManager>>().lock() {
+        manager.cancel_all();
+    }
     if let Ok(mut manager) = app.state::<Mutex<ApplianceManager>>().lock() {
         manager.cancel_preparation.store(true, Ordering::Relaxed);
         if let Some(mut session) = manager.session.take() {
@@ -27,6 +30,7 @@ pub fn run() {
         })
         .manage(Mutex::new(ApplianceManager::default()))
         .manage(Mutex::new(NvidiaBuildManager::default()))
+        .manage(Mutex::new(UsbPreparationManager::default()))
         .setup(|_| {
             cleanup_abandoned_runtimes().map_err(std::io::Error::other)?;
             cleanup_abandoned_nvidia_build_runtimes().map_err(std::io::Error::other)?;
@@ -76,6 +80,8 @@ pub fn run() {
             validate_image,
             preview_image_output,
             inspect_usb_targets,
+            arm_usb_write_preflight,
+            cancel_usb_write_preflight,
             windows::open_progress_window,
             windows::open_maintainer_window,
         ])

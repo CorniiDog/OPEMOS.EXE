@@ -149,6 +149,12 @@
                 <select id="usb-target" disabled><option value="">No target selected</option></select>
             </label>
             <button id="refresh-usb-targets" class="primary" type="button">Refresh Removable Drives</button>
+            <label id="usb-confirmation-row" class="source-choice hidden" for="usb-confirmation">
+                <span><strong>Destructive-intent phrase</strong><small id="usb-confirmation-help">Select a target first.</small></span>
+                <input id="usb-confirmation" type="text" autocomplete="off" spellcheck="false">
+            </label>
+            <button id="arm-usb-preflight" class="primary hidden" type="button" disabled>Revalidate Target &amp; Confirm Intent</button>
+            <button id="cancel-usb-preflight" class="secondary hidden" type="button">Cancel USB Preparation</button>
             <p id="usb-message" class="result-message"></p>
         </section>
 
