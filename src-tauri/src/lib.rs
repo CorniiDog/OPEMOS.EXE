@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(unix)]
-use std::os::unix::fs::FileTypeExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
@@ -5530,6 +5530,9 @@ fn validate_pinned_support_files(files: &[PinnedInstallerFile]) -> Result<u64, S
     for file in files {
         let path = Path::new(file.path);
         if file.path.is_empty()
+            || !file.path.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'-')
+            })
             || path
                 .components()
                 .any(|component| !matches!(component, std::path::Component::Normal(_)))
@@ -5545,6 +5548,35 @@ fn validate_pinned_support_files(files: &[PinnedInstallerFile]) -> Result<u64, S
             .ok_or("Pinned NVIDIA support-file size overflowed.")?;
     }
     Ok(total)
+}
+
+fn apply_pinned_file_permissions(path: &Path, executable: bool) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let mode = if executable { 0o755 } else { 0o644 };
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))
+            .map_err(|error| format!("Could not set pinned support-file permissions: {error}"))?;
+    }
+    #[cfg(not(unix))]
+    let _ = (path, executable);
+    Ok(())
+}
+
+fn pinned_installer_guest_permissions() -> Result<String, String> {
+    validate_pinned_installer_contract()?;
+    let mut command = String::new();
+    for executable in [false, true] {
+        let mode = if executable { "0755" } else { "0644" };
+        let paths = PINNED_INSTALLER_FILES
+            .iter()
+            .filter(|file| file.executable == executable)
+            .map(|file| format!("\"$WORK/support/{}\"", file.path))
+            .collect::<Vec<_>>();
+        if !paths.is_empty() {
+            command.push_str(&format!("chmod {mode} {};\n", paths.join(" ")));
+        }
+    }
+    Ok(command)
 }
 
 fn validate_pinned_installer_contract() -> Result<u64, String> {
@@ -5653,6 +5685,8 @@ fn download_pinned_installer_file(
     output
         .flush()
         .map_err(|e| format!("Could not finish pinned support file {}: {e}", file.path))?;
+    drop(output);
+    apply_pinned_file_permissions(&partial, file.executable)?;
     fs::rename(&partial, destination)
         .map_err(|e| format!("Could not finalize pinned support file {}: {e}", file.path))?;
     partial_guard.armed = false;
@@ -5729,6 +5763,13 @@ fn validate_staged_pinned_files(root: &Path, files: &[PinnedInstallerFile]) -> R
         {
             return Err(format!(
                 "Staged support file no longer matches its pin: {}.",
+                pinned.path
+            ));
+        }
+        #[cfg(unix)]
+        if metadata.permissions().mode() & 0o7777 != if pinned.executable { 0o755 } else { 0o644 } {
+            return Err(format!(
+                "Staged support file has unexpected permissions: {}.",
                 pinned.path
             ));
         }
@@ -10683,6 +10724,7 @@ fn validate_nvidia_install_handoff_blocking(
     let validation_attempt = 1_usize;
     let validation = {
         let userspace_arguments = userspace_installer_arguments(&inputs.packages)?;
+        let installer_permissions = pinned_installer_guest_permissions()?;
         let command = format!(
             r#"set -euo pipefail
 WORK=/tmp/steamos-nvidia-offline-install
@@ -10691,6 +10733,7 @@ ROOT=/mnt/steamos-nvidia-target
 rm -rf "$WORK"
 mkdir -p "$WORK/support"
 tar -xzf /tmp/offline-installer.tar.gz -C "$WORK/support"
+{installer_permissions}
 test -b "$TARGET"
 mapfile -t ROOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "rootfs-A" && $3 == "btrfs" {{print $1}}')
 mapfile -t BOOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "efi-A" && ($3 == "vfat" || $3 == "fat") {{print $1}}')
@@ -10753,6 +10796,7 @@ trap - EXIT INT TERM"#,
             kernel = inputs.kernel_version,
             userspace_arguments = userspace_arguments,
             compression_profile = NVIDIA_COMPRESSION_PROFILE,
+            installer_permissions = installer_permissions,
         );
         let execution_result = run_guest_command_logged(
             &connection,
@@ -12161,6 +12205,11 @@ mod tests {
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == NVIDIA_USERSPACE_KEYRING_PATH && !file.executable));
+        let guest_permissions = pinned_installer_guest_permissions().unwrap();
+        assert!(guest_permissions.contains("chmod 0755 "));
+        assert!(guest_permissions.contains("\"$WORK/support/lib/measure_btrfs_payload.py\""));
+        assert!(guest_permissions.contains("chmod 0644 "));
+        assert!(guest_permissions.contains("\"$WORK/support/lib/atomic_output.py\""));
     }
 
     #[test]
@@ -13011,6 +13060,15 @@ mod tests {
         assert_eq!(state.report.commit, NVIDIA_INSTALLER_COMMIT);
         assert_eq!(state.report.files.len(), PINNED_INSTALLER_FILES.len());
         assert!(state.root.join("installer-bundle.json").is_file());
+        #[cfg(unix)]
+        for file in &PINNED_INSTALLER_FILES {
+            let mode = fs::symlink_metadata(state.root.join(file.path))
+                .expect("inspect pinned installer mode")
+                .permissions()
+                .mode()
+                & 0o7777;
+            assert_eq!(mode, if file.executable { 0o755 } else { 0o644 });
+        }
         let serialized = serde_json::to_string(&state.report).expect("serialize installer report");
         assert!(!serialized.contains(&root.0.to_string_lossy().to_string()));
     }

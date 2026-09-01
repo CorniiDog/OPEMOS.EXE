@@ -130,7 +130,9 @@ The backend also stages the offline-root installer from immutable support commit
 `2a6d97ec08d8767d738b815d15e5b6660d89f02f`. Its fifteen required scripts,
 helpers, signer-policy files, reviewed lock, and minimal binary keyring have
 embedded byte counts and SHA-256 pins; every file must match before a versioned
-bundle manifest is recorded. The
+bundle manifest is recorded. Required executable/data modes are applied and
+verified on Unix hosts, then enforced again after extraction in the managed
+Fedora appliance so host archive-mode behavior cannot disable a helper. The
 normal workflow therefore does not accept a user-selected support checkout or
 follow a moving branch. Failed or cancelled downloads remove the entire partial
 bundle, and repeated preparation revalidates and reuses the session-owned copy.
