@@ -10,7 +10,7 @@ body {
   overflow: auto;
   overscroll-behavior: none;
 }
-button, select { font: inherit; }
+button, select, textarea { font: inherit; }
 .maintainer-shell { width: min(1040px, calc(100% - 48px)); margin: 0 auto; padding: 24px 0 18px; display: grid; gap: 14px; }
 header, .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; }
 h1 { margin: 0; font-size: 30px; line-height: 1.1; }
@@ -33,6 +33,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .selector-grid label.wide { grid-column: 1 / -1; }
 .selector-grid span { display: block; margin: 0 0 5px; color: #8f9bae; font-size: 11px; font-weight: 650; }
 select { width: 100%; padding: 9px 34px 9px 10px; border: 1px solid #36445c; border-radius: 10px; color: #dce5ff; background: #202a3a; }
+textarea { width: 100%; margin: 5px 0 9px; padding: 9px 10px; resize: vertical; border: 1px solid #36445c; border-radius: 10px; color: #dce5ff; background: #202a3a; }
+.commit-panel { margin-top: 13px; padding-top: 13px; border-top: 1px solid #2d394c; }
+.commit-panel label { color: #8f9bae; font-size: 11px; font-weight: 650; }
 .identity { margin: 13px 0; padding: 10px 12px; border: 1px solid #2d394c; border-radius: 11px; background: rgba(13, 18, 26, .62); display: grid; grid-template-columns: 1fr 1fr 1.25fr; gap: 12px; }
 .worktree-identity { grid-template-columns: 1.6fr .7fr 1fr .7fr; }
 .identity div { min-width: 0; }

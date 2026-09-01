@@ -50,6 +50,8 @@ pub fn run() {
             plan_maintainer_workspace,
             inspect_maintainer_worktree,
             open_maintainer_worktree_in_vscode,
+            review_maintainer_staged_commit,
+            create_maintainer_local_commit,
             start_appliance,
             start_nvidia_build_appliance,
             get_appliance_status,

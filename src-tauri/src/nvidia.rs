@@ -962,6 +962,203 @@ pub(crate) async fn open_maintainer_worktree_in_vscode(
     .map_err(|error| format!("VS Code launcher worker failed: {error}"))?
 }
 
+pub(crate) fn validate_local_commit_message(message: &str) -> Result<(), String> {
+    if message.is_empty() || message.trim() != message || message.len() > 2_048 {
+        return Err(
+            "The commit message must be 1-2,048 characters with no leading or trailing whitespace."
+                .into(),
+        );
+    }
+    if message.contains('\r')
+        || message
+            .chars()
+            .any(|character| character.is_control() && character != '\n')
+    {
+        return Err("The commit message contains unsupported control characters.".into());
+    }
+    let subject = message.lines().next().unwrap_or("");
+    if subject.is_empty() || subject.len() > 72 {
+        return Err("The commit subject must be 1-72 characters.".into());
+    }
+    Ok(())
+}
+
+fn staged_paths(path: &Path) -> Result<Vec<String>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["diff", "--cached", "--name-only", "-z"])
+        .output()
+        .map_err(|error| format!("Could not inspect staged paths: {error}"))?;
+    if !output.status.success() || output.stdout.len() > 4 * 1024 * 1024 {
+        return Err("Could not inspect a bounded staged path list.".into());
+    }
+    let mut paths = Vec::new();
+    for raw in output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+    {
+        let path = std::str::from_utf8(raw)
+            .map_err(|_| "A staged path is not valid UTF-8 and cannot be reviewed safely.")?;
+        if paths.len() >= 1_000 {
+            return Err(
+                "More than 1,000 paths are staged; split the commit before continuing.".into(),
+            );
+        }
+        paths.push(path.to_owned());
+    }
+    if paths.is_empty() {
+        return Err(
+            "No staged changes are available. Stage reviewed files in VS Code first.".into(),
+        );
+    }
+    Ok(paths)
+}
+
+pub(crate) fn unsafe_staged_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    path.starts_with('/')
+        || path.chars().any(char::is_control)
+        || path.split('/').any(|part| part == ".." || part.is_empty())
+        || lower.split('/').any(|part| {
+            part == ".env"
+                || part.starts_with(".env.")
+                || part.contains("credential")
+                || part.contains("secret")
+                || part == ".ssh"
+        })
+        || ["node_modules/", "target/", "src-tauri/target/", ".git/"]
+            .iter()
+            .any(|prefix| lower.starts_with(prefix))
+        || [
+            ".img", ".qcow2", ".iso", ".raw", ".pem", ".key", ".p12", ".pfx",
+        ]
+        .iter()
+        .any(|suffix| lower.ends_with(suffix))
+}
+
+fn review_staged_commit_blocking(
+    path: String,
+    repository: String,
+    message: String,
+) -> Result<MaintainerCommitReview, String> {
+    validate_local_commit_message(&message)?;
+    let worktree = inspect_maintainer_worktree_blocking(path, repository)?;
+    let branch = worktree
+        .branch
+        .ok_or("Local commits require a named branch; detached HEAD is not allowed.")?;
+    let paths = staged_paths(Path::new(&worktree.path))?;
+    let unsafe_paths = paths
+        .iter()
+        .filter(|path| unsafe_staged_path(path))
+        .take(20)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unsafe_paths.is_empty() {
+        return Err(format!(
+            "The staged set includes blocked generated or credential-like paths: {}",
+            unsafe_paths.join(", ")
+        ));
+    }
+    let index_tree = git_output(
+        Path::new(&worktree.path),
+        &["write-tree"],
+        "snapshot the exact staged tree",
+    )?;
+    if !valid_git_commit(&index_tree) {
+        return Err("Git did not return a valid staged tree identity.".into());
+    }
+    Ok(MaintainerCommitReview {
+        repository: worktree.repository,
+        path: worktree.path,
+        branch,
+        head: worktree.head,
+        index_tree,
+        staged_paths: paths,
+        message,
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn review_maintainer_staged_commit(
+    path: String,
+    repository: String,
+    message: String,
+) -> Result<MaintainerCommitReview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        review_staged_commit_blocking(path, repository, message)
+    })
+    .await
+    .map_err(|error| format!("Maintainer commit-review worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn create_maintainer_local_commit(
+    path: String,
+    repository: String,
+    message: String,
+    expected_head: String,
+    expected_index_tree: String,
+) -> Result<MaintainerLocalCommit, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let review = review_staged_commit_blocking(path, repository, message)?;
+        if review.head != expected_head || review.index_tree != expected_index_tree {
+            return Err("HEAD or the staged tree changed after review. Review the commit again.".into());
+        }
+        let mut child = Command::new("git")
+            .arg("-C")
+            .arg(&review.path)
+            .args(["commit-tree", &review.index_tree, "-p", &review.head])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("Could not create the exact local commit object: {error}"))?;
+        child
+            .stdin
+            .take()
+            .ok_or("Could not open the local commit message input.")?
+            .write_all(review.message.as_bytes())
+            .map_err(|error| format!("Could not provide the local commit message: {error}"))?;
+        let output = child
+            .wait_with_output()
+            .map_err(|error| format!("Could not finish the local commit object: {error}"))?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Git could not create the local commit: {}", detail.trim()));
+        }
+        let commit = String::from_utf8(output.stdout)
+            .map_err(|_| "Git returned a non-UTF-8 local commit identity.")?
+            .trim()
+            .to_owned();
+        if !valid_git_commit(&commit) {
+            return Err("Git returned an invalid local commit identity.".into());
+        }
+        let update = Command::new("git")
+            .arg("-C")
+            .arg(&review.path)
+            .args(["update-ref", "-m", "commit: maintainer workspace", "HEAD", &commit, &review.head])
+            .output()
+            .map_err(|error| format!("Could not attach the local commit atomically: {error}"))?;
+        if !update.status.success() {
+            return Err("The branch changed before the local commit could be attached. No branch was updated.".into());
+        }
+        Ok(MaintainerLocalCommit {
+            repository: review.repository,
+            path: review.path,
+            branch: review.branch,
+            previous_head: review.head,
+            commit,
+            index_tree: review.index_tree,
+            pushed: false,
+            message: "Created an exact local commit from the reviewed staged tree. Nothing was pushed.".into(),
+        })
+    })
+    .await
+    .map_err(|error| format!("Maintainer local-commit worker failed: {error}"))?
+}
+
 pub(crate) fn fetch_nvidia_source_branches(
     client: &reqwest::blocking::Client,
 ) -> Result<Vec<NvidiaSourceBranch>, String> {

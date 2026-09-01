@@ -14,12 +14,16 @@ const elements = {
   worktreeBranch: $("#worktree-branch"), worktreeHead: $("#worktree-head"),
   worktreeChanges: $("#worktree-changes"), openVscode: $("#open-vscode"),
   worktreeMessage: $("#worktree-message"),
+  localCommitPanel: $("#local-commit-panel"), commitMessage: $("#commit-message"),
+  reviewStaged: $("#review-staged"), stagedReview: $("#staged-review"),
+  createLocalCommit: $("#create-local-commit"), commitStatus: $("#commit-message-status"),
 };
 
 let sources = [];
 let loading = false;
 let plannedRepository = null;
 let localWorktree = null;
+let commitReview = null;
 
 function sourceKey(source) {
   return JSON.stringify([
@@ -59,6 +63,7 @@ function renderSelection() {
 function resetPlan() {
   plannedRepository = null;
   localWorktree = null;
+  commitReview = null;
   elements.planTitle.textContent = "No workspace prepared";
   elements.planStatus.textContent = "Idle";
   elements.planStatus.className = "status";
@@ -66,6 +71,7 @@ function resetPlan() {
   elements.remoteMutation.textContent = "Blocked";
   elements.worktreeCard.classList.add("hidden");
   elements.openVscode.disabled = true;
+  elements.localCommitPanel.classList.add("hidden");
 }
 
 function disableSourceControls(disabled) {
@@ -160,6 +166,7 @@ elements.planButton.addEventListener("click", async () => {
 
 function renderWorktree(worktree) {
   localWorktree = worktree;
+  commitReview = null;
   elements.worktreePath.textContent = worktree?.path || "—";
   elements.worktreePath.title = worktree?.path || "";
   elements.worktreeBranch.textContent = worktree?.branch || (worktree ? "Detached HEAD" : "—");
@@ -167,6 +174,10 @@ function renderWorktree(worktree) {
   elements.worktreeHead.title = worktree?.head || "";
   elements.worktreeChanges.textContent = worktree ? `${worktree.changedFiles} changed path${worktree.changedFiles === 1 ? "" : "s"}` : "—";
   elements.openVscode.disabled = !worktree?.vscodeAvailable;
+  elements.localCommitPanel.classList.toggle("hidden", !worktree);
+  elements.reviewStaged.disabled = !worktree || !elements.commitMessage.value.trim();
+  elements.stagedReview.classList.add("hidden");
+  elements.createLocalCommit.classList.add("hidden");
 }
 
 elements.chooseWorktree.addEventListener("click", async () => {
@@ -202,6 +213,72 @@ elements.openVscode.addEventListener("click", async () => {
     elements.worktreeMessage.textContent = String(error);
     elements.worktreeMessage.className = "message error";
     elements.openVscode.disabled = false;
+  }
+});
+
+elements.commitMessage.addEventListener("input", () => {
+  commitReview = null;
+  elements.reviewStaged.disabled = !localWorktree || !elements.commitMessage.value.trim();
+  elements.stagedReview.classList.add("hidden");
+  elements.createLocalCommit.classList.add("hidden");
+});
+
+elements.reviewStaged.addEventListener("click", async () => {
+  if (!localWorktree || !plannedRepository) return;
+  elements.reviewStaged.disabled = true;
+  elements.commitStatus.textContent = "Revalidating the worktree and snapshotting its exact staged tree…";
+  elements.commitStatus.className = "message";
+  try {
+    commitReview = await invoke("review_maintainer_staged_commit", {
+      path: localWorktree.path, repository: plannedRepository, message: elements.commitMessage.value,
+    });
+    const visiblePaths = commitReview.stagedPaths.slice(0, 20).join(", ");
+    const remaining = Math.max(0, commitReview.stagedPaths.length - 20);
+    elements.stagedReview.textContent = `${commitReview.stagedPaths.length} staged path${commitReview.stagedPaths.length === 1 ? "" : "s"}: ${visiblePaths}${remaining ? `, and ${remaining} more` : ""}`;
+    elements.stagedReview.classList.remove("hidden");
+    elements.createLocalCommit.classList.remove("hidden");
+    elements.commitStatus.textContent = `Review bound to ${commitReview.head.slice(0, 12)} and tree ${commitReview.indexTree.slice(0, 12)}. Nothing has been committed or pushed.`;
+  } catch (error) {
+    commitReview = null;
+    elements.commitStatus.textContent = String(error);
+    elements.commitStatus.className = "message error";
+  } finally {
+    elements.reviewStaged.disabled = !localWorktree || !elements.commitMessage.value.trim();
+  }
+});
+
+elements.createLocalCommit.addEventListener("click", async () => {
+  if (!commitReview || !localWorktree || !plannedRepository) return;
+  elements.createLocalCommit.disabled = true;
+  elements.commitStatus.textContent = "Revalidating HEAD and the staged tree before the atomic local commit…";
+  try {
+    const result = await invoke("create_maintainer_local_commit", {
+      path: localWorktree.path,
+      repository: plannedRepository,
+      message: elements.commitMessage.value,
+      expectedHead: commitReview.head,
+      expectedIndexTree: commitReview.indexTree,
+    });
+    elements.commitStatus.textContent = `${result.message} ${result.commit.slice(0, 12)} on ${result.branch}.`;
+    elements.commitStatus.className = "message";
+    elements.commitMessage.value = "";
+    commitReview = null;
+    elements.stagedReview.classList.add("hidden");
+    elements.createLocalCommit.classList.add("hidden");
+    const refreshed = await invoke("inspect_maintainer_worktree", {
+      path: localWorktree.path, repository: plannedRepository,
+    });
+    renderWorktree(refreshed);
+    elements.commitStatus.textContent = `${result.message} ${result.commit.slice(0, 12)} on ${result.branch}.`;
+  } catch (error) {
+    commitReview = null;
+    elements.commitStatus.textContent = String(error);
+    elements.commitStatus.className = "message error";
+    elements.createLocalCommit.classList.add("hidden");
+    elements.stagedReview.classList.add("hidden");
+  } finally {
+    elements.createLocalCommit.disabled = false;
+    elements.reviewStaged.disabled = !localWorktree || !elements.commitMessage.value.trim();
   }
 });
 

@@ -198,6 +198,26 @@ mod tests {
     }
 
     #[test]
+    fn maintainer_local_commit_rejects_unsafe_messages_and_paths() {
+        assert!(validate_local_commit_message("Add guarded local commit flow").is_ok());
+        assert!(validate_local_commit_message("").is_err());
+        assert!(validate_local_commit_message(" leading").is_err());
+        assert!(validate_local_commit_message("trailing ").is_err());
+        assert!(validate_local_commit_message(&"x".repeat(73)).is_err());
+        assert!(validate_local_commit_message("subject\rbody").is_err());
+
+        assert!(!unsafe_staged_path("src/maintainer.js"));
+        assert!(!unsafe_staged_path("docs/commit-design.md"));
+        assert!(unsafe_staged_path(".env"));
+        assert!(unsafe_staged_path("config/production.secret.json"));
+        assert!(unsafe_staged_path("src-tauri/target/debug/app"));
+        assert!(unsafe_staged_path("output/recovery.img"));
+        assert!(unsafe_staged_path("keys/release.pem"));
+        assert!(unsafe_staged_path("../outside.txt"));
+        assert!(unsafe_staged_path("line\nbreak.txt"));
+    }
+
+    #[test]
     fn usb_candidate_parser_rejects_internal_virtual_and_undersized_disks() {
         let removable = serde_json::json!({
             "DeviceIdentifier": "disk7",

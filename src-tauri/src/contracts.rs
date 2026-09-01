@@ -128,6 +128,31 @@ pub(crate) struct MaintainerLocalWorktree {
     pub(crate) vscode_available: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerCommitReview {
+    pub(crate) repository: String,
+    pub(crate) path: String,
+    pub(crate) branch: String,
+    pub(crate) head: String,
+    pub(crate) index_tree: String,
+    pub(crate) staged_paths: Vec<String>,
+    pub(crate) message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerLocalCommit {
+    pub(crate) repository: String,
+    pub(crate) path: String,
+    pub(crate) branch: String,
+    pub(crate) previous_head: String,
+    pub(crate) commit: String,
+    pub(crate) index_tree: String,
+    pub(crate) pushed: bool,
+    pub(crate) message: String,
+}
+
 pub(crate) struct PinnedInstallerFile {
     pub(crate) path: &'static str,
     pub(crate) sha256: &'static str,

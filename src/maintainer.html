@@ -96,6 +96,14 @@
             </dl>
             <button id="open-vscode" class="primary" type="button" disabled>Open Selected Worktree in VS Code</button>
             <p id="worktree-message" class="message" aria-live="polite"></p>
+            <div id="local-commit-panel" class="commit-panel hidden">
+                <label for="commit-message"><span>Local commit message</span></label>
+                <textarea id="commit-message" rows="3" maxlength="2048" placeholder="Describe the reviewed staged changes"></textarea>
+                <button id="review-staged" class="secondary" type="button" disabled>Review Staged Commit</button>
+                <div id="staged-review" class="notice hidden"></div>
+                <button id="create-local-commit" class="primary hidden" type="button">Create Exact Local Commit</button>
+                <p id="commit-message-status" class="message" aria-live="polite"></p>
+            </div>
         </section>
 
         <section class="card actions-card">
