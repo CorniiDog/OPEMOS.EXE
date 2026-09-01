@@ -135,7 +135,7 @@ The authenticated closure is reused verbatim for mutation, and guest pacman
 remains fully offline throughout this process.
 
 The backend also stages the offline-root installer from immutable support commit
-`e93bd5b91f8b645d27090fb5963edfd6613bbe68`. Its twenty required scripts,
+`ee8ce07b628a8b9943773657389034943fea66e4`. Its twenty-one required scripts,
 helpers, signer-policy files, reviewed lock, and minimal binary keyring have
 embedded byte counts and SHA-256 pins; every file must match before a versioned
 bundle manifest is recorded. Required executable/data modes are applied and

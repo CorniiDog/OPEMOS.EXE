@@ -1235,8 +1235,8 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 297_058);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 20);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 306_453);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 21);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
@@ -1246,6 +1246,9 @@ mod tests {
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/verify_bind_mount.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/snapshot_target_execution.py" && file.executable));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/measure_btrfs_payload.py" && file.executable));
@@ -1287,6 +1290,7 @@ mod tests {
         assert!(guest_permissions.contains("\"$WORK/support/lib/measure_btrfs_payload.py\""));
         assert!(guest_permissions.contains("\"$WORK/support/lib/prepare_pacman_config.py\""));
         assert!(guest_permissions.contains("\"$WORK/support/lib/verify_bind_mount.py\""));
+        assert!(guest_permissions.contains("\"$WORK/support/lib/snapshot_target_execution.py\""));
         assert!(guest_permissions.contains("chmod 0644 "));
         assert!(guest_permissions.contains("\"$WORK/support/lib/atomic_output.py\""));
     }

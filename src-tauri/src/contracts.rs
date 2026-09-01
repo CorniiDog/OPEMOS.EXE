@@ -195,11 +195,11 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 20] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 21] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "0bf8a08be325fae8af877461d73580287333e25556f6455b8e46f062a7ea5250",
-        bytes: 44_762,
+        sha256: "ad160d45cb0d4bfbdc8945d5a2692106cb7075cc6930aeda64964b779ac499cc",
+        bytes: 45_927,
         executable: true,
     },
     PinnedInstallerFile {
@@ -291,6 +291,12 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 20] = [
         sha256: "61c25cf137e56a4b0c4e5bacabef5b76c403fcdc02f1368aaeff36ddc471c7b1",
         bytes: 2_616,
         executable: false,
+    },
+    PinnedInstallerFile {
+        path: "lib/snapshot_target_execution.py",
+        sha256: "8b05f6484990f7ad402b7702f8145c20755280d00c08157d3335dcf6796e9dd9",
+        bytes: 8_230,
+        executable: true,
     },
     PinnedInstallerFile {
         path: "trust/nvidia-userspace-package-signers.json",
