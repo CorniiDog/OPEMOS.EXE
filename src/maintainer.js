@@ -17,6 +17,10 @@ const elements = {
   localCommitPanel: $("#local-commit-panel"), commitMessage: $("#commit-message"),
   reviewStaged: $("#review-staged"), stagedReview: $("#staged-review"),
   createLocalCommit: $("#create-local-commit"), commitStatus: $("#commit-message-status"),
+  checkoutPanel: $("#checkout-panel"), localBranch: $("#local-branch"),
+  loadLocalBranches: $("#load-local-branches"), reviewCheckout: $("#review-checkout"),
+  checkoutReview: $("#checkout-review"), executeCheckout: $("#execute-checkout"),
+  checkoutStatus: $("#checkout-status"),
 };
 
 let sources = [];
@@ -24,6 +28,7 @@ let loading = false;
 let plannedRepository = null;
 let localWorktree = null;
 let commitReview = null;
+let branchReview = null;
 
 function sourceKey(source) {
   return JSON.stringify([
@@ -64,6 +69,7 @@ function resetPlan() {
   plannedRepository = null;
   localWorktree = null;
   commitReview = null;
+  branchReview = null;
   elements.planTitle.textContent = "No workspace prepared";
   elements.planStatus.textContent = "Idle";
   elements.planStatus.className = "status";
@@ -72,6 +78,7 @@ function resetPlan() {
   elements.worktreeCard.classList.add("hidden");
   elements.openVscode.disabled = true;
   elements.localCommitPanel.classList.add("hidden");
+  elements.checkoutPanel.classList.add("hidden");
 }
 
 function disableSourceControls(disabled) {
@@ -167,6 +174,7 @@ elements.planButton.addEventListener("click", async () => {
 function renderWorktree(worktree) {
   localWorktree = worktree;
   commitReview = null;
+  branchReview = null;
   elements.worktreePath.textContent = worktree?.path || "—";
   elements.worktreePath.title = worktree?.path || "";
   elements.worktreeBranch.textContent = worktree?.branch || (worktree ? "Detached HEAD" : "—");
@@ -175,9 +183,15 @@ function renderWorktree(worktree) {
   elements.worktreeChanges.textContent = worktree ? `${worktree.changedFiles} changed path${worktree.changedFiles === 1 ? "" : "s"}` : "—";
   elements.openVscode.disabled = !worktree?.vscodeAvailable;
   elements.localCommitPanel.classList.toggle("hidden", !worktree);
+  elements.checkoutPanel.classList.toggle("hidden", !worktree);
   elements.reviewStaged.disabled = !worktree || !elements.commitMessage.value.trim();
   elements.stagedReview.classList.add("hidden");
   elements.createLocalCommit.classList.add("hidden");
+  elements.localBranch.replaceChildren(new Option("Load clean local branches first", ""));
+  elements.localBranch.disabled = true;
+  elements.reviewCheckout.disabled = true;
+  elements.checkoutReview.classList.add("hidden");
+  elements.executeCheckout.classList.add("hidden");
 }
 
 elements.chooseWorktree.addEventListener("click", async () => {
@@ -279,6 +293,97 @@ elements.createLocalCommit.addEventListener("click", async () => {
   } finally {
     elements.createLocalCommit.disabled = false;
     elements.reviewStaged.disabled = !localWorktree || !elements.commitMessage.value.trim();
+  }
+});
+
+elements.loadLocalBranches.addEventListener("click", async () => {
+  if (!localWorktree || !plannedRepository) return;
+  branchReview = null;
+  elements.loadLocalBranches.disabled = true;
+  elements.checkoutStatus.textContent = "Revalidating cleanliness and loading existing local branches…";
+  elements.checkoutStatus.className = "message";
+  try {
+    const branches = await invoke("list_maintainer_local_branches", {
+      path: localWorktree.path, repository: plannedRepository,
+    });
+    elements.localBranch.replaceChildren();
+    for (const branch of branches) {
+      const option = document.createElement("option");
+      option.value = branch.name;
+      option.textContent = `${branch.name}${branch.current ? " (current)" : ""} · ${branch.commit.slice(0, 12)}`;
+      elements.localBranch.append(option);
+    }
+    elements.localBranch.disabled = false;
+    elements.reviewCheckout.disabled = false;
+    elements.checkoutStatus.textContent = `${branches.length} clean local branch context${branches.length === 1 ? "" : "s"} available. No remote was queried.`;
+  } catch (error) {
+    elements.localBranch.replaceChildren(new Option("Clean local branches unavailable", ""));
+    elements.localBranch.disabled = true;
+    elements.reviewCheckout.disabled = true;
+    elements.checkoutStatus.textContent = String(error);
+    elements.checkoutStatus.className = "message error";
+  } finally {
+    elements.loadLocalBranches.disabled = false;
+  }
+});
+
+elements.localBranch.addEventListener("change", () => {
+  branchReview = null;
+  elements.checkoutReview.classList.add("hidden");
+  elements.executeCheckout.classList.add("hidden");
+});
+
+elements.reviewCheckout.addEventListener("click", async () => {
+  if (!localWorktree || !plannedRepository || !elements.localBranch.value) return;
+  elements.reviewCheckout.disabled = true;
+  elements.checkoutStatus.textContent = "Revalidating the clean current and target branch identities…";
+  try {
+    branchReview = await invoke("review_maintainer_checkout", {
+      path: localWorktree.path,
+      repository: plannedRepository,
+      targetBranch: elements.localBranch.value,
+    });
+    elements.checkoutReview.textContent = `${branchReview.currentBranch} ${branchReview.currentHead.slice(0, 12)} → ${branchReview.targetBranch} ${branchReview.targetCommit.slice(0, 12)}. ${branchReview.message}`;
+    elements.checkoutReview.classList.remove("hidden");
+    elements.executeCheckout.classList.remove("hidden");
+    elements.checkoutStatus.textContent = "Branch change reviewed; execute will revalidate everything again.";
+    elements.checkoutStatus.className = "message";
+  } catch (error) {
+    branchReview = null;
+    elements.checkoutStatus.textContent = String(error);
+    elements.checkoutStatus.className = "message error";
+  } finally {
+    elements.reviewCheckout.disabled = !elements.localBranch.value;
+  }
+});
+
+elements.executeCheckout.addEventListener("click", async () => {
+  if (!branchReview || !localWorktree || !plannedRepository) return;
+  elements.executeCheckout.disabled = true;
+  elements.checkoutStatus.textContent = "Performing the freshly revalidated clean local branch change…";
+  try {
+    const result = await invoke("execute_maintainer_checkout", {
+      path: localWorktree.path,
+      repository: plannedRepository,
+      targetBranch: branchReview.targetBranch,
+      expectedHead: branchReview.currentHead,
+      expectedTargetCommit: branchReview.targetCommit,
+    });
+    const message = `${result.message} ${result.branch} at ${result.head.slice(0, 12)}.`;
+    const refreshed = await invoke("inspect_maintainer_worktree", {
+      path: localWorktree.path, repository: plannedRepository,
+    });
+    renderWorktree(refreshed);
+    elements.checkoutStatus.textContent = message;
+    elements.checkoutStatus.className = "message";
+  } catch (error) {
+    branchReview = null;
+    elements.checkoutStatus.textContent = String(error);
+    elements.checkoutStatus.className = "message error";
+    elements.checkoutReview.classList.add("hidden");
+    elements.executeCheckout.classList.add("hidden");
+  } finally {
+    elements.executeCheckout.disabled = false;
   }
 });
 

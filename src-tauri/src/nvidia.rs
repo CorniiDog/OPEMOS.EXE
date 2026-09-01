@@ -1159,6 +1159,186 @@ pub(crate) async fn create_maintainer_local_commit(
     .map_err(|error| format!("Maintainer local-commit worker failed: {error}"))?
 }
 
+pub(crate) fn valid_local_branch_name(value: &str) -> bool {
+    valid_maintainer_git_reference(value)
+        && value != "HEAD"
+        && !value.starts_with('-')
+        && !value.starts_with("refs/")
+        && !value.ends_with(['~', '^'])
+}
+
+fn local_branches_blocking(
+    path: String,
+    repository: String,
+) -> Result<(MaintainerLocalWorktree, Vec<MaintainerLocalBranch>), String> {
+    let worktree = inspect_maintainer_worktree_blocking(path, repository)?;
+    let current_branch = worktree
+        .branch
+        .as_deref()
+        .ok_or("Branch changes require a named current branch; detached HEAD is not allowed.")?;
+    if worktree.changed_files != 0 {
+        return Err("Branch changes require a completely clean worktree, index, and untracked-file set. Commit, move, or remove those changes manually first.".into());
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&worktree.path)
+        .args([
+            "for-each-ref",
+            "--format=%(refname:short)%09%(objectname)",
+            "refs/heads/",
+        ])
+        .output()
+        .map_err(|error| format!("Could not list local branches: {error}"))?;
+    if !output.status.success() || output.stdout.len() > 1024 * 1024 {
+        return Err("Could not list a bounded set of local branches.".into());
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|_| "Local branch metadata is not valid UTF-8.")?;
+    let mut branches = Vec::new();
+    for line in stdout.lines().filter(|line| !line.is_empty()) {
+        if branches.len() >= 1_000 {
+            return Err(
+                "More than 1,000 local branches exist; manage them directly with Git.".into(),
+            );
+        }
+        let (name, commit) = line
+            .split_once('\t')
+            .ok_or("Git returned malformed local branch metadata.")?;
+        if !valid_local_branch_name(name) || !valid_git_commit(commit) {
+            return Err("Git returned an unsafe local branch identity.".into());
+        }
+        branches.push(MaintainerLocalBranch {
+            name: name.into(),
+            commit: commit.to_ascii_lowercase(),
+            current: name == current_branch,
+        });
+    }
+    if branches.is_empty() || branches.iter().filter(|branch| branch.current).count() != 1 {
+        return Err("The current named branch is missing from the local branch set.".into());
+    }
+    Ok((worktree, branches))
+}
+
+#[tauri::command]
+pub(crate) async fn list_maintainer_local_branches(
+    path: String,
+    repository: String,
+) -> Result<Vec<MaintainerLocalBranch>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        local_branches_blocking(path, repository).map(|(_, branches)| branches)
+    })
+    .await
+    .map_err(|error| format!("Maintainer local-branch worker failed: {error}"))?
+}
+
+fn review_checkout_blocking(
+    path: String,
+    repository: String,
+    target_branch: String,
+) -> Result<MaintainerCheckoutReview, String> {
+    if !valid_local_branch_name(&target_branch) {
+        return Err("The selected local branch name is unsafe.".into());
+    }
+    let (worktree, branches) = local_branches_blocking(path, repository)?;
+    let current_branch = worktree.branch.ok_or("The current branch disappeared.")?;
+    let matches = branches
+        .iter()
+        .filter(|branch| branch.name == target_branch)
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Err("The selected local branch is missing or ambiguous. Refresh branches.".into());
+    }
+    Ok(MaintainerCheckoutReview {
+        repository: worktree.repository,
+        path: worktree.path,
+        current_branch,
+        current_head: worktree.head,
+        target_branch,
+        target_commit: matches[0].commit.clone(),
+        message: "Clean local branch change reviewed. No fetch, reset, force, remote, or file-discard operation is allowed.".into(),
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn review_maintainer_checkout(
+    path: String,
+    repository: String,
+    target_branch: String,
+) -> Result<MaintainerCheckoutReview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        review_checkout_blocking(path, repository, target_branch)
+    })
+    .await
+    .map_err(|error| format!("Maintainer checkout-review worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn execute_maintainer_checkout(
+    path: String,
+    repository: String,
+    target_branch: String,
+    expected_head: String,
+    expected_target_commit: String,
+) -> Result<MaintainerCheckoutResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let review = review_checkout_blocking(path, repository, target_branch)?;
+        if review.current_head != expected_head || review.target_commit != expected_target_commit {
+            return Err("The current or target branch changed after review. Review the branch change again.".into());
+        }
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&review.path)
+            .args([
+                "-c",
+                "core.hooksPath=/dev/null",
+                "switch",
+                "--no-guess",
+                "--",
+                &review.target_branch,
+            ])
+            .output()
+            .map_err(|error| format!("Could not switch the clean local branch: {error}"))?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Git refused the clean local branch change: {}", detail.trim()));
+        }
+        let checkout_path = Path::new(&review.path);
+        let after_branch = git_output(
+            checkout_path,
+            &["branch", "--show-current"],
+            "verify the resulting local branch",
+        )?;
+        let after_head = git_output(
+            checkout_path,
+            &["rev-parse", "HEAD"],
+            "verify the resulting local HEAD",
+        )?;
+        let after_status = git_output(
+            checkout_path,
+            &["status", "--porcelain=v1", "--untracked-files=all"],
+            "verify the resulting clean worktree",
+        )?;
+        if after_branch != review.target_branch
+            || after_head != review.target_commit
+            || !after_status.is_empty()
+        {
+            return Err("The local branch change did not finish in the exact reviewed clean state. Inspect the worktree manually; no cleanup was attempted.".into());
+        }
+        Ok(MaintainerCheckoutResult {
+            repository: review.repository,
+            path: review.path,
+            previous_branch: review.current_branch,
+            previous_head: review.current_head,
+            branch: review.target_branch,
+            head: review.target_commit,
+            remote_changed: false,
+            message: "Changed to the exact reviewed local branch. No fetch, reset, force, or remote operation occurred.".into(),
+        })
+    })
+    .await
+    .map_err(|error| format!("Maintainer checkout worker failed: {error}"))?
+}
+
 pub(crate) fn fetch_nvidia_source_branches(
     client: &reqwest::blocking::Client,
 ) -> Result<Vec<NvidiaSourceBranch>, String> {

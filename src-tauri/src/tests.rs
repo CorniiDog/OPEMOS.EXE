@@ -218,6 +218,21 @@ mod tests {
     }
 
     #[test]
+    fn maintainer_checkout_accepts_only_safe_local_branch_names() {
+        assert!(valid_local_branch_name("main"));
+        assert!(valid_local_branch_name("feature/local-context"));
+        assert!(valid_local_branch_name("release-1.2.3"));
+        assert!(!valid_local_branch_name("HEAD"));
+        assert!(!valid_local_branch_name("refs/heads/main"));
+        assert!(!valid_local_branch_name("--detach"));
+        assert!(!valid_local_branch_name("../main"));
+        assert!(!valid_local_branch_name("feature//unsafe"));
+        assert!(!valid_local_branch_name("feature@{1}"));
+        assert!(!valid_local_branch_name("branch.lock"));
+        assert!(!valid_local_branch_name("branch name"));
+    }
+
+    #[test]
     fn usb_candidate_parser_rejects_internal_virtual_and_undersized_disks() {
         let removable = serde_json::json!({
             "DeviceIdentifier": "disk7",

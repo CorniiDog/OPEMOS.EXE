@@ -153,6 +153,39 @@ pub(crate) struct MaintainerLocalCommit {
     pub(crate) message: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerLocalBranch {
+    pub(crate) name: String,
+    pub(crate) commit: String,
+    pub(crate) current: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerCheckoutReview {
+    pub(crate) repository: String,
+    pub(crate) path: String,
+    pub(crate) current_branch: String,
+    pub(crate) current_head: String,
+    pub(crate) target_branch: String,
+    pub(crate) target_commit: String,
+    pub(crate) message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerCheckoutResult {
+    pub(crate) repository: String,
+    pub(crate) path: String,
+    pub(crate) previous_branch: String,
+    pub(crate) previous_head: String,
+    pub(crate) branch: String,
+    pub(crate) head: String,
+    pub(crate) remote_changed: bool,
+    pub(crate) message: String,
+}
+
 pub(crate) struct PinnedInstallerFile {
     pub(crate) path: &'static str,
     pub(crate) sha256: &'static str,

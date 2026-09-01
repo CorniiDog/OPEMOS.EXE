@@ -96,6 +96,15 @@
             </dl>
             <button id="open-vscode" class="primary" type="button" disabled>Open Selected Worktree in VS Code</button>
             <p id="worktree-message" class="message" aria-live="polite"></p>
+            <div id="checkout-panel" class="commit-panel hidden">
+                <label for="local-branch"><span>Local branch context</span></label>
+                <select id="local-branch" disabled><option value="">Load clean local branches first</option></select>
+                <button id="load-local-branches" class="secondary" type="button">Load Clean Local Branches</button>
+                <button id="review-checkout" class="secondary" type="button" disabled>Review Branch Change</button>
+                <div id="checkout-review" class="notice hidden"></div>
+                <button id="execute-checkout" class="primary hidden" type="button">Change to Reviewed Local Branch</button>
+                <p id="checkout-status" class="message" aria-live="polite"></p>
+            </div>
             <div id="local-commit-panel" class="commit-panel hidden">
                 <label for="commit-message"><span>Local commit message</span></label>
                 <textarea id="commit-message" rows="3" maxlength="2048" placeholder="Describe the reviewed staged changes"></textarea>
