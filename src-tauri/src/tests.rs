@@ -215,6 +215,17 @@ mod tests {
         assert!(unsafe_staged_path("keys/release.pem"));
         assert!(unsafe_staged_path("../outside.txt"));
         assert!(unsafe_staged_path("line\nbreak.txt"));
+
+        assert!(!contains_sensitive_patch_content(
+            "diff --git a/src/app.rs b/src/app.rs\n+safe local code"
+        ));
+        assert!(contains_sensitive_patch_content(
+            "+Authorization: Bearer example-token"
+        ));
+        let private_key_marker = ["+-----BEGIN OPEN", "SSH PRIVATE KEY-----"].concat();
+        assert!(contains_sensitive_patch_content(&private_key_marker));
+        let github_token_marker = ["+token=github", "_pat_example"].concat();
+        assert!(contains_sensitive_patch_content(&github_token_marker));
     }
 
     #[test]

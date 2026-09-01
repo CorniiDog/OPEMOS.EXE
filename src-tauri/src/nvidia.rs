@@ -1016,6 +1016,77 @@ fn staged_paths(path: &Path) -> Result<Vec<String>, String> {
     Ok(paths)
 }
 
+const MAINTAINER_PATCH_LIMIT: usize = 1024 * 1024;
+
+pub(crate) fn contains_sensitive_patch_content(patch: &str) -> bool {
+    let lower = patch.to_ascii_lowercase();
+    let markers = [
+        ["-----begin private ", "key-----"].concat(),
+        ["-----begin rsa private ", "key-----"].concat(),
+        ["-----begin open", "ssh private key-----"].concat(),
+        ["authorization: ", "bearer "].concat(),
+        ["github", "_pat_"].concat(),
+        ["gh", "p_"].concat(),
+        ["aws_secret", "_access_key"].concat(),
+    ];
+    markers.iter().any(|marker| lower.contains(marker.as_str()))
+}
+
+fn staged_patch(path: &Path) -> Result<(String, String), String> {
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args([
+            "diff",
+            "--cached",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--binary",
+            "--full-index",
+            "--no-color",
+            "--unified=3",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("Could not start the staged patch review: {error}"))?;
+    let mut bytes = Vec::new();
+    child
+        .stdout
+        .take()
+        .ok_or("Could not read the staged patch review.")?
+        .take((MAINTAINER_PATCH_LIMIT + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not read the staged patch review: {error}"))?;
+    if bytes.len() > MAINTAINER_PATCH_LIMIT {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(
+            "The staged patch exceeds 1 MiB; split it into smaller reviewable commits.".into(),
+        );
+    }
+    let status = child
+        .wait()
+        .map_err(|error| format!("Could not finish the staged patch review: {error}"))?;
+    if !status.success() || bytes.is_empty() {
+        return Err("Git could not produce a non-empty staged patch review.".into());
+    }
+    let patch = String::from_utf8(bytes)
+        .map_err(|_| "The staged patch is not valid UTF-8 and cannot be reviewed safely.")?;
+    if patch
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\n' | '\t'))
+    {
+        return Err("The staged patch contains unsupported control characters.".into());
+    }
+    if contains_sensitive_patch_content(&patch) {
+        return Err("The staged patch appears to contain a credential or private key. Remove it from the staged set before committing.".into());
+    }
+    let sha256 = format!("{:x}", Sha256::digest(patch.as_bytes()));
+    Ok((patch, sha256))
+}
+
 pub(crate) fn unsafe_staged_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     path.starts_with('/')
@@ -1069,6 +1140,7 @@ fn review_staged_commit_blocking(
     if !valid_git_commit(&index_tree) {
         return Err("Git did not return a valid staged tree identity.".into());
     }
+    let (patch_preview, patch_sha256) = staged_patch(Path::new(&worktree.path))?;
     Ok(MaintainerCommitReview {
         repository: worktree.repository,
         path: worktree.path,
@@ -1076,6 +1148,8 @@ fn review_staged_commit_blocking(
         head: worktree.head,
         index_tree,
         staged_paths: paths,
+        patch_sha256,
+        patch_preview,
         message,
     })
 }
@@ -1100,11 +1174,15 @@ pub(crate) async fn create_maintainer_local_commit(
     message: String,
     expected_head: String,
     expected_index_tree: String,
+    expected_patch_sha256: String,
 ) -> Result<MaintainerLocalCommit, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let review = review_staged_commit_blocking(path, repository, message)?;
-        if review.head != expected_head || review.index_tree != expected_index_tree {
-            return Err("HEAD or the staged tree changed after review. Review the commit again.".into());
+        if review.head != expected_head
+            || review.index_tree != expected_index_tree
+            || review.patch_sha256 != expected_patch_sha256
+        {
+            return Err("HEAD, the staged tree, or its reviewed patch changed after review. Review the commit again.".into());
         }
         let mut child = Command::new("git")
             .arg("-C")

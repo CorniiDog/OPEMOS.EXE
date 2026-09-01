@@ -17,6 +17,7 @@ const elements = {
   localCommitPanel: $("#local-commit-panel"), commitMessage: $("#commit-message"),
   reviewStaged: $("#review-staged"), stagedReview: $("#staged-review"),
   createLocalCommit: $("#create-local-commit"), commitStatus: $("#commit-message-status"),
+  stagedPatch: $("#staged-patch"),
   checkoutPanel: $("#checkout-panel"), localBranch: $("#local-branch"),
   loadLocalBranches: $("#load-local-branches"), reviewCheckout: $("#review-checkout"),
   checkoutReview: $("#checkout-review"), executeCheckout: $("#execute-checkout"),
@@ -186,6 +187,7 @@ function renderWorktree(worktree) {
   elements.checkoutPanel.classList.toggle("hidden", !worktree);
   elements.reviewStaged.disabled = !worktree || !elements.commitMessage.value.trim();
   elements.stagedReview.classList.add("hidden");
+  elements.stagedPatch.classList.add("hidden");
   elements.createLocalCommit.classList.add("hidden");
   elements.localBranch.replaceChildren(new Option("Load clean local branches first", ""));
   elements.localBranch.disabled = true;
@@ -234,6 +236,7 @@ elements.commitMessage.addEventListener("input", () => {
   commitReview = null;
   elements.reviewStaged.disabled = !localWorktree || !elements.commitMessage.value.trim();
   elements.stagedReview.classList.add("hidden");
+  elements.stagedPatch.classList.add("hidden");
   elements.createLocalCommit.classList.add("hidden");
 });
 
@@ -250,6 +253,8 @@ elements.reviewStaged.addEventListener("click", async () => {
     const remaining = Math.max(0, commitReview.stagedPaths.length - 20);
     elements.stagedReview.textContent = `${commitReview.stagedPaths.length} staged path${commitReview.stagedPaths.length === 1 ? "" : "s"}: ${visiblePaths}${remaining ? `, and ${remaining} more` : ""}`;
     elements.stagedReview.classList.remove("hidden");
+    elements.stagedPatch.textContent = commitReview.patchPreview;
+    elements.stagedPatch.classList.remove("hidden");
     elements.createLocalCommit.classList.remove("hidden");
     elements.commitStatus.textContent = `Review bound to ${commitReview.head.slice(0, 12)} and tree ${commitReview.indexTree.slice(0, 12)}. Nothing has been committed or pushed.`;
   } catch (error) {
@@ -272,12 +277,14 @@ elements.createLocalCommit.addEventListener("click", async () => {
       message: elements.commitMessage.value,
       expectedHead: commitReview.head,
       expectedIndexTree: commitReview.indexTree,
+      expectedPatchSha256: commitReview.patchSha256,
     });
     elements.commitStatus.textContent = `${result.message} ${result.commit.slice(0, 12)} on ${result.branch}.`;
     elements.commitStatus.className = "message";
     elements.commitMessage.value = "";
     commitReview = null;
     elements.stagedReview.classList.add("hidden");
+    elements.stagedPatch.classList.add("hidden");
     elements.createLocalCommit.classList.add("hidden");
     const refreshed = await invoke("inspect_maintainer_worktree", {
       path: localWorktree.path, repository: plannedRepository,
@@ -290,6 +297,7 @@ elements.createLocalCommit.addEventListener("click", async () => {
     elements.commitStatus.className = "message error";
     elements.createLocalCommit.classList.add("hidden");
     elements.stagedReview.classList.add("hidden");
+    elements.stagedPatch.classList.add("hidden");
   } finally {
     elements.createLocalCommit.disabled = false;
     elements.reviewStaged.disabled = !localWorktree || !elements.commitMessage.value.trim();

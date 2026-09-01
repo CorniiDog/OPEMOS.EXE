@@ -137,6 +137,8 @@ pub(crate) struct MaintainerCommitReview {
     pub(crate) head: String,
     pub(crate) index_tree: String,
     pub(crate) staged_paths: Vec<String>,
+    pub(crate) patch_sha256: String,
+    pub(crate) patch_preview: String,
     pub(crate) message: String,
 }
 
