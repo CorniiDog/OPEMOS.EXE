@@ -21,6 +21,9 @@ test("guest writes only the exact disposable synthetic virtio disk", () => {
   assert.match(guest, /\/dev\/disk\/by-id\/virtio-STEAMOS_SYNTH_V1/);
   assert.match(guest, /synthetic disk resolved to guest root/);
   assert.match(guest, /67108864/);
+  assert.match(guest, /name=rootfs-A/);
+  assert.match(guest, /name=rootfs-B/);
+  assert.match(guest, /synthetic recovery B rollback mismatch/);
   assert.match(guest, /STEAMOS_HEADLESS_RESULT/);
 });
 

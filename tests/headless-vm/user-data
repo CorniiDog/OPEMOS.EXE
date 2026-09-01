@@ -9,7 +9,7 @@ write_files:
       result='failed'
       reason='unexpected guest failure'
       finish() {
-        printf 'STEAMOS_HEADLESS_RESULT {"schemaVersion":1,"status":"%s","reason":"%s"}\n' "$result" "$reason" > /dev/ttyS0
+        printf 'STEAMOS_HEADLESS_RESULT {"schemaVersion":1,"status":"%s","reason":"%s","checks":["disk-identity","raw-readback","recovery-ab-rollback"]}\n' "$result" "$reason" > /dev/ttyS0
         sync
         poweroff -f
       }
@@ -25,8 +25,28 @@ write_files:
       digest="$(dd if="$test_device" bs=1M count=1 status=none | sha256sum | awk '{print $1}')"
       expected='30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58'
       [[ "$digest" = "$expected" ]] || { reason='synthetic disk readback mismatch'; exit 1; }
+      command -v sfdisk >/dev/null || { reason='guest partition tool missing'; exit 1; }
+      printf 'label: gpt\nsize=24M, type=0fc63daf-8483-4772-8e79-3d69d8477de4, name=rootfs-A\nsize=24M, type=0fc63daf-8483-4772-8e79-3d69d8477de4, name=rootfs-B\n' | sfdisk "$test_device" >/dev/null
+      blockdev --rereadpt "$test_device"
+      udevadm settle
+      partition_a="$(lsblk -nrpo NAME,PARTLABEL "$test_device" | awk '$2 == "rootfs-A" { print $1 }')"
+      partition_b="$(lsblk -nrpo NAME,PARTLABEL "$test_device" | awk '$2 == "rootfs-B" { print $1 }')"
+      [[ -b "$partition_a" && -b "$partition_b" && "$partition_a" != "$partition_b" ]] || {
+        reason='synthetic recovery A-B partitions are missing or ambiguous'
+        exit 1
+      }
+      dd if=/dev/zero of="$partition_a" bs=1M count=1 conv=fsync status=none
+      dd if=/dev/zero of="$partition_b" bs=1M count=1 conv=fsync status=none
+      dd if="$partition_b" of=/tmp/rootfs-b.backup bs=1M count=1 status=none
+      before="$(sha256sum /tmp/rootfs-b.backup | awk '{print $1}')"
+      dd if=/dev/urandom of="$partition_b" bs=1M count=1 conv=fsync status=none
+      mutated="$(dd if="$partition_b" bs=1M count=1 status=none | sha256sum | awk '{print $1}')"
+      [[ "$mutated" != "$before" ]] || { reason='synthetic recovery mutation did not change B'; exit 1; }
+      dd if=/tmp/rootfs-b.backup of="$partition_b" bs=1M count=1 conv=fsync status=none
+      restored="$(dd if="$partition_b" bs=1M count=1 status=none | sha256sum | awk '{print $1}')"
+      [[ "$restored" = "$before" ]] || { reason='synthetic recovery B rollback mismatch'; exit 1; }
       result='passed'
-      reason='serial-controlled synthetic virtio disk write and readback succeeded'
+      reason='synthetic disk identity, raw readback, and recovery A-B rollback succeeded'
 runcmd:
   - [ /usr/local/sbin/steamos-headless-harness ]
 final_message: STEAMOS_HEADLESS_CLOUD_INIT_COMPLETE

@@ -2,7 +2,7 @@
 
 Run `npm run test:vm-headless` from the repository root. The harness boots the existing immutable x86_64 Fedora appliance through QEMU TCG, creates a disposable qcow2 system overlay and a 64 MiB synthetic raw disk, and controls the guest only through NoCloud seed media and the serial console.
 
-The VM has no emulated network device, GUI, monitor, SSH workflow, host-disk passthrough, secrets, or persistent host permission. Guest code refuses to write unless the target is the uniquely serialed synthetic virtio disk, differs from the guest root device, and has the exact expected capacity. Every runtime artifact is created beneath the nested ignored `work/` directory and removed on exit.
+The VM has no emulated network device, GUI, monitor, SSH workflow, host-disk passthrough, secrets, or persistent host permission. Guest code refuses to write unless the target is the uniquely serialed synthetic virtio disk, differs from the guest root device, and has the exact expected capacity. It then creates unambiguous synthetic `rootfs-A` and `rootfs-B` partitions, mutates only B, restores B from a disposable backup, and verifies the rollback hash. Every runtime artifact is created beneath the nested ignored `work/` directory and removed on exit.
 
 The final machine-readable record is written to `tests/headless-vm/results/latest.json`. Missing QEMU, seed-media tooling, or the base image produces a `skipped` record and exit status 2; test failures produce a `failed` record and exit status 1.
 
