@@ -382,6 +382,7 @@ boundary is useful; do not split files merely to chase a line-count target.
 * [x] Add a repository-local one-command headless VM harness using a disposable qcow2 overlay, exact synthetic virtio disk, NoCloud seed control, serial JSON result, no network/GUI/SSH, and nested ignored runtime state.
 * [x] Extend the headless VM harness with unambiguous synthetic `rootfs-A`/`rootfs-B` discovery, isolated B mutation, backup restoration, and byte-hash rollback verification.
 * [x] Exercise synthetic USB identity/capacity authorization, progress, mid-copy cancellation cleanup, full-device readback, and explicit root/wrong-identity refusal entirely inside the isolated headless VM.
+* [x] Harden the headless VM harness against symlinked state, stale/non-atomic results, unbounded timeout input, malformed progress, and first/middle/final-block cancellation or off-by-one capacity regressions.
 
 ---
 

@@ -4,38 +4,82 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPOSITORY_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)"
 BASE_IMAGE="${STEAMOS_HEADLESS_VM_BASE:-$REPOSITORY_ROOT/builder/appliance/fedora-builder-x86_64.qcow2}"
-WORK_ROOT="$SCRIPT_DIR/work"
-RESULT_ROOT="$SCRIPT_DIR/results"
+STATE_ROOT="${STEAMOS_HEADLESS_VM_STATE_ROOT:-$SCRIPT_DIR}"
+WORK_ROOT="$STATE_ROOT/work"
+RESULT_ROOT="$STATE_ROOT/results"
 RESULT_PATH="$RESULT_ROOT/latest.json"
 TIMEOUT_SECONDS="${STEAMOS_HEADLESS_VM_TIMEOUT_SECONDS:-180}"
 SYNTHETIC_BYTES=$((64 * 1024 * 1024))
 
-mkdir -p "$WORK_ROOT" "$RESULT_ROOT"
+if ! command -v node >/dev/null 2>&1; then
+    printf 'Headless VM harness requires node for machine-readable result validation.\n' >&2
+    exit 2
+fi
+if [[ "$STATE_ROOT" != /* || ! -d "$STATE_ROOT" || -L "$STATE_ROOT" ]]; then
+    printf 'Headless VM harness state root must be an existing absolute non-symlink directory.\n' >&2
+    exit 2
+fi
+for state_directory in "$WORK_ROOT" "$RESULT_ROOT"; do
+    if [[ -L "$state_directory" || ( -e "$state_directory" && ! -d "$state_directory" ) ]]; then
+        printf 'Headless VM harness refuses unsafe runtime/result state: %s\n' "$state_directory" >&2
+        exit 2
+    fi
+    if [[ ! -d "$state_directory" ]]; then
+        mkdir -m 0700 -- "$state_directory"
+    fi
+done
+if [[ ! "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || (( TIMEOUT_SECONDS < 30 || TIMEOUT_SECONDS > 900 )); then
+    printf 'STEAMOS_HEADLESS_VM_TIMEOUT_SECONDS must be an integer from 30 through 900.\n' >&2
+    exit 2
+fi
+
+atomic_result()
+{
+    local status="$1"
+    local reason="$2"
+    local staged_result
+    staged_result="$(mktemp "$RESULT_ROOT/.latest.XXXXXX")"
+    node -e '
+const fs = require("fs");
+const [path, status, reason] = process.argv.slice(1);
+fs.writeFileSync(path, `${JSON.stringify({schemaVersion: 1, status, reason})}\n`, {mode: 0o600});
+' "$staged_result" "$status" "$reason"
+    chmod 0600 "$staged_result"
+    mv -f -- "$staged_result" "$RESULT_PATH"
+}
+
+if [[ "${STEAMOS_HEADLESS_VM_STATE_CHECK_ONLY:-0}" == 1 ]]; then
+    atomic_result passed "runtime and result state boundaries are safe"
+    exit 0
+fi
+
 RUNTIME="$(mktemp -d "$WORK_ROOT/run.XXXXXX")"
 QEMU_PID=""
+RUN_COMPLETE=0
 
 cleanup()
 {
+    local exit_status=$?
     if [[ -n "$QEMU_PID" ]] && kill -0 "$QEMU_PID" 2>/dev/null; then
         kill "$QEMU_PID" 2>/dev/null || true
         wait "$QEMU_PID" 2>/dev/null || true
     fi
     rm -rf -- "$RUNTIME"
+    if (( RUN_COMPLETE == 0 )); then
+        atomic_result failed "headless VM harness aborted before a final guest result" || true
+    fi
+    return "$exit_status"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 write_result()
 {
-    local status="$1"
-    local reason="$2"
-    node -e '
-const fs = require("fs");
-const [path, status, reason] = process.argv.slice(1);
-fs.writeFileSync(path, `${JSON.stringify({schemaVersion: 1, status, reason})}\n`, {mode: 0o600});
-' "$RESULT_PATH" "$status" "$reason"
+    atomic_result "$1" "$2"
+    RUN_COMPLETE=1
 }
 
-for command in node qemu-img qemu-system-x86_64; do
+for command in qemu-img qemu-system-x86_64; do
     if ! command -v "$command" >/dev/null 2>&1; then
         write_result "skipped" "missing dependency: $command"
         printf 'Headless VM harness skipped: missing %s\n' "$command" >&2
@@ -128,15 +172,18 @@ done
 wait "$QEMU_PID" || true
 QEMU_PID=""
 
-RESULT_LINE="$(grep -a '^STEAMOS_HEADLESS_RESULT ' "$SERIAL_LOG" | tail -n 1 || true)"
+RESULT_LINE="$(grep -ao 'STEAMOS_HEADLESS_RESULT {[^}]*}' "$SERIAL_LOG" | tail -n 1 || true)"
 if [[ -z "$RESULT_LINE" ]]; then
     write_result "failed" "guest emitted no machine-readable result"
     exit 1
 fi
-printf '%s\n' "${RESULT_LINE#STEAMOS_HEADLESS_RESULT }" > "$RESULT_PATH"
-node -e '
-const fs = require("fs");
-const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-if (result.schemaVersion !== 1 || result.status !== "passed") process.exit(1);
-' "$RESULT_PATH"
+GUEST_RESULT="$RUNTIME/guest-result.json"
+printf '%s\n' "${RESULT_LINE#STEAMOS_HEADLESS_RESULT }" > "$GUEST_RESULT"
+grep -ao 'STEAMOS_HEADLESS_PROGRESS {[^}]*}' "$SERIAL_LOG" | sed 's/^STEAMOS_HEADLESS_PROGRESS //' > "$RUNTIME/progress.jsonl"
+node "$SCRIPT_DIR/validate-result.mjs" "$GUEST_RESULT" "$RUNTIME/progress.jsonl"
+STAGED_RESULT="$(mktemp "$RESULT_ROOT/.latest.XXXXXX")"
+cp "$GUEST_RESULT" "$STAGED_RESULT"
+chmod 0600 "$STAGED_RESULT"
+mv -f -- "$STAGED_RESULT" "$RESULT_PATH"
+RUN_COMPLETE=1
 printf 'Headless VM harness passed; result: %s\n' "$RESULT_PATH"

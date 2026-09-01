@@ -30,6 +30,8 @@ write_files:
       }
       ! authorize_usb_target "$root_device" STEAMOS_SYNTH_V1 67108864 || { reason='guest root disk passed USB authorization'; exit 1; }
       ! authorize_usb_target "$wrong_device" STEAMOS_WRONG_V1 67108864 || { reason='unexpected device identity passed USB authorization'; exit 1; }
+      ! authorize_usb_target "$test_device" STEAMOS_SYNTH_V1 67108863 || { reason='undersized capacity boundary passed USB authorization'; exit 1; }
+      ! authorize_usb_target "$test_device" STEAMOS_SYNTH_V1 67108865 || { reason='oversized capacity boundary passed USB authorization'; exit 1; }
       authorize_usb_target "$test_device" STEAMOS_SYNTH_V1 67108864 || { reason='exact synthetic USB identity was rejected'; exit 1; }
       source_image=/var/tmp/steamos-synthetic-usb.img
       dd if=/dev/urandom of="$source_image" bs=4M count=16 status=none
@@ -48,15 +50,17 @@ write_files:
         done
         sync
       }
-      set +e
-      copy_usb_image 2
-      cancelled_rc=$?
-      set -e
-      [[ "$cancelled_rc" = 130 ]] || { reason='synthetic USB cancellation was not observed'; exit 1; }
-      dd if=/dev/zero of="$test_device" bs=4M count=16 conv=fsync status=none
       zero_hash="$(dd if=/dev/zero bs=4M count=16 status=none | sha256sum | awk '{print $1}')"
-      cleanup_hash="$(dd if="$test_device" bs=4M count=16 status=none | sha256sum | awk '{print $1}')"
-      [[ "$cleanup_hash" = "$zero_hash" ]] || { reason='cancelled synthetic USB was not sanitized'; exit 1; }
+      for cancel_point in 0 8 15; do
+        set +e
+        copy_usb_image "$cancel_point"
+        cancelled_rc=$?
+        set -e
+        [[ "$cancelled_rc" = 130 ]] || { reason='synthetic USB cancellation boundary was not observed'; exit 1; }
+        dd if=/dev/zero of="$test_device" bs=4M count=16 conv=fsync status=none
+        cleanup_hash="$(dd if="$test_device" bs=4M count=16 status=none | sha256sum | awk '{print $1}')"
+        [[ "$cleanup_hash" = "$zero_hash" ]] || { reason='cancelled synthetic USB was not sanitized'; exit 1; }
+      done
       copy_usb_image none
       source_hash="$(sha256sum "$source_image" | awk '{print $1}')"
       readback_hash="$(dd if="$test_device" bs=4M count=16 status=none | sha256sum | awk '{print $1}')"
