@@ -2,14 +2,25 @@ const ANSI_CSI = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const ANSI_OSC = /\x1b\][^\x07]*(?:\x07|\x1b\\)/g;
 const INSTALLER_PROGRESS_PREFIX = "STEAMOS_NVIDIA_PROGRESS ";
 
-const INSTALLER_VALIDATION_STAGES = {
-  holo_database: [64, "Reading the Holo package database"],
-  hashing: [65, "Hashing an authenticated installer input"],
-  archive_layout: [66, "Inspecting the NVIDIA module archive"],
-  modules: [67, "Verifying exact-kernel NVIDIA modules"],
-  userspace_packages: [68, "Verifying signed userspace packages"],
-  dependency_closure: [69, "Resolving the package dependency closure"],
-  storage_calculation: [70, "Calculating target storage requirements"],
+const INSTALLER_PROGRESS_STAGES = {
+  holo_database: [64, "Reading the Holo package database", "validation"],
+  hashing: [65, "Hashing an authenticated installer input", "validation"],
+  archive_layout: [66, "Inspecting the NVIDIA module archive", "validation"],
+  modules: [67, "Verifying exact-kernel NVIDIA modules", "validation"],
+  userspace_packages: [68, "Verifying signed userspace packages", "validation"],
+  dependency_closure: [69, "Resolving the package dependency closure", "validation"],
+  storage_calculation: [70, "Calculating target storage requirements", "validation"],
+  pacman_policy: [72, "Preparing the confined package transaction", "installation"],
+  runtime_mounts: [73, "Attaching target runtime filesystems", "installation"],
+  userspace_install: [75, "Installing authenticated NVIDIA userspace", "installation"],
+  userspace_verification: [77, "Verifying installed userspace files", "installation"],
+  module_install: [79, "Installing exact-kernel NVIDIA modules", "installation"],
+  module_verification: [80, "Verifying all five installed modules", "installation"],
+  grub_update: [81, "Updating NVIDIA boot arguments", "installation"],
+  depmod: [82, "Refreshing module dependencies", "installation"],
+  initramfs: [83, "Generating the SteamOS initramfs", "installation"],
+  installation_state: [84, "Recording verified installation state", "installation"],
+  mount_cleanup: [84, "Releasing installer mounts", "installation"],
 };
 
 const ROUTINE_LINE = /^(?:\[\s*\d+(?:\.\d+)?\]\s|\[\s*OK\s*\]|\s*(?:Starting|Started|Stopping|Stopped|Finished|Reached target|Listening on|Mounted|Mounting|Found device|Expecting device|Created slice|Activated swap|Activating swap|Closed|Set up automount)\b|UEFI firmware|ArmTrngLib|Tpm2|BdsDxe:|Error: Image at|Image type X64|error: \.\.\/\.\.\/grub-core\/|(?:invalid\s+)?environment block\.|\s*(?:serial port|terminal)\s+|isn't found\.$|sparse file not$|allowed\.$|\s*Booting `Fedora Linux|Fedora Linux \d+|Kernel .* on |enp\d|Try contacting this VM|steamos-builder login:|qemu-system-|QEMU: Terminated|cloud-init\[|P\+q6E616D65|\[\*+\s*\]\s+Job |^[M\r]$|\[[^\]]+\]\s+(?:CC|LD|AR|BTF|MODPOST)\b|\s*(?:CC|LD|AR|BTF|MODPOST)\s+\[M\]|make\[\d+\]: (?:Entering|Leaving) directory|\s*\[\s*\d+\/\d+\]|\s*\(\d+\/\d+\)|Updating and loading repositories:|Repositories loaded\.|\s*Fedora .*100%|Package .* is already installed\.|Package\s+Arch\s+Version|\s*[A-Za-z0-9@._+:-]+\s+(?:x86_64|any|noarch)\s+|Downloading Packages:|Running transaction|Complete!$|Last metadata expiration check:|Dependencies resolved\.|Package\s+Architecture\s+Version|Transaction Summary|\s*(?:Installing|Upgrading|Verifying|Preparing)\s*:|Total (?:download )?size|Total size of inbound packages|After this operation|Installed size:|Replacing:|Importing OpenPGP key|UserID\s*:|Fingerprint:|From\s*:|The key was successfully imported|>>>|-+$|Is this ok \[y\/N\])/i;
@@ -57,7 +68,7 @@ export function inferInstallerValidationProgress(value) {
     } catch {
       continue;
     }
-    const stage = INSTALLER_VALIDATION_STAGES[document.phase];
+    const stage = INSTALLER_PROGRESS_STAGES[document.phase];
     const attempt = Number(document.attempt);
     const indeterminate = document.indeterminate === true;
     const completed = indeterminate ? null : Number(document.completed);
@@ -77,6 +88,7 @@ export function inferInstallerValidationProgress(value) {
     return {
       attempt,
       completed,
+      kind: stage[2],
       label: stage[1],
       overallProgress: stage[0],
       stage: document.phase,

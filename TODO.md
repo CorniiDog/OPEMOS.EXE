@@ -504,6 +504,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Apply and validate every pinned support file's executable/data mode before packaging, then enforce the exact modes again inside Fedora after extraction so direct helper execution works independently of macOS/Windows host archive semantics.
 * [x] Repin support commit `f8c569c72fc6c1ecfba3d1a87235886f09baaa63`, whose validator launches the measurement helper through its exact Python interpreter and preserves a bounded, path-sanitized `OSError` when process creation itself fails.
 * [x] Repin support commit `6d02c3167f115044b72bc8feb81724574d6be3c1`, stage its confined pacman-config helper, and require the authenticated measured-space result to authorize the scoped `CheckSpace` exception while every conservative or insufficient-space path preserves it.
+* [x] Repin support commit `d6cb08d3508361e1b1804e37a67a2b3c07116b1e`, including recursive runtime-mount cleanup, canonical compressed-module installation, aggregate installed-module verification, preserved structured results, and real mutation progress.
 * [x] Compare reviewed and validated package dependency/provider relations as bounded canonical sets: accept order-only normalization, reject duplicates, unsafe syntax, or membership drift, and report every differing package field in one builder error.
 * [ ] Run the compressed mutation against the real SteamOS 3.8.14 overlay, then independently verify final package contents, modules, initramfs, Btrfs policy, cancellation cleanup, repeat execution, and the remaining free-space margin before exporting.
 * [x] Normalize the verified archive checksum sidecar to the builder's fixed guest archive basename before handoff, while retaining the Rust-owned digest and requiring the pinned support validator to independently rehash the transferred bytes.
@@ -1247,6 +1248,7 @@ Before calling the project **beta**, verify:
 * [x] Reweight progress around real workflow cost and advance the long NVIDIA compile/validation/install ranges from normalized diagnostic milestones without allowing backward movement.
 * [x] Split one shared rounded progress track into an overall upper half and per-step lower half: byte-counted work reports a real substep ratio, while validation and other unmeasurable phases use a restrained indeterminate animation.
 * [x] Define and consume strict schema-1 `STEAMOS_NVIDIA_PROGRESS` JSON lines for detailed offline-root validation phases, real byte/item ratios, bounded attempts, readable phase logs, and app-owned status wording; the pinned support validator now emits this contract.
+* [x] Consume the same strict progress contract for offline-root mutation, including pacman policy, runtime mounts, authenticated userspace installation/verification, all five modules, GRUB, depmod, initramfs, state recording, and cleanup.
 * [ ] Advanced custom package injection framework only if it does not dilute the NVIDIA-focused safety model.
 
 ## Deferred settings, profiles, and maintainer automation

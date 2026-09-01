@@ -39,6 +39,7 @@ test("structured installer validation progress is strict and measurable", () => 
   assert.deepEqual(inferInstallerValidationProgress(`older log\n${marker}`), {
     attempt: 2,
     completed: 3145728,
+    kind: "validation",
     label: "Hashing an authenticated installer input",
     overallProgress: 65,
     stage: "hashing",
@@ -52,6 +53,7 @@ test("structured installer validation progress is strict and measurable", () => 
     {
       attempt: 0,
       completed: null,
+      kind: "validation",
       label: "Resolving the package dependency closure",
       overallProgress: 69,
       stage: "dependency_closure",
@@ -62,6 +64,24 @@ test("structured installer validation progress is strict and measurable", () => 
   );
   assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"attempt":1,"phase":"unknown","indeterminate":true}`), null);
   assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"attempt":1,"phase":"modules","indeterminate":false,"completed":6,"total":5,"unit":"items"}`), null);
+});
+
+test("structured installer mutation progress reports real package and module work", () => {
+  const prefix = "STEAMOS_NVIDIA_PROGRESS ";
+  assert.deepEqual(
+    inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"attempt":2,"phase":"module_verification","indeterminate":false,"completed":3,"total":5,"unit":"items"}`),
+    {
+      attempt: 2,
+      completed: 3,
+      kind: "installation",
+      label: "Verifying all five installed modules",
+      overallProgress: 80,
+      stage: "module_verification",
+      stepProgress: 0.6,
+      total: 5,
+      unit: "items",
+    },
+  );
 });
 
 test("credentials and host usernames are redacted", () => {

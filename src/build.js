@@ -383,19 +383,20 @@ function renderLogs(applianceLog, source = "native") {
   if (source === "nvidia") {
     nvidiaBuildSubphase = inferNvidiaBuildSubphase(normalizedLog);
     installerProgress = inferInstallerValidationProgress(normalizedLog);
-    if (running && activeNvidiaPhase === "validation" && installerProgress) {
+    if (running && activeNvidiaPhase === installerProgress?.kind) {
       nvidiaMilestoneProgress = Math.max(nvidiaMilestoneProgress, installerProgress.overallProgress);
+      const operation = installerProgress.kind === "validation" ? "Validation" : "Installation";
       const amount = installerProgress.total === null
-        ? `Validation pass ${installerProgress.attempt} is active.`
+        ? `${operation} pass ${installerProgress.attempt} is active.`
         : installerProgress.unit === "bytes"
-          ? `${formatBytes(installerProgress.completed)} of ${formatBytes(installerProgress.total)} checked during validation pass ${installerProgress.attempt}.`
-          : `${installerProgress.completed} of ${installerProgress.total} checked during validation pass ${installerProgress.attempt}.`;
+          ? `${formatBytes(installerProgress.completed)} of ${formatBytes(installerProgress.total)} processed during ${operation.toLowerCase()} pass ${installerProgress.attempt}.`
+          : `${installerProgress.completed} of ${installerProgress.total} processed during ${operation.toLowerCase()} pass ${installerProgress.attempt}.`;
       setStatus(
         "running",
         installerProgress.label,
         amount,
         nvidiaMilestoneProgress,
-        "Validating",
+        installerProgress.kind === "validation" ? "Validating" : "Installing",
         false,
         installerProgress.stepProgress,
       );
@@ -416,7 +417,7 @@ function renderLogs(applianceLog, source = "native") {
     const progressKey = `${installerProgress.attempt}:${installerProgress.stage}`;
     if (progressKey !== lastInstallerProgressKey) {
       lastInstallerProgressKey = progressKey;
-      delta += `\n\x1b[36m[validator]\x1b[0m ${installerProgress.label} (pass ${installerProgress.attempt}).\n`;
+      delta += `\n\x1b[36m[installer]\x1b[0m ${installerProgress.label} (pass ${installerProgress.attempt}).\n`;
     }
   }
   if (source === "nvidia") lastNvidiaApplianceLog = normalizedLog;

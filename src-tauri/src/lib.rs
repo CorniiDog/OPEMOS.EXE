@@ -64,7 +64,7 @@ const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_SUPPORT_COMMIT: &str = "6d02c3167f115044b72bc8feb81724574d6be3c1";
+const NVIDIA_SUPPORT_COMMIT: &str = "d6cb08d3508361e1b1804e37a67a2b3c07116b1e";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 #[cfg(test)]
@@ -215,8 +215,8 @@ struct PinnedInstallerFile {
 const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 16] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "d50a9c50e055a1f069864ba866b2870068007cb34812cde4c91e3d234496f9b9",
-        bytes: 26_096,
+        sha256: "59d87712273f8e5cfe1ace75dfcd8f363b9d362531da1a463b29bc5c89fabe75",
+        bytes: 31_314,
         executable: true,
     },
     PinnedInstallerFile {
@@ -245,8 +245,8 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 16] = [
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "f13b8dc403885f8b90dc937849c64fa8fffc6dd5028d863da9368d239c68c8bc",
-        bytes: 27_332,
+        sha256: "03a1bb88d15f72083ba14a7d183274a2dcd383faac24f781020d39c23ae2d1b1",
+        bytes: 33_992,
         executable: true,
     },
     PinnedInstallerFile {
@@ -275,14 +275,14 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 16] = [
     },
     PinnedInstallerFile {
         path: "lib/verify_installed_modules.py",
-        sha256: "b860a3b7655773c6b3fc2b7712d65811fd960195e45bac1e69552e7eedec5571",
-        bytes: 5_139,
+        sha256: "d1da199092b285a4bab439c96c784fb3bdc09f059ec309189f5d4091c8396ccb",
+        bytes: 10_895,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/verify_installed_userspace.py",
-        sha256: "233b3282423faeefa1967f2a39a051c59418e6b87ce67ef4b2a4a9a834dc4178",
-        bytes: 10_985,
+        sha256: "bcc62b683e893ec2586d3bedcb81b8f2c71c14a349827d5857a72d7aa87302ae",
+        bytes: 12_053,
         executable: true,
     },
     PinnedInstallerFile {
@@ -11308,6 +11308,7 @@ fn install_nvidia_to_working_image_blocking(
         (NvidiaBuildConnection::from(&*session), cancel)
     };
     let userspace_arguments = userspace_installer_arguments(&inputs.packages)?;
+    let mutation_attempt = 2_usize;
     let command = format!(
         r#"set -euo pipefail
 WORK=/tmp/steamos-nvidia-offline-install
@@ -11405,7 +11406,7 @@ sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/efi"
 EFI_MOUNTED=1
 test -d /var/tmp
 test "$(findmnt -rn -T /var/tmp -o FSTYPE)" != tmpfs
-sudo env TMPDIR=/var/tmp bash "$WORK/support/bootstrap/install_to_root.sh" --compression-profile {compression_profile} --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --result-json "$WORK/install-mutation-result.json"
+sudo env TMPDIR=/var/tmp bash "$WORK/support/bootstrap/install_to_root.sh" --compression-profile {compression_profile} --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --progress-attempt {mutation_attempt} --result-json "$WORK/install-mutation-result.json"
 test "$(root_compression_option)" = "$ORIGINAL_ROOT_COMPRESSION"
 INITRAMFS_OK=0
 while IFS= read -r INITRAMFS; do
@@ -11446,6 +11447,7 @@ trap - EXIT INT TERM"#,
         kernel = inputs.kernel_version,
         userspace_arguments = userspace_arguments,
         compression_profile = NVIDIA_COMPRESSION_PROFILE,
+        mutation_attempt = mutation_attempt,
     );
     let execution_result = run_guest_command_logged(
         &connection,
