@@ -1235,8 +1235,8 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 247_343);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 16);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 294_219);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 19);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
@@ -1246,6 +1246,12 @@ mod tests {
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/measure_btrfs_payload.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/snapshot_install_input.py" && !file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/run_pacman_transaction.py" && file.executable));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/atomic_output.py" && !file.executable));

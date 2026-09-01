@@ -195,11 +195,11 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 16] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 19] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "59d87712273f8e5cfe1ace75dfcd8f363b9d362531da1a463b29bc5c89fabe75",
-        bytes: 31_314,
+        sha256: "1766391d1811aedcc07245776acb16f1f64e4595b894fe4f10522231456414ce",
+        bytes: 44_563,
         executable: true,
     },
     PinnedInstallerFile {
@@ -228,8 +228,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 16] = [
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "03a1bb88d15f72083ba14a7d183274a2dcd383faac24f781020d39c23ae2d1b1",
-        bytes: 33_992,
+        sha256: "31dcaf6f0d20ba9cde816e65a8454045425276afe380b38a038199dc61b4b961",
+        bytes: 46_768,
         executable: true,
     },
     PinnedInstallerFile {
@@ -264,9 +264,27 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 16] = [
     },
     PinnedInstallerFile {
         path: "lib/verify_installed_userspace.py",
-        sha256: "bcc62b683e893ec2586d3bedcb81b8f2c71c14a349827d5857a72d7aa87302ae",
-        bytes: 12_053,
+        sha256: "704cb3052bdcbf53acfe8183bedd071d4265e89af4974586a68341e3ccb4a1b7",
+        bytes: 15_534,
         executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/check_initramfs_workspace.py",
+        sha256: "b26eed0dc0d9fc4088e2f4e667e684794bf950174641f4d48efa4aa30878514e",
+        bytes: 12_031,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/run_pacman_transaction.py",
+        sha256: "b8c95f9ceea93f1d22954a2f24c9e5e27c8d3ad676a2b43a1ef46e60a922d2cd",
+        bytes: 2_723,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/snapshot_install_input.py",
+        sha256: "61c25cf137e56a4b0c4e5bacabef5b76c403fcdc02f1368aaeff36ddc471c7b1",
+        bytes: 2_616,
+        executable: false,
     },
     PinnedInstallerFile {
         path: "trust/nvidia-userspace-package-signers.json",
