@@ -2861,12 +2861,11 @@ pub(crate) fn stage_reviewed_userspace_closure(
     Ok(closure)
 }
 
-pub(crate) fn validate_pinned_support_files(files: &[PinnedInstallerFile]) -> Result<u64, String> {
-    if NVIDIA_SUPPORT_COMMIT.len() != 40
-        || !NVIDIA_SUPPORT_COMMIT
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-    {
+pub(crate) fn validate_pinned_support_files(
+    commit: &str,
+    files: &[PinnedInstallerFile],
+) -> Result<u64, String> {
+    if commit.len() != 40 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("Pinned NVIDIA support commit is invalid.".into());
     }
     let mut paths = HashSet::new();
@@ -2924,22 +2923,23 @@ pub(crate) fn pinned_installer_guest_permissions() -> Result<String, String> {
 }
 
 pub(crate) fn validate_pinned_installer_contract() -> Result<u64, String> {
-    validate_pinned_support_files(&PINNED_INSTALLER_FILES)
+    validate_pinned_support_files(NVIDIA_INSTALLER_COMMIT, &PINNED_INSTALLER_FILES)
 }
 
 pub(crate) fn validate_pinned_publisher_contract() -> Result<u64, String> {
-    validate_pinned_support_files(&PINNED_PUBLISHER_FILES)
+    validate_pinned_support_files(NVIDIA_SUPPORT_COMMIT, &PINNED_PUBLISHER_FILES)
 }
 
 pub(crate) fn download_pinned_installer_file(
     client: &reqwest::blocking::Client,
-    file: &PinnedInstallerFile,
+    source: (&str, &PinnedInstallerFile),
     destination: &Path,
     completed_before: u64,
     total_bytes: u64,
     cancel: &AtomicBool,
     progress: &impl Fn(&str, u64, u64),
 ) -> Result<(), String> {
+    let (commit, file) = source;
     if destination.exists() {
         return Err(format!(
             "Refusing to overwrite a staged NVIDIA support file: {}",
@@ -2963,7 +2963,7 @@ pub(crate) fn download_pinned_installer_file(
         armed: true,
     };
     let url = format!(
-        "https://raw.githubusercontent.com/{NVIDIA_SUPPORT_REPOSITORY}/{NVIDIA_SUPPORT_COMMIT}/{}",
+        "https://raw.githubusercontent.com/{NVIDIA_SUPPORT_REPOSITORY}/{commit}/{}",
         file.path
     );
     let mut response = client
@@ -3057,7 +3057,7 @@ pub(crate) fn prepare_pinned_nvidia_installer_bundle(
         let destination = root.join(file.path);
         download_pinned_installer_file(
             client,
-            file,
+            (NVIDIA_INSTALLER_COMMIT, file),
             &destination,
             completed,
             total_bytes,
@@ -3143,7 +3143,7 @@ pub(crate) fn prepare_pinned_nvidia_publisher(runtime_dir: &Path) -> Result<Path
     for file in &PINNED_PUBLISHER_FILES {
         download_pinned_installer_file(
             &client,
-            file,
+            (NVIDIA_SUPPORT_COMMIT, file),
             &root.join(file.path),
             completed,
             total_bytes,

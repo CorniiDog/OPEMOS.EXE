@@ -1333,6 +1333,23 @@ pub(crate) fn validate_nvidia_install_result(
         return Err("Offline installer returned unexpected gaming-payload metadata.".into());
     }
     let lock = &inputs.userspace_lock;
+    let input_bundle_cache_id = match validation.input_source.mode.as_str() {
+        "direct" if validation.input_source.bundle_cache_id.is_none() => None,
+        "authenticated-bundle" => Some(
+            validation
+                .input_source
+                .bundle_cache_id
+                .as_deref()
+                .filter(|value| exact_sha256(value))
+                .ok_or("Authenticated-bundle validation omitted its exact cache identity.")?
+                .to_owned(),
+        ),
+        _ => {
+            return Err(
+                "Offline installer returned invalid input-source provenance metadata.".into(),
+            );
+        }
+    };
     if validation.archive_sha256 != inputs.archive_sha256
         || validation.provenance_sha256 != inputs.provenance_sha256
         || validation.userspace_lock.name
@@ -1528,6 +1545,8 @@ pub(crate) fn validate_nvidia_install_result(
         trust: inputs.trust.clone(),
         archive_sha256: inputs.archive_sha256.clone(),
         provenance_sha256: inputs.provenance_sha256.clone(),
+        input_source_mode: validation.input_source.mode,
+        input_bundle_cache_id,
         pacman_database_path: validation.pacman_database.path,
         pacman_package_count: validation.pacman_database.package_count,
         rootfs_boot_path: validation.boot.rootfs_boot_path,

@@ -195,11 +195,11 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 23] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 25] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "047dca4df91699c7fd95d3c00fec5888721503accee9da372a1fa96565423f3f",
-        bytes: 47_895,
+        sha256: "344a02369f32b17484a1fc713bcb0a7c4d6abb36be0312ee866f187e3c3c3a86",
+        bytes: 53_828,
         executable: true,
     },
     PinnedInstallerFile {
@@ -228,8 +228,20 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 23] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "ae98ef5072308a8186dffda3249b41e2849d637877dea79b39895b6570ae9863",
-        bytes: 85_059,
+        sha256: "36289767d421e7aab374c3ab98857707c0c7186cfb00a0b3f9d081a111d09e74",
+        bytes: 85_597,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/authenticated_cache_bundle.py",
+        sha256: "5602f3be56f2949cdd713479f188972aa5cd23b91ef6694a676440c659e9a9cb",
+        bytes: 26_233,
+        executable: false,
+    },
+    PinnedInstallerFile {
+        path: "lib/resolve_authenticated_install_bundle.py",
+        sha256: "3b9d493b898842f066adbd450ee6a1acecb6997e3d08785422cc945b5ab49e06",
+        bytes: 5_973,
         executable: true,
     },
     PinnedInstallerFile {
@@ -799,6 +811,8 @@ pub(crate) struct SupportInstallGamingPayload {
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SupportInstallValidation {
+    #[serde(default)]
+    pub(crate) input_source: SupportInstallInputSource,
     pub(crate) archive_sha256: String,
     pub(crate) provenance_sha256: String,
     pub(crate) userspace_lock: SupportInstallPinnedIdentity,
@@ -810,6 +824,23 @@ pub(crate) struct SupportInstallValidation {
     pub(crate) gaming_payload: SupportInstallGamingPayload,
     pub(crate) compression: SupportInstallCompression,
     pub(crate) storage: SupportInstallStorage,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportInstallInputSource {
+    pub(crate) mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) bundle_cache_id: Option<String>,
+}
+
+impl Default for SupportInstallInputSource {
+    fn default() -> Self {
+        Self {
+            mode: "direct".into(),
+            bundle_cache_id: None,
+        }
+    }
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -1042,6 +1073,9 @@ pub(crate) struct NvidiaInstallHandoffResult {
     pub(crate) trust: String,
     pub(crate) archive_sha256: String,
     pub(crate) provenance_sha256: String,
+    pub(crate) input_source_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) input_bundle_cache_id: Option<String>,
     pub(crate) pacman_database_path: String,
     pub(crate) pacman_package_count: u64,
     pub(crate) rootfs_boot_path: String,

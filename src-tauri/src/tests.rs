@@ -1838,8 +1838,8 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 326_666);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 23);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 365_343);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 25);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
@@ -1864,6 +1864,12 @@ esac
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/atomic_output.py" && !file.executable));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "lib/authenticated_cache_bundle.py" && !file.executable
+        }));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "lib/resolve_authenticated_install_bundle.py" && file.executable
+        }));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/prepare_pacman_config.py" && file.executable));
@@ -2083,6 +2089,12 @@ esac
 
     #[test]
     fn accepts_only_exact_offline_installer_validation_results() {
+        let additive_source: SupportInstallInputSource = serde_json::from_value(
+            serde_json::json!({"mode":"direct","futureProducerField":true}),
+        )
+        .expect("schema-1 source provenance must remain forward-additive");
+        assert_eq!(additive_source.mode, "direct");
+        assert!(additive_source.bundle_cache_id.is_none());
         let digest = |byte: char| byte.to_string().repeat(64);
         fn conservative_compression(storage: &SupportInstallStorage) -> SupportInstallCompression {
             SupportInstallCompression {
@@ -2263,6 +2275,7 @@ esac
             initramfs_verification: None,
             validation: Some(SupportInstallValidationDocument::Verified(Box::new(
                 SupportInstallValidation {
+                    input_source: SupportInstallInputSource::default(),
                     archive_sha256: digest('a'),
                     provenance_sha256: digest('e'),
                     userspace_lock: SupportInstallPinnedIdentity {
@@ -2572,7 +2585,7 @@ esac
         }
         successful.initramfs_verification = Some(parse_initramfs_fixture(initramfs));
         let installed = validate_nvidia_install_result(
-            successful,
+            successful.clone(),
             &inputs,
             "success",
             "install_complete",
@@ -2588,6 +2601,45 @@ esac
                 .len(),
             1
         );
+        assert_eq!(installed.input_source_mode, "direct");
+        assert!(installed.input_bundle_cache_id.is_none());
+
+        let mut authenticated = successful;
+        verified_validation(&mut authenticated).input_source = SupportInstallInputSource {
+            mode: "authenticated-bundle".into(),
+            bundle_cache_id: Some(digest('9')),
+        };
+        let authenticated = validate_nvidia_install_result(
+            authenticated,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )
+        .expect("authenticated bundle provenance should pass");
+        assert_eq!(authenticated.input_source_mode, "authenticated-bundle");
+        assert_eq!(authenticated.input_bundle_cache_id, Some(digest('9')));
+
+        for (mode, cache_id) in [
+            ("authenticated-bundle", None),
+            ("authenticated-bundle", Some("A".repeat(64))),
+            ("direct", Some(digest('9'))),
+            ("network", None),
+        ] {
+            let mut hostile = result.clone();
+            verified_validation(&mut hostile).input_source = SupportInstallInputSource {
+                mode: mode.into(),
+                bundle_cache_id: cache_id,
+            };
+            assert!(validate_nvidia_install_result(
+                hostile,
+                &inputs,
+                "validated",
+                "validation_complete",
+                "validated",
+            )
+            .is_err(), "hostile input source {mode} must fail");
+        }
         let accepted = validate_nvidia_install_result(
             result,
             &inputs,
@@ -2762,6 +2814,7 @@ esac
             initramfs_verification: None,
             validation: Some(SupportInstallValidationDocument::Verified(Box::new(
                 SupportInstallValidation {
+                    input_source: SupportInstallInputSource::default(),
                     archive_sha256: digest('a'),
                     provenance_sha256: digest('e'),
                     userspace_lock: SupportInstallPinnedIdentity {
@@ -3291,6 +3344,8 @@ esac
             trust: "certified-published".into(),
             archive_sha256: "a".repeat(64),
             provenance_sha256: "c".repeat(64),
+            input_source_mode: "direct".into(),
+            input_bundle_cache_id: None,
             pacman_database_path: "/usr/lib/holo/pacmandb".into(),
             pacman_package_count: 1_158,
             rootfs_boot_path: "/boot".into(),
