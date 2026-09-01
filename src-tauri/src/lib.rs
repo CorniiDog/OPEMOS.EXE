@@ -5411,6 +5411,42 @@ fn exact_lower_hex(value: &str, length: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn canonical_package_relations(relations: &[String]) -> Option<Vec<&str>> {
+    if relations.len() > 64 {
+        return None;
+    }
+    let mut seen = HashSet::new();
+    let mut canonical = Vec::with_capacity(relations.len());
+    for relation in relations {
+        if relation.is_empty()
+            || relation.len() > 256
+            || !relation.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || matches!(
+                        byte,
+                        b'@' | b'.' | b'_' | b'+' | b'<' | b'>' | b'=' | b':' | b'-'
+                    )
+            })
+            || !seen.insert(relation.as_str())
+        {
+            return None;
+        }
+        canonical.push(relation.as_str());
+    }
+    canonical.sort_unstable();
+    Some(canonical)
+}
+
+fn package_relations_match(left: &[String], right: &[String]) -> bool {
+    matches!(
+        (
+            canonical_package_relations(left),
+            canonical_package_relations(right)
+        ),
+        (Some(left), Some(right)) if left == right
+    )
+}
+
 fn load_reviewed_userspace_lock(
     installer_root: &Path,
     steamos_version: &str,
@@ -5469,13 +5505,8 @@ fn load_reviewed_userspace_lock(
                 .all(|byte| byte.is_ascii_hexdigit())
             || package.signer_fingerprint.len() != 40
             || package.installed_size == 0
-            || package.dependencies.len() > 64
-            || package.provides.len() > 64
-            || package
-                .dependencies
-                .iter()
-                .chain(&package.provides)
-                .any(|relation| relation.is_empty() || relation.len() > 256)
+            || canonical_package_relations(&package.dependencies).is_none()
+            || canonical_package_relations(&package.provides).is_none()
             || !names.insert(package.name.as_str())
         {
             return Err("Reviewed NVIDIA userspace lock contains an unsafe package record.".into());
@@ -10452,26 +10483,61 @@ fn validate_nvidia_install_result(
         } else {
             "dependency"
         };
-        if validated.name != expected.name
-            || validated.filename != expected.filename
-            || validated.signature_filename != locked.signature_filename
-            || validated.full_version != expected.full_version
-            || validated.full_version != locked.version
-            || validated.role != expected.role
-            || validated.role != expected_role
-            || validated.architecture != locked.architecture
-            || validated.sha256 != expected.package_sha256
-            || validated.sha256 != locked.package_sha256
-            || validated.signature_sha256 != locked.signature_sha256
-            || validated.installed_size != locked.installed_size
-            || validated.dependencies != locked.dependencies
-            || validated.provides != locked.provides
-            || validated.pkgrel.is_empty()
-            || validated.signer != locked.signer_fingerprint
-        {
+        let mismatched_fields = [
+            (validated.name != expected.name, "name"),
+            (
+                validated.filename != expected.filename || validated.filename != locked.filename,
+                "filename",
+            ),
+            (
+                validated.signature_filename != locked.signature_filename,
+                "signatureFilename",
+            ),
+            (
+                validated.full_version != expected.full_version
+                    || validated.full_version != locked.version,
+                "fullVersion",
+            ),
+            (
+                validated.role != expected.role || validated.role != expected_role,
+                "role",
+            ),
+            (
+                validated.architecture != locked.architecture,
+                "architecture",
+            ),
+            (
+                validated.sha256 != expected.package_sha256
+                    || validated.sha256 != locked.package_sha256,
+                "sha256",
+            ),
+            (
+                validated.signature_sha256 != locked.signature_sha256,
+                "signatureSha256",
+            ),
+            (
+                validated.installed_size != locked.installed_size,
+                "installedSize",
+            ),
+            (
+                !package_relations_match(&validated.dependencies, &locked.dependencies),
+                "dependencies",
+            ),
+            (
+                !package_relations_match(&validated.provides, &locked.provides),
+                "provides",
+            ),
+            (validated.pkgrel.is_empty(), "pkgrel"),
+            (validated.signer != locked.signer_fingerprint, "signer"),
+        ]
+        .into_iter()
+        .filter_map(|(mismatched, field)| mismatched.then_some(field))
+        .collect::<Vec<_>>();
+        if !mismatched_fields.is_empty() {
             return Err(format!(
-                "Offline validation metadata does not match staged {}.",
-                expected.name
+                "Offline validation metadata does not match staged {} fields: {}.",
+                expected.name,
+                mismatched_fields.join(", ")
             ));
         }
         match locked.name.as_str() {
@@ -12485,6 +12551,34 @@ mod tests {
     }
 
     #[test]
+    fn package_relations_ignore_order_but_reject_unsafe_or_ambiguous_sets() {
+        let reviewed = vec![
+            "libglvnd".to_string(),
+            "egl-wayland".to_string(),
+            "egl-gbm".to_string(),
+            "egl-x11".to_string(),
+        ];
+        let validated = vec![
+            "egl-gbm".to_string(),
+            "egl-wayland".to_string(),
+            "egl-x11".to_string(),
+            "libglvnd".to_string(),
+        ];
+        assert!(package_relations_match(&reviewed, &validated));
+
+        let duplicate = vec!["egl-gbm".to_string(), "egl-gbm".to_string()];
+        assert!(!package_relations_match(&duplicate, &validated));
+        assert!(!package_relations_match(
+            &["../../unsafe".to_string()],
+            &["../../unsafe".to_string()]
+        ));
+        assert!(!package_relations_match(
+            &["egl-gbm".to_string()],
+            &validated
+        ));
+    }
+
+    #[test]
     fn accepts_only_exact_offline_installer_validation_results() {
         let digest = |byte: char| byte.to_string().repeat(64);
         fn conservative_compression(storage: &SupportInstallStorage) -> SupportInstallCompression {
@@ -12539,7 +12633,7 @@ mod tests {
                 provides: Vec::new(),
             }
         };
-        let userspace_lock = ReviewedUserspaceLock {
+        let mut userspace_lock = ReviewedUserspaceLock {
             schema_version: 1,
             status: "reviewed".into(),
             target: ReviewedUserspaceTarget {
@@ -12557,6 +12651,13 @@ mod tests {
                 locked_package("lib32-nvidia-utils", "1", LIB32_NVIDIA_UTILS_SIGNER, 'c'),
             ],
         };
+        userspace_lock.packages[0].dependencies = vec![
+            "libglvnd".into(),
+            "egl-wayland".into(),
+            "egl-gbm".into(),
+            "egl-x11".into(),
+        ];
+        userspace_lock.packages[0].provides = vec!["vulkan-driver".into(), "opengl-driver".into()];
         let inputs = NvidiaInstallInputs {
             image_runtime_dir: "/image-runtime".into(),
             working_image: "/working.qcow2".into(),
@@ -12578,8 +12679,8 @@ mod tests {
             ],
             userspace_lock,
         };
-        let validated_package =
-            |name: &str, release: &str, signer: &str, signer_digest: char| SupportInstallPackage {
+        let validated_package = |name: &str, release: &str, signer: &str, signer_digest: char| {
+            let mut package = SupportInstallPackage {
                 name: name.into(),
                 role: "nvidia-userspace".into(),
                 filename: format!("{name}-575.64.05-{release}-x86_64.pkg.tar.zst"),
@@ -12595,6 +12696,17 @@ mod tests {
                 dependencies: Vec::new(),
                 provides: Vec::new(),
             };
+            if name == "nvidia-utils" {
+                package.dependencies = vec![
+                    "egl-gbm".into(),
+                    "egl-wayland".into(),
+                    "egl-x11".into(),
+                    "libglvnd".into(),
+                ];
+                package.provides = vec!["opengl-driver".into(), "vulkan-driver".into()];
+            }
+            package
+        };
         let storage = SupportInstallStorage {
             root_available_bytes: 256 * 1024 * 1024,
             root_required_bytes: 128 * 1024 * 1024 + 3_000,
@@ -12813,14 +12925,18 @@ mod tests {
         .expect("the complete reviewed dependency manifest should pass in any order");
         assert_eq!(dependency_accepted.packages.len(), 3);
         verified_validation(&mut dependency_result).packages[0].signer = "B".repeat(40);
-        assert!(validate_nvidia_install_result(
+        let mismatch = validate_nvidia_install_result(
             dependency_result,
             &dependency_inputs,
             "validated",
             "validation_complete",
             "validated",
-        )
-        .is_err());
+        );
+        let mismatch = match mismatch {
+            Ok(_) => panic!("changed package metadata must fail"),
+            Err(error) => error,
+        };
+        assert!(mismatch.contains("signer"), "unexpected error: {mismatch}");
         let mut measured_result = result.clone();
         let measured_validation = verified_validation(&mut measured_result);
         measured_validation.storage.root_conservative_required_bytes =

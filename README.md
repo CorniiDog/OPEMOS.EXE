@@ -123,6 +123,10 @@ reviewed userspace lock and stages its complete six-package closure in one
 bounded pass. Every exact filename, version, package/signature hash, signer
 fingerprint, architecture, and minimal keyring hash must match; a missing lock
 or any drift is a maintainer compatibility gate rather than an end-user retry.
+Dependency and provider relations are compared as bounded, unique canonical
+sets, so harmless ordering normalization across the support boundary is
+accepted while missing, extra, duplicate, or unsafe relations still fail with
+the complete list of mismatched package fields.
 The authenticated closure is reused verbatim for mutation, and guest pacman
 remains fully offline throughout this process.
 
