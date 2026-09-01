@@ -127,7 +127,7 @@ The authenticated closure is reused verbatim for mutation, and guest pacman
 remains fully offline throughout this process.
 
 The backend also stages the offline-root installer from immutable support commit
-`7c07018149dea6a7e14548ceb12c3b1ea0fe88b9`. Its ten required scripts,
+`78e9ae8a65c001a97dd6594ab6837589dc8042a8`. Its fourteen required scripts,
 helpers, signer-policy files, reviewed lock, and minimal binary keyring have
 embedded byte counts and SHA-256 pins; every file must match before a versioned
 bundle manifest is recorded. The
@@ -148,10 +148,17 @@ the `btrfs-zstd3` profile from disk-backed appliance temporary storage (large
 measurement files never share the appliance's 2 GiB RAM-backed `/tmp`) and
 independently checks its measured physical
 allocation, exact no-op credits, reserves, and admission decision. Mutation uses
-that same profile and must restore the original compression option before Rust
-accepts the result. The backend mounts the Btrfs top level explicitly, identifies the current default root
-subvolume, mount matching `var-A` and `efi-A` without hiding rootfs `/boot`, and
-require exact restoration of Btrfs read-only, seed-device, and compression
+that same profile and must report both released mounts and restoration of the
+original compression option before Rust accepts the result. Bounded structured
+measurement failures retain their phase, approved command identity, exit status,
+and safe stderr excerpt so a missing tool, mount failure, parse failure, or
+ENOSPC condition is visible instead of collapsing into one generic error. The
+pin also carries the reviewed gaming/no-CUDA profile contract and independent
+post-install module/userspace verifiers; the builder requires the profile to be
+`not-requested` until its disabled setting is deliberately wired to a supported
+target. The backend mounts the Btrfs top level explicitly, identifies the current default root
+subvolume, mounts matching `var-A` and `efi-A` without hiding rootfs `/boot`, and
+requires exact restoration of Btrfs read-only, seed-device, and compression
 state. The resulting raw candidate will be reopened through a
 fresh appliance and checked for all five modules, matching package records and
 GSP firmware, configuration, provenance state, initramfs output, exact

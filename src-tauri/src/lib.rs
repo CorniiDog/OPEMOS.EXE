@@ -56,7 +56,7 @@ const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
-const NVIDIA_SUPPORT_COMMIT: &str = "7c07018149dea6a7e14548ceb12c3b1ea0fe88b9";
+const NVIDIA_SUPPORT_COMMIT: &str = "78e9ae8a65c001a97dd6594ab6837589dc8042a8";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 #[cfg(test)]
@@ -204,11 +204,11 @@ struct PinnedInstallerFile {
     executable: bool,
 }
 
-const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 10] = [
+const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 14] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "e7cbed9691c870ab80c3e4148183dd21848871f7d833d3c0b6e10211aefa70b5",
-        bytes: 21_421,
+        sha256: "731765273a355270c25c13c45a341d7e3c7354c87331e548d8d3ee1404077c81",
+        bytes: 22_373,
         executable: true,
     },
     PinnedInstallerFile {
@@ -221,7 +221,7 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 10] = [
         path: "lib/run_in_process_group.py",
         sha256: "06ada2883b18e40a8114861644e03bf59bc10b9bd8174a5437e47fc77a3f177f",
         bytes: 250,
-        executable: true,
+        executable: false,
     },
     PinnedInstallerFile {
         path: "lib/update_grub_nvidia_args.py",
@@ -231,20 +231,38 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 10] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "068eab5fef12baaec6d3f74b3cd58c10cf331cfeeb846b433659ad8a7284d3a7",
-        bytes: 76_987,
+        sha256: "dcea4dd9d0b7cc871590e53b788506d3e198924a3a1fec21f2a1b1187e491e62",
+        bytes: 84_775,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "ce4fac4e3af36d9f4b89cc58a1b679213af802d01f94f2e06a6759274745f205",
-        bytes: 19_302,
+        sha256: "b299e08dfdc3158efa876379de06cf7dac007619f010b93a96aac55abdd121b3",
+        bytes: 26_944,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/measure_btrfs_payload.py",
-        sha256: "e66097052b65cc78c5ae817b142cd3b1a850adb8c37c1a48763c724fcf5d510b",
-        bytes: 12_293,
+        sha256: "4bc5ae114d4f8e5e52a4f301e95568311464278f8883147390882efe909d593b",
+        bytes: 23_520,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/gaming_payload_profiles.py",
+        sha256: "ed0e54389a648ef6bafed62cf799254a460de1c5c54ddf1409beea9167455eeb",
+        bytes: 6_066,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/verify_installed_modules.py",
+        sha256: "b860a3b7655773c6b3fc2b7712d65811fd960195e45bac1e69552e7eedec5571",
+        bytes: 5_139,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/verify_installed_userspace.py",
+        sha256: "233b3282423faeefa1967f2a39a051c59418e6b87ce67ef4b2a4a9a834dc4178",
+        bytes: 10_985,
         executable: true,
     },
     PinnedInstallerFile {
@@ -265,6 +283,12 @@ const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 10] = [
         bytes: 5_623,
         executable: false,
     },
+    PinnedInstallerFile {
+        path: "profiles/gaming/reviewed-policy-v1.json",
+        sha256: "4e11a8ea25f8aec91f5f7bbb0dfd5733209e28f0a0337e9f419b3268359f5b27",
+        bytes: 397,
+        executable: false,
+    },
 ];
 
 const PINNED_PUBLISHER_FILES: [PinnedInstallerFile; 2] = [
@@ -276,8 +300,8 @@ const PINNED_PUBLISHER_FILES: [PinnedInstallerFile; 2] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_publish_inputs.py",
-        sha256: "c95d426c19f81985930115dcefe036f16c7aedf07ce7169b07834b84cb884f44",
-        bytes: 11_349,
+        sha256: "725cf6915fed970f1e2d676b93e84d770477f8d3cf92c5dd5117e897f9edaf7b",
+        bytes: 14_029,
         executable: true,
     },
 ];
@@ -675,6 +699,15 @@ struct SupportInstallTarget {
 #[serde(rename_all = "camelCase")]
 struct SupportInstallCleanup {
     mounts_released: bool,
+    compression_policy_restored: bool,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SupportInstallGamingPayload {
+    schema_version: u32,
+    status: String,
+    profile_id: String,
 }
 
 #[derive(Clone, Deserialize)]
@@ -688,6 +721,7 @@ struct SupportInstallValidation {
     keyring: SupportInstallKeyring,
     packages: Vec<SupportInstallPackage>,
     package_dependency_closure: Vec<SupportInstallDependency>,
+    gaming_payload: SupportInstallGamingPayload,
     compression: SupportInstallCompression,
     storage: SupportInstallStorage,
 }
@@ -719,6 +753,17 @@ struct SupportInstallFailureValidation {
     package_record: Option<String>,
     #[serde(default)]
     invalid_fields: Vec<String>,
+    #[serde(default)]
+    measurement_failure: Option<SupportInstallMeasurementFailure>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SupportInstallMeasurementFailure {
+    phase: String,
+    command: Option<String>,
+    exit_status: Option<i16>,
+    stderr: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -920,6 +965,7 @@ struct NvidiaInstallHandoffResult {
     storage: SupportInstallStorage,
     compression: SupportInstallCompression,
     mounts_released: bool,
+    compression_policy_restored: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -9912,6 +9958,7 @@ fn validate_nvidia_storage_failure(
         || document.target.nvidia_version != "unknown"
         || document.target.architecture != "x86_64"
         || !document.cleanup.mounts_released
+        || !document.cleanup.compression_policy_restored
     {
         return Err("Offline installer returned an invalid storage-failure result.".into());
     }
@@ -9994,6 +10041,51 @@ fn concise_json_value(value: &serde_json::Value) -> String {
     concise
 }
 
+fn valid_support_measurement_failure(detail: &SupportInstallMeasurementFailure) -> bool {
+    const PHASES: [&str; 12] = [
+        "dependency_check",
+        "image_create",
+        "filesystem_create",
+        "mount",
+        "baseline_usage",
+        "package_extraction",
+        "package_usage",
+        "module_extraction",
+        "module_compression",
+        "final_usage",
+        "cleanup",
+        "launcher",
+    ];
+    const COMMANDS: [&str; 12] = [
+        "btrfs",
+        "findmnt",
+        "mkfs.btrfs",
+        "mount",
+        "umount",
+        "zstd",
+        "image-create",
+        "btrfs-filesystem-usage",
+        "package-archive",
+        "module-archive",
+        "zstd-compress",
+        "zstd-decompress",
+    ];
+    PHASES.contains(&detail.phase.as_str())
+        && detail
+            .command
+            .as_deref()
+            .is_none_or(|command| COMMANDS.contains(&command) || command == "measurement-helper")
+        && detail
+            .exit_status
+            .is_none_or(|status| (-255..=255).contains(&status))
+        && detail.stderr.as_deref().is_none_or(|stderr| {
+            stderr.len() <= 512
+                && stderr
+                    .bytes()
+                    .all(|byte| byte.is_ascii() && !byte.is_ascii_control())
+        })
+}
+
 fn support_install_failure_message(document: &SupportInstallResult) -> String {
     let mut details = Vec::new();
     if let Some(SupportInstallValidationDocument::Failed(validation)) = &document.validation {
@@ -10066,6 +10158,30 @@ fn support_install_failure_message(document: &SupportInstallResult) -> String {
                 .unwrap_or_default();
             details.push(format!("package: {package}{signer}"));
         }
+        if let Some(measurement) = &validation.measurement_failure {
+            if valid_support_measurement_failure(measurement) {
+                let command = measurement
+                    .command
+                    .as_deref()
+                    .map(|command| format!(" command {command}"))
+                    .unwrap_or_default();
+                let status = measurement
+                    .exit_status
+                    .map(|status| format!(" exit {status}"))
+                    .unwrap_or_default();
+                let stderr = measurement
+                    .stderr
+                    .as_deref()
+                    .map(|stderr| format!("; {stderr}"))
+                    .unwrap_or_default();
+                details.push(format!(
+                    "measurement phase {}{command}{status}{stderr}",
+                    measurement.phase
+                ));
+            } else {
+                details.push("measurement diagnostics were malformed and were ignored".into());
+            }
+        }
     }
     let summary = format!(
         "Offline installer validation did not succeed: {} ({}): {}",
@@ -10098,6 +10214,7 @@ fn validate_nvidia_install_result(
         || document.target.architecture != "x86_64"
         || document.trust != inputs.trust
         || !document.cleanup.mounts_released
+        || !document.cleanup.compression_policy_restored
     {
         return Err(
             "Offline installer validation result does not match the handoff target.".into(),
@@ -10112,6 +10229,12 @@ fn validate_nvidia_install_result(
         }
     };
     validate_support_storage(&validation.storage, &validation.compression, true)?;
+    if validation.gaming_payload.schema_version != 1
+        || validation.gaming_payload.status != "not-requested"
+        || validation.gaming_payload.profile_id != "gaming-no-cuda-v1"
+    {
+        return Err("Offline installer returned unexpected gaming-payload metadata.".into());
+    }
     let lock = &inputs.userspace_lock;
     if validation.archive_sha256 != inputs.archive_sha256
         || validation.provenance_sha256 != inputs.provenance_sha256
@@ -10284,6 +10407,7 @@ fn validate_nvidia_install_result(
         storage: validation.storage,
         compression: validation.compression,
         mounts_released: true,
+        compression_policy_restored: true,
     })
 }
 
@@ -11996,8 +12120,8 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 168_899);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 10);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 219_095);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 14);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
@@ -12007,6 +12131,18 @@ mod tests {
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/measure_btrfs_payload.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/gaming_payload_profiles.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/verify_installed_modules.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/verify_installed_userspace.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "profiles/gaming/reviewed-policy-v1.json" && !file.executable
+        }));
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "trust/nvidia-userspace-package-signers.json" && !file.executable
         }));
@@ -12020,7 +12156,7 @@ mod tests {
 
     #[test]
     fn pinned_publisher_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_publisher_contract().unwrap(), 15_075);
+        assert_eq!(validate_pinned_publisher_contract().unwrap(), 17_755);
         assert_eq!(PINNED_PUBLISHER_FILES.len(), 2);
         assert!(PINNED_PUBLISHER_FILES
             .iter()
@@ -12305,6 +12441,7 @@ mod tests {
             trust: "certified-published".into(),
             cleanup: SupportInstallCleanup {
                 mounts_released: true,
+                compression_policy_restored: true,
             },
             validation: Some(SupportInstallValidationDocument::Verified(Box::new(
                 SupportInstallValidation {
@@ -12355,6 +12492,11 @@ mod tests {
                             source: "incoming".into(),
                         },
                     ],
+                    gaming_payload: SupportInstallGamingPayload {
+                        schema_version: 1,
+                        status: "not-requested".into(),
+                        profile_id: "gaming-no-cuda-v1".into(),
+                    },
                     compression: compression.clone(),
                     storage: storage.clone(),
                 },
@@ -12564,6 +12706,30 @@ mod tests {
             measured.compression.requested_profile.as_deref(),
             Some(NVIDIA_COMPRESSION_PROFILE)
         );
+        let mut wrong_gaming_payload = result.clone();
+        verified_validation(&mut wrong_gaming_payload)
+            .gaming_payload
+            .status = "applied".into();
+        assert!(validate_nvidia_install_result(
+            wrong_gaming_payload,
+            &inputs,
+            "validated",
+            "validation_complete",
+            "validated",
+        )
+        .err()
+        .expect("an unrequested gaming payload must fail")
+        .contains("gaming-payload"));
+        let mut unrestored_compression = result.clone();
+        unrestored_compression.cleanup.compression_policy_restored = false;
+        assert!(validate_nvidia_install_result(
+            unrestored_compression,
+            &inputs,
+            "validated",
+            "validation_complete",
+            "validated",
+        )
+        .is_err());
         let accepted = validate_nvidia_install_result(
             result,
             &inputs,
@@ -12620,6 +12786,7 @@ mod tests {
             trust: "certified-published".into(),
             cleanup: SupportInstallCleanup {
                 mounts_released: true,
+                compression_policy_restored: true,
             },
             validation: Some(SupportInstallValidationDocument::Failed(Box::new(
                 SupportInstallFailureValidation {
@@ -12677,6 +12844,41 @@ mod tests {
             assert!(detailed.contains(required));
         }
 
+        let mut measurement_failure = storage_failure.clone();
+        measurement_failure.reason = "compression_measurement_mount_failed".into();
+        measurement_failure.message = "Scratch Btrfs loop mount failed.".into();
+        measurement_failure.validation = Some(SupportInstallValidationDocument::Failed(Box::new(
+            SupportInstallFailureValidation {
+                measurement_failure: Some(SupportInstallMeasurementFailure {
+                    phase: "mount".into(),
+                    command: Some("mount".into()),
+                    exit_status: Some(32),
+                    stderr: Some("wrong fs type, bad option, or bad superblock".into()),
+                }),
+                ..Default::default()
+            },
+        )));
+        let measurement_message = support_install_failure_message(&measurement_failure);
+        for required in [
+            "measurement phase mount",
+            "command mount",
+            "exit 32",
+            "wrong fs type",
+        ] {
+            assert!(measurement_message.contains(required));
+        }
+        if let Some(SupportInstallValidationDocument::Failed(validation)) =
+            &mut measurement_failure.validation
+        {
+            validation
+                .measurement_failure
+                .as_mut()
+                .expect("measurement failure fixture")
+                .command = Some("/bin/sh".into());
+        }
+        assert!(support_install_failure_message(&measurement_failure)
+            .contains("measurement diagnostics were malformed"));
+
         let rejected = SupportInstallResult {
             schema_version: 1,
             status: "validated".into(),
@@ -12692,6 +12894,7 @@ mod tests {
             trust: "certified-published".into(),
             cleanup: SupportInstallCleanup {
                 mounts_released: true,
+                compression_policy_restored: true,
             },
             validation: Some(SupportInstallValidationDocument::Verified(Box::new(
                 SupportInstallValidation {
@@ -12742,6 +12945,11 @@ mod tests {
                             source: "incoming".into(),
                         },
                     ],
+                    gaming_payload: SupportInstallGamingPayload {
+                        schema_version: 1,
+                        status: "not-requested".into(),
+                        profile_id: "gaming-no-cuda-v1".into(),
+                    },
                     compression: compression.clone(),
                     storage,
                 },
@@ -13224,6 +13432,7 @@ mod tests {
                 module_payload_noop: None,
             },
             mounts_released: true,
+            compression_policy_restored: true,
         };
         let nvidia_manifest = marker_build_manifest(MarkerManifestData {
             input,
