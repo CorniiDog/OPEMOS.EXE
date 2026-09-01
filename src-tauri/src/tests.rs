@@ -359,6 +359,114 @@ mod tests {
     }
 
     #[test]
+    fn usb_image_identity_rejects_manifest_and_content_drift() {
+        struct TemporaryUsbDirectory(PathBuf);
+        impl Drop for TemporaryUsbDirectory {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TemporaryUsbDirectory(std::env::temp_dir().join(format!(
+            "steamos-usb-image-identity-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        )));
+        fs::create_dir(&root.0).expect("create USB identity fixture");
+        let image = root.0.join("completed.img");
+        let original = b"validated-image";
+        fs::write(&image, original).expect("write image fixture");
+        let sha256 = format!("{:x}", Sha256::digest(original));
+        let manifest = manifest_path_for_output(&image);
+        let write_manifest = |filename: &str, bytes: u64, hash: &str| {
+            fs::write(
+                &manifest,
+                serde_json::to_vec(&serde_json::json!({
+                    "output": {
+                        "filename": filename,
+                        "format": "raw",
+                        "bytes": bytes,
+                        "sha256": hash
+                    }
+                }))
+                .expect("serialize manifest"),
+            )
+            .expect("write manifest fixture");
+        };
+        write_manifest("completed.img", original.len() as u64, &sha256);
+        let (_, bytes, actual) = validate_usb_image_identity(
+            image.to_str().expect("UTF-8 fixture path"),
+        )
+        .expect("valid image identity");
+        assert_eq!(bytes, original.len() as u64);
+        assert_eq!(actual, sha256);
+
+        fs::write(&image, b"tampered-image!").expect("tamper image fixture");
+        assert!(validate_usb_image_identity(image.to_str().unwrap()).is_err());
+
+        fs::write(&image, original).expect("restore image fixture");
+        write_manifest("different.img", original.len() as u64, &sha256);
+        assert!(validate_usb_image_identity(image.to_str().unwrap()).is_err());
+
+        write_manifest("completed.img", original.len() as u64 + 1, &sha256);
+        assert!(validate_usb_image_identity(image.to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn usb_write_intent_binds_phrase_device_capacity_and_identity() {
+        let target = UsbTargetCandidate {
+            device_identifier: "disk7".into(),
+            device_node: "/dev/disk7".into(),
+            media_name: "Fixture USB".into(),
+            bus_protocol: "USB".into(),
+            bytes: 64_000_000_000,
+            identity_token: "a".repeat(64),
+        };
+        assert!(validate_usb_write_intent(
+            &target,
+            32_000_000_000,
+            "disk7",
+            &"a".repeat(64),
+            "ERASE disk7"
+        )
+        .is_ok());
+        assert!(validate_usb_write_intent(
+            &target,
+            32_000_000_000,
+            "disk7",
+            &"a".repeat(64),
+            "erase disk7"
+        )
+        .is_err());
+        assert!(validate_usb_write_intent(
+            &target,
+            32_000_000_000,
+            "disk8",
+            &"a".repeat(64),
+            "ERASE disk8"
+        )
+        .is_err());
+        assert!(validate_usb_write_intent(
+            &target,
+            32_000_000_000,
+            "disk7",
+            &"b".repeat(64),
+            "ERASE disk7"
+        )
+        .is_err());
+        assert!(validate_usb_write_intent(
+            &target,
+            128_000_000_000,
+            "disk7",
+            &"a".repeat(64),
+            "ERASE disk7"
+        )
+        .is_err());
+    }
+
+    #[test]
     fn explicit_upstream_source_is_pinned_and_never_treated_as_automatic() {
         let target =
             ready_published_target("3.8.14", "6.16.12-valve24.4-1-neptune-616-gfe145653a794");

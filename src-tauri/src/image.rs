@@ -1764,7 +1764,9 @@ fn revalidate_usb_target(
     Err("Read-only USB target revalidation is currently implemented only for macOS.".into())
 }
 
-fn validate_usb_image_identity(image_path: &str) -> Result<(PathBuf, u64, String), String> {
+pub(crate) fn validate_usb_image_identity(
+    image_path: &str,
+) -> Result<(PathBuf, u64, String), String> {
     let image = fs::canonicalize(image_path)
         .map_err(|error| format!("Could not resolve the completed image: {error}"))?;
     if image.extension().and_then(|value| value.to_str()) != Some("img") {
@@ -1814,6 +1816,46 @@ fn validate_usb_image_identity(image_path: &str) -> Result<(PathBuf, u64, String
     Ok((image, metadata.len(), actual_sha256))
 }
 
+pub(crate) fn validate_usb_write_intent(
+    target: &UsbTargetCandidate,
+    image_bytes: u64,
+    requested_identifier: &str,
+    expected_identity_token: &str,
+    confirmation: &str,
+) -> Result<(), String> {
+    if !requested_identifier.starts_with("disk")
+        || requested_identifier.len() <= 4
+        || !requested_identifier[4..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+    {
+        return Err("The selected device identifier is invalid.".into());
+    }
+    let expected_confirmation = format!("ERASE {requested_identifier}");
+    if confirmation != expected_confirmation {
+        return Err(format!(
+            "Type {expected_confirmation} exactly to confirm the selected whole disk."
+        ));
+    }
+    if target.device_identifier != requested_identifier
+        || target.device_node != format!("/dev/{requested_identifier}")
+    {
+        return Err("The revalidated disk does not match the requested whole device.".into());
+    }
+    if expected_identity_token.len() != 64
+        || !expected_identity_token
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+        || target.identity_token != expected_identity_token
+    {
+        return Err("The selected disk identity changed after discovery. Refresh removable drives and select it again.".into());
+    }
+    if target.bytes < image_bytes {
+        return Err("The selected disk is no longer large enough for the completed image.".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) async fn inspect_usb_targets(image_path: String) -> Result<UsbTargetPreflight, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -1856,9 +1898,13 @@ pub(crate) async fn arm_usb_write_preflight(
     })
     .await
     .map_err(|error| format!("USB device revalidation worker failed: {error}"))??;
-    if target.identity_token != identity_token {
-        return Err("The selected disk identity changed after discovery. Refresh removable drives and select it again.".into());
-    }
+    validate_usb_write_intent(
+        &target,
+        image_bytes,
+        &device_identifier,
+        &identity_token,
+        &confirmation,
+    )?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "The system clock is earlier than the Unix epoch.")?;
