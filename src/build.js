@@ -25,6 +25,7 @@ const elements = {
 };
 const progressWindow = getCurrentWebviewWindow();
 let running = false;
+let activeRequestPath = null;
 let cancelling = false;
 let lastApplianceLog = "";
 let lastNvidiaApplianceLog = "";
@@ -387,7 +388,10 @@ async function finish(state, message, output = null) {
   running = false;
   elements.cancelBuild.disabled = true;
   elements.closeWindow.classList.remove("hidden");
-  await progressWindow.emitTo("main", "build-finished", { state, message, output });
+  await progressWindow.emitTo("main", "build-finished", {
+    state, message, output, inputPath: activeRequestPath,
+  });
+  activeRequestPath = null;
 }
 
 async function stopAllWorkers() {
@@ -415,6 +419,7 @@ async function cancelBuild() {
 async function runBuild(request) {
   if (running) return;
   running = true;
+  activeRequestPath = request.path;
   cancelling = false;
   lastApplianceLog = "";
   lastNvidiaApplianceLog = "";

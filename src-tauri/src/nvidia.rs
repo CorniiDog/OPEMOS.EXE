@@ -830,19 +830,60 @@ pub(crate) fn repository_from_remote(remote: &str) -> Option<String> {
     Some(format!("{owner}/{repository}"))
 }
 
-fn git_output(path: &Path, args: &[&str], description: &str) -> Result<String, String> {
-    let output = Command::new("git")
+pub(crate) fn git_output_bytes(
+    path: &Path,
+    args: &[&str],
+    description: &str,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    let mut child = Command::new("git")
         .arg("-C")
         .arg(path)
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
         .args(args)
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
         .map_err(|error| format!("Could not {description}: {error}"))?;
-    if !output.status.success() {
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!(
+            "Could not {description}; Git output was unavailable."
+        ));
+    };
+    let mut bytes = Vec::new();
+    if let Err(error) = stdout.take((limit + 1) as u64).read_to_end(&mut bytes) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("Could not {description}: {error}"));
+    }
+    if bytes.len() > limit {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!(
+            "Could not {description}; Git output exceeded the safe limit."
+        ));
+    }
+    let status = child
+        .wait()
+        .map_err(|error| format!("Could not finish {description}: {error}"))?;
+    if !status.success() {
         return Err(format!(
             "Could not {description}; the selected folder is not a usable Git worktree."
         ));
     }
-    String::from_utf8(output.stdout)
+    Ok(bytes)
+}
+
+fn git_output(path: &Path, args: &[&str], description: &str) -> Result<String, String> {
+    String::from_utf8(git_output_bytes(path, args, description, 4 * 1024 * 1024)?)
         .map(|value| value.trim().to_owned())
         .map_err(|_| format!("Could not {description}; Git returned non-UTF-8 output."))
 }
@@ -984,18 +1025,14 @@ pub(crate) fn validate_local_commit_message(message: &str) -> Result<(), String>
 }
 
 fn staged_paths(path: &Path) -> Result<Vec<String>, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(["diff", "--cached", "--name-only", "-z"])
-        .output()
-        .map_err(|error| format!("Could not inspect staged paths: {error}"))?;
-    if !output.status.success() || output.stdout.len() > 4 * 1024 * 1024 {
-        return Err("Could not inspect a bounded staged path list.".into());
-    }
+    let output = git_output_bytes(
+        path,
+        &["diff", "--cached", "--name-only", "-z"],
+        "inspect a bounded staged path list",
+        4 * 1024 * 1024,
+    )?;
     let mut paths = Vec::new();
     for raw in output
-        .stdout
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
     {
@@ -1044,6 +1081,12 @@ fn staged_patch(path: &Path) -> Result<(String, String), String> {
         .arg("-C")
         .arg(path)
         .args([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
+        .args([
             "diff",
             "--cached",
             "--no-ext-diff",
@@ -1059,13 +1102,19 @@ fn staged_patch(path: &Path) -> Result<(String, String), String> {
         .spawn()
         .map_err(|error| format!("Could not start the staged patch review: {error}"))?;
     let mut bytes = Vec::new();
-    child
-        .stdout
-        .take()
-        .ok_or("Could not read the staged patch review.")?
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("Could not read the staged patch review.".into());
+    };
+    if let Err(error) = stdout
         .take((MAINTAINER_PATCH_LIMIT + 1) as u64)
         .read_to_end(&mut bytes)
-        .map_err(|error| format!("Could not read the staged patch review: {error}"))?;
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("Could not read the staged patch review: {error}"));
+    }
     if bytes.len() > MAINTAINER_PATCH_LIMIT {
         let _ = child.kill();
         let _ = child.wait();
@@ -1264,21 +1313,18 @@ fn local_branches_blocking(
     if worktree.changed_files != 0 {
         return Err("Branch changes require a completely clean worktree, index, and untracked-file set. Commit, move, or remove those changes manually first.".into());
     }
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(&worktree.path)
-        .args([
+    let output = git_output_bytes(
+        Path::new(&worktree.path),
+        &[
             "for-each-ref",
             "--format=%(refname:short)%09%(objectname)",
             "refs/heads/",
-        ])
-        .output()
-        .map_err(|error| format!("Could not list local branches: {error}"))?;
-    if !output.status.success() || output.stdout.len() > 1024 * 1024 {
-        return Err("Could not list a bounded set of local branches.".into());
-    }
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|_| "Local branch metadata is not valid UTF-8.")?;
+        ],
+        "list a bounded set of local branches",
+        1024 * 1024,
+    )?;
+    let stdout =
+        String::from_utf8(output).map_err(|_| "Local branch metadata is not valid UTF-8.")?;
     let mut branches = Vec::new();
     for line in stdout.lines().filter(|line| !line.is_empty()) {
         if branches.len() >= 1_000 {

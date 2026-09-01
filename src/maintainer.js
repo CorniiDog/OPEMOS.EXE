@@ -30,6 +30,7 @@ let plannedRepository = null;
 let localWorktree = null;
 let commitReview = null;
 let branchReview = null;
+let workspaceGeneration = 0;
 
 function sourceKey(source) {
   return JSON.stringify([
@@ -67,6 +68,7 @@ function renderSelection() {
 }
 
 function resetPlan() {
+  workspaceGeneration += 1;
   plannedRepository = null;
   localWorktree = null;
   commitReview = null;
@@ -87,6 +89,22 @@ function disableSourceControls(disabled) {
   elements.component.disabled = disabled;
   elements.origin.disabled = disabled;
   elements.referenceSelect.disabled = disabled;
+}
+
+function setWorkspaceMutationPending(pending) {
+  loading = pending;
+  elements.refresh.disabled = pending;
+  elements.component.disabled = pending || !sources.length;
+  elements.origin.disabled = pending || !sources.length;
+  elements.referenceSelect.disabled = pending || !sources.length;
+  elements.chooseWorktree.disabled = pending;
+  elements.openVscode.disabled = pending || !localWorktree?.vscodeAvailable;
+  elements.commitMessage.disabled = pending;
+  elements.reviewStaged.disabled = pending || !localWorktree || !elements.commitMessage.value.trim();
+  elements.loadLocalBranches.disabled = pending;
+  elements.localBranch.disabled = pending || !elements.localBranch.value;
+  elements.reviewCheckout.disabled = pending || !elements.localBranch.value;
+  renderSelection();
 }
 
 async function loadSources() {
@@ -173,6 +191,7 @@ elements.planButton.addEventListener("click", async () => {
 });
 
 function renderWorktree(worktree) {
+  workspaceGeneration += 1;
   localWorktree = worktree;
   commitReview = null;
   branchReview = null;
@@ -198,18 +217,24 @@ function renderWorktree(worktree) {
 
 elements.chooseWorktree.addEventListener("click", async () => {
   if (!plannedRepository) return;
+  const dialogGeneration = workspaceGeneration;
+  const repository = plannedRepository;
   const path = await openFolder({ directory: true, multiple: false, title: "Select matching Git worktree" });
   if (!path) return;
+  if (dialogGeneration !== workspaceGeneration || repository !== plannedRepository) return;
   elements.worktreeMessage.textContent = "Validating the worktree root, origin, HEAD, and change state…";
   elements.worktreeMessage.className = "message";
   renderWorktree(null);
+  const generation = workspaceGeneration;
   try {
-    const worktree = await invoke("inspect_maintainer_worktree", { path, repository: plannedRepository });
+    const worktree = await invoke("inspect_maintainer_worktree", { path, repository });
+    if (generation !== workspaceGeneration || repository !== plannedRepository) return;
     renderWorktree(worktree);
     elements.worktreeMessage.textContent = worktree.vscodeAvailable
       ? "Valid local target. VS Code can reuse its current window for this worktree."
       : "Valid local target, but the VS Code command-line launcher was not found.";
   } catch (error) {
+    if (generation !== workspaceGeneration) return;
     elements.worktreeMessage.textContent = String(error);
     elements.worktreeMessage.className = "message error";
   }
@@ -242,13 +267,19 @@ elements.commitMessage.addEventListener("input", () => {
 
 elements.reviewStaged.addEventListener("click", async () => {
   if (!localWorktree || !plannedRepository) return;
+  const generation = workspaceGeneration;
+  const worktreePath = localWorktree.path;
+  const repository = plannedRepository;
+  const message = elements.commitMessage.value;
   elements.reviewStaged.disabled = true;
   elements.commitStatus.textContent = "Revalidating the worktree and snapshotting its exact staged tree…";
   elements.commitStatus.className = "message";
   try {
     commitReview = await invoke("review_maintainer_staged_commit", {
-      path: localWorktree.path, repository: plannedRepository, message: elements.commitMessage.value,
+      path: worktreePath, repository, message,
     });
+    if (generation !== workspaceGeneration || worktreePath !== localWorktree?.path
+      || repository !== plannedRepository || message !== elements.commitMessage.value) return;
     const visiblePaths = commitReview.stagedPaths.slice(0, 20).join(", ");
     const remaining = Math.max(0, commitReview.stagedPaths.length - 20);
     elements.stagedReview.textContent = `${commitReview.stagedPaths.length} staged path${commitReview.stagedPaths.length === 1 ? "" : "s"}: ${visiblePaths}${remaining ? `, and ${remaining} more` : ""}`;
@@ -258,6 +289,7 @@ elements.reviewStaged.addEventListener("click", async () => {
     elements.createLocalCommit.classList.remove("hidden");
     elements.commitStatus.textContent = `Review bound to ${commitReview.head.slice(0, 12)} and tree ${commitReview.indexTree.slice(0, 12)}. Nothing has been committed or pushed.`;
   } catch (error) {
+    if (generation !== workspaceGeneration) return;
     commitReview = null;
     elements.commitStatus.textContent = String(error);
     elements.commitStatus.className = "message error";
@@ -269,6 +301,7 @@ elements.reviewStaged.addEventListener("click", async () => {
 elements.createLocalCommit.addEventListener("click", async () => {
   if (!commitReview || !localWorktree || !plannedRepository) return;
   elements.createLocalCommit.disabled = true;
+  setWorkspaceMutationPending(true);
   elements.commitStatus.textContent = "Revalidating HEAD and the staged tree before the atomic local commit…";
   try {
     const result = await invoke("create_maintainer_local_commit", {
@@ -299,6 +332,7 @@ elements.createLocalCommit.addEventListener("click", async () => {
     elements.stagedReview.classList.add("hidden");
     elements.stagedPatch.classList.add("hidden");
   } finally {
+    setWorkspaceMutationPending(false);
     elements.createLocalCommit.disabled = false;
     elements.reviewStaged.disabled = !localWorktree || !elements.commitMessage.value.trim();
   }
@@ -306,14 +340,19 @@ elements.createLocalCommit.addEventListener("click", async () => {
 
 elements.loadLocalBranches.addEventListener("click", async () => {
   if (!localWorktree || !plannedRepository) return;
+  const generation = workspaceGeneration;
+  const worktreePath = localWorktree.path;
+  const repository = plannedRepository;
   branchReview = null;
   elements.loadLocalBranches.disabled = true;
   elements.checkoutStatus.textContent = "Revalidating cleanliness and loading existing local branches…";
   elements.checkoutStatus.className = "message";
   try {
     const branches = await invoke("list_maintainer_local_branches", {
-      path: localWorktree.path, repository: plannedRepository,
+      path: worktreePath, repository,
     });
+    if (generation !== workspaceGeneration || worktreePath !== localWorktree?.path
+      || repository !== plannedRepository) return;
     elements.localBranch.replaceChildren();
     for (const branch of branches) {
       const option = document.createElement("option");
@@ -325,6 +364,7 @@ elements.loadLocalBranches.addEventListener("click", async () => {
     elements.reviewCheckout.disabled = false;
     elements.checkoutStatus.textContent = `${branches.length} clean local branch context${branches.length === 1 ? "" : "s"} available. No remote was queried.`;
   } catch (error) {
+    if (generation !== workspaceGeneration) return;
     elements.localBranch.replaceChildren(new Option("Clean local branches unavailable", ""));
     elements.localBranch.disabled = true;
     elements.reviewCheckout.disabled = true;
@@ -343,20 +383,27 @@ elements.localBranch.addEventListener("change", () => {
 
 elements.reviewCheckout.addEventListener("click", async () => {
   if (!localWorktree || !plannedRepository || !elements.localBranch.value) return;
+  const generation = workspaceGeneration;
+  const worktreePath = localWorktree.path;
+  const repository = plannedRepository;
+  const targetBranch = elements.localBranch.value;
   elements.reviewCheckout.disabled = true;
   elements.checkoutStatus.textContent = "Revalidating the clean current and target branch identities…";
   try {
     branchReview = await invoke("review_maintainer_checkout", {
-      path: localWorktree.path,
-      repository: plannedRepository,
-      targetBranch: elements.localBranch.value,
+      path: worktreePath,
+      repository,
+      targetBranch,
     });
+    if (generation !== workspaceGeneration || worktreePath !== localWorktree?.path
+      || repository !== plannedRepository || targetBranch !== elements.localBranch.value) return;
     elements.checkoutReview.textContent = `${branchReview.currentBranch} ${branchReview.currentHead.slice(0, 12)} → ${branchReview.targetBranch} ${branchReview.targetCommit.slice(0, 12)}. ${branchReview.message}`;
     elements.checkoutReview.classList.remove("hidden");
     elements.executeCheckout.classList.remove("hidden");
     elements.checkoutStatus.textContent = "Branch change reviewed; execute will revalidate everything again.";
     elements.checkoutStatus.className = "message";
   } catch (error) {
+    if (generation !== workspaceGeneration) return;
     branchReview = null;
     elements.checkoutStatus.textContent = String(error);
     elements.checkoutStatus.className = "message error";
@@ -368,6 +415,7 @@ elements.reviewCheckout.addEventListener("click", async () => {
 elements.executeCheckout.addEventListener("click", async () => {
   if (!branchReview || !localWorktree || !plannedRepository) return;
   elements.executeCheckout.disabled = true;
+  setWorkspaceMutationPending(true);
   elements.checkoutStatus.textContent = "Performing the freshly revalidated clean local branch change…";
   try {
     const result = await invoke("execute_maintainer_checkout", {
@@ -391,6 +439,7 @@ elements.executeCheckout.addEventListener("click", async () => {
     elements.checkoutReview.classList.add("hidden");
     elements.executeCheckout.classList.add("hidden");
   } finally {
+    setWorkspaceMutationPending(false);
     elements.executeCheckout.disabled = false;
   }
 });

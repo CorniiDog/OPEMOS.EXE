@@ -250,6 +250,55 @@ mod tests {
     }
 
     #[test]
+    fn maintainer_git_output_is_streamed_to_a_hard_limit() {
+        struct TemporaryGitDirectory(PathBuf);
+        impl Drop for TemporaryGitDirectory {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TemporaryGitDirectory(std::env::temp_dir().join(format!(
+            "steamos-maintainer-git-output-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        )));
+        fs::create_dir(&root.0).expect("create git output fixture");
+        let git = |args: &[&str]| {
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(&root.0)
+                .args(args)
+                .status()
+                .expect("run fixture git");
+            assert!(status.success());
+        };
+        git(&["init", "--quiet"]);
+        git(&["config", "user.name", "Local Test"]);
+        git(&["config", "user.email", "local@example.invalid"]);
+        fs::write(root.0.join("large.txt"), "x".repeat(4_096)).expect("write large fixture");
+        git(&["add", "large.txt"]);
+        git(&["commit", "--quiet", "-m", "large fixture"]);
+
+        let error = git_output_bytes(
+            &root.0,
+            &["show", "--format=", "--no-color", "HEAD"],
+            "read bounded test output",
+            128,
+        )
+        .expect_err("large Git output must be rejected");
+        assert!(error.contains("exceeded the safe limit"));
+        assert_eq!(
+            git_output_bytes(&root.0, &["rev-parse", "HEAD"], "read HEAD", 64)
+                .expect("bounded HEAD")
+                .len(),
+            41
+        );
+    }
+
+    #[test]
     fn usb_candidate_parser_rejects_internal_virtual_and_undersized_disks() {
         let removable = serde_json::json!({
             "DeviceIdentifier": "disk7",
