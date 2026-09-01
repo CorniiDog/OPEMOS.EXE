@@ -195,11 +195,11 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 21] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 23] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "ad160d45cb0d4bfbdc8945d5a2692106cb7075cc6930aeda64964b779ac499cc",
-        bytes: 45_927,
+        sha256: "047dca4df91699c7fd95d3c00fec5888721503accee9da372a1fa96565423f3f",
+        bytes: 47_895,
         executable: true,
     },
     PinnedInstallerFile {
@@ -234,8 +234,14 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 21] = [
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "31dcaf6f0d20ba9cde816e65a8454045425276afe380b38a038199dc61b4b961",
-        bytes: 46_768,
+        sha256: "adba48e2389c8bc7280c2bb3a7f66ae782fcb7dbf9ca11f57fcc872c3539eca5",
+        bytes: 52_076,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/capture_bounded_command.py",
+        sha256: "a0d2290d1df62a07b546e182035bd651802b4b0762f262e7e6f6cbf13d158659",
+        bytes: 2_965,
         executable: true,
     },
     PinnedInstallerFile {
@@ -294,8 +300,14 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 21] = [
     },
     PinnedInstallerFile {
         path: "lib/snapshot_target_execution.py",
-        sha256: "8b05f6484990f7ad402b7702f8145c20755280d00c08157d3335dcf6796e9dd9",
-        bytes: 8_230,
+        sha256: "24229e6e9fdff07470fe343b9bf6a39037ce3749d6f05b235b96c31b7cf5db5a",
+        bytes: 8_344,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/verify_initramfs.py",
+        sha256: "53865878d2e12d06fa9b7033e8dd0ceb04bc9ebd5c39d322f1fd0b8d263ba39c",
+        bytes: 9_858,
         executable: true,
     },
     PinnedInstallerFile {
@@ -710,6 +722,16 @@ pub(crate) struct SupportInstallResult {
     pub(crate) trust: String,
     pub(crate) cleanup: SupportInstallCleanup,
     pub(crate) validation: Option<SupportInstallValidationDocument>,
+    pub(crate) initramfs_verification: Option<SupportInitramfsVerification>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportInitramfsVerification {
+    pub(crate) schema_version: u32,
+    pub(crate) status: String,
+    pub(crate) kernel_version: String,
+    pub(crate) images: Vec<serde_json::Value>,
 }
 
 #[derive(Clone, Deserialize)]

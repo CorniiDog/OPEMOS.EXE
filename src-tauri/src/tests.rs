@@ -1235,8 +1235,8 @@ mod tests {
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 306_453);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 21);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 326_666);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 23);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
@@ -1291,6 +1291,8 @@ mod tests {
         assert!(guest_permissions.contains("\"$WORK/support/lib/prepare_pacman_config.py\""));
         assert!(guest_permissions.contains("\"$WORK/support/lib/verify_bind_mount.py\""));
         assert!(guest_permissions.contains("\"$WORK/support/lib/snapshot_target_execution.py\""));
+        assert!(guest_permissions.contains("\"$WORK/support/lib/capture_bounded_command.py\""));
+        assert!(guest_permissions.contains("\"$WORK/support/lib/verify_initramfs.py\""));
         assert!(guest_permissions.contains("chmod 0644 "));
         assert!(guest_permissions.contains("\"$WORK/support/lib/atomic_output.py\""));
     }
@@ -1655,6 +1657,7 @@ mod tests {
                 runtime_mounts_released: 4,
                 compression_policy_restored: true,
             },
+            initramfs_verification: None,
             validation: Some(SupportInstallValidationDocument::Verified(Box::new(
                 SupportInstallValidation {
                     archive_sha256: digest('a'),
@@ -2008,6 +2011,7 @@ mod tests {
                 runtime_mounts_released: 4,
                 compression_policy_restored: true,
             },
+            initramfs_verification: None,
             validation: Some(SupportInstallValidationDocument::Failed(Box::new(
                 SupportInstallFailureValidation {
                     storage: Some(insufficient_storage),
@@ -2118,6 +2122,7 @@ mod tests {
                 runtime_mounts_released: 4,
                 compression_policy_restored: true,
             },
+            initramfs_verification: None,
             validation: Some(SupportInstallValidationDocument::Verified(Box::new(
                 SupportInstallValidation {
                     archive_sha256: digest('a'),

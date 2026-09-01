@@ -1204,6 +1204,21 @@ pub(crate) fn validate_nvidia_install_result(
             "Offline installer validation result does not match the handoff target.".into(),
         );
     }
+    if expected_status == "success" {
+        let initramfs = document
+            .initramfs_verification
+            .as_ref()
+            .ok_or("Offline installer success omitted exact initramfs verification metadata.")?;
+        if initramfs.schema_version != 1
+            || initramfs.status != "verified"
+            || initramfs.kernel_version != inputs.kernel_version
+            || !(1..=32).contains(&initramfs.images.len())
+        {
+            return Err(
+                "Offline installer returned invalid initramfs verification metadata.".into(),
+            );
+        }
+    }
     let validation = match document.validation {
         Some(SupportInstallValidationDocument::Verified(validation)) => validation,
         _ => {
