@@ -1625,6 +1625,204 @@ pub(crate) fn usb_candidate_from_diskutil_info(
 
 pub(crate) const USB_PREFLIGHT_TTL: Duration = Duration::from_secs(60);
 pub(crate) const PHYSICAL_USB_WRITES_ALLOWED: bool = false;
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) const USB_HELPER_PROTOCOL: &str = "org.steamos-nvidia-builder.usb-writer/1";
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn decode_usb_helper_exchange(
+    request_json: &[u8],
+    attestation_json: &[u8],
+    event_jsonl: &[u8],
+) -> Result<
+    (
+        UsbHelperWriteRequest,
+        UsbHelperAttestation,
+        Vec<UsbHelperEvent>,
+    ),
+    String,
+> {
+    const MAX_DOCUMENT_BYTES: usize = 32 * 1024;
+    const MAX_EVENT_STREAM_BYTES: usize = 8 * 1024 * 1024;
+    const MAX_EVENT_LINE_BYTES: usize = 4 * 1024;
+    if request_json.is_empty()
+        || attestation_json.is_empty()
+        || request_json.len() > MAX_DOCUMENT_BYTES
+        || attestation_json.len() > MAX_DOCUMENT_BYTES
+        || event_jsonl.is_empty()
+        || event_jsonl.len() > MAX_EVENT_STREAM_BYTES
+    {
+        return Err("The USB helper protocol payload is empty or oversized.".into());
+    }
+    let request = serde_json::from_slice(request_json)
+        .map_err(|_| "The USB helper request document is malformed.".to_string())?;
+    let attestation = serde_json::from_slice(attestation_json)
+        .map_err(|_| "The USB helper attestation document is malformed.".to_string())?;
+    let mut events = Vec::new();
+    for line in event_jsonl.split(|byte| *byte == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        if line.len() > MAX_EVENT_LINE_BYTES {
+            return Err("The USB helper emitted an oversized event record.".into());
+        }
+        events.push(
+            serde_json::from_slice(line)
+                .map_err(|_| "The USB helper emitted a malformed event record.".to_string())?,
+        );
+    }
+    Ok((request, attestation, events))
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn validate_usb_helper_exchange(
+    request: &UsbHelperWriteRequest,
+    attestation: &UsbHelperAttestation,
+    events: &[UsbHelperEvent],
+    policy: &UsbHelperTrustPolicy<'_>,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    const MAX_EVENTS: usize = 16_384;
+    const MAX_MESSAGE_BYTES: usize = 512;
+    if request.schema_version != 1 || attestation.schema_version != 1 {
+        return Err("The USB helper schema version is unsupported.".into());
+    }
+    if request.protocol != USB_HELPER_PROTOCOL || attestation.protocol != USB_HELPER_PROTOCOL {
+        return Err("The USB helper protocol identity is invalid.".into());
+    }
+    if request.request_id.len() != 64
+        || !valid_sha256(&request.request_id)
+        || !valid_usb_preflight_session_token(&request.intent_token)
+        || !valid_sha256(&request.image_sha256)
+        || !valid_sha256(&request.device_identity_token)
+    {
+        return Err("The USB helper request contains an invalid identity token.".into());
+    }
+    if request.expires_at_unix_ms <= now_unix_ms
+        || request.expires_at_unix_ms.saturating_sub(now_unix_ms)
+            > USB_PREFLIGHT_TTL.as_millis() as u64
+    {
+        return Err("The USB helper intent is expired or exceeds the allowed lifetime.".into());
+    }
+    if request.image_bytes == 0 || request.device_capacity_bytes < request.image_bytes {
+        return Err("The USB helper image/device size boundary is invalid.".into());
+    }
+    let image = Path::new(&request.image_path);
+    let canonical = Path::new(&request.canonical_device_node);
+    let raw = Path::new(&request.raw_device_node);
+    if !image.is_absolute()
+        || !canonical.is_absolute()
+        || !raw.is_absolute()
+        || request.image_path.len() > 4096
+        || request.canonical_device_node.len() > 1024
+        || request.raw_device_node.len() > 1024
+        || request.image_path.contains("/../")
+        || request.canonical_device_node.contains("/../")
+        || request.raw_device_node.contains("/../")
+        || request.device_identifier.is_empty()
+        || request.device_identifier.len() > 128
+        || canonical.file_name().and_then(|value| value.to_str())
+            != Some(request.device_identifier.as_str())
+        || raw
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_none_or(|value| {
+                value != request.device_identifier
+                    && value != format!("r{}", request.device_identifier)
+            })
+    {
+        return Err("The USB helper device paths are not canonical absolute paths.".into());
+    }
+    if !attestation.independently_authenticated
+        || !attestation.independently_authorized
+        || attestation.process_id == 0
+        || attestation.effective_user_id != 0
+        || !attestation
+            .executable_sha256
+            .eq_ignore_ascii_case(policy.executable_sha256)
+        || attestation.signing_identity != policy.signing_identity
+        || attestation.helper_version != policy.helper_version
+    {
+        return Err("The USB helper is not independently authenticated and authorized.".into());
+    }
+    if events.is_empty() || events.len() > MAX_EVENTS {
+        return Err("The USB helper event stream is missing or oversized.".into());
+    }
+    let required = ["unmount", "open", "write", "fsync", "readback", "cleanup"];
+    let mut seen = std::collections::HashSet::new();
+    let mut terminal = false;
+    let mut last_phase_rank = 0_u8;
+    let mut last_progress = std::collections::HashMap::new();
+    for (index, event) in events.iter().enumerate() {
+        if event.schema_version != 1
+            || event.protocol != USB_HELPER_PROTOCOL
+            || event.request_id != request.request_id
+            || event.sequence as usize != index
+            || event.bytes_total != request.image_bytes
+            || event.bytes_completed > event.bytes_total
+            || event.image_sha256 != request.image_sha256
+            || event.device_identity_token != request.device_identity_token
+            || event.message.len() > MAX_MESSAGE_BYTES
+        {
+            return Err("The USB helper event stream drifted from the authorized request.".into());
+        }
+        if terminal {
+            return Err("The USB helper emitted events after its terminal outcome.".into());
+        }
+        if !matches!(
+            event.phase.as_str(),
+            "unmount" | "open" | "write" | "fsync" | "readback" | "cancel" | "cleanup"
+        ) || !matches!(
+            event.outcome.as_str(),
+            "started" | "progress" | "succeeded" | "failed" | "cancelled"
+        ) {
+            return Err("The USB helper emitted an unknown phase or outcome.".into());
+        }
+        let phase_rank = match event.phase.as_str() {
+            "unmount" => 1,
+            "open" => 2,
+            "write" => 3,
+            "fsync" => 4,
+            "readback" => 5,
+            "cancel" => 6,
+            "cleanup" => 7,
+            _ => unreachable!(),
+        };
+        if phase_rank < last_phase_rank
+            || last_progress
+                .insert(event.phase.as_str(), event.bytes_completed)
+                .is_some_and(|previous| event.bytes_completed < previous)
+        {
+            return Err("The USB helper phase or progress sequence moved backward.".into());
+        }
+        last_phase_rank = phase_rank;
+        if event.outcome == "succeeded" {
+            seen.insert(event.phase.as_str());
+        }
+        terminal = event.phase == "cleanup"
+            && matches!(event.outcome.as_str(), "succeeded" | "failed" | "cancelled");
+    }
+    if !terminal {
+        return Err("The USB helper event stream ended without cleanup.".into());
+    }
+    let cancelled_or_failed = events
+        .iter()
+        .any(|event| matches!(event.outcome.as_str(), "cancelled" | "failed"));
+    if !cancelled_or_failed && required.iter().any(|phase| !seen.contains(phase)) {
+        return Err("The USB helper reported success without every required outcome.".into());
+    }
+    let last = events.last().expect("nonempty event stream");
+    if !cancelled_or_failed
+        && (last.outcome != "succeeded" || last.bytes_completed != request.image_bytes)
+    {
+        return Err("The USB helper did not prove complete cleanup after verification.".into());
+    }
+    Ok(())
+}
 
 #[derive(Clone)]
 struct ArmedUsbPreflight {

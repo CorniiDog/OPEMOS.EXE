@@ -1254,6 +1254,64 @@ pub(crate) struct UsbWriteResult {
     pub(crate) message: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct UsbHelperWriteRequest {
+    pub(crate) schema_version: u32,
+    pub(crate) protocol: String,
+    pub(crate) request_id: String,
+    pub(crate) intent_token: String,
+    pub(crate) expires_at_unix_ms: u64,
+    pub(crate) image_path: String,
+    pub(crate) image_bytes: u64,
+    pub(crate) image_sha256: String,
+    pub(crate) device_identifier: String,
+    pub(crate) canonical_device_node: String,
+    pub(crate) raw_device_node: String,
+    pub(crate) device_capacity_bytes: u64,
+    pub(crate) device_identity_token: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct UsbHelperAttestation {
+    pub(crate) schema_version: u32,
+    pub(crate) protocol: String,
+    pub(crate) helper_version: String,
+    pub(crate) process_id: u32,
+    pub(crate) effective_user_id: u32,
+    pub(crate) executable_sha256: String,
+    pub(crate) signing_identity: String,
+    pub(crate) independently_authenticated: bool,
+    pub(crate) independently_authorized: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct UsbHelperEvent {
+    pub(crate) schema_version: u32,
+    pub(crate) protocol: String,
+    pub(crate) request_id: String,
+    pub(crate) sequence: u32,
+    pub(crate) phase: String,
+    pub(crate) outcome: String,
+    pub(crate) bytes_completed: u64,
+    pub(crate) bytes_total: u64,
+    pub(crate) image_sha256: String,
+    pub(crate) device_identity_token: String,
+    pub(crate) message: String,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct UsbHelperTrustPolicy<'a> {
+    pub(crate) executable_sha256: &'a str,
+    pub(crate) signing_identity: &'a str,
+    pub(crate) helper_version: &'a str,
+}
+
 pub(crate) struct MarkerManifestData<'a> {
     pub(crate) input: &'a Path,
     pub(crate) output: &'a Path,

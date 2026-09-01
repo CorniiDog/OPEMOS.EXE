@@ -6,9 +6,9 @@ import { validateGuestResult, validateProgressLines } from "./headless-vm/valida
 const validResult = {
   schemaVersion: 1,
   status: "passed",
-  reason: "synthetic USB identity, capacity, progress, cancellation cleanup, readback, and recovery A-B rollback succeeded",
+  reason: "synthetic USB identity, capacity, helper protocol, progress, cancellation cleanup, readback, and recovery A-B rollback succeeded",
   checks: [
-    "usb-identity", "usb-capacity", "usb-progress", "usb-cancellation-cleanup",
+    "usb-identity", "usb-capacity", "usb-helper-protocol", "usb-progress", "usb-cancellation-cleanup",
     "usb-readback", "recovery-ab-rollback",
   ],
 };

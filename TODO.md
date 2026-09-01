@@ -1410,6 +1410,7 @@ Before calling the project **beta**, verify:
 * [x] Add a one-use USB writer state transition with 4 MiB bounded writes, live byte progress, safe-boundary cancellation, full written-range SHA-256 read-back, and best-effort eject on success or failure.
 * [x] Exercise the same writer against regular-file fixtures and an opt-in 16 MiB macOS virtual raw disk while continuing to reject virtual disks from real target discovery.
 * [x] Keep the physical writer command fail-closed before unmount/open until a signed least-privilege helper can bind the exact revalidated identity to the opened raw-device handle; retain only synthetic copy-engine coverage meanwhile.
+* [x] Define and hostile-test the bounded external-helper protocol for exact image, intent, process, device, progress, outcome, cancellation, readback, and cleanup binding; keep production authorization closed until an independently authenticated signed helper is installed.
 * [ ] Install and authenticate a signed, least-privilege macOS privileged helper so normal packaged applications can open only the exact revalidated raw device without running the Tauri GUI as root.
 * [ ] Validate the complete workflow against a sacrificial physical USB device, including unplug/replug identity drift, busy volumes, cancellation during write and verification, read errors, eject failure, sleep/wake, and power loss.
 * [ ] Define a recoverable post-verification cleanup action for USB-only mode; until then retain the validated staging image rather than automatically deleting multi-gigabyte user output.

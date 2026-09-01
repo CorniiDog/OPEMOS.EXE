@@ -9,7 +9,7 @@ write_files:
       result='failed'
       reason='unexpected guest failure'
       finish() {
-        printf 'STEAMOS_HEADLESS_RESULT {"schemaVersion":1,"status":"%s","reason":"%s","checks":["usb-identity","usb-capacity","usb-progress","usb-cancellation-cleanup","usb-readback","recovery-ab-rollback"]}\n' "$result" "$reason" > /dev/ttyS0
+        printf 'STEAMOS_HEADLESS_RESULT {"schemaVersion":1,"status":"%s","reason":"%s","checks":["usb-identity","usb-capacity","usb-helper-protocol","usb-progress","usb-cancellation-cleanup","usb-readback","recovery-ab-rollback"]}\n' "$result" "$reason" > /dev/ttyS0
         sync
         poweroff -f
       }
@@ -22,6 +22,20 @@ write_files:
       root_device="$(readlink -f "$root_source" 2>/dev/null || printf '%s' "$root_source")"
       test_device="$(readlink -f "$disk")"
       wrong_device="$(readlink -f "$unexpected_disk")"
+      helper_protocol='org.steamos-nvidia-builder.usb-writer/1'
+      helper_request_id="$(printf 'vm-helper-request' | sha256sum | awk '{print $1}')"
+      helper_intent="$(printf 'vm-helper-intent' | sha256sum | awk '{print $1}')"
+      helper_identity="$(printf 'STEAMOS_SYNTH_V1:67108864' | sha256sum | awk '{print $1}')"
+      helper_authorize() {
+        local protocol="$1" request_id="$2" intent="$3" expires="$4" image_hash="$5" image_bytes="$6"
+        local candidate="$7" raw_candidate="$8" capacity="$9" identity="${10}" authenticated="${11}" authorized="${12}"
+        [[ "$protocol" = "$helper_protocol" ]] || return 1
+        [[ "$request_id" =~ ^[0-9a-f]{64}$ && "$intent" =~ ^[0-9a-f]{64}$ ]] || return 1
+        [[ "$expires" = 1050 && "$image_hash" =~ ^[0-9a-f]{64}$ && "$image_bytes" = 67108864 ]] || return 1
+        [[ "$candidate" = "$test_device" && "$raw_candidate" = "$test_device" ]] || return 1
+        [[ "$capacity" = 67108864 && "$identity" = "$helper_identity" ]] || return 1
+        [[ "$authenticated" = yes && "$authorized" = yes ]] || return 1
+      }
       authorize_usb_target() {
         local candidate="$1" expected_identity="$2" expected_bytes="$3"
         [[ "$expected_identity" = 'STEAMOS_SYNTH_V1' ]] || return 1
@@ -35,6 +49,12 @@ write_files:
       authorize_usb_target "$test_device" STEAMOS_SYNTH_V1 67108864 || { reason='exact synthetic USB identity was rejected'; exit 1; }
       source_image=/var/tmp/steamos-synthetic-usb.img
       dd if=/dev/urandom of="$source_image" bs=4M count=16 status=none
+      source_hash="$(sha256sum "$source_image" | awk '{print $1}')"
+      ! helper_authorize spoof/1 "$helper_request_id" "$helper_intent" 1050 "$source_hash" 67108864 "$test_device" "$test_device" 67108864 "$helper_identity" yes yes || { reason='spoofed helper protocol passed'; exit 1; }
+      ! helper_authorize "$helper_protocol" "$helper_request_id" "$helper_intent" 1050 "$source_hash" 67108864 "$wrong_device" "$wrong_device" 67108864 "$helper_identity" yes yes || { reason='spoofed helper device passed'; exit 1; }
+      ! helper_authorize "$helper_protocol" "$helper_request_id" "$helper_intent" 1049 "$source_hash" 67108864 "$test_device" "$test_device" 67108864 "$helper_identity" yes yes || { reason='expired helper intent passed'; exit 1; }
+      ! helper_authorize "$helper_protocol" "$helper_request_id" "$helper_intent" 1050 "$source_hash" 67108864 "$test_device" "$test_device" 67108864 "$helper_identity" no yes || { reason='unauthenticated helper passed'; exit 1; }
+      helper_authorize "$helper_protocol" "$helper_request_id" "$helper_intent" 1050 "$source_hash" 67108864 "$test_device" "$test_device" 67108864 "$helper_identity" yes yes || { reason='exact helper request was rejected'; exit 1; }
       [[ "$(stat -c %s "$source_image")" = "$(blockdev --getsize64 "$test_device")" ]] || {
         reason='exact image/device capacity boundary mismatch'
         exit 1
@@ -62,7 +82,6 @@ write_files:
         [[ "$cleanup_hash" = "$zero_hash" ]] || { reason='cancelled synthetic USB was not sanitized'; exit 1; }
       done
       copy_usb_image none
-      source_hash="$(sha256sum "$source_image" | awk '{print $1}')"
       readback_hash="$(dd if="$test_device" bs=4M count=16 status=none | sha256sum | awk '{print $1}')"
       [[ "$readback_hash" = "$source_hash" ]] || { reason='synthetic USB full readback mismatch'; exit 1; }
       command -v sfdisk >/dev/null || { reason='guest partition tool missing'; exit 1; }
@@ -86,7 +105,7 @@ write_files:
       restored="$(dd if="$partition_b" bs=1M count=1 status=none | sha256sum | awk '{print $1}')"
       [[ "$restored" = "$before" ]] || { reason='synthetic recovery B rollback mismatch'; exit 1; }
       result='passed'
-      reason='synthetic USB identity, capacity, progress, cancellation cleanup, readback, and recovery A-B rollback succeeded'
+      reason='synthetic USB identity, capacity, helper protocol, progress, cancellation cleanup, readback, and recovery A-B rollback succeeded'
 runcmd:
   - [ /usr/local/sbin/steamos-headless-harness ]
 final_message: STEAMOS_HEADLESS_CLOUD_INIT_COMPLETE

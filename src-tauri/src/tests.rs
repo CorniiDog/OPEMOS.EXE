@@ -956,6 +956,171 @@ esac
         .is_err());
     }
 
+    fn helper_exchange_fixture() -> (
+        UsbHelperWriteRequest,
+        UsbHelperAttestation,
+        Vec<UsbHelperEvent>,
+    ) {
+        let hash = "a".repeat(64);
+        let identity = "b".repeat(64);
+        let request_id = "c".repeat(64);
+        let request = UsbHelperWriteRequest {
+            schema_version: 1,
+            protocol: USB_HELPER_PROTOCOL.into(),
+            request_id: request_id.clone(),
+            intent_token: "d".repeat(64),
+            expires_at_unix_ms: 1_050_000,
+            image_path: "/private/var/tmp/completed.img".into(),
+            image_bytes: 8 * 1024 * 1024,
+            image_sha256: hash.clone(),
+            device_identifier: "disk7".into(),
+            canonical_device_node: "/dev/disk7".into(),
+            raw_device_node: "/dev/rdisk7".into(),
+            device_capacity_bytes: 16 * 1024 * 1024,
+            device_identity_token: identity.clone(),
+        };
+        let attestation = UsbHelperAttestation {
+            schema_version: 1,
+            protocol: USB_HELPER_PROTOCOL.into(),
+            helper_version: "1.0.0".into(),
+            process_id: 42,
+            effective_user_id: 0,
+            executable_sha256: "e".repeat(64),
+            signing_identity: "TEAM.example.usb-helper".into(),
+            independently_authenticated: true,
+            independently_authorized: true,
+        };
+        let events = ["unmount", "open", "write", "fsync", "readback", "cleanup"]
+            .into_iter()
+            .enumerate()
+            .map(|(sequence, phase)| UsbHelperEvent {
+                schema_version: 1,
+                protocol: USB_HELPER_PROTOCOL.into(),
+                request_id: request_id.clone(),
+                sequence: sequence as u32,
+                phase: phase.into(),
+                outcome: "succeeded".into(),
+                bytes_completed: request.image_bytes,
+                bytes_total: request.image_bytes,
+                image_sha256: hash.clone(),
+                device_identity_token: identity.clone(),
+                message: phase.into(),
+            })
+            .collect();
+        (request, attestation, events)
+    }
+
+    #[test]
+    fn usb_helper_protocol_binds_attestation_intent_device_image_and_outcomes() {
+        let (request, attestation, events) = helper_exchange_fixture();
+        let policy = UsbHelperTrustPolicy {
+            executable_sha256: &"e".repeat(64),
+            signing_identity: "TEAM.example.usb-helper",
+            helper_version: "1.0.0",
+        };
+        validate_usb_helper_exchange(&request, &attestation, &events, &policy, 1_000_000)
+            .expect("exact authenticated exchange");
+
+        for mutation in ["image", "device", "request", "progress", "phase", "terminal"] {
+            let (mut request, mut attestation, mut events) = helper_exchange_fixture();
+            match mutation {
+                "image" => request.image_sha256 = "f".repeat(64),
+                "device" => events[2].device_identity_token = "f".repeat(64),
+                "request" => events[1].request_id = "f".repeat(64),
+                "progress" => events[2].bytes_completed = request.image_bytes + 1,
+                "phase" => events[2].phase = "format".into(),
+                "terminal" => { events.pop(); }
+                _ => unreachable!(),
+            }
+            assert!(validate_usb_helper_exchange(&request, &attestation, &events, &policy, 1_000_000).is_err(), "{mutation} drift must fail");
+            attestation.independently_authenticated = true;
+        }
+
+        for mutation in ["unauthenticated", "unauthorized", "pid", "uid", "binary", "signer", "version"] {
+            let (request, mut attestation, events) = helper_exchange_fixture();
+            match mutation {
+                "unauthenticated" => attestation.independently_authenticated = false,
+                "unauthorized" => attestation.independently_authorized = false,
+                "pid" => attestation.process_id = 0,
+                "uid" => attestation.effective_user_id = 501,
+                "binary" => attestation.executable_sha256 = "f".repeat(64),
+                "signer" => attestation.signing_identity = "attacker".into(),
+                "version" => attestation.helper_version = "2.0.0".into(),
+                _ => unreachable!(),
+            }
+            assert!(validate_usb_helper_exchange(&request, &attestation, &events, &policy, 1_000_000).is_err(), "{mutation} attestation must fail");
+        }
+        assert!(validate_usb_helper_exchange(&request, &attestation, &events, &policy, 1_050_000).is_err(), "expired intent must fail");
+    }
+
+    #[test]
+    fn usb_helper_protocol_accepts_bounded_cancel_cleanup_but_not_partial_success() {
+        let (request, attestation, mut events) = helper_exchange_fixture();
+        let policy = UsbHelperTrustPolicy {
+            executable_sha256: &"e".repeat(64),
+            signing_identity: "TEAM.example.usb-helper",
+            helper_version: "1.0.0",
+        };
+        events.truncate(3);
+        events.push(UsbHelperEvent {
+            sequence: 3,
+            phase: "cancel".into(),
+            outcome: "cancelled".into(),
+            bytes_completed: 4 * 1024 * 1024,
+            message: "cancel acknowledged".into(),
+            ..events[2].clone()
+        });
+        events.push(UsbHelperEvent {
+            sequence: 4,
+            phase: "cleanup".into(),
+            outcome: "cancelled".into(),
+            bytes_completed: 4 * 1024 * 1024,
+            message: "device closed".into(),
+            ..events[2].clone()
+        });
+        validate_usb_helper_exchange(&request, &attestation, &events, &policy, 1_000_000)
+            .expect("bounded cancellation with cleanup");
+
+        let (_, _, mut partial) = helper_exchange_fixture();
+        partial.retain(|event| event.phase != "fsync");
+        for (sequence, event) in partial.iter_mut().enumerate() { event.sequence = sequence as u32; }
+        assert!(validate_usb_helper_exchange(&request, &attestation, &partial, &policy, 1_000_000).is_err());
+        let (_, _, mut oversized) = helper_exchange_fixture();
+        oversized[0].message = "x".repeat(513);
+        assert!(validate_usb_helper_exchange(&request, &attestation, &oversized, &policy, 1_000_000).is_err());
+    }
+
+    #[test]
+    fn usb_helper_wire_protocol_rejects_malformed_duplicate_unknown_and_oversized_records() {
+        let (request, attestation, events) = helper_exchange_fixture();
+        let request_json = serde_json::to_vec(&request).expect("serialize request");
+        let attestation_json = serde_json::to_vec(&attestation).expect("serialize attestation");
+        let event_jsonl = events
+            .iter()
+            .map(|event| serde_json::to_string(event).expect("serialize event"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let decoded = decode_usb_helper_exchange(
+            &request_json,
+            &attestation_json,
+            event_jsonl.as_bytes(),
+        )
+        .expect("decode exact bounded exchange");
+        assert_eq!(decoded.2.len(), events.len());
+
+        assert!(decode_usb_helper_exchange(b"{} trailing", &attestation_json, event_jsonl.as_bytes()).is_err());
+        let duplicate = String::from_utf8(request_json.clone())
+            .expect("UTF-8 request")
+            .replacen("{", "{\"schemaVersion\":1,", 1);
+        assert!(decode_usb_helper_exchange(duplicate.as_bytes(), &attestation_json, event_jsonl.as_bytes()).is_err());
+        let unknown = String::from_utf8(request_json.clone())
+            .expect("UTF-8 request")
+            .replacen("{", "{\"unexpected\":true,", 1);
+        assert!(decode_usb_helper_exchange(unknown.as_bytes(), &attestation_json, event_jsonl.as_bytes()).is_err());
+        assert!(decode_usb_helper_exchange(&vec![b'x'; 32 * 1024 + 1], &attestation_json, event_jsonl.as_bytes()).is_err());
+        assert!(decode_usb_helper_exchange(&request_json, &attestation_json, &vec![b'x'; 4 * 1024 + 1]).is_err());
+    }
+
     #[test]
     fn usb_copy_engine_writes_verifies_and_cancels_synthetic_media() {
         struct TemporaryUsbDirectory(PathBuf);

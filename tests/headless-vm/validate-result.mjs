@@ -4,12 +4,13 @@ import { pathToFileURL } from "node:url";
 const expectedChecks = [
   "usb-identity",
   "usb-capacity",
+  "usb-helper-protocol",
   "usb-progress",
   "usb-cancellation-cleanup",
   "usb-readback",
   "recovery-ab-rollback",
 ];
-const expectedReason = "synthetic USB identity, capacity, progress, cancellation cleanup, readback, and recovery A-B rollback succeeded";
+const expectedReason = "synthetic USB identity, capacity, helper protocol, progress, cancellation cleanup, readback, and recovery A-B rollback succeeded";
 const blockBytes = 4 * 1024 * 1024;
 const totalBytes = 64 * 1024 * 1024;
 const expectedProgress = [
