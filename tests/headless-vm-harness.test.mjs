@@ -14,13 +14,19 @@ test("headless VM harness exposes no GUI, network, monitor, SSH, or host disks",
   assert.match(run, /uefi-vars\.fd/);
   assert.doesNotMatch(run, /hostfwd|tap,|bridge,|\/dev\/disk|\/dev\/rdisk|ssh\b/);
   assert.match(run, /synthetic-test-disk\.raw/);
+  assert.match(run, /unexpected-test-disk\.raw/);
   assert.match(run, /STEAMOS_SYNTH_V1/);
+  assert.match(run, /STEAMOS_WRONG_V1/);
 });
 
 test("guest writes only the exact disposable synthetic virtio disk", () => {
   assert.match(guest, /\/dev\/disk\/by-id\/virtio-STEAMOS_SYNTH_V1/);
-  assert.match(guest, /synthetic disk resolved to guest root/);
+  assert.match(guest, /guest root disk passed USB authorization/);
   assert.match(guest, /67108864/);
+  assert.match(guest, /unexpected device identity passed USB authorization/);
+  assert.match(guest, /STEAMOS_HEADLESS_PROGRESS/);
+  assert.match(guest, /cancelled synthetic USB was not sanitized/);
+  assert.match(guest, /synthetic USB full readback mismatch/);
   assert.match(guest, /name=rootfs-A/);
   assert.match(guest, /name=rootfs-B/);
   assert.match(guest, /synthetic recovery B rollback mismatch/);

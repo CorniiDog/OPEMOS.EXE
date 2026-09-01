@@ -52,6 +52,7 @@ SEED_DIR="$RUNTIME/seed"
 SEED_ISO="$RUNTIME/seed.iso"
 OVERLAY="$RUNTIME/system-overlay.qcow2"
 SYNTHETIC_DISK="$RUNTIME/synthetic-test-disk.raw"
+UNEXPECTED_DISK="$RUNTIME/unexpected-test-disk.raw"
 SERIAL_LOG="$RUNTIME/serial.log"
 UEFI_VARS="$RUNTIME/uefi-vars.fd"
 mkdir -p "$SEED_DIR"
@@ -94,6 +95,7 @@ cp "$UEFI_VARS_TEMPLATE" "$UEFI_VARS"
 
 qemu-img create -q -f qcow2 -F qcow2 -b "$BASE_IMAGE" "$OVERLAY"
 qemu-img create -q -f raw "$SYNTHETIC_DISK" "$SYNTHETIC_BYTES"
+qemu-img create -q -f raw "$UNEXPECTED_DISK" "$SYNTHETIC_BYTES"
 
 qemu-system-x86_64 \
     -machine q35,accel=tcg \
@@ -110,6 +112,8 @@ qemu-system-x86_64 \
     -drive "if=virtio,format=qcow2,readonly=off,file=$OVERLAY" \
     -drive "if=none,id=synthetic,format=raw,readonly=off,file=$SYNTHETIC_DISK" \
     -device "virtio-blk-pci,drive=synthetic,serial=STEAMOS_SYNTH_V1" \
+    -drive "if=none,id=unexpected,format=raw,readonly=off,file=$UNEXPECTED_DISK" \
+    -device "virtio-blk-pci,drive=unexpected,serial=STEAMOS_WRONG_V1" \
     -drive "if=virtio,media=cdrom,format=raw,readonly=on,file=$SEED_ISO" &
 QEMU_PID="$!"
 

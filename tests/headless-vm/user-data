@@ -9,22 +9,58 @@ write_files:
       result='failed'
       reason='unexpected guest failure'
       finish() {
-        printf 'STEAMOS_HEADLESS_RESULT {"schemaVersion":1,"status":"%s","reason":"%s","checks":["disk-identity","raw-readback","recovery-ab-rollback"]}\n' "$result" "$reason" > /dev/ttyS0
+        printf 'STEAMOS_HEADLESS_RESULT {"schemaVersion":1,"status":"%s","reason":"%s","checks":["usb-identity","usb-capacity","usb-progress","usb-cancellation-cleanup","usb-readback","recovery-ab-rollback"]}\n' "$result" "$reason" > /dev/ttyS0
         sync
         poweroff -f
       }
       trap finish EXIT
       disk='/dev/disk/by-id/virtio-STEAMOS_SYNTH_V1'
+      unexpected_disk='/dev/disk/by-id/virtio-STEAMOS_WRONG_V1'
       [[ -b "$disk" ]] || { reason='synthetic virtio disk missing'; exit 1; }
+      [[ -b "$unexpected_disk" ]] || { reason='unexpected-identity fixture disk missing'; exit 1; }
       root_source="$(findmnt -n -o SOURCE /)"
       root_device="$(readlink -f "$root_source" 2>/dev/null || printf '%s' "$root_source")"
       test_device="$(readlink -f "$disk")"
-      [[ "$root_device" != "$test_device" ]] || { reason='synthetic disk resolved to guest root'; exit 1; }
-      [[ "$(blockdev --getsize64 "$test_device")" = '67108864' ]] || { reason='synthetic disk size mismatch'; exit 1; }
-      dd if=/dev/zero of="$test_device" bs=1M count=1 conv=fsync status=none
-      digest="$(dd if="$test_device" bs=1M count=1 status=none | sha256sum | awk '{print $1}')"
-      expected='30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58'
-      [[ "$digest" = "$expected" ]] || { reason='synthetic disk readback mismatch'; exit 1; }
+      wrong_device="$(readlink -f "$unexpected_disk")"
+      authorize_usb_target() {
+        local candidate="$1" expected_identity="$2" expected_bytes="$3"
+        [[ "$expected_identity" = 'STEAMOS_SYNTH_V1' ]] || return 1
+        [[ "$candidate" = "$test_device" && "$candidate" != "$root_device" ]] || return 1
+        [[ "$(blockdev --getsize64 "$candidate")" = "$expected_bytes" ]] || return 1
+      }
+      ! authorize_usb_target "$root_device" STEAMOS_SYNTH_V1 67108864 || { reason='guest root disk passed USB authorization'; exit 1; }
+      ! authorize_usb_target "$wrong_device" STEAMOS_WRONG_V1 67108864 || { reason='unexpected device identity passed USB authorization'; exit 1; }
+      authorize_usb_target "$test_device" STEAMOS_SYNTH_V1 67108864 || { reason='exact synthetic USB identity was rejected'; exit 1; }
+      source_image=/var/tmp/steamos-synthetic-usb.img
+      dd if=/dev/urandom of="$source_image" bs=4M count=16 status=none
+      [[ "$(stat -c %s "$source_image")" = "$(blockdev --getsize64 "$test_device")" ]] || {
+        reason='exact image/device capacity boundary mismatch'
+        exit 1
+      }
+      copy_usb_image() {
+        local cancel_after="$1" block
+        for block in $(seq 0 15); do
+          if [[ "$cancel_after" != none && "$block" -ge "$cancel_after" ]]; then
+            return 130
+          fi
+          dd if="$source_image" of="$test_device" bs=4M skip="$block" seek="$block" count=1 conv=notrunc status=none
+          printf 'STEAMOS_HEADLESS_PROGRESS {"schemaVersion":1,"phase":"writing","bytesCompleted":%s,"bytesTotal":67108864}\n' "$(( (block + 1) * 4194304 ))" > /dev/ttyS0
+        done
+        sync
+      }
+      set +e
+      copy_usb_image 2
+      cancelled_rc=$?
+      set -e
+      [[ "$cancelled_rc" = 130 ]] || { reason='synthetic USB cancellation was not observed'; exit 1; }
+      dd if=/dev/zero of="$test_device" bs=4M count=16 conv=fsync status=none
+      zero_hash="$(dd if=/dev/zero bs=4M count=16 status=none | sha256sum | awk '{print $1}')"
+      cleanup_hash="$(dd if="$test_device" bs=4M count=16 status=none | sha256sum | awk '{print $1}')"
+      [[ "$cleanup_hash" = "$zero_hash" ]] || { reason='cancelled synthetic USB was not sanitized'; exit 1; }
+      copy_usb_image none
+      source_hash="$(sha256sum "$source_image" | awk '{print $1}')"
+      readback_hash="$(dd if="$test_device" bs=4M count=16 status=none | sha256sum | awk '{print $1}')"
+      [[ "$readback_hash" = "$source_hash" ]] || { reason='synthetic USB full readback mismatch'; exit 1; }
       command -v sfdisk >/dev/null || { reason='guest partition tool missing'; exit 1; }
       printf 'label: gpt\nsize=24M, type=0fc63daf-8483-4772-8e79-3d69d8477de4, name=rootfs-A\nsize=24M, type=0fc63daf-8483-4772-8e79-3d69d8477de4, name=rootfs-B\n' | sfdisk "$test_device" >/dev/null
       blockdev --rereadpt "$test_device"
@@ -46,7 +82,7 @@ write_files:
       restored="$(dd if="$partition_b" bs=1M count=1 status=none | sha256sum | awk '{print $1}')"
       [[ "$restored" = "$before" ]] || { reason='synthetic recovery B rollback mismatch'; exit 1; }
       result='passed'
-      reason='synthetic disk identity, raw readback, and recovery A-B rollback succeeded'
+      reason='synthetic USB identity, capacity, progress, cancellation cleanup, readback, and recovery A-B rollback succeeded'
 runcmd:
   - [ /usr/local/sbin/steamos-headless-harness ]
 final_message: STEAMOS_HEADLESS_CLOUD_INIT_COMPLETE
