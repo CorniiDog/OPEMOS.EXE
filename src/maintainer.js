@@ -1,3 +1,5 @@
+import { operationContextMatches } from "./operation-context.js";
+
 const { invoke } = window.__TAURI__.core;
 const openFolder = (options) => invoke("plugin:dialog|open", { options });
 const $ = (selector) => document.querySelector(selector);
@@ -242,15 +244,30 @@ elements.chooseWorktree.addEventListener("click", async () => {
 
 elements.openVscode.addEventListener("click", async () => {
   if (!localWorktree || !plannedRepository) return;
+  const context = {
+    generation: workspaceGeneration,
+    path: localWorktree.path,
+    repository: plannedRepository,
+  };
   elements.openVscode.disabled = true;
   elements.worktreeMessage.textContent = "Revalidating and opening the selected worktree in VS Code…";
   try {
     const refreshed = await invoke("open_maintainer_worktree_in_vscode", {
-      path: localWorktree.path, repository: plannedRepository,
+      path: context.path, repository: context.repository,
     });
+    if (!operationContextMatches(context, {
+      generation: workspaceGeneration,
+      path: localWorktree?.path,
+      repository: plannedRepository,
+    })) return;
     renderWorktree(refreshed);
     elements.worktreeMessage.textContent = "Opened the validated worktree in VS Code.";
   } catch (error) {
+    if (!operationContextMatches(context, {
+      generation: workspaceGeneration,
+      path: localWorktree?.path,
+      repository: plannedRepository,
+    })) return;
     elements.worktreeMessage.textContent = String(error);
     elements.worktreeMessage.className = "message error";
     elements.openVscode.disabled = false;

@@ -1,3 +1,5 @@
+import { operationContextMatches } from "./operation-context.js";
+
 const { invoke } = window.__TAURI__.core;
 const { getAllWebviewWindows, getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 const open = (options) => invoke("plugin:dialog|open", { options });
@@ -39,6 +41,7 @@ let plannedOutput = null;
 let completedOutput = null;
 let usbPreflightSession = null;
 let usbContextGeneration = 0;
+let usbArmPending = false;
 let hostReady = false;
 let progressReady = false;
 let builderSettings = {
@@ -488,29 +491,44 @@ elements.usbTarget.addEventListener("change", async () => {
 });
 
 elements.usbConfirmation.addEventListener("input", () => {
-  elements.armUsbPreflight.disabled = elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
+  elements.armUsbPreflight.disabled = usbArmPending
+    || elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
 });
 
 elements.armUsbPreflight.addEventListener("click", async () => {
   const option = elements.usbTarget.selectedOptions[0];
-  if (!completedOutput?.path || !option?.value || !option.dataset.identityToken) return;
+  if (usbArmPending || !completedOutput?.path || !option?.value || !option.dataset.identityToken) return;
   const generation = usbContextGeneration;
   const imagePath = completedOutput.path;
+  const deviceIdentifier = option.value;
+  const identityToken = option.dataset.identityToken;
+  const confirmation = elements.usbConfirmation.value;
+  usbArmPending = true;
   elements.armUsbPreflight.disabled = true;
   elements.usbMessage.textContent = "Rehashing the image and immediately revalidating the selected disk identity…";
   elements.usbMessage.className = "result-message";
   try {
-    usbPreflightSession = await invoke("arm_usb_write_preflight", {
+    const session = await invoke("arm_usb_write_preflight", {
       imagePath,
-      deviceIdentifier: option.value,
-      identityToken: option.dataset.identityToken,
-      confirmation: elements.usbConfirmation.value,
+      deviceIdentifier,
+      identityToken,
+      confirmation,
     });
-    if (generation !== usbContextGeneration || completedOutput?.path !== imagePath) {
-      await invoke("cancel_usb_write_preflight", { sessionToken: usbPreflightSession.sessionToken }).catch(() => {});
-      usbPreflightSession = null;
+    const currentOption = elements.usbTarget.selectedOptions[0];
+    if (!operationContextMatches(
+      { generation, imagePath, deviceIdentifier, identityToken, confirmation },
+      {
+        generation: usbContextGeneration,
+        imagePath: completedOutput?.path,
+        deviceIdentifier: currentOption?.value,
+        identityToken: currentOption?.dataset.identityToken,
+        confirmation: elements.usbConfirmation.value,
+      },
+    )) {
+      await invoke("cancel_usb_write_preflight", { sessionToken: session.sessionToken }).catch(() => {});
       return;
     }
+    usbPreflightSession = session;
     elements.usbMessage.textContent = usbPreflightSession.message;
     elements.cancelUsbPreflight.classList.remove("hidden");
     elements.checkUsbPreflight.classList.remove("hidden");
@@ -519,17 +537,31 @@ elements.armUsbPreflight.addEventListener("click", async () => {
     usbPreflightSession = null;
     elements.usbMessage.textContent = String(error);
     elements.usbMessage.className = "result-message error";
-    elements.armUsbPreflight.disabled = false;
+  } finally {
+    usbArmPending = false;
+    if (generation === usbContextGeneration) {
+      elements.armUsbPreflight.disabled = elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
+    }
   }
 });
 
 elements.checkUsbPreflight.addEventListener("click", async () => {
   if (!usbPreflightSession?.sessionToken) return;
+  const context = {
+    generation: usbContextGeneration,
+    imagePath: completedOutput?.path,
+    sessionToken: usbPreflightSession.sessionToken,
+  };
   elements.checkUsbPreflight.disabled = true;
   try {
     const status = await invoke("get_usb_write_preflight_status", {
-      sessionToken: usbPreflightSession.sessionToken,
+      sessionToken: context.sessionToken,
     });
+    if (!operationContextMatches(context, {
+      generation: usbContextGeneration,
+      imagePath: completedOutput?.path,
+      sessionToken: usbPreflightSession?.sessionToken,
+    })) return;
     const identityMatches =
       status.deviceIdentifier === usbPreflightSession.deviceIdentifier &&
       status.imageSha256 === usbPreflightSession.imageSha256 &&
@@ -538,7 +570,9 @@ elements.checkUsbPreflight.addEventListener("click", async () => {
       usbPreflightSession = null;
       elements.checkUsbPreflight.classList.add("hidden");
       elements.cancelUsbPreflight.classList.add("hidden");
-      throw new Error("USB intent status no longer matches the confirmed device and image. Revalidate before continuing.");
+      elements.usbMessage.textContent = "USB intent status no longer matches the confirmed device and image. Revalidate before continuing.";
+      elements.usbMessage.className = "result-message error";
+      return;
     }
     const remaining = status.active ? ` ${Math.ceil(Number(status.expiresInMs) / 1000)} seconds remain.` : "";
     const identity = status.deviceIdentifier && status.imageSha256
@@ -552,28 +586,55 @@ elements.checkUsbPreflight.addEventListener("click", async () => {
       elements.cancelUsbPreflight.classList.add("hidden");
     }
   } catch (error) {
+    if (!operationContextMatches(context, {
+      generation: usbContextGeneration,
+      imagePath: completedOutput?.path,
+      sessionToken: usbPreflightSession?.sessionToken,
+    })) return;
     elements.usbMessage.textContent = String(error);
     elements.usbMessage.className = "result-message error";
   } finally {
-    elements.checkUsbPreflight.disabled = false;
+    if (context.generation === usbContextGeneration
+      && context.sessionToken === usbPreflightSession?.sessionToken) {
+      elements.checkUsbPreflight.disabled = false;
+    }
   }
 });
 
 elements.cancelUsbPreflight.addEventListener("click", async () => {
   if (!usbPreflightSession?.sessionToken) return;
+  const context = {
+    generation: usbContextGeneration,
+    imagePath: completedOutput?.path,
+    sessionToken: usbPreflightSession.sessionToken,
+  };
   let cancellationCompleted = false;
   try {
-    const result = await invoke("cancel_usb_write_preflight", { sessionToken: usbPreflightSession.sessionToken });
+    const result = await invoke("cancel_usb_write_preflight", { sessionToken: context.sessionToken });
+    if (!operationContextMatches(context, {
+      generation: usbContextGeneration,
+      imagePath: completedOutput?.path,
+      sessionToken: usbPreflightSession?.sessionToken,
+    })) return;
     cancellationCompleted = true;
     elements.usbMessage.textContent = result.cancelled
       ? "USB preparation cancelled. No disk was opened or changed."
       : "No matching USB preparation was active; no disk was opened or changed.";
     elements.usbMessage.className = "result-message";
   } catch (error) {
+    if (!operationContextMatches(context, {
+      generation: usbContextGeneration,
+      imagePath: completedOutput?.path,
+      sessionToken: usbPreflightSession?.sessionToken,
+    })) return;
     elements.usbMessage.textContent = `Could not confirm USB preparation cancellation: ${error}`;
     elements.usbMessage.className = "result-message error";
   } finally {
-    if (cancellationCompleted) {
+    if (cancellationCompleted && operationContextMatches(context, {
+      generation: usbContextGeneration,
+      imagePath: completedOutput?.path,
+      sessionToken: usbPreflightSession?.sessionToken,
+    })) {
       usbPreflightSession = null;
       elements.cancelUsbPreflight.classList.add("hidden");
       elements.checkUsbPreflight.classList.add("hidden");

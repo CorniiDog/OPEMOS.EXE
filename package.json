@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "scripts": {"tauri":"tauri","dev":"tauri dev","build":"tauri build","test:logs":"node --test tests/log-diagnostics.test.mjs tests/terminal-renderer.test.mjs","test:hygiene":"bash scripts/check_repository_hygiene.sh","test:all":"npm run test:logs && npm run test:hygiene && cargo test --manifest-path src-tauri/Cargo.toml"},
+  "scripts": {"tauri":"tauri","dev":"tauri dev","build":"tauri build","test:logs":"node --test tests/log-diagnostics.test.mjs tests/operation-context.test.mjs tests/terminal-renderer.test.mjs","test:hygiene":"bash scripts/check_repository_hygiene.sh","test:all":"npm run test:logs && npm run test:hygiene && cargo test --manifest-path src-tauri/Cargo.toml"},
   "dependencies": {"@tauri-apps/api":"^2","@tauri-apps/plugin-dialog":"^2","@tauri-apps/plugin-opener":"^2"},
   "devDependencies": {"@tauri-apps/cli":"^2"}
 }
