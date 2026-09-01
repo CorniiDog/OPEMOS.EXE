@@ -1019,7 +1019,12 @@ fn staged_paths(path: &Path) -> Result<Vec<String>, String> {
 const MAINTAINER_PATCH_LIMIT: usize = 1024 * 1024;
 
 pub(crate) fn contains_sensitive_patch_content(patch: &str) -> bool {
-    let lower = patch.to_ascii_lowercase();
+    let added_content = patch
+        .lines()
+        .filter_map(|line| line.strip_prefix('+').filter(|_| !line.starts_with("+++ ")))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_ascii_lowercase();
     let markers = [
         ["-----begin private ", "key-----"].concat(),
         ["-----begin rsa private ", "key-----"].concat(),
@@ -1029,7 +1034,9 @@ pub(crate) fn contains_sensitive_patch_content(patch: &str) -> bool {
         ["gh", "p_"].concat(),
         ["aws_secret", "_access_key"].concat(),
     ];
-    markers.iter().any(|marker| lower.contains(marker.as_str()))
+    markers
+        .iter()
+        .any(|marker| added_content.contains(marker.as_str()))
 }
 
 fn staged_patch(path: &Path) -> Result<(String, String), String> {

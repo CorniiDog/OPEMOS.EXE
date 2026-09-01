@@ -217,7 +217,7 @@ mod tests {
         assert!(unsafe_staged_path("line\nbreak.txt"));
 
         assert!(!contains_sensitive_patch_content(
-            "diff --git a/src/app.rs b/src/app.rs\n+safe local code"
+            "diff --git a/src/app.rs b/src/app.rs\n+++ b/src/app.rs\n+safe local code"
         ));
         assert!(contains_sensitive_patch_content(
             "+Authorization: Bearer example-token"
@@ -226,6 +226,12 @@ mod tests {
         assert!(contains_sensitive_patch_content(&private_key_marker));
         let github_token_marker = ["+token=github", "_pat_example"].concat();
         assert!(contains_sensitive_patch_content(&github_token_marker));
+        let removed_token_marker = ["-token=github", "_pat_example"].concat();
+        assert!(!contains_sensitive_patch_content(&removed_token_marker));
+        let context_token_marker = [" token=github", "_pat_example"].concat();
+        assert!(!contains_sensitive_patch_content(&context_token_marker));
+        let header_marker = ["+++ github", "_pat_example"].concat();
+        assert!(!contains_sensitive_patch_content(&header_marker));
     }
 
     #[test]
