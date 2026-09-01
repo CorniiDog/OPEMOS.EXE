@@ -359,7 +359,7 @@ mod tests {
         assert!(active.active);
         assert_eq!(active.status, "armed");
         assert!(active.expires_in_ms > 0);
-        assert!(active.writes_allowed);
+        assert!(!active.writes_allowed);
         assert_eq!(active.device_identifier.as_deref(), Some("disk7"));
         assert_eq!(active.image_sha256.as_deref(), Some(fixture_image_sha.as_str()));
         assert_eq!(active.identity_token.as_deref(), Some(fixture_identity.as_str()));

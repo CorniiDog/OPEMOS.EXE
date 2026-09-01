@@ -571,7 +571,7 @@ elements.armUsbPreflight.addEventListener("click", async () => {
     elements.usbMessage.textContent = usbPreflightSession.message;
     elements.cancelUsbPreflight.classList.remove("hidden");
     elements.checkUsbPreflight.classList.remove("hidden");
-    elements.writeUsbImage.classList.remove("hidden");
+    elements.writeUsbImage.classList.toggle("hidden", !usbPreflightSession.writesAllowed);
   } catch (error) {
     if (generation !== usbContextGeneration) return;
     usbPreflightSession = null;

@@ -1624,6 +1624,7 @@ pub(crate) fn usb_candidate_from_diskutil_info(
 }
 
 pub(crate) const USB_PREFLIGHT_TTL: Duration = Duration::from_secs(60);
+pub(crate) const PHYSICAL_USB_WRITES_ALLOWED: bool = false;
 
 #[derive(Clone)]
 struct ArmedUsbPreflight {
@@ -1736,11 +1737,11 @@ impl UsbPreparationManager {
                 status: "writing".into(),
                 active: true,
                 expires_in_ms: 0,
-                writes_allowed: true,
+                writes_allowed: false,
                 device_identifier: None,
                 image_sha256: None,
                 identity_token: None,
-                message: "The confirmed image is being written to the selected USB device.".into(),
+                message: "A USB writer operation is active.".into(),
             };
         }
         if let Some(armed) = self.armed.as_ref() {
@@ -1786,11 +1787,11 @@ impl UsbPreparationManager {
                 status: "armed".into(),
                 active: true,
                 expires_in_ms: armed.expires_at.duration_since(now).as_millis(),
-                writes_allowed: true,
+                writes_allowed: PHYSICAL_USB_WRITES_ALLOWED,
                 device_identifier: Some(armed.device_identifier.clone()),
                 image_sha256: Some(armed.image_sha256.clone()),
                 identity_token: Some(armed.identity_token.clone()),
-                message: "The confirmed USB intent session is active and can be consumed once to start writing.".into(),
+                message: "The confirmed USB intent session is active. Physical writing remains disabled until a signed least-privilege helper can bind authorization to the opened device.".into(),
             };
         }
         UsbWritePreflightStatus {
@@ -2244,9 +2245,9 @@ pub(crate) async fn arm_usb_write_preflight(
         image_sha256,
         identity_token: target.identity_token,
         expires_at_unix_ms,
-        writes_allowed: true,
+        writes_allowed: PHYSICAL_USB_WRITES_ALLOWED,
         message: format!(
-            "Intent confirmed for {}. The one-time write authorization expires in 60 seconds.",
+            "Intent confirmed for {}. Physical writing remains disabled pending a signed least-privilege helper; this review expires in 60 seconds.",
             image.display()
         ),
     })
@@ -2359,6 +2360,9 @@ pub(crate) async fn write_image_to_usb(
     session_token: String,
     image_path: String,
 ) -> Result<UsbWriteResult, String> {
+    if !PHYSICAL_USB_WRITES_ALLOWED {
+        return Err("Physical USB writing is disabled. A signed least-privilege helper must bind the exact revalidated device identity to the opened raw-device handle before this operation can be enabled.".into());
+    }
     if !valid_usb_preflight_session_token(&session_token) {
         return Err("The USB intent session token is invalid.".into());
     }
