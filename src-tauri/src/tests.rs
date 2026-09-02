@@ -2303,7 +2303,7 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 460_811);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 463_753);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 28);
         assert!(PINNED_INSTALLER_FILES
             .iter()

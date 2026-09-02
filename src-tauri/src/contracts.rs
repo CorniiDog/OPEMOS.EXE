@@ -231,8 +231,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 28] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "aff7ceedf9d3fe34ac3fcced1beef437b7be605de82a162fbda9b1390e94dc5c",
-        bytes: 91_333,
+        sha256: "c1f62fa2c048f5dc7d0cfb610556c7382eff43f7f67dbda9307c55eb6c307a60",
+        bytes: 94_275,
         executable: true,
     },
     PinnedInstallerFile {
