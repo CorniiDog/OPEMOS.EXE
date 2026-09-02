@@ -26,7 +26,7 @@ pub(crate) fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> 
     .min_inner_size(680.0, 680.0)
     .resizable(true)
     .theme(Some(tauri::Theme::Dark))
-    .background_color(Color(13, 17, 23, 255))
+    .background_color(Color(23, 26, 33, 255))
     .visible(false)
     .parent(&main)
     .map_err(|error| format!("Could not couple the build progress window: {error}"))?
@@ -67,7 +67,7 @@ pub(crate) async fn open_maintainer_window(app: tauri::AppHandle) -> Result<(), 
     .min_inner_size(820.0, 640.0)
     .resizable(true)
     .theme(Some(tauri::Theme::Dark))
-    .background_color(Color(13, 17, 23, 255))
+    .background_color(Color(23, 26, 33, 255))
     .visible(false)
     .parent(&main)
     .map_err(|error| format!("Could not couple the maintainer window: {error}"))?
