@@ -32,6 +32,14 @@ Source hashing, emulated x86_64 boot, package measurement, pacman hooks, and
 the support tool can provide only bounded heartbeats. An indeterminate bar
 means alive without a trustworthy percentage; it does not imply a freeze.
 
+## Black screen or missing Wi-Fi on target hardware
+
+Keep the original recovery USB available and avoid wiping or reinstalling
+until the active slot, running kernel, NVIDIA module, and graphical logs are
+known. See [Hardware and update recovery](hardware-and-updates.md) for a
+read-only black-screen collection, Wi-Fi controller/firmware diagnosis, and
+the planned fail-safe A/B update behavior.
+
 ## Safe retry
 
 After failure, confirm the app reports cleanup and QEMU shutdown. Retry from the

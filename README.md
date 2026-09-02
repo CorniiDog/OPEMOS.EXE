@@ -40,6 +40,7 @@ progress window, and permission-gated maintainer workspace.
 - [Build workflow](docs/workflow.md)
 - [Developer guide](docs/developer-guide.md)
 - [Architecture and trust boundaries](docs/architecture.md)
+- [Hardware and update recovery](docs/hardware-and-updates.md)
 - [Security model](docs/security.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Roadmap](TODO.md)

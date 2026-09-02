@@ -710,6 +710,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Avoid overwriting unrelated Mesa/AMD/Intel userspace unnecessarily.
 * [ ] Preserve the ability for the resulting SteamOS image to run on the intended NVIDIA system without requiring network access during first boot.
 * [ ] Document whether the generated image remains multi-GPU-capable.
+* [ ] Detect the target machine's GPU topology and display-owner relationship before enabling a hardware profile; distinguish discrete-only, muxed, muxless/hybrid, and iGPU-driven boot displays without assuming that the NVIDIA device owns the internal panel.
 
 ---
 
@@ -739,6 +740,16 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Verify first boot without network access if all required artifacts are embedded.
 * [ ] After installing from generated media, boot without the recovery USB and verify NVIDIA modules, boot arguments, updater integration, desktop account state, and A/B update behavior on the installed disk.
 * [ ] Verify rollback/recovery path if NVIDIA initialization fails.
+* [ ] Add a fail-closed installed-system update guardian: bind the staged inactive A/B slot and exact kernel identity, resolve/build the selected NVIDIA policy, run the reviewed support installer, independently verify modules/userspace/firmware/initramfs/boot policy, and permit the slot switch only after success.
+* [ ] Persist update-guardian state and bounded diagnostics outside the replaceable root slot. Resume or roll back interrupted download/build/install/verification transactions without trusting a partial result.
+* [ ] Preserve the last verified boot slot and use a bounded first-boot graphical health check plus boot-attempt accounting to fall back automatically when NVIDIA, DRM, the display manager, or Gamescope does not reach the required state.
+* [ ] Provide an explicit NVIDIA recovery boot entry that reaches a console-safe rescue environment without Gaming Mode; validate its exact Valve boot configuration and never infer edits for an unknown layout.
+* [ ] Show honest installed-update phases before reboot and mirror them to a persistent log/console-safe status path because the compositor may disappear during graphics work. Never represent heartbeats as percentage completion.
+* [ ] Keep the update guardian fail-closed under network loss, missing exact headers/artifacts, signer/lock drift, insufficient storage, cancellation, power loss, and unsupported future result schemas; never copy the legacy installer's unsigned `SigLevel = Never` fallback.
+* [ ] Make update policy honor the image manifest: Automatic may select only a certified compatible profile, while a pinned NVIDIA source/version remains pinned and pauses the update when its exact new-kernel artifact cannot be produced.
+* [ ] Add an installed-system diagnostics/export UI that remains reachable from Desktop Mode or a TTY and reports active/candidate slot, running/candidate kernel, module vermagic, userspace/GSP versions, last update transaction, and stable failure reason without secrets.
+* [ ] Inventory target Wi-Fi by PCI/USB identity, bound kernel module, requested firmware filenames, rfkill state, and NetworkManager state reason; classify missing device, missing driver, missing firmware, blocked radio, authentication, and IP failures separately.
+* [ ] Define reviewed non-Deck hardware profiles for required in-tree Wi-Fi modules and authenticated firmware. Verify the exact kernel/initramfs contains them, preserve the profile across both A/B slots and updates, and reject arbitrary first-boot/out-of-tree driver downloads.
 
 ---
 
@@ -813,6 +824,8 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Test Ampere GPU such as RTX 3080.
 * [ ] Test laptop hybrid-graphics system.
 * [ ] Test desktop discrete-NVIDIA-only system.
+* [ ] Test Wi-Fi on representative Intel, Realtek, Qualcomm/Atheros, Broadcom, and MediaTek controllers only after recording exact PCI/USB IDs, in-tree driver, firmware identity, NetworkManager result, suspend/resume, and A/B-update survival.
+* [ ] Inject an update with an unavailable exact NVIDIA artifact, failed signature, failed module build, failed initramfs verification, power loss, and failed first graphical boot; each case must retain or automatically return to the last verified slot.
 * [ ] Track unsupported generations explicitly.
 * [ ] Build compatibility matrix by SteamOS release, kernel, NVIDIA release, and GPU generation.
 

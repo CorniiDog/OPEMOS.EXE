@@ -50,6 +50,7 @@ artifact, userspace, and offline-installation contracts.
 | Goal | Start here |
 | --- | --- |
 | Build from an official recovery image | [Getting started](getting-started.md) |
+| Diagnose hardware or recover from an update | [Hardware and update recovery](hardware-and-updates.md) |
 | Understand every stage and trust label | [Build workflow](workflow.md) |
 | Prepare appliances and run tests | [Developer guide](developer-guide.md) |
 | Review process and data boundaries | [Architecture](architecture.md) |

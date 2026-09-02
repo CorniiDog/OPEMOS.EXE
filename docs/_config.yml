@@ -12,6 +12,7 @@ header_pages:
   - workflow.md
   - developer-guide.md
   - architecture.md
+  - hardware-and-updates.md
   - security.md
   - troubleshooting.md
 exclude:
