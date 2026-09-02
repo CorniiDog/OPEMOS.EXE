@@ -2,12 +2,12 @@
   <title id="title">Gaming-ready graphics</title>
   <desc id="desc">A game controller sits below a display with blue and green graphics.</desc>
   <defs><linearGradient id="g" x1="0" x2="1"><stop stop-color="#57c4fb"/><stop offset="1" stop-color="#78da70"/></linearGradient></defs>
-  <rect id="gaming-display" x="98" y="42" width="324" height="142" rx="24" fill="#0b202c" stroke="url(#g)" stroke-width="4"/>
-  <path id="gaming-scene" d="M122 160 190 100l48 38 80-58 80 60v20H122z" fill="url(#g)" opacity=".24"/>
-  <path id="controller" d="M191 196h138c20 0 38 13 44 32l15 44c8 24-9 44-33 44-18 0-32-10-45-28l-16-21h-68l-16 21c-13 18-27 28-45 28-24 0-41-20-33-44l15-44c6-19 24-32 44-32z" fill="#193747" stroke="url(#g)" stroke-width="4" stroke-linejoin="round"/>
-  <path id="direction-pad" d="M203 222v50m-25-25h50" stroke="#ecfaff" stroke-width="10" stroke-linecap="round"/>
-  <circle cx="330" cy="232" r="8" fill="#78da70"/>
-  <circle cx="350" cy="252" r="8" fill="#57c4fb"/>
-  <circle cx="310" cy="252" r="8" fill="#57c4fb"/>
-  <circle cx="330" cy="272" r="8" fill="#78da70"/>
+  <rect id="gaming-display" x="98" y="34" width="324" height="130" rx="24" fill="#0b202c" stroke="url(#g)" stroke-width="4"/>
+  <path id="gaming-scene" d="M122 142 190 84l48 38 80-58 80 60v18H122z" fill="url(#g)" opacity=".24"/>
+  <path id="controller" data-left="120" data-right="400" data-top="179" data-bottom="328" d="M188 179h144c22 0 41 15 48 36l18 55c10 31-12 58-43 58-20 0-36-11-51-32l-15-20h-58l-15 20c-15 21-31 32-51 32-31 0-53-27-43-58l18-55c7-21 26-36 48-36z" fill="#193747" stroke="url(#g)" stroke-width="4" stroke-linejoin="round"/>
+  <path id="direction-pad" d="M202 212v52m-26-26h52" stroke="#ecfaff" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="330" cy="222" r="8" fill="#78da70"/>
+  <circle cx="350" cy="242" r="8" fill="#57c4fb"/>
+  <circle cx="310" cy="242" r="8" fill="#57c4fb"/>
+  <circle cx="330" cy="262" r="8" fill="#78da70"/>
 </svg>

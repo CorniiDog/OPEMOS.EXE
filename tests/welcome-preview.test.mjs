@@ -71,7 +71,7 @@ function elementWithId(svg, id) {
   return match[0];
 }
 
-test("welcome illustrations preserve balanced geometry and non-crossing silhouettes", () => {
+test("welcome illustrations preserve balanced geometry and intentional layering", () => {
   const [install, recovery, gaming] = illustrations;
 
   const frame = elementWithId(install, "display-frame");
@@ -89,14 +89,21 @@ test("welcome illustrations preserve balanced geometry and non-crossing silhouet
     numericAttribute(slotA, "x") + numericAttribute(slotA, "width") / 2,
     520 - (numericAttribute(slotB, "x") + numericAttribute(slotB, "width") / 2),
   );
-  const slotBottom = numericAttribute(slotB, "y") + numericAttribute(slotB, "height") + numericAttribute(slotB, "stroke-width") / 2;
+  const clearance = elementWithId(recovery, "check-clearance");
   const check = elementWithId(recovery, "readiness-check");
-  const checkEndY = Number(check.match(/\s([0-9]+)" fill=/)[1]);
-  assert.ok(checkEndY - numericAttribute(check, "stroke-width") / 2 > slotBottom);
+  assert.equal(clearance.match(/\sd="([^"]+)"/)[1], check.match(/\sd="([^"]+)"/)[1]);
+  assert.ok(
+    numericAttribute(clearance, "stroke-width") >= numericAttribute(check, "stroke-width") + 12,
+    "the overlaid check must retain a visible negative-space halo",
+  );
 
   const display = elementWithId(gaming, "gaming-display");
   const controller = elementWithId(gaming, "controller");
   const displayBottom = numericAttribute(display, "y") + numericAttribute(display, "height") + numericAttribute(display, "stroke-width") / 2;
-  const controllerTop = Number(controller.match(/d="M[0-9]+ ([0-9]+)/)[1]) - numericAttribute(controller, "stroke-width") / 2;
+  const controllerTop = numericAttribute(controller, "data-top") - numericAttribute(controller, "stroke-width") / 2;
   assert.ok(controllerTop > displayBottom, "controller and display must retain a visible gap");
+  const controllerWidth = numericAttribute(controller, "data-right") - numericAttribute(controller, "data-left");
+  const controllerHeight = numericAttribute(controller, "data-bottom") - numericAttribute(controller, "data-top");
+  assert.ok(controllerHeight >= 140, "controller must retain full-height grips");
+  assert.ok(controllerWidth / controllerHeight < 2, "controller must not become visually squashed");
 });
