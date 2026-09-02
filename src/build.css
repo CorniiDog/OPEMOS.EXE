@@ -35,6 +35,18 @@ body {
 .platform-macos body { -webkit-backdrop-filter: blur(24px) saturate(135%); backdrop-filter: blur(24px) saturate(135%); }
 .window-drag-region { display: none; }
 .platform-macos .window-drag-region { display: block; position: fixed; z-index: 85; top: 0; right: 64px; left: 76px; height: 38px; }
+.platform-macos .window-drag-region::after {
+  content: "";
+  position: absolute;
+  right: 28px;
+  bottom: 4px;
+  left: 28px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(151, 194, 219, .2) 20%, rgba(183, 219, 238, .3) 50%, rgba(151, 194, 219, .2) 80%, transparent);
+  box-shadow: 0 1px 5px rgba(102, 192, 244, .08);
+  pointer-events: none;
+}
 body::before,
 body::after { content: ""; position: fixed; pointer-events: none; }
 body::before {

@@ -22,23 +22,27 @@ body {
 .platform-macos body { -webkit-backdrop-filter: blur(24px) saturate(135%); backdrop-filter: blur(24px) saturate(135%); }
 .window-drag-region { display: none; }
 .platform-macos .window-drag-region {
-  display: flex;
+  display: block;
   position: fixed;
   z-index: 95;
   top: 0;
   right: 0;
   left: 76px;
   height: 38px;
-  align-items: center;
-  justify-content: center;
-  border-bottom: 1px solid rgba(184, 220, 241, .08);
-  background: linear-gradient(180deg, rgba(37, 55, 68, .24), rgba(11, 17, 24, .08));
-  color: rgba(211, 224, 235, .58);
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: .01em;
   -webkit-user-select: none;
   user-select: none;
+}
+.platform-macos .window-drag-region::after {
+  content: "";
+  position: absolute;
+  right: 28px;
+  bottom: 4px;
+  left: 28px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(151, 194, 219, .2) 20%, rgba(183, 219, 238, .3) 50%, rgba(151, 194, 219, .2) 80%, transparent);
+  box-shadow: 0 1px 5px rgba(102, 192, 244, .08);
+  pointer-events: none;
 }
 body::before,
 body::after { content: ""; position: fixed; pointer-events: none; }
@@ -64,11 +68,10 @@ button, select, textarea { font: inherit; }
   width: min(1040px, calc(100% - 48px));
   height: 100%;
   margin: 0 auto;
-  padding: 24px 10px 18px 0;
+  padding: 24px 0 18px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
   scrollbar-color: rgba(142, 172, 192, .48) transparent;
   scrollbar-width: thin;
   display: grid;
@@ -76,16 +79,17 @@ button, select, textarea { font: inherit; }
   gap: 14px;
 }
 .platform-macos .maintainer-shell { height: calc(100% - 38px); margin-top: 38px; padding-top: 12px; }
-.maintainer-shell::-webkit-scrollbar { width: 10px; }
-.maintainer-shell::-webkit-scrollbar-track { background: transparent; margin-block: 8px; }
+.maintainer-shell::-webkit-scrollbar { width: 6px; background: transparent; }
+.maintainer-shell::-webkit-scrollbar-track,
+.maintainer-shell::-webkit-scrollbar-corner { border: 0; background: transparent; }
 .maintainer-shell::-webkit-scrollbar-thumb {
   min-height: 42px;
-  border: 3px solid transparent;
+  border: 1px solid transparent;
   border-radius: 999px;
-  background: rgba(142, 172, 192, .48);
+  background: rgba(142, 172, 192, .34);
   background-clip: padding-box;
 }
-.maintainer-shell::-webkit-scrollbar-thumb:hover { background: rgba(174, 203, 221, .7); background-clip: padding-box; }
+.maintainer-shell::-webkit-scrollbar-thumb:hover { background: rgba(174, 203, 221, .58); background-clip: padding-box; }
 .platform-macos .maintainer-shell > header { padding-left: 60px; }
 header, .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; }
 .section-actions { flex: none; display: flex; align-items: center; gap: 8px; }

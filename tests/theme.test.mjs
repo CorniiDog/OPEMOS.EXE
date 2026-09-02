@@ -15,6 +15,7 @@ test("every application surface shares the Steam glass material tokens", async (
     assert.match(css, /body::after[\s\S]*inset 0 0 0 1px rgba\(220, 239, 249, \.12\)/, `${name} is missing the refractive glass rim`);
     assert.match(css, /\.platform-macos body\s*\{[^}]*backdrop-filter:\s*blur\(24px\)/, `${name} is missing macOS frosted blur`);
     assert.match(css, /\.platform-macos \.window-drag-region\s*\{[^}]*height:\s*38px;/, `${name} is missing the dedicated macOS drag strip`);
+    assert.match(css, /\.platform-macos \.window-drag-region::after\s*\{[^}]*border-radius:\s*999px;[^}]*linear-gradient\(90deg, transparent,[^}]*transparent\);/, `${name} is missing the fading glass drag indicator`);
     assert.doesNotMatch(css, /body::before[\s\S]{0,160}border:/, `${name} still draws the rejected inset window border`);
     assert.doesNotMatch(css, /--brand-gradient/, `${name} still uses the rejected full-surface gradient`);
   }
