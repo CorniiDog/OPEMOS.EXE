@@ -201,8 +201,10 @@
             id="drop-zone"
             class="drop-zone"
         >
-            <div class="drop-icon">
-                ⇩
+            <div class="drop-icon" aria-hidden="true">
+                <svg viewBox="0 0 32 32" focusable="false">
+                    <path d="M16 7v15M10.5 17.5 16 23l5.5-5.5"/>
+                </svg>
             </div>
 
             <strong id="drop-title">
@@ -268,7 +270,7 @@
                             <small>Checked by default. Uncheck only when writing exclusively to a selected USB drive.</small>
                         </span>
                     </label>
-                    <div class="usb-picker">
+                    <div id="usb-picker" class="usb-picker is-empty">
                         <div class="usb-picker-heading">
                             <span>
                                 <strong>Optional USB destination</strong>

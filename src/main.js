@@ -16,6 +16,7 @@ const elements = {
   selectionCard: $("#selection-card"), selectedName: $("#selected-name"), selectedPath: $("#selected-path"),
   selectionStatus: $("#selection-status"), buildCard: $("#build-card"), buildButton: $("#build-button"),
   exportImage: $("#export-image"),
+  usbPicker: $("#usb-picker"),
   nvidiaSource: $("#nvidia-source"), upstreamWarning: $("#upstream-warning"),
   allowUpstreamBuild: $("#allow-upstream-build"),
   summaryInput: $("#summary-input"), summaryOutput: $("#summary-output"),
@@ -191,6 +192,7 @@ function applyCompletedOutput(output, imported = false) {
   completedOutput = output;
   plannedOutput = output.path;
   elements.buildCard.classList.add("completed-output-selected");
+  elements.appShell.classList.add("completed-output-selected");
   elements.exportImage.checked = true;
   elements.exportImage.disabled = true;
   elements.summaryOutput.textContent = output.path;
@@ -377,11 +379,14 @@ async function selectImage(path) {
   }
   completedOutput = null;
   elements.buildCard.classList.remove("completed-output-selected");
+  elements.appShell.classList.remove("completed-output-selected");
   elements.exportImage.disabled = false;
   usbPreflightSession = null;
     setUsbMenuOpen(false);
   elements.usbTarget.replaceChildren();
   elements.usbTarget.disabled = true;
+  elements.usbPicker.classList.add("is-empty");
+  elements.usbPicker.classList.remove("is-loading");
   elements.clearUsbTarget.classList.add("hidden");
   elements.usbTargetDetail.textContent = "Connect a USB drive, then refresh.";
   elements.usbPickerMessage.textContent = "No USB drive will be written unless one is selected.";
@@ -412,7 +417,9 @@ async function selectImage(path) {
     currentImageName = info.name;
     plannedOutput = preview.output_path;
     elements.selectedName.textContent = info.name;
+    elements.selectedName.title = info.name;
     elements.selectedPath.textContent = info.path;
+    elements.selectedPath.title = info.path;
     elements.summaryInput.textContent = preview.input_path;
     elements.summaryInput.title = preview.input_path;
     elements.summaryOutput.textContent = preview.output_path;
@@ -429,7 +436,9 @@ async function selectImage(path) {
     currentImageName = null;
     plannedOutput = null;
     elements.selectedName.textContent = path.split(/[\\/]/).pop();
+    elements.selectedName.title = elements.selectedName.textContent;
     elements.selectedPath.textContent = path;
+    elements.selectedPath.title = path;
     elements.selectionStatus.textContent = "Unsupported";
     elements.selectionStatus.className = "status failed";
     elements.selectionCard.classList.remove("hidden");
@@ -653,6 +662,7 @@ async function refreshUsbTargets(preferredTarget = null) {
   elements.checkUsbPreflight.classList.add("hidden");
   elements.refreshUsbTargets.disabled = true;
   elements.usbTarget.disabled = true;
+  elements.usbPicker.classList.add("is-empty", "is-loading");
   elements.usbMessage.textContent = "Inspecting whole external physical disks without opening them for writing…";
   elements.usbPickerMessage.textContent = elements.usbMessage.textContent;
   elements.usbMessage.className = "result-message";
@@ -673,6 +683,7 @@ async function refreshUsbTargets(preferredTarget = null) {
     }
     elements.usbTarget.selectedIndex = -1;
     elements.usbTarget.disabled = !preflight.targets.length;
+    elements.usbPicker.classList.toggle("is-empty", !preflight.targets.length);
     elements.clearUsbTarget.classList.add("hidden");
     elements.usbMessage.textContent = preflight.message;
     elements.usbPickerMessage.textContent = preflight.message;
@@ -695,7 +706,10 @@ async function refreshUsbTargets(preferredTarget = null) {
     elements.usbMessage.className = "result-message error";
     elements.usbPickerMessage.textContent = `Drive inspection failed: ${error}`;
   } finally {
-    if (generation === usbContextGeneration) elements.refreshUsbTargets.disabled = false;
+    if (generation === usbContextGeneration) {
+      elements.refreshUsbTargets.disabled = false;
+      elements.usbPicker.classList.remove("is-loading");
+    }
   }
   return false;
 }

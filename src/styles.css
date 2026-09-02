@@ -180,7 +180,21 @@ footer p { color: #aab4c5; }
 .drop-zone.dragging,
 .drop-zone.processing { border-color: var(--steam-blue-soft); background: rgba(31, 65, 87, .56); box-shadow: inset 0 0 30px rgba(26, 159, 255, .09); }
 .drop-zone.processing .drop-icon { animation: pulse 1s ease-in-out infinite; }
-.drop-icon { width: 50px; height: 50px; display: grid; place-items: center; border: 1px solid rgba(102, 192, 244, .2); border-radius: 16px; color: #dff5ff; background: rgba(33, 68, 91, .68); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1); font-size: 25px; }
+.drop-icon {
+  width: 54px;
+  height: 42px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: #e6f6ff;
+  background:
+    linear-gradient(rgba(20, 40, 54, .88), rgba(14, 29, 40, .82)) padding-box,
+    linear-gradient(90deg, rgba(26, 159, 255, .72), rgba(8, 117, 181, .58) 48%, rgba(118, 185, 0, .64)) border-box;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 5px 16px rgba(6, 17, 25, .18);
+  display: grid;
+  place-items: center;
+}
+.drop-icon svg { width: 27px; height: 27px; overflow: visible; }
+.drop-icon path { fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
 .drop-icon { grid-row: 1 / 3; }
 .drop-zone strong { align-self: end; min-width: 0; font-size: 19px; overflow-wrap: anywhere; }
 .drop-zone span { align-self: start; min-width: 0; color: #8490a3; font-size: 13px; overflow-wrap: anywhere; }
@@ -318,11 +332,30 @@ footer p { color: #aab4c5; }
   background-clip: padding-box;
 }
 .usb-picker select::-webkit-scrollbar-thumb:hover { background: rgba(174, 203, 221, .58); background-clip: padding-box; }
+.usb-picker.is-empty select { display: none; }
+.usb-picker.is-loading .usb-picker-message { color: #a7bfd0; }
 .usb-picker-message { min-height: 15px; margin: 0; color: #8490a3; font-size: 10px; line-height: 1.35; }
 #review-usb-target { width: 100%; margin-top: 1px; }
 .build-card.completed-output-selected .build-options-grid { grid-template-columns: minmax(0, 1fr); }
 .build-card.completed-output-selected .build-side-column,
 .build-card.completed-output-selected #build-button { display: none; }
+.app-shell.completed-output-selected .readiness-grid .environment-card,
+.app-shell.completed-output-selected .readiness-grid .selection-card { min-height: 92px; max-height: 92px; }
+.app-shell.completed-output-selected .selection-card h2,
+.app-shell.completed-output-selected .readiness-grid .path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-shell.completed-output-selected .drop-zone {
+  flex: 0 0 94px;
+  min-height: 94px;
+  padding-top: 11px;
+  padding-bottom: 11px;
+}
+.app-shell.completed-output-selected .build-card { padding-top: 9px; padding-bottom: 9px; }
+.app-shell.completed-output-selected .build-options-grid { margin-bottom: 5px; }
+.app-shell.completed-output-selected .result-message { margin-top: 4px; }
 .source-choice { margin-bottom: 9px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .source-choice span { min-width: 0; }
 .source-choice strong { display: block; font-size: 14px; }

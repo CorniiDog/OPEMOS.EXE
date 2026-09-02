@@ -33,6 +33,17 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(css, /\.usb-picker select::\-webkit-scrollbar\s*\{[^}]*width:\s*5px;[^}]*background:\s*transparent;/);
   assert.match(css, /\.usb-picker select::\-webkit-scrollbar-track,[\s\S]*\.usb-picker select::\-webkit-scrollbar-corner\s*\{[^}]*background:\s*transparent !important;/);
   assert.match(css, /\.usb-picker-actions\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;/);
+  assert.match(html, /id="usb-picker" class="usb-picker is-empty"/);
+  assert.match(css, /\.usb-picker\.is-empty select\s*\{\s*display:\s*none;/);
+  assert.match(script, /elements\.usbPicker\.classList\.add\("is-empty", "is-loading"\)/);
+  assert.match(script, /elements\.usbPicker\.classList\.toggle\("is-empty", !preflight\.targets\.length\)/);
+});
+
+test("image chooser uses a rounded glass download mark", () => {
+  assert.match(html, /class="drop-icon" aria-hidden="true"[\s\S]*<svg viewBox="0 0 32 32"[\s\S]*M16 7v15M10\.5 17\.5 16 23l5\.5-5\.5/);
+  assert.match(css, /\.drop-icon\s*\{[^}]*border-radius:\s*999px;[^}]*linear-gradient\(90deg, rgba\(26, 159, 255, \.72\), rgba\(8, 117, 181, \.58\) 48%, rgba\(118, 185, 0, \.64\)\) border-box;/);
+  assert.match(css, /\.drop-icon path\s*\{[^}]*stroke-linecap:\s*round;[^}]*stroke-linejoin:\s*round;/);
+  assert.doesNotMatch(html, /class="drop-icon"[^>]*>\s*⇩/);
 });
 
 test("main macOS chrome stays slim and settings begin below it", () => {
@@ -53,6 +64,10 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.doesNotMatch(script, /Existing NVIDIA output and adjacent manifest match byte-for-byte/);
   assert.match(script, /Boolean\(completedOutput\) \|\| buildRunning/);
   assert.match(css, /\.build-card\.completed-output-selected \.build-side-column,[\s\S]*#build-button\s*\{\s*display:\s*none;/);
+  assert.match(script, /elements\.appShell\.classList\.add\("completed-output-selected"\)/);
+  assert.match(script, /elements\.appShell\.classList\.remove\("completed-output-selected"\)/);
+  assert.match(css, /\.app-shell\.completed-output-selected \.drop-zone\s*\{[^}]*flex:\s*0 0 94px;[^}]*min-height:\s*94px;/);
+  assert.match(css, /\.app-shell\.completed-output-selected \.selection-card h2,[\s\S]*text-overflow:\s*ellipsis;[\s\S]*white-space:\s*nowrap;/);
 });
 
 test("builder readiness expands while no image has been selected", () => {
