@@ -47,3 +47,12 @@ After Valve's operation returns, the helper installs the immutable support
 snapshot into both target root slots and independently verifies the persistent
 recovery scripts, services, symlinks, support revision, and NVIDIA version in
 each slot before reporting success.
+
+## Safe macOS graphical preview
+
+Run `./test_welcome_macos.sh` from the repository root to open the interactive
+browser-based welcome simulation. It uses only fixed synthetic disks and mock
+progress. The launcher cannot inspect or write a disk, elevate privileges,
+start QEMU, access the network, or invoke either installation helper. This is a
+visual/interaction test; the generated SteamOS media continues to use the
+audited Zenity frontend above.

@@ -27,6 +27,15 @@ slots so delayed-network repair remains available after the USB is removed.
 The original recovery image is opened read-only and is never redistributed by
 this project.
 
+Preview the installation-media welcome flow safely on macOS with:
+
+```bash
+./test_welcome_macos.sh
+```
+
+The preview uses synthetic disks and mocked progress only. It never requests
+privileges, inspects storage, starts QEMU, or invokes the real installer.
+
 > OPEMOS.EXE is active development software. NVIDIA image mutation has passed
 > structural validation, but Valve installer propagation, A/B update behavior,
 > and physical NVIDIA hardware boot are still separate certification gates.

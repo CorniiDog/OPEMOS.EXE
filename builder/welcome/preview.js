@@ -1,0 +1,129 @@
+"use strict";
+
+const view = document.querySelector("#view");
+const state = { action: "install", disk: null, progress: 0, timer: null };
+const disks = [
+  { id: "vda", name: "Synthetic OPEMOS Target", detail: "/dev/vda · 32.0 GB · VirtIO", eligible: true },
+  { id: "vdb", name: "Booted installation media", detail: "/dev/vdb · 8.0 GB · USB", eligible: false, reason: "recovery-medium" },
+  { id: "vdc", name: "Mounted data disk", detail: "/dev/vdc · 64.0 GB · VirtIO", eligible: false, reason: "mounted-or-swap-active" },
+];
+
+function button(label, action, className = "") {
+  return `<button type="button" class="${className}" data-action="${action}">${label}</button>`;
+}
+
+function home() {
+  state.disk = null;
+  view.innerHTML = `
+    <p class="lead">Choose an installation or recovery operation. Every device and result shown in this preview is synthetic.</p>
+    <div class="choices">
+      <button class="choice" data-action="choose-install"><strong>Install OPEMOS</strong><span>Erase one explicitly selected disk and install this image.</span></button>
+      <button class="choice" data-action="choose-reinstall"><strong>Reinstall OPEMOS</strong><span>Preserve games and personal files on a recognized SteamOS layout.</span></button>
+      <button class="choice" data-action="rollback"><strong>Recovery</strong><span>Select a previously working NVIDIA-ready A/B slot.</span></button>
+      <button class="choice" data-action="diagnostics"><strong>Diagnostics</strong><span>Review media identity, eligible disks, and the last installation result.</span></button>
+    </div>`;
+}
+
+function chooseDisk(mode) {
+  state.action = mode;
+  view.innerHTML = `
+    <div class="panel">
+      <span class="label">${mode === "install" ? "Fresh installation" : "System reinstall"}</span>
+      <h2>Select a whole physical disk</h2>
+      <p class="lead">The running recovery medium and unavailable disks are excluded automatically.</p>
+      <div class="disks">
+        ${disks.filter((disk) => disk.eligible).map((disk) => `<button class="disk" data-disk="${disk.id}"><span><strong>${disk.name}</strong><small>${disk.detail}</small></span><span class="status">Eligible</span></button>`).join("")}
+      </div>
+      <div class="actions">${button("Back", "home", "secondary")}${button("Review diagnostics", "diagnostics", "secondary")}${button("Continue", "confirm", "primary")}</div>
+    </div>`;
+}
+
+function confirmDisk() {
+  if (!state.disk) {
+    view.querySelector(".lead").textContent = "Select the synthetic target before continuing.";
+    return;
+  }
+  const phrase = `${state.action === "install" ? "ERASE" : "REINSTALL"} vda`;
+  view.innerHTML = `
+    <div class="panel">
+      <span class="label">Final disk confirmation</span>
+      <h2>${state.action === "install" ? "Everything on /dev/vda would be erased" : "Both simulated OS slots would be replaced"}</h2>
+      <p class="lead warning">This is a visual simulation. Type <strong>${phrase}</strong> to exercise the confirmation flow.</p>
+      <input id="phrase" autocomplete="off" spellcheck="false" placeholder="${phrase}" aria-label="Confirmation phrase">
+      <div class="actions">${button("Back", "choose-again", "secondary")}${button("Begin simulation", "begin", "danger")}</div>
+    </div>`;
+  view.querySelector("#phrase").focus();
+}
+
+function begin() {
+  const required = `${state.action === "install" ? "ERASE" : "REINSTALL"} vda`;
+  if (view.querySelector("#phrase").value !== required) {
+    view.querySelector(".lead").textContent = `Confirmation did not match. Type ${required} exactly; nothing was changed.`;
+    return;
+  }
+  state.progress = 6;
+  view.innerHTML = `
+    <div class="panel">
+      <span class="label">Simulated installation</span><h2 id="stage">Validating the selected physical disk</h2>
+      <p class="lead warning">Do not disconnect the target while a real installation is running.</p>
+      <div class="progress"><i></i></div><p id="detail" class="lead">No host operation is running in this preview.</p>
+    </div>`;
+  const stages = [
+    [18, "Preparing the target layout"], [56, "Running the protected Valve installation"],
+    [76, "Installing recovery into rootfs-A"], [88, "Installing recovery into rootfs-B"],
+    [96, "Verifying both A/B guardians"], [100, "Installation simulation complete"],
+  ];
+  let index = 0;
+  clearInterval(state.timer);
+  state.timer = setInterval(() => {
+    const [progress, stage] = stages[index++];
+    state.progress = progress;
+    view.querySelector(".progress i").style.setProperty("--progress", `${progress}%`);
+    view.querySelector("#stage").textContent = stage;
+    if (progress === 100) {
+      clearInterval(state.timer);
+      view.querySelector("#detail").innerHTML = `Both simulated slots passed identity verification.<div class="actions">${button("Return home", "home", "secondary")}${button("Finish", "complete", "primary")}</div>`;
+    }
+  }, 650);
+}
+
+function diagnostics() {
+  view.innerHTML = `
+    <div class="panel"><span class="label">Installation-media diagnostics</span><h2>Safe simulated inventory</h2>
+      <pre>schema=1
+supportRevision=0b09b55998eaca30f705ef8fe5ea56314607dfc8
+nvidiaVersion=575.64.05
+status=ready
+
+Synthetic OPEMOS Target  32.0 GB  [eligible]
+Booted installation media  8.0 GB  [recovery-medium]
+Mounted data disk  64.0 GB  [mounted-or-swap-active]</pre>
+      <div class="actions">${button("Back", "home", "secondary")}</div>
+    </div>`;
+}
+
+function rollback() {
+  view.innerHTML = `<div class="panel"><span class="label">Recovery simulation</span><h2>Choose a verified slot</h2><p class="lead">Slot A is the current simulated slot. Slot B contains a structurally matching NVIDIA kernel payload.</p><div class="choices"><button class="disk" data-action="complete"><span><strong>rootfs-B</strong><small>SteamOS 3.8.16 · NVIDIA 575.64.05</small></span><span class="status">Eligible</span></button></div><div class="actions">${button("Back", "home", "secondary")}</div></div>`;
+}
+
+view.addEventListener("click", (event) => {
+  const target = event.target.closest("button");
+  if (!target) return;
+  if (target.dataset.disk) {
+    state.disk = target.dataset.disk;
+    view.querySelectorAll(".disk").forEach((disk) => disk.classList.toggle("selected", disk === target));
+    return;
+  }
+  const actions = {
+    home, "choose-install": () => chooseDisk("install"), "choose-reinstall": () => chooseDisk("reinstall"),
+    "choose-again": () => chooseDisk(state.action), confirm: confirmDisk, begin,
+    diagnostics, rollback, complete: () => { clearInterval(state.timer); home(); },
+  };
+  actions[target.dataset.action]?.();
+});
+
+view.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && event.target.id === "phrase") begin();
+});
+
+home();
