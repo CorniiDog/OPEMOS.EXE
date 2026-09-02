@@ -1,0 +1,19 @@
+title: OPEMOS.EXE
+description: Desktop documentation for building and exporting exact-kernel NVIDIA SteamOS recovery images.
+url: https://corniidog.github.io
+baseurl: /OPEMOS.EXE
+repository: CorniiDog/OPEMOS.EXE
+theme: minima
+markdown: kramdown
+highlighter: rouge
+strict_front_matter: true
+header_pages:
+  - getting-started.md
+  - workflow.md
+  - developer-guide.md
+  - architecture.md
+  - security.md
+  - troubleshooting.md
+exclude:
+  - Gemfile
+  - Gemfile.lock

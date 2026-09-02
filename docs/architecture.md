@@ -1,3 +1,9 @@
+---
+layout: page
+title: Architecture
+description: Host, appliance, image, support-repository, and trust boundaries.
+---
+
 # Architecture and trust boundaries
 
 SteamOS NVIDIA Image Builder is a local desktop workflow. The user supplies an

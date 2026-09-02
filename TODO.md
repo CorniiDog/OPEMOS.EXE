@@ -53,7 +53,7 @@ The project is not yet producing a bootable modified SteamOS image.
 
 * [x] Keep the desktop image-builder application in:
 
-  * `CorniiDog/steamos-nvidia-image-builder`
+  * `CorniiDog/OPEMOS.EXE`
 * [x] Keep SteamOS NVIDIA support/build/install logic in:
 
   * `CorniiDog/OPEMOS`
