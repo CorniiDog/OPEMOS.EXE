@@ -576,6 +576,34 @@ mod tests {
     }
 
     #[test]
+    fn managed_maintainer_worktrees_have_exact_confined_destinations() {
+        let root = Path::new("/private/managed-worktrees");
+        let commit = "a".repeat(40);
+        assert_eq!(
+            managed_maintainer_worktree_destination(
+                root,
+                NVIDIA_SOURCE_REPOSITORY,
+                &commit,
+            )
+            .unwrap(),
+            root.join("CorniiDog--open-gpu-kernel-modules-steamos--aaaaaaaaaaaa")
+        );
+        assert!(managed_maintainer_worktree_destination(
+            root,
+            "unapproved/repository",
+            &commit,
+        )
+        .is_err());
+        assert!(managed_maintainer_worktree_destination(
+            root,
+            NVIDIA_SOURCE_REPOSITORY,
+            "not-a-commit",
+        )
+        .is_err());
+        assert!(!valid_local_branch_name("-option"));
+    }
+
+    #[test]
     fn maintainer_local_commit_rejects_unsafe_messages_and_paths() {
         assert!(validate_local_commit_message("Add guarded local commit flow").is_ok());
         assert!(validate_local_commit_message("").is_err());

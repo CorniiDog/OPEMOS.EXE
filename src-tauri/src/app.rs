@@ -48,6 +48,7 @@ pub fn run() {
             list_nvidia_source_branches,
             list_maintainer_workspace_sources,
             plan_maintainer_workspace,
+            make_maintainer_worktree,
             inspect_maintainer_worktree,
             open_maintainer_worktree_in_vscode,
             review_maintainer_staged_commit,

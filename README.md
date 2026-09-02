@@ -22,6 +22,14 @@ release, and Deck deployment controls remain explicitly disabled until their
 isolated-environment, review, credential, confirmation, and rollback contracts
 are implemented; planning never grants remote-mutation authority.
 
+For immediate local editing, that plan can validate a folder selected by the
+maintainer or create a private managed checkout at the exact re-resolved commit.
+Managed checkouts use an exact approved GitHub origin and a named local branch,
+are published atomically under the application's data directory, and are reused
+without fetching, resetting, deleting edits, or changing remotes. Opening the
+result in VS Code remains a separate action and performs another origin/worktree
+validation first.
+
 When an exact-kernel NVIDIA artifact is built locally and reaches `locally-built-verified`, maintainers who opted in receive a release confirmation naming the repository, tag, pinned support commit, trust classification, and archive hash. “No, keep local” is focused by default. Publication uses the support repository's hash-pinned canonical publisher: Rust cross-checks its dry-run JSON and then invokes only its create-only mode. It refuses to overwrite an existing release and uploads only the NVIDIA archive, checksum, external build-info, and provenance sidecar—never the recovery image or generated SteamOS image.
 
 The main build card also exposes a per-build NVIDIA source selector. `Automatic` remains the default and follows the nearest compatible same-series release; `Latest` explicitly selects the newest available project branch; individual `nvidia/<version>` branches can be selected for controlled testing. An off-by-default setting can additionally expose numeric tags from NVIDIA's official `NVIDIA/open-gpu-kernel-modules` repository in a separate experimental group. Upstream selections require a transient per-build acknowledgement, are re-resolved to an exact tag commit, must have matching Arch Archive userspace inputs before the long build begins, and are never offered to the automated publisher. Every source choice is pinned to an exact commit before the x86_64 build begins.

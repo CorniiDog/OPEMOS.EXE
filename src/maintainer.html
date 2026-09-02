@@ -85,9 +85,12 @@
                     <p class="eyebrow">Local editor target</p>
                     <h2>Select a matching Git worktree</h2>
                 </div>
-                <button id="choose-worktree" class="secondary" type="button">Choose Folder</button>
+                <div class="section-actions">
+                    <button id="choose-worktree" class="secondary" type="button">Choose Folder</button>
+                    <button id="make-worktree" class="secondary" type="button">Make For Me</button>
+                </div>
             </div>
-            <p class="section-copy">The folder must be a worktree root whose GitHub origin matches the verified repository. No checkout or remote is changed.</p>
+            <p class="section-copy">Choose an existing matching worktree, or let the app create a dedicated checkout at the exact verified commit. Existing checkouts, edits, and remotes are never changed.</p>
             <dl class="identity worktree-identity">
                 <div><dt>Folder</dt><dd id="worktree-path">—</dd></div>
                 <div><dt>Branch</dt><dd id="worktree-branch">—</dd></div>

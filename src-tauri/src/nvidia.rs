@@ -902,6 +902,7 @@ pub(crate) fn bounded_git_mutation(
         .arg("-C")
         .arg(path)
         .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {
@@ -1009,6 +1010,210 @@ fn vscode_binary() -> Option<PathBuf> {
             PathBuf::from("/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code");
         candidate.is_file().then_some(candidate)
     })
+}
+
+static MAINTAINER_WORKTREE_SEQUENCE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+pub(crate) fn managed_maintainer_worktree_destination(
+    root: &Path,
+    repository: &str,
+    commit: &str,
+) -> Result<PathBuf, String> {
+    if ![
+        NVIDIA_SOURCE_REPOSITORY,
+        NVIDIA_UPSTREAM_REPOSITORY,
+        GAMESCOPE_SOURCE_REPOSITORY,
+        GAMESCOPE_UPSTREAM_REPOSITORY,
+    ]
+    .contains(&repository)
+        || !valid_git_commit(commit)
+    {
+        return Err("The managed worktree identity is not an approved exact source.".into());
+    }
+    let directory = format!("{}--{}", repository.replace('/', "--"), &commit[..12]);
+    Ok(root.join(directory))
+}
+
+fn managed_maintainer_worktree_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not determine the managed-worktree directory: {error}"))?
+        .join("maintainer-worktrees");
+    fs::create_dir_all(&root)
+        .map_err(|error| format!("Could not create the managed-worktree directory: {error}"))?;
+    let metadata = fs::symlink_metadata(&root)
+        .map_err(|error| format!("Could not inspect the managed-worktree directory: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("The managed-worktree location must be a real directory, not a link.".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if metadata.uid() != unsafe { libc::geteuid() } {
+            return Err("The managed-worktree directory is not owned by the current user.".into());
+        }
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("Could not secure the managed-worktree directory: {error}"))?;
+    }
+    Ok(root)
+}
+
+fn make_maintainer_worktree_blocking(
+    app: tauri::AppHandle,
+    component: String,
+    origin: String,
+    repository: String,
+    reference: String,
+    commit: String,
+) -> Result<MaintainerLocalWorktree, String> {
+    require_maintainer_authorization()?;
+    if !valid_local_branch_name(&reference) || !valid_git_commit(&commit) {
+        return Err("The requested managed checkout has an unsafe Git identity.".into());
+    }
+    let matches = fetch_maintainer_workspace_sources(&nvidia_http_client()?)?
+        .into_iter()
+        .filter(|source| {
+            source.component == component
+                && source.origin == origin
+                && source.repository == repository
+                && source.reference == reference
+                && source.commit == commit
+        })
+        .count();
+    if matches != 1 {
+        return Err("The planned source changed before its managed checkout could be created. Refresh and verify the workspace plan again.".into());
+    }
+
+    let root = managed_maintainer_worktree_root(&app)?;
+    let destination = managed_maintainer_worktree_destination(&root, &repository, &commit)?;
+    match fs::symlink_metadata(&destination) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err("The managed checkout destination is not a real directory.".into());
+            }
+            return inspect_maintainer_worktree_blocking(
+                destination.to_string_lossy().into_owned(),
+                repository,
+            );
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect the managed checkout destination: {error}"
+            ));
+        }
+    }
+
+    let sequence = MAINTAINER_WORKTREE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = root.join(format!(
+        ".creating-{}-{}-{}",
+        std::process::id(),
+        sequence,
+        &commit[..12]
+    ));
+    fs::create_dir(&temporary).map_err(|error| {
+        format!("Could not create the private checkout staging directory: {error}")
+    })?;
+    #[cfg(unix)]
+    if let Err(error) = fs::set_permissions(&temporary, fs::Permissions::from_mode(0o700)) {
+        let _ = fs::remove_dir(&temporary);
+        return Err(format!(
+            "Could not secure the private checkout staging directory: {error}"
+        ));
+    }
+
+    let create = (|| {
+        let git = Path::new("git");
+        bounded_git_mutation(
+            git,
+            &temporary,
+            &["init", "--quiet"],
+            None,
+            Duration::from_secs(15),
+            64 * 1024,
+            "initialize the managed checkout",
+        )?;
+        let remote = format!("https://github.com/{repository}.git");
+        bounded_git_mutation(
+            git,
+            &temporary,
+            &["remote", "add", "origin", &remote],
+            None,
+            Duration::from_secs(15),
+            64 * 1024,
+            "bind the approved origin",
+        )?;
+        let fetch_reference = format!(
+            "refs/{}/{reference}",
+            if origin == "project" { "heads" } else { "tags" }
+        );
+        bounded_git_mutation(
+            git,
+            &temporary,
+            &[
+                "fetch",
+                "--no-tags",
+                "--depth=1",
+                "origin",
+                &fetch_reference,
+            ],
+            None,
+            Duration::from_secs(180),
+            1024 * 1024,
+            "fetch the exact verified source",
+        )?;
+        let fetched = git_output(
+            &temporary,
+            &["rev-parse", "FETCH_HEAD"],
+            "verify the fetched source commit",
+        )?;
+        if !fetched.eq_ignore_ascii_case(&commit) {
+            return Err("The fetched reference no longer identifies the verified commit.".into());
+        }
+        bounded_git_mutation(
+            git,
+            &temporary,
+            &["checkout", "--quiet", "-b", &reference, &commit],
+            None,
+            Duration::from_secs(30),
+            1024 * 1024,
+            "create the exact managed branch",
+        )?;
+        fs::rename(&temporary, &destination).map_err(|error| {
+            format!("Could not publish the managed checkout atomically: {error}")
+        })?;
+        Ok::<(), String>(())
+    })();
+    if let Err(error) = create {
+        let _ = fs::remove_dir_all(&temporary);
+        return Err(error);
+    }
+    let worktree = inspect_maintainer_worktree_blocking(
+        destination.to_string_lossy().into_owned(),
+        repository,
+    )?;
+    if worktree.head != commit || worktree.branch.as_deref() != Some(reference.as_str()) {
+        return Err("The new managed checkout does not match the verified source identity.".into());
+    }
+    Ok(worktree)
+}
+
+#[tauri::command]
+pub(crate) async fn make_maintainer_worktree(
+    app: tauri::AppHandle,
+    component: String,
+    origin: String,
+    repository: String,
+    reference: String,
+    commit: String,
+) -> Result<MaintainerLocalWorktree, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        make_maintainer_worktree_blocking(app, component, origin, repository, reference, commit)
+    })
+    .await
+    .map_err(|error| format!("Managed maintainer-worktree worker failed: {error}"))?
 }
 
 fn inspect_maintainer_worktree_blocking(

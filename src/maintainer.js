@@ -12,7 +12,7 @@ const elements = {
   message: $("#workspace-message"), planTitle: $("#plan-title"), planStatus: $("#plan-status"),
   planId: $("#plan-id"), architecture: $("#architecture"), isolation: $("#isolation"),
   remoteMutation: $("#remote-mutation"), worktreeCard: $("#local-worktree-card"),
-  chooseWorktree: $("#choose-worktree"), worktreePath: $("#worktree-path"),
+  chooseWorktree: $("#choose-worktree"), makeWorktree: $("#make-worktree"), worktreePath: $("#worktree-path"),
   worktreeBranch: $("#worktree-branch"), worktreeHead: $("#worktree-head"),
   worktreeChanges: $("#worktree-changes"), openVscode: $("#open-vscode"),
   worktreeMessage: $("#worktree-message"),
@@ -29,6 +29,7 @@ const elements = {
 let sources = [];
 let loading = false;
 let plannedRepository = null;
+let plannedSource = null;
 let localWorktree = null;
 let commitReview = null;
 let branchReview = null;
@@ -72,6 +73,7 @@ function renderSelection() {
 function resetPlan() {
   workspaceGeneration += 1;
   plannedRepository = null;
+  plannedSource = null;
   localWorktree = null;
   commitReview = null;
   branchReview = null;
@@ -100,6 +102,7 @@ function setWorkspaceMutationPending(pending) {
   elements.origin.disabled = pending || !sources.length;
   elements.referenceSelect.disabled = pending || !sources.length;
   elements.chooseWorktree.disabled = pending;
+  elements.makeWorktree.disabled = pending;
   elements.openVscode.disabled = pending || !localWorktree?.vscodeAvailable;
   elements.commitMessage.disabled = pending;
   elements.reviewStaged.disabled = pending || !localWorktree || !elements.commitMessage.value.trim();
@@ -177,6 +180,13 @@ elements.planButton.addEventListener("click", async () => {
     elements.isolation.textContent = plan.isolation.replaceAll("-", " ");
     elements.remoteMutation.textContent = plan.remoteMutationAllowed ? "Allowed" : "Blocked pending confirmation";
     plannedRepository = plan.repository;
+    plannedSource = {
+      component: plan.component,
+      origin: plan.origin,
+      repository: plan.repository,
+      reference: plan.reference,
+      commit: plan.commit,
+    };
     elements.worktreeCard.classList.remove("hidden");
     elements.message.textContent = plan.message;
   } catch (error) {
@@ -239,6 +249,30 @@ elements.chooseWorktree.addEventListener("click", async () => {
     if (generation !== workspaceGeneration) return;
     elements.worktreeMessage.textContent = String(error);
     elements.worktreeMessage.className = "message error";
+  }
+});
+
+elements.makeWorktree.addEventListener("click", async () => {
+  if (!plannedSource) return;
+  const source = { ...plannedSource };
+  const generation = workspaceGeneration;
+  setWorkspaceMutationPending(true);
+  elements.worktreeMessage.textContent = "Creating or reopening a dedicated checkout at the exact verified commit…";
+  elements.worktreeMessage.className = "message";
+  try {
+    const worktree = await invoke("make_maintainer_worktree", source);
+    if (generation !== workspaceGeneration
+      || JSON.stringify(source) !== JSON.stringify(plannedSource)) return;
+    renderWorktree(worktree);
+    elements.worktreeMessage.textContent = worktree.vscodeAvailable
+      ? "Managed local target is ready. VS Code can reuse its current window for this worktree."
+      : "Managed local target is ready, but the VS Code command-line launcher was not found.";
+  } catch (error) {
+    if (generation !== workspaceGeneration) return;
+    elements.worktreeMessage.textContent = String(error);
+    elements.worktreeMessage.className = "message error";
+  } finally {
+    setWorkspaceMutationPending(false);
   }
 });
 
