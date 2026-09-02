@@ -101,6 +101,21 @@ test("terminal failure summaries retain the root cause without progress protocol
   assert.doesNotMatch(buildDiagnosticLog(log), /STEAMOS_NVIDIA_PROGRESS/);
 });
 
+test("support contract failures outrank unrelated appliance cleanup output", () => {
+  const log = [
+    "[OPEMOS] Offline-root NVIDIA inputs validated without mutation.",
+    "installer contract rejected: progress record regressed",
+    ">>> ==> Updating trust database...",
+  ].join("\n");
+  assert.equal(
+    summarizeBuildFailure(
+      "NVIDIA appliance command exited with exit status: 1: >>> ==> Updating trust database...",
+      log,
+    ),
+    "Pinned support installer contract failed: progress record regressed. No image mutation was accepted; update the support bundle and retry.",
+  );
+});
+
 test("progress-window diagnostics remain in the fixed log toolbar", async () => {
   const [html, css, script] = await Promise.all([
     readFile(new URL("../src/build.html", import.meta.url), "utf8"),

@@ -122,6 +122,11 @@ export function stripInstallerProgressProtocol(value) {
 
 export function summarizeBuildFailure(rawError, rawLog = "") {
   const log = stripInstallerProgressProtocol(rawLog);
+  const contractMatches = [...log.matchAll(/^installer contract rejected:\s*([^\n]+)$/gm)];
+  if (contractMatches.length) {
+    const reason = contractMatches.at(-1)[1].trim().replace(/[.]+$/, "");
+    return `Pinned support installer contract failed: ${reason}. No image mutation was accepted; update the support bundle and retry.`;
+  }
   const safetyMatches = [...log.matchAll(/snapshot_target_execution\.py:\s*([^\n]+)/g)];
   if (safetyMatches.length) {
     const reason = safetyMatches.at(-1)[1].trim().replace(/[.]+$/, "");

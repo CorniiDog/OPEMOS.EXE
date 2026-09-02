@@ -3658,6 +3658,14 @@ pub(crate) fn guest_command_failure_detail(bytes: &[u8]) -> String {
 
     let start = bytes.len().saturating_sub(TAIL_BYTES);
     let tail = String::from_utf8_lossy(&bytes[start..]);
+    let contract_failure = tail
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| line.starts_with("installer contract rejected:"));
+    if let Some(failure) = contract_failure {
+        return failure.chars().take(MAX_DETAIL_CHARACTERS).collect();
+    }
     let mut lines = Vec::new();
     for line in tail.lines() {
         let line = line.trim();

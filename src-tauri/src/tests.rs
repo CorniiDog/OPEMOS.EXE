@@ -17,6 +17,15 @@ mod tests {
     }
 
     #[test]
+    fn guest_failure_details_prioritize_support_contract_rejections() {
+        let log = "[OPEMOS] Offline-root NVIDIA inputs validated without mutation.\ninstaller contract rejected: progress record regressed\n>>> ==> Updating trust database...\n";
+        assert_eq!(
+            guest_command_failure_detail(log.as_bytes()),
+            "installer contract rejected: progress record regressed"
+        );
+    }
+
+    #[test]
     fn final_grub_validator_is_portable_and_rejects_duplicate_arguments() {
         let run = |grub: &str| {
             let mut child = std::process::Command::new("awk")
