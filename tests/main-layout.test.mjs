@@ -25,13 +25,14 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(script, /exportImage\.addEventListener\("change", renderExportMode\)/);
   assert.match(script, /if \(currentImage\) elements\.refreshUsbTargets\.click\(\);/);
   assert.match(html, /id="usb-target" size="3" disabled[^>]*><\/select>/);
-  assert.match(html, /id="usb-target-detail"[\s\S]*id="clear-usb-target"/);
+  assert.match(html, /id="usb-target-detail"[\s\S]*class="usb-picker-actions"[\s\S]*id="clear-usb-target"[\s\S]*id="refresh-usb-targets"/);
   assert.doesNotMatch(script, /Select a removable drive for review/);
   assert.match(script, /elements\.usbTarget\.selectedIndex = -1/);
   assert.match(script, /elements\.clearUsbTarget\.addEventListener\("click"/);
   assert.doesNotMatch(html, /id="export-mode"/);
   assert.match(css, /\.usb-picker select::\-webkit-scrollbar\s*\{[^}]*width:\s*5px;[^}]*background:\s*transparent;/);
   assert.match(css, /\.usb-picker select::\-webkit-scrollbar-track,[\s\S]*\.usb-picker select::\-webkit-scrollbar-corner\s*\{[^}]*background:\s*transparent !important;/);
+  assert.match(css, /\.usb-picker-actions\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;/);
 });
 
 test("main macOS chrome stays slim and settings begin below it", () => {

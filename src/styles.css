@@ -285,6 +285,7 @@ footer p { color: #aab4c5; }
 .usb-picker-heading .secondary { flex: none; padding: 6px 10px; font-size: 11px; }
 .usb-detail-line { margin-top: 2px; display: flex; align-items: baseline; gap: 7px; }
 .usb-detail-line small { min-width: 0; margin: 0; }
+.usb-picker-actions { flex: none; display: flex; align-items: center; gap: 9px; }
 .usb-clear {
   flex: none;
   padding: 0;
@@ -297,6 +298,7 @@ footer p { color: #aab4c5; }
   text-decoration: underline;
   text-decoration-color: rgba(159, 201, 225, .42);
   text-underline-offset: 2px;
+  line-height: 1;
 }
 .usb-clear:hover { color: #dff5ff; }
 .usb-picker select { width: 100% !important; min-height: 64px; padding: 4px; }
