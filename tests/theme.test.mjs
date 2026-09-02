@@ -46,6 +46,13 @@ test("preload and native window backgrounds preserve translucent dark fallback",
   assert.deepEqual(main.windowEffects.effects, ["underWindowBackground", "acrylic"]);
   assert.equal(main.windowEffects.radius, 10);
   assert.deepEqual(main.windowEffects.color, [11, 17, 24, 220]);
+  assert.deepEqual(config.bundle.icon, [
+    "icons/32x32.png",
+    "icons/128x128.png",
+    "icons/128x128@2x.png",
+    "icons/icon.icns",
+    "icons/icon.ico",
+  ]);
 
   const windows = await readFile(new URL("../src-tauri/src/windows.rs", import.meta.url), "utf8");
   assert.equal([...windows.matchAll(/\.transparent\(true\)/g)].length, 2);
