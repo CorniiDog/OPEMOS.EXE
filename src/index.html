@@ -18,6 +18,7 @@
         rel="stylesheet"
         href="/styles.css"
     >
+    <link rel="stylesheet" href="/window-chrome.css">
 </head>
 
 <body>
@@ -271,13 +272,14 @@
                         <div class="usb-picker-heading">
                             <span>
                                 <strong>Optional USB destination</strong>
-                                <small id="usb-target-detail">Connect a removable drive, then refresh the list.</small>
+                                <span class="usb-detail-line">
+                                    <small id="usb-target-detail">Connect a removable drive, then refresh the list.</small>
+                                    <button id="clear-usb-target" class="usb-clear hidden" type="button">Clear</button>
+                                </span>
                             </span>
                             <button id="refresh-usb-targets" class="secondary" type="button">Refresh Drives</button>
                         </div>
-                        <select id="usb-target" size="3" disabled aria-label="Detected removable USB drives">
-                            <option value="">No removable drives loaded</option>
-                        </select>
+                        <select id="usb-target" size="3" disabled aria-label="Detected removable USB drives"></select>
                         <p id="usb-picker-message" class="usb-picker-message">No USB drive will be written unless one is selected.</p>
                     </div>
                     <button id="review-usb-target" class="secondary hidden" type="button">Review &amp; Write Selected USB…</button>

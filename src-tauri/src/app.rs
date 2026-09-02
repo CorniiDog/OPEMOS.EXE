@@ -86,6 +86,7 @@ pub fn run() {
             stop_nvidia_build_appliance,
             validate_image,
             preview_image_output,
+            inspect_completed_nvidia_image,
             inspect_usb_targets,
             inspect_usb_targets_for_build,
             arm_usb_write_preflight,

@@ -1124,6 +1124,92 @@ esac
     }
 
     #[test]
+    fn completed_nvidia_image_requires_exact_manifest_bound_success() {
+        struct TemporaryCompletedDirectory(PathBuf);
+        impl Drop for TemporaryCompletedDirectory {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TemporaryCompletedDirectory(std::env::temp_dir().join(format!(
+            "steamos-completed-image-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        )));
+        fs::create_dir(&root.0).expect("create completed-image fixture");
+        let image = root.0.join("completed-nvidia.img");
+        let payload = vec![0x5a_u8; 4096];
+        fs::write(&image, &payload).expect("write completed image fixture");
+        assert!(completed_nvidia_image_from_path(image.to_str().unwrap())
+            .expect("an ordinary image is not a completed output")
+            .is_none());
+
+        let sha256 = format!("{:x}", Sha256::digest(&payload));
+        let mut manifest = serde_json::json!({
+            "schemaVersion": 1,
+            "resultClass": "nvidia-mutation-valid",
+            "input": {"sourceSha256": "b".repeat(64)},
+            "output": {
+                "filename": "completed-nvidia.img",
+                "format": "raw",
+                "bytes": payload.len(),
+                "sha256": sha256
+            },
+            "steamos": {"layoutScheme": "valve-recovery-a"},
+            "validation": {
+                "passed": true,
+                "sourceUnchanged": true,
+                "candidateAttachedReadOnly": true,
+                "layoutRecognized": true,
+                "markerVerified": true,
+                "nvidiaPayloadVerified": true
+            },
+            "integration": {
+                "milestone": "nvidia-offline-installed",
+                "nvidia": {
+                    "status": "success",
+                    "phase": "complete",
+                    "reason": "install_complete",
+                    "mountsReleased": true,
+                    "compressionPolicyRestored": true
+                }
+            }
+        });
+        let manifest_path = manifest_path_for_output(&image);
+        let write_manifest = |value: &serde_json::Value| {
+            fs::write(
+                &manifest_path,
+                serde_json::to_vec(value).expect("serialize completed-image manifest"),
+            )
+            .expect("write completed-image manifest");
+        };
+        write_manifest(&manifest);
+        let completed = completed_nvidia_image_from_path(image.to_str().unwrap())
+            .expect("validate completed output")
+            .expect("recognize completed output");
+        assert_eq!(
+            completed.path,
+            fs::canonicalize(&image)
+                .expect("canonical completed image")
+                .to_string_lossy()
+        );
+        assert_eq!(completed.sha256, sha256);
+        assert_eq!(completed.layout_scheme, "valve-recovery-a");
+
+        manifest["validation"]["nvidiaPayloadVerified"] = serde_json::json!(false);
+        write_manifest(&manifest);
+        assert!(completed_nvidia_image_from_path(image.to_str().unwrap()).is_err());
+
+        manifest["validation"]["nvidiaPayloadVerified"] = serde_json::json!(true);
+        manifest["resultClass"] = serde_json::json!("marker-only");
+        write_manifest(&manifest);
+        assert!(completed_nvidia_image_from_path(image.to_str().unwrap()).is_err());
+    }
+
+    #[test]
     fn usb_write_intent_binds_phrase_device_capacity_and_identity() {
         let target = UsbTargetCandidate {
             device_identifier: "disk7".into(),

@@ -4,6 +4,7 @@ import test from "node:test";
 
 const html = await readFile(new URL("../src/maintainer.html", import.meta.url), "utf8");
 const css = await readFile(new URL("../src/maintainer.css", import.meta.url), "utf8");
+const chromeCss = await readFile(new URL("../src/window-chrome.css", import.meta.url), "utf8");
 
 test("maintainer scrolling stays inside an inset content viewport", () => {
   assert.match(css, /html, body\s*\{[^}]*height:\s*100%;[^}]*overflow:\s*hidden;/);
@@ -16,6 +17,8 @@ test("maintainer scrolling stays inside an inset content viewport", () => {
 
 test("macOS keeps a visible drag rail outside the scrolling viewport", () => {
   assert.match(html, /class="window-drag-region" data-tauri-drag-region aria-hidden="true"><\/div>/);
-  assert.match(css, /\.platform-macos \.window-drag-region\s*\{[^}]*position:\s*fixed;[^}]*height:\s*38px;/);
-  assert.match(css, /\.platform-macos \.window-drag-region::after\s*\{[^}]*position:\s*fixed;[^}]*right:\s*0;[^}]*left:\s*0;[^}]*height:\s*1px;/);
+  assert.match(html, /href="\/window-chrome\.css"/);
+  assert.match(chromeCss, /\.platform-macos \.window-drag-region\s*\{[^}]*position:\s*fixed;[^}]*height:\s*var\(--window-chrome-height\)/);
+  assert.match(chromeCss, /\.platform-macos \.window-drag-region::after\s*\{[^}]*position:\s*fixed;[^}]*right:\s*0;[^}]*left:\s*0;[^}]*height:\s*1px;/);
+  assert.match(css, /html\.platform-macos\s*\{\s*--window-chrome-drag-right:\s*0;/);
 });

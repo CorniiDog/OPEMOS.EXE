@@ -2256,6 +2256,13 @@ fn revalidate_usb_target(
 pub(crate) fn validate_usb_image_identity(
     image_path: &str,
 ) -> Result<(PathBuf, u64, String), String> {
+    let (image, image_bytes, image_sha256, _) = validated_usb_image_manifest(image_path)?;
+    Ok((image, image_bytes, image_sha256))
+}
+
+fn validated_usb_image_manifest(
+    image_path: &str,
+) -> Result<(PathBuf, u64, String, serde_json::Value), String> {
     let image = fs::canonicalize(image_path)
         .map_err(|error| format!("Could not resolve the completed image: {error}"))?;
     if image.extension().and_then(|value| value.to_str()) != Some("img") {
@@ -2307,7 +2314,101 @@ pub(crate) fn validate_usb_image_identity(
     if !actual_sha256.eq_ignore_ascii_case(sha256) {
         return Err("The completed image changed after its build manifest was written.".into());
     }
-    Ok((image, metadata.len(), actual_sha256))
+    Ok((image, metadata.len(), actual_sha256, manifest))
+}
+
+pub(crate) fn completed_nvidia_image_from_path(
+    image_path: &str,
+) -> Result<Option<ExportedImage>, String> {
+    let canonical = fs::canonicalize(image_path)
+        .map_err(|error| format!("Could not resolve the selected image: {error}"))?;
+    let manifest_path = manifest_path_for_output(&canonical);
+    if !manifest_path.exists() {
+        return Ok(None);
+    }
+    let (image, bytes, sha256, manifest) = validated_usb_image_manifest(image_path)?;
+    let validation = manifest
+        .get("validation")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("The adjacent build manifest has no validation record.")?;
+    for field in [
+        "passed",
+        "sourceUnchanged",
+        "candidateAttachedReadOnly",
+        "layoutRecognized",
+        "markerVerified",
+        "nvidiaPayloadVerified",
+    ] {
+        if validation.get(field).and_then(serde_json::Value::as_bool) != Some(true) {
+            return Err(format!(
+                "The adjacent build manifest does not confirm {field}."
+            ));
+        }
+    }
+    let integration = manifest
+        .get("integration")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("The adjacent build manifest has no integration record.")?;
+    let nvidia = integration
+        .get("nvidia")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("The adjacent build manifest has no NVIDIA installation result.")?;
+    if manifest
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+        || manifest
+            .get("resultClass")
+            .and_then(serde_json::Value::as_str)
+            != Some("nvidia-mutation-valid")
+        || integration
+            .get("milestone")
+            .and_then(serde_json::Value::as_str)
+            != Some("nvidia-offline-installed")
+        || nvidia.get("status").and_then(serde_json::Value::as_str) != Some("success")
+        || nvidia.get("phase").and_then(serde_json::Value::as_str) != Some("complete")
+        || nvidia.get("reason").and_then(serde_json::Value::as_str) != Some("install_complete")
+        || nvidia
+            .get("mountsReleased")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        || nvidia
+            .get("compressionPolicyRestored")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+    {
+        return Err(
+            "The adjacent build manifest is not a completed NVIDIA mutation result.".into(),
+        );
+    }
+    let source_sha256 = manifest
+        .pointer("/input/sourceSha256")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or("The adjacent build manifest has an invalid source-image identity.")?;
+    let layout_scheme = manifest
+        .pointer("/steamos/layoutScheme")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| *value == "valve-recovery-a")
+        .ok_or("The adjacent build manifest has an unsupported SteamOS layout identity.")?;
+    Ok(Some(ExportedImage {
+        path: image.to_string_lossy().into_owned(),
+        manifest_path: manifest_path.to_string_lossy().into_owned(),
+        bytes,
+        sha256,
+        source_sha256: source_sha256.to_ascii_lowercase(),
+        layout_scheme: layout_scheme.into(),
+        marker_path: "/etc/steamos-nvidia-image-builder-test".into(),
+    }))
+}
+
+#[tauri::command]
+pub(crate) async fn inspect_completed_nvidia_image(
+    path: String,
+) -> Result<Option<ExportedImage>, String> {
+    tauri::async_runtime::spawn_blocking(move || completed_nvidia_image_from_path(&path))
+        .await
+        .map_err(|error| format!("Completed-image inspection worker failed: {error}"))?
 }
 
 pub(crate) fn validate_usb_write_intent(

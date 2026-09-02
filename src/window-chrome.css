@@ -1,0 +1,30 @@
+:root {
+  --window-chrome-drag-right: 64px;
+  --window-chrome-height: 38px;
+  --window-chrome-line: 37px;
+}
+
+.window-drag-region { display: none; }
+
+.platform-macos .window-drag-region {
+  display: block;
+  position: fixed;
+  z-index: 95;
+  top: 0;
+  right: var(--window-chrome-drag-right);
+  left: 76px;
+  height: var(--window-chrome-height);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.platform-macos .window-drag-region::after {
+  content: "";
+  position: fixed;
+  top: var(--window-chrome-line);
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: rgba(174, 207, 225, .22);
+  pointer-events: none;
+}

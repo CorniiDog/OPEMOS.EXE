@@ -4,6 +4,7 @@ import test from "node:test";
 
 const html = await readFile(new URL("../src/index.html", import.meta.url), "utf8");
 const css = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+const chromeCss = await readFile(new URL("../src/window-chrome.css", import.meta.url), "utf8");
 const script = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
@@ -23,15 +24,29 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(script, /function selectedExportMode\(\)[\s\S]*if \(image && usb\) return "both";/);
   assert.match(script, /exportImage\.addEventListener\("change", renderExportMode\)/);
   assert.match(script, /if \(currentImage\) elements\.refreshUsbTargets\.click\(\);/);
+  assert.match(html, /id="usb-target" size="3" disabled[^>]*><\/select>/);
+  assert.match(html, /id="usb-target-detail"[\s\S]*id="clear-usb-target"/);
+  assert.doesNotMatch(script, /Select a removable drive for review/);
+  assert.match(script, /elements\.usbTarget\.selectedIndex = -1/);
+  assert.match(script, /elements\.clearUsbTarget\.addEventListener\("click"/);
   assert.doesNotMatch(html, /id="export-mode"/);
   assert.match(css, /\.usb-picker select::\-webkit-scrollbar\s*\{[^}]*width:\s*5px;[^}]*background:\s*transparent;/);
   assert.match(css, /\.usb-picker select::\-webkit-scrollbar-track,[\s\S]*\.usb-picker select::\-webkit-scrollbar-corner\s*\{[^}]*background:\s*transparent !important;/);
 });
 
 test("main macOS chrome stays slim and settings begin below it", () => {
-  assert.match(css, /\.platform-macos \.window-drag-region\s*\{[^}]*height:\s*32px;/);
-  assert.match(css, /\.platform-macos \.app-shell\s*\{[^}]*padding:\s*44px 0 8px;/);
+  assert.match(html, /href="\/window-chrome\.css"/);
+  assert.match(chromeCss, /--window-chrome-height:\s*38px/);
+  assert.match(chromeCss, /--window-chrome-line:\s*37px/);
+  assert.match(css, /\.platform-macos \.app-shell\s*\{[^}]*padding:\s*50px 0 8px;/);
   assert.match(css, /\.settings-panel\s*\{[^}]*top:\s*44px;[^}]*max-height:\s*calc\(100vh - 56px\);/);
+});
+
+test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () => {
+  assert.match(script, /invoke\("inspect_completed_nvidia_image", \{ path: info\.path \}\)/);
+  assert.match(script, /function applyCompletedOutput\(output, imported = false\)/);
+  assert.match(script, /Boolean\(completedOutput\) \|\| buildRunning/);
+  assert.match(css, /\.build-card\.completed-output-selected \.build-side-column,[\s\S]*#build-button\s*\{\s*display:\s*none;/);
 });
 
 test("builder readiness expands while no image has been selected", () => {

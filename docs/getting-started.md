@@ -71,5 +71,11 @@ before writing, OPEMOS.EXE revalidates identity and capacity, requires the exact
 authorized raw-device descriptor, reads the written range back, verifies its
 SHA-256, and ejects it.
 
+A finalized `-nvidia.img` may be dropped into the application again when its
+adjacent `.manifest.json` remains beside it. OPEMOS.EXE rehashes the image and
+requires the manifest's complete NVIDIA-mutation and independent-validation
+result before offering USB export. It never starts the builder merely because a
+filename ends in `-nvidia.img`.
+
 The GUI must not run as root. Virtual and internal disks remain ineligible even
 though the copy engine is tested against disposable virtual media.

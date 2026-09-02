@@ -123,7 +123,10 @@ test("progress-window diagnostics remain in the fixed log toolbar", async () => 
 
 test("progress-window title starts below the macOS separator", async () => {
   const css = await readFile(new URL("../src/build.css", import.meta.url), "utf8");
-  assert.match(css, /\.platform-macos \.window-drag-region::after\s*\{[^}]*top:\s*37px;/);
+  const chromeCss = await readFile(new URL("../src/window-chrome.css", import.meta.url), "utf8");
+  const html = await readFile(new URL("../src/build.html", import.meta.url), "utf8");
+  assert.match(html, /href="\/window-chrome\.css"/);
+  assert.match(chromeCss, /--window-chrome-line:\s*37px/);
   assert.match(css, /\.platform-macos \.progress-shell\s*\{[^}]*padding-top:\s*50px;/);
 });
 

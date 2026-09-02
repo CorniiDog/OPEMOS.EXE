@@ -6,6 +6,11 @@ const cssFiles = ["styles.css", "build.css", "maintainer.css"];
 const htmlFiles = ["index.html", "build.html", "maintainer.html"];
 
 test("every application surface shares the Steam glass material tokens", async () => {
+  const chromeCss = await readFile(new URL("../src/window-chrome.css", import.meta.url), "utf8");
+  assert.match(chromeCss, /--window-chrome-height:\s*38px;/);
+  assert.match(chromeCss, /--window-chrome-line:\s*37px;/);
+  assert.match(chromeCss, /\.platform-macos \.window-drag-region\s*\{[^}]*height:\s*var\(--window-chrome-height\);/);
+  assert.match(chromeCss, /\.platform-macos \.window-drag-region::after\s*\{[^}]*position:\s*fixed;[^}]*right:\s*0;[^}]*left:\s*0;[^}]*height:\s*1px;[^}]*background:\s*rgba\(174, 207, 225, \.22\);/);
   for (const name of cssFiles) {
     const css = await readFile(new URL(`../src/${name}`, import.meta.url), "utf8");
     assert.match(css, /--steam-blue:\s*#1a9fff;/, `${name} is missing the Steam accent`);
@@ -14,9 +19,6 @@ test("every application surface shares the Steam glass material tokens", async (
     assert.match(css, /body::after[\s\S]*linear-gradient\(to left, rgba\(118, 185, 0, \.08\), transparent 8%\)/, `${name} is missing the diffuse NVIDIA edge glare`);
     assert.match(css, /body::after[\s\S]*inset 0 0 0 1px rgba\(220, 239, 249, \.12\)/, `${name} is missing the refractive glass rim`);
     assert.match(css, /\.platform-macos body\s*\{[^}]*backdrop-filter:\s*blur\(24px\)/, `${name} is missing macOS frosted blur`);
-    const expectedDragHeight = name === "styles.css" ? "32px" : "38px";
-    assert.match(css, new RegExp(`\\.platform-macos \\.window-drag-region\\s*\\{[^}]*height:\\s*${expectedDragHeight};`), `${name} is missing the dedicated macOS drag strip`);
-    assert.match(css, /\.platform-macos \.window-drag-region::after\s*\{[^}]*position:\s*fixed;[^}]*right:\s*0;[^}]*left:\s*0;[^}]*height:\s*1px;[^}]*background:\s*rgba\(174, 207, 225, \.22\);/, `${name} is missing the full-width glass separator`);
     assert.match(css, /\.platform-macos body\s*\{[^}]*contain:\s*paint;[^}]*clip-path:\s*inset\(0 round 10px\);/, `${name} can composite beyond the rounded window silhouette`);
     assert.doesNotMatch(css, /body::before[\s\S]{0,160}border:/, `${name} still draws the rejected inset window border`);
     assert.doesNotMatch(css, /--brand-gradient/, `${name} still uses the rejected full-surface gradient`);
@@ -30,6 +32,7 @@ test("preload and native window backgrounds preserve translucent dark fallback",
     assert.match(html, /navigator\.platform\.startsWith\("Mac"\).*navigator\.userAgent\.includes\("Macintosh"\)/, `${name} cannot detect macOS robustly`);
     assert.match(html, /<header[^>]*data-tauri-drag-region/, `${name} cannot drag its overlay title bar`);
     assert.match(html, /class="window-drag-region" data-tauri-drag-region/, `${name} is missing its top-edge drag target`);
+    assert.match(html, /href="\/window-chrome\.css"/, `${name} does not load the shared window chrome`);
   }
 
   const config = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));

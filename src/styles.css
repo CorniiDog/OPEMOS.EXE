@@ -34,26 +34,6 @@ body {
   background: radial-gradient(circle at 10% -8%, rgba(102, 192, 244, .16), transparent 31rem), var(--glass-canvas);
 }
 .platform-macos body { contain: paint; clip-path: inset(0 round 10px); -webkit-backdrop-filter: blur(24px) saturate(135%); backdrop-filter: blur(24px) saturate(135%); }
-.window-drag-region { display: none; }
-.platform-macos .window-drag-region {
-  display: block;
-  position: fixed;
-  z-index: 85;
-  top: 0;
-  right: 64px;
-  left: 76px;
-  height: 32px;
-}
-.platform-macos .window-drag-region::after {
-  content: "";
-  position: fixed;
-  top: 31px;
-  right: 0;
-  left: 0;
-  height: 1px;
-  background: rgba(174, 207, 225, .22);
-  pointer-events: none;
-}
 body::before,
 body::after { content: ""; position: fixed; pointer-events: none; }
 body::before {
@@ -110,7 +90,7 @@ body.companion-active .window-drag-region { pointer-events: none; }
   flex-direction: column;
   gap: 10px;
 }
-.platform-macos .app-shell { padding: 44px 0 8px; gap: 8px; }
+.platform-macos .app-shell { padding: 50px 0 8px; gap: 8px; }
 
 .app-shell > * { flex: none; }
 .app-shell > header { padding: 0 2px; }
@@ -303,6 +283,22 @@ footer p { color: #aab4c5; }
 .usb-picker-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .usb-picker-heading > span { min-width: 0; }
 .usb-picker-heading .secondary { flex: none; padding: 6px 10px; font-size: 11px; }
+.usb-detail-line { margin-top: 2px; display: flex; align-items: baseline; gap: 7px; }
+.usb-detail-line small { min-width: 0; margin: 0; }
+.usb-clear {
+  flex: none;
+  padding: 0;
+  border: 0;
+  color: #9fc9e1;
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: rgba(159, 201, 225, .42);
+  text-underline-offset: 2px;
+}
+.usb-clear:hover { color: #dff5ff; }
 .usb-picker select { width: 100% !important; min-height: 64px; padding: 4px; }
 .usb-picker select {
   scrollbar-color: rgba(142, 172, 192, .48) transparent;
@@ -322,6 +318,9 @@ footer p { color: #aab4c5; }
 .usb-picker select::-webkit-scrollbar-thumb:hover { background: rgba(174, 203, 221, .58); background-clip: padding-box; }
 .usb-picker-message { min-height: 15px; margin: 0; color: #8490a3; font-size: 10px; line-height: 1.35; }
 #review-usb-target { width: 100%; margin-top: 1px; }
+.build-card.completed-output-selected .build-options-grid { grid-template-columns: minmax(0, 1fr); }
+.build-card.completed-output-selected .build-side-column,
+.build-card.completed-output-selected #build-button { display: none; }
 .source-choice { margin-bottom: 9px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .source-choice span { min-width: 0; }
 .source-choice strong { display: block; font-size: 14px; }
