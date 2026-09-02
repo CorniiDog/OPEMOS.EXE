@@ -2,9 +2,12 @@
   <title id="title">Gaming-ready graphics</title>
   <desc id="desc">A game controller rests in front of a display with blue and green graphics.</desc>
   <defs><linearGradient id="g" x1="0" x2="1"><stop stop-color="#57c4fb"/><stop offset="1" stop-color="#78da70"/></linearGradient></defs>
-  <rect x="95" y="48" width="330" height="205" rx="25" fill="#0b202c" stroke="url(#g)" stroke-width="4"/>
-  <path d="M121 219c67-94 118 15 180-66 34-44 65-34 98-65v139H121z" fill="url(#g)" opacity=".28"/>
-  <path d="M169 309c-25 0-43-20-36-44l17-57c6-20 24-34 45-34h130c21 0 39 14 45 34l17 57c7 24-11 44-36 44-16 0-28-8-41-25l-14-18h-72l-14 18c-13 17-25 25-41 25z" fill="#193747" stroke="url(#g)" stroke-width="4"/>
-  <path d="M203 214v48m-24-24h48" stroke="#ecfaff" stroke-width="11" stroke-linecap="round"/>
-  <circle cx="322" cy="222" r="9" fill="#78da70"/><circle cx="342" cy="243" r="9" fill="#57c4fb"/>
+  <rect x="94" y="46" width="332" height="208" rx="24" fill="#0b202c" stroke="url(#g)" stroke-width="4"/>
+  <path d="M120 215 190 145l52 42 80-82 78 62v60H120z" fill="url(#g)" opacity=".24"/>
+  <path d="M169 310c-25 0-43-20-36-44l17-57c6-20 24-34 45-34h130c21 0 39 14 45 34l17 57c7 24-11 44-36 44-16 0-28-8-41-25l-14-18h-72l-14 18c-13 17-25 25-41 25z" fill="#193747" stroke="url(#g)" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M203 212v50m-25-25h50" stroke="#ecfaff" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="330" cy="222" r="8" fill="#78da70"/>
+  <circle cx="350" cy="242" r="8" fill="#57c4fb"/>
+  <circle cx="310" cy="242" r="8" fill="#57c4fb"/>
+  <circle cx="330" cy="262" r="8" fill="#78da70"/>
 </svg>

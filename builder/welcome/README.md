@@ -47,6 +47,9 @@ After Valve's operation returns, the helper installs the immutable support
 snapshot into both target root slots and independently verifies the persistent
 recovery scripts, services, symlinks, support revision, and NVIDIA version in
 each slot before reporting success.
+Successful installation ends with an explicit Shut Down, Restart, or Stay Here
+choice. Shut Down is recommended; restart copy explains when to remove the USB
+or use the firmware boot menu so the machine does not loop back into recovery.
 
 ## Safe macOS graphical preview
 

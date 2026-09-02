@@ -42,6 +42,9 @@ test("preview covers the welcome workflow and clearly labels synthetic state", (
   assert.match(javascript, /ERASE/);
   assert.match(javascript, /REINSTALL/);
   assert.match(javascript, /event\.key === "Enter"/);
+  assert.match(javascript, /Shut Down is recommended/);
+  assert.match(javascript, /simulate-restart/);
+  assert.match(javascript, /simulate-shutdown/);
   assert.match(javascript, /assets\/install\.svg/);
   assert.match(javascript, /assets\/recovery\.svg/);
   assert.match(javascript, /assets\/gaming\.svg/);
@@ -52,5 +55,6 @@ test("preview covers the welcome workflow and clearly labels synthetic state", (
     assert.match(illustration, /<title id="title">[^<]+<\/title>/);
     assert.match(illustration, /<desc id="desc">[^<]+<\/desc>/);
     assert.doesNotMatch(illustration, /<script|<foreignObject|(?:href|src)=["']https?:/);
+    assert.doesNotMatch(illustration, /stroke-dasharray|<filter|<mask/);
   }
 });

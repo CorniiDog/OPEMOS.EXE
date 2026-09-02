@@ -21,6 +21,10 @@ test("installation-media UI delegates only bounded operations", () => {
   assert.match(welcome, /Diagnostics — review media identity/);
   assert.match(welcome, /last-install-log/);
   assert.match(welcome, /flock -n 8/);
+  assert.match(welcome, /TRUE shutdown/);
+  assert.match(welcome, /FALSE restart/);
+  assert.match(welcome, /restart\) systemctl reboot/);
+  assert.match(welcome, /remove the USB as the screen turns off/);
   assert.match(gtkCss, /linear-gradient\(to right, @opemos_blue, @opemos_green\)/);
   assert.doesNotMatch(welcome, /\beval\b/);
   assert.doesNotMatch(helper, /\beval\b/);

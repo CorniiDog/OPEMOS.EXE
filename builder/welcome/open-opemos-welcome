@@ -136,7 +136,7 @@ choose_disk() {
 }
 
 run_install() {
-  local mode=$1 selected device token basename phrase warning log status
+  local mode=$1 selected device token basename phrase warning log status power_action
   selected=$(choose_disk "$mode") || return 0
   IFS='|' read -r device token <<<"$selected"
   [[ -n "$device" && "$token" =~ ^[0-9a-f]{64}$ ]] || {
@@ -174,11 +174,19 @@ run_install() {
   status=${PIPESTATUS[0]}
   set -e
   if (( status == 0 )); then
-    if opemos_zenity --question --title="OPEMOS installation complete" --width=560 \
-      --ok-label="Shut Down" --cancel-label="Stay Here" \
-      --text="OPEMOS was installed, its A/B recovery guardian was verified, and the target was finalized.\n\nChoose Shut Down, remove the installation media, then start the computer from $device."; then
-      systemctl poweroff
-    fi
+    power_action=$(opemos_zenity --list --radiolist \
+      --title="OPEMOS installation complete" \
+      --text="OPEMOS and its A/B recovery guardian were verified.\n\nShut Down is recommended. Remove the installation USB after power-off, then boot from $device. If you restart, remove the USB as the screen turns off or select the installed disk from the boot menu." \
+      --column="" --column="Action" --column="What happens next" \
+      --hide-column=2 --print-column=2 --width=720 --height=340 \
+      TRUE shutdown "Shut down safely, then remove the installation USB" \
+      FALSE restart "Restart now; remove the USB during restart or use the boot menu" \
+      FALSE stay "Return to the recovery desktop") || power_action=stay
+    case "$power_action" in
+      shutdown) systemctl poweroff ;;
+      restart) systemctl reboot ;;
+      stay) ;;
+    esac
   else
     failure "Installation stopped safely before completion.\n\nDiagnostic log: $log\n\nDo not boot from the incomplete target until the failure is resolved or installation is run again."
   fi

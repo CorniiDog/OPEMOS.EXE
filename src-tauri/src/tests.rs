@@ -2643,6 +2643,10 @@ esac
         assert!(welcome.contains("Diagnostics — review media identity"));
         assert!(welcome.contains("last-install-log"));
         assert!(welcome.contains("flock -n 8"));
+        assert!(welcome.contains("TRUE shutdown"));
+        assert!(welcome.contains("FALSE restart"));
+        assert!(welcome.contains("restart) systemctl reboot"));
+        assert!(welcome.contains("remove the USB as the screen turns off"));
         assert!(!welcome.contains("eval "));
         assert!(gtk_css.contains("@define-color opemos_blue"));
         assert!(gtk_css.contains("linear-gradient(to right, @opemos_blue, @opemos_green)"));
