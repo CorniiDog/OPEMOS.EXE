@@ -44,6 +44,24 @@ As a temporary diagnostic route, the legacy installer documents
 `steamos-session-select plasma` from a TTY. That may recover a desktop when
 Gaming Mode alone failed, but it does not repair a mismatched kernel module.
 
+The first OPEMOS hardware update test observed the sharper failure case: the
+newly activated `rootfs-A` contained kernel `6.16.12-valve24.5` but no
+`nvidia.ko`, while `rootfs-B` retained an NVIDIA module. The firmware displayed
+neither SteamOS's automatic rollback menu nor its forced `steamcl-menu` UI on
+that machine. This confirms that a structurally valid recovery image is not an
+installed-update guarantee and that a visible bootloader menu cannot be the
+only recovery path.
+
+Generated development media now includes **Roll Back Last SteamOS Update** on
+the recovery desktop. The action lists only unmounted disks with one complete
+SteamOS A/B layout, requires explicit disk selection, offers only slots whose
+sole kernel has matching NVIDIA vermagic and GSP firmware, revalidates the
+partition identity, and requires an exact confirmation phrase. It then asks
+Valve's disk-scoped boot tools to select that slot; it never invokes the broad
+repair/re-image workflow. This remains a development recovery action until its
+bootconf result and cancellation behavior pass sacrificial-disk and real-
+hardware testing.
+
 ## Why a SteamOS update can invalidate NVIDIA
 
 SteamOS stages operating-system updates into an inactive A/B root slot. NVIDIA

@@ -1574,6 +1574,8 @@ pub(crate) fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json:
             "/etc/mkinitcpio.conf.d/90-open-gpu-kernel-modules-steamos.conf",
             "/usr/lib/modules/<target-kernel>/updates/open-gpu-kernel-modules-steamos",
             "/var/lib/open-gpu-kernel-modules-steamos-support/offline-install",
+            "/home/deck/tools/opemos-rollback-last-update",
+            "/home/deck/Desktop/OPEMOS-Rollback.desktop",
             "/boot"
         ])
     } else {
@@ -1663,6 +1665,7 @@ pub(crate) fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json:
             "layoutRecognized": data.layout.recognized,
             "markerVerified": true,
             "nvidiaPayloadVerified": nvidia_installed,
+            "recoveryRollbackVerified": nvidia_installed,
             "sourceUnchanged": true,
             "passed": true
         }

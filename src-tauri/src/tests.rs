@@ -2539,6 +2539,46 @@ esac
         );
         assert!(source.contains("install-progress.log"));
         assert!(source.contains("install-mutation-progress.log"));
+        assert_eq!(source.matches("mapfile -t HOME_PARTS").count(), 2);
+        assert_eq!(
+            source
+                .matches(r#"sudo mount -o rw "${{HOME_PARTS[0]}}" "$ROOT/home""#)
+                .count(),
+            1
+        );
+        assert_eq!(
+            source
+                .matches(r#"sudo mount -o ro "${{HOME_PARTS[0]}}" "$ROOT/home""#)
+                .count(),
+            1
+        );
+        assert_eq!(
+            source
+                .matches(r#"if (( HOME_MOUNTED )); then sudo umount "$ROOT/home""#)
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn recovery_rollback_action_is_bundled_and_fail_closed() {
+        let script = std::str::from_utf8(RECOVERY_ROLLBACK_SCRIPT).unwrap();
+        let desktop = std::str::from_utf8(RECOVERY_ROLLBACK_DESKTOP).unwrap();
+        for label in [
+            "esp", "efi-A", "efi-B", "rootfs-A", "rootfs-B", "var-A", "var-B", "home",
+        ] {
+            assert!(script.contains(label));
+        }
+        assert!(script.contains("valid_disk \"$disk\" || die"));
+        assert!(script.contains("-o ro,norecovery"));
+        assert!(script.contains("-name 'nvidia.ko*'"));
+        assert!(script.contains("modinfo -F vermagic"));
+        assert!(script.contains("Type %s exactly to confirm"));
+        assert!(script.contains("steamos-chroot --no-overlay --disk \"$disk\""));
+        assert!(script.contains("steamos-bootconf --image \"$slot\" set-mode reboot"));
+        assert!(!script.contains("repair_device.sh"));
+        assert!(desktop.contains("Terminal=true"));
+        assert!(desktop.contains("Exec=sudo /home/deck/tools/opemos-rollback-last-update"));
     }
 
     #[test]
@@ -4124,6 +4164,12 @@ esac
             "575.64.05"
         );
         assert_eq!(nvidia_manifest["validation"]["nvidiaPayloadVerified"], true);
+        assert_eq!(nvidia_manifest["validation"]["recoveryRollbackVerified"], true);
+        assert!(nvidia_manifest["integration"]["modifiedPaths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == "/home/deck/tools/opemos-rollback-last-update"));
         assert_eq!(
             nvidia_manifest["integration"]["nvidiaSourcePolicy"]["mode"],
             "pinned"

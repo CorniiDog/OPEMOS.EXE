@@ -1137,6 +1137,8 @@ pub(crate) fn verify_nvidia_from_validation_overlay(
     session: &ImageInspectionSession,
     installation: &NvidiaInstallHandoffResult,
 ) -> Result<(), String> {
+    let recovery_script_sha256 = format!("{:x}", Sha256::digest(RECOVERY_ROLLBACK_SCRIPT));
+    let recovery_desktop_sha256 = format!("{:x}", Sha256::digest(RECOVERY_ROLLBACK_DESKTOP));
     let mut package_assertions = String::new();
     for package in &installation.packages {
         if arch_dependency_name(&package.name)? != package.name
@@ -1163,24 +1165,32 @@ test "$(sudo blockdev --getro "$WORK")" = 1
 mapfile -t ROOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$WORK" | awk '$2 == "rootfs-A" && $3 == "btrfs" {{print $1}}')
 mapfile -t BOOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$WORK" | awk '$2 == "efi-A" && ($3 == "vfat" || $3 == "fat") {{print $1}}')
 mapfile -t VAR_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$WORK" | awk '$2 == "var-A" && $3 == "ext4" {{print $1}}')
+mapfile -t HOME_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$WORK" | awk '$2 == "home" && $3 == "ext4" {{print $1}}')
 test "${{#ROOT_PARTS[@]}}" -eq 1
 test "${{#BOOT_PARTS[@]}}" -eq 1
 test "${{#VAR_PARTS[@]}}" -eq 1
+test "${{#HOME_PARTS[@]}}" -eq 1
 test "${{ROOT_PARTS[0]}}" != "${{BOOT_PARTS[0]}}"
 test "${{ROOT_PARTS[0]}}" != "${{VAR_PARTS[0]}}"
 test "${{BOOT_PARTS[0]}}" != "${{VAR_PARTS[0]}}"
+test "${{HOME_PARTS[0]}}" != "${{ROOT_PARTS[0]}}"
+test "${{HOME_PARTS[0]}}" != "${{BOOT_PARTS[0]}}"
+test "${{HOME_PARTS[0]}}" != "${{VAR_PARTS[0]}}"
 sudo mkdir -p "$ROOT"
 ROOT_MOUNTED=0
 VAR_MOUNTED=0
 EFI_MOUNTED=0
+HOME_MOUNTED=0
 cleanup() {{
   rc=$?
   trap - EXIT INT TERM
   if (( EFI_MOUNTED )); then sudo umount "$ROOT/efi" || rc=1; fi
   if (( VAR_MOUNTED )); then sudo umount "$ROOT/var" || rc=1; fi
+  if (( HOME_MOUNTED )); then sudo umount "$ROOT/home" || rc=1; fi
   if (( ROOT_MOUNTED )); then sudo umount "$ROOT" || rc=1; fi
   ! findmnt -rn -M "$ROOT/efi" >/dev/null 2>&1 || rc=1
   ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1 || rc=1
+  ! findmnt -rn -M "$ROOT/home" >/dev/null 2>&1 || rc=1
   ! findmnt -rn -M "$ROOT" >/dev/null 2>&1 || rc=1
   exit "$rc"
 }}
@@ -1193,6 +1203,10 @@ test -d "$ROOT/efi"
 test ! -L "$ROOT/efi"
 test -d "$ROOT/var"
 test ! -L "$ROOT/var"
+test -d "$ROOT/home"
+test ! -L "$ROOT/home"
+sudo mount -o ro "${{HOME_PARTS[0]}}" "$ROOT/home"
+HOME_MOUNTED=1
 sudo mount -o ro "${{VAR_PARTS[0]}}" "$ROOT/var"
 VAR_MOUNTED=1
 sudo mount -o ro "${{BOOT_PARTS[0]}}" "$ROOT/efi"
@@ -1236,14 +1250,30 @@ package_versions() {{
 }}
 {}
 find "$ROOT/boot" -maxdepth 1 -type f -name 'initramfs*.img' -size +0c -print -quit | grep -q .
+DECK_ID=$(awk -F: '$1 == "deck" {{print $3 ":" $4}}' "$ROOT/etc/passwd")
+test -n "$DECK_ID"
+test "$(printf '%s\n' "$DECK_ID" | wc -l | tr -d ' ')" = 1
+test -f "$ROOT/home/deck/tools/opemos-rollback-last-update"
+test ! -L "$ROOT/home/deck/tools/opemos-rollback-last-update"
+test "$(sha256sum "$ROOT/home/deck/tools/opemos-rollback-last-update" | awk '{{print $1}}')" = "{}"
+test "$(stat -c '%a' "$ROOT/home/deck/tools/opemos-rollback-last-update")" = 755
+test "$(stat -c '%u:%g' "$ROOT/home/deck/tools/opemos-rollback-last-update")" = "$DECK_ID"
+test -f "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
+test ! -L "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
+test "$(sha256sum "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop" | awk '{{print $1}}')" = "{}"
+test "$(stat -c '%a' "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop")" = 755
+test "$(stat -c '%u:%g' "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop")" = "$DECK_ID"
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
 sudo umount "$ROOT/var"
 VAR_MOUNTED=0
+sudo umount "$ROOT/home"
+HOME_MOUNTED=0
 sudo umount "$ROOT"
 ROOT_MOUNTED=0
 ! findmnt -rn -M "$ROOT/efi" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1
+! findmnt -rn -M "$ROOT/home" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
         installation.kernel_version,
@@ -1256,6 +1286,8 @@ trap - EXIT INT TERM"#,
         installation.nvidia_version,
         installation.pacman_database_path,
         package_assertions,
+        recovery_script_sha256,
+        recovery_desktop_sha256,
     );
     run_guest_command(session, &command).map(|_| ())
 }

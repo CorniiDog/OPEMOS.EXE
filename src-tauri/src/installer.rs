@@ -2,6 +2,27 @@ use super::*;
 use serde::de::DeserializeSeed as _;
 
 const MAX_SUPPORT_INSTALL_RESULT_BYTES: u64 = 32 * 1024 * 1024;
+pub(crate) const RECOVERY_ROLLBACK_SCRIPT: &[u8] =
+    include_bytes!("../../builder/recovery/opemos-rollback-last-update");
+pub(crate) const RECOVERY_ROLLBACK_DESKTOP: &[u8] =
+    include_bytes!("../../builder/recovery/OPEMOS-Rollback.desktop");
+
+fn stage_recovery_rollback_assets(
+    connection: &NvidiaBuildConnection,
+) -> Result<(String, String), String> {
+    let script = connection.runtime_dir.join("opemos-rollback-last-update");
+    let desktop = connection.runtime_dir.join("OPEMOS-Rollback.desktop");
+    fs::write(&script, RECOVERY_ROLLBACK_SCRIPT)
+        .map_err(|error| format!("Could not stage the OPEMOS recovery helper: {error}"))?;
+    fs::write(&desktop, RECOVERY_ROLLBACK_DESKTOP)
+        .map_err(|error| format!("Could not stage the OPEMOS recovery launcher: {error}"))?;
+    copy_install_input_to_guest(connection, &script, "opemos-rollback-last-update")?;
+    copy_install_input_to_guest(connection, &desktop, "OPEMOS-Rollback.desktop")?;
+    Ok((
+        format!("{:x}", Sha256::digest(RECOVERY_ROLLBACK_SCRIPT)),
+        format!("{:x}", Sha256::digest(RECOVERY_ROLLBACK_DESKTOP)),
+    ))
+}
 
 struct UniqueJson;
 
@@ -2368,6 +2389,8 @@ pub(crate) fn install_nvidia_to_working_image_blocking(
         (NvidiaBuildConnection::from(&*session), cancel)
     };
     let userspace_arguments = userspace_installer_arguments(&inputs.packages)?;
+    let (recovery_script_sha256, recovery_desktop_sha256) =
+        stage_recovery_rollback_assets(&connection)?;
     let mutation_attempt = 2_usize;
     let command = format!(
         r#"set -euo pipefail
@@ -2382,18 +2405,24 @@ test -f "$WORK/support/{lock_path}"
 mapfile -t ROOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "rootfs-A" && $3 == "btrfs" {{print $1}}')
 mapfile -t BOOT_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "efi-A" && ($3 == "vfat" || $3 == "fat") {{print $1}}')
 mapfile -t VAR_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "var-A" && $3 == "ext4" {{print $1}}')
+mapfile -t HOME_PARTS < <(lsblk -nrpo PATH,PARTLABEL,FSTYPE "$TARGET" | awk '$2 == "home" && $3 == "ext4" {{print $1}}')
 test "${{#ROOT_PARTS[@]}}" -eq 1
 test "${{#BOOT_PARTS[@]}}" -eq 1
 test "${{#VAR_PARTS[@]}}" -eq 1
+test "${{#HOME_PARTS[@]}}" -eq 1
 test "${{ROOT_PARTS[0]}}" != "${{BOOT_PARTS[0]}}"
 test "${{ROOT_PARTS[0]}}" != "${{VAR_PARTS[0]}}"
 test "${{BOOT_PARTS[0]}}" != "${{VAR_PARTS[0]}}"
+test "${{HOME_PARTS[0]}}" != "${{ROOT_PARTS[0]}}"
+test "${{HOME_PARTS[0]}}" != "${{BOOT_PARTS[0]}}"
+test "${{HOME_PARTS[0]}}" != "${{VAR_PARTS[0]}}"
 sudo mkdir -p "$TOP" "$ROOT"
 TOP_MOUNTED=0
 ROOT_MOUNTED=0
 ROOT_IS_TOP=0
 VAR_MOUNTED=0
 EFI_MOUNTED=0
+HOME_MOUNTED=0
 RESTORE_ROOT_RO=0
 WAS_SEEDING=0
 SEEDING_RESTORED=0
@@ -2403,6 +2432,7 @@ cleanup() {{
   trap - EXIT INT TERM
   if (( EFI_MOUNTED )); then sudo umount "$ROOT/efi" || rc=1; fi
   if (( VAR_MOUNTED )); then sudo umount "$ROOT/var" || rc=1; fi
+  if (( HOME_MOUNTED )); then sudo umount "$ROOT/home" || rc=1; fi
   if (( ROOT_MOUNTED )); then sudo umount "$ROOT" || rc=1; fi
   if (( RESTORE_ROOT_RO )) && (( TOP_MOUNTED )) && test -n "$SOURCE_ROOT"; then
     sudo btrfs property set -f -ts "$SOURCE_ROOT" ro true || rc=1
@@ -2413,6 +2443,7 @@ cleanup() {{
   fi
   ! findmnt -rn -M "$ROOT/efi" >/dev/null 2>&1 || rc=1
   ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1 || rc=1
+  ! findmnt -rn -M "$ROOT/home" >/dev/null 2>&1 || rc=1
   ! findmnt -rn -M "$ROOT" >/dev/null 2>&1 || rc=1
   ! findmnt -rn -M "$TOP" >/dev/null 2>&1 || rc=1
   exit "$rc"
@@ -2460,6 +2491,10 @@ test -d "$ROOT/efi"
 test ! -L "$ROOT/efi"
 test -d "$ROOT/var"
 test ! -L "$ROOT/var"
+test -d "$ROOT/home"
+test ! -L "$ROOT/home"
+sudo mount -o rw "${{HOME_PARTS[0]}}" "$ROOT/home"
+HOME_MOUNTED=1
 sudo mount -o rw "${{VAR_PARTS[0]}}" "$ROOT/var"
 VAR_MOUNTED=1
 sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/efi"
@@ -2487,11 +2522,36 @@ while IFS= read -r INITRAMFS; do
   fi
 done < <(sudo find "$ROOT/boot" -maxdepth 1 -type f -name 'initramfs*.img' -print)
 test "$INITRAMFS_OK" = 1
+test "$(sha256sum /tmp/opemos-rollback-last-update | awk '{{print $1}}')" = "{recovery_script_sha256}"
+test "$(sha256sum /tmp/OPEMOS-Rollback.desktop | awk '{{print $1}}')" = "{recovery_desktop_sha256}"
+DECK_ID=$(awk -F: '$1 == "deck" {{print $3 ":" $4}}' "$ROOT/etc/passwd")
+test -n "$DECK_ID"
+test "$(printf '%s\n' "$DECK_ID" | wc -l | tr -d ' ')" = 1
+case "$DECK_ID" in *[!0-9:]*) echo 'The SteamOS deck account has an unsafe numeric identity.' >&2; exit 1;; esac
+test -d "$ROOT/home/deck"
+test ! -L "$ROOT/home/deck"
+DECK_UID=${{DECK_ID%:*}}
+DECK_GID=${{DECK_ID#*:}}
+for DIRECTORY in "$ROOT/home/deck/tools" "$ROOT/home/deck/Desktop"; do
+  if test -e "$DIRECTORY"; then
+    test -d "$DIRECTORY"
+    test ! -L "$DIRECTORY"
+  else
+    sudo install -d -m 0755 -o "$DECK_UID" -g "$DECK_GID" "$DIRECTORY"
+  fi
+done
+sudo install -m 0755 /tmp/opemos-rollback-last-update "$ROOT/home/deck/tools/opemos-rollback-last-update"
+sudo install -m 0755 /tmp/OPEMOS-Rollback.desktop "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
+sudo chown "$DECK_ID" "$ROOT/home/deck/tools/opemos-rollback-last-update" "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
+test "$(sha256sum "$ROOT/home/deck/tools/opemos-rollback-last-update" | awk '{{print $1}}')" = "{recovery_script_sha256}"
+test "$(sha256sum "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop" | awk '{{print $1}}')" = "{recovery_desktop_sha256}"
 sync
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
 sudo umount "$ROOT/var"
 VAR_MOUNTED=0
+sudo umount "$ROOT/home"
+HOME_MOUNTED=0
 if (( ROOT_MOUNTED )); then sudo umount "$ROOT"; ROOT_MOUNTED=0; fi
 if (( RESTORE_ROOT_RO )); then
   sudo btrfs property set -f -ts "$SOURCE_ROOT" ro true
@@ -2505,6 +2565,7 @@ if (( WAS_SEEDING )); then
 fi
 ! findmnt -rn -M "$ROOT/efi" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1
+! findmnt -rn -M "$ROOT/home" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 ! findmnt -rn -M "$TOP" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
@@ -2514,6 +2575,8 @@ trap - EXIT INT TERM"#,
         userspace_arguments = userspace_arguments,
         compression_profile = NVIDIA_COMPRESSION_PROFILE,
         mutation_attempt = mutation_attempt,
+        recovery_script_sha256 = recovery_script_sha256,
+        recovery_desktop_sha256 = recovery_desktop_sha256,
     );
     let execution_result = run_guest_command_logged(
         &connection,

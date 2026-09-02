@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+die() {
+  printf 'OPEMOS recovery: %s\n' "$*" >&2
+  exit 1
+}
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || die "run this recovery action with sudo"
+for tool in lsblk findmnt mount umount modinfo steamos-chroot steamos-bootconf; do
+  command -v "$tool" >/dev/null 2>&1 || die "required SteamOS recovery tool is missing: $tool"
+done
+
+work=$(mktemp -d /tmp/opemos-rollback.XXXXXX)
+mounted=""
+cleanup() {
+  if [[ -n "$mounted" ]]; then
+    umount "$mounted" >/dev/null 2>&1 || true
+  fi
+  rmdir "$work/slot" "$work" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM
+
+partition_for() {
+  local disk=$1 label=$2
+  lsblk -nrpo PATH,PARTLABEL,TYPE "$disk" |
+    awk -v wanted="$label" '$2 == wanted && $3 == "part" { print $1 }'
+}
+
+valid_disk() {
+  local disk=$1 label matches
+  [[ -b "$disk" ]] || return 1
+  [[ $(lsblk -dnro TYPE "$disk") == disk ]] || return 1
+  for label in esp efi-A efi-B rootfs-A rootfs-B var-A var-B home; do
+    matches=$(partition_for "$disk" "$label")
+    [[ $(printf '%s\n' "$matches" | sed '/^$/d' | wc -l) -eq 1 ]] || return 1
+  done
+  while IFS= read -r target; do
+    case "$target" in
+      /|/boot|/efi|/esp|/var|/home|/run/*) return 1 ;;
+    esac
+  done < <(lsblk -nrpo MOUNTPOINTS "$disk" | tr ' ' '\n' | sed '/^$/d')
+}
+
+mapfile -t disks < <(
+  while IFS= read -r candidate; do
+    valid_disk "$candidate" && printf '%s\n' "$candidate"
+  done < <(lsblk -dnpo PATH,TYPE | awk '$2 == "disk" { print $1 }')
+)
+(( ${#disks[@]} > 0 )) || die "no unmounted disk with one exact SteamOS A/B layout was found"
+
+printf '\nOPEMOS — Roll back last SteamOS update\n'
+printf 'This changes only SteamOS boot selection. It does not reinstall or erase data.\n\n'
+for index in "${!disks[@]}"; do
+  disk=${disks[$index]}
+  model=$(lsblk -dnro MODEL "$disk" | sed 's/[[:space:]]*$//')
+  size=$(lsblk -dnro SIZE "$disk")
+  serial=$(lsblk -dnro SERIAL "$disk" | sed 's/[[:space:]]*$//')
+  printf '  %d) %s — %s — %s — serial %s\n' "$((index + 1))" "$disk" "$model" "$size" "${serial:-unavailable}"
+done
+printf '\nSelect the installed SteamOS disk by number: '
+read -r selection
+[[ "$selection" =~ ^[0-9]+$ ]] || die "selection must be a number"
+(( selection >= 1 && selection <= ${#disks[@]} )) || die "selection is outside the displayed list"
+disk=${disks[$((selection - 1))]}
+valid_disk "$disk" || die "selected disk identity or mount state changed"
+
+declare -a eligible=()
+for slot in A B; do
+  root=$(partition_for "$disk" "rootfs-$slot")
+  [[ $(printf '%s\n' "$root" | sed '/^$/d' | wc -l) -eq 1 ]] || die "rootfs-$slot identity changed"
+  mkdir "$work/slot"
+  mount -t btrfs -o ro,norecovery "$root" "$work/slot" || die "could not inspect rootfs-$slot read-only"
+  mounted="$work/slot"
+  mapfile -t kernels < <(find "$work/slot/usr/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null)
+  version=$(sed -n 's/^VERSION_ID=//p' "$work/slot/etc/os-release" 2>/dev/null | head -n 1 | tr -d '"')
+  status="not eligible"
+  if (( ${#kernels[@]} == 1 )); then
+    kernel=${kernels[0]}
+    mapfile -t modules < <(find "$work/slot/usr/lib/modules/$kernel" -type f -name 'nvidia.ko*' -print 2>/dev/null)
+    if (( ${#modules[@]} == 1 )) \
+      && [[ $(modinfo -F vermagic "${modules[0]}" 2>/dev/null | awk '{print $1}') == "$kernel" ]] \
+      && find "$work/slot/usr/lib/firmware/nvidia" -type f -name 'gsp*.bin' -print -quit 2>/dev/null | grep -q .; then
+      eligible+=("$slot")
+      status="NVIDIA module and GSP firmware match $kernel"
+    fi
+  else
+    kernel="${kernels[*]:-unknown}"
+  fi
+  umount "$work/slot"
+  mounted=""
+  rmdir "$work/slot"
+  printf '  Slot %s: SteamOS %s; kernel %s; %s\n' "$slot" "${version:-unknown}" "${kernel:-unknown}" "$status"
+done
+
+(( ${#eligible[@]} > 0 )) || die "neither slot has a structurally matching NVIDIA kernel payload"
+printf '\nEligible rollback slots: %s\n' "${eligible[*]}"
+printf 'Select slot A or B: '
+read -r slot
+slot=${slot^^}
+case " ${eligible[*]} " in
+  *" $slot "*) ;;
+  *) die "selected slot is not in the eligible list" ;;
+esac
+
+partuuid=$(lsblk -dnro PARTUUID "$(partition_for "$disk" "rootfs-$slot")")
+phrase="BOOT $slot ON $(basename "$disk")"
+printf '\nSelected rootfs-%s (%s).\n' "$slot" "$partuuid"
+printf 'Type %s exactly to confirm: ' "$phrase"
+read -r confirmation
+[[ "$confirmation" == "$phrase" ]] || die "confirmation did not match; nothing changed"
+valid_disk "$disk" || die "selected disk identity or mount state changed before mutation"
+[[ $(lsblk -dnro PARTUUID "$(partition_for "$disk" "rootfs-$slot")") == "$partuuid" ]] \
+  || die "selected slot identity changed before mutation"
+
+steamos-chroot --no-overlay --disk "$disk" --partset "$slot" -- \
+  steamos-bootconf --image "$slot" set-mode reboot
+sync
+printf '\nSteamOS slot %s is selected for the next boot. Remove the recovery USB and reboot.\n' "$slot"
+
