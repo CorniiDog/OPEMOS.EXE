@@ -195,11 +195,11 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 25] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 26] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "344a02369f32b17484a1fc713bcb0a7c4d6abb36be0312ee866f187e3c3c3a86",
-        bytes: 53_828,
+        sha256: "70be446240ba011e10bc3ecc43fcafbe5dc2124814907960aa3aec563de2250a",
+        bytes: 57_705,
         executable: true,
     },
     PinnedInstallerFile {
@@ -228,14 +228,14 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 25] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "36289767d421e7aab374c3ab98857707c0c7186cfb00a0b3f9d081a111d09e74",
-        bytes: 85_597,
+        sha256: "4c0c77d58c1c1df2f835332c7d56b2912552c4aee1cf817fedf13d647123ab7e",
+        bytes: 91_199,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/authenticated_cache_bundle.py",
-        sha256: "5602f3be56f2949cdd713479f188972aa5cd23b91ef6694a676440c659e9a9cb",
-        bytes: 26_233,
+        sha256: "148ea7fbb85738700901895293f26ed192395918395655e1b2e10f20a5748bc5",
+        bytes: 27_965,
         executable: false,
     },
     PinnedInstallerFile {
@@ -246,8 +246,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 25] = [
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "adba48e2389c8bc7280c2bb3a7f66ae782fcb7dbf9ca11f57fcc872c3539eca5",
-        bytes: 52_076,
+        sha256: "7685a111127f189ecfa54642109662b8f3c26a7fade46e8d04267a4ad121ad1a",
+        bytes: 57_806,
         executable: true,
     },
     PinnedInstallerFile {
@@ -270,14 +270,20 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 25] = [
     },
     PinnedInstallerFile {
         path: "lib/prepare_pacman_config.py",
-        sha256: "60c20abd7444a07ef191bd6ef5fe7c7863fd9a89328fcf507f1f2a3558982f64",
-        bytes: 2_962,
+        sha256: "12c4c41f26615b476da295574db7e80a8cc6a1862ac040e97592b80d1b6d2bba",
+        bytes: 4_100,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/gaming_payload_profiles.py",
-        sha256: "ed0e54389a648ef6bafed62cf799254a460de1c5c54ddf1409beea9167455eeb",
-        bytes: 6_066,
+        sha256: "b26767e246fc849d2685cdf2556442668883179f3cda163d5f27daf94227e0fd",
+        bytes: 13_377,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/repack_gaming_userspace.py",
+        sha256: "09565f447bb2d1ea574525690c535de61658d2c55ebcf564c43814cd33b392f0",
+        bytes: 16_569,
         executable: true,
     },
     PinnedInstallerFile {
@@ -312,8 +318,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 25] = [
     },
     PinnedInstallerFile {
         path: "lib/snapshot_target_execution.py",
-        sha256: "24229e6e9fdff07470fe343b9bf6a39037ce3749d6f05b235b96c31b7cf5db5a",
-        bytes: 8_344,
+        sha256: "7f27c2fddf657c2faa069e039f531736c8751e4d41adb2e8f504b79d444b203f",
+        bytes: 13_204,
         executable: true,
     },
     PinnedInstallerFile {
@@ -342,8 +348,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 25] = [
     },
     PinnedInstallerFile {
         path: "profiles/gaming/reviewed-policy-v1.json",
-        sha256: "4e11a8ea25f8aec91f5f7bbb0dfd5733209e28f0a0337e9f419b3268359f5b27",
-        bytes: 397,
+        sha256: "f93bfa20134fc9bf9bada94c0c44029dc195cca41454ab6a5062168ed9e0d209",
+        bytes: 1_042,
         executable: false,
     },
 ];

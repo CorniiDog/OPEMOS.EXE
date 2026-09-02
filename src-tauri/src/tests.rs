@@ -1947,8 +1947,8 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 365_343);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 25);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 412_807);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 26);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
@@ -1985,6 +1985,9 @@ esac
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/gaming_payload_profiles.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/repack_gaming_userspace.py" && file.executable));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/verify_installed_modules.py" && file.executable));
