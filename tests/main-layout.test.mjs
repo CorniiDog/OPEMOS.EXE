@@ -7,21 +7,28 @@ const css = await readFile(new URL("../src/styles.css", import.meta.url), "utf8"
 const script = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
-test("main workflow groups related status and build controls into compact columns", () => {
+test("main workflow keeps readiness compact and gives output selection full width", () => {
   assert.match(html, /id="readiness-grid"[\s\S]*class="environment-card"[\s\S]*id="selection-card"[\s\S]*id="drop-zone"/);
-  assert.match(html, /class="build-options-grid"[\s\S]*for="export-mode"[\s\S]*for="nvidia-source"/);
+  assert.match(html, /class="build-options-grid"[\s\S]*for="export-image"[\s\S]*id="usb-target"[\s\S]*for="nvidia-source"/);
   assert.match(css, /\.readiness-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/);
-  assert.match(css, /\.build-options-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/);
+  assert.match(css, /\.build-options-grid\s*\{[^}]*grid-template-columns:\s*1fr;/);
 });
 
-test("USB selection is anchored to its export choice and uses a modal header", () => {
-  assert.match(html, /class="source-choice export-choice"[\s\S]*for="export-mode"[\s\S]*id="review-usb-target"/);
+test("USB drives are embedded beside an independent image-output checkbox", () => {
+  assert.match(html, /class="source-choice export-choice"[\s\S]*id="export-image"[^>]*checked[\s\S]*id="usb-target" size="3"[\s\S]*id="review-usb-target"/);
   assert.match(html, /id="usb-scrim" class="usb-scrim hidden"/);
   assert.match(html, /id="usb-card"[^>]*role="dialog"[\s\S]*class="usb-heading"[\s\S]*id="close-usb-menu"/);
   assert.match(script, /function setUsbMenuOpen\(opened\)/);
-  assert.match(script, /buildCard\.classList\.toggle\("usb-export-active", usbRequested\)/);
-  assert.match(css, /\.build-card\.usb-export-active \.build-options-grid\s*\{[^}]*grid-template-columns:\s*1fr;/);
-  assert.doesNotMatch(script, /exportMode\.addEventListener\("change", \(\) => \{[\s\S]{0,160}usbCard\.classList\.remove/);
+  assert.match(script, /function selectedExportMode\(\)[\s\S]*if \(image && usb\) return "both";/);
+  assert.match(script, /exportImage\.addEventListener\("change", renderExportMode\)/);
+  assert.match(script, /if \(currentImage\) elements\.refreshUsbTargets\.click\(\);/);
+  assert.doesNotMatch(html, /id="export-mode"/);
+});
+
+test("main macOS chrome stays slim and settings begin below it", () => {
+  assert.match(css, /\.platform-macos \.window-drag-region\s*\{[^}]*height:\s*32px;/);
+  assert.match(css, /\.platform-macos \.app-shell\s*\{[^}]*padding:\s*38px 0 8px;/);
+  assert.match(css, /\.settings-panel\s*\{[^}]*top:\s*40px;[^}]*max-height:\s*calc\(100vh - 52px\);/);
 });
 
 test("builder readiness expands while no image has been selected", () => {

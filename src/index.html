@@ -124,11 +124,10 @@
                 </div>
                 <button id="close-usb-menu" class="icon-button compact usb-close" type="button" aria-label="Close USB menu">×</button>
             </div>
-            <label class="source-choice" for="usb-target">
-                <span><strong>Removable target</strong><small id="usb-target-detail">Connect a USB drive, then refresh.</small></span>
-                <select id="usb-target" disabled><option value="">No target selected</option></select>
-            </label>
-            <button id="refresh-usb-targets" class="primary" type="button">Refresh Removable Drives</button>
+            <div class="usb-dialog-target">
+                <span>Selected removable target</span>
+                <strong id="usb-dialog-target">No drive selected</strong>
+            </div>
             <label id="usb-confirmation-row" class="source-choice hidden" for="usb-confirmation">
                 <span><strong>Destructive-intent phrase</strong><small id="usb-confirmation-help">Select a target first.</small></span>
                 <input id="usb-confirmation" type="text" autocomplete="off" spellcheck="false">
@@ -261,16 +260,27 @@
         >
             <div class="build-options-grid">
                 <div class="source-choice export-choice">
-                    <label for="export-mode"><span>
-                            <strong>Export destination</strong>
-                            <small>A USB export also creates a validated staging image.</small>
-                    </span></label>
-                    <select id="export-mode">
-                        <option value="image">Export as image (Recommended)</option>
-                        <option value="usb">Export to USB</option>
-                        <option value="both">Export image and USB</option>
-                    </select>
-                    <button id="review-usb-target" class="secondary hidden" type="button">Select or Review USB…</button>
+                    <label class="export-image-toggle" for="export-image">
+                        <input id="export-image" type="checkbox" checked>
+                        <span>
+                            <strong>Keep exported image</strong>
+                            <small>Checked by default. Uncheck only when writing exclusively to a selected USB drive.</small>
+                        </span>
+                    </label>
+                    <div class="usb-picker">
+                        <div class="usb-picker-heading">
+                            <span>
+                                <strong>Optional USB destination</strong>
+                                <small id="usb-target-detail">Connect a removable drive, then refresh the list.</small>
+                            </span>
+                            <button id="refresh-usb-targets" class="secondary" type="button">Refresh Drives</button>
+                        </div>
+                        <select id="usb-target" size="3" disabled aria-label="Detected removable USB drives">
+                            <option value="">No removable drives loaded</option>
+                        </select>
+                        <p id="usb-picker-message" class="usb-picker-message">No USB drive will be written unless one is selected.</p>
+                    </div>
+                    <button id="review-usb-target" class="secondary hidden" type="button">Review &amp; Write Selected USB…</button>
                 </div>
 
                 <label class="source-choice nvidia-choice" for="nvidia-source">

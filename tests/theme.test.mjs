@@ -14,7 +14,8 @@ test("every application surface shares the Steam glass material tokens", async (
     assert.match(css, /body::after[\s\S]*linear-gradient\(to left, rgba\(118, 185, 0, \.08\), transparent 8%\)/, `${name} is missing the diffuse NVIDIA edge glare`);
     assert.match(css, /body::after[\s\S]*inset 0 0 0 1px rgba\(220, 239, 249, \.12\)/, `${name} is missing the refractive glass rim`);
     assert.match(css, /\.platform-macos body\s*\{[^}]*backdrop-filter:\s*blur\(24px\)/, `${name} is missing macOS frosted blur`);
-    assert.match(css, /\.platform-macos \.window-drag-region\s*\{[^}]*height:\s*38px;/, `${name} is missing the dedicated macOS drag strip`);
+    const expectedDragHeight = name === "styles.css" ? "32px" : "38px";
+    assert.match(css, new RegExp(`\\.platform-macos \\.window-drag-region\\s*\\{[^}]*height:\\s*${expectedDragHeight};`), `${name} is missing the dedicated macOS drag strip`);
     assert.match(css, /\.platform-macos \.window-drag-region::after\s*\{[^}]*position:\s*fixed;[^}]*right:\s*0;[^}]*left:\s*0;[^}]*height:\s*1px;[^}]*background:\s*rgba\(174, 207, 225, \.22\);/, `${name} is missing the full-width glass separator`);
     assert.match(css, /\.platform-macos body\s*\{[^}]*contain:\s*paint;[^}]*clip-path:\s*inset\(0 round 10px\);/, `${name} can composite beyond the rounded window silhouette`);
     assert.doesNotMatch(css, /body::before[\s\S]{0,160}border:/, `${name} still draws the rejected inset window border`);
