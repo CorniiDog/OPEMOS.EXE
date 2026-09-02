@@ -10,6 +10,8 @@ pub(crate) struct BuilderSettings {
     pub(crate) include_upstream_nvidia_releases: bool,
     #[serde(default)]
     pub(crate) omit_optional_cuda: bool,
+    #[serde(default)]
+    pub(crate) recent_maintainer_worktrees: Vec<String>,
 }
 
 impl Default for BuilderSettings {
@@ -20,6 +22,7 @@ impl Default for BuilderSettings {
             track_steamos_driver_updates: false,
             include_upstream_nvidia_releases: false,
             omit_optional_cuda: false,
+            recent_maintainer_worktrees: Vec::new(),
         }
     }
 }

@@ -221,12 +221,16 @@ pub(crate) fn load_builder_settings_path_unlocked(path: &Path) -> Result<Builder
     }
     let mut settings: BuilderSettings = serde_json::from_reader(file)
         .map_err(|error| format!("settings.json is invalid: {error}"))?;
-    if matches!(settings.schema_version, 1 | 2) {
-        if settings.schema_version == 1 {
+    if matches!(settings.schema_version, 1..=3) {
+        let previous_schema = settings.schema_version;
+        if previous_schema == 1 {
             settings.include_upstream_nvidia_releases = false;
         }
         settings.schema_version = BUILDER_SETTINGS_SCHEMA;
-        settings.omit_optional_cuda = false;
+        if previous_schema < 3 {
+            settings.omit_optional_cuda = false;
+        }
+        settings.recent_maintainer_worktrees.clear();
         save_builder_settings_path_unlocked(path, &settings)?;
     } else if settings.schema_version != BUILDER_SETTINGS_SCHEMA {
         return Err(format!(
@@ -234,6 +238,7 @@ pub(crate) fn load_builder_settings_path_unlocked(path: &Path) -> Result<Builder
             settings.schema_version, BUILDER_SETTINGS_SCHEMA
         ));
     }
+    validate_recent_maintainer_worktrees(&settings.recent_maintainer_worktrees)?;
     Ok(settings)
 }
 
@@ -257,6 +262,7 @@ pub(crate) fn save_builder_settings_path_unlocked(
             "Only settings schema {BUILDER_SETTINGS_SCHEMA} can be saved."
         ));
     }
+    validate_recent_maintainer_worktrees(&settings.recent_maintainer_worktrees)?;
     let parent = validate_settings_parent(path)?;
     let sequence = SETTINGS_WRITE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let temporary = parent.join(format!(
@@ -290,6 +296,47 @@ pub(crate) fn save_builder_settings_path_unlocked(
         let _ = fs::remove_file(&temporary);
     }
     staged
+}
+
+pub(crate) fn validate_recent_maintainer_worktrees(paths: &[String]) -> Result<(), String> {
+    if paths.len() > 10 {
+        return Err("At most ten recent maintainer worktrees can be remembered.".into());
+    }
+    let mut unique = HashSet::new();
+    for path in paths {
+        if path.is_empty()
+            || path.len() > 4_096
+            || path.chars().any(char::is_control)
+            || !Path::new(path).is_absolute()
+            || !unique.insert(path)
+        {
+            return Err("A recent maintainer-worktree path is invalid or duplicated.".into());
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn remember_maintainer_worktree(
+    app: &tauri::AppHandle,
+    worktree: &Path,
+) -> Result<(), String> {
+    let canonical = fs::canonicalize(worktree)
+        .map_err(|error| format!("Could not remember the maintainer worktree: {error}"))?;
+    if !canonical.is_dir() {
+        return Err("Only an existing worktree directory can be remembered.".into());
+    }
+    let value = canonical.to_string_lossy().into_owned();
+    let _guard = settings_transaction_lock()?;
+    let path = settings_path(app)?;
+    let file_guard = acquire_settings_file_lock(&path, SETTINGS_LOCK_TIMEOUT)?;
+    let mut settings = load_builder_settings_path_unlocked(&path)?;
+    settings
+        .recent_maintainer_worktrees
+        .retain(|recent| recent != &value);
+    settings.recent_maintainer_worktrees.insert(0, value);
+    settings.recent_maintainer_worktrees.truncate(10);
+    save_builder_settings_path_unlocked(&path, &settings)?;
+    file_guard.verify()
 }
 
 pub(crate) fn github_maintainer_status() -> Result<GithubMaintainerStatus, String> {
@@ -424,6 +471,9 @@ pub(crate) async fn update_builder_settings(
         let current = load_builder_settings_unlocked(&app)?;
         let mut settings = settings;
         settings.schema_version = BUILDER_SETTINGS_SCHEMA;
+        // Recent worktrees are backend-owned observations. A stale main window
+        // must not erase or inject maintainer paths while saving preferences.
+        settings.recent_maintainer_worktrees = current.recent_maintainer_worktrees.clone();
         if settings.omit_optional_cuda {
             return Err(
                 "Optional CUDA omission is unavailable because the pinned support repository has no audited target-specific gaming payload. The complete NVIDIA driver will be used."

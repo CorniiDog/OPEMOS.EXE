@@ -50,11 +50,12 @@ let activeExportMode = "image";
 let hostReady = false;
 let progressReady = false;
 let builderSettings = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   autoReleaseVerifiedNvidia: false,
   trackSteamosDriverUpdates: false,
   includeUpstreamNvidiaReleases: false,
   omitOptionalCuda: false,
+  recentMaintainerWorktrees: [],
 };
 let githubMaintainer = null;
 let githubLoginPoll = 0;
@@ -186,7 +187,7 @@ async function loadSettings() {
 
 async function saveSettings(next) {
   const previous = builderSettings;
-  builderSettings = { ...builderSettings, ...next, schemaVersion: 3 };
+  builderSettings = { ...builderSettings, ...next, schemaVersion: 4 };
   settingsSavePending = true;
   elements.settingsMessage.textContent = "Saving…";
   elements.settingsMessage.className = "settings-message";
@@ -348,7 +349,7 @@ elements.allowUpstreamBuild.addEventListener("change", updateBuildButton);
 elements.autoReleaseNvidia.addEventListener("change", async () => {
   const previous = builderSettings;
   const enabled = elements.autoReleaseNvidia.checked;
-  builderSettings = { ...builderSettings, autoReleaseVerifiedNvidia: enabled, schemaVersion: 3 };
+  builderSettings = { ...builderSettings, autoReleaseVerifiedNvidia: enabled, schemaVersion: 4 };
   autoReleaseVerificationPending = true;
   settingsSavePending = true;
   elements.autoReleaseStatus.textContent = enabled ? "Checking maintainer permission…" : "Saving…";

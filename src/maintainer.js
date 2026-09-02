@@ -12,7 +12,8 @@ const elements = {
   message: $("#workspace-message"), planTitle: $("#plan-title"), planStatus: $("#plan-status"),
   planId: $("#plan-id"), architecture: $("#architecture"), isolation: $("#isolation"),
   remoteMutation: $("#remote-mutation"), worktreeCard: $("#local-worktree-card"),
-  chooseWorktree: $("#choose-worktree"), makeWorktree: $("#make-worktree"), worktreePath: $("#worktree-path"),
+  recentWorktree: $("#recent-worktree"), chooseWorktree: $("#choose-worktree"),
+  makeWorktree: $("#make-worktree"), worktreePath: $("#worktree-path"),
   worktreeBranch: $("#worktree-branch"), worktreeHead: $("#worktree-head"),
   worktreeChanges: $("#worktree-changes"), openVscode: $("#open-vscode"),
   worktreeMessage: $("#worktree-message"),
@@ -83,6 +84,8 @@ function resetPlan() {
   elements.planId.textContent = "—";
   elements.remoteMutation.textContent = "Blocked";
   elements.worktreeCard.classList.add("hidden");
+  elements.recentWorktree.replaceChildren(new Option("No Recent Folders", ""));
+  elements.recentWorktree.disabled = true;
   elements.openVscode.disabled = true;
   elements.localCommitPanel.classList.add("hidden");
   elements.checkoutPanel.classList.add("hidden");
@@ -103,6 +106,7 @@ function setWorkspaceMutationPending(pending) {
   elements.referenceSelect.disabled = pending || !sources.length;
   elements.chooseWorktree.disabled = pending;
   elements.makeWorktree.disabled = pending;
+  elements.recentWorktree.disabled = pending || elements.recentWorktree.options.length <= 1;
   elements.openVscode.disabled = pending || !localWorktree?.vscodeAvailable;
   elements.commitMessage.disabled = pending;
   elements.reviewStaged.disabled = pending || !localWorktree || !elements.commitMessage.value.trim();
@@ -189,6 +193,7 @@ elements.planButton.addEventListener("click", async () => {
     };
     elements.worktreeCard.classList.remove("hidden");
     elements.message.textContent = plan.message;
+    await refreshRecentWorktrees(plan.repository, workspaceGeneration);
   } catch (error) {
     resetPlan();
     elements.planStatus.textContent = "Rejected";
@@ -227,6 +232,31 @@ function renderWorktree(worktree) {
   elements.executeCheckout.classList.add("hidden");
 }
 
+async function refreshRecentWorktrees(repository, generation = workspaceGeneration) {
+  elements.recentWorktree.replaceChildren(new Option("Checking Recent Folders…", ""));
+  elements.recentWorktree.disabled = true;
+  try {
+    const worktrees = await invoke("list_recent_maintainer_worktrees", { repository });
+    if (generation !== workspaceGeneration || repository !== plannedRepository) return;
+    elements.recentWorktree.replaceChildren(new Option(
+      worktrees.length ? "Select Recent Folder" : "No Recent Folders",
+      "",
+    ));
+    for (const worktree of worktrees) {
+      const option = new Option(worktree.path.split(/[\\/]/).at(-1) || worktree.path, worktree.path);
+      option.title = worktree.path;
+      elements.recentWorktree.append(option);
+    }
+    elements.recentWorktree.disabled = !worktrees.length;
+  } catch (error) {
+    if (generation !== workspaceGeneration) return;
+    elements.recentWorktree.replaceChildren(new Option("Recent Folders Unavailable", ""));
+    elements.recentWorktree.disabled = true;
+    elements.worktreeMessage.textContent = String(error);
+    elements.worktreeMessage.className = "message error";
+  }
+}
+
 elements.chooseWorktree.addEventListener("click", async () => {
   if (!plannedRepository) return;
   const dialogGeneration = workspaceGeneration;
@@ -242,6 +272,7 @@ elements.chooseWorktree.addEventListener("click", async () => {
     const worktree = await invoke("inspect_maintainer_worktree", { path, repository });
     if (generation !== workspaceGeneration || repository !== plannedRepository) return;
     renderWorktree(worktree);
+    void refreshRecentWorktrees(repository, workspaceGeneration);
     elements.worktreeMessage.textContent = worktree.vscodeAvailable
       ? "Valid local target. VS Code can reuse its current window for this worktree."
       : "Valid local target, but the VS Code command-line launcher was not found.";
@@ -249,6 +280,32 @@ elements.chooseWorktree.addEventListener("click", async () => {
     if (generation !== workspaceGeneration) return;
     elements.worktreeMessage.textContent = String(error);
     elements.worktreeMessage.className = "message error";
+  }
+});
+
+elements.recentWorktree.addEventListener("change", async () => {
+  const path = elements.recentWorktree.value;
+  if (!path || !plannedRepository) return;
+  const repository = plannedRepository;
+  const generation = workspaceGeneration;
+  setWorkspaceMutationPending(true);
+  elements.worktreeMessage.textContent = "Revalidating the recent folder before selecting it…";
+  elements.worktreeMessage.className = "message";
+  try {
+    const worktree = await invoke("inspect_maintainer_worktree", { path, repository });
+    if (generation !== workspaceGeneration || repository !== plannedRepository) return;
+    renderWorktree(worktree);
+    void refreshRecentWorktrees(repository, workspaceGeneration);
+    elements.worktreeMessage.textContent = worktree.vscodeAvailable
+      ? "Recent local target revalidated. VS Code can reuse its current window for this worktree."
+      : "Recent local target revalidated, but the VS Code command-line launcher was not found.";
+  } catch (error) {
+    if (generation !== workspaceGeneration) return;
+    elements.worktreeMessage.textContent = String(error);
+    elements.worktreeMessage.className = "message error";
+    void refreshRecentWorktrees(repository, workspaceGeneration);
+  } finally {
+    setWorkspaceMutationPending(false);
   }
 });
 
@@ -264,6 +321,7 @@ elements.makeWorktree.addEventListener("click", async () => {
     if (generation !== workspaceGeneration
       || JSON.stringify(source) !== JSON.stringify(plannedSource)) return;
     renderWorktree(worktree);
+    void refreshRecentWorktrees(source.repository, workspaceGeneration);
     elements.worktreeMessage.textContent = worktree.vscodeAvailable
       ? "Managed local target is ready. VS Code can reuse its current window for this worktree."
       : "Managed local target is ready, but the VS Code command-line launcher was not found.";

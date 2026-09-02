@@ -50,6 +50,7 @@ pub fn run() {
             plan_maintainer_workspace,
             make_maintainer_worktree,
             inspect_maintainer_worktree,
+            list_recent_maintainer_worktrees,
             open_maintainer_worktree_in_vscode,
             review_maintainer_staged_commit,
             create_maintainer_local_commit,

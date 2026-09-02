@@ -9,6 +9,9 @@ test("maintainer workspace offers a bounded managed-checkout action", async () =
   ]);
   assert.match(html, /id="choose-worktree"[^>]*>Choose Folder</);
   assert.match(html, /id="make-worktree"[^>]*>Make For Me</);
+  assert.match(html, /id="recent-worktree"[^>]*aria-label="Recent matching worktrees"/);
   assert.match(script, /invoke\("make_maintainer_worktree", source\)/);
+  assert.match(script, /invoke\("list_recent_maintainer_worktrees", \{ repository \}\)/);
+  assert.match(script, /Revalidating the recent folder before selecting it/);
   assert.match(script, /Creating or reopening a dedicated checkout at the exact verified commit/);
 });

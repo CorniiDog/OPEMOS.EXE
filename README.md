@@ -29,6 +29,10 @@ are published atomically under the application's data directory, and are reused
 without fetching, resetting, deleting edits, or changing remotes. Opening the
 result in VS Code remains a separate action and performs another origin/worktree
 validation first.
+The same owner-only settings file retains at most ten previously validated
+worktree paths. The maintainer window lists only entries that still exist and
+again pass exact Git-root and planned-origin checks; selecting a recent entry
+performs the complete inspection once more instead of trusting saved paths.
 
 When an exact-kernel NVIDIA artifact is built locally and reaches `locally-built-verified`, maintainers who opted in receive a release confirmation naming the repository, tag, pinned support commit, trust classification, and archive hash. “No, keep local” is focused by default. Publication uses the support repository's hash-pinned canonical publisher: Rust cross-checks its dry-run JSON and then invokes only its create-only mode. It refuses to overwrite an existing release and uploads only the NVIDIA archive, checksum, external build-info, and provenance sidecar—never the recovery image or generated SteamOS image.
 

@@ -187,15 +187,38 @@ mod tests {
             track_steamos_driver_updates: true,
             include_upstream_nvidia_releases: true,
             omit_optional_cuda: false,
+            recent_maintainer_worktrees: vec!["/private/worktree".into()],
         })
         .unwrap();
         assert!(serialized.contains("autoReleaseVerifiedNvidia"));
         assert!(serialized.contains("trackSteamosDriverUpdates"));
         assert!(serialized.contains("includeUpstreamNvidiaReleases"));
         assert!(serialized.contains("omitOptionalCuda"));
+        assert!(serialized.contains("recentMaintainerWorktrees"));
         for forbidden in ["token", "password", "secret", "ssh"] {
             assert!(!serialized.to_ascii_lowercase().contains(forbidden));
         }
+    }
+
+    #[test]
+    fn recent_maintainer_settings_are_bounded_absolute_and_unique() {
+        assert!(validate_recent_maintainer_worktrees(&[
+            "/private/worktree-a".into(),
+            "/private/worktree-b".into(),
+        ])
+        .is_ok());
+        assert!(validate_recent_maintainer_worktrees(&["relative/worktree".into()]).is_err());
+        assert!(validate_recent_maintainer_worktrees(&[
+            "/private/repeated".into(),
+            "/private/repeated".into(),
+        ])
+        .is_err());
+        assert!(validate_recent_maintainer_worktrees(
+            &(0..11)
+                .map(|index| format!("/private/worktree-{index}"))
+                .collect::<Vec<_>>()
+        )
+        .is_err());
     }
 
     #[test]
@@ -387,6 +410,7 @@ mod tests {
         assert_eq!(migrated.schema_version, BUILDER_SETTINGS_SCHEMA);
         assert!(migrated.track_steamos_driver_updates);
         assert!(migrated.include_upstream_nvidia_releases);
+        assert!(migrated.recent_maintainer_worktrees.is_empty());
         fs::remove_dir_all(root).expect("remove process settings fixture");
     }
 

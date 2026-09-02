@@ -14,6 +14,7 @@ button, select, textarea { font: inherit; }
 .maintainer-shell { width: min(1040px, calc(100% - 48px)); margin: 0 auto; padding: 24px 0 18px; display: grid; gap: 14px; }
 header, .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; }
 .section-actions { flex: none; display: flex; align-items: center; gap: 8px; }
+.recent-worktree { width: 190px; max-width: 24vw; padding-top: 7px; padding-bottom: 7px; font-size: 11px; }
 h1 { margin: 0; font-size: 30px; line-height: 1.1; }
 h2 { margin: 0; font-size: 18px; }
 .eyebrow { margin: 0 0 4px; color: #9fb4ff; font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }

@@ -1093,7 +1093,7 @@ fn make_maintainer_worktree_blocking(
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
                 return Err("The managed checkout destination is not a real directory.".into());
             }
-            return inspect_maintainer_worktree_blocking(
+            return inspect_authorized_maintainer_worktree(
                 destination.to_string_lossy().into_owned(),
                 repository,
             );
@@ -1190,7 +1190,7 @@ fn make_maintainer_worktree_blocking(
         let _ = fs::remove_dir_all(&temporary);
         return Err(error);
     }
-    let worktree = inspect_maintainer_worktree_blocking(
+    let worktree = inspect_authorized_maintainer_worktree(
         destination.to_string_lossy().into_owned(),
         repository,
     )?;
@@ -1210,7 +1210,16 @@ pub(crate) async fn make_maintainer_worktree(
     commit: String,
 ) -> Result<MaintainerLocalWorktree, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        make_maintainer_worktree_blocking(app, component, origin, repository, reference, commit)
+        let worktree = make_maintainer_worktree_blocking(
+            app.clone(),
+            component,
+            origin,
+            repository,
+            reference,
+            commit,
+        )?;
+        remember_maintainer_worktree(&app, Path::new(&worktree.path))?;
+        Ok(worktree)
     })
     .await
     .map_err(|error| format!("Managed maintainer-worktree worker failed: {error}"))?
@@ -1221,6 +1230,13 @@ fn inspect_maintainer_worktree_blocking(
     repository: String,
 ) -> Result<MaintainerLocalWorktree, String> {
     require_maintainer_authorization()?;
+    inspect_authorized_maintainer_worktree(path, repository)
+}
+
+fn inspect_authorized_maintainer_worktree(
+    path: String,
+    repository: String,
+) -> Result<MaintainerLocalWorktree, String> {
     if ![
         NVIDIA_SOURCE_REPOSITORY,
         NVIDIA_UPSTREAM_REPOSITORY,
@@ -1292,18 +1308,42 @@ fn inspect_maintainer_worktree_blocking(
 
 #[tauri::command]
 pub(crate) async fn inspect_maintainer_worktree(
+    app: tauri::AppHandle,
     path: String,
     repository: String,
 ) -> Result<MaintainerLocalWorktree, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        inspect_maintainer_worktree_blocking(path, repository)
+        let worktree = inspect_maintainer_worktree_blocking(path, repository)?;
+        remember_maintainer_worktree(&app, Path::new(&worktree.path))?;
+        Ok(worktree)
     })
     .await
     .map_err(|error| format!("Maintainer worktree inspector failed: {error}"))?
 }
 
 #[tauri::command]
+pub(crate) async fn list_recent_maintainer_worktrees(
+    app: tauri::AppHandle,
+    repository: String,
+) -> Result<Vec<MaintainerLocalWorktree>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        require_maintainer_authorization()?;
+        let settings = load_builder_settings(&app)?;
+        let mut worktrees = Vec::new();
+        for path in settings.recent_maintainer_worktrees {
+            if let Ok(worktree) = inspect_authorized_maintainer_worktree(path, repository.clone()) {
+                worktrees.push(worktree);
+            }
+        }
+        Ok(worktrees)
+    })
+    .await
+    .map_err(|error| format!("Recent maintainer-worktree worker failed: {error}"))?
+}
+
+#[tauri::command]
 pub(crate) async fn open_maintainer_worktree_in_vscode(
+    app: tauri::AppHandle,
     path: String,
     repository: String,
 ) -> Result<MaintainerLocalWorktree, String> {
@@ -1317,6 +1357,7 @@ pub(crate) async fn open_maintainer_worktree_in_vscode(
             .arg(&worktree.path)
             .spawn()
             .map_err(|error| format!("Could not open the selected worktree in VS Code: {error}"))?;
+        remember_maintainer_worktree(&app, Path::new(&worktree.path))?;
         Ok(worktree)
     })
     .await
