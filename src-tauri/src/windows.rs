@@ -25,7 +25,7 @@ pub(crate) fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> 
     let main = app
         .get_webview_window("main")
         .ok_or("The main application window is unavailable.")?;
-    let progress = tauri::WebviewWindowBuilder::new(
+    let progress_builder = tauri::WebviewWindowBuilder::new(
         &app,
         "build-progress",
         tauri::WebviewUrl::App("build.html".into()),
@@ -38,11 +38,17 @@ pub(crate) fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> 
     .transparent(true)
     .background_color(Color(11, 17, 24, 0))
     .effects(glass_window_effects())
-    .visible(false)
-    .parent(&main)
-    .map_err(|error| format!("Could not couple the build progress window: {error}"))?
-    .build()
-    .map_err(|error| format!("Could not create the build progress window: {error}"))?;
+    .shadow(false)
+    .visible(false);
+    #[cfg(target_os = "macos")]
+    let progress_builder = progress_builder
+        .title_bar_style(tauri::TitleBarStyle::Transparent)
+        .hidden_title(true);
+    let progress = progress_builder
+        .parent(&main)
+        .map_err(|error| format!("Could not couple the build progress window: {error}"))?
+        .build()
+        .map_err(|error| format!("Could not create the build progress window: {error}"))?;
     progress
         .show()
         .map_err(|error| format!("Could not show the build progress window: {error}"))?;
@@ -68,7 +74,7 @@ pub(crate) async fn open_maintainer_window(app: tauri::AppHandle) -> Result<(), 
     let main = app
         .get_webview_window("main")
         .ok_or("The main application window is unavailable.")?;
-    let window = tauri::WebviewWindowBuilder::new(
+    let window_builder = tauri::WebviewWindowBuilder::new(
         &app,
         "maintainer-workspace",
         tauri::WebviewUrl::App("maintainer.html".into()),
@@ -81,11 +87,17 @@ pub(crate) async fn open_maintainer_window(app: tauri::AppHandle) -> Result<(), 
     .transparent(true)
     .background_color(Color(11, 17, 24, 0))
     .effects(glass_window_effects())
-    .visible(false)
-    .parent(&main)
-    .map_err(|error| format!("Could not couple the maintainer window: {error}"))?
-    .build()
-    .map_err(|error| format!("Could not create the maintainer window: {error}"))?;
+    .shadow(false)
+    .visible(false);
+    #[cfg(target_os = "macos")]
+    let window_builder = window_builder
+        .title_bar_style(tauri::TitleBarStyle::Transparent)
+        .hidden_title(true);
+    let window = window_builder
+        .parent(&main)
+        .map_err(|error| format!("Could not couple the maintainer window: {error}"))?
+        .build()
+        .map_err(|error| format!("Could not create the maintainer window: {error}"))?;
     window
         .show()
         .map_err(|error| format!("Could not show the maintainer window: {error}"))?;

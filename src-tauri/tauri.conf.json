@@ -20,6 +20,9 @@
         "theme": "Dark",
         "backgroundColor": [11, 17, 24, 0],
         "transparent": true,
+        "titleBarStyle": "Transparent",
+        "hiddenTitle": true,
+        "shadow": false,
         "windowEffects": {
           "effects": ["underWindowBackground", "acrylic"],
           "state": "followsWindowActiveState",
