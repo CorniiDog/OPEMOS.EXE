@@ -10,7 +10,7 @@
     <style>
         html, body { background: rgba(11, 17, 24, .64); color: #f5f7fb; }
     </style>
-    <script>if (navigator.platform.startsWith("Mac")) document.documentElement.classList.add("platform-macos");</script>
+    <script>if (navigator.platform.startsWith("Mac") || navigator.userAgent.includes("Macintosh")) document.documentElement.classList.add("platform-macos");</script>
 
     <title>SteamOS NVIDIA Builder</title>
 

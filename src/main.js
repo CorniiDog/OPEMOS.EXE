@@ -1,4 +1,5 @@
 import { operationContextMatches } from "./operation-context.js";
+import { installWindowDrag } from "./window-drag.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getAllWebviewWindows, getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
@@ -64,6 +65,7 @@ let githubLoginPending = false;
 let autoReleaseVerificationPending = false;
 let settingsSavePending = false;
 const mainWindow = getCurrentWebviewWindow();
+installWindowDrag(mainWindow);
 
 await mainWindow.listen("build-progress-ready", () => { progressReady = true; });
 

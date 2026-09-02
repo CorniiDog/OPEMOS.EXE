@@ -26,6 +26,13 @@ test("selected-image mode preserves the build action and result region", () => {
   assert.doesNotMatch(script, /header\.after|dropZone\.after|selectionCard\.after/);
 });
 
+test("long selected-image names and paths remain inside the readiness card", () => {
+  assert.match(css, /\.readiness-grid > section\s*\{[^}]*overflow:\s*hidden;/);
+  assert.match(css, /\.readiness-grid \.path\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/);
+  assert.match(css, /\.selection-card h2\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/);
+  assert.doesNotMatch(css, /\.selection-card h2\s*\{[^}]*text-overflow:\s*ellipsis;/);
+});
+
 test("compact main window height agrees between web content and Tauri", () => {
   const mainWindow = tauriConfig.app.windows.find(({ label }) => label === "main");
   assert.equal(mainWindow.height, 800);

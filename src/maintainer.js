@@ -1,8 +1,12 @@
 import { operationContextMatches } from "./operation-context.js";
+import { installWindowDrag } from "./window-drag.js";
 
 const { invoke } = window.__TAURI__.core;
+const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 const openFolder = (options) => invoke("plugin:dialog|open", { options });
 const $ = (selector) => document.querySelector(selector);
+const maintainerWindow = getCurrentWebviewWindow();
+installWindowDrag(maintainerWindow);
 
 const elements = {
   permission: $("#permission-status"), refresh: $("#refresh-sources"),

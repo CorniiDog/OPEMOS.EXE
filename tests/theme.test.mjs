@@ -24,7 +24,7 @@ test("preload and native window backgrounds preserve translucent dark fallback",
   for (const name of htmlFiles) {
     const html = await readFile(new URL(`../src/${name}`, import.meta.url), "utf8");
     assert.match(html, /html, body \{ background: rgba\(11, 17, 24, \.64\);/, `${name} can flash an un-tinted transparent canvas`);
-    assert.match(html, /navigator\.platform\.startsWith\("Mac"\)/, `${name} cannot reserve macOS traffic-light space conditionally`);
+    assert.match(html, /navigator\.platform\.startsWith\("Mac"\).*navigator\.userAgent\.includes\("Macintosh"\)/, `${name} cannot detect macOS robustly`);
     assert.match(html, /<header[^>]*data-tauri-drag-region/, `${name} cannot drag its overlay title bar`);
     assert.match(html, /class="window-drag-region" data-tauri-drag-region/, `${name} is missing its top-edge drag target`);
   }
@@ -48,4 +48,11 @@ test("preload and native window backgrounds preserve translucent dark fallback",
   assert.equal([...windows.matchAll(/\.title_bar_style\(tauri::TitleBarStyle::Overlay\)/g)].length, 2);
   assert.match(windows, /\.radius\(10\.0\)/);
   assert.match(windows, /Effect::UnderWindowBackground, Effect::Acrylic/);
+
+  const dragScript = await readFile(new URL("../src/window-drag.js", import.meta.url), "utf8");
+  assert.match(dragScript, /pointerdown/);
+  assert.match(dragScript, /windowHandle\.startDragging\(\)/);
+
+  const capabilities = JSON.parse(await readFile(new URL("../src-tauri/capabilities/default.json", import.meta.url), "utf8"));
+  assert.ok(capabilities.permissions.includes("core:window:allow-start-dragging"));
 });

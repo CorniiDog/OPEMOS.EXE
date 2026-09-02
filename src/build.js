@@ -11,6 +11,7 @@ import {
   freshAnsiState,
   normalizeTerminalText,
 } from "./terminal-renderer.js";
+import { installWindowDrag } from "./window-drag.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
@@ -25,6 +26,7 @@ const elements = {
   releaseCancel: $("#release-cancel"), releaseConfirm: $("#release-confirm"),
 };
 const progressWindow = getCurrentWebviewWindow();
+installWindowDrag(progressWindow);
 let running = false;
 let activeRequestPath = null;
 let cancelling = false;

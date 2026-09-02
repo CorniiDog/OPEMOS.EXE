@@ -126,12 +126,20 @@ footer p { color: #aab4c5; }
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
 }
-.readiness-grid > section { min-width: 0; }
+.readiness-grid > section { min-width: 0; overflow: hidden; }
 .readiness-grid > .environment-card { grid-column: 1 / -1; }
 .readiness-grid.has-selection > .environment-card { grid-column: auto; }
 .readiness-grid .environment-card,
 .readiness-grid .selection-card { min-height: 82px; }
-.readiness-grid .path { max-width: 100%; }
+.readiness-grid .environment-card > div,
+.readiness-grid .selection-card > div { flex: 1 1 auto; min-width: 0; }
+.readiness-grid .path {
+  max-width: 100%;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
 .environment-card p { margin-top: 0; margin-bottom: 3px; }
 .environment-actions { display: flex; gap: 10px; margin-top: 10px; }
 
@@ -185,10 +193,10 @@ footer p { color: #aab4c5; }
 .guide-shot img { display: block; width: 100%; max-height: 82px; object-fit: cover; }
 .guide-caption { margin: 4px 0 0 !important; font-size: 11px; }
 .selection-card { padding: 10px 16px; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
-.selection-card h2 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.selection-card > div { min-width: 0; }
+.selection-card h2 { white-space: normal; overflow-wrap: anywhere; line-height: 1.2; }
+.selection-card > div { flex: 1 1 auto; min-width: 0; }
 .path { max-width: 670px; margin: 3px 0 0; color: #8490a3; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.status { flex: none; padding: 7px 10px; border-radius: 999px; background: rgba(118, 185, 0, .16); color: #9bd35a; font-size: 12px; font-weight: 700; }
+.status { flex: none; align-self: flex-start; max-width: 100%; padding: 7px 10px; border-radius: 999px; background: rgba(118, 185, 0, .16); color: #9bd35a; font-size: 12px; font-weight: 700; }
 .status.pending { background: #302b17; color: #f2d477; }
 .status.failed { background: #3d2020; color: #ff9494; }
 .build-card { padding: 10px 14px; }
