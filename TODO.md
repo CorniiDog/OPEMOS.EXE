@@ -1016,6 +1016,140 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Test input checksum preservation in the opt-in live appliance test.
 * [x] Test independent marker/NVIDIA output-validation contracts.
 
+## Cross-workflow corner and edge-case matrix
+
+Exercise these first with pure fixtures or disposable virtual media. Tests that
+need a real recovery image, network archive, privileged raw device, or physical
+NVIDIA system must remain explicitly opt-in and must not run destructively in
+ordinary CI. A VM result validates orchestration and image structure, not
+physical NVIDIA boot compatibility.
+
+### Output naming, metadata, and version reuse
+
+* [ ] Test final versioned names for raw, `.bz2`, `.gz`, and `.xz` inputs,
+  including spaces, Unicode, mixed-case extensions, very long names, an empty
+  stem, and exhausted/non-writable destination directories.
+* [ ] Test collision numbering when the image exists, only its manifest exists,
+  both exist, a partial output exists, or a previous versioned NVIDIA output is
+  selected. Never overwrite or pair an image with the wrong manifest.
+* [ ] Keep legacy unversioned `-nvidia.img` outputs importable when their
+  adjacent manifest passes every current identity and content check.
+* [ ] Prove filenames are hints only: harmless renaming must require a matching
+  manifest update/revalidation, while a version-looking filename without a
+  valid manifest must never skip a build.
+* [ ] Reject contradictory manifest identity: output filename/size/hash,
+  SteamOS version, kernel, NVIDIA version, source selection/origin/reference,
+  trust class, result class, and installation verification must agree.
+* [ ] Test completed-output reuse for Automatic and an exact matching pinned
+  version. Test an explicitly different version, project/upstream origin
+  mismatch, and missing version metadata; none may silently reuse or mutate the
+  completed image.
+* [ ] Test that `Latest` is resolved and pinned at build start rather than
+  inferred from a filename or changed by a later catalog refresh.
+* [ ] Test source-selector changes during image inspection and immediately
+  before build dispatch so a stale inspection cannot authorize a different
+  requested driver.
+* [ ] Test current-schema safe additive fields, missing mandatory identity,
+  malformed/oversized JSON, duplicate keys where the parser permits detection,
+  unsupported future schema versions, and legacy migrations.
+* [ ] Add a future explicit upgrade-mode test before allowing a completed
+  NVIDIA image to be rebuilt. It must verify installed state, removal/replacement
+  ownership, rollback, free space, initramfs, and repeat execution; until then,
+  require the original Valve recovery image for a different driver version.
+
+### Idempotency, restart, and concurrent ownership
+
+* [ ] Build the same clean source and exact NVIDIA selection twice. Verify the
+  source remains identical, outputs do not overwrite each other, both manifests
+  bind the correct bytes, and no first-run cache/runtime state is trusted by the
+  second run without revalidation.
+* [ ] Reopen a completed output repeatedly for image-only and USB-only export;
+  verify no installer, compiler, mutation appliance, or new output image starts.
+* [ ] Rapidly select image A then image B while hashing, inspecting, resolving,
+  refreshing USB devices, and receiving completion events. Only the newest
+  generation may alter visible or backend state.
+* [ ] Start a second application instance against the same source, qcow2,
+  handoff, output name, and USB target. Verify exclusive locks fail safely and
+  abandoned locks are recovered only after exact owner/process validation.
+* [ ] Exercise cancel followed immediately by restart during decompression,
+  source hashing, native-appliance boot, x86 boot, download, compilation,
+  validation, mutation, initramfs, export, and USB verification.
+* [ ] Close the progress window, main window, Dock/taskbar application, and OS
+  session during every long phase. Require bounded cleanup, no orphaned QEMU or
+  helper process, no trusted partial output, and an actionable next-launch
+  recovery report.
+* [ ] Test host sleep/wake, clock movement, network loss/recovery, and removable
+  volume disappearance without treating elapsed-time estimates or stale
+  heartbeats as proof of failure or success.
+
+### Filesystem, capacity, and hostile local paths
+
+* [ ] Test exact-fit, one-byte-short, inode-exhausted, sparse-file, quota-limited,
+  read-only, case-insensitive collision, and free-space-changing-during-export
+  destinations. Partial files and manifests must be removed or quarantined.
+* [ ] Test source/output/runtime paths containing newlines, tabs, combining
+  Unicode, shell metacharacters, leading dashes, invalid UTF-8 at the Rust
+  boundary, symlink swaps, hard links, aliases, and parent-directory replacement.
+* [ ] Test interrupted atomic finalization between image rename, manifest rename,
+  directory sync, and Finder reveal. Never leave a final-looking image with an
+  absent, stale, or mismatched manifest.
+* [ ] Test damaged/truncated qcow2 layers, unexpected backing-file changes,
+  full appliance filesystems, guest inode exhaustion, and host write/read errors
+  while preserving the original source and bounded diagnostics.
+
+### USB discovery, authorization, and physical-media behavior
+
+* [ ] Test macOS discovery of previously flashed multi-partition Linux/Arch
+  media where Finder mounts only the EFI volume; select the external whole disk,
+  never an individual visible partition.
+* [ ] Test `diskutil` empty/invalid plist, missing optional keys, internal disks,
+  external USB SSDs with unusual removable/ejectable flags, SD-card readers,
+  disk images, Thunderbolt storage, multiple identical models, and devices with
+  no readable serial number.
+* [ ] Test drive renumbering, unplug/replug, same-capacity replacement, identity
+  token drift, new volumes auto-mounting, and device disappearance before and
+  after authorization. Revalidate the whole disk immediately before the first
+  write and again before reporting success.
+* [ ] Test exact-capacity and off-by-one rejection at logical/physical block-size
+  boundaries, short writes, zero-byte writes, partial final blocks, readback
+  mismatch at first/middle/last block, and media becoming read-only.
+* [ ] Test busy-volume unmount refusal, user cancellation of the macOS privilege
+  prompt, denied authorization, descriptor substitution, descriptor leakage,
+  helper crash, cancellation during write/readback, eject refusal, and power
+  loss. Never reuse a consumed or expired intent session.
+* [ ] Test Image, USB, and Both behavior when the USB is selected before a long
+  build but changes afterward. The completed staging image must remain available
+  whenever USB writing fails or is cancelled.
+
+### UI, diagnostics, and accessibility regressions
+
+* [ ] Add screenshot/layout tests for every window at minimum size, expanded
+  size, macOS display scaling, long paths, long translated errors, empty logs,
+  maximum bounded logs, settings expansion, and USB-device lists. Controls and
+  explanatory footer text must never clip or shift between progress events.
+* [ ] Test keyboard-only image selection, source selection, settings, log text
+  selection/copy, paused-scroll return-to-latest, USB review, confirmation, and
+  cancellation with visible focus and correct disabled/inert states.
+* [ ] Test rapid ANSI output, partial escape sequences, carriage-return compiler
+  progress, invalid UTF-8, very long lines, repeated diagnostics, and copy-smart
+  redaction without freezing scrolling or hiding the authoritative error.
+* [ ] Test companion-window stacking/focus and native close behavior across
+  main, progress, settings, USB review, and maintainer windows, including app
+  switching and another process between their z-order.
+
+### Platform and release-package coverage
+
+* [ ] Run the complete non-destructive suite on Apple Silicon and Intel macOS;
+  distinguish native x86 acceleration from Apple Silicon TCG behavior and do
+  not infer physical-host support solely from a nested VM.
+* [ ] Repeat output identity, completed-image reuse, path, cancellation, and USB
+  helper protocol tests on Windows before enabling that platform. Include UAC
+  denial, `PhysicalDrive` renumbering, drive-letter-only visibility, antivirus
+  interference, sleep/wake, and signed-helper upgrade/rollback.
+* [ ] Test a packaged application with no Homebrew, developer checkout, Cargo,
+  Node, host Python, GitHub CLI, or pre-populated cache. Every required runtime
+  must be bundled or acquired through an authenticated, recoverable path.
+
 ---
 
 # 36. CI
