@@ -45,7 +45,7 @@ The project is not yet producing a bootable modified SteamOS image.
 9. [x] Detect compression/container format and prepare a disposable writable qcow2 working layer.
 10. [x] Inspect a selected raw image read-only without mounting and return structured partition/filesystem metadata. (Real Valve-image validation remains in the immediate sequence.)
 11. [x] Implement the first deterministic marker-only mutation on the selected image's disposable working overlay.
-12. [x] Integrate NVIDIA support from `open-gpu-kernel-modules-steamos-support` only after the generic image-mutation path is proven.
+12. [x] Integrate NVIDIA support from `OPEMOS` (formerly `open-gpu-kernel-modules-steamos-support`) only after the generic image-mutation path is proven.
 
 ---
 
@@ -56,7 +56,7 @@ The project is not yet producing a bootable modified SteamOS image.
   * `CorniiDog/steamos-nvidia-image-builder`
 * [x] Keep SteamOS NVIDIA support/build/install logic in:
 
-  * `CorniiDog/open-gpu-kernel-modules-steamos-support`
+  * `CorniiDog/OPEMOS`
 * [x] Keep NVIDIA source history and project patch branches in:
 
   * `CorniiDog/open-gpu-kernel-modules-steamos`

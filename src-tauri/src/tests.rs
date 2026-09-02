@@ -1805,6 +1805,9 @@ esac
 
     #[test]
     fn follows_schema_two_published_nvidia_selection_policy() {
+        assert_eq!(NVIDIA_RELEASE_REPOSITORY, "CorniiDog/OPEMOS");
+        assert_eq!(NVIDIA_SUPPORT_REPOSITORY, "CorniiDog/OPEMOS");
+        assert!(NVIDIA_RELEASES_API.contains("/repos/CorniiDog/OPEMOS/releases"));
         let kernel = "6.16.12-valve24.5-1-neptune-616-gb2f7cfe85e45";
         let releases = vec![
             published_release_fixture("3.8.15", kernel, "575.64.05"),

@@ -44,8 +44,9 @@ use settings::*;
 const READY_MARKER: &str = "SteamOS NVIDIA Image Builder appliance\nREADY";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
 const NVIDIA_BUILD_BOOT_TIMEOUT: Duration = Duration::from_secs(600);
-const NVIDIA_RELEASES_API: &str = "https://api.github.com/repos/CorniiDog/open-gpu-kernel-modules-steamos-support/releases?per_page=100";
-const NVIDIA_RELEASE_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
+const NVIDIA_RELEASES_API: &str =
+    "https://api.github.com/repos/CorniiDog/OPEMOS/releases?per_page=100";
+const NVIDIA_RELEASE_REPOSITORY: &str = "CorniiDog/OPEMOS";
 const NVIDIA_SOURCE_BRANCHES_API: &str =
     "https://api.github.com/repos/CorniiDog/open-gpu-kernel-modules-steamos/branches?per_page=100";
 const NVIDIA_SOURCE_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos";
@@ -79,7 +80,7 @@ const NVIDIA_DEPENDENCY_ARCHIVE_LIMIT: u64 = 256 * 1024 * 1024;
 const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
-const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/open-gpu-kernel-modules-steamos-support";
+const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/OPEMOS";
 const NVIDIA_SUPPORT_COMMIT: &str = "9f3f1918846dea4fc3068d651451133207653fe5";
 const NVIDIA_INSTALLER_COMMIT: &str = "93285dc176f65964daa6d0c0c01f01e53ab7506e";
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;

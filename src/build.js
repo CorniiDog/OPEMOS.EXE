@@ -672,7 +672,7 @@ async function runBuild(request) {
               const publication = nvidiaResolution.publication;
               const releaseTag = `steamos-${publication.steamosVersion}-nvidia-${publication.nvidiaVersion}-k${publication.kernelVersion}`;
               const publishApproved = await confirmNvidiaRelease(
-                `Repository: CorniiDog/open-gpu-kernel-modules-steamos-support\n` +
+                `Repository: CorniiDog/OPEMOS\n` +
                 `Tag: ${releaseTag}\n` +
                 `Support commit: ${nvidiaResolution.buildPlan.supportCommit}\n` +
                 `Source: ${nvidiaResolution.buildPlan.sourceBranch}@${nvidiaResolution.buildPlan.sourceCommit}\n` +
