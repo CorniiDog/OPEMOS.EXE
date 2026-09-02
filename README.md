@@ -26,10 +26,10 @@ this project.
 
 | Main workflow | Build progress |
 | --- | --- |
-| _Screenshot reserved: main image and USB workflow_ | _Screenshot reserved: live validation and installation progress_ |
+| ![OPEMOS.EXE main image workflow](docs/assets/screenshots/main-window-readme.png) | ![OPEMOS.EXE live build progress](docs/assets/screenshots/build-progress-readme.png) |
 
-The documentation site contains additional prepared screenshot slots and the
-exact filenames to use when captures are ready.
+The documentation site includes full 16:9 captures of the main workflow,
+progress window, and permission-gated maintainer workspace.
 
 ## Start here
 

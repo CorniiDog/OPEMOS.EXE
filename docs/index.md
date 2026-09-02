@@ -30,23 +30,20 @@ artifact, userspace, and offline-installation contracts.
 
 ## Application preview
 
-<div class="screenshot-grid" aria-label="Reserved application screenshots">
+<div class="screenshot-grid" aria-label="Application screenshots">
   <figure class="screenshot-slot" data-screenshot="main-window">
-    <div role="img" aria-label="Reserved space for the OPEMOS.EXE main workflow screenshot">Main workflow screenshot</div>
-    <figcaption><code>docs/assets/screenshots/main-window.png</code></figcaption>
+    <img src="{{ '/assets/screenshots/main-window.png' | relative_url }}" alt="OPEMOS.EXE main recovery-image workflow" loading="lazy">
+    <figcaption>Main recovery-image workflow</figcaption>
   </figure>
   <figure class="screenshot-slot" data-screenshot="build-progress">
-    <div role="img" aria-label="Reserved space for the build progress screenshot">Build progress screenshot</div>
-    <figcaption><code>docs/assets/screenshots/build-progress.png</code></figcaption>
+    <img src="{{ '/assets/screenshots/build-progress.png' | relative_url }}" alt="OPEMOS.EXE source verification and build progress window" loading="lazy">
+    <figcaption>Live build progress and diagnostics</figcaption>
   </figure>
   <figure class="screenshot-slot" data-screenshot="maintainer-workspace">
-    <div role="img" aria-label="Reserved space for the maintainer workspace screenshot">Maintainer workspace screenshot</div>
-    <figcaption><code>docs/assets/screenshots/maintainer-workspace.png</code></figcaption>
+    <img src="{{ '/assets/screenshots/maintainer-workspace.png' | relative_url }}" alt="OPEMOS.EXE permission-gated maintainer workspace" loading="lazy">
+    <figcaption>Permission-gated maintainer workspace</figcaption>
   </figure>
 </div>
-
-The slots intentionally render without broken image icons. Replace each slot
-with its named image after capturing the corresponding window.
 
 ## Choose your path
 

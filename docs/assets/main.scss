@@ -175,6 +175,16 @@ summary:focus-visible {
   padding: 1rem;
   text-align: center;
 }
+.screenshot-slot > img {
+  aspect-ratio: 16 / 9;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: 0 12px 30px var(--shadow);
+  display: block;
+  object-fit: cover;
+  width: 100%;
+}
 .screenshot-slot figcaption { color: var(--text-muted); font-size: 0.82rem; margin-top: 0.55rem; text-align: center; }
 
 blockquote { background: var(--surface); border-left-color: var(--nvidia-green); color: var(--text-muted); padding-bottom: 0.75rem; padding-top: 0.75rem; }
