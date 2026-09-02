@@ -7,6 +7,11 @@ const openFolder = (options) => invoke("plugin:dialog|open", { options });
 const $ = (selector) => document.querySelector(selector);
 const maintainerWindow = getCurrentWebviewWindow();
 installWindowDrag(maintainerWindow);
+await maintainerWindow.onCloseRequested(async (event) => {
+  event.preventDefault();
+  await maintainerWindow.emitTo("main", "companion-window-hidden", { label: "maintainer-workspace" });
+  await maintainerWindow.hide();
+});
 
 const elements = {
   permission: $("#permission-status"), refresh: $("#refresh-sources"),

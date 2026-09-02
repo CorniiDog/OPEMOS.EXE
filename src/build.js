@@ -50,6 +50,11 @@ const RETAIN_VISIBLE_LOG_CHARACTERS = 750_000;
 
 let ansiState = freshAnsiState();
 
+async function hideProgressWindow() {
+  await progressWindow.emitTo("main", "companion-window-hidden", { label: "build-progress" });
+  await progressWindow.hide();
+}
+
 function setStepProgress(state, step, progress) {
   if (state !== "running") {
     currentStep = "";
@@ -773,7 +778,7 @@ async function runBuild(request) {
 
 elements.cancelBuild.addEventListener("click", cancelBuild);
 elements.copyDiagnosticLog.addEventListener("click", copyDiagnosticLog);
-elements.closeWindow.addEventListener("click", () => progressWindow.hide());
+elements.closeWindow.addEventListener("click", () => { void hideProgressWindow(); });
 elements.logFollow.addEventListener("click", resumeLogFollowing);
 elements.buildLog.addEventListener("wheel", (event) => {
   if (event.deltaY < 0) pauseLogFollowing();
@@ -806,5 +811,5 @@ await progressWindow.emitTo("main", "build-progress-ready");
 await progressWindow.onCloseRequested(async (event) => {
   event.preventDefault();
   if (running) await cancelBuild();
-  await progressWindow.hide();
+  await hideProgressWindow();
 });

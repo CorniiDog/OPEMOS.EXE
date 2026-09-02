@@ -22,7 +22,10 @@
 
 <body>
     <div class="window-drag-region" data-tauri-drag-region aria-hidden="true"></div>
-    <main class="app-shell">
+    <button id="companion-scrim" class="companion-scrim hidden" type="button" aria-label="Return focus to the open companion window">
+        <span id="companion-scrim-label">Build progress is open</span>
+    </button>
+    <main id="app-shell" class="app-shell">
         <header class="app-header" data-tauri-drag-region>
             <button id="settings-button" class="icon-button" type="button" aria-label="Open settings" aria-controls="settings-panel" aria-expanded="false">
                 <svg class="hamburger-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">

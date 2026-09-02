@@ -8,6 +8,8 @@ const openUrl = (url) => invoke("plugin:opener|open_url", { url });
 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
+  appShell: $("#app-shell"), companionScrim: $("#companion-scrim"),
+  companionScrimLabel: $("#companion-scrim-label"),
   dropZone: $("#drop-zone"), chooseImage: $("#choose-image"), openValve: $("#open-valve"),
   dropTitle: $("#drop-title"), dropMessage: $("#drop-message"),
   readinessGrid: $("#readiness-grid"), downloadCard: $("#download-card"),
@@ -64,10 +66,45 @@ let githubLoginPoll = 0;
 let githubLoginPending = false;
 let autoReleaseVerificationPending = false;
 let settingsSavePending = false;
+let activeCompanion = null;
 const mainWindow = getCurrentWebviewWindow();
 installWindowDrag(mainWindow);
 
 await mainWindow.listen("build-progress-ready", () => { progressReady = true; });
+
+function setCompanionMode(label = null) {
+  activeCompanion = label;
+  const active = Boolean(label);
+  document.body.classList.toggle("companion-active", active);
+  elements.companionScrim.classList.toggle("hidden", !active);
+  elements.appShell.inert = active;
+  elements.appShell.setAttribute("aria-hidden", String(active));
+  if (label === "maintainer-workspace") {
+    elements.companionScrimLabel.textContent = "Maintainer Workspace is open";
+  } else if (active) {
+    elements.companionScrimLabel.textContent = "Build Progress is open";
+  }
+}
+
+async function focusActiveCompanion() {
+  if (!activeCompanion) return;
+  const label = activeCompanion;
+  const windows = await getAllWebviewWindows();
+  const companion = windows.find((window) => window.label === label);
+  if (!companion || label !== activeCompanion) {
+    setCompanionMode();
+    return;
+  }
+  await companion.setFocus();
+}
+
+elements.companionScrim.addEventListener("click", () => { void focusActiveCompanion(); });
+await mainWindow.onFocusChanged(({ payload: focused }) => {
+  if (focused && activeCompanion) void focusActiveCompanion();
+});
+await mainWindow.listen("companion-window-hidden", ({ payload }) => {
+  if (payload?.label === activeCompanion) setCompanionMode();
+});
 
 async function waitForProgressWindow(progressWindow) {
   progressReady = false;
@@ -406,6 +443,7 @@ elements.openMaintainer.addEventListener("click", async () => {
     await waitForPaint();
     await invoke("open_maintainer_window");
     setSettingsOpen(false);
+    setCompanionMode("maintainer-workspace");
   } catch (error) {
     elements.settingsMessage.textContent = String(error);
     elements.settingsMessage.className = "settings-message error";
@@ -427,6 +465,7 @@ elements.buildButton.addEventListener("click", async () => {
     elements.summaryOutput.textContent = plannedOutput;
     elements.summaryOutput.title = plannedOutput;
     await invoke("open_progress_window");
+    setCompanionMode("build-progress");
     const windows = await getAllWebviewWindows();
     const progressWindow = windows.find((window) => window.label === "build-progress");
     if (!progressWindow) throw new Error("The build progress window is unavailable.");
@@ -440,6 +479,7 @@ elements.buildButton.addEventListener("click", async () => {
       exportMode: activeExportMode,
     });
   } catch (error) {
+    if (activeCompanion === "build-progress") setCompanionMode();
     elements.resultMessage.textContent = String(error);
     elements.resultMessage.className = "result-message error";
     buildRunning = false;
