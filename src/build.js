@@ -45,6 +45,7 @@ let lastInstallerProgressKey = "";
 let validationStartedAt = null;
 let visibleLogCharacters = 0;
 let cancellationTask = null;
+let releaseConfirmationCancel = null;
 
 const MAX_VISIBLE_LOG_CHARACTERS = 1_000_000;
 const RETAIN_VISIBLE_LOG_CHARACTERS = 750_000;
@@ -135,15 +136,20 @@ function addStageLog(message) {
 }
 
 function confirmNvidiaRelease(summary) {
+  if (releaseConfirmationCancel) releaseConfirmationCancel();
   elements.releaseSummary.textContent = summary;
   elements.releaseDialog.showModal();
   elements.releaseCancel.focus();
   return new Promise((resolve) => {
+    let settled = false;
     const finish = (approved) => {
-      elements.releaseDialog.close();
+      if (settled) return;
+      settled = true;
+      if (elements.releaseDialog.open) elements.releaseDialog.close();
       elements.releaseCancel.removeEventListener("click", cancel);
       elements.releaseConfirm.removeEventListener("click", confirm);
       elements.releaseDialog.removeEventListener("cancel", cancelEvent);
+      if (releaseConfirmationCancel === cancel) releaseConfirmationCancel = null;
       resolve(approved);
     };
     const cancel = () => finish(false);
@@ -152,7 +158,12 @@ function confirmNvidiaRelease(summary) {
     elements.releaseCancel.addEventListener("click", cancel);
     elements.releaseConfirm.addEventListener("click", confirm);
     elements.releaseDialog.addEventListener("cancel", cancelEvent);
+    releaseConfirmationCancel = cancel;
   });
+}
+
+function cancelPendingReleaseConfirmation() {
+  if (releaseConfirmationCancel) releaseConfirmationCancel();
 }
 
 function formatBytes(bytes) {
@@ -457,6 +468,7 @@ async function stopAllWorkers() {
 async function cancelBuild() {
   if (cancellationTask) return cancellationTask;
   cancelling = true;
+  cancelPendingReleaseConfirmation();
   const activeBuild = running;
   cancellationTask = (async () => {
     elements.cancelBuild.disabled = true;

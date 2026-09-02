@@ -197,7 +197,7 @@ footer p { color: #aab4c5; }
 .drop-icon path { fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
 .drop-icon { grid-row: 1 / 3; }
 .drop-zone strong { align-self: end; min-width: 0; font-size: 19px; overflow-wrap: anywhere; }
-.drop-zone span { align-self: start; min-width: 0; color: #8490a3; font-size: 13px; overflow-wrap: anywhere; }
+.drop-zone span { align-self: start; min-width: 0; max-height: 3.15em; overflow: auto; color: #8490a3; font-size: 13px; overflow-wrap: anywhere; scrollbar-width: thin; }
 .drop-zone .secondary { grid-column: 3; grid-row: 1 / 3; white-space: nowrap; }
 
 .primary,
@@ -207,7 +207,21 @@ footer p { color: #aab4c5; }
 .secondary { padding: 8px 12px; border: 1px solid rgba(169, 211, 237, .12); color: #dce5ff; background: rgba(40, 66, 87, .62); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
 .secondary:hover:not(:disabled) { background: rgba(49, 82, 108, .76); }
 .primary:disabled,
-.secondary:disabled { cursor: wait; opacity: .55; }
+.secondary:disabled { cursor: not-allowed; opacity: .55; }
+.primary[aria-busy="true"],
+.secondary[aria-busy="true"] { cursor: wait; }
+.primary[aria-busy="true"]::before {
+  content: "";
+  width: 11px;
+  height: 11px;
+  margin-right: 8px;
+  border: 2px solid rgba(6, 19, 28, .24);
+  border-top-color: #06131c;
+  border-radius: 50%;
+  animation: glass-control-spin .8s linear infinite;
+  display: inline-block;
+  vertical-align: -1px;
+}
 
 .download-card,
 .selection-card,
@@ -265,7 +279,7 @@ footer p { color: #aab4c5; }
 .usb-dialog-actions { display: flex; align-items: center; gap: 9px; }
 .usb-dialog-actions .primary { flex: 1 1 auto; }
 .usb-dialog-actions .secondary { flex: 0 0 auto; min-width: 72px; }
-#usb-card > .result-message { max-height: none; margin-top: 8px; font-size: 12px; }
+#usb-card > .result-message { min-height: 34px; max-height: 5em; margin-top: 8px; overflow: auto; overflow-wrap: anywhere; font-size: 12px; }
 .usb-dialog-target { margin-bottom: 10px; padding: 9px 11px; border: 1px solid var(--glass-border); border-radius: 10px; background: rgba(9, 19, 28, .46); }
 .usb-dialog-target span { display: block; color: #8490a3; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
 .usb-dialog-target strong { display: block; margin-top: 3px; overflow: hidden; color: #dce5ff; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }

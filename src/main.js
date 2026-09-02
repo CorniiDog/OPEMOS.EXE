@@ -52,6 +52,7 @@ let imageSelectionGeneration = 0;
 let usbPreflightSession = null;
 let usbContextGeneration = 0;
 let usbArmPending = false;
+let usbCancelPending = false;
 let usbWriting = false;
 let buildRunning = false;
 let activeExportMode = "image";
@@ -162,13 +163,32 @@ function renderExportMode() {
 }
 
 function setUsbMenuOpen(opened) {
+  const wasOpen = !elements.usbCard.classList.contains("hidden");
+  if (opened && !elements.settingsPanel.classList.contains("hidden")) setSettingsOpen(false);
   const selected = elements.usbTarget.selectedOptions[0];
   elements.usbDialogTarget.textContent = selected?.value
     ? `${selected.textContent} — ${selected.dataset.detail || "identity ready for final validation"}`
     : "No drive selected";
   elements.usbCard.classList.toggle("hidden", !opened);
   elements.usbScrim.classList.toggle("hidden", !opened);
-  if (opened) requestAnimationFrame(() => elements.closeUsbMenu.focus());
+  elements.reviewUsbTarget.setAttribute("aria-expanded", String(opened));
+  if (opened) {
+    requestAnimationFrame(() => elements.closeUsbMenu.focus());
+  } else if (wasOpen && !elements.reviewUsbTarget.classList.contains("hidden")) {
+    requestAnimationFrame(() => elements.reviewUsbTarget.focus());
+  }
+}
+
+async function dismissUsbMenu() {
+  if (usbWriting) return;
+  usbContextGeneration += 1;
+  const session = usbPreflightSession;
+  usbPreflightSession = null;
+  renderUsbConfirmationPhase(false);
+  setUsbMenuOpen(false);
+  if (session?.sessionToken) {
+    await invoke("cancel_usb_write_preflight", { sessionToken: session.sessionToken }).catch(() => {});
+  }
 }
 
 function renderUsbConfirmationPhase(prepared = Boolean(usbPreflightSession)) {
@@ -333,10 +353,16 @@ async function saveSettings(next) {
 }
 
 function setSettingsOpen(opened) {
+  if (opened && !elements.usbCard.classList.contains("hidden")) void dismissUsbMenu();
   elements.settingsPanel.classList.toggle("hidden", !opened);
   elements.settingsScrim.classList.toggle("hidden", !opened);
   elements.settingsButton.setAttribute("aria-expanded", String(opened));
-  if (opened) refreshGithubMaintainer();
+  if (opened) {
+    refreshGithubMaintainer();
+    requestAnimationFrame(() => elements.settingsClose.focus());
+  } else {
+    requestAnimationFrame(() => elements.settingsButton.focus());
+  }
 }
 
 async function checkEnvironment() {
@@ -849,6 +875,8 @@ elements.armUsbPreflight.addEventListener("click", async () => {
   const confirmation = elements.usbConfirmation.value;
   usbArmPending = true;
   elements.armUsbPreflight.disabled = true;
+  elements.armUsbPreflight.setAttribute("aria-busy", "true");
+  elements.armUsbPreflight.textContent = "Revalidating…";
   elements.usbMessage.textContent = "Rehashing the image and immediately revalidating the selected disk identity…";
   elements.usbMessage.className = "result-message";
   try {
@@ -885,6 +913,8 @@ elements.armUsbPreflight.addEventListener("click", async () => {
     elements.usbMessage.className = "result-message error";
   } finally {
     usbArmPending = false;
+    elements.armUsbPreflight.removeAttribute("aria-busy");
+    elements.armUsbPreflight.textContent = "Confirm & Prepare USB";
     if (generation === usbContextGeneration) {
       elements.armUsbPreflight.disabled = elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
     }
@@ -892,13 +922,17 @@ elements.armUsbPreflight.addEventListener("click", async () => {
 });
 
 elements.cancelUsbPreflight.addEventListener("click", async () => {
-  if (!usbPreflightSession?.sessionToken) return;
+  if (usbCancelPending || !usbPreflightSession?.sessionToken) return;
   const context = {
     generation: usbContextGeneration,
     imagePath: completedOutput?.path,
     sessionToken: usbPreflightSession.sessionToken,
   };
   let cancellationCompleted = false;
+  usbCancelPending = true;
+  elements.cancelUsbPreflight.disabled = true;
+  elements.cancelUsbPreflight.setAttribute("aria-busy", "true");
+  elements.cancelUsbPreflight.textContent = "Cancelling…";
   try {
     const result = await invoke("cancel_usb_write_preflight", { sessionToken: context.sessionToken });
     if (!operationContextMatches(context, {
@@ -931,6 +965,10 @@ elements.cancelUsbPreflight.addEventListener("click", async () => {
       elements.usbMessage.removeAttribute("title");
       renderUsbConfirmationPhase(false);
     }
+    usbCancelPending = false;
+    elements.cancelUsbPreflight.disabled = false;
+    elements.cancelUsbPreflight.removeAttribute("aria-busy");
+    elements.cancelUsbPreflight.textContent = "Back";
   }
 });
 
@@ -940,11 +978,38 @@ elements.reviewUsbTarget.addEventListener("click", () => {
     setUsbMenuOpen(true);
   }
 });
-elements.closeUsbMenu.addEventListener("click", () => {
-  if (!usbWriting) setUsbMenuOpen(false);
-});
-elements.usbScrim.addEventListener("click", () => {
-  if (!usbWriting) setUsbMenuOpen(false);
+elements.closeUsbMenu.addEventListener("click", () => { void dismissUsbMenu(); });
+elements.usbScrim.addEventListener("click", () => { void dismissUsbMenu(); });
+
+function containOverlayFocus(event, container) {
+  const controls = [...container.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])")]
+    .filter((control) => control.getClientRects().length > 0);
+  if (!controls.length) return;
+  const first = controls[0];
+  const last = controls.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+document.addEventListener("keydown", (event) => {
+  const usbOpen = !elements.usbCard.classList.contains("hidden");
+  const settingsOpen = !elements.settingsPanel.classList.contains("hidden");
+  if (event.key === "Tab" && (usbOpen || settingsOpen)) {
+    containOverlayFocus(event, usbOpen ? elements.usbCard : elements.settingsPanel);
+    return;
+  }
+  if (event.key === "Escape" && usbOpen) {
+    event.preventDefault();
+    void dismissUsbMenu();
+  } else if (event.key === "Escape" && settingsOpen) {
+    event.preventDefault();
+    setSettingsOpen(false);
+  }
 });
 
 await mainWindow.listen("usb-write-progress", (event) => {

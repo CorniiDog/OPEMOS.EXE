@@ -20,6 +20,7 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(html, /class="source-choice export-choice"[\s\S]*id="export-image"[^>]*checked[\s\S]*id="usb-target" size="3"[\s\S]*id="review-usb-target"/);
   assert.match(html, /id="usb-scrim" class="usb-scrim hidden"/);
   assert.match(html, /id="usb-card"[^>]*role="dialog"[\s\S]*class="usb-heading"[\s\S]*id="close-usb-menu"/);
+  assert.match(html, /id="review-usb-target"[^>]*aria-haspopup="dialog"[^>]*aria-controls="usb-card"[^>]*aria-expanded="false"/);
   assert.match(script, /function setUsbMenuOpen\(opened\)/);
   assert.match(script, /function selectedExportMode\(\)[\s\S]*if \(image && usb\) return "both";/);
   assert.match(script, /exportImage\.addEventListener\("change", renderExportMode\)/);
@@ -46,6 +47,14 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.doesNotMatch(html, /Check Preparation Status/);
   assert.match(script, /function renderUsbConfirmationPhase\(prepared = Boolean\(usbPreflightSession\)\)/);
   assert.match(script, /renderUsbConfirmationPhase\(true\)/);
+  assert.match(script, /async function dismissUsbMenu\(\)[\s\S]*usbContextGeneration \+= 1;[\s\S]*cancel_usb_write_preflight/);
+  assert.match(script, /document\.addEventListener\("keydown"[\s\S]*event\.key === "Escape" && usbOpen[\s\S]*dismissUsbMenu\(\)[\s\S]*event\.key === "Escape" && settingsOpen[\s\S]*setSettingsOpen\(false\)/);
+  assert.match(script, /function containOverlayFocus\(event, container\)[\s\S]*control\.getClientRects\(\)\.length > 0[\s\S]*event\.shiftKey[\s\S]*last\.focus\(\)/);
+  assert.match(script, /const wasOpen = !elements\.usbCard\.classList\.contains\("hidden"\);[\s\S]*else if \(wasOpen/);
+  assert.match(script, /armUsbPreflight\.setAttribute\("aria-busy", "true"\)[\s\S]*armUsbPreflight\.textContent = "Revalidating…"/);
+  assert.match(script, /usbCancelPending \|\| !usbPreflightSession\?\.sessionToken[\s\S]*cancelUsbPreflight\.textContent = "Cancelling…"/);
+  assert.match(css, /#usb-card > \.result-message\s*\{[^}]*max-height:\s*5em;[^}]*overflow:\s*auto;/);
+  assert.match(css, /\.primary:disabled,[\s\S]*\.secondary:disabled\s*\{[^}]*cursor:\s*not-allowed;/);
 });
 
 test("image chooser uses a rounded glass download mark", () => {

@@ -21,3 +21,10 @@ test("late x86 startup results are discarded after cancellation", () => {
     assert.match(source, /if cancel\.load\(Ordering::Relaxed\) \{[\s\S]{0,180}drop\(prepared\);[\s\S]{0,220}manager\.starting = false;/);
   }
 });
+
+test("closing during release confirmation resolves the pending modal before cleanup", () => {
+  assert.match(script, /let releaseConfirmationCancel = null;/);
+  assert.match(script, /function cancelPendingReleaseConfirmation\(\)[\s\S]*releaseConfirmationCancel\(\)/);
+  assert.match(script, /async function cancelBuild\(\)[\s\S]*cancelling = true;\s*cancelPendingReleaseConfirmation\(\);/);
+  assert.match(script, /if \(settled\) return;[\s\S]*if \(elements\.releaseDialog\.open\) elements\.releaseDialog\.close\(\)/);
+});
