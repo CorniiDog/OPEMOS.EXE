@@ -795,12 +795,20 @@ async function runBuild(request) {
     addStageLog(`Source safety: original SHA256 ${output.sourceSha256}; unchanged=true.`);
     const usbRequested = request.exportMode === "usb" || request.exportMode === "both";
     const completionMessage = usbRequested
-      ? "Validated staging image ready. Return to the main window to revalidate and write the selected USB device."
+      ? "Validated staging image ready. Opening the USB identity and destructive-write review now."
       : "Validated raw image ready. Return to the main window to reveal it in Finder.";
-    setStatus("complete", nvidiaInstalled ? "NVIDIA mutation complete" : "Marker image complete", completionMessage, 100);
+    const completionTitle = usbRequested
+      ? `${nvidiaInstalled ? "NVIDIA image" : "Marker image"} ready for USB review`
+      : (nvidiaInstalled ? "NVIDIA mutation complete" : "Marker image complete");
+    setStatus("complete", completionTitle, completionMessage, 100);
     await finish("complete", usbRequested
       ? `${nvidiaInstalled ? "NVIDIA-mutated image" : "Marker image"} is ready for USB export: ${output.path}`
       : `${nvidiaInstalled ? "NVIDIA-mutated image" : "Marker image"} created: ${output.path}`, output);
+    if (usbRequested) {
+      await hideProgressWindow().catch((error) => {
+        addStageLog(`The image is ready, but the USB review could not open automatically: ${error}`);
+      });
+    }
   } catch (error) {
     if (cancelling) return;
     addStageLog(`ERROR: ${error}`);

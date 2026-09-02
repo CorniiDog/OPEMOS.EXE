@@ -30,7 +30,7 @@ test("both companion close paths release the rear-window interaction lock", () =
   assert.match(main, /listen\("companion-window-hidden"/);
 });
 
-test("build completion waits for the progress window before changing the main workflow", () => {
+test("image-only completion waits for the progress window before changing the main workflow", () => {
   assert.match(main, /if \(activeCompanion === "build-progress"\) \{\s*pendingBuildFinished = event\.payload;\s*return;/);
   assert.match(main, /payload\.label === "build-progress" && pendingBuildFinished/);
   assert.match(build, /export_marker_image", \{ revealInFinder: false \}/);
@@ -38,6 +38,8 @@ test("build completion waits for the progress window before changing the main wo
 });
 
 test("USB builds reselect only the exact pre-build device and defer Finder until verified", () => {
+  assert.match(build, /await finish\("complete",[\s\S]*if \(usbRequested\) \{\s*await hideProgressWindow\(\)\.catch/);
+  assert.match(build, /ready for USB review/);
   assert.match(main, /deviceIdentifier: selectedUsb\.value,[\s\S]*identityToken: selectedUsb\.dataset\.identityToken/);
   assert.match(main, /option\.value === preferredTarget\.deviceIdentifier[\s\S]*option\.dataset\.identityToken === preferredTarget\.identityToken/);
   assert.match(main, /if \(restored\) \{\s*setUsbMenuOpen\(true\);/);
