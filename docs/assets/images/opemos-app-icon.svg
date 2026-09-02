@@ -42,7 +42,7 @@
     <path id="half-ring" d="M 461 217.4 A 244 244 0 0 0 461 694.6"/>
   </defs>
 
-  <rect x="48" y="48" width="928" height="928" rx="196" fill="url(#tile)" filter="url(#soft-depth)"/>
+  <rect x="48" y="48" width="928" height="928" rx="196" fill="url(#tile)"/>
   <rect x="55" y="55" width="914" height="914" rx="189" fill="none" stroke="url(#tile-rim)" stroke-width="14"/>
 
   <g fill="none" stroke-width="88" stroke-linecap="round" filter="url(#frost)">

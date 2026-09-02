@@ -9,5 +9,5 @@
     </linearGradient>
   </defs>
   <rect x="1" y="1" width="190" height="46" rx="23" fill="url(#opemos-gradient)"/>
-  <path d="M20 12h134a16 16 0 0 1 14 8" fill="none" stroke="#fff" stroke-linecap="round" stroke-opacity="0.2" stroke-width="3"/>
+  <rect x="2.5" y="2.5" width="187" height="43" rx="21.5" fill="none" stroke="#fff" stroke-opacity="0.18" stroke-width="1.5"/>
 </svg>

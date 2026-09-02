@@ -53,10 +53,20 @@ image.draw(
 context.flushGraphics()
 NSGraphicsContext.restoreGraphicsState()
 
-for point in [NSPoint(x: 0, y: 0), NSPoint(x: pixels - 1, y: 0), NSPoint(x: 0, y: pixels - 1), NSPoint(x: pixels - 1, y: pixels - 1)] {
-    guard bitmap.colorAt(x: Int(point.x), y: Int(point.y))?.alphaComponent == 0 else {
-        FileHandle.standardError.write(Data("rendered icon corner is not transparent: \(point)\n".utf8))
+func requireTransparent(x: Int, y: Int) {
+    guard bitmap.colorAt(x: x, y: y)?.alphaComponent == 0 else {
+        FileHandle.standardError.write(Data("rendered icon has pixels outside its contour at (\(x), \(y))\n".utf8))
         exit(1)
+    }
+}
+
+let transparentMargin = 32
+for offset in 0..<transparentMargin {
+    for coordinate in 0..<pixels {
+        requireTransparent(x: coordinate, y: offset)
+        requireTransparent(x: coordinate, y: pixels - 1 - offset)
+        requireTransparent(x: offset, y: coordinate)
+        requireTransparent(x: pixels - 1 - offset, y: coordinate)
     }
 }
 
