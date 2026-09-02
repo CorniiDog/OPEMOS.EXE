@@ -58,3 +58,45 @@ test("preview covers the welcome workflow and clearly labels synthetic state", (
     assert.doesNotMatch(illustration, /stroke-dasharray|<filter|<mask/);
   }
 });
+
+function numericAttribute(element, name) {
+  const match = element.match(new RegExp(`\\b${name}="([0-9.]+)"`));
+  assert.ok(match, `expected ${name} on ${element}`);
+  return Number(match[1]);
+}
+
+function elementWithId(svg, id) {
+  const match = svg.match(new RegExp(`<[^>]+\\bid="${id}"[^>]*>`));
+  assert.ok(match, `expected #${id}`);
+  return match[0];
+}
+
+test("welcome illustrations preserve balanced geometry and non-crossing silhouettes", () => {
+  const [install, recovery, gaming] = illustrations;
+
+  const frame = elementWithId(install, "display-frame");
+  const panel = elementWithId(install, "display-panel");
+  const disc = elementWithId(install, "download-disc");
+  assert.equal(numericAttribute(frame, "x") + numericAttribute(frame, "width") / 2, 260);
+  assert.equal(numericAttribute(panel, "x") + numericAttribute(panel, "width") / 2, 260);
+  assert.equal(numericAttribute(disc, "cx"), 260);
+
+  const slotA = elementWithId(recovery, "slot-a");
+  const slotB = elementWithId(recovery, "slot-b");
+  assert.equal(numericAttribute(slotA, "width"), numericAttribute(slotB, "width"));
+  assert.equal(numericAttribute(slotA, "height"), numericAttribute(slotB, "height"));
+  assert.equal(
+    numericAttribute(slotA, "x") + numericAttribute(slotA, "width") / 2,
+    520 - (numericAttribute(slotB, "x") + numericAttribute(slotB, "width") / 2),
+  );
+  const slotBottom = numericAttribute(slotB, "y") + numericAttribute(slotB, "height") + numericAttribute(slotB, "stroke-width") / 2;
+  const check = elementWithId(recovery, "readiness-check");
+  const checkEndY = Number(check.match(/\s([0-9]+)" fill=/)[1]);
+  assert.ok(checkEndY - numericAttribute(check, "stroke-width") / 2 > slotBottom);
+
+  const display = elementWithId(gaming, "gaming-display");
+  const controller = elementWithId(gaming, "controller");
+  const displayBottom = numericAttribute(display, "y") + numericAttribute(display, "height") + numericAttribute(display, "stroke-width") / 2;
+  const controllerTop = Number(controller.match(/d="M[0-9]+ ([0-9]+)/)[1]) - numericAttribute(controller, "stroke-width") / 2;
+  assert.ok(controllerTop > displayBottom, "controller and display must retain a visible gap");
+});

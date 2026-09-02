@@ -1,13 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 360" role="img" aria-labelledby="title desc">
   <title id="title">Gaming-ready graphics</title>
-  <desc id="desc">A game controller rests in front of a display with blue and green graphics.</desc>
+  <desc id="desc">A game controller sits below a display with blue and green graphics.</desc>
   <defs><linearGradient id="g" x1="0" x2="1"><stop stop-color="#57c4fb"/><stop offset="1" stop-color="#78da70"/></linearGradient></defs>
-  <rect x="94" y="46" width="332" height="208" rx="24" fill="#0b202c" stroke="url(#g)" stroke-width="4"/>
-  <path d="M120 215 190 145l52 42 80-82 78 62v60H120z" fill="url(#g)" opacity=".24"/>
-  <path d="M169 310c-25 0-43-20-36-44l17-57c6-20 24-34 45-34h130c21 0 39 14 45 34l17 57c7 24-11 44-36 44-16 0-28-8-41-25l-14-18h-72l-14 18c-13 17-25 25-41 25z" fill="#193747" stroke="url(#g)" stroke-width="4" stroke-linejoin="round"/>
-  <path d="M203 212v50m-25-25h50" stroke="#ecfaff" stroke-width="10" stroke-linecap="round"/>
-  <circle cx="330" cy="222" r="8" fill="#78da70"/>
-  <circle cx="350" cy="242" r="8" fill="#57c4fb"/>
-  <circle cx="310" cy="242" r="8" fill="#57c4fb"/>
-  <circle cx="330" cy="262" r="8" fill="#78da70"/>
+  <rect id="gaming-display" x="98" y="42" width="324" height="142" rx="24" fill="#0b202c" stroke="url(#g)" stroke-width="4"/>
+  <path id="gaming-scene" d="M122 160 190 100l48 38 80-58 80 60v20H122z" fill="url(#g)" opacity=".24"/>
+  <path id="controller" d="M191 196h138c20 0 38 13 44 32l15 44c8 24-9 44-33 44-18 0-32-10-45-28l-16-21h-68l-16 21c-13 18-27 28-45 28-24 0-41-20-33-44l15-44c6-19 24-32 44-32z" fill="#193747" stroke="url(#g)" stroke-width="4" stroke-linejoin="round"/>
+  <path id="direction-pad" d="M203 222v50m-25-25h50" stroke="#ecfaff" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="330" cy="232" r="8" fill="#78da70"/>
+  <circle cx="350" cy="252" r="8" fill="#57c4fb"/>
+  <circle cx="310" cy="252" r="8" fill="#57c4fb"/>
+  <circle cx="330" cy="272" r="8" fill="#78da70"/>
 </svg>
