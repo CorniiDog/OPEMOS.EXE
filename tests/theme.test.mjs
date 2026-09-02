@@ -21,23 +21,27 @@ test("preload and native window backgrounds preserve translucent dark fallback",
   for (const name of htmlFiles) {
     const html = await readFile(new URL(`../src/${name}`, import.meta.url), "utf8");
     assert.match(html, /html, body \{ background: rgba\(11, 17, 24, \.74\);/, `${name} can flash an un-tinted transparent canvas`);
+    assert.match(html, /navigator\.platform\.startsWith\("Mac"\)/, `${name} cannot reserve macOS traffic-light space conditionally`);
+    assert.match(html, /<header[^>]*data-tauri-drag-region/, `${name} cannot drag its overlay title bar`);
   }
 
   const config = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
   const main = config.app.windows[0];
   assert.equal(config.app.macOSPrivateApi, true);
   assert.equal(main.transparent, true);
-  assert.equal(main.titleBarStyle, "Transparent");
+  assert.equal(main.titleBarStyle, "Overlay");
   assert.equal(main.hiddenTitle, true);
   assert.equal(main.shadow, false);
   assert.deepEqual(main.backgroundColor, [11, 17, 24, 0]);
   assert.deepEqual(main.windowEffects.effects, ["underWindowBackground", "acrylic"]);
+  assert.equal(main.windowEffects.radius, 10);
   assert.deepEqual(main.windowEffects.color, [11, 17, 24, 220]);
 
   const windows = await readFile(new URL("../src-tauri/src/windows.rs", import.meta.url), "utf8");
   assert.equal([...windows.matchAll(/\.transparent\(true\)/g)].length, 2);
   assert.equal([...windows.matchAll(/\.effects\(glass_window_effects\(\)\)/g)].length, 2);
   assert.equal([...windows.matchAll(/\.shadow\(false\)/g)].length, 2);
-  assert.equal([...windows.matchAll(/\.title_bar_style\(tauri::TitleBarStyle::Transparent\)/g)].length, 2);
+  assert.equal([...windows.matchAll(/\.title_bar_style\(tauri::TitleBarStyle::Overlay\)/g)].length, 2);
+  assert.match(windows, /\.radius\(10\.0\)/);
   assert.match(windows, /Effect::UnderWindowBackground, Effect::Acrylic/);
 });

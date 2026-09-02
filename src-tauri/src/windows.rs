@@ -6,7 +6,7 @@ fn glass_window_effects() -> tauri::utils::config::WindowEffectsConfig {
     EffectsBuilder::new()
         .effects([Effect::UnderWindowBackground, Effect::Acrylic])
         .state(EffectState::FollowsWindowActiveState)
-        .radius(22.0)
+        .radius(10.0)
         .color(Color(11, 17, 24, 220))
         .build()
 }
@@ -42,7 +42,7 @@ pub(crate) fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> 
     .visible(false);
     #[cfg(target_os = "macos")]
     let progress_builder = progress_builder
-        .title_bar_style(tauri::TitleBarStyle::Transparent)
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true);
     let progress = progress_builder
         .parent(&main)
@@ -91,7 +91,7 @@ pub(crate) async fn open_maintainer_window(app: tauri::AppHandle) -> Result<(), 
     .visible(false);
     #[cfg(target_os = "macos")]
     let window_builder = window_builder
-        .title_bar_style(tauri::TitleBarStyle::Transparent)
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true);
     let window = window_builder
         .parent(&main)

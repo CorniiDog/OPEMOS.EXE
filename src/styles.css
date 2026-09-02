@@ -66,6 +66,7 @@ body::after {
 .app-shell > * { flex: none; }
 .app-shell > header { padding: 0 2px; }
 .app-header { position: relative; padding-right: 54px !important; }
+.platform-macos .app-header { padding-left: 60px !important; }
 .app-header h1 {
   color: #f5f7fb;
 }

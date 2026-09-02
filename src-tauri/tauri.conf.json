@@ -20,13 +20,13 @@
         "theme": "Dark",
         "backgroundColor": [11, 17, 24, 0],
         "transparent": true,
-        "titleBarStyle": "Transparent",
+        "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "shadow": false,
         "windowEffects": {
           "effects": ["underWindowBackground", "acrylic"],
           "state": "followsWindowActiveState",
-          "radius": 22,
+          "radius": 10,
           "color": [11, 17, 24, 220]
         },
         "visible": false,

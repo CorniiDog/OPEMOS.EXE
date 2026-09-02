@@ -10,6 +10,7 @@
     <style>
         html, body { background: rgba(11, 17, 24, .74); color: #f5f7fb; }
     </style>
+    <script>if (navigator.platform.startsWith("Mac")) document.documentElement.classList.add("platform-macos");</script>
 
     <title>SteamOS NVIDIA Builder</title>
 
@@ -21,7 +22,7 @@
 
 <body>
     <main class="app-shell">
-        <header class="app-header">
+        <header class="app-header" data-tauri-drag-region>
             <button id="settings-button" class="icon-button" type="button" aria-label="Open settings" aria-controls="settings-panel" aria-expanded="false">
                 <svg class="hamburger-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path d="M4 6.5h16M4 12h16M4 17.5h16"></path>

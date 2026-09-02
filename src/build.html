@@ -5,12 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
     <style>html, body { background: rgba(11, 17, 24, .74); color: #f5f7fb; }</style>
+    <script>if (navigator.platform.startsWith("Mac")) document.documentElement.classList.add("platform-macos");</script>
     <title>Build Progress</title>
     <link rel="stylesheet" href="/build.css">
 </head>
 <body>
     <main class="progress-shell">
-        <header>
+        <header data-tauri-drag-region>
             <p class="eyebrow">SteamOS NVIDIA Image Builder</p>
             <h1>Image build progress</h1>
             <p id="input-name" class="input-name">Receiving selected image…</p>
