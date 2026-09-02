@@ -391,6 +391,12 @@ function pauseLogFollowing() {
 function resumeLogFollowing() {
   followingLogs = true;
   flushPendingLogs();
+  // There may be no queued output when the user clicks "Scroll paused".
+  // Jump independently of flushing so the control always returns to the live
+  // edge and restores its truthful state.
+  elements.buildLog.scrollTop = elements.buildLog.scrollHeight;
+  elements.logFollow.textContent = "Following live output";
+  elements.logFollow.classList.remove("paused");
 }
 
 async function refreshLogs() {

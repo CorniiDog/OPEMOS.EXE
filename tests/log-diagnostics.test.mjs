@@ -102,9 +102,10 @@ test("terminal failure summaries retain the root cause without progress protocol
 });
 
 test("progress-window diagnostics remain in the fixed log toolbar", async () => {
-  const [html, css] = await Promise.all([
+  const [html, css, script] = await Promise.all([
     readFile(new URL("../src/build.html", import.meta.url), "utf8"),
     readFile(new URL("../src/build.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/build.js", import.meta.url), "utf8"),
   ]);
   const tools = html.match(/<div class="log-tools">([\s\S]*?)<\/div>/)?.[1] || "";
   assert.match(tools, /id="copy-diagnostic-log"/);
@@ -112,6 +113,12 @@ test("progress-window diagnostics remain in the fixed log toolbar", async () => 
   assert.ok(tools.indexOf("copy-diagnostic-log") < tools.indexOf("log-follow"));
   assert.match(css, /\.actions\s*\{[^}]*min-height:\s*41px/s);
   assert.match(css, /\.logs-card\s*\{[^}]*min-height:\s*0/s);
+  const resume = script.match(/function resumeLogFollowing\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(resume, /followingLogs\s*=\s*true/);
+  assert.match(resume, /flushPendingLogs\(\)/);
+  assert.match(resume, /buildLog\.scrollTop\s*=\s*elements\.buildLog\.scrollHeight/);
+  assert.match(resume, /logFollow\.textContent\s*=\s*"Following live output"/);
+  assert.match(resume, /logFollow\.classList\.remove\("paused"\)/);
 });
 
 test("credentials and host usernames are redacted", () => {
