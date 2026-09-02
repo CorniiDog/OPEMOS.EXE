@@ -12,45 +12,53 @@
       <stop offset="0.48" stop-color="#547286" stop-opacity="0.2"/>
       <stop offset="1" stop-color="#80a867" stop-opacity="0.42"/>
     </linearGradient>
-    <linearGradient id="blue-glass" x1="250" y1="210" x2="525" y2="700" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#8dd4f7" stop-opacity="0.88"/>
-      <stop offset="0.38" stop-color="#3f9ed5" stop-opacity="0.78"/>
-      <stop offset="1" stop-color="#1a6ca5" stop-opacity="0.7"/>
+    <linearGradient id="ring-blue" x1="461" y1="217.4" x2="512" y2="700" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1a9fff" stop-opacity="0.74"/>
+      <stop offset="0.76" stop-color="#1184c7" stop-opacity="0.71"/>
+      <stop offset="1" stop-color="#2f8078" stop-opacity="0.7"/>
     </linearGradient>
-    <linearGradient id="green-glass" x1="774" y1="210" x2="499" y2="700" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#b2d77a" stop-opacity="0.86"/>
-      <stop offset="0.4" stop-color="#76b900" stop-opacity="0.72"/>
-      <stop offset="1" stop-color="#477d18" stop-opacity="0.66"/>
+    <linearGradient id="ring-green" x1="563" y1="217.4" x2="512" y2="700" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#76b900" stop-opacity="0.72"/>
+      <stop offset="0.76" stop-color="#5a9f20" stop-opacity="0.71"/>
+      <stop offset="1" stop-color="#2f8078" stop-opacity="0.7"/>
     </linearGradient>
     <linearGradient id="neutral-glass" x1="400" y1="300" x2="630" y2="820" gradientUnits="userSpaceOnUse">
       <stop stop-color="#a9c8d8"/>
       <stop offset="0.52" stop-color="#658395"/>
       <stop offset="1" stop-color="#304a5c"/>
     </linearGradient>
-    <path id="half-ring" d="M 461 217.4 A 244 244 0 0 0 461 694.6"/>
+    <linearGradient id="arrow-glass" x1="512" y1="564" x2="512" y2="726" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#c0dbe9"/>
+      <stop offset="0.52" stop-color="#819dac"/>
+      <stop offset="1" stop-color="#4b687a"/>
+    </linearGradient>
+    <path id="ring-blue-arc" d="M 461 217.4 A 244 244 0 0 0 512 700"/>
+    <path id="ring-green-arc" d="M 512 700 A 244 244 0 0 0 563 217.4"/>
+    <clipPath id="ring-blue-half"><rect width="512" height="1024"/></clipPath>
+    <clipPath id="ring-green-half"><rect x="512" width="512" height="1024"/></clipPath>
   </defs>
 
   <rect x="48" y="48" width="928" height="928" rx="196" fill="url(#tile)"/>
   <rect x="55" y="55" width="914" height="914" rx="189" fill="none" stroke="url(#tile-rim)" stroke-width="14"/>
 
   <g fill="none" stroke-width="88" stroke-linecap="round">
-    <use href="#half-ring" stroke="url(#blue-glass)"/>
-    <use href="#half-ring" transform="translate(1024 0) scale(-1 1)" stroke="url(#green-glass)"/>
+    <use href="#ring-blue-arc" stroke="url(#ring-blue)" clip-path="url(#ring-blue-half)"/>
+    <use href="#ring-green-arc" stroke="url(#ring-green)" clip-path="url(#ring-green-half)"/>
   </g>
-  <g fill="none" stroke="#d7effb" stroke-opacity="0.38" stroke-width="7" stroke-linecap="round">
-    <use href="#half-ring"/>
-    <use href="#half-ring" transform="translate(1024 0) scale(-1 1)"/>
+  <g fill="none" stroke="#d7effb" stroke-opacity="0.24" stroke-width="7" stroke-linecap="round">
+    <use href="#ring-blue-arc" clip-path="url(#ring-blue-half)"/>
+    <use href="#ring-green-arc" clip-path="url(#ring-green-half)"/>
   </g>
 
   <g>
-    <path d="M 512 580 V 672" fill="none" stroke="url(#neutral-glass)" stroke-width="88" stroke-linecap="round"/>
-    <path d="M 424 640 L 512 738 L 600 640 Z" fill="url(#neutral-glass)" stroke="#d5edf8" stroke-opacity="0.52" stroke-width="9" stroke-linejoin="round"/>
+    <path d="M 474 578 Q 474 564 488 564 H 536 Q 550 564 550 578 V 618 H 582 Q 594 618 587 628 L 523 712 Q 512 726 501 712 L 437 628 Q 430 618 442 618 H 474 Z"
+      fill="url(#arrow-glass)" stroke="#d5edf8" stroke-opacity="0.34" stroke-width="6" stroke-linejoin="round"/>
     <circle cx="512" cy="456" r="142" fill="url(#neutral-glass)" stroke="#d5edf8" stroke-opacity="0.52" stroke-width="9"/>
     <circle cx="512" cy="456" r="55" fill="#0b151e" stroke="#9bbdce" stroke-opacity="0.58" stroke-width="9"/>
   </g>
 
   <g fill="url(#neutral-glass)" stroke="#b7d6e7" stroke-opacity="0.42" stroke-width="8" stroke-linejoin="round">
-    <path d="M 330 744 L 512 684 L 694 744 L 512 814 Z"/>
-    <path d="M 330 820 L 512 760 L 694 820 L 512 890 Z" opacity="0.68"/>
+    <path d="M 320 778 L 470 723 L 487 744 A 32 32 0 0 0 537 744 L 554 723 L 704 778 L 512 850 Z"/>
+    <path d="M 330 854 L 512 800 L 694 854 L 512 920 Z" opacity="0.68"/>
   </g>
 </svg>

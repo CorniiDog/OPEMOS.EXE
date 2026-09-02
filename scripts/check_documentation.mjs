@@ -133,11 +133,20 @@ for (const screenshot of ["main-window-readme.png", "build-progress-readme.png"]
 }
 
 const iconSvg = await read("docs/assets/images/opemos-app-icon.svg");
-assert.match(iconSvg, /id="half-ring"/);
-assert.match(iconSvg, /transform="translate\(1024 0\) scale\(-1 1\)"/);
+assert.match(iconSvg, /id="ring-blue-arc"/);
+assert.match(iconSvg, /id="ring-green-arc"/);
+assert.match(iconSvg, /id="ring-blue"/);
+assert.match(iconSvg, /id="ring-green"/);
+assert.match(iconSvg, /id="arrow-glass"/);
+assert.match(iconSvg, /M 461 217\.4 A 244 244 0 0 0 512 700/);
+assert.match(iconSvg, /M 512 700 A 244 244 0 0 0 563 217\.4/);
+assert.match(iconSvg, /id="ring-blue-half"/);
+assert.match(iconSvg, /id="ring-green-half"/);
 assert.match(iconSvg, /<circle cx="512" cy="456" r="142"/);
 assert.match(iconSvg, /<circle cx="512" cy="456" r="55"/);
-assert.match(iconSvg, /M 424 640 L 512 738 L 600 640 Z/);
+assert.match(iconSvg, /M 474 578 Q 474 564 488 564 H 536 Q 550 564 550 578/);
+assert.doesNotMatch(iconSvg, /M 432 626 L 512 724 L 592 626 Z/);
+assert.match(iconSvg, /M 320 778 L 470 723 L 487 744 A 32 32 0 0 0 537 744 L 554 723 L 704 778 L 512 850 Z/);
 assert.doesNotMatch(iconSvg, /M 104 226 Q 170 92 330 78/);
 assert.doesNotMatch(iconSvg, /<rect x="48" y="48"[^>]*filter=/);
 assert.doesNotMatch(iconSvg, /<filter|filter="url\(/);

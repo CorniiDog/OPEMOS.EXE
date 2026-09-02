@@ -54,6 +54,10 @@ test("preload and native window backgrounds preserve translucent dark fallback",
     "icons/icon.ico",
   ]);
 
+  const buildScript = await readFile(new URL("../src-tauri/build.rs", import.meta.url), "utf8");
+  assert.match(buildScript, /cargo:rerun-if-changed=icons\/icon\.png/);
+  assert.match(buildScript, /cargo:rerun-if-changed=icons\/icon\.icns/);
+
   const windows = await readFile(new URL("../src-tauri/src/windows.rs", import.meta.url), "utf8");
   assert.equal([...windows.matchAll(/\.transparent\(true\)/g)].length, 2);
   assert.equal([...windows.matchAll(/\.effects\(glass_window_effects\(\)\)/g)].length, 2);
