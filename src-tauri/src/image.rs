@@ -2134,6 +2134,10 @@ pub(crate) fn valid_usb_preflight_session_token(session_token: &str) -> bool {
 }
 
 #[cfg(target_os = "macos")]
+pub(crate) const DISKUTIL_EXTERNAL_PHYSICAL_LIST_ARGS: [&str; 4] =
+    ["list", "-plist", "external", "physical"];
+
+#[cfg(target_os = "macos")]
 fn plist_command_json(
     mut command: Command,
     description: &str,
@@ -2141,9 +2145,25 @@ fn plist_command_json(
     let plist = command
         .output()
         .map_err(|error| format!("Could not {description}: {error}"))?;
-    if !plist.status.success() || plist.stdout.len() > 4 * 1024 * 1024 {
+    if !plist.status.success() {
+        let detail: String = String::from_utf8_lossy(&plist.stderr)
+            .trim()
+            .chars()
+            .take(512)
+            .collect();
         return Err(format!(
-            "Could not {description}; diskutil returned an invalid response."
+            "Could not {description}; diskutil exited with {}{}.",
+            plist.status,
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            }
+        ));
+    }
+    if plist.stdout.len() > 4 * 1024 * 1024 {
+        return Err(format!(
+            "Could not {description}; diskutil returned more than 4 MiB of metadata."
         ));
     }
     let mut child = Command::new("/usr/bin/plutil")
@@ -2172,7 +2192,7 @@ fn plist_command_json(
 #[cfg(target_os = "macos")]
 fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
     let mut list_command = Command::new("/usr/sbin/diskutil");
-    list_command.args(["list", "external", "physical", "-plist"]);
+    list_command.args(DISKUTIL_EXTERNAL_PHYSICAL_LIST_ARGS);
     let list = plist_command_json(list_command, "list external physical disks")?;
     let identifiers = list
         .get("WholeDisks")

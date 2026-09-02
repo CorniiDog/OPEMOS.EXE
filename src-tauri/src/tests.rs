@@ -900,6 +900,15 @@ esac
 
     #[cfg(target_os = "macos")]
     #[test]
+    fn macos_diskutil_list_places_plist_before_filters() {
+        assert_eq!(
+            DISKUTIL_EXTERNAL_PHYSICAL_LIST_ARGS,
+            ["list", "-plist", "external", "physical"]
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn macos_usb_authorization_receives_one_close_on_exec_descriptor() {
         use std::os::fd::AsRawFd as _;
 
