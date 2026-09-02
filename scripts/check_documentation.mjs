@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { access, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { inflateSync } from "node:zlib";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const requiredPages = [
@@ -19,6 +20,49 @@ const pngDimensions = async (relative) => {
   const bytes = await readFile(path.join(root, relative));
   assert.equal(bytes.subarray(1, 4).toString("ascii"), "PNG", `${relative} must be a PNG`);
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+};
+
+const pngRgbaCornerAlphas = async (relative) => {
+  const bytes = await readFile(path.join(root, relative));
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  assert.equal(bytes[24], 8, `${relative} must use 8-bit samples`);
+  assert.equal(bytes[25], 6, `${relative} must use RGBA pixels`);
+  assert.equal(bytes[28], 0, `${relative} must not be interlaced`);
+  const chunks = [];
+  for (let offset = 8; offset + 12 <= bytes.length;) {
+    const length = bytes.readUInt32BE(offset);
+    const type = bytes.subarray(offset + 4, offset + 8).toString("ascii");
+    if (type === "IDAT") chunks.push(bytes.subarray(offset + 8, offset + 8 + length));
+    offset += 12 + length;
+  }
+  const packed = inflateSync(Buffer.concat(chunks));
+  const stride = width * 4;
+  const pixels = Buffer.alloc(stride * height);
+  for (let row = 0, source = 0; row < height; row += 1) {
+    const filter = packed[source++];
+    const target = row * stride;
+    for (let column = 0; column < stride; column += 1) {
+      const raw = packed[source++];
+      const left = column >= 4 ? pixels[target + column - 4] : 0;
+      const above = row ? pixels[target + column - stride] : 0;
+      const upperLeft = row && column >= 4 ? pixels[target + column - stride - 4] : 0;
+      const predictor = (() => {
+        if (filter === 0) return 0;
+        if (filter === 1) return left;
+        if (filter === 2) return above;
+        if (filter === 3) return Math.floor((left + above) / 2);
+        if (filter === 4) {
+          const estimate = left + above - upperLeft;
+          const distances = [Math.abs(estimate - left), Math.abs(estimate - above), Math.abs(estimate - upperLeft)];
+          return distances[0] <= distances[1] && distances[0] <= distances[2] ? left : distances[1] <= distances[2] ? above : upperLeft;
+        }
+        assert.fail(`${relative} uses unsupported PNG filter ${filter}`);
+      })();
+      pixels[target + column] = (raw + predictor) & 0xff;
+    }
+  }
+  return [pixels[3], pixels[stride - 1], pixels[(height - 1) * stride + 3], pixels[pixels.length - 1]];
 };
 
 for (const page of requiredPages) {
@@ -94,6 +138,8 @@ assert.match(iconSvg, /<circle cx="512" cy="456" r="55"/);
 assert.match(iconSvg, /M 424 640 L 512 738 L 600 640 Z/);
 const iconDimensions = await pngDimensions("docs/assets/images/opemos-app-icon.png");
 assert.deepEqual(iconDimensions, { width: 1024, height: 1024 });
+assert.deepEqual(await pngRgbaCornerAlphas("docs/assets/images/opemos-app-icon.png"), [0, 0, 0, 0]);
+assert.deepEqual(await pngRgbaCornerAlphas("src-tauri/icons/icon.png"), [0, 0, 0, 0]);
 
 const checks = await read(".github/workflows/checks.yml");
 assert.match(checks, /^name: Checks$/m);
