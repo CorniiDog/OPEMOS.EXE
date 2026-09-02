@@ -1299,7 +1299,8 @@ esac
                 "layoutRecognized": true,
                 "markerVerified": true,
                 "nvidiaPayloadVerified": true,
-                "installationMediaWelcomeVerified": true
+                "installationMediaWelcomeVerified": true,
+                "installedRecoveryGuardianPayloadVerified": true
             },
             "integration": {
                 "milestone": "nvidia-offline-installed",
@@ -1369,6 +1370,15 @@ esac
         assert!(completed_nvidia_image_from_path(image.to_str().unwrap()).is_err());
 
         manifest["validation"]["installationMediaWelcomeVerified"] = serde_json::json!(true);
+        manifest["validation"]
+            .as_object_mut()
+            .unwrap()
+            .remove("installedRecoveryGuardianPayloadVerified");
+        write_manifest(&manifest);
+        assert!(completed_nvidia_image_from_path(image.to_str().unwrap()).is_err());
+
+        manifest["validation"]["installedRecoveryGuardianPayloadVerified"] =
+            serde_json::json!(true);
         manifest["resultClass"] = serde_json::json!("marker-only");
         write_manifest(&manifest);
         assert!(completed_nvidia_image_from_path(image.to_str().unwrap()).is_err());
@@ -2312,11 +2322,24 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 463_753);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 28);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 521_800);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 42);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "bootstrap/install_recovery_guardian_to_root.sh" && file.executable
+        }));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "bootstrap/recoveryctl.sh" && file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/open_opemos_contract.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "support/recovery/opemos-nvidia-guardian.service.in"
+                && !file.executable
+        }));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/update_grub_nvidia_args.py" && file.executable));
@@ -2614,6 +2637,8 @@ esac
         assert!(helper.contains("typed confirmation did not match; nothing changed"));
         assert!(helper.contains("flock -n 9"));
         assert!(helper.contains("OPEMOS_FAIL_FAST=1"));
+        assert!(helper.contains("install_recovery_guardian_to_root.sh"));
+        assert!(helper.contains("for slot in A B"));
         assert!(!helper.contains("eval "));
 
         assert!(patcher.contains("unsupported Valve installer structure for guarded anchor"));
@@ -4210,6 +4235,10 @@ esac
         assert_eq!(nvidia_manifest["validation"]["recoveryRollbackVerified"], true);
         assert_eq!(
             nvidia_manifest["validation"]["installationMediaWelcomeVerified"],
+            true
+        );
+        assert_eq!(
+            nvidia_manifest["validation"]["installedRecoveryGuardianPayloadVerified"],
             true
         );
         assert!(nvidia_manifest["integration"]["modifiedPaths"]

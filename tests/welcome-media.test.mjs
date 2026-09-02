@@ -30,6 +30,9 @@ test("install helper binds and revalidates a physical device identity", () => {
   assert.match(helper, /flock -n 9/);
   assert.match(helper, /case "\$mode" in all\|system/);
   assert.match(helper, /PARTN,PARTLABEL,TYPE/);
+  assert.match(helper, /install_recovery_guardian_to_root\.sh/);
+  assert.match(helper, /for slot in A B/);
+  assert.match(helper, /--support-revision "\$support_revision"/);
 });
 
 test("guarded patcher accepts the audited Valve contract without broad rewriting", (context) => {

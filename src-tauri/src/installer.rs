@@ -72,6 +72,19 @@ fn stage_install_media_welcome_assets(
     })
 }
 
+fn installation_media_support_install_commands() -> Result<String, String> {
+    validate_pinned_installer_contract()?;
+    let mut commands = String::new();
+    for file in &PINNED_INSTALLER_FILES {
+        let mode = if file.executable { "0755" } else { "0644" };
+        commands.push_str(&format!(
+            "sudo install -D -o root -g root -m {mode} \"$WORK/support/{path}\" \"$ROOT/usr/lib/opemos-install-media/support/{path}\"\n",
+            path = file.path
+        ));
+    }
+    Ok(commands)
+}
+
 struct UniqueJson;
 
 impl<'de> serde::de::DeserializeSeed<'de> for UniqueJson {
@@ -2440,6 +2453,7 @@ pub(crate) fn install_nvidia_to_working_image_blocking(
     let (recovery_script_sha256, recovery_desktop_sha256) =
         stage_recovery_rollback_assets(&connection)?;
     let welcome_digests = stage_install_media_welcome_assets(&connection)?;
+    let install_media_support_commands = installation_media_support_install_commands()?;
     let mutation_attempt = 2_usize;
     let command = format!(
         r#"set -euo pipefail
@@ -2610,6 +2624,11 @@ sudo install -m 0755 -o root -g root /tmp/opemos-install-helper "$ROOT/usr/lib/o
 sudo python3 /tmp/patch_repair_device.py "$ROOT/home/deck/tools/repair_device.sh" "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 sudo chown root:root "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 sudo chmod 0755 "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
+{install_media_support_commands}
+printf '%s\n' '{support_commit}' | sudo tee "$ROOT/usr/lib/opemos-install-media/support-revision" >/dev/null
+printf '%s\n' '{nvidia_version}' | sudo tee "$ROOT/usr/lib/opemos-install-media/nvidia-version" >/dev/null
+sudo chown root:root "$ROOT/usr/lib/opemos-install-media/support-revision" "$ROOT/usr/lib/opemos-install-media/nvidia-version"
+sudo chmod 0644 "$ROOT/usr/lib/opemos-install-media/support-revision" "$ROOT/usr/lib/opemos-install-media/nvidia-version"
 sudo install -m 0755 /tmp/opemos-rollback-last-update "$ROOT/home/deck/tools/opemos-rollback-last-update"
 sudo install -m 0755 /tmp/OPEMOS-Rollback.desktop "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
 sudo install -m 0755 /tmp/open-opemos-welcome "$ROOT/home/deck/tools/open-opemos-welcome"
@@ -2636,6 +2655,13 @@ grep -Fqx 'DISK="${{STEAMOS_TARGET_DISK:?Open OPEMOS requires an explicit target
 grep -Fq 'OPEMOS_SKIP_JUPITER_FIRMWARE' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 grep -Fq 'OPEMOS_NO_REBOOT' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 grep -Fq 'OPEMOS_FAIL_FAST' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
+test "$(cat "$ROOT/usr/lib/opemos-install-media/support-revision")" = "{support_commit}"
+test "$(cat "$ROOT/usr/lib/opemos-install-media/nvidia-version")" = "{nvidia_version}"
+test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/support-revision")" = root:root:644
+test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/nvidia-version")" = root:root:644
+test -x "$ROOT/usr/lib/opemos-install-media/support/bootstrap/install_recovery_guardian_to_root.sh"
+test -x "$ROOT/usr/lib/opemos-install-media/support/bootstrap/recoveryctl.sh"
+test -x "$ROOT/usr/lib/opemos-install-media/support/lib/validate_recovery_install_path.py"
 sync
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
@@ -2673,6 +2699,9 @@ trap - EXIT INT TERM"#,
         welcome_patcher_sha256 = welcome_digests.patcher,
         welcome_desktop_sha256 = welcome_digests.desktop,
         welcome_icon_sha256 = welcome_digests.icon,
+        install_media_support_commands = install_media_support_commands,
+        support_commit = NVIDIA_SUPPORT_COMMIT,
+        nvidia_version = inputs.nvidia_version,
     );
     let execution_result = run_guest_command_logged(
         &connection,

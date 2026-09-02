@@ -198,7 +198,7 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 28] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 42] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
         sha256: "4bcb351d99608ff1cc6be3cf891d219e5fe78f0584f716d5a352891dbcf3f222",
@@ -206,10 +206,64 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 28] = [
         executable: true,
     },
     PinnedInstallerFile {
+        path: "bootstrap/install_recovery_guardian_to_root.sh",
+        sha256: "65c9dc05f1eeb3d095683bf15b7012589684660d966dcb01f839ef869fbec6da",
+        bytes: 4_208,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "bootstrap/recoveryctl.sh",
+        sha256: "ff218a0af004e5abd6acfcd1116d3f88bde3692178b363152cc9d6df356c4747",
+        bytes: 14_522,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "bootstrap/online_install.sh",
+        sha256: "5b1443169eb30a8c1c2f34ccfeddaeed682dd752e6787d00edd4d0f3f4b31833",
+        bytes: 14_160,
+        executable: true,
+    },
+    PinnedInstallerFile {
         path: "lib/common.sh",
         sha256: "72451b4d70230959337de5f933d88c36b60d0ef2147403e1d5ba7285b9a8936f",
         bytes: 7_110,
         executable: false,
+    },
+    PinnedInstallerFile {
+        path: "lib/recovery_status.py",
+        sha256: "bd5d6c826bd97f6f337f30edda59ce1f93a936fb148841d397ed194b27d6670b",
+        bytes: 7_887,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/recovery_transaction.py",
+        sha256: "4caf8dac4296779c1f098c3c2475d70898f633ae81e1f00f7d83c73c7648d3bb",
+        bytes: 4_373,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/recovery_release_plan.py",
+        sha256: "c76c50b4b1a3490410e958c7c0c60987cfc7fee16d5e20e63b2f13b4d6aa6f8a",
+        bytes: 3_856,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/update_recovery_grub_args.py",
+        sha256: "93a1d1559d222f9aca1173da862f8032c15eb9634dda7ee3c0223b0138a130ad",
+        bytes: 1_378,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/open_opemos_contract.py",
+        sha256: "e4fc16f9822a8ca3d8bbad0f8ff6c7cd8399b4666953089a6843a06c622e525b",
+        bytes: 3_650,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/validate_recovery_install_path.py",
+        sha256: "2f4b41aaf86ba149b7e75e804222d3143845314d8d29250505cb28d68c4de3ff",
+        bytes: 2_610,
+        executable: true,
     },
     PinnedInstallerFile {
         path: "lib/run_in_process_group.py",
@@ -365,6 +419,36 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 28] = [
         path: "profiles/gaming/reviewed-policy-v1.json",
         sha256: "f93bfa20134fc9bf9bada94c0c44029dc195cca41454ab6a5062168ed9e0d209",
         bytes: 1_042,
+        executable: false,
+    },
+    PinnedInstallerFile {
+        path: "support/recovery/opemos-nvidia-guardian.service.in",
+        sha256: "33abea6d0c32577310763844cd9c4a8c562a4fd1aa4910eff0b3eb0c6bfca696",
+        bytes: 267,
+        executable: false,
+    },
+    PinnedInstallerFile {
+        path: "support/recovery/opemos-nvidia-repair.service.in",
+        sha256: "87cb1564c90f977af4a89e2e15f82590160a745ff5c40ad2b20aea8d41082c07",
+        bytes: 276,
+        executable: false,
+    },
+    PinnedInstallerFile {
+        path: "support/recovery/opemos-nvidia-repair.timer",
+        sha256: "24fe32bd2e9abde716d81238d7ba9dec41f4486e215bf47c923ab72662ede2d6",
+        bytes: 229,
+        executable: false,
+    },
+    PinnedInstallerFile {
+        path: "support/recovery/90-opemos-nvidia-repair",
+        sha256: "8aa86928816be4dfc9ee0022871fb3d3a6ce70ca05efe03d0a67e1adeb66e14c",
+        bytes: 126,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "support/recovery/90-opemos-nvidia-guardian.conf",
+        sha256: "9cfec066ffcba283d572d8e146024cd19b4a7479032232d17920df4b2972a3d3",
+        bytes: 505,
         executable: false,
     },
 ];
@@ -1582,6 +1666,9 @@ pub(crate) fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json:
             "/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg",
             "/usr/lib/opemos-install-media/opemos-install-helper",
             "/usr/lib/opemos-install-media/repair_device.sh",
+            "/usr/lib/opemos-install-media/support",
+            "/usr/lib/opemos-install-media/support-revision",
+            "/usr/lib/opemos-install-media/nvidia-version",
             "/boot"
         ])
     } else {
@@ -1673,6 +1760,7 @@ pub(crate) fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json:
             "nvidiaPayloadVerified": nvidia_installed,
             "recoveryRollbackVerified": nvidia_installed,
             "installationMediaWelcomeVerified": nvidia_installed,
+            "installedRecoveryGuardianPayloadVerified": nvidia_installed,
             "sourceUnchanged": true,
             "passed": true
         }

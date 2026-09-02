@@ -76,7 +76,13 @@ that retries package installation with `SigLevel = Never`. HTTPS transport is
 not a replacement for the reviewed signatures, hashes, locks, and provenance
 required by the OPEMOS support contract.
 
-## Planned OPEMOS update guardian
+## OPEMOS update guardian
+
+Generated installation media now embeds the exact pinned support guardian and
+the Open OPEMOS installer stages it into both target A/B slots after Valve's
+installation completes. Its console-safe fallback, delayed-network repair, and
+machine-readable state are implemented. Physical A/B update, graphical-failure,
+power-loss, and rollback coverage remain certification gates.
 
 The installed-system updater should use a persistent, machine-readable state
 transaction:

@@ -4,6 +4,9 @@ set -euo pipefail
 
 readonly MINIMUM_INSTALL_BYTES=$((12 * 1024 * 1024 * 1024))
 readonly REPAIR_DEVICE=/usr/lib/opemos-install-media/repair_device.sh
+readonly SUPPORT_ROOT=/usr/lib/opemos-install-media/support
+readonly SUPPORT_REVISION_FILE=/usr/lib/opemos-install-media/support-revision
+readonly NVIDIA_VERSION_FILE=/usr/lib/opemos-install-media/nvidia-version
 readonly LOCK_DIRECTORY=/run/lock
 
 die() {
@@ -15,7 +18,7 @@ need() {
   command -v "$1" >/dev/null 2>&1 || die "required recovery tool is missing: $1"
 }
 
-for tool in awk blockdev findmnt flock lsblk readlink sed sha256sum; do
+for tool in awk blockdev findmnt flock lsblk readlink sed sha256sum steamos-chroot; do
   need "$tool"
 done
 
@@ -175,14 +178,38 @@ install_to_disk() {
   [[ "$(disk_identity "$device")" == "$expected_identity" ]] ||
     die "selected disk identity changed immediately before installation"
 
+  local support_revision nvidia_version slot
+  [[ -f "$SUPPORT_REVISION_FILE" && ! -L "$SUPPORT_REVISION_FILE" ]] ||
+    die "the pinned recovery support revision is unavailable"
+  [[ -f "$NVIDIA_VERSION_FILE" && ! -L "$NVIDIA_VERSION_FILE" ]] ||
+    die "the pinned recovery NVIDIA version is unavailable"
+  support_revision=$(<"$SUPPORT_REVISION_FILE")
+  nvidia_version=$(<"$NVIDIA_VERSION_FILE")
+  [[ "$support_revision" =~ ^[0-9a-f]{40}$ ]] || die "the pinned recovery support revision is malformed"
+  [[ "$nvidia_version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] ||
+    die "the pinned recovery NVIDIA version is malformed"
+  [[ -x "$SUPPORT_ROOT/bootstrap/install_recovery_guardian_to_root.sh" ]] ||
+    die "the pinned installed-system recovery guardian is unavailable"
+
   printf 'Open OPEMOS is installing to %s. Do not power off or disconnect either drive.\n' "$device" >&2
-  exec env \
+  env \
     STEAMOS_TARGET_DISK="$device" \
     NOPROMPT=1 \
     OPEMOS_FAIL_FAST=1 \
     OPEMOS_NO_REBOOT=1 \
     OPEMOS_SKIP_JUPITER_FIRMWARE=1 \
     "$REPAIR_DEVICE" "$mode"
+
+  printf 'Valve installation finished. Installing the exact-kernel recovery guardian into both A/B slots.\n' >&2
+  for slot in A B; do
+    steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- \
+      "$SUPPORT_ROOT/bootstrap/install_recovery_guardian_to_root.sh" \
+        --root / \
+        --support-revision "$support_revision" \
+        --nvidia "$nvidia_version"
+  done
+  sync
+  printf 'Open OPEMOS installation and A/B recovery-guardian staging completed.\n' >&2
 }
 
 case "${1:-}" in

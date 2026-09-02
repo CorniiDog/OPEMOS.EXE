@@ -85,6 +85,14 @@ mode, and delegates to a structurally verified copy of the image's own Valve
 installer. OPEMOS does not interpolate UI text into shell source or rewrite the
 installer at runtime.
 
+After Valve finishes cloning the recovery system, the protected helper enters
+each installed A/B slot and runs the pinned support repository's offline-root
+guardian installer. The shared target home receives the persistent recovery
+snapshot, while both root slots receive the matching systemd, NetworkManager,
+and atomic-update integration. This post-install step is required because a
+fresh Valve installation formats the target home rather than copying the
+installation USB's home partition.
+
 ## Cancellation
 
 Cancellation can occur during normalization, download, validation, package

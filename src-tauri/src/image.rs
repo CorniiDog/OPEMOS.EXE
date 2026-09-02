@@ -1143,6 +1143,18 @@ pub(crate) fn verify_nvidia_from_validation_overlay(
     let welcome_helper_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_HELPER));
     let welcome_desktop_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_DESKTOP));
     let welcome_icon_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_ICON));
+    let mut install_media_support_assertions = String::new();
+    for file in &PINNED_INSTALLER_FILES {
+        let mode = if file.executable { "755" } else { "644" };
+        install_media_support_assertions.push_str(&format!(
+            "test -f \"$ROOT/usr/lib/opemos-install-media/support/{path}\"\n\
+             test ! -L \"$ROOT/usr/lib/opemos-install-media/support/{path}\"\n\
+             test \"$(sha256sum \"$ROOT/usr/lib/opemos-install-media/support/{path}\" | awk '{{print $1}}')\" = \"{sha256}\"\n\
+             test \"$(stat -c '%a:%u:%g' \"$ROOT/usr/lib/opemos-install-media/support/{path}\")\" = {mode}:0:0\n",
+            path = file.path,
+            sha256 = file.sha256,
+        ));
+    }
     let mut package_assertions = String::new();
     for package in &installation.packages {
         if arch_dependency_name(&package.name)? != package.name
@@ -1295,6 +1307,11 @@ grep -Fqx 'DISK="${{STEAMOS_TARGET_DISK:?Open OPEMOS requires an explicit target
 grep -Fq 'OPEMOS_SKIP_JUPITER_FIRMWARE' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 grep -Fq 'OPEMOS_NO_REBOOT' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 grep -Fq 'OPEMOS_FAIL_FAST' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
+test "$(cat "$ROOT/usr/lib/opemos-install-media/support-revision")" = "{}"
+test "$(cat "$ROOT/usr/lib/opemos-install-media/nvidia-version")" = "{}"
+test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/support-revision")" = 644:0:0
+test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/nvidia-version")" = 644:0:0
+{}
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
 sudo umount "$ROOT/var"
@@ -1324,6 +1341,9 @@ trap - EXIT INT TERM"#,
         welcome_desktop_sha256,
         welcome_icon_sha256,
         welcome_helper_sha256,
+        NVIDIA_SUPPORT_COMMIT,
+        installation.nvidia_version,
+        install_media_support_assertions,
     );
     run_guest_command(session, &command).map(|_| ())
 }
@@ -2512,6 +2532,7 @@ pub(crate) fn completed_nvidia_image_from_path(
         "markerVerified",
         "nvidiaPayloadVerified",
         "installationMediaWelcomeVerified",
+        "installedRecoveryGuardianPayloadVerified",
     ] {
         if validation.get(field).and_then(serde_json::Value::as_bool) != Some(true) {
             return Err(format!(
