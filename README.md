@@ -1,14 +1,16 @@
 <p align="center">
-  <img src="docs/assets/images/opemos-app-icon.png" alt="OPEMOS.EXE frosted glass application icon" width="112">
+  <img src="docs/assets/images/opemos-app-icon.svg" alt="OPEMOS.EXE frosted glass application icon" width="112">
 </p>
 
 <h1 align="center">OPEMOS.EXE</h1>
 
 <p align="center"><strong>Desktop image building for exact-kernel NVIDIA on SteamOS.</strong></p>
 
-[![Checks](https://github.com/CorniiDog/OPEMOS.EXE/actions/workflows/checks.yml/badge.svg)](https://github.com/CorniiDog/OPEMOS.EXE/actions/workflows/checks.yml)
-[![Documentation](https://github.com/CorniiDog/OPEMOS.EXE/actions/workflows/pages.yml/badge.svg)](https://github.com/CorniiDog/OPEMOS.EXE/actions/workflows/pages.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/CorniiDog/OPEMOS.EXE/actions/workflows/checks.yml"><img src="https://img.shields.io/github/actions/workflow/status/CorniiDog/OPEMOS.EXE/checks.yml?branch=main&amp;style=for-the-badge&amp;logo=github&amp;logoColor=white&amp;label=checks&amp;labelColor=192c3c" alt="OPEMOS.EXE checks status"></a>
+  <a href="https://github.com/CorniiDog/OPEMOS.EXE/actions/workflows/pages.yml"><img src="https://img.shields.io/github/actions/workflow/status/CorniiDog/OPEMOS.EXE/pages.yml?branch=main&amp;style=for-the-badge&amp;logo=githubpages&amp;logoColor=white&amp;label=docs&amp;labelColor=192c3c" alt="OPEMOS.EXE documentation status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1a9fff?style=for-the-badge&amp;labelColor=192c3c" alt="MIT license"></a>
+</p>
 
 OPEMOS.EXE is the desktop SteamOS NVIDIA Image Builder. It takes an official
 Valve recovery image, performs exact-kernel NVIDIA resolution and installation

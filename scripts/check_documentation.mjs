@@ -73,10 +73,12 @@ for (const relative of markdownFiles) {
 
 const readme = await read("README.md");
 assert.ok((await stat(path.join(root, "README.md"))).size < 16_000, "README should remain a concise landing page");
-assert.match(readme, /actions\/workflows\/checks\.yml\/badge\.svg/);
-assert.match(readme, /actions\/workflows\/pages\.yml\/badge\.svg/);
+assert.match(readme, /img\.shields\.io\/github\/actions\/workflow\/status\/CorniiDog\/OPEMOS\.EXE\/checks\.yml/);
+assert.match(readme, /img\.shields\.io\/github\/actions\/workflow\/status\/CorniiDog\/OPEMOS\.EXE\/pages\.yml/);
+assert.match(readme, /style=for-the-badge/);
+assert.match(readme, /labelColor=192c3c/);
 assert.match(readme, /https:\/\/corniidog\.github\.io\/OPEMOS\.EXE\//);
-assert.match(readme, /docs\/assets\/images\/opemos-app-icon\.png/);
+assert.match(readme, /docs\/assets\/images\/opemos-app-icon\.svg/);
 assert.match(readme, /docs\/assets\/screenshots\/main-window-readme\.png/);
 assert.match(readme, /docs\/assets\/screenshots\/build-progress-readme\.png/);
 for (const screenshot of ["main-window-readme.png", "build-progress-readme.png"]) {
