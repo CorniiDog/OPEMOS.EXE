@@ -4,17 +4,26 @@ import test from "node:test";
 
 const html = await readFile(new URL("../src/index.html", import.meta.url), "utf8");
 const css = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+const script = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
 test("main workflow groups related status and build controls into compact columns", () => {
-  assert.match(html, /class="readiness-grid"[\s\S]*id="selection-card"[\s\S]*class="environment-card"/);
+  assert.match(html, /id="readiness-grid"[\s\S]*class="environment-card"[\s\S]*id="selection-card"[\s\S]*id="drop-zone"/);
   assert.match(html, /class="build-options-grid"[\s\S]*for="export-mode"[\s\S]*for="nvidia-source"/);
   assert.match(css, /\.readiness-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/);
   assert.match(css, /\.build-options-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/);
 });
 
 test("builder readiness expands while no image has been selected", () => {
-  assert.match(css, /\.readiness-grid > \.selection-card\.hidden \+ \.environment-card\s*\{\s*grid-column:\s*1 \/ -1;/);
+  assert.match(css, /\.readiness-grid > \.environment-card\s*\{\s*grid-column:\s*1 \/ -1;/);
+  assert.match(css, /\.readiness-grid\.has-selection > \.environment-card\s*\{\s*grid-column:\s*auto;/);
+  assert.match(script, /elements\.readinessGrid\.classList\.add\("has-selection"\)/);
+});
+
+test("selected-image mode preserves the build action and result region", () => {
+  assert.match(script, /elements\.downloadCard\.classList\.toggle\("hidden", Boolean\(currentImage\)\)/);
+  assert.match(css, /\.result-message\s*\{\s*min-height:\s*18px;/);
+  assert.doesNotMatch(script, /header\.after|dropZone\.after|selectionCard\.after/);
 });
 
 test("compact main window height agrees between web content and Tauri", () => {

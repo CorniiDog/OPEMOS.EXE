@@ -132,58 +132,7 @@
             <p id="usb-message" class="result-message"></p>
         </section>
 
-        <section
-            id="drop-zone"
-            class="drop-zone"
-        >
-            <div class="drop-icon">
-                ⇩
-            </div>
-
-            <strong id="drop-title">
-                Drop SteamOS recovery image here
-            </strong>
-
-            <span id="drop-message">
-                .img, .img.bz2, .img.gz, or .img.xz
-            </span>
-
-            <button
-                id="choose-image"
-                class="secondary"
-            >
-                Choose Image…
-            </button>
-        </section>
-
-        <div class="readiness-grid" aria-label="Image and builder readiness">
-            <section
-                id="selection-card"
-                class="selection-card hidden"
-            >
-                <div>
-                    <p class="eyebrow">
-                        Selected image
-                    </p>
-
-                    <h2 id="selected-name">
-                        No image selected
-                    </h2>
-
-                    <p
-                        id="selected-path"
-                        class="path"
-                    ></p>
-                </div>
-
-                <span
-                    id="selection-status"
-                    class="status"
-                >
-                    Ready
-                </span>
-            </section>
-
+        <div id="readiness-grid" class="readiness-grid" aria-label="Image and builder readiness">
             <section class="environment-card">
                 <div>
                     <p class="eyebrow">
@@ -211,9 +160,60 @@
                     Checking
                 </span>
             </section>
+
+            <section
+                id="selection-card"
+                class="selection-card hidden"
+            >
+                <div>
+                    <p class="eyebrow">
+                        Selected image
+                    </p>
+
+                    <h2 id="selected-name">
+                        No image selected
+                    </h2>
+
+                    <p
+                        id="selected-path"
+                        class="path"
+                    ></p>
+                </div>
+
+                <span
+                    id="selection-status"
+                    class="status"
+                >
+                    Ready
+                </span>
+            </section>
         </div>
 
-        <section class="download-card">
+        <section
+            id="drop-zone"
+            class="drop-zone"
+        >
+            <div class="drop-icon">
+                ⇩
+            </div>
+
+            <strong id="drop-title">
+                Drop SteamOS recovery image here
+            </strong>
+
+            <span id="drop-message">
+                .img, .img.bz2, .img.gz, or .img.xz
+            </span>
+
+            <button
+                id="choose-image"
+                class="secondary"
+            >
+                Choose Image…
+            </button>
+        </section>
+
+        <section id="download-card" class="download-card">
             <div>
                 <h2>
                     Need the official image?
@@ -311,6 +311,7 @@
             <p
                 id="result-message"
                 class="result-message"
+                aria-live="polite"
             ></p>
         </section>
 

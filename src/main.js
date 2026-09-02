@@ -9,6 +9,7 @@ const $ = (selector) => document.querySelector(selector);
 const elements = {
   dropZone: $("#drop-zone"), chooseImage: $("#choose-image"), openValve: $("#open-valve"),
   dropTitle: $("#drop-title"), dropMessage: $("#drop-message"),
+  readinessGrid: $("#readiness-grid"), downloadCard: $("#download-card"),
   selectionCard: $("#selection-card"), selectedName: $("#selected-name"), selectedPath: $("#selected-path"),
   selectionStatus: $("#selection-status"), buildCard: $("#build-card"), buildButton: $("#build-button"),
   exportMode: $("#export-mode"),
@@ -302,6 +303,7 @@ async function selectImage(path) {
     elements.selectionStatus.textContent = "Ready";
     elements.selectionStatus.className = "status";
     elements.selectionCard.classList.remove("hidden");
+    elements.readinessGrid.classList.add("has-selection");
     elements.buildCard.classList.remove("hidden");
     elements.resultMessage.textContent = "";
   } catch (error) {
@@ -313,13 +315,15 @@ async function selectImage(path) {
     elements.selectionStatus.textContent = "Unsupported";
     elements.selectionStatus.className = "status failed";
     elements.selectionCard.classList.remove("hidden");
+    elements.readinessGrid.classList.add("has-selection");
     elements.buildCard.classList.add("hidden");
     elements.resultMessage.textContent = String(error);
   } finally {
     elements.dropZone.classList.remove("processing");
     elements.chooseImage.disabled = false;
+    elements.downloadCard.classList.toggle("hidden", Boolean(currentImage));
     elements.dropTitle.textContent = currentImage ? "SteamOS image selected" : "Drop SteamOS recovery image here";
-    elements.dropMessage.textContent = currentImage ? "Review it below, then build a separate validated image." : ".img, .img.bz2, .img.gz, or .img.xz";
+    elements.dropMessage.textContent = currentImage ? "Review it above, then build a separate validated image." : ".img, .img.bz2, .img.gz, or .img.xz";
   }
   updateBuildButton();
   renderExportMode();
@@ -756,14 +760,6 @@ await mainWindow.onDragDropEvent(async (event) => {
   }
 });
 
-const header = document.querySelector("header");
-const downloadCard = document.querySelector(".download-card");
-const environmentCard = document.querySelector(".environment-card");
-header.after(downloadCard);
-elements.dropZone.after(environmentCard);
-environmentCard.after(elements.selectionCard);
-elements.selectionCard.after(elements.buildCard);
-elements.buildCard.after(elements.usbCard);
 await checkEnvironment();
 await loadSettings();
 await loadNvidiaSourceBranches();
