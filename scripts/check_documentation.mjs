@@ -140,6 +140,7 @@ assert.match(iconSvg, /<circle cx="512" cy="456" r="55"/);
 assert.match(iconSvg, /M 424 640 L 512 738 L 600 640 Z/);
 assert.doesNotMatch(iconSvg, /M 104 226 Q 170 92 330 78/);
 assert.doesNotMatch(iconSvg, /<rect x="48" y="48"[^>]*filter=/);
+assert.doesNotMatch(iconSvg, /<filter|filter="url\(/);
 const iconDimensions = await pngDimensions("docs/assets/images/opemos-app-icon.png");
 assert.deepEqual(iconDimensions, { width: 1024, height: 1024 });
 assert.deepEqual(await pngRgbaCornerAlphas("docs/assets/images/opemos-app-icon.png"), [0, 0, 0, 0]);
