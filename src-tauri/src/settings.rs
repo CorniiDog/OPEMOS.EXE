@@ -175,10 +175,6 @@ pub(crate) fn load_builder_settings_path_unlocked(path: &Path) -> Result<Builder
     {
         return Err("settings.json must be a nonempty bounded regular file, not a link.".into());
     }
-    #[cfg(unix)]
-    if metadata.permissions().mode() & 0o777 != 0o600 {
-        return Err("settings.json permissions must be 0600.".into());
-    }
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -194,10 +190,29 @@ pub(crate) fn load_builder_settings_path_unlocked(path: &Path) -> Result<Builder
         use std::os::unix::fs::MetadataExt as _;
         if metadata.dev() != opened.dev()
             || metadata.ino() != opened.ino()
-            || metadata.mode() != opened.mode()
             || metadata.len() != opened.len()
         {
             return Err("settings.json changed while it was being opened.".into());
+        }
+        if opened.mode() & 0o7777 != 0o600 {
+            if opened.uid() != unsafe { libc::geteuid() } {
+                return Err(
+                    "settings.json has unsafe permissions and is not owned by the current user."
+                        .into(),
+                );
+            }
+            file.set_permissions(fs::Permissions::from_mode(0o600))
+                .map_err(|error| format!("Could not secure settings.json permissions: {error}"))?;
+            let secured = file
+                .metadata()
+                .map_err(|error| format!("Could not revalidate secured settings.json: {error}"))?;
+            if secured.dev() != opened.dev()
+                || secured.ino() != opened.ino()
+                || secured.len() != opened.len()
+                || secured.mode() & 0o7777 != 0o600
+            {
+                return Err("settings.json could not be secured to owner-only permissions.".into());
+            }
         }
     }
     #[cfg(not(unix))]

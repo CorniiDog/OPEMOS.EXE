@@ -379,7 +379,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn settings_transactions_reject_links_and_insecure_settings_modes() {
+    fn settings_transactions_repair_owned_modes_and_reject_links() {
         use std::os::unix::fs::symlink;
 
         let root = std::env::temp_dir().join(format!(
@@ -407,9 +407,16 @@ mod tests {
             .expect("seed secure settings");
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644))
             .expect("weaken fixture settings mode");
-        assert!(load_builder_settings_path_unlocked(&path)
-            .expect_err("insecure settings mode must fail")
-            .contains("0600"));
+        load_builder_settings_path_unlocked(&path)
+            .expect("owned settings mode should be repaired safely");
+        assert_eq!(
+            fs::metadata(&path)
+                .expect("repaired settings metadata")
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o600
+        );
         fs::remove_file(&path).expect("remove insecure settings");
         let target = real.join("target.json");
         fs::write(&target, b"{}\n").expect("write symlink target");
