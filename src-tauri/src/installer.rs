@@ -2684,6 +2684,9 @@ test "$(sha256sum "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css" | aw
 test "$(stat -c '%U:%G:%a' "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css")" = root:root:644
 test -x "$ROOT/usr/lib/opemos-install-media/support/bootstrap/install_recovery_guardian_to_root.sh"
 test -x "$ROOT/usr/lib/opemos-install-media/support/bootstrap/recoveryctl.sh"
+test -x "$ROOT/usr/lib/opemos-install-media/support/bootstrap/launch_desktop_companion.sh"
+test -x "$ROOT/usr/lib/opemos-install-media/support/lib/desktop_update_generations.py"
+test -f "$ROOT/usr/lib/opemos-install-media/support/trust/desktop-update-signers.json"
 test -x "$ROOT/usr/lib/opemos-install-media/support/lib/validate_recovery_install_path.py"
 sync
 sudo umount "$ROOT/efi"

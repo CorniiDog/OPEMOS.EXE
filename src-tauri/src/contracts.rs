@@ -198,7 +198,7 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 42] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 45] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
         sha256: "4bcb351d99608ff1cc6be3cf891d219e5fe78f0584f716d5a352891dbcf3f222",
@@ -207,8 +207,14 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 42] = [
     },
     PinnedInstallerFile {
         path: "bootstrap/install_recovery_guardian_to_root.sh",
-        sha256: "65c9dc05f1eeb3d095683bf15b7012589684660d966dcb01f839ef869fbec6da",
-        bytes: 4_208,
+        sha256: "322b0b5a8e1495c47b32b29812ce066fa864fdccd927ccff77c2e11a8fbff126",
+        bytes: 4_846,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "bootstrap/launch_desktop_companion.sh",
+        sha256: "af95900fef141824b9d17dc7276f0b4d3796b0ed642a8f86c501d35a9bd07a15",
+        bytes: 2_179,
         executable: true,
     },
     PinnedInstallerFile {
@@ -233,6 +239,12 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 42] = [
         path: "lib/recovery_status.py",
         sha256: "bd5d6c826bd97f6f337f30edda59ce1f93a936fb148841d397ed194b27d6670b",
         bytes: 7_887,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/desktop_update_generations.py",
+        sha256: "b565db9c20c50aefe61a4701560600aa9fc8499daace2ca34532a4198361e103",
+        bytes: 30_047,
         executable: true,
     },
     PinnedInstallerFile {
@@ -449,6 +461,12 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 42] = [
         path: "support/recovery/90-opemos-nvidia-guardian.conf",
         sha256: "9cfec066ffcba283d572d8e146024cd19b4a7479032232d17920df4b2972a3d3",
         bytes: 505,
+        executable: false,
+    },
+    PinnedInstallerFile {
+        path: "trust/desktop-update-signers.json",
+        sha256: "673780febd887c25c307cc0f98e36f741a36c2c32c683e171c045d9e0856638f",
+        bytes: 95,
         executable: false,
     },
 ];

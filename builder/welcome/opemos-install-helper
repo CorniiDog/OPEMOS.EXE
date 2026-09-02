@@ -179,6 +179,9 @@ verify_guardian_slot() {
     sh -eu -c '
       test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/recoveryctl.sh
       test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/online_install.sh
+      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/launch_desktop_companion.sh
+      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/lib/desktop_update_generations.py
+      test -f /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/trust/desktop-update-signers.json
       test -f /etc/systemd/system/opemos-nvidia-guardian.service
       test -f /etc/systemd/system/opemos-nvidia-repair.service
       test -L /etc/systemd/system/multi-user.target.wants/opemos-nvidia-guardian.service

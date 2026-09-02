@@ -2322,8 +2322,8 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 521_800);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 42);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 554_759);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 45);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
@@ -2333,6 +2333,15 @@ esac
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/recoveryctl.sh" && file.executable));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "bootstrap/launch_desktop_companion.sh" && file.executable
+        }));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/desktop_update_generations.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "trust/desktop-update-signers.json" && !file.executable
+        }));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/open_opemos_contract.py" && file.executable));
