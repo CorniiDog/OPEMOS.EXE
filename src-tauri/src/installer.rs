@@ -335,10 +335,25 @@ pub(crate) fn start_nvidia_install_appliance_blocking(
         manager.starting = true;
         manager.cancel_build.store(false, Ordering::Relaxed);
     }
+    let cancel = {
+        let manager = build_manager_state
+            .lock()
+            .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+        manager.cancel_build.clone()
+    };
     let prepared = prepare_nvidia_build_session(Some(&working_image));
     let mut manager = build_manager_state
         .lock()
         .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+    if cancel.load(Ordering::Relaxed) {
+        drop(manager);
+        drop(prepared);
+        let mut manager = build_manager_state
+            .lock()
+            .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+        manager.starting = false;
+        return Err("NVIDIA installer-appliance startup cancelled.".into());
+    }
     manager.starting = false;
     let mut session = prepared?;
     session.message = if session.acceleration == "tcg" {

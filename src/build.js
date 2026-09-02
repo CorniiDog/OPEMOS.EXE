@@ -44,6 +44,7 @@ let currentStep = "";
 let lastInstallerProgressKey = "";
 let validationStartedAt = null;
 let visibleLogCharacters = 0;
+let cancellationTask = null;
 
 const MAX_VISIBLE_LOG_CHARACTERS = 1_000_000;
 const RETAIN_VISIBLE_LOG_CHARACTERS = 750_000;
@@ -436,21 +437,48 @@ async function stopAllWorkers() {
     invoke("stop_appliance"),
     invoke("stop_nvidia_build_appliance"),
   ]);
+  const failures = [];
   for (const stop of stops) {
-    if (stop.status === "rejected") addStageLog(`Shutdown warning: ${stop.reason}`);
+    if (stop.status === "rejected") failures.push(String(stop.reason));
   }
+  if (failures.length) throw new Error(`Worker shutdown failed: ${failures.join("; ")}`);
+
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const [native, nvidia] = await Promise.all([
+      invoke("get_appliance_status"),
+      invoke("get_nvidia_build_appliance_status"),
+    ]);
+    if (native.state === "stopped" && nvidia.state === "stopped") return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("Timed out waiting for every managed QEMU worker to stop.");
 }
 
 async function cancelBuild() {
-  if (!running || cancelling) return;
+  if (cancellationTask) return cancellationTask;
   cancelling = true;
-  elements.cancelBuild.disabled = true;
-  setStatus("running", "Cancelling safely…", "Stopping all disposable builder workers.", 90, "Cancelling");
-  addStageLog("Cancellation requested.");
-  await stopAllWorkers();
-  setStatus("cancelled", "Build cancelled", "The original image was not modified.", 100);
-  addStageLog("Build cancelled; disposable image and NVIDIA workers stopped.");
-  await finish("cancelled", "Image build cancelled.");
+  const activeBuild = running;
+  cancellationTask = (async () => {
+    elements.cancelBuild.disabled = true;
+    setStatus("running", "Cancelling safely…", "Stopping and confirming every disposable QEMU worker.", 90, "Cancelling");
+    addStageLog("Cancellation requested; waiting for managed QEMU shutdown confirmation.");
+    try {
+      await stopAllWorkers();
+      setStatus("cancelled", activeBuild ? "Build cancelled" : "Workers stopped", "Every managed QEMU worker has exited.", 100);
+      addStageLog("Managed image and NVIDIA workers confirmed stopped.");
+      if (activeBuild) await finish("cancelled", "Image build cancelled.");
+      return true;
+    } catch (error) {
+      cancelling = false;
+      setStatus("failed", "Could not close safely", String(error), 100);
+      addStageLog(`ERROR: ${error}`);
+      elements.cancelBuild.disabled = false;
+      return false;
+    } finally {
+      cancellationTask = null;
+    }
+  })();
+  return cancellationTask;
 }
 
 async function runBuild(request) {
@@ -776,7 +804,7 @@ async function runBuild(request) {
   }
 }
 
-elements.cancelBuild.addEventListener("click", cancelBuild);
+elements.cancelBuild.addEventListener("click", () => { void cancelBuild(); });
 elements.copyDiagnosticLog.addEventListener("click", copyDiagnosticLog);
 elements.closeWindow.addEventListener("click", () => { void hideProgressWindow(); });
 elements.logFollow.addEventListener("click", resumeLogFollowing);
@@ -810,6 +838,5 @@ await progressWindow.listen("build-progress-probe", () => progressWindow.emitTo(
 await progressWindow.emitTo("main", "build-progress-ready");
 await progressWindow.onCloseRequested(async (event) => {
   event.preventDefault();
-  if (running) await cancelBuild();
-  await hideProgressWindow();
+  if (await cancelBuild()) await hideProgressWindow();
 });

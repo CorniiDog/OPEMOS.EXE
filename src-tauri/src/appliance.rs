@@ -2226,10 +2226,25 @@ pub(crate) fn start_nvidia_build_appliance_blocking(
         manager.starting = true;
         manager.cancel_build.store(false, Ordering::Relaxed);
     }
+    let cancel = {
+        let manager = manager_state
+            .lock()
+            .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+        manager.cancel_build.clone()
+    };
     let prepared = prepare_nvidia_build_session(None);
     let mut manager = manager_state
         .lock()
         .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+    if cancel.load(Ordering::Relaxed) {
+        drop(manager);
+        drop(prepared);
+        let mut manager = manager_state
+            .lock()
+            .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+        manager.starting = false;
+        return Err("NVIDIA build-appliance startup cancelled.".into());
+    }
     manager.starting = false;
     let session = prepared?;
     let status = nvidia_build_status(&session);
