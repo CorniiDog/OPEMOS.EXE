@@ -14,6 +14,14 @@ test("main workflow groups related status and build controls into compact column
   assert.match(css, /\.build-options-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/);
 });
 
+test("USB selection is anchored to its export choice and uses a modal header", () => {
+  assert.match(html, /class="source-choice export-choice"[\s\S]*for="export-mode"[\s\S]*id="review-usb-target"/);
+  assert.match(html, /id="usb-scrim" class="usb-scrim hidden"/);
+  assert.match(html, /id="usb-card"[^>]*role="dialog"[\s\S]*class="usb-heading"[\s\S]*id="close-usb-menu"/);
+  assert.match(script, /function setUsbMenuOpen\(opened\)/);
+  assert.doesNotMatch(script, /exportMode\.addEventListener\("change", \(\) => \{[\s\S]{0,160}usbCard\.classList\.remove/);
+});
+
 test("builder readiness expands while no image has been selected", () => {
   assert.match(css, /\.readiness-grid > \.environment-card\s*\{\s*grid-column:\s*1 \/ -1;/);
   assert.match(css, /\.readiness-grid\.has-selection > \.environment-card\s*\{\s*grid-column:\s*auto;/);

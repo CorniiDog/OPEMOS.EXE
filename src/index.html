@@ -112,14 +112,17 @@
         </aside>
         <button id="settings-scrim" class="settings-scrim hidden" type="button" aria-label="Close settings"></button>
 
-        <section id="usb-card" class="build-card hidden">
-            <button id="close-usb-menu" class="icon-button compact usb-close" type="button" aria-label="Close USB menu">×</button>
-            <div class="build-summary">
-                <div>
-                    <span>Image to USB</span>
-                    <strong>Review a removable target</strong>
+        <button id="usb-scrim" class="usb-scrim hidden" type="button" aria-label="Close USB selection"></button>
+        <section id="usb-card" class="build-card hidden" role="dialog" aria-modal="true" aria-labelledby="usb-dialog-title">
+            <div class="usb-heading">
+                <div class="build-summary">
+                    <div>
+                        <span>Image to USB</span>
+                        <strong id="usb-dialog-title">Review a removable target</strong>
+                    </div>
+                    <p>Only whole external physical media are eligible. The final image and device identity are revalidated immediately before writing.</p>
                 </div>
-                <p>Only whole external physical media are eligible. The final image and device identity are revalidated immediately before writing.</p>
+                <button id="close-usb-menu" class="icon-button compact usb-close" type="button" aria-label="Close USB menu">×</button>
             </div>
             <label class="source-choice" for="usb-target">
                 <span><strong>Removable target</strong><small id="usb-target-detail">Connect a USB drive, then refresh.</small></span>
@@ -257,17 +260,18 @@
             class="build-card hidden"
         >
             <div class="build-options-grid">
-                <label class="source-choice" for="export-mode">
-                    <span>
-                        <strong>Export destination</strong>
-                        <small>A USB export also creates a validated staging image.</small>
-                    </span>
+                <div class="source-choice export-choice">
+                    <label for="export-mode"><span>
+                            <strong>Export destination</strong>
+                            <small>A USB export also creates a validated staging image.</small>
+                    </span></label>
                     <select id="export-mode">
                         <option value="image">Export as image (Recommended)</option>
                         <option value="usb">Export to USB</option>
                         <option value="both">Export image and USB</option>
                     </select>
-                </label>
+                    <button id="review-usb-target" class="secondary hidden" type="button">Select or Review USB…</button>
+                </div>
 
                 <label class="source-choice" for="nvidia-source">
                     <span>
@@ -280,7 +284,6 @@
                     </select>
                 </label>
 
-                <button id="review-usb-target" class="secondary hidden" type="button">Select or Review USB…</button>
             </div>
 
             <div id="upstream-warning" class="source-warning hidden">

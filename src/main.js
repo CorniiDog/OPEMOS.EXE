@@ -21,7 +21,7 @@ const elements = {
   summaryInput: $("#summary-input"), summaryOutput: $("#summary-output"),
   summaryAction: $("#summary-action"),
   resultMessage: $("#result-message"), environmentTitle: $("#environment-title"),
-  usbCard: $("#usb-card"), usbTarget: $("#usb-target"),
+  usbCard: $("#usb-card"), usbScrim: $("#usb-scrim"), usbTarget: $("#usb-target"),
   usbTargetDetail: $("#usb-target-detail"), refreshUsbTargets: $("#refresh-usb-targets"),
   usbMessage: $("#usb-message"), usbConfirmationRow: $("#usb-confirmation-row"),
   usbConfirmation: $("#usb-confirmation"), usbConfirmationHelp: $("#usb-confirmation-help"),
@@ -127,11 +127,17 @@ function updateBuildButton() {
 function renderExportMode() {
   const usbRequested = elements.exportMode.value !== "image";
   elements.reviewUsbTarget.classList.toggle("hidden", !usbRequested || !currentImage);
-  if (!usbRequested || !currentImage) elements.usbCard.classList.add("hidden");
+  if (!usbRequested || !currentImage) setUsbMenuOpen(false);
   if (usbRequested && !completedOutput?.path && !elements.usbTarget.value) {
     elements.usbMessage.textContent = "Select a removable target now. Its identity and final capacity will be checked again after the build.";
   }
   renderSourceWarning();
+}
+
+function setUsbMenuOpen(opened) {
+  elements.usbCard.classList.toggle("hidden", !opened);
+  elements.usbScrim.classList.toggle("hidden", !opened);
+  if (opened) requestAnimationFrame(() => elements.closeUsbMenu.focus());
 }
 
 function renderSourceWarning() {
@@ -313,7 +319,7 @@ async function selectImage(path) {
   }
   completedOutput = null;
   usbPreflightSession = null;
-  elements.usbCard.classList.add("hidden");
+    setUsbMenuOpen(false);
   elements.usbTarget.replaceChildren(new Option("No target selected", ""));
   elements.usbTarget.disabled = true;
   elements.usbTargetDetail.textContent = "Connect a USB drive, then refresh.";
@@ -499,7 +505,7 @@ await mainWindow.listen("build-finished", (event) => {
     usbContextGeneration += 1;
     completedOutput = output;
     if (activeExportMode !== "image") {
-      elements.usbCard.classList.remove("hidden");
+      setUsbMenuOpen(true);
       elements.usbMessage.textContent = "The image is ready. Refresh and reconfirm the selected removable drive before writing.";
     }
   }
@@ -736,17 +742,13 @@ elements.cancelUsbPreflight.addEventListener("click", async () => {
 });
 
 elements.exportMode.addEventListener("change", renderExportMode);
-elements.exportMode.addEventListener("change", () => {
-  if (elements.exportMode.value !== "image" && currentImage) {
-    elements.usbCard.classList.remove("hidden");
-  }
-});
 elements.reviewUsbTarget.addEventListener("click", () => {
   if (currentImage && elements.exportMode.value !== "image") {
-    elements.usbCard.classList.remove("hidden");
+    setUsbMenuOpen(true);
   }
 });
-elements.closeUsbMenu.addEventListener("click", () => elements.usbCard.classList.add("hidden"));
+elements.closeUsbMenu.addEventListener("click", () => setUsbMenuOpen(false));
+elements.usbScrim.addEventListener("click", () => setUsbMenuOpen(false));
 
 await mainWindow.listen("usb-write-progress", (event) => {
   if (!usbWriting) return;

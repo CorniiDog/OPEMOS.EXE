@@ -40,8 +40,7 @@ body {
   left: 28px;
   height: 2px;
   border-radius: 999px;
-  background: linear-gradient(90deg, transparent, rgba(151, 194, 219, .2) 20%, rgba(183, 219, 238, .3) 50%, rgba(151, 194, 219, .2) 80%, transparent);
-  box-shadow: 0 1px 5px rgba(102, 192, 244, .08);
+  background: rgba(174, 207, 225, .22);
   pointer-events: none;
 }
 body::before,
@@ -71,6 +70,7 @@ button, select, textarea { font: inherit; }
   padding: 24px 0 18px;
   overflow-x: hidden;
   overflow-y: auto;
+  overflow-y: overlay;
   overscroll-behavior: contain;
   scrollbar-color: rgba(142, 172, 192, .48) transparent;
   scrollbar-width: thin;
@@ -79,9 +79,10 @@ button, select, textarea { font: inherit; }
   gap: 14px;
 }
 .platform-macos .maintainer-shell { height: calc(100% - 38px); margin-top: 38px; padding-top: 12px; }
-.maintainer-shell::-webkit-scrollbar { width: 6px; background: transparent; }
+.maintainer-shell::-webkit-scrollbar { width: 5px; border: 0; background: transparent; -webkit-appearance: none; }
 .maintainer-shell::-webkit-scrollbar-track,
-.maintainer-shell::-webkit-scrollbar-corner { border: 0; background: transparent; }
+.maintainer-shell::-webkit-scrollbar-track-piece,
+.maintainer-shell::-webkit-scrollbar-corner { border: 0; background: transparent !important; box-shadow: none; }
 .maintainer-shell::-webkit-scrollbar-thumb {
   min-height: 42px;
   border: 1px solid transparent;
