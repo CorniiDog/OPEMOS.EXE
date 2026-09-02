@@ -796,6 +796,95 @@ esac
         assert!(usb_candidate_from_diskutil_info(&partition, 32_000_000_000, Some("disk7s1")).is_none());
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_usb_authorization_receives_one_close_on_exec_descriptor() {
+        use std::os::fd::AsRawFd as _;
+
+        let root = std::env::temp_dir().join(format!(
+            "steamos-authopen-fd-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("create descriptor fixture");
+        let path = root.join("payload");
+        fs::write(&path, b"authorized descriptor fixture").expect("write descriptor fixture");
+        let file = File::open(&path).expect("open descriptor fixture");
+        let (sender, receiver) = UnixStream::pair().expect("create descriptor socket pair");
+
+        let mut byte = [1_u8; 1];
+        let mut iov = libc::iovec {
+            iov_base: byte.as_mut_ptr().cast(),
+            iov_len: byte.len(),
+        };
+        let mut control = [0_usize; 8];
+        let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
+        message.msg_iov = &mut iov;
+        message.msg_iovlen = 1;
+        message.msg_control = control.as_mut_ptr().cast();
+        message.msg_controllen = std::mem::size_of_val(&control) as _;
+        let header = unsafe { libc::CMSG_FIRSTHDR(&message) };
+        assert!(!header.is_null());
+        unsafe {
+            (*header).cmsg_level = libc::SOL_SOCKET;
+            (*header).cmsg_type = libc::SCM_RIGHTS;
+            (*header).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<i32>() as _) as _;
+            std::ptr::write_unaligned(libc::CMSG_DATA(header).cast::<i32>(), file.as_raw_fd());
+            message.msg_controllen = (*header).cmsg_len as _;
+        }
+        assert_eq!(unsafe { libc::sendmsg(sender.as_raw_fd(), &message, 0) }, 1);
+        receiver
+            .set_nonblocking(true)
+            .expect("make descriptor receiver nonblocking");
+        let mut received = receive_authorized_descriptor(&receiver)
+            .expect("receive descriptor")
+            .expect("descriptor should be ready");
+        let mut payload = String::new();
+        received
+            .read_to_string(&mut payload)
+            .expect("read received descriptor");
+        assert_eq!(payload, "authorized descriptor fixture");
+        assert_ne!(
+            unsafe { libc::fcntl(received.as_raw_fd(), libc::F_GETFD) } & libc::FD_CLOEXEC,
+            0
+        );
+        fs::remove_dir_all(root).expect("remove descriptor fixture");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_usb_authorization_uses_the_protected_system_utility() {
+        validate_system_authopen().expect("system authopen should be protected and root-owned");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "invokes macOS Authorization Services for a harmless user-owned temporary file"]
+    fn live_macos_authopen_returns_the_exact_owned_file_descriptor() {
+        let root = std::env::temp_dir().join(format!(
+            "steamos-authopen-live-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("create authopen fixture");
+        let path = root.join("payload");
+        fs::write(&path, b"authopen live fixture").expect("write authopen fixture");
+        let cancel = AtomicBool::new(false);
+        let mut opened = authorized_open_path(&path, &cancel).expect("authorize owned fixture");
+        let mut payload = String::new();
+        opened
+            .read_to_string(&mut payload)
+            .expect("read authopen fixture");
+        assert_eq!(payload, "authopen live fixture");
+        fs::remove_dir_all(root).expect("remove authopen fixture");
+    }
+
     #[test]
     fn usb_preflight_state_replaces_cancels_and_expires_sessions() {
         let now = Instant::now();
@@ -817,7 +906,7 @@ esac
         assert!(active.active);
         assert_eq!(active.status, "armed");
         assert!(active.expires_in_ms > 0);
-        assert!(!active.writes_allowed);
+        assert_eq!(active.writes_allowed, physical_usb_writes_allowed());
         assert_eq!(active.device_identifier.as_deref(), Some("disk7"));
         assert_eq!(active.image_sha256.as_deref(), Some(fixture_image_sha.as_str()));
         assert_eq!(active.identity_token.as_deref(), Some(fixture_identity.as_str()));

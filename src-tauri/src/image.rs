@@ -1624,7 +1624,14 @@ pub(crate) fn usb_candidate_from_diskutil_info(
 }
 
 pub(crate) const USB_PREFLIGHT_TTL: Duration = Duration::from_secs(60);
-pub(crate) const PHYSICAL_USB_WRITES_ALLOWED: bool = false;
+#[cfg(target_os = "macos")]
+pub(crate) fn physical_usb_writes_allowed() -> bool {
+    validate_system_authopen().is_ok()
+}
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn physical_usb_writes_allowed() -> bool {
+    false
+}
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const USB_HELPER_PROTOCOL: &str = "org.steamos-nvidia-builder.usb-writer/1";
 
@@ -1985,11 +1992,16 @@ impl UsbPreparationManager {
                 status: "armed".into(),
                 active: true,
                 expires_in_ms: armed.expires_at.duration_since(now).as_millis(),
-                writes_allowed: PHYSICAL_USB_WRITES_ALLOWED,
+                writes_allowed: physical_usb_writes_allowed(),
                 device_identifier: Some(armed.device_identifier.clone()),
                 image_sha256: Some(armed.image_sha256.clone()),
                 identity_token: Some(armed.identity_token.clone()),
-                message: "The confirmed USB intent session is active. Physical writing remains disabled until a signed least-privilege helper can bind authorization to the opened device.".into(),
+                message: if physical_usb_writes_allowed() {
+                    "The confirmed USB intent session is active. macOS will request permission to open only the revalidated raw device when writing begins."
+                } else {
+                    "The confirmed USB intent session is active. Physical writing is not available on this platform yet."
+                }
+                .into(),
             };
         }
         UsbWritePreflightStatus {
@@ -2326,13 +2338,19 @@ pub(crate) async fn inspect_usb_targets(image_path: String) -> Result<UsbTargetP
     tauri::async_runtime::spawn_blocking(move || {
         let (image, image_bytes, image_sha256) = validate_usb_image_identity(&image_path)?;
         let targets = discover_usb_targets(image_bytes)?;
+        let writes_allowed = physical_usb_writes_allowed();
         Ok(UsbTargetPreflight {
             image_path: image.to_string_lossy().into_owned(),
             image_bytes,
             image_sha256,
             targets,
-            writes_allowed: false,
-            message: "Read-only discovery complete. Direct disk writes remain disabled; select a target only for review.".into(),
+            writes_allowed,
+            message: if writes_allowed {
+                "Eligible removable drives are shown. The image and exact device will be revalidated before macOS requests permission to open it."
+            } else {
+                "Read-only discovery complete. Physical USB writing is not available on this platform yet."
+            }
+            .into(),
         })
     })
     .await
@@ -2443,10 +2461,15 @@ pub(crate) async fn arm_usb_write_preflight(
         image_sha256,
         identity_token: target.identity_token,
         expires_at_unix_ms,
-        writes_allowed: PHYSICAL_USB_WRITES_ALLOWED,
+        writes_allowed: physical_usb_writes_allowed(),
         message: format!(
-            "Intent confirmed for {}. Physical writing remains disabled pending a signed least-privilege helper; this review expires in 60 seconds.",
-            image.display()
+            "Intent confirmed for {}. {} This authorization expires in 60 seconds.",
+            image.display(),
+            if physical_usb_writes_allowed() {
+                "macOS will request permission for only the selected raw device when writing begins."
+            } else {
+                "Physical writing is not available on this platform yet."
+            },
         ),
     })
 }
@@ -2517,24 +2540,223 @@ fn eject_usb_target(identifier: &str) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn open_usb_raw_device(target: &UsbTargetCandidate) -> Result<File, String> {
+fn remount_usb_target(identifier: &str) -> bool {
+    Command::new("/usr/sbin/diskutil")
+        .args(["mountDisk", identifier])
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn validate_system_authopen() -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let path = Path::new("/usr/libexec/authopen");
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not inspect macOS authopen: {error}"))?;
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| format!("Could not resolve macOS authopen: {error}"))?;
+    if canonical != path
+        || metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.uid() != 0
+        || metadata.mode() & 0o111 == 0
+        || metadata.mode() & 0o022 != 0
+    {
+        return Err(
+            "The macOS authorization utility is not a protected root-owned executable.".into(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn receive_authorized_descriptor(socket: &UnixStream) -> io::Result<Option<File>> {
+    let mut byte = [0_u8; 1];
+    let mut iov = libc::iovec {
+        iov_base: byte.as_mut_ptr().cast(),
+        iov_len: byte.len(),
+    };
+    let mut control = [0_usize; 8];
+    let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
+    message.msg_iov = &mut iov;
+    message.msg_iovlen = 1;
+    message.msg_control = control.as_mut_ptr().cast();
+    message.msg_controllen = std::mem::size_of_val(&control) as _;
+    let received = unsafe { libc::recvmsg(socket.as_raw_fd(), &mut message, 0) };
+    if received < 0 {
+        let error = io::Error::last_os_error();
+        return if error.kind() == io::ErrorKind::WouldBlock {
+            Ok(None)
+        } else {
+            Err(error)
+        };
+    }
+    if received == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "authopen closed without returning a device descriptor",
+        ));
+    }
+    if message.msg_flags & libc::MSG_CTRUNC != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "authopen returned truncated descriptor metadata",
+        ));
+    }
+    let header = unsafe { libc::CMSG_FIRSTHDR(&message) };
+    if header.is_null()
+        || unsafe { (*header).cmsg_level } != libc::SOL_SOCKET
+        || unsafe { (*header).cmsg_type } != libc::SCM_RIGHTS
+        || unsafe { (*header).cmsg_len }
+            != unsafe { libc::CMSG_LEN(std::mem::size_of::<i32>() as _) }
+        || !unsafe { libc::CMSG_NXTHDR(&message, header) }.is_null()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "authopen returned an invalid descriptor message",
+        ));
+    }
+    let descriptor = unsafe { std::ptr::read_unaligned(libc::CMSG_DATA(header).cast::<i32>()) };
+    if descriptor < 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "authopen returned an invalid descriptor",
+        ));
+    }
+    let descriptor_flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+    if descriptor_flags < 0
+        || unsafe {
+            libc::fcntl(
+                descriptor,
+                libc::F_SETFD,
+                descriptor_flags | libc::FD_CLOEXEC,
+            )
+        } < 0
+    {
+        unsafe { libc::close(descriptor) };
+        return Err(io::Error::last_os_error());
+    }
+    Ok(Some(unsafe { File::from_raw_fd(descriptor) }))
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn authorized_open_path(path: &Path, cancel: &AtomicBool) -> Result<File, String> {
+    validate_system_authopen()?;
+    let (parent_socket, child_socket) = UnixStream::pair()
+        .map_err(|error| format!("Could not prepare macOS USB authorization: {error}"))?;
+    parent_socket
+        .set_nonblocking(true)
+        .map_err(|error| format!("Could not prepare macOS authorization polling: {error}"))?;
+    let child_output: OwnedFd = child_socket.into();
+    let mut child = Command::new("/usr/libexec/authopen")
+        .args(["-stdoutpipe", "-o", "2"])
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(child_output))
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Could not start macOS USB authorization: {error}"))?;
+    let started = Instant::now();
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("USB authorization was cancelled before the device was opened.".into());
+        }
+        match receive_authorized_descriptor(&parent_socket) {
+            Ok(Some(file)) => {
+                let output = child.wait_with_output().map_err(|error| {
+                    format!("Could not finish macOS USB authorization: {error}")
+                })?;
+                if !output.status.success() {
+                    return Err(
+                        "macOS did not authorize access to the selected raw USB device.".into(),
+                    );
+                }
+                return Ok(file);
+            }
+            Ok(None) => {}
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                let output = child.wait_with_output().map_err(|wait_error| {
+                    format!("Could not finish macOS USB authorization: {wait_error}")
+                })?;
+                let detail: String = String::from_utf8_lossy(&output.stderr)
+                    .trim()
+                    .chars()
+                    .take(300)
+                    .collect();
+                return Err(if detail.is_empty() {
+                    "macOS did not authorize access to the selected raw USB device.".into()
+                } else {
+                    format!("macOS USB authorization failed: {detail}")
+                });
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "Could not receive the authorized USB device descriptor: {error}"
+                ));
+            }
+        }
+        if started.elapsed() >= Duration::from_secs(120) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("macOS USB authorization timed out before any device was opened.".into());
+        }
+        if child
+            .try_wait()
+            .map_err(|error| format!("Could not inspect macOS USB authorization: {error}"))?
+            .is_some()
+        {
+            let detail = child
+                .stderr
+                .take()
+                .and_then(|stderr| {
+                    let mut bytes = Vec::new();
+                    stderr.take(4096).read_to_end(&mut bytes).ok()?;
+                    Some(String::from_utf8_lossy(&bytes).trim().to_string())
+                })
+                .unwrap_or_default();
+            return Err(if detail.is_empty() {
+                "macOS did not authorize access to the selected raw USB device.".into()
+            } else {
+                format!("macOS USB authorization failed: {detail}")
+            });
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn open_usb_raw_device(target: &UsbTargetCandidate, cancel: &AtomicBool) -> Result<File, String> {
+    use std::os::unix::fs::MetadataExt as _;
+
     let raw_node = PathBuf::from(format!("/dev/r{}", target.device_identifier));
     let metadata = fs::symlink_metadata(&raw_node)
         .map_err(|error| format!("Could not inspect {}: {error}", raw_node.display()))?;
     if metadata.file_type().is_symlink() || !metadata.file_type().is_char_device() {
         return Err("The selected raw USB node is not a direct character device.".into());
     }
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&raw_node)
-        .map_err(|error| {
-            if error.kind() == io::ErrorKind::PermissionDenied {
-                "macOS denied raw USB access. A signed privileged-helper installation is required before packaged builds can flash physical media.".into()
-            } else {
-                format!("Could not open the selected raw USB device: {error}")
-            }
-        })
+    let file = authorized_open_path(&raw_node, cancel)?;
+    let opened = file
+        .metadata()
+        .map_err(|error| format!("Could not inspect the authorized USB descriptor: {error}"))?;
+    let flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL) };
+    if !opened.file_type().is_char_device()
+        || opened.dev() != metadata.dev()
+        || opened.ino() != metadata.ino()
+        || opened.rdev() != metadata.rdev()
+        || flags < 0
+        || flags & libc::O_ACCMODE != libc::O_RDWR
+    {
+        return Err(
+            "The authorized descriptor does not identify the exact selected read/write raw device."
+                .into(),
+        );
+    }
+    Ok(file)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -2548,7 +2770,12 @@ fn eject_usb_target(_identifier: &str) -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn open_usb_raw_device(_target: &UsbTargetCandidate) -> Result<File, String> {
+fn remount_usb_target(_identifier: &str) -> bool {
+    false
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_usb_raw_device(_target: &UsbTargetCandidate, _cancel: &AtomicBool) -> Result<File, String> {
     Err("USB writing is currently implemented only for macOS.".into())
 }
 
@@ -2558,8 +2785,8 @@ pub(crate) async fn write_image_to_usb(
     session_token: String,
     image_path: String,
 ) -> Result<UsbWriteResult, String> {
-    if !PHYSICAL_USB_WRITES_ALLOWED {
-        return Err("Physical USB writing is disabled. A signed least-privilege helper must bind the exact revalidated device identity to the opened raw-device handle before this operation can be enabled.".into());
+    if !physical_usb_writes_allowed() {
+        return Err("Physical USB writing is not available on this platform yet.".into());
     }
     if !valid_usb_preflight_session_token(&session_token) {
         return Err("The USB intent session token is invalid.".into());
@@ -2602,19 +2829,50 @@ pub(crate) async fn write_image_to_usb(
     let device_node = target.device_node.clone();
     let expected_sha256 = image_sha256.clone();
     let worker = tauri::async_runtime::spawn_blocking(move || {
+        let _ = app_for_progress.emit(
+            "usb-write-progress",
+            UsbWriteProgress {
+                phase: "unmounting".into(),
+                bytes_completed: 0,
+                bytes_total: image_bytes,
+                message: "Unmounting the selected removable disk without writing to it.".into(),
+            },
+        );
         unmount_usb_target(&target.device_identifier)?;
         let revalidated = revalidate_usb_target(&target.device_identifier, image_bytes)?;
         if revalidated.identity_token != target.identity_token {
-            let _ = eject_usb_target(&target.device_identifier);
             return Err("The selected removable device changed while it was being unmounted.".into());
         }
-        let mut device = match open_usb_raw_device(&revalidated) {
+        let _ = app_for_progress.emit(
+            "usb-write-progress",
+            UsbWriteProgress {
+                phase: "authorizing".into(),
+                bytes_completed: 0,
+                bytes_total: image_bytes,
+                message: "Waiting for macOS permission to open only the selected raw device."
+                    .into(),
+            },
+        );
+        let mut device = match open_usb_raw_device(&revalidated, &cancel) {
             Ok(device) => device,
             Err(error) => {
-                let _ = eject_usb_target(&revalidated.device_identifier);
+                let _ = remount_usb_target(&revalidated.device_identifier);
                 return Err(error);
             }
         };
+        let opened_target = match revalidate_usb_target(&revalidated.device_identifier, image_bytes)
+        {
+            Ok(target) => target,
+            Err(error) => {
+                drop(device);
+                let _ = remount_usb_target(&revalidated.device_identifier);
+                return Err(error);
+            }
+        };
+        if opened_target.identity_token != revalidated.identity_token {
+            drop(device);
+            return Err("The selected removable device changed during authorization.".into());
+        }
         let copy_result = copy_and_verify_usb_image(
             &image,
             &mut device,
