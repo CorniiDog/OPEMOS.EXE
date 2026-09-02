@@ -120,6 +120,24 @@ export function stripInstallerProgressProtocol(value) {
     .join("\n");
 }
 
+export function summarizeBuildFailure(rawError, rawLog = "") {
+  const log = stripInstallerProgressProtocol(rawLog);
+  const safetyMatches = [...log.matchAll(/snapshot_target_execution\.py:\s*([^\n]+)/g)];
+  if (safetyMatches.length) {
+    const reason = safetyMatches.at(-1)[1].trim().replace(/[.]+$/, "");
+    return `Installer safety check failed: ${reason}. No image mutation was accepted.`;
+  }
+  const supportMatches = [...log.matchAll(/^\[open-gpu-kernel-modules-steamos-support\]\s+([^\n]+)$/gm)];
+  if (supportMatches.length) return supportMatches.at(-1)[1].trim();
+
+  const cleanError = stripInstallerProgressProtocol(rawError)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !/^[,{}\[\]"]/.test(line))
+    .at(-1) || "The build worker stopped unexpectedly.";
+  return cleanError.length > 360 ? `${cleanError.slice(0, 357)}…` : cleanError;
+}
+
 export function stripTerminalFormatting(value) {
   return String(value ?? "")
     .replace(ANSI_OSC, "")
@@ -211,7 +229,7 @@ function boundSummary(lines) {
 }
 
 export function buildDiagnosticLog(rawLog, metadata = {}) {
-  const sanitized = redactDiagnosticSecrets(stripTerminalFormatting(rawLog));
+  const sanitized = redactDiagnosticSecrets(stripInstallerProgressProtocol(rawLog));
   const compacted = boundSummary(compactLines(sanitized.split("\n")));
   const generatedAt = metadata.generatedAt || new Date().toISOString();
   const status = metadata.status || "Unknown";

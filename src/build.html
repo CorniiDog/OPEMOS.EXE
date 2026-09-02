@@ -37,14 +37,16 @@
         <section class="logs-card">
             <div class="logs-heading">
                 <h2>Build logs</h2>
-                <button id="log-follow" class="log-follow" type="button">Following live output</button>
+                <div class="log-tools">
+                    <button id="copy-diagnostic-log" class="log-tool" type="button" disabled>Copy Diagnostic Log</button>
+                    <button id="log-follow" class="log-follow" type="button">Following live output</button>
+                </div>
             </div>
             <pre id="build-log" tabindex="0" aria-label="Selectable build log">Waiting for the build to start…</pre>
         </section>
 
         <div class="actions">
             <button id="cancel-build" class="danger" disabled>Cancel Build</button>
-            <button id="copy-diagnostic-log" class="secondary" type="button" disabled>Copy Diagnostic Log</button>
             <button id="close-window" class="secondary hidden">Close</button>
         </div>
 

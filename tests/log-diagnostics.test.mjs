@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 import {
   buildDiagnosticLog,
@@ -8,6 +9,7 @@ import {
   redactDiagnosticSecrets,
   stripInstallerProgressProtocol,
   stripTerminalFormatting,
+  summarizeBuildFailure,
 } from "../src/log-diagnostics.js";
 
 test("terminal formatting is removed without losing messages", () => {
@@ -86,6 +88,30 @@ test("structured installer mutation progress reports real package and module wor
       unit: "items",
     },
   );
+});
+
+test("terminal failure summaries retain the root cause without progress protocol", () => {
+  const progress = 'STEAMOS_NVIDIA_PROGRESS {"schemaVersion":1,"attempt":2,"phase":"hashing","indeterminate":false,"completed":4,"total":8,"unit":"bytes"}';
+  const raw = `NVIDIA target build exited with exit status: 1: ${progress}`;
+  const log = `${progress}\nsnapshot_target_execution.py: execution input has an unsafe parent: bin/bash\n[open-gpu-kernel-modules-steamos-support] Target-owned inputs are unsafe.`;
+  assert.equal(
+    summarizeBuildFailure(raw, log),
+    "Installer safety check failed: execution input has an unsafe parent: bin/bash. No image mutation was accepted.",
+  );
+  assert.doesNotMatch(buildDiagnosticLog(log), /STEAMOS_NVIDIA_PROGRESS/);
+});
+
+test("progress-window diagnostics remain in the fixed log toolbar", async () => {
+  const [html, css] = await Promise.all([
+    readFile(new URL("../src/build.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/build.css", import.meta.url), "utf8"),
+  ]);
+  const tools = html.match(/<div class="log-tools">([\s\S]*?)<\/div>/)?.[1] || "";
+  assert.match(tools, /id="copy-diagnostic-log"/);
+  assert.match(tools, /id="log-follow"/);
+  assert.ok(tools.indexOf("copy-diagnostic-log") < tools.indexOf("log-follow"));
+  assert.match(css, /\.actions\s*\{[^}]*min-height:\s*41px/s);
+  assert.match(css, /\.logs-card\s*\{[^}]*min-height:\s*0/s);
 });
 
 test("credentials and host usernames are redacted", () => {

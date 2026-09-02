@@ -3,6 +3,19 @@
 mod tests {
     use super::*;
 
+    #[test]
+    fn guest_failure_details_drop_progress_noise_and_remain_bounded() {
+        let progress = "STEAMOS_NVIDIA_PROGRESS {\"schemaVersion\":1,\"attempt\":2,\"phase\":\"hashing\",\"indeterminate\":false,\"completed\":4,\"total\":8,\"unit\":\"bytes\"}";
+        let log = format!(
+            "{progress}\n{progress}\nsnapshot_target_execution.py: execution input has an unsafe parent: bin/bash\n[open-gpu-kernel-modules-steamos-support] Target-owned inputs are unsafe.\nWorkspace preparation metadata is valid only for validation results.\n"
+        );
+        let detail = guest_command_failure_detail(log.as_bytes());
+        assert!(!detail.contains("STEAMOS_NVIDIA_PROGRESS"));
+        assert!(detail.contains("unsafe parent: bin/bash"));
+        assert!(detail.contains("Target-owned inputs are unsafe"));
+        assert!(detail.chars().count() <= 2 * 1024 + 1);
+    }
+
     fn initramfs_verification_fixture() -> serde_json::Value {
         let kernel = "6.16.12-valve-fixture";
         let module_path = |name: &str| format!("usr/lib/modules/{kernel}/kernel/nvidia/{name}.zst");

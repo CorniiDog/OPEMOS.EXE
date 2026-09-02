@@ -3397,13 +3397,52 @@ pub(crate) fn run_guest_command_logged(
         return Ok(());
     }
     let bytes = fs::read(log_path).unwrap_or_default();
-    let start = bytes.len().saturating_sub(8 * 1024);
-    let detail = String::from_utf8_lossy(&bytes[start..]).trim().to_string();
+    let detail = guest_command_failure_detail(&bytes);
     Err(if detail.is_empty() {
-        format!("NVIDIA target build exited with {status}.")
+        format!("NVIDIA appliance command exited with {status}.")
     } else {
-        format!("NVIDIA target build exited with {status}: {detail}")
+        format!("NVIDIA appliance command exited with {status}: {detail}")
     })
+}
+
+pub(crate) fn guest_command_failure_detail(bytes: &[u8]) -> String {
+    const TAIL_BYTES: usize = 64 * 1024;
+    const MAX_DETAIL_CHARACTERS: usize = 2 * 1024;
+    const MAX_DETAIL_LINES: usize = 12;
+
+    let start = bytes.len().saturating_sub(TAIL_BYTES);
+    let tail = String::from_utf8_lossy(&bytes[start..]);
+    let mut lines = Vec::new();
+    for line in tail.lines() {
+        let line = line.trim();
+        if line.is_empty()
+            || line.starts_with("STEAMOS_NVIDIA_PROGRESS ")
+            || line.starts_with(",\"")
+        {
+            continue;
+        }
+        if lines.last().is_some_and(|previous| *previous == line) {
+            continue;
+        }
+        lines.push(line);
+        if lines.len() > MAX_DETAIL_LINES {
+            lines.remove(0);
+        }
+    }
+    let detail = lines.join("\n");
+    if detail.chars().count() <= MAX_DETAIL_CHARACTERS {
+        detail
+    } else {
+        let suffix: String = detail
+            .chars()
+            .rev()
+            .take(MAX_DETAIL_CHARACTERS)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        format!("…{suffix}")
+    }
 }
 
 pub(crate) enum NvidiaSupportSource<'a> {

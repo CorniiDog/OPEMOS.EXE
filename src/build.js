@@ -4,6 +4,7 @@ import {
   inferNvidiaDiagnosticMilestone,
   stripInstallerProgressProtocol,
   stripTerminalFormatting,
+  summarizeBuildFailure,
 } from "./log-diagnostics.js";
 import {
   appendAnsiText,
@@ -40,6 +41,10 @@ let currentProgress = 0;
 let currentStep = "";
 let lastInstallerProgressKey = "";
 let validationStartedAt = null;
+let visibleLogCharacters = 0;
+
+const MAX_VISIBLE_LOG_CHARACTERS = 1_000_000;
+const RETAIN_VISIBLE_LOG_CHARACTERS = 750_000;
 
 let ansiState = freshAnsiState();
 
@@ -230,6 +235,24 @@ function flushPendingLogs() {
   const fragment = document.createDocumentFragment();
   appendAnsiText(fragment, content, ansiState);
   elements.buildLog.append(fragment);
+  visibleLogCharacters += content.length;
+  if (visibleLogCharacters > MAX_VISIBLE_LOG_CHARACTERS) {
+    let removed = 0;
+    while (elements.buildLog.childNodes.length > 1
+        && visibleLogCharacters - removed > RETAIN_VISIBLE_LOG_CHARACTERS) {
+      const first = elements.buildLog.firstChild;
+      removed += first.textContent?.length || 0;
+      first.remove();
+    }
+    visibleLogCharacters = Math.max(0, visibleLogCharacters - removed);
+    if (removed > 0) {
+      const marker = document.createElement("span");
+      marker.className = "log-truncation";
+      marker.textContent = `[Earlier visual output hidden to keep this window responsive; Copy Diagnostic Log retains bounded failure context.]\n`;
+      elements.buildLog.prepend(marker);
+      visibleLogCharacters += marker.textContent.length;
+    }
+  }
   elements.buildLog.scrollTop = elements.buildLog.scrollHeight;
   elements.logFollow.textContent = "Following live output";
   elements.logFollow.classList.remove("paused");
@@ -387,6 +410,7 @@ async function refreshLogs() {
 async function finish(state, message, output = null) {
   running = false;
   elements.cancelBuild.disabled = true;
+  elements.cancelBuild.classList.add("hidden");
   elements.closeWindow.classList.remove("hidden");
   await progressWindow.emitTo("main", "build-finished", {
     state, message, output, inputPath: activeRequestPath,
@@ -425,6 +449,7 @@ async function runBuild(request) {
   lastNvidiaApplianceLog = "";
   pendingLogChunks = [];
   diagnosticLog = "";
+  visibleLogCharacters = 0;
   ansiState = freshAnsiState();
   nvidiaBuildSubphase = "Preparing the isolated build environment";
   nvidiaMilestoneProgress = 30;
@@ -437,6 +462,7 @@ async function runBuild(request) {
   elements.logFollow.textContent = "Following live output";
   elements.logFollow.classList.remove("paused");
   elements.closeWindow.classList.add("hidden");
+  elements.cancelBuild.classList.remove("hidden");
   elements.copyDiagnosticLog.disabled = true;
   elements.cancelBuild.disabled = false;
   elements.inputName.textContent = request.name;
@@ -728,8 +754,9 @@ async function runBuild(request) {
     if (cancelling) return;
     addStageLog(`ERROR: ${error}`);
     await stopAllWorkers();
-    setStatus("failed", "Build failed", String(error), 100);
-    await finish("failed", `Image build failed: ${error}`);
+    const failure = summarizeBuildFailure(error, diagnosticLog);
+    setStatus("failed", "Build failed", failure, 100);
+    await finish("failed", `Image build failed: ${failure}`);
   } finally {
     if (logTimer) clearInterval(logTimer);
     await refreshLogs();
