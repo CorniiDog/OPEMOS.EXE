@@ -40,6 +40,12 @@ test("builder readiness expands while no image has been selected", () => {
   assert.match(script, /elements\.readinessGrid\.classList\.add\("has-selection"\)/);
 });
 
+test("adjacent translucent workflow cards do not cast shadows through each other", () => {
+  assert.match(css, /\.environment-card\s*\{[^}]*box-shadow:\s*inset 0 1px 0 var\(--glass-highlight\);/);
+  assert.match(css, /\.download-card,[\s\S]*\.build-card\s*\{[^}]*box-shadow:\s*inset 0 1px 0 var\(--glass-highlight\);/);
+  assert.doesNotMatch(css, /\.environment-card\s*\{[^}]*box-shadow:\s*var\(--glass-shadow\);/);
+});
+
 test("selected-image mode preserves the build action and result region", () => {
   assert.match(script, /elements\.downloadCard\.classList\.toggle\("hidden", Boolean\(currentImage\)\)/);
   assert.match(css, /\.result-message\s*\{\s*min-height:\s*18px;/);
