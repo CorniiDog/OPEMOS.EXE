@@ -1298,7 +1298,8 @@ esac
                 "candidateAttachedReadOnly": true,
                 "layoutRecognized": true,
                 "markerVerified": true,
-                "nvidiaPayloadVerified": true
+                "nvidiaPayloadVerified": true,
+                "installationMediaWelcomeVerified": true
             },
             "integration": {
                 "milestone": "nvidia-offline-installed",
@@ -1360,6 +1361,14 @@ esac
         assert!(completed_nvidia_image_from_path(image.to_str().unwrap()).is_err());
 
         manifest["validation"]["nvidiaPayloadVerified"] = serde_json::json!(true);
+        manifest["validation"]
+            .as_object_mut()
+            .unwrap()
+            .remove("installationMediaWelcomeVerified");
+        write_manifest(&manifest);
+        assert!(completed_nvidia_image_from_path(image.to_str().unwrap()).is_err());
+
+        manifest["validation"]["installationMediaWelcomeVerified"] = serde_json::json!(true);
         manifest["resultClass"] = serde_json::json!("marker-only");
         write_manifest(&manifest);
         assert!(completed_nvidia_image_from_path(image.to_str().unwrap()).is_err());
@@ -2579,6 +2588,40 @@ esac
         assert!(!script.contains("repair_device.sh"));
         assert!(desktop.contains("Terminal=true"));
         assert!(desktop.contains("Exec=sudo /home/deck/tools/opemos-rollback-last-update"));
+    }
+
+    #[test]
+    fn installation_media_welcome_is_bundled_with_a_bounded_privilege_boundary() {
+        let welcome = std::str::from_utf8(INSTALL_MEDIA_WELCOME).unwrap();
+        let helper = std::str::from_utf8(INSTALL_MEDIA_HELPER).unwrap();
+        let patcher = std::str::from_utf8(INSTALL_MEDIA_PATCHER).unwrap();
+        let desktop = std::str::from_utf8(INSTALL_MEDIA_DESKTOP).unwrap();
+
+        assert!(desktop.contains("Name=Open OPEMOS"));
+        assert!(desktop.contains("Exec=/home/deck/tools/open-opemos-welcome"));
+        assert!(desktop.contains("X-KDE-AutostartScript=true"));
+        assert!(welcome.contains("Welcome to OPEMOS"));
+        assert!(welcome.contains("Install OPEMOS"));
+        assert!(welcome.contains("Reinstall OPEMOS"));
+        assert!(welcome.contains("Do not power off the computer or disconnect either drive"));
+        assert!(welcome.contains("sudo \"$HELPER\" install"));
+        assert!(!welcome.contains("eval "));
+
+        assert!(helper.contains("MINIMUM_INSTALL_BYTES"));
+        assert!(helper.contains("is_recovery_disk \"$device\""));
+        assert!(helper.contains("mounted_child \"$device\""));
+        assert!(helper.contains("disk_identity \"$device\""));
+        assert!(helper.contains("typed confirmation did not match; nothing changed"));
+        assert!(helper.contains("flock -n 9"));
+        assert!(helper.contains("OPEMOS_FAIL_FAST=1"));
+        assert!(!helper.contains("eval "));
+
+        assert!(patcher.contains("unsupported Valve installer structure for guarded anchor"));
+        assert!(patcher.contains("Open OPEMOS requires an explicit target disk"));
+        assert!(patcher.contains("OPEMOS_SKIP_JUPITER_FIRMWARE"));
+        assert!(patcher.contains("OPEMOS_NO_REBOOT"));
+        assert!(patcher.contains("OPEMOS_FAIL_FAST"));
+        assert!(!patcher.contains("subprocess"));
     }
 
     #[test]
@@ -4165,11 +4208,20 @@ esac
         );
         assert_eq!(nvidia_manifest["validation"]["nvidiaPayloadVerified"], true);
         assert_eq!(nvidia_manifest["validation"]["recoveryRollbackVerified"], true);
+        assert_eq!(
+            nvidia_manifest["validation"]["installationMediaWelcomeVerified"],
+            true
+        );
         assert!(nvidia_manifest["integration"]["modifiedPaths"]
             .as_array()
             .unwrap()
             .iter()
             .any(|path| path == "/home/deck/tools/opemos-rollback-last-update"));
+        assert!(nvidia_manifest["integration"]["modifiedPaths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == "/home/deck/tools/open-opemos-welcome"));
         assert_eq!(
             nvidia_manifest["integration"]["nvidiaSourcePolicy"]["mode"],
             "pinned"

@@ -63,6 +63,28 @@ skips installation when the manifest matches. If an explicitly selected
 NVIDIA version differs, the completed image is not silently reused or upgraded
 in place; select the original Valve recovery image to build that version.
 
+## Bootable-media welcome flow
+
+Newly generated images stage **Open OPEMOS** in the recovery desktop and launch
+it automatically. The first implementation intentionally uses the recovery
+image's known Zenity runtime while the frosted-glass native surface is built.
+The safety contract does not depend on that presentation layer.
+
+The welcome flow offers separate actions for a fresh installation, a SteamOS
+system reinstall that preserves the recognized home partition, and A/B
+rollback. It never silently picks the first or smallest disk. Only whole,
+writable, unmounted physical disks of sufficient capacity are offered, and the
+booted installation medium is excluded. The selected disk is bound to its
+device path, capacity, kernel major/minor and sequence values, and available
+hardware identifiers. The protected helper rechecks all of them after the
+typed confirmation and immediately before Valve's installer starts.
+
+The frontend runs as `deck`. The only privileged installation code is stored
+root-owned in the recovery root filesystem, accepts the fixed `all` or `system`
+mode, and delegates to a structurally verified copy of the image's own Valve
+installer. OPEMOS does not interpolate UI text into shell source or rewrite the
+installer at runtime.
+
 ## Cancellation
 
 Cancellation can occur during normalization, download, validation, package

@@ -17,6 +17,11 @@ Valve recovery image, performs exact-kernel NVIDIA resolution and installation
 inside managed Fedora appliances, independently validates the result, and
 exports a separate image, a removable USB target, or both.
 
+Newly generated media also includes **Open OPEMOS**, an automatically launched
+installation-media welcome application. It makes the destination disk an
+explicit choice, keeps fresh install and reinstall distinct, and revalidates
+the exact physical device before delegating to Valve's installer.
+
 The original recovery image is opened read-only and is never redistributed by
 this project.
 
@@ -88,8 +93,8 @@ virtual media, or macOS authorization.
 
 | Repository | Responsibility |
 | --- | --- |
-| [`OPEMOS.EXE`](https://github.com/CorniiDog/OPEMOS.EXE) | Desktop UI, recovery-image inspection, QEMU lifecycle, safe export, USB workflow, and independent final-image validation |
-| [`OPEMOS`](https://github.com/CorniiDog/OPEMOS) | Exact NVIDIA artifact resolution, builds, userspace locks, offline installation, provenance, and publication |
+| [`OPEMOS.EXE`](https://github.com/CorniiDog/OPEMOS.EXE) | Host image builder, recovery-image inspection, QEMU lifecycle, safe export/USB workflow, independent validation, and the welcome/installer UI embedded in bootable media |
+| [`OPEMOS`](https://github.com/CorniiDog/OPEMOS) | Exact NVIDIA artifact resolution, builds, userspace locks, offline installation, provenance/publication, the installed-system update guardian, and the persistent target-device Desktop UI |
 | [`open-gpu-kernel-modules-steamos`](https://github.com/CorniiDog/open-gpu-kernel-modules-steamos) | Versioned project NVIDIA source branches and SteamOS-specific patches |
 
 ## Safety summary
@@ -104,6 +109,10 @@ virtual media, or macOS authorization.
   NVIDIA image name.
 - The GUI never runs as root. macOS USB writing uses a narrowly authorized raw
   device descriptor and revalidates the target immediately before destruction.
+- The installation-media welcome UI also remains unprivileged. Its protected
+  helper accepts only fixed install modes, excludes the booted media, binds the
+  selection to a device-identity digest, and checks that identity again before
+  invoking a root-owned compatible Valve installer delegate.
 - Human-readable logs are diagnostic only; machine-readable contracts decide
   success.
 

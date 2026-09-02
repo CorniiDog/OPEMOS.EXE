@@ -52,6 +52,22 @@ Rust code.
 Windows requires a separately signed UAC helper implementing the same protocol
 and remains unavailable until that helper exists.
 
+## Installation-media authorization
+
+The bootable-media welcome application does not inherit broad shell or root
+authority. Its helper accepts only inventory, identity, and the fixed fresh or
+reinstall operation. It excludes the physical disk backing the running recovery
+home/root, rejects mounted/read-only/undersized targets, uses a per-device
+exclusive lock, and requires a matching identity digest plus a device-specific
+typed phrase immediately before mutation.
+
+The compatible Valve installer is patched once while the image is built, using
+guarded exact structural anchors, and installed root-owned in the immutable
+recovery root. The desktop user cannot replace the program executed by `sudo`.
+Generic-PC installation skips Steam Deck-specific BIOS/controller updates and
+firmware secure erase; the selected disk is still repartitioned and its target
+filesystems are recreated by Valve's install path.
+
 ## Remaining certification gates
 
 - Physical NVIDIA GPU boot and rendering coverage

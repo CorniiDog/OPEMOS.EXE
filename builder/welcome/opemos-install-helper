@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly MINIMUM_INSTALL_BYTES=$((12 * 1024 * 1024 * 1024))
+readonly REPAIR_DEVICE=/usr/lib/opemos-install-media/repair_device.sh
+readonly LOCK_DIRECTORY=/run/lock
+
+die() {
+  printf 'Open OPEMOS installer: %s\n' "$*" >&2
+  exit 1
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || die "required recovery tool is missing: $1"
+}
+
+for tool in awk blockdev findmnt flock lsblk readlink sed sha256sum; do
+  need "$tool"
+done
+
+clean_field() {
+  printf '%s' "$1" | tr '\t\r\n' '   ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//'
+}
+
+parent_disk() {
+  local source parent type
+  source=$(readlink -f -- "$1" 2>/dev/null || true)
+  [[ -b "$source" ]] || return 1
+  type=$(lsblk -dnro TYPE "$source" 2>/dev/null || true)
+  if [[ "$type" == disk ]]; then
+    printf '%s\n' "$source"
+    return 0
+  fi
+  parent=$(lsblk -dnro PKNAME "$source" 2>/dev/null | head -n 1)
+  [[ -n "$parent" ]] || return 1
+  printf '/dev/%s\n' "$parent"
+}
+
+recovery_disks() {
+  local source disk target
+  for target in /home/deck /home /; do
+    source=$(findmnt -nro SOURCE -T "$target" 2>/dev/null || true)
+    [[ -n "$source" ]] || continue
+    disk=$(parent_disk "$source" 2>/dev/null || true)
+    [[ -n "$disk" ]] && printf '%s\n' "$disk"
+  done | awk 'NF && !seen[$0]++'
+}
+
+is_recovery_disk() {
+  local device=$1 recovery
+  while IFS= read -r recovery; do
+    [[ "$device" == "$recovery" ]] && return 0
+  done < <(recovery_disks)
+  return 1
+}
+
+mounted_child() {
+  local device=$1 child mountpoint
+  while IFS= read -r child; do
+    [[ -n "$child" ]] || continue
+    while IFS= read -r mountpoint; do
+      [[ -n "$mountpoint" ]] && return 0
+    done < <(lsblk -nrpo MOUNTPOINTS "$child" 2>/dev/null | sed '/^[[:space:]]*$/d')
+    if awk -v wanted="$child" 'NR > 1 && $1 == wanted { found=1 } END { exit !found }' /proc/swaps 2>/dev/null; then
+      return 0
+    fi
+  done < <(lsblk -nrpo PATH "$device" 2>/dev/null)
+  return 1
+}
+
+canonical_whole_disk() {
+  local requested=$1 resolved type
+  [[ "$requested" == /dev/* ]] || return 1
+  resolved=$(readlink -f -- "$requested" 2>/dev/null || true)
+  [[ -b "$resolved" ]] || return 1
+  type=$(lsblk -dnro TYPE "$resolved" 2>/dev/null || true)
+  [[ "$type" == disk ]] || return 1
+  case "$resolved" in
+    /dev/loop*|/dev/zram*|/dev/ram*|/dev/nbd*|/dev/sr*) return 1 ;;
+  esac
+  printf '%s\n' "$resolved"
+}
+
+disk_bytes() {
+  blockdev --getsize64 "$1" 2>/dev/null
+}
+
+disk_identity() {
+  local device=$1 bytes majmin diskseq model serial wwn transport
+  bytes=$(disk_bytes "$device")
+  majmin=$(lsblk -dnro MAJ:MIN "$device" | tr -d '[:space:]')
+  diskseq=$(lsblk -dnro DISKSEQ "$device" 2>/dev/null | tr -d '[:space:]' || true)
+  model=$(clean_field "$(lsblk -dnro MODEL "$device" 2>/dev/null || true)")
+  serial=$(clean_field "$(lsblk -dnro SERIAL "$device" 2>/dev/null || true)")
+  wwn=$(clean_field "$(lsblk -dnro WWN "$device" 2>/dev/null || true)")
+  transport=$(clean_field "$(lsblk -dnro TRAN "$device" 2>/dev/null || true)")
+  printf 'schema=1\ndevice=%s\nmajorMinor=%s\ndiskSequence=%s\nbytes=%s\nmodel=%s\nserial=%s\nwwn=%s\ntransport=%s\n' \
+    "$device" "$majmin" "$diskseq" "$bytes" "$model" "$serial" "$wwn" "$transport" |
+    sha256sum | awk '{print $1}'
+}
+
+eligible_disk() {
+  local requested=$1 device bytes ro
+  device=$(canonical_whole_disk "$requested") || return 1
+  is_recovery_disk "$device" && return 1
+  ro=$(lsblk -dnro RO "$device" | tr -d '[:space:]')
+  [[ "$ro" == 0 ]] || return 1
+  bytes=$(disk_bytes "$device")
+  [[ "$bytes" =~ ^[0-9]+$ ]] && (( bytes >= MINIMUM_INSTALL_BYTES )) || return 1
+  mounted_child "$device" && return 1
+}
+
+has_exact_steamos_layout() {
+  local device=$1 index label count
+  local -a labels=(esp efi-A efi-B rootfs-A rootfs-B var-A var-B home)
+  for offset in "${!labels[@]}"; do
+    index=$((offset + 1))
+    label=${labels[$offset]}
+    count=$(lsblk -nrpo PARTN,PARTLABEL,TYPE "$device" |
+      awk -v number="$index" -v wanted="$label" '$1 == number && $2 == wanted && $3 == "part" { count++ } END { print count+0 }')
+    [[ "$count" == 1 ]] || return 1
+  done
+}
+
+inventory() {
+  local candidate device bytes token model serial transport layout
+  while IFS= read -r candidate; do
+    device=$(canonical_whole_disk "$candidate" 2>/dev/null || true)
+    [[ -n "$device" ]] || continue
+    eligible_disk "$device" || continue
+    bytes=$(disk_bytes "$device")
+    token=$(disk_identity "$device")
+    model=$(clean_field "$(lsblk -dnro MODEL "$device" 2>/dev/null || true)")
+    serial=$(clean_field "$(lsblk -dnro SERIAL "$device" 2>/dev/null || true)")
+    transport=$(clean_field "$(lsblk -dnro TRAN "$device" 2>/dev/null || true)")
+    layout=fresh
+    has_exact_steamos_layout "$device" && layout=steamos
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$device" "$bytes" "$token" "${model:-Unknown model}" \
+      "${serial:-Unavailable}" "${transport:-Unknown}" "$layout"
+  done < <(lsblk -dnpo PATH,TYPE | awk '$2 == "disk" { print $1 }')
+}
+
+install_to_disk() {
+  local mode=$1 requested=$2 expected_identity=$3 confirmation=$4
+  local device current_identity basename majmin phrase
+
+  [[ ${EUID:-$(id -u)} -eq 0 ]] || die "installation must be started through sudo"
+  case "$mode" in all|system) ;; *) die "unsupported installation mode" ;; esac
+  [[ "$expected_identity" =~ ^[0-9a-f]{64}$ ]] || die "selected disk identity is malformed"
+  device=$(canonical_whole_disk "$requested") || die "selected target is no longer a whole physical disk"
+  eligible_disk "$device" || die "selected disk is mounted, read-only, too small, missing, or is the recovery medium"
+  [[ "$mode" != system ]] || has_exact_steamos_layout "$device" ||
+    die "reinstall requires one exact recognized SteamOS A/B partition layout"
+  current_identity=$(disk_identity "$device")
+  [[ "$current_identity" == "$expected_identity" ]] || die "selected disk identity changed; refresh and choose it again"
+
+  basename=${device##*/}
+  if [[ "$mode" == all ]]; then
+    phrase="ERASE $basename"
+  else
+    phrase="REINSTALL $basename"
+  fi
+  [[ "$confirmation" == "$phrase" ]] || die "typed confirmation did not match; nothing changed"
+  [[ -f "$REPAIR_DEVICE" && ! -L "$REPAIR_DEVICE" && -x "$REPAIR_DEVICE" ]] ||
+    die "the protected Valve installer delegate is unavailable"
+  grep -Fqx 'DISK="${STEAMOS_TARGET_DISK:?Open OPEMOS requires an explicit target disk}"' "$REPAIR_DEVICE" ||
+    die "the protected Valve installer delegate does not require an explicit target"
+
+  majmin=$(lsblk -dnro MAJ:MIN "$device" | tr ':[:space:]' '__')
+  exec 9>"$LOCK_DIRECTORY/opemos-install-$majmin.lock"
+  flock -n 9 || die "another installation is already using this target disk"
+  eligible_disk "$device" || die "selected disk changed immediately before installation"
+  [[ "$(disk_identity "$device")" == "$expected_identity" ]] ||
+    die "selected disk identity changed immediately before installation"
+
+  printf 'Open OPEMOS is installing to %s. Do not power off or disconnect either drive.\n' "$device" >&2
+  exec env \
+    STEAMOS_TARGET_DISK="$device" \
+    NOPROMPT=1 \
+    OPEMOS_FAIL_FAST=1 \
+    OPEMOS_NO_REBOOT=1 \
+    OPEMOS_SKIP_JUPITER_FIRMWARE=1 \
+    "$REPAIR_DEVICE" "$mode"
+}
+
+case "${1:-}" in
+  inventory)
+    [[ $# -eq 1 ]] || die "inventory takes no arguments"
+    inventory
+    ;;
+  identity)
+    [[ $# -eq 2 ]] || die "identity requires one device"
+    device=$(canonical_whole_disk "$2") || die "target is not a whole physical disk"
+    eligible_disk "$device" || die "target is not currently eligible"
+    disk_identity "$device"
+    ;;
+  install)
+    [[ $# -eq 6 && $5 == --confirm ]] ||
+      die "install requires MODE DEVICE IDENTITY --confirm PHRASE"
+    install_to_disk "$2" "$3" "$4" "$6"
+    ;;
+  *)
+    die "usage: $0 inventory | identity DEVICE | install MODE DEVICE IDENTITY --confirm PHRASE"
+    ;;
+esac

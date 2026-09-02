@@ -1139,6 +1139,10 @@ pub(crate) fn verify_nvidia_from_validation_overlay(
 ) -> Result<(), String> {
     let recovery_script_sha256 = format!("{:x}", Sha256::digest(RECOVERY_ROLLBACK_SCRIPT));
     let recovery_desktop_sha256 = format!("{:x}", Sha256::digest(RECOVERY_ROLLBACK_DESKTOP));
+    let welcome_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_WELCOME));
+    let welcome_helper_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_HELPER));
+    let welcome_desktop_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_DESKTOP));
+    let welcome_icon_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_ICON));
     let mut package_assertions = String::new();
     for package in &installation.packages {
         if arch_dependency_name(&package.name)? != package.name
@@ -1263,6 +1267,34 @@ test ! -L "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
 test "$(sha256sum "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop" | awk '{{print $1}}')" = "{}"
 test "$(stat -c '%a' "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop")" = 755
 test "$(stat -c '%u:%g' "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop")" = "$DECK_ID"
+test -f "$ROOT/home/deck/tools/open-opemos-welcome"
+test ! -L "$ROOT/home/deck/tools/open-opemos-welcome"
+test "$(sha256sum "$ROOT/home/deck/tools/open-opemos-welcome" | awk '{{print $1}}')" = "{}"
+test "$(stat -c '%a' "$ROOT/home/deck/tools/open-opemos-welcome")" = 755
+test "$(stat -c '%u:%g' "$ROOT/home/deck/tools/open-opemos-welcome")" = "$DECK_ID"
+for DESKTOP in "$ROOT/home/deck/Desktop/Open-OPEMOS.desktop" "$ROOT/home/deck/.config/autostart/Open-OPEMOS.desktop"; do
+  test -f "$DESKTOP"
+  test ! -L "$DESKTOP"
+  test "$(sha256sum "$DESKTOP" | awk '{{print $1}}')" = "{}"
+  test "$(stat -c '%a' "$DESKTOP")" = 644
+  test "$(stat -c '%u:%g' "$DESKTOP")" = "$DECK_ID"
+done
+test -f "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg"
+test ! -L "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg"
+test "$(sha256sum "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg" | awk '{{print $1}}')" = "{}"
+test "$(stat -c '%a' "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg")" = 644
+test "$(stat -c '%u:%g' "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg")" = "$DECK_ID"
+test -f "$ROOT/usr/lib/opemos-install-media/opemos-install-helper"
+test ! -L "$ROOT/usr/lib/opemos-install-media/opemos-install-helper"
+test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/opemos-install-helper" | awk '{{print $1}}')" = "{}"
+test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/opemos-install-helper")" = 755:0:0
+test -f "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
+test ! -L "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
+test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/repair_device.sh")" = 755:0:0
+grep -Fqx 'DISK="${{STEAMOS_TARGET_DISK:?Open OPEMOS requires an explicit target disk}}"' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
+grep -Fq 'OPEMOS_SKIP_JUPITER_FIRMWARE' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
+grep -Fq 'OPEMOS_NO_REBOOT' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
+grep -Fq 'OPEMOS_FAIL_FAST' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
 sudo umount "$ROOT/var"
@@ -1288,6 +1320,10 @@ trap - EXIT INT TERM"#,
         package_assertions,
         recovery_script_sha256,
         recovery_desktop_sha256,
+        welcome_sha256,
+        welcome_desktop_sha256,
+        welcome_icon_sha256,
+        welcome_helper_sha256,
     );
     run_guest_command(session, &command).map(|_| ())
 }
@@ -2475,6 +2511,7 @@ pub(crate) fn completed_nvidia_image_from_path(
         "layoutRecognized",
         "markerVerified",
         "nvidiaPayloadVerified",
+        "installationMediaWelcomeVerified",
     ] {
         if validation.get(field).and_then(serde_json::Value::as_bool) != Some(true) {
             return Err(format!(

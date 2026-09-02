@@ -6,6 +6,28 @@ pub(crate) const RECOVERY_ROLLBACK_SCRIPT: &[u8] =
     include_bytes!("../../builder/recovery/opemos-rollback-last-update");
 pub(crate) const RECOVERY_ROLLBACK_DESKTOP: &[u8] =
     include_bytes!("../../builder/recovery/OPEMOS-Rollback.desktop");
+pub(crate) const INSTALL_MEDIA_WELCOME: &[u8] =
+    include_bytes!("../../builder/welcome/open-opemos-welcome");
+pub(crate) const INSTALL_MEDIA_HELPER: &[u8] =
+    include_bytes!("../../builder/welcome/opemos-install-helper");
+pub(crate) const INSTALL_MEDIA_PATCHER: &[u8] =
+    include_bytes!("../../builder/welcome/patch_repair_device.py");
+pub(crate) const INSTALL_MEDIA_DESKTOP: &[u8] =
+    include_bytes!("../../builder/welcome/Open-OPEMOS.desktop");
+pub(crate) const INSTALL_MEDIA_ICON: &[u8] =
+    include_bytes!("../../docs/assets/images/opemos-app-icon.svg");
+
+struct InstallMediaWelcomeDigests {
+    welcome: String,
+    helper: String,
+    patcher: String,
+    desktop: String,
+    icon: String,
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
 
 fn stage_recovery_rollback_assets(
     connection: &NvidiaBuildConnection,
@@ -22,6 +44,32 @@ fn stage_recovery_rollback_assets(
         format!("{:x}", Sha256::digest(RECOVERY_ROLLBACK_SCRIPT)),
         format!("{:x}", Sha256::digest(RECOVERY_ROLLBACK_DESKTOP)),
     ))
+}
+
+fn stage_install_media_welcome_assets(
+    connection: &NvidiaBuildConnection,
+) -> Result<InstallMediaWelcomeDigests, String> {
+    let assets = [
+        ("open-opemos-welcome", INSTALL_MEDIA_WELCOME),
+        ("opemos-install-helper", INSTALL_MEDIA_HELPER),
+        ("patch_repair_device.py", INSTALL_MEDIA_PATCHER),
+        ("Open-OPEMOS.desktop", INSTALL_MEDIA_DESKTOP),
+        ("opemos.svg", INSTALL_MEDIA_ICON),
+    ];
+    for (name, bytes) in assets {
+        let path = connection.runtime_dir.join(name);
+        fs::write(&path, bytes).map_err(|error| {
+            format!("Could not stage Open OPEMOS welcome asset {name}: {error}")
+        })?;
+        copy_install_input_to_guest(connection, &path, name)?;
+    }
+    Ok(InstallMediaWelcomeDigests {
+        welcome: sha256_bytes(INSTALL_MEDIA_WELCOME),
+        helper: sha256_bytes(INSTALL_MEDIA_HELPER),
+        patcher: sha256_bytes(INSTALL_MEDIA_PATCHER),
+        desktop: sha256_bytes(INSTALL_MEDIA_DESKTOP),
+        icon: sha256_bytes(INSTALL_MEDIA_ICON),
+    })
 }
 
 struct UniqueJson;
@@ -2391,6 +2439,7 @@ pub(crate) fn install_nvidia_to_working_image_blocking(
     let userspace_arguments = userspace_installer_arguments(&inputs.packages)?;
     let (recovery_script_sha256, recovery_desktop_sha256) =
         stage_recovery_rollback_assets(&connection)?;
+    let welcome_digests = stage_install_media_welcome_assets(&connection)?;
     let mutation_attempt = 2_usize;
     let command = format!(
         r#"set -euo pipefail
@@ -2524,6 +2573,11 @@ done < <(sudo find "$ROOT/boot" -maxdepth 1 -type f -name 'initramfs*.img' -prin
 test "$INITRAMFS_OK" = 1
 test "$(sha256sum /tmp/opemos-rollback-last-update | awk '{{print $1}}')" = "{recovery_script_sha256}"
 test "$(sha256sum /tmp/OPEMOS-Rollback.desktop | awk '{{print $1}}')" = "{recovery_desktop_sha256}"
+test "$(sha256sum /tmp/open-opemos-welcome | awk '{{print $1}}')" = "{welcome_sha256}"
+test "$(sha256sum /tmp/opemos-install-helper | awk '{{print $1}}')" = "{welcome_helper_sha256}"
+test "$(sha256sum /tmp/patch_repair_device.py | awk '{{print $1}}')" = "{welcome_patcher_sha256}"
+test "$(sha256sum /tmp/Open-OPEMOS.desktop | awk '{{print $1}}')" = "{welcome_desktop_sha256}"
+test "$(sha256sum /tmp/opemos.svg | awk '{{print $1}}')" = "{welcome_icon_sha256}"
 DECK_ID=$(awk -F: '$1 == "deck" {{print $3 ":" $4}}' "$ROOT/etc/passwd")
 test -n "$DECK_ID"
 test "$(printf '%s\n' "$DECK_ID" | wc -l | tr -d ' ')" = 1
@@ -2532,7 +2586,7 @@ test -d "$ROOT/home/deck"
 test ! -L "$ROOT/home/deck"
 DECK_UID=${{DECK_ID%:*}}
 DECK_GID=${{DECK_ID#*:}}
-for DIRECTORY in "$ROOT/home/deck/tools" "$ROOT/home/deck/Desktop"; do
+for DIRECTORY in "$ROOT/home/deck/tools" "$ROOT/home/deck/Desktop" "$ROOT/home/deck/.config" "$ROOT/home/deck/.config/autostart" "$ROOT/home/deck/.local" "$ROOT/home/deck/.local/share" "$ROOT/home/deck/.local/share/icons" "$ROOT/home/deck/.local/share/icons/hicolor" "$ROOT/home/deck/.local/share/icons/hicolor/scalable" "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps"; do
   if test -e "$DIRECTORY"; then
     test -d "$DIRECTORY"
     test ! -L "$DIRECTORY"
@@ -2540,11 +2594,48 @@ for DIRECTORY in "$ROOT/home/deck/tools" "$ROOT/home/deck/Desktop"; do
     sudo install -d -m 0755 -o "$DECK_UID" -g "$DECK_GID" "$DIRECTORY"
   fi
 done
+test -e "$ROOT/home/deck/tools/repair_device.sh"
+test -f "$ROOT/home/deck/tools/repair_device.sh"
+test ! -L "$ROOT/home/deck/tools/repair_device.sh"
+test -d "$ROOT/usr"
+test ! -L "$ROOT/usr"
+test -d "$ROOT/usr/lib"
+test ! -L "$ROOT/usr/lib"
+if test -e "$ROOT/usr/lib/opemos-install-media"; then
+  test -d "$ROOT/usr/lib/opemos-install-media"
+  test ! -L "$ROOT/usr/lib/opemos-install-media"
+fi
+sudo install -d -m 0755 -o root -g root "$ROOT/usr/lib/opemos-install-media"
+sudo install -m 0755 -o root -g root /tmp/opemos-install-helper "$ROOT/usr/lib/opemos-install-media/opemos-install-helper"
+sudo python3 /tmp/patch_repair_device.py "$ROOT/home/deck/tools/repair_device.sh" "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
+sudo chown root:root "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
+sudo chmod 0755 "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 sudo install -m 0755 /tmp/opemos-rollback-last-update "$ROOT/home/deck/tools/opemos-rollback-last-update"
 sudo install -m 0755 /tmp/OPEMOS-Rollback.desktop "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
-sudo chown "$DECK_ID" "$ROOT/home/deck/tools/opemos-rollback-last-update" "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
+sudo install -m 0755 /tmp/open-opemos-welcome "$ROOT/home/deck/tools/open-opemos-welcome"
+sudo install -m 0644 /tmp/Open-OPEMOS.desktop "$ROOT/home/deck/Desktop/Open-OPEMOS.desktop"
+sudo install -m 0644 /tmp/Open-OPEMOS.desktop "$ROOT/home/deck/.config/autostart/Open-OPEMOS.desktop"
+sudo install -m 0644 /tmp/opemos.svg "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg"
+sudo chown "$DECK_ID" \
+  "$ROOT/home/deck/tools/opemos-rollback-last-update" \
+  "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop" \
+  "$ROOT/home/deck/tools/open-opemos-welcome" \
+  "$ROOT/home/deck/Desktop/Open-OPEMOS.desktop" \
+  "$ROOT/home/deck/.config/autostart/Open-OPEMOS.desktop" \
+  "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg"
 test "$(sha256sum "$ROOT/home/deck/tools/opemos-rollback-last-update" | awk '{{print $1}}')" = "{recovery_script_sha256}"
 test "$(sha256sum "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop" | awk '{{print $1}}')" = "{recovery_desktop_sha256}"
+test "$(sha256sum "$ROOT/home/deck/tools/open-opemos-welcome" | awk '{{print $1}}')" = "{welcome_sha256}"
+test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/opemos-install-helper" | awk '{{print $1}}')" = "{welcome_helper_sha256}"
+test "$(sha256sum "$ROOT/home/deck/Desktop/Open-OPEMOS.desktop" | awk '{{print $1}}')" = "{welcome_desktop_sha256}"
+test "$(sha256sum "$ROOT/home/deck/.config/autostart/Open-OPEMOS.desktop" | awk '{{print $1}}')" = "{welcome_desktop_sha256}"
+test "$(sha256sum "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg" | awk '{{print $1}}')" = "{welcome_icon_sha256}"
+test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/opemos-install-helper")" = root:root:755
+test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/repair_device.sh")" = root:root:755
+grep -Fqx 'DISK="${{STEAMOS_TARGET_DISK:?Open OPEMOS requires an explicit target disk}}"' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
+grep -Fq 'OPEMOS_SKIP_JUPITER_FIRMWARE' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
+grep -Fq 'OPEMOS_NO_REBOOT' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
+grep -Fq 'OPEMOS_FAIL_FAST' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 sync
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
@@ -2577,6 +2668,11 @@ trap - EXIT INT TERM"#,
         mutation_attempt = mutation_attempt,
         recovery_script_sha256 = recovery_script_sha256,
         recovery_desktop_sha256 = recovery_desktop_sha256,
+        welcome_sha256 = welcome_digests.welcome,
+        welcome_helper_sha256 = welcome_digests.helper,
+        welcome_patcher_sha256 = welcome_digests.patcher,
+        welcome_desktop_sha256 = welcome_digests.desktop,
+        welcome_icon_sha256 = welcome_digests.icon,
     );
     let execution_result = run_guest_command_logged(
         &connection,

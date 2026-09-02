@@ -1576,6 +1576,12 @@ pub(crate) fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json:
             "/var/lib/open-gpu-kernel-modules-steamos-support/offline-install",
             "/home/deck/tools/opemos-rollback-last-update",
             "/home/deck/Desktop/OPEMOS-Rollback.desktop",
+            "/home/deck/tools/open-opemos-welcome",
+            "/home/deck/Desktop/Open-OPEMOS.desktop",
+            "/home/deck/.config/autostart/Open-OPEMOS.desktop",
+            "/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg",
+            "/usr/lib/opemos-install-media/opemos-install-helper",
+            "/usr/lib/opemos-install-media/repair_device.sh",
             "/boot"
         ])
     } else {
@@ -1666,6 +1672,7 @@ pub(crate) fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json:
             "markerVerified": true,
             "nvidiaPayloadVerified": nvidia_installed,
             "recoveryRollbackVerified": nvidia_installed,
+            "installationMediaWelcomeVerified": nvidia_installed,
             "sourceUnchanged": true,
             "passed": true
         }

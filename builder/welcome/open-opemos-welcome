@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly HELPER=/usr/lib/opemos-install-media/opemos-install-helper
+readonly ROLLBACK=/home/deck/tools/opemos-rollback-last-update
+export GTK_THEME="${GTK_THEME:-Breeze-Dark}"
+
+message() {
+  zenity --info --title="Open OPEMOS" --width=520 --no-wrap --text="$1" || true
+}
+
+failure() {
+  zenity --error --title="Open OPEMOS" --width=560 --no-wrap --text="$1" || true
+}
+
+human_size() {
+  awk -v bytes="$1" 'BEGIN { printf "%.1f GB", bytes / 1000000000 }'
+}
+
+choose_action() {
+  zenity --list --radiolist \
+    --title="Open OPEMOS" \
+    --text="Welcome to OPEMOS\n\nChoose what you want to do on this computer." \
+    --column="" --column="Action" --column="What it does" \
+    --hide-column=2 --print-column=2 \
+    --width=760 --height=390 \
+    TRUE install "Install OPEMOS — erase one selected disk and install this image" \
+    FALSE reinstall "Reinstall OPEMOS — preserve games and personal files on a recognized SteamOS disk" \
+    FALSE rollback "Recovery — select a previously working NVIDIA-ready A/B slot"
+}
+
+choose_disk() {
+  local mode=$1 inventory line device bytes token model serial transport layout
+  local -a rows=()
+  inventory=$(mktemp /tmp/open-opemos-inventory.XXXXXX)
+  trap 'rm -f "$inventory"' RETURN
+  if ! "$HELPER" inventory >"$inventory"; then
+    failure "OPEMOS could not inspect the available physical disks. No disk was changed."
+    return 1
+  fi
+  while IFS=$'\t' read -r device bytes token model serial transport layout; do
+    [[ -n "$device" && -n "$token" ]] || continue
+    [[ "$mode" != system || "$layout" == steamos ]] || continue
+    rows+=(FALSE "$device" "$(human_size "$bytes")" "$model" "$serial" "$transport" "${device}|${token}")
+  done <"$inventory"
+  (( ${#rows[@]} > 0 )) || {
+    failure "No eligible target disk was found.\n\nOPEMOS excludes the booted installation media, mounted disks, read-only disks, and disks smaller than 12 GiB. Reinstall also requires one exact SteamOS A/B layout."
+    return 1
+  }
+  zenity --list --radiolist \
+    --title="Select installation disk" \
+    --text="Choose the whole physical disk OPEMOS may use. The installation media is excluded automatically." \
+    --column="" --column="Device" --column="Capacity" --column="Model" --column="Serial" --column="Bus" --column="Identity" \
+    --hide-column=7 --print-column=7 \
+    --width=920 --height=430 "${rows[@]}"
+}
+
+run_install() {
+  local mode=$1 selected device token basename phrase warning log status
+  selected=$(choose_disk "$mode") || return 0
+  IFS='|' read -r device token <<<"$selected"
+  [[ -n "$device" && "$token" =~ ^[0-9a-f]{64}$ ]] || {
+    failure "The disk selection was incomplete. Refresh and choose it again."
+    return 0
+  }
+  basename=${device##*/}
+  if [[ "$mode" == all ]]; then
+    phrase="ERASE $basename"
+    warning="Everything on $device will be permanently erased."
+  else
+    phrase="REINSTALL $basename"
+    warning="OPEMOS will replace both OS slots and var data on $device while preserving its recognized home partition."
+  fi
+  confirmation=$(zenity --entry \
+    --title="Final disk confirmation" \
+    --width=620 \
+    --text="$warning\n\nThe device identity will be checked again immediately before any change.\nType $phrase exactly to continue.") || return 0
+  [[ "$confirmation" == "$phrase" ]] || {
+    message "Confirmation did not match. Nothing was changed."
+    return 0
+  }
+
+  log="/tmp/open-opemos-install-$(date +%Y%m%d-%H%M%S).log"
+  set +e
+  sudo "$HELPER" install "$mode" "$device" "$token" --confirm "$confirmation" 2>&1 |
+    tee "$log" |
+    zenity --progress --pulsate --no-cancel --auto-close \
+      --title="Installing OPEMOS" \
+      --width=620 \
+      --text="Installing to $device. Do not power off the computer or disconnect either drive."
+  status=${PIPESTATUS[0]}
+  set -e
+  if (( status == 0 )); then
+    if zenity --question --title="OPEMOS installation complete" --width=560 \
+      --ok-label="Shut Down" --cancel-label="Stay Here" \
+      --text="OPEMOS was installed and the target was finalized.\n\nChoose Shut Down, remove the installation media, then start the computer from $device."; then
+      systemctl poweroff
+    fi
+  else
+    failure "Installation stopped safely before completion.\n\nDiagnostic log: $log\n\nDo not boot from the incomplete target until the failure is resolved or installation is run again."
+  fi
+}
+
+for tool in awk sudo tee zenity; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    printf 'Open OPEMOS requires %s in the recovery environment.\n' "$tool" >&2
+    exit 1
+  }
+done
+if [[ ! -x "$HELPER" ]]; then
+  failure "The protected OPEMOS installation helper is missing from this media."
+  exit 1
+fi
+
+while true; do
+  action=$(choose_action) || exit 0
+  case "$action" in
+    install) run_install all ;;
+    reinstall) run_install system ;;
+    rollback)
+      if [[ -x "$ROLLBACK" ]]; then
+        if command -v konsole >/dev/null 2>&1; then
+          konsole -e sudo "$ROLLBACK"
+        else
+          failure "The recovery terminal is unavailable on this media."
+        fi
+      else
+        failure "The rollback tool is not present on this installation media."
+      fi
+      ;;
+  esac
+done
