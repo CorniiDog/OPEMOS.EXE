@@ -33,7 +33,7 @@ body {
   isolation: isolate;
   background: radial-gradient(circle at 10% -8%, rgba(102, 192, 244, .16), transparent 31rem), var(--glass-canvas);
 }
-.platform-macos body { -webkit-backdrop-filter: blur(24px) saturate(135%); backdrop-filter: blur(24px) saturate(135%); }
+.platform-macos body { contain: paint; clip-path: inset(0 round 10px); -webkit-backdrop-filter: blur(24px) saturate(135%); backdrop-filter: blur(24px) saturate(135%); }
 .window-drag-region { display: none; }
 .platform-macos .window-drag-region {
   display: block;
@@ -46,12 +46,11 @@ body {
 }
 .platform-macos .window-drag-region::after {
   content: "";
-  position: absolute;
-  right: 28px;
-  bottom: 4px;
-  left: 28px;
-  height: 2px;
-  border-radius: 999px;
+  position: fixed;
+  top: 37px;
+  right: 0;
+  left: 0;
+  height: 1px;
   background: rgba(174, 207, 225, .22);
   pointer-events: none;
 }
@@ -64,8 +63,7 @@ body::before {
   width: 36%;
   height: 84%;
   border-radius: 50%;
-  background: rgba(118, 185, 0, .1);
-  filter: blur(44px);
+  background: radial-gradient(circle, rgba(118, 185, 0, .12), transparent 72%);
 }
 body::after {
   z-index: 90;
@@ -286,6 +284,12 @@ footer p { color: #aab4c5; }
   display: grid;
   gap: 7px;
 }
+.build-card.usb-export-active .build-options-grid { grid-template-columns: 1fr; }
+.build-card.usb-export-active .export-choice,
+.build-card.usb-export-active .nvidia-choice { grid-column: 1 / -1; }
+.build-card.usb-export-active .export-choice { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+.build-card.usb-export-active .export-choice > label { grid-column: 1 / -1; }
+.build-card.usb-export-active #review-usb-target { width: auto; min-width: 190px; }
 #review-usb-target { width: 100%; margin-top: 1px; }
 .export-choice > label { display: block; }
 .source-choice { margin-bottom: 9px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }

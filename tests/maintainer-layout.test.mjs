@@ -7,15 +7,15 @@ const css = await readFile(new URL("../src/maintainer.css", import.meta.url), "u
 
 test("maintainer scrolling stays inside an inset content viewport", () => {
   assert.match(css, /html, body\s*\{[^}]*height:\s*100%;[^}]*overflow:\s*hidden;/);
-  assert.match(css, /\.maintainer-shell\s*\{[^}]*height:\s*100%;[^}]*overflow-y:\s*auto;/);
+  assert.match(css, /\.maintainer-scroll\s*\{[^}]*position:\s*fixed;[^}]*inset:\s*0;[^}]*overflow-y:\s*auto;/);
+  assert.match(css, /\.platform-macos \.maintainer-scroll\s*\{[^}]*top:\s*38px;[^}]*height:\s*calc\(100% - 38px\);/);
   assert.doesNotMatch(css, /scrollbar-gutter:\s*stable/);
-  assert.match(css, /\.maintainer-shell::\-webkit-scrollbar\s*\{[^}]*width:\s*5px;[^}]*background:\s*transparent;/);
-  assert.match(css, /\.maintainer-shell::\-webkit-scrollbar-track,[\s\S]*\.maintainer-shell::\-webkit-scrollbar-corner\s*\{[^}]*background:\s*transparent !important;/);
+  assert.match(css, /\.maintainer-scroll::\-webkit-scrollbar\s*\{[^}]*width:\s*5px;[^}]*background:\s*transparent;/);
+  assert.match(css, /\.maintainer-scroll::\-webkit-scrollbar-track,[\s\S]*\.maintainer-scroll::\-webkit-scrollbar-corner\s*\{[^}]*background:\s*transparent !important;/);
 });
 
 test("macOS keeps a visible drag rail outside the scrolling viewport", () => {
   assert.match(html, /class="window-drag-region" data-tauri-drag-region aria-hidden="true"><\/div>/);
   assert.match(css, /\.platform-macos \.window-drag-region\s*\{[^}]*position:\s*fixed;[^}]*height:\s*38px;/);
-  assert.match(css, /\.platform-macos \.window-drag-region::after\s*\{[^}]*border-radius:\s*999px;[^}]*background:\s*rgba\(174, 207, 225, \.22\);/);
-  assert.match(css, /\.platform-macos \.maintainer-shell\s*\{[^}]*height:\s*calc\(100% - 38px\);[^}]*margin-top:\s*38px;/);
+  assert.match(css, /\.platform-macos \.window-drag-region::after\s*\{[^}]*position:\s*fixed;[^}]*right:\s*0;[^}]*left:\s*0;[^}]*height:\s*1px;/);
 });

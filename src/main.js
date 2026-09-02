@@ -126,6 +126,7 @@ function updateBuildButton() {
 
 function renderExportMode() {
   const usbRequested = elements.exportMode.value !== "image";
+  elements.buildCard.classList.toggle("usb-export-active", usbRequested);
   elements.reviewUsbTarget.classList.toggle("hidden", !usbRequested || !currentImage);
   if (!usbRequested || !currentImage) setUsbMenuOpen(false);
   if (usbRequested && !completedOutput?.path && !elements.usbTarget.value) {

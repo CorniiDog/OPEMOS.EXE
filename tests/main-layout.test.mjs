@@ -19,6 +19,8 @@ test("USB selection is anchored to its export choice and uses a modal header", (
   assert.match(html, /id="usb-scrim" class="usb-scrim hidden"/);
   assert.match(html, /id="usb-card"[^>]*role="dialog"[\s\S]*class="usb-heading"[\s\S]*id="close-usb-menu"/);
   assert.match(script, /function setUsbMenuOpen\(opened\)/);
+  assert.match(script, /buildCard\.classList\.toggle\("usb-export-active", usbRequested\)/);
+  assert.match(css, /\.build-card\.usb-export-active \.build-options-grid\s*\{[^}]*grid-template-columns:\s*1fr;/);
   assert.doesNotMatch(script, /exportMode\.addEventListener\("change", \(\) => \{[\s\S]{0,160}usbCard\.classList\.remove/);
 });
 

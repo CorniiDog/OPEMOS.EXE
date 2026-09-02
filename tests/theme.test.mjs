@@ -15,7 +15,8 @@ test("every application surface shares the Steam glass material tokens", async (
     assert.match(css, /body::after[\s\S]*inset 0 0 0 1px rgba\(220, 239, 249, \.12\)/, `${name} is missing the refractive glass rim`);
     assert.match(css, /\.platform-macos body\s*\{[^}]*backdrop-filter:\s*blur\(24px\)/, `${name} is missing macOS frosted blur`);
     assert.match(css, /\.platform-macos \.window-drag-region\s*\{[^}]*height:\s*38px;/, `${name} is missing the dedicated macOS drag strip`);
-    assert.match(css, /\.platform-macos \.window-drag-region::after\s*\{[^}]*height:\s*2px;[^}]*border-radius:\s*999px;[^}]*background:\s*rgba\(174, 207, 225, \.22\);/, `${name} is missing the flat glass drag separator`);
+    assert.match(css, /\.platform-macos \.window-drag-region::after\s*\{[^}]*position:\s*fixed;[^}]*right:\s*0;[^}]*left:\s*0;[^}]*height:\s*1px;[^}]*background:\s*rgba\(174, 207, 225, \.22\);/, `${name} is missing the full-width glass separator`);
+    assert.match(css, /\.platform-macos body\s*\{[^}]*contain:\s*paint;[^}]*clip-path:\s*inset\(0 round 10px\);/, `${name} can composite beyond the rounded window silhouette`);
     assert.doesNotMatch(css, /body::before[\s\S]{0,160}border:/, `${name} still draws the rejected inset window border`);
     assert.doesNotMatch(css, /--brand-gradient/, `${name} still uses the rejected full-surface gradient`);
   }
@@ -56,4 +57,12 @@ test("preload and native window backgrounds preserve translucent dark fallback",
 
   const capabilities = JSON.parse(await readFile(new URL("../src-tauri/capabilities/default.json", import.meta.url), "utf8"));
   assert.ok(capabilities.permissions.includes("core:window:allow-start-dragging"));
+});
+
+test("build progress uses two rounded glass channels inside one glass pill", async () => {
+  const css = await readFile(new URL("../src/build.css", import.meta.url), "utf8");
+  assert.match(css, /\.progress-stack\s*\{[^}]*border:\s*1px solid rgba\(184, 220, 241, \.18\);[^}]*border-radius:\s*999px;[^}]*backdrop-filter:\s*blur\(12px\)/);
+  assert.match(css, /\.progress-track,[\s\S]*\.step-progress-track\s*\{[^}]*border-radius:\s*999px;/);
+  assert.match(css, /\.progress-bar\s*\{[^}]*border-radius:\s*inherit;/);
+  assert.match(css, /\.step-progress-bar\s*\{[^}]*border-radius:\s*inherit;/);
 });

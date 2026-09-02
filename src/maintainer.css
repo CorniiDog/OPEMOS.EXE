@@ -19,7 +19,7 @@ body {
   background: radial-gradient(circle at 10% -8%, rgba(102, 192, 244, .15), transparent 33rem), var(--glass-canvas);
   overscroll-behavior: none;
 }
-.platform-macos body { -webkit-backdrop-filter: blur(24px) saturate(135%); backdrop-filter: blur(24px) saturate(135%); }
+.platform-macos body { contain: paint; clip-path: inset(0 round 10px); -webkit-backdrop-filter: blur(24px) saturate(135%); backdrop-filter: blur(24px) saturate(135%); }
 .window-drag-region { display: none; }
 .platform-macos .window-drag-region {
   display: block;
@@ -34,12 +34,11 @@ body {
 }
 .platform-macos .window-drag-region::after {
   content: "";
-  position: absolute;
-  right: 28px;
-  bottom: 4px;
-  left: 28px;
-  height: 2px;
-  border-radius: 999px;
+  position: fixed;
+  top: 37px;
+  right: 0;
+  left: 0;
+  height: 1px;
   background: rgba(174, 207, 225, .22);
   pointer-events: none;
 }
@@ -52,8 +51,7 @@ body::before {
   width: 36%;
   height: 84%;
   border-radius: 50%;
-  background: rgba(118, 185, 0, .1);
-  filter: blur(44px);
+  background: radial-gradient(circle, rgba(118, 185, 0, .12), transparent 72%);
 }
 body::after {
   z-index: 90;
@@ -63,34 +61,40 @@ body::after {
   box-shadow: inset 0 0 0 1px rgba(220, 239, 249, .12), inset 0 1px 0 rgba(255, 255, 255, .15), inset -14px 0 28px -24px rgba(150, 214, 66, .38);
 }
 button, select, textarea { font: inherit; }
-.maintainer-shell {
-  width: min(1040px, calc(100% - 48px));
+.maintainer-scroll {
+  position: fixed;
+  inset: 0;
   height: 100%;
-  margin: 0 auto;
-  padding: 24px 0 18px;
   overflow-x: hidden;
   overflow-y: auto;
   overflow-y: overlay;
   overscroll-behavior: contain;
   scrollbar-color: rgba(142, 172, 192, .48) transparent;
   scrollbar-width: thin;
+}
+.platform-macos .maintainer-scroll { top: 38px; height: calc(100% - 38px); }
+.maintainer-shell {
+  width: min(1040px, calc(100% - 48px));
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 24px 0 18px;
   display: grid;
   align-content: start;
   gap: 14px;
 }
-.platform-macos .maintainer-shell { height: calc(100% - 38px); margin-top: 38px; padding-top: 12px; }
-.maintainer-shell::-webkit-scrollbar { width: 5px; border: 0; background: transparent; -webkit-appearance: none; }
-.maintainer-shell::-webkit-scrollbar-track,
-.maintainer-shell::-webkit-scrollbar-track-piece,
-.maintainer-shell::-webkit-scrollbar-corner { border: 0; background: transparent !important; box-shadow: none; }
-.maintainer-shell::-webkit-scrollbar-thumb {
+.platform-macos .maintainer-shell { padding-top: 12px; }
+.maintainer-scroll::-webkit-scrollbar { width: 5px; border: 0; background: transparent; -webkit-appearance: none; }
+.maintainer-scroll::-webkit-scrollbar-track,
+.maintainer-scroll::-webkit-scrollbar-track-piece,
+.maintainer-scroll::-webkit-scrollbar-corner { border: 0; background: transparent !important; box-shadow: none; }
+.maintainer-scroll::-webkit-scrollbar-thumb {
   min-height: 42px;
   border: 1px solid transparent;
   border-radius: 999px;
   background: rgba(142, 172, 192, .34);
   background-clip: padding-box;
 }
-.maintainer-shell::-webkit-scrollbar-thumb:hover { background: rgba(174, 203, 221, .58); background-clip: padding-box; }
+.maintainer-scroll::-webkit-scrollbar-thumb:hover { background: rgba(174, 203, 221, .58); background-clip: padding-box; }
 .platform-macos .maintainer-shell > header { padding-left: 60px; }
 header, .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; }
 .section-actions { flex: none; display: flex; align-items: center; gap: 8px; }
