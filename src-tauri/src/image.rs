@@ -2360,6 +2360,18 @@ pub(crate) fn validate_usb_image_identity(
 fn validated_usb_image_manifest(
     image_path: &str,
 ) -> Result<(PathBuf, u64, String, serde_json::Value), String> {
+    let (image, image_bytes, declared_sha256, manifest) =
+        inspect_usb_image_manifest_identity(image_path)?;
+    let actual_sha256 = sha256_file(&image)?;
+    if !actual_sha256.eq_ignore_ascii_case(&declared_sha256) {
+        return Err("The completed image changed after its build manifest was written.".into());
+    }
+    Ok((image, image_bytes, actual_sha256, manifest))
+}
+
+pub(crate) fn inspect_usb_image_manifest_identity(
+    image_path: &str,
+) -> Result<(PathBuf, u64, String, serde_json::Value), String> {
     let image = fs::canonicalize(image_path)
         .map_err(|error| format!("Could not resolve the completed image: {error}"))?;
     if image.extension().and_then(|value| value.to_str()) != Some("img") {
@@ -2407,11 +2419,7 @@ fn validated_usb_image_manifest(
                 .into(),
         );
     }
-    let actual_sha256 = sha256_file(&image)?;
-    if !actual_sha256.eq_ignore_ascii_case(sha256) {
-        return Err("The completed image changed after its build manifest was written.".into());
-    }
-    Ok((image, metadata.len(), actual_sha256, manifest))
+    Ok((image, metadata.len(), sha256.to_ascii_lowercase(), manifest))
 }
 
 pub(crate) fn completed_nvidia_image_from_path(
@@ -2605,7 +2613,12 @@ pub(crate) fn validate_usb_write_intent(
 #[tauri::command]
 pub(crate) async fn inspect_usb_targets(image_path: String) -> Result<UsbTargetPreflight, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let (image, image_bytes, image_sha256) = validate_usb_image_identity(&image_path)?;
+        // Discovery is non-mutating and follows a completed-image inspection that already
+        // hashed the image. Recheck its bounded manifest and current byte length here; the
+        // authorization phase deliberately performs the full hash again immediately before
+        // opening the selected raw device.
+        let (image, image_bytes, image_sha256, _) =
+            inspect_usb_image_manifest_identity(&image_path)?;
         let targets = discover_usb_targets(image_bytes)?;
         let writes_allowed = physical_usb_writes_allowed();
         Ok(UsbTargetPreflight {

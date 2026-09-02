@@ -297,6 +297,19 @@ footer p { color: #aab4c5; }
 .usb-picker-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .usb-picker-heading > span { min-width: 0; }
 .usb-picker-heading .secondary { flex: none; padding: 6px 10px; font-size: 11px; }
+#refresh-usb-targets { min-width: 104px; }
+.usb-picker.is-loading #refresh-usb-targets::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border: 2px solid rgba(211, 235, 248, .24);
+  border-top-color: #bfe8fb;
+  border-radius: 50%;
+  animation: glass-control-spin .8s linear infinite;
+  display: inline-block;
+  vertical-align: -1px;
+}
 .usb-detail-line { margin-top: 2px; display: flex; align-items: baseline; gap: 7px; }
 .usb-detail-line small { min-width: 0; margin: 0; }
 .usb-picker-actions { flex: none; display: flex; align-items: center; gap: 9px; }
@@ -335,7 +348,7 @@ footer p { color: #aab4c5; }
 .usb-picker.is-empty select { display: none; }
 .usb-picker.is-loading .usb-picker-message { color: #a7bfd0; }
 .usb-picker-message { min-height: 15px; margin: 0; color: #8490a3; font-size: 10px; line-height: 1.35; }
-#review-usb-target { width: 100%; margin-top: 1px; }
+#review-usb-target { width: 100%; min-height: 35px; margin-top: 1px; }
 .build-card.completed-output-selected { min-height: 188px; }
 .build-card.completed-output-selected .nvidia-choice,
 .build-card.completed-output-selected .source-warning,

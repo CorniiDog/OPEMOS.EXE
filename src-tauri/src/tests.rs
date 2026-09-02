@@ -1113,6 +1113,12 @@ esac
         assert_eq!(actual, sha256);
 
         fs::write(&image, vec![0x7a_u8; original.len()]).expect("tamper image fixture");
+        let (_, discovery_bytes, declared, _) = inspect_usb_image_manifest_identity(
+            image.to_str().expect("UTF-8 fixture path"),
+        )
+        .expect("read-only discovery defers the expensive content hash");
+        assert_eq!(discovery_bytes, original.len() as u64);
+        assert_eq!(declared, sha256);
         assert!(validate_usb_image_identity(image.to_str().unwrap()).is_err());
 
         fs::write(&image, &original).expect("restore image fixture");

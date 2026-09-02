@@ -145,8 +145,13 @@ function selectedExportMode() {
 }
 
 function renderExportMode() {
-  const finalUsbReady = Boolean(completedOutput?.path && elements.usbTarget.value);
-  elements.reviewUsbTarget.classList.toggle("hidden", !finalUsbReady);
+  const completedImageReady = Boolean(completedOutput?.path);
+  const finalUsbReady = Boolean(completedImageReady && elements.usbTarget.value);
+  elements.reviewUsbTarget.classList.toggle("hidden", !completedImageReady);
+  elements.reviewUsbTarget.disabled = !finalUsbReady || usbWriting;
+  elements.reviewUsbTarget.textContent = finalUsbReady
+    ? "Review & Write Selected USB…"
+    : "Select a USB Drive to Continue";
   if (!finalUsbReady) setUsbMenuOpen(false);
   renderSourceWarning();
 }
@@ -561,6 +566,8 @@ elements.buildButton.addEventListener("click", async () => {
   elements.exportImage.disabled = true;
   elements.usbTarget.disabled = true;
   elements.refreshUsbTargets.disabled = true;
+  elements.refreshUsbTargets.setAttribute("aria-busy", "true");
+  elements.refreshUsbTargets.textContent = "Scanning…";
   elements.resultMessage.textContent = "Build progress opened in a separate window.";
   try {
     const preview = await invoke("preview_image_output", { path: currentImage });
@@ -672,6 +679,12 @@ async function refreshUsbTargets(preferredTarget = null) {
       : await invoke("inspect_usb_targets_for_build", { inputPath: imagePath });
     if (generation !== usbContextGeneration || (completedOutput?.path || currentImage) !== imagePath) return;
     elements.usbTarget.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Select a removable drive…";
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    elements.usbTarget.append(placeholder);
     for (const target of preflight.targets) {
       const option = document.createElement("option");
       option.value = target.deviceIdentifier;
@@ -681,12 +694,12 @@ async function refreshUsbTargets(preferredTarget = null) {
       option.dataset.bytes = String(target.bytes);
       elements.usbTarget.append(option);
     }
-    elements.usbTarget.selectedIndex = -1;
     elements.usbTarget.disabled = !preflight.targets.length;
     elements.usbPicker.classList.toggle("is-empty", !preflight.targets.length);
     elements.clearUsbTarget.classList.add("hidden");
     elements.usbMessage.textContent = preflight.message;
     elements.usbPickerMessage.textContent = preflight.message;
+    renderExportMode();
     if (preferredTarget) {
       const preferred = [...elements.usbTarget.options].find((option) => (
         option.value === preferredTarget.deviceIdentifier
@@ -708,6 +721,8 @@ async function refreshUsbTargets(preferredTarget = null) {
   } finally {
     if (generation === usbContextGeneration) {
       elements.refreshUsbTargets.disabled = false;
+      elements.refreshUsbTargets.removeAttribute("aria-busy");
+      elements.refreshUsbTargets.textContent = "Refresh Drives";
       elements.usbPicker.classList.remove("is-loading");
     }
   }
@@ -750,8 +765,8 @@ elements.usbTarget.addEventListener("change", async () => {
 });
 
 elements.clearUsbTarget.addEventListener("click", () => {
-  if (elements.usbTarget.selectedIndex < 0) return;
-  elements.usbTarget.selectedIndex = -1;
+  if (!elements.usbTarget.value) return;
+  elements.usbTarget.value = "";
   elements.usbTarget.dispatchEvent(new Event("change"));
   elements.usbTarget.focus();
 });
