@@ -200,11 +200,12 @@ function applyCompletedOutput(output, imported = false) {
     : (imported ? "Verified output" : "Complete");
   elements.selectionStatus.className = "status";
   const installedIdentity = output.nvidiaVersion
-    ? ` NVIDIA ${output.nvidiaVersion}, SteamOS ${output.steamosVersion}, and kernel ${output.kernelVersion} are bound by the manifest (${output.trust}).`
-    : "";
+    ? `NVIDIA ${output.nvidiaVersion}, SteamOS ${output.steamosVersion}, kernel ${output.kernelVersion}, trust ${output.trust}.`
+    : "Manifest-bound output.";
+  elements.resultMessage.title = installedIdentity;
   elements.resultMessage.textContent = imported
-    ? `Existing NVIDIA output and adjacent manifest match byte-for-byte.${installedIdentity} No rebuild is needed; choose a USB drive below.`
-    : `NVIDIA image complete.${installedIdentity} Choose a USB drive below to write the verified output.`;
+    ? `Verified existing NVIDIA ${output.nvidiaVersion || "image"} output${output.steamosVersion ? ` for SteamOS ${output.steamosVersion}` : ""}. No rebuild needed; select a USB drive.`
+    : `NVIDIA image complete and verified. Select a USB drive to write it, or keep the exported image.`;
   elements.resultMessage.className = "result-message success";
   renderSourceWarning();
 }

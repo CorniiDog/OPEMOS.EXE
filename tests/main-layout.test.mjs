@@ -46,8 +46,11 @@ test("main macOS chrome stays slim and settings begin below it", () => {
 test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () => {
   assert.match(script, /invoke\("inspect_completed_nvidia_image", \{\s*path: info\.path,\s*requestedNvidiaVersion,/);
   assert.match(script, /option\.dataset\.nvidiaVersion = branch\.version/);
-  assert.match(script, /NVIDIA \$\{output\.nvidiaVersion\}.*kernel \$\{output\.kernelVersion\} are bound by the manifest/);
+  assert.match(script, /NVIDIA \$\{output\.nvidiaVersion\}, SteamOS \$\{output\.steamosVersion\}, kernel \$\{output\.kernelVersion\}, trust \$\{output\.trust\}/);
   assert.match(script, /function applyCompletedOutput\(output, imported = false\)/);
+  assert.match(script, /elements\.resultMessage\.title = installedIdentity;/);
+  assert.match(script, /Verified existing NVIDIA.*No rebuild needed; select a USB drive/);
+  assert.doesNotMatch(script, /Existing NVIDIA output and adjacent manifest match byte-for-byte/);
   assert.match(script, /Boolean\(completedOutput\) \|\| buildRunning/);
   assert.match(css, /\.build-card\.completed-output-selected \.build-side-column,[\s\S]*#build-button\s*\{\s*display:\s*none;/);
 });
