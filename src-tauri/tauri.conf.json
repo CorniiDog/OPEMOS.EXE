@@ -8,6 +8,7 @@
   },
   "app": {
     "withGlobalTauri": true,
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -17,7 +18,14 @@
         "minWidth": 760,
         "minHeight": 800,
         "theme": "Dark",
-        "backgroundColor": [23, 26, 33, 255],
+        "backgroundColor": [11, 17, 24, 0],
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["underWindowBackground", "acrylic"],
+          "state": "followsWindowActiveState",
+          "radius": 22,
+          "color": [11, 17, 24, 220]
+        },
         "visible": false,
         "resizable": false,
         "maximizable": false,

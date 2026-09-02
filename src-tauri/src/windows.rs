@@ -1,6 +1,15 @@
 use super::require_maintainer_authorization;
-use tauri::utils::config::Color;
+use tauri::window::{Color, Effect, EffectState, EffectsBuilder};
 use tauri::Manager;
+
+fn glass_window_effects() -> tauri::utils::config::WindowEffectsConfig {
+    EffectsBuilder::new()
+        .effects([Effect::UnderWindowBackground, Effect::Acrylic])
+        .state(EffectState::FollowsWindowActiveState)
+        .radius(22.0)
+        .color(Color(11, 17, 24, 220))
+        .build()
+}
 
 #[tauri::command]
 pub(crate) fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> {
@@ -26,7 +35,9 @@ pub(crate) fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> 
     .min_inner_size(680.0, 680.0)
     .resizable(true)
     .theme(Some(tauri::Theme::Dark))
-    .background_color(Color(23, 26, 33, 255))
+    .transparent(true)
+    .background_color(Color(11, 17, 24, 0))
+    .effects(glass_window_effects())
     .visible(false)
     .parent(&main)
     .map_err(|error| format!("Could not couple the build progress window: {error}"))?
@@ -67,7 +78,9 @@ pub(crate) async fn open_maintainer_window(app: tauri::AppHandle) -> Result<(), 
     .min_inner_size(820.0, 640.0)
     .resizable(true)
     .theme(Some(tauri::Theme::Dark))
-    .background_color(Color(23, 26, 33, 255))
+    .transparent(true)
+    .background_color(Color(11, 17, 24, 0))
+    .effects(glass_window_effects())
     .visible(false)
     .parent(&main)
     .map_err(|error| format!("Could not couple the maintainer window: {error}"))?
