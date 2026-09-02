@@ -7,11 +7,12 @@ const css = await readFile(new URL("../src/styles.css", import.meta.url), "utf8"
 const script = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
-test("main workflow keeps readiness compact and gives output selection full width", () => {
+test("main workflow keeps readiness compact and balances output and source columns", () => {
   assert.match(html, /id="readiness-grid"[\s\S]*class="environment-card"[\s\S]*id="selection-card"[\s\S]*id="drop-zone"/);
-  assert.match(html, /class="build-options-grid"[\s\S]*for="export-image"[\s\S]*id="usb-target"[\s\S]*for="nvidia-source"/);
+  assert.match(html, /class="build-options-grid"[\s\S]*class="source-choice export-choice"[\s\S]*id="usb-target"[\s\S]*class="build-side-column"[\s\S]*for="nvidia-source"[\s\S]*id="summary-output"[\s\S]*id="build-button"/);
   assert.match(css, /\.readiness-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/);
-  assert.match(css, /\.build-options-grid\s*\{[^}]*grid-template-columns:\s*1fr;/);
+  assert.match(css, /\.build-options-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.12fr\) minmax\(0, \.88fr\);/);
+  assert.match(css, /\.build-side-column \.build-summary\s*\{[^}]*grid-template-columns:\s*1fr;/);
 });
 
 test("USB drives are embedded beside an independent image-output checkbox", () => {
@@ -27,8 +28,8 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
 
 test("main macOS chrome stays slim and settings begin below it", () => {
   assert.match(css, /\.platform-macos \.window-drag-region\s*\{[^}]*height:\s*32px;/);
-  assert.match(css, /\.platform-macos \.app-shell\s*\{[^}]*padding:\s*38px 0 8px;/);
-  assert.match(css, /\.settings-panel\s*\{[^}]*top:\s*40px;[^}]*max-height:\s*calc\(100vh - 52px\);/);
+  assert.match(css, /\.platform-macos \.app-shell\s*\{[^}]*padding:\s*44px 0 8px;/);
+  assert.match(css, /\.settings-panel\s*\{[^}]*top:\s*44px;[^}]*max-height:\s*calc\(100vh - 56px\);/);
 });
 
 test("builder readiness expands while no image has been selected", () => {

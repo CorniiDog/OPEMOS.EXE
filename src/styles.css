@@ -110,7 +110,7 @@ body.companion-active .window-drag-region { pointer-events: none; }
   flex-direction: column;
   gap: 10px;
 }
-.platform-macos .app-shell { padding: 38px 0 8px; gap: 8px; }
+.platform-macos .app-shell { padding: 44px 0 8px; gap: 8px; }
 
 .app-shell > * { flex: none; }
 .app-shell > header { padding: 0 2px; }
@@ -274,8 +274,9 @@ footer p { color: #aab4c5; }
 .build-options-grid {
   margin-bottom: 9px;
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr);
   gap: 9px 12px;
+  align-items: stretch;
 }
 .build-options-grid .source-choice {
   min-width: 0;
@@ -288,10 +289,17 @@ footer p { color: #aab4c5; }
   gap: 7px;
 }
 .build-options-grid .export-choice,
-.build-options-grid .nvidia-choice { grid-column: 1 / -1; }
+.build-options-grid .nvidia-choice { grid-column: auto; }
+.build-options-grid .export-choice { width: 100%; height: 100%; align-content: start; }
+.build-side-column { min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+.build-side-column .source-choice,
+.build-side-column .source-warning,
+.build-side-column .build-summary { width: 100%; margin: 0; }
+.build-side-column .build-summary { flex: 1; grid-template-columns: 1fr; align-content: start; }
+.build-side-column .build-summary p { grid-column: 1; }
 .export-image-toggle { padding: 2px 0 7px; display: flex !important; align-items: flex-start; gap: 10px; cursor: pointer; }
 .export-image-toggle input { flex: none; width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--steam-blue); }
-.usb-picker { padding-top: 8px; border-top: 1px solid rgba(184, 220, 241, .1); display: grid; gap: 7px; }
+.usb-picker { width: 100%; min-width: 0; padding-top: 8px; border-top: 1px solid rgba(184, 220, 241, .1); display: grid; gap: 7px; }
 .usb-picker-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .usb-picker-heading > span { min-width: 0; }
 .usb-picker-heading .secondary { flex: none; padding: 6px 10px; font-size: 11px; }
@@ -363,10 +371,10 @@ footer p { margin: 0; }
 .settings-panel {
   position: fixed;
   z-index: 21;
-  top: 40px;
+  top: 44px;
   right: 18px;
   width: min(440px, calc(100vw - 36px));
-  max-height: calc(100vh - 52px);
+  max-height: calc(100vh - 56px);
   padding: 20px;
   overflow: auto;
   border: 1px solid var(--glass-border);

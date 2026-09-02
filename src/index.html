@@ -283,40 +283,41 @@
                     <button id="review-usb-target" class="secondary hidden" type="button">Review &amp; Write Selected USB…</button>
                 </div>
 
-                <label class="source-choice nvidia-choice" for="nvidia-source">
-                    <span>
-                        <strong>NVIDIA source</strong>
-                        <small>Used only when no exact published artifact exists.</small>
-                    </span>
-                    <select id="nvidia-source">
-                        <option value="automatic">Automatic (Recommended)</option>
-                        <option value="latest">Latest project branch</option>
-                    </select>
-                </label>
+                <div class="build-side-column">
+                    <label class="source-choice nvidia-choice" for="nvidia-source">
+                        <span>
+                            <strong>NVIDIA source</strong>
+                            <small>Used only when no exact published artifact exists.</small>
+                        </span>
+                        <select id="nvidia-source">
+                            <option value="automatic">Automatic (Recommended)</option>
+                            <option value="latest">Latest project branch</option>
+                        </select>
+                    </label>
 
-            </div>
+                    <div id="upstream-warning" class="source-warning hidden">
+                        <div>
+                            <strong>Experimental upstream source</strong>
+                            <small>The app will preflight the exact tag and matching userspace, build it locally, and disable automated publication.</small>
+                        </div>
+                        <label>
+                            <input id="allow-upstream-build" type="checkbox">
+                            <span>Allow this experimental build</span>
+                        </label>
+                    </div>
 
-            <div id="upstream-warning" class="source-warning hidden">
-                <div>
-                    <strong>Experimental upstream source</strong>
-                    <small>The app will preflight the exact tag and matching userspace, build it locally, and disable automated publication.</small>
+                    <div class="build-summary" aria-label="Build summary">
+                        <div>
+                            <span>Read-only source</span>
+                            <strong id="summary-input">—</strong>
+                        </div>
+                        <div>
+                            <span>Planned output</span>
+                            <strong id="summary-output">—</strong>
+                        </div>
+                        <p id="summary-action">The isolated x86_64 builder will validate an exact compatible NVIDIA artifact and export a separate image.</p>
+                    </div>
                 </div>
-                <label>
-                    <input id="allow-upstream-build" type="checkbox">
-                    <span>Allow this experimental build</span>
-                </label>
-            </div>
-
-            <div class="build-summary" aria-label="Build summary">
-                <div>
-                    <span>Read-only source</span>
-                    <strong id="summary-input">—</strong>
-                </div>
-                <div>
-                    <span>Planned output</span>
-                    <strong id="summary-output">—</strong>
-                </div>
-                <p id="summary-action">The isolated x86_64 builder will validate an exact compatible NVIDIA artifact and export a separate image.</p>
             </div>
 
             <button
