@@ -50,6 +50,19 @@ exact Valve header package and pinned project source.
 
 No closest-kernel headers, modules, userspace packages, or signers are used.
 
+## Output identity and reuse
+
+New NVIDIA outputs include the resolved driver version in their human-readable
+name, for example `steamdeck-repair-nvidia-575.64.05.img`. The adjacent JSON
+manifest remains authoritative: it binds the exact NVIDIA, SteamOS, kernel,
+source policy, trust classification, and image hash. Renaming the image does
+not change its identity.
+
+Dropping a completed image back into the application verifies both files and
+skips installation when the manifest matches. If an explicitly selected
+NVIDIA version differs, the completed image is not silently reused or upgraded
+in place; select the original Valve recovery image to build that version.
+
 ## Cancellation
 
 Cancellation can occur during normalization, download, validation, package

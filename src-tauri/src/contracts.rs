@@ -1239,6 +1239,19 @@ pub(crate) struct ExportedImage {
     pub(crate) marker_path: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CompletedNvidiaImage {
+    #[serde(flatten)]
+    pub(crate) output: ExportedImage,
+    pub(crate) nvidia_version: String,
+    pub(crate) kernel_version: String,
+    pub(crate) steamos_version: String,
+    pub(crate) trust: String,
+    pub(crate) source_selection: String,
+    pub(crate) source_mode: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UsbTargetCandidate {

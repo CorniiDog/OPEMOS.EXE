@@ -154,7 +154,10 @@ function setUsbMenuOpen(opened) {
 
 function renderSourceWarning() {
   if (completedOutput?.path) {
-    elements.summaryAction.textContent = "This manifest-bound NVIDIA output is already complete. No rebuild or reinstall will run; select a USB drive to review the destructive write.";
+    const identity = completedOutput.nvidiaVersion
+      ? `NVIDIA ${completedOutput.nvidiaVersion} for SteamOS ${completedOutput.steamosVersion}`
+      : "This manifest-bound NVIDIA output";
+    elements.summaryAction.textContent = `${identity} is already complete. No rebuild or reinstall will run; select a USB drive to review the destructive write.`;
     updateBuildButton();
     return;
   }
@@ -184,11 +187,16 @@ function applyCompletedOutput(output, imported = false) {
   elements.exportImage.disabled = true;
   elements.summaryOutput.textContent = output.path;
   elements.summaryOutput.title = output.path;
-  elements.selectionStatus.textContent = imported ? "Verified output" : "Complete";
+  elements.selectionStatus.textContent = output.nvidiaVersion
+    ? `NVIDIA ${output.nvidiaVersion}`
+    : (imported ? "Verified output" : "Complete");
   elements.selectionStatus.className = "status";
+  const installedIdentity = output.nvidiaVersion
+    ? ` NVIDIA ${output.nvidiaVersion}, SteamOS ${output.steamosVersion}, and kernel ${output.kernelVersion} are bound by the manifest (${output.trust}).`
+    : "";
   elements.resultMessage.textContent = imported
-    ? "Existing NVIDIA output and adjacent manifest match byte-for-byte. No rebuild is needed; choose a USB drive below."
-    : "NVIDIA image complete. Choose a USB drive below to write the verified output.";
+    ? `Existing NVIDIA output and adjacent manifest match byte-for-byte.${installedIdentity} No rebuild is needed; choose a USB drive below.`
+    : `NVIDIA image complete.${installedIdentity} Choose a USB drive below to write the verified output.`;
   elements.resultMessage.className = "result-message success";
   renderSourceWarning();
 }
@@ -335,6 +343,7 @@ async function loadNvidiaSourceBranches() {
       const option = document.createElement("option");
       option.value = branch.selection;
       option.textContent = `${branch.version} · ${branch.commit.slice(0, 12)}`;
+      option.dataset.nvidiaVersion = branch.version;
       (branch.experimental ? upstream : project).append(option);
     }
     if (project.children.length) elements.nvidiaSource.append(project);
@@ -380,7 +389,14 @@ async function selectImage(path) {
   try {
     const info = await invoke("validate_image", { path });
     elements.dropMessage.textContent = "Checking for a matching completed-output manifest and verifying image bytes.";
-    const completed = await invoke("inspect_completed_nvidia_image", { path: info.path });
+    const selectedSource = elements.nvidiaSource.selectedOptions[0];
+    const requestedNvidiaVersion = ["automatic", "latest"].includes(elements.nvidiaSource.value)
+      ? null
+      : (selectedSource?.dataset.nvidiaVersion || null);
+    const completed = await invoke("inspect_completed_nvidia_image", {
+      path: info.path,
+      requestedNvidiaVersion,
+    });
     const preview = completed ? { input_path: info.path, output_path: info.path }
       : await invoke("preview_image_output", { path: info.path });
     currentImage = info.path;
@@ -552,7 +568,7 @@ elements.buildButton.addEventListener("click", async () => {
   }
 });
 
-await mainWindow.listen("build-finished", (event) => {
+await mainWindow.listen("build-finished", async (event) => {
   const { state, message, output, inputPath } = event.payload;
   elements.resultMessage.textContent = message;
   elements.resultMessage.className = `result-message ${state === "complete" ? "success" : state === "failed" ? "error" : ""}`;
@@ -563,7 +579,11 @@ await mainWindow.listen("build-finished", (event) => {
   updateBuildButton();
   if (state === "complete" && output?.path && inputPath === currentImage) {
     usbContextGeneration += 1;
-    applyCompletedOutput(output);
+    const completed = await invoke("inspect_completed_nvidia_image", {
+      path: output.path,
+      requestedNvidiaVersion: null,
+    }).catch(() => null);
+    applyCompletedOutput(completed || output);
     if (activeExportMode !== "image") {
       elements.usbTarget.replaceChildren();
       elements.usbTarget.disabled = true;

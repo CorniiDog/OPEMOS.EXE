@@ -721,6 +721,25 @@ pub(crate) fn output_path_for_input(
     input: &Path,
     nvidia_installed: bool,
 ) -> Result<PathBuf, String> {
+    output_path_for_input_label(input, if nvidia_installed { "nvidia" } else { "marker" })
+}
+
+pub(crate) fn output_path_for_nvidia_version(
+    input: &Path,
+    nvidia_version: &str,
+) -> Result<PathBuf, String> {
+    let parts: Vec<_> = nvidia_version.split('.').collect();
+    if !(2..=3).contains(&parts.len())
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err("The resolved NVIDIA version is not safe for an output filename.".into());
+    }
+    output_path_for_input_label(input, &format!("nvidia-{nvidia_version}"))
+}
+
+fn output_path_for_input_label(input: &Path, output_label: &str) -> Result<PathBuf, String> {
     let parent = input
         .parent()
         .ok_or("Could not determine the selected image folder.")?;
@@ -742,16 +761,28 @@ pub(crate) fn output_path_for_input(
         let suffix = ["-marker", "-nvidia"]
             .into_iter()
             .find(|suffix| lower.ends_with(suffix));
-        let Some(suffix) = suffix else { break };
-        base.truncate(base.len() - suffix.len());
+        if let Some(suffix) = suffix {
+            base.truncate(base.len() - suffix.len());
+            continue;
+        }
+        let Some(index) = lower.rfind("-nvidia-") else {
+            break;
+        };
+        let version = &base[index + "-nvidia-".len()..];
+        let version_parts: Vec<_> = version.split('.').collect();
+        if !(2..=3).contains(&version_parts.len())
+            || version_parts
+                .iter()
+                .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+        {
+            break;
+        }
+        base.truncate(index);
     }
     if base.is_empty() {
         base = "SteamOS".into();
     }
-    let output_base = format!(
-        "{base}-{}",
-        if nvidia_installed { "nvidia" } else { "marker" }
-    );
+    let output_base = format!("{base}-{output_label}");
     for number in 1..=9999_u32 {
         let suffix = if number == 1 {
             String::new()
@@ -1321,8 +1352,12 @@ pub(crate) fn export_marker_image_blocking(
         if session.state == "nvidia-installed" && nvidia_installation.is_none() {
             return Err("NVIDIA-installed state omitted its structured result.".into());
         }
-        let final_path =
-            output_path_for_input(&session.input_image, nvidia_installation.is_some())?;
+        let final_path = match nvidia_installation.as_ref() {
+            Some(installation) => {
+                output_path_for_nvidia_version(&session.input_image, &installation.nvidia_version)?
+            }
+            None => output_path_for_input(&session.input_image, false)?,
+        };
         let required_output_bytes = session
             .input_preparation
             .image_bytes
@@ -2319,7 +2354,7 @@ fn validated_usb_image_manifest(
 
 pub(crate) fn completed_nvidia_image_from_path(
     image_path: &str,
-) -> Result<Option<ExportedImage>, String> {
+) -> Result<Option<CompletedNvidiaImage>, String> {
     let canonical = fs::canonicalize(image_path)
         .map_err(|error| format!("Could not resolve the selected image: {error}"))?;
     let manifest_path = manifest_path_for_output(&canonical);
@@ -2391,24 +2426,73 @@ pub(crate) fn completed_nvidia_image_from_path(
         .and_then(serde_json::Value::as_str)
         .filter(|value| *value == "valve-recovery-a")
         .ok_or("The adjacent build manifest has an unsupported SteamOS layout identity.")?;
-    Ok(Some(ExportedImage {
-        path: image.to_string_lossy().into_owned(),
-        manifest_path: manifest_path.to_string_lossy().into_owned(),
-        bytes,
-        sha256,
-        source_sha256: source_sha256.to_ascii_lowercase(),
-        layout_scheme: layout_scheme.into(),
-        marker_path: "/etc/steamos-nvidia-image-builder-test".into(),
+    let required_identity = |pointer: &str, description: &str| {
+        manifest
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| format!("The adjacent build manifest has no valid {description}."))
+    };
+    let nvidia_version = required_identity("/integration/nvidia/nvidiaVersion", "NVIDIA version")?;
+    let kernel_version = required_identity("/integration/nvidia/kernelVersion", "kernel version")?;
+    let steamos_version =
+        required_identity("/integration/nvidia/steamosVersion", "SteamOS version")?;
+    let trust = required_identity("/integration/nvidia/trust", "NVIDIA trust classification")?;
+    let source_selection = required_identity(
+        "/integration/nvidiaSourcePolicy/selection",
+        "NVIDIA source selection",
+    )?;
+    let source_mode = required_identity(
+        "/integration/nvidiaSourcePolicy/mode",
+        "NVIDIA source policy mode",
+    )?;
+    Ok(Some(CompletedNvidiaImage {
+        output: ExportedImage {
+            path: image.to_string_lossy().into_owned(),
+            manifest_path: manifest_path.to_string_lossy().into_owned(),
+            bytes,
+            sha256,
+            source_sha256: source_sha256.to_ascii_lowercase(),
+            layout_scheme: layout_scheme.into(),
+            marker_path: "/etc/steamos-nvidia-image-builder-test".into(),
+        },
+        nvidia_version,
+        kernel_version,
+        steamos_version,
+        trust,
+        source_selection,
+        source_mode,
     }))
 }
 
 #[tauri::command]
 pub(crate) async fn inspect_completed_nvidia_image(
     path: String,
-) -> Result<Option<ExportedImage>, String> {
-    tauri::async_runtime::spawn_blocking(move || completed_nvidia_image_from_path(&path))
-        .await
-        .map_err(|error| format!("Completed-image inspection worker failed: {error}"))?
+    requested_nvidia_version: Option<String>,
+) -> Result<Option<CompletedNvidiaImage>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let completed = completed_nvidia_image_from_path(&path)?;
+        validate_completed_nvidia_version(&completed, requested_nvidia_version.as_deref())?;
+        Ok(completed)
+    })
+    .await
+    .map_err(|error| format!("Completed-image inspection worker failed: {error}"))?
+}
+
+pub(crate) fn validate_completed_nvidia_version(
+    completed: &Option<CompletedNvidiaImage>,
+    requested_nvidia_version: Option<&str>,
+) -> Result<(), String> {
+    if let (Some(completed), Some(requested)) = (completed, requested_nvidia_version) {
+        if completed.nvidia_version != requested {
+            return Err(format!(
+                "This completed image contains NVIDIA {}, but NVIDIA {} is selected. Select the original Valve recovery image to build the requested version; an already-mutated image is never silently reused or upgraded in place.",
+                completed.nvidia_version, requested
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_usb_write_intent(

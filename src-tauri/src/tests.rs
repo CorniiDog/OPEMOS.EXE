@@ -1174,7 +1174,15 @@ esac
                     "phase": "complete",
                     "reason": "install_complete",
                     "mountsReleased": true,
-                    "compressionPolicyRestored": true
+                    "compressionPolicyRestored": true,
+                    "nvidiaVersion": "575.64.05",
+                    "kernelVersion": "6.16.12-valve24.4-1-neptune-616-test",
+                    "steamosVersion": "3.8.14",
+                    "trust": "locally-built-verified"
+                },
+                "nvidiaSourcePolicy": {
+                    "selection": "automatic",
+                    "mode": "automatic"
                 }
             }
         });
@@ -1191,13 +1199,28 @@ esac
             .expect("validate completed output")
             .expect("recognize completed output");
         assert_eq!(
-            completed.path,
+            completed.output.path,
             fs::canonicalize(&image)
                 .expect("canonical completed image")
                 .to_string_lossy()
         );
-        assert_eq!(completed.sha256, sha256);
-        assert_eq!(completed.layout_scheme, "valve-recovery-a");
+        assert_eq!(completed.output.sha256, sha256);
+        assert_eq!(completed.output.layout_scheme, "valve-recovery-a");
+        assert_eq!(completed.nvidia_version, "575.64.05");
+        assert_eq!(completed.steamos_version, "3.8.14");
+        assert_eq!(completed.source_selection, "automatic");
+        assert!(validate_completed_nvidia_version(
+            &Some(completed),
+            Some("575.64.05")
+        )
+        .is_ok());
+
+        let completed = completed_nvidia_image_from_path(image.to_str().unwrap())
+            .expect("revalidate completed output")
+            .expect("recognize completed output again");
+        let mismatch = validate_completed_nvidia_version(&Some(completed), Some("580.1.2"))
+            .expect_err("a different explicitly requested NVIDIA version must not be reused");
+        assert!(mismatch.contains("original Valve recovery image"));
 
         manifest["validation"]["nvidiaPayloadVerified"] = serde_json::json!(false);
         write_manifest(&manifest);
@@ -3524,6 +3547,27 @@ esac
             output_path_for_input(&root.join("Steam Deck 🐧 recovery.img.xz"), true).unwrap(),
             root.join("Steam Deck 🐧 recovery-nvidia.img")
         );
+        assert_eq!(
+            output_path_for_nvidia_version(
+                &root.join("Steam Deck 🐧 recovery.img.xz"),
+                "575.64.05",
+            )
+            .unwrap(),
+            root.join("Steam Deck 🐧 recovery-nvidia-575.64.05.img")
+        );
+        assert_eq!(
+            output_path_for_nvidia_version(
+                &root.join("Steam Deck 🐧 recovery-nvidia-570.1.2.img"),
+                "575.64.05",
+            )
+            .unwrap(),
+            root.join("Steam Deck 🐧 recovery-nvidia-575.64.05.img")
+        );
+        assert!(output_path_for_nvidia_version(
+            &root.join("Steam Deck recovery.img"),
+            "575.64.05/unsafe",
+        )
+        .is_err());
         fs::write(root.join("already-marker.img"), b"input")
             .expect("create already-suffixed input");
         assert_eq!(
