@@ -23,6 +23,8 @@ mod tests {
             "schemaVersion": 1,
             "status": "verified",
             "kernelVersion": kernel,
+            "requiredModules": ["nvidia.ko", "nvidia-modeset.ko", "nvidia-uvm.ko", "nvidia-drm.ko"],
+            "rootfsOnlyModules": ["nvidia-peermem.ko"],
             "tools": {
                 "mkinitcpio": {"path": "/usr/bin/mkinitcpio", "sizeBytes": 4096, "sha256": "a".repeat(64)},
                 "lsinitcpio": {"path": "/usr/bin/lsinitcpio", "sizeBytes": 4096, "sha256": "b".repeat(64)}
@@ -42,7 +44,6 @@ mod tests {
                     "nvidia.ko": module_path("nvidia.ko"),
                     "nvidia-drm.ko": module_path("nvidia-drm.ko"),
                     "nvidia-modeset.ko": module_path("nvidia-modeset.ko"),
-                    "nvidia-peermem.ko": module_path("nvidia-peermem.ko"),
                     "nvidia-uvm.ko": module_path("nvidia-uvm.ko")
                 },
                 "configPath": "etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf"
@@ -101,6 +102,18 @@ mod tests {
             .unwrap()
             .remove("nvidia-uvm.ko");
         cases.push(missing_module);
+        let mut rootfs_only_in_initramfs = initramfs_verification_fixture();
+        rootfs_only_in_initramfs["images"][0]["modules"]["nvidia-peermem.ko"] =
+            serde_json::json!(format!(
+                "usr/lib/modules/{kernel}/kernel/nvidia/nvidia-peermem.ko.zst"
+            ));
+        cases.push(rootfs_only_in_initramfs);
+        let mut wrong_required_contract = initramfs_verification_fixture();
+        wrong_required_contract["requiredModules"][0] = serde_json::json!("nvidia-peermem.ko");
+        cases.push(wrong_required_contract);
+        let mut missing_rootfs_only_contract = initramfs_verification_fixture();
+        missing_rootfs_only_contract["rootfsOnlyModules"] = serde_json::json!([]);
+        cases.push(missing_rootfs_only_contract);
         let mut wrong_config = initramfs_verification_fixture();
         wrong_config["images"][0]["configPath"] = serde_json::json!("etc/modprobe.d/hostile.conf");
         cases.push(wrong_config);
@@ -1999,7 +2012,7 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 418_266);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 419_988);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 26);
         assert!(PINNED_INSTALLER_FILES
             .iter()

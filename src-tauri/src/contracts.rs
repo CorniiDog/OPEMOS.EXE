@@ -201,8 +201,8 @@ pub(crate) struct PinnedInstallerFile {
 pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 26] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "70be446240ba011e10bc3ecc43fcafbe5dc2124814907960aa3aec563de2250a",
-        bytes: 57_705,
+        sha256: "26f506d27a466b20604ea864c569492bc39ab47f5d4c03dddaa7011ca6a31aff",
+        bytes: 58_464,
         executable: true,
     },
     PinnedInstallerFile {
@@ -249,8 +249,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 26] = [
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "015a7190ccc15f2f7268986d85e8d2c7f42c6ac580db0be8b7fa9dd14dd710f6",
-        bytes: 59_197,
+        sha256: "8bd4eb1b8878ac1f1363e2c45277f7207d62947c7188f9f8b27ba1bc59f497db",
+        bytes: 59_789,
         executable: true,
     },
     PinnedInstallerFile {
@@ -327,8 +327,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 26] = [
     },
     PinnedInstallerFile {
         path: "lib/verify_initramfs.py",
-        sha256: "53865878d2e12d06fa9b7033e8dd0ceb04bc9ebd5c39d322f1fd0b8d263ba39c",
-        bytes: 9_858,
+        sha256: "cc2cbf20fd2f8453ec6db18ed14a4162b3bdc8bd5f70135eae5e4b51f1ec1a00",
+        bytes: 10_229,
         executable: true,
     },
     PinnedInstallerFile {
@@ -771,6 +771,8 @@ pub(crate) struct SupportInitramfsVerification {
     pub(crate) schema_version: u32,
     pub(crate) status: String,
     pub(crate) kernel_version: String,
+    pub(crate) required_modules: Vec<String>,
+    pub(crate) rootfs_only_modules: Vec<String>,
     pub(crate) tools: SupportInitramfsTools,
     pub(crate) config: SupportInitramfsFileIdentity,
     pub(crate) images: Vec<SupportInitramfsImage>,

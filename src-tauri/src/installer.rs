@@ -1218,18 +1218,20 @@ pub(crate) fn validate_support_initramfs_verification(
 ) -> Result<(), String> {
     const CONFIG_PATH: &str = "/etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf";
     const ARCHIVE_CONFIG_PATH: &str = "etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf";
-    const MODULES: [&str; 5] = [
+    const REQUIRED_MODULES: [&str; 4] = [
         "nvidia.ko",
-        "nvidia-drm.ko",
         "nvidia-modeset.ko",
-        "nvidia-peermem.ko",
         "nvidia-uvm.ko",
+        "nvidia-drm.ko",
     ];
+    const ROOTFS_ONLY_MODULES: [&str; 1] = ["nvidia-peermem.ko"];
     const COMPRESSION_SUFFIXES: [&str; 6] = ["", ".gz", ".xz", ".zst", ".lz4", ".lzo"];
 
     if verification.schema_version != 1
         || verification.status != "verified"
         || verification.kernel_version != expected_kernel
+        || verification.required_modules != REQUIRED_MODULES
+        || verification.rootfs_only_modules != ROOTFS_ONLY_MODULES
         || !(1..=32).contains(&verification.images.len())
     {
         return Err("Offline installer returned invalid initramfs verification metadata.".into());
@@ -1274,12 +1276,12 @@ pub(crate) fn validate_support_initramfs_verification(
             || !exact_sha256(&image.sha256)
             || !exact_sha256(&image.listing_sha256)
             || image.config_path != ARCHIVE_CONFIG_PATH
-            || image.modules.len() != MODULES.len()
+            || image.modules.len() != REQUIRED_MODULES.len()
         {
             return Err("Offline installer returned invalid initramfs image metadata.".into());
         }
         let mut module_paths = std::collections::HashSet::new();
-        for module in MODULES {
+        for module in REQUIRED_MODULES {
             let path = image.modules.get(module).ok_or_else(|| {
                 "Offline installer initramfs metadata omitted an NVIDIA module.".to_owned()
             })?;
