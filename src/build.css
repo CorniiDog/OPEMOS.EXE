@@ -74,7 +74,7 @@ body::after {
   grid-template-rows: auto auto 16px minmax(0, 1fr) auto 70px;
   gap: 13px;
 }
-.platform-macos .progress-shell { padding-top: 44px; padding-bottom: 12px; gap: 11px; }
+.platform-macos .progress-shell { padding-top: 50px; padding-bottom: 12px; gap: 11px; }
 .platform-macos .progress-shell > header { padding-left: 60px; }
 
 .eyebrow { margin: 0 0 6px; color: #66c0f4; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }

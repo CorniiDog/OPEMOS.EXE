@@ -121,6 +121,12 @@ test("progress-window diagnostics remain in the fixed log toolbar", async () => 
   assert.match(resume, /logFollow\.classList\.remove\("paused"\)/);
 });
 
+test("progress-window title starts below the macOS separator", async () => {
+  const css = await readFile(new URL("../src/build.css", import.meta.url), "utf8");
+  assert.match(css, /\.platform-macos \.window-drag-region::after\s*\{[^}]*top:\s*37px;/);
+  assert.match(css, /\.platform-macos \.progress-shell\s*\{[^}]*padding-top:\s*50px;/);
+});
+
 test("credentials and host usernames are redacted", () => {
   const value = redactDiagnosticSecrets(
     "Input: /Users/connor/Downloads/image.img\nAuthorization: Bearer github_pat_abcdefghijklmnopqrstuvwxyz\nhttps://me:secret@example.com/file?token=secret",

@@ -24,6 +24,8 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(script, /exportImage\.addEventListener\("change", renderExportMode\)/);
   assert.match(script, /if \(currentImage\) elements\.refreshUsbTargets\.click\(\);/);
   assert.doesNotMatch(html, /id="export-mode"/);
+  assert.match(css, /\.usb-picker select::\-webkit-scrollbar\s*\{[^}]*width:\s*5px;[^}]*background:\s*transparent;/);
+  assert.match(css, /\.usb-picker select::\-webkit-scrollbar-track,[\s\S]*\.usb-picker select::\-webkit-scrollbar-corner\s*\{[^}]*background:\s*transparent !important;/);
 });
 
 test("main macOS chrome stays slim and settings begin below it", () => {
