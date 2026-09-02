@@ -12,6 +12,7 @@ import {
   normalizeTerminalText,
 } from "./terminal-renderer.js";
 import { installWindowDrag } from "./window-drag.js";
+import { installKeyboardBindings, selectKeyboardRegionContents } from "./keyboard.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
@@ -839,16 +840,14 @@ elements.buildLog.addEventListener("scroll", () => {
     resumeLogFollowing();
   }
 }, { passive: true });
-elements.buildLog.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
-    event.preventDefault();
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(elements.buildLog);
-    selection.removeAllRanges();
-    selection.addRange(range);
-  }
-});
+installKeyboardBindings([
+  {
+    key: "a",
+    accelerator: "either",
+    when: () => document.activeElement === elements.buildLog,
+    run: () => selectKeyboardRegionContents(elements.buildLog),
+  },
+]);
 await progressWindow.listen("build-requested", (event) => runBuild(event.payload));
 await progressWindow.listen("input-progress", (event) => showInputProgress(event.payload));
 await progressWindow.listen("nvidia-resolution-progress", (event) => showNvidiaResolutionProgress(event.payload));

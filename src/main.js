@@ -1,5 +1,6 @@
 import { operationContextMatches } from "./operation-context.js";
 import { installWindowDrag } from "./window-drag.js";
+import { installKeyboardBindings, keepKeyboardFocusInside } from "./keyboard.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getAllWebviewWindows, getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
@@ -981,36 +982,34 @@ elements.reviewUsbTarget.addEventListener("click", () => {
 elements.closeUsbMenu.addEventListener("click", () => { void dismissUsbMenu(); });
 elements.usbScrim.addEventListener("click", () => { void dismissUsbMenu(); });
 
-function containOverlayFocus(event, container) {
-  const controls = [...container.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])")]
-    .filter((control) => control.getClientRects().length > 0);
-  if (!controls.length) return;
-  const first = controls[0];
-  const last = controls.at(-1);
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault();
-    last.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault();
-    first.focus();
-  }
-}
-
-document.addEventListener("keydown", (event) => {
-  const usbOpen = !elements.usbCard.classList.contains("hidden");
-  const settingsOpen = !elements.settingsPanel.classList.contains("hidden");
-  if (event.key === "Tab" && (usbOpen || settingsOpen)) {
-    containOverlayFocus(event, usbOpen ? elements.usbCard : elements.settingsPanel);
-    return;
-  }
-  if (event.key === "Escape" && usbOpen) {
-    event.preventDefault();
-    void dismissUsbMenu();
-  } else if (event.key === "Escape" && settingsOpen) {
-    event.preventDefault();
-    setSettingsOpen(false);
-  }
-});
+installKeyboardBindings([
+  {
+    key: "Tab",
+    shift: "any",
+    allowInEditable: true,
+    preventDefault: false,
+    when: () => !elements.usbCard.classList.contains("hidden")
+      || !elements.settingsPanel.classList.contains("hidden"),
+    run: (event) => {
+      const usbOpen = !elements.usbCard.classList.contains("hidden");
+      if (keepKeyboardFocusInside(event, usbOpen ? elements.usbCard : elements.settingsPanel)) {
+        event.preventDefault();
+      }
+    },
+  },
+  {
+    key: "Escape",
+    allowInEditable: true,
+    when: () => !elements.usbCard.classList.contains("hidden"),
+    run: () => { void dismissUsbMenu(); },
+  },
+  {
+    key: "Escape",
+    allowInEditable: true,
+    when: () => !elements.settingsPanel.classList.contains("hidden"),
+    run: () => setSettingsOpen(false),
+  },
+]);
 
 await mainWindow.listen("usb-write-progress", (event) => {
   if (!usbWriting) return;
