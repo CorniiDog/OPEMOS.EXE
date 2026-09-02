@@ -7,6 +7,8 @@ const launcher = readFileSync("test_welcome_macos.sh", "utf8");
 const html = readFileSync("builder/welcome/preview.html", "utf8");
 const css = readFileSync("builder/welcome/preview.css", "utf8");
 const javascript = readFileSync("builder/welcome/preview.js", "utf8");
+const illustrations = ["install", "recovery", "gaming"].map((name) =>
+  readFileSync(`builder/welcome/assets/${name}.svg`, "utf8"));
 
 test("macOS welcome preview has a print-only non-GUI test path", () => {
   const result = spawnSync("bash", ["test_welcome_macos.sh"], {
@@ -40,6 +42,15 @@ test("preview covers the welcome workflow and clearly labels synthetic state", (
   assert.match(javascript, /ERASE/);
   assert.match(javascript, /REINSTALL/);
   assert.match(javascript, /event\.key === "Enter"/);
+  assert.match(javascript, /assets\/install\.svg/);
+  assert.match(javascript, /assets\/recovery\.svg/);
+  assert.match(javascript, /assets\/gaming\.svg/);
   assert.match(css, /backdrop-filter: blur/);
   assert.match(css, /linear-gradient\(90deg, #57c4fb, #78da70\)/);
+  for (const illustration of illustrations) {
+    assert.match(illustration, /^<svg[^>]+viewBox="0 0 520 360"/);
+    assert.match(illustration, /<title id="title">[^<]+<\/title>/);
+    assert.match(illustration, /<desc id="desc">[^<]+<\/desc>/);
+    assert.doesNotMatch(illustration, /<script|<foreignObject|(?:href|src)=["']https?:/);
+  }
 });

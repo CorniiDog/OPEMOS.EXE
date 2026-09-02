@@ -4,18 +4,27 @@ set -euo pipefail
 
 readonly HELPER=/usr/lib/opemos-install-media/opemos-install-helper
 readonly ROLLBACK=/home/deck/tools/opemos-rollback-last-update
+readonly ICON=/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg
 readonly UI_CONFIG=/usr/share/opemos-install-media/ui
 readonly STATE_DIRECTORY=/home/deck/.local/state/open-opemos
 readonly LAST_LOG_FILE="$STATE_DIRECTORY/last-install-log"
 export GTK_THEME="${GTK_THEME:-Breeze-Dark}"
 [[ -d "$UI_CONFIG" ]] && export XDG_CONFIG_HOME="$UI_CONFIG"
 
+opemos_zenity() {
+  if [[ -f "$ICON" && ! -L "$ICON" ]]; then
+    command zenity --window-icon="$ICON" "$@"
+  else
+    command zenity "$@"
+  fi
+}
+
 message() {
-  zenity --info --title="Open OPEMOS" --width=520 --no-wrap --text="$1" || true
+  opemos_zenity --info --title="Open OPEMOS" --width=520 --no-wrap --text="$1" || true
 }
 
 failure() {
-  zenity --error --title="Open OPEMOS" --width=560 --no-wrap --text="$1" || true
+  opemos_zenity --error --title="Open OPEMOS" --width=560 --no-wrap --text="$1" || true
 }
 
 human_size() {
@@ -30,7 +39,7 @@ choose_action() {
     $1 == "supportRevision" { revision=substr($2, 1, 12) }
     END { if (nvidia != "" && revision != "") printf "NVIDIA %s · recovery %s", nvidia, revision }
   ')
-  zenity --list --radiolist \
+  opemos_zenity --list --radiolist \
     --title="Open OPEMOS" \
     --text="Welcome to OPEMOS\n${summary:+$summary\n}\nChoose what you want to do on this computer." \
     --column="" --column="Action" --column="What it does" \
@@ -81,13 +90,13 @@ show_diagnostics() {
       printf '\nNo installation attempt has been logged in this booted environment.\n'
     fi
   } >"$report" 2>&1
-  zenity --text-info --title="Open OPEMOS diagnostics" --width=780 --height=500 \
+  opemos_zenity --text-info --title="Open OPEMOS diagnostics" --width=780 --height=500 \
     --filename="$report" --ok-label="Back" || true
   if latest=$(last_log); then
-    if zenity --question --title="Installation log" --width=520 \
+    if opemos_zenity --question --title="Installation log" --width=520 \
       --ok-label="View Log" --cancel-label="Back" \
       --text="Open the complete last installation log?"; then
-      zenity --text-info --title="Open OPEMOS installation log" --width=900 --height=600 \
+      opemos_zenity --text-info --title="Open OPEMOS installation log" --width=900 --height=600 \
         --filename="$latest" --ok-label="Back" || true
     fi
   fi
@@ -113,7 +122,7 @@ choose_disk() {
     failure "No eligible target disk was found.\n\nOPEMOS excludes the booted installation media, mounted disks, read-only disks, and disks smaller than 12 GiB. Reinstall also requires one exact SteamOS A/B layout."
     return 1
   }
-  selection=$(zenity --list --radiolist \
+  selection=$(opemos_zenity --list --radiolist \
     --title="Select installation disk" \
     --text="Choose the whole physical disk OPEMOS may use. The installation media is excluded automatically." \
     --column="" --column="Device" --column="Capacity" --column="Model" --column="Serial" --column="Bus" --column="Identity" \
@@ -142,7 +151,7 @@ run_install() {
     phrase="REINSTALL $basename"
     warning="OPEMOS will replace both OS slots and var data on $device while preserving its recognized home partition."
   fi
-  confirmation=$(zenity --entry \
+  confirmation=$(opemos_zenity --entry \
     --title="Final disk confirmation" \
     --width=620 \
     --text="$warning\n\nThe device identity will be checked again immediately before any change.\nType $phrase exactly to continue.") || return 0
@@ -158,14 +167,14 @@ run_install() {
   set +e
   sudo "$HELPER" install "$mode" "$device" "$token" --confirm "$confirmation" 2>&1 |
     tee "$log" |
-    zenity --progress --pulsate --no-cancel --auto-close \
+    opemos_zenity --progress --pulsate --no-cancel --auto-close \
       --title="Installing OPEMOS" \
       --width=620 \
       --text="Installing to $device. Do not power off the computer or disconnect either drive."
   status=${PIPESTATUS[0]}
   set -e
   if (( status == 0 )); then
-    if zenity --question --title="OPEMOS installation complete" --width=560 \
+    if opemos_zenity --question --title="OPEMOS installation complete" --width=560 \
       --ok-label="Shut Down" --cancel-label="Stay Here" \
       --text="OPEMOS was installed, its A/B recovery guardian was verified, and the target was finalized.\n\nChoose Shut Down, remove the installation media, then start the computer from $device."; then
       systemctl poweroff

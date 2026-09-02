@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 360" role="img" aria-labelledby="title desc">
+  <title id="title">OPEMOS installation</title>
+  <desc id="desc">A recovery image flows safely into a selected computer.</desc>
+  <defs>
+    <linearGradient id="edge" x1="0" x2="1"><stop stop-color="#57c4fb"/><stop offset="1" stop-color="#78da70"/></linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#254b61" stop-opacity=".88"/><stop offset="1" stop-color="#102b34" stop-opacity=".72"/></linearGradient>
+  </defs>
+  <rect x="72" y="58" width="376" height="238" rx="28" fill="url(#glass)" stroke="url(#edge)" stroke-width="3"/>
+  <rect x="96" y="82" width="328" height="178" rx="17" fill="#071923" stroke="#74b8d4" stroke-opacity=".38"/>
+  <path d="M222 297h76l13 30H209z" fill="#183b4b" stroke="#6eb8d4" stroke-opacity=".45"/>
+  <path d="M177 327h166" fill="none" stroke="url(#edge)" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="260" cy="171" r="61" fill="#112d3a" stroke="url(#edge)" stroke-width="9"/>
+  <path d="M260 126v72m-29-28 29 29 29-29" fill="none" stroke="#eefaff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M143 286c0-21 17-38 38-38h21" fill="none" stroke="#57c4fb" stroke-width="5" stroke-linecap="round" stroke-dasharray="2 13"/>
+  <circle cx="139" cy="289" r="9" fill="#57c4fb"/>
+  <circle cx="381" cy="289" r="9" fill="#78da70"/>
+</svg>

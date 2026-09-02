@@ -56,3 +56,8 @@ progress. The launcher cannot inspect or write a disk, elevate privileges,
 start QEMU, access the network, or invoke either installation helper. This is a
 visual/interaction test; the generated SteamOS media continues to use the
 audited Zenity frontend above.
+
+The preview follows the centered-choice and installation-slideshow principles
+used by modern graphical installers. Its original OPEMOS illustrations explain
+target selection, gaming graphics, and A/B recovery without borrowing another
+distribution's branding.

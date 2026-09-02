@@ -15,12 +15,22 @@ function button(label, action, className = "") {
 function home() {
   state.disk = null;
   view.innerHTML = `
-    <p class="lead">Choose an installation or recovery operation. Every device and result shown in this preview is synthetic.</p>
-    <div class="choices">
-      <button class="choice" data-action="choose-install"><strong>Install OPEMOS</strong><span>Erase one explicitly selected disk and install this image.</span></button>
-      <button class="choice" data-action="choose-reinstall"><strong>Reinstall OPEMOS</strong><span>Preserve games and personal files on a recognized SteamOS layout.</span></button>
-      <button class="choice" data-action="rollback"><strong>Recovery</strong><span>Select a previously working NVIDIA-ready A/B slot.</span></button>
-      <button class="choice" data-action="diagnostics"><strong>Diagnostics</strong><span>Review media identity, eligible disks, and the last installation result.</span></button>
+    <div class="welcome-layout">
+      <div>
+        <p class="lead">Choose an installation or recovery operation. Every device and result shown in this preview is synthetic.</p>
+        <div class="choices">
+          <button class="choice" data-action="choose-install"><strong>Install OPEMOS</strong><span>Erase one explicitly selected disk and install this image.</span></button>
+          <button class="choice" data-action="choose-reinstall"><strong>Reinstall OPEMOS</strong><span>Preserve games and personal files on a recognized SteamOS layout.</span></button>
+          <button class="choice" data-action="rollback"><strong>Recovery</strong><span>Select a previously working NVIDIA-ready A/B slot.</span></button>
+          <button class="choice" data-action="diagnostics"><strong>Diagnostics</strong><span>Review media identity, eligible disks, and the last installation result.</span></button>
+        </div>
+      </div>
+      <aside class="feature-card">
+        <img src="assets/install.svg" alt="A recovery image flowing safely into a computer">
+        <span class="label">Designed for recovery</span>
+        <h2>Install with the target clearly in view.</h2>
+        <p>OPEMOS rechecks the physical disk immediately before Valve's installer begins.</p>
+      </aside>
     </div>`;
 }
 
@@ -63,23 +73,32 @@ function begin() {
   }
   state.progress = 6;
   view.innerHTML = `
-    <div class="panel">
-      <span class="label">Simulated installation</span><h2 id="stage">Validating the selected physical disk</h2>
-      <p class="lead warning">Do not disconnect the target while a real installation is running.</p>
-      <div class="progress"><i></i></div><p id="detail" class="lead">No host operation is running in this preview.</p>
+    <div class="panel progress-layout">
+      <div>
+        <span class="label">Simulated installation</span><h2 id="stage">Validating the selected physical disk</h2>
+        <p class="lead warning">Do not disconnect the target while a real installation is running.</p>
+        <div class="progress"><i></i></div><p id="detail" class="lead">No host operation is running in this preview.</p>
+      </div>
+      <aside class="slide"><img id="feature-image" src="assets/install.svg" alt="Installation illustration"><strong id="feature-title">A deliberate installation</strong><span id="feature-copy">Your selected disk is identified and checked again before mutation.</span></aside>
     </div>`;
   const stages = [
-    [18, "Preparing the target layout"], [56, "Running the protected Valve installation"],
-    [76, "Installing recovery into rootfs-A"], [88, "Installing recovery into rootfs-B"],
-    [96, "Verifying both A/B guardians"], [100, "Installation simulation complete"],
+    [18, "Preparing the target layout", "assets/install.svg", "A deliberate installation", "The source media stays separate while the selected target is prepared."],
+    [56, "Running the protected Valve installation", "assets/gaming.svg", "Built for the big screen", "Matching NVIDIA graphics, Vulkan, video, and firmware are carried into the installed system."],
+    [76, "Installing recovery into rootfs-A", "assets/recovery.svg", "Recovery follows every slot", "The persistent guardian records exact kernel and driver identity outside replaceable roots."],
+    [88, "Installing recovery into rootfs-B", "assets/recovery.svg", "Both A/B slots are covered", "Updates do not need to leave the alternate system slot without a recovery path."],
+    [96, "Verifying both A/B guardians", "assets/recovery.svg", "Trust, then verify", "OPEMOS reopens both slots and checks the installed recovery identity before success."],
+    [100, "Installation simulation complete", "assets/gaming.svg", "Ready for hardware testing", "Remove the installation medium after shutdown, then boot from the installed drive."],
   ];
   let index = 0;
   clearInterval(state.timer);
   state.timer = setInterval(() => {
-    const [progress, stage] = stages[index++];
+    const [progress, stage, image, title, copy] = stages[index++];
     state.progress = progress;
     view.querySelector(".progress i").style.setProperty("--progress", `${progress}%`);
     view.querySelector("#stage").textContent = stage;
+    view.querySelector("#feature-image").src = image;
+    view.querySelector("#feature-title").textContent = title;
+    view.querySelector("#feature-copy").textContent = copy;
     if (progress === 100) {
       clearInterval(state.timer);
       view.querySelector("#detail").innerHTML = `Both simulated slots passed identity verification.<div class="actions">${button("Return home", "home", "secondary")}${button("Finish", "complete", "primary")}</div>`;
@@ -91,7 +110,7 @@ function diagnostics() {
   view.innerHTML = `
     <div class="panel"><span class="label">Installation-media diagnostics</span><h2>Safe simulated inventory</h2>
       <pre>schema=1
-supportRevision=0b09b55998eaca30f705ef8fe5ea56314607dfc8
+supportRevision=2f6f133485f68ed09abf58b8a49ad67b985dd2e6
 nvidiaVersion=575.64.05
 status=ready
 

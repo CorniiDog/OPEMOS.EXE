@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 360" role="img" aria-labelledby="title desc">
+  <title id="title">Gaming-ready graphics</title>
+  <desc id="desc">A game controller rests in front of a display with blue and green graphics.</desc>
+  <defs><linearGradient id="g" x1="0" x2="1"><stop stop-color="#57c4fb"/><stop offset="1" stop-color="#78da70"/></linearGradient></defs>
+  <rect x="95" y="48" width="330" height="205" rx="25" fill="#0b202c" stroke="url(#g)" stroke-width="4"/>
+  <path d="M121 219c67-94 118 15 180-66 34-44 65-34 98-65v139H121z" fill="url(#g)" opacity=".28"/>
+  <path d="M169 309c-25 0-43-20-36-44l17-57c6-20 24-34 45-34h130c21 0 39 14 45 34l17 57c7 24-11 44-36 44-16 0-28-8-41-25l-14-18h-72l-14 18c-13 17-25 25-41 25z" fill="#193747" stroke="url(#g)" stroke-width="4"/>
+  <path d="M203 214v48m-24-24h48" stroke="#ecfaff" stroke-width="11" stroke-linecap="round"/>
+  <circle cx="322" cy="222" r="9" fill="#78da70"/><circle cx="342" cy="243" r="9" fill="#57c4fb"/>
+</svg>
