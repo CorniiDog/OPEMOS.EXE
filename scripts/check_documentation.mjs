@@ -66,7 +66,7 @@ assert.ok((await stat(path.join(root, "README.md"))).size < 16_000, "README shou
 assert.match(readme, /actions\/workflows\/checks\.yml\/badge\.svg/);
 assert.match(readme, /actions\/workflows\/pages\.yml\/badge\.svg/);
 assert.match(readme, /https:\/\/corniidog\.github\.io\/OPEMOS\.EXE\//);
-assert.match(readme, /docs\/assets\/images\/opemos-pill\.svg/);
+assert.match(readme, /docs\/assets\/images\/opemos-app-icon\.png/);
 
 const checks = await read(".github/workflows/checks.yml");
 assert.match(checks, /^name: Checks$/m);
