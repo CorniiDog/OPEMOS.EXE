@@ -29,7 +29,7 @@ const elements = {
   usbMessage: $("#usb-message"), usbConfirmationRow: $("#usb-confirmation-row"),
   usbConfirmation: $("#usb-confirmation"), usbConfirmationHelp: $("#usb-confirmation-help"),
   armUsbPreflight: $("#arm-usb-preflight"), cancelUsbPreflight: $("#cancel-usb-preflight"),
-  writeUsbImage: $("#write-usb-image"),
+  writeUsbImage: $("#write-usb-image"), usbActiveWarning: $("#usb-active-warning"),
   closeUsbMenu: $("#close-usb-menu"), reviewUsbTarget: $("#review-usb-target"),
   environmentMessage: $("#environment-message"), environmentDetails: $("#environment-details"),
   environmentStatus: $("#environment-status"),
@@ -1026,6 +1026,7 @@ elements.writeUsbImage.addEventListener("click", async () => {
   if (!window.confirm(`FINAL WARNING\n\nErase ${device} and write the validated SteamOS image?\n\nEvery existing partition and file on this device will be destroyed.`)) return;
   usbWriting = true;
   elements.chooseImage.disabled = true;
+  elements.usbActiveWarning.classList.remove("hidden");
   elements.writeUsbImage.disabled = true;
   elements.refreshUsbTargets.disabled = true;
   elements.closeUsbMenu.disabled = true;
@@ -1054,6 +1055,7 @@ elements.writeUsbImage.addEventListener("click", async () => {
   } finally {
     usbWriting = false;
     elements.chooseImage.disabled = false;
+    elements.usbActiveWarning.classList.add("hidden");
     elements.writeUsbImage.disabled = false;
     elements.refreshUsbTargets.disabled = false;
     elements.closeUsbMenu.disabled = false;

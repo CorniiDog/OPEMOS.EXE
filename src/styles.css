@@ -277,8 +277,11 @@ footer p { color: #aab4c5; }
 #usb-card .usb-heading .build-summary { flex: 1; min-width: 0; margin: 0; }
 #usb-card .usb-close { position: static; flex: none; }
 .usb-dialog-actions { display: flex; align-items: center; gap: 9px; }
+.usb-dialog-actions > button { height: 42px; min-height: 42px; padding-top: 0; padding-bottom: 0; display: inline-flex; align-items: center; justify-content: center; }
 .usb-dialog-actions .primary { flex: 1 1 auto; }
 .usb-dialog-actions .secondary { flex: 0 0 auto; min-width: 72px; }
+.usb-active-warning { margin: 9px 0 0; padding: 9px 11px; border: 1px solid rgba(255, 188, 74, .38); border-radius: 10px; color: #f4d08b; background: rgba(91, 57, 11, .42); font-size: 12px; line-height: 1.35; }
+.usb-active-warning strong { color: #ffe1a8; }
 #usb-card > .result-message { min-height: 34px; max-height: 5em; margin-top: 8px; overflow: auto; overflow-wrap: anywhere; font-size: 12px; }
 .usb-dialog-target { margin-bottom: 10px; padding: 9px 11px; border: 1px solid var(--glass-border); border-radius: 10px; background: rgba(9, 19, 28, .46); }
 .usb-dialog-target span { display: block; color: #8490a3; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }

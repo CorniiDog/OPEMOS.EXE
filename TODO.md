@@ -729,6 +729,11 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Require a target-disk picker, exclude the booted recovery medium, validate the selected block device, and show a final destructive confirmation before a fresh install.
 * [ ] Keep fresh-install and system-upgrade modes distinct; verify upgrade mode recognizes an existing SteamOS layout and preserves the target `home` partition.
 * [ ] Pass the selected target disk explicitly to the installer without hard-coding NVMe naming, including correct partition suffix handling for NVMe and non-NVMe devices.
+* [ ] Design and stage a project-owned SteamOS Storage Manager desktop launcher with the generated media, then verify that Valve installation propagates it to the installed system rather than leaving it available only in recovery mode.
+* [ ] Give the Storage Manager a bounded graphical drive picker for mount, unmount, format, and wipe operations; identify whole devices and partitions clearly, exclude the running system and recovery media, and never construct arbitrary shell commands from UI text.
+* [ ] Support deliberate multi-drive selection for bulk mount or wipe only after every device identity is independently revalidated. Require a conspicuous destructive summary and explicit confirmation that names every affected physical drive.
+* [ ] Add opt-in persistent automount by filesystem UUID with an explicit mount policy that survives reboot and works in both Desktop and Gaming Mode. Missing/replaced drives must fail safely without delaying or breaking boot.
+* [ ] Keep one-time mounting separate from persistent automount, preserve existing user data unless format/wipe is explicitly chosen, and add hardware tests for USB disks, SD-card readers, multiple identical devices, sleep/wake, unplug/replug, and partial bulk-operation failure.
 * [ ] Ensure NVIDIA setup occurs before first Gaming Mode launch.
 * [ ] Verify first boot without manual TTY intervention.
 * [ ] Verify first boot without network access if all required artifacts are embedded.
