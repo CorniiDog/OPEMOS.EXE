@@ -1,4 +1,10 @@
-# OPEMOS.EXE
+<p align="center">
+  <img src="docs/assets/images/opemos-pill.svg" alt="OPEMOS gradient pill" width="112">
+</p>
+
+<h1 align="center">OPEMOS.EXE</h1>
+
+<p align="center"><strong>Desktop image building for exact-kernel NVIDIA on SteamOS.</strong></p>
 
 [![Checks](https://github.com/CorniiDog/OPEMOS.EXE/actions/workflows/checks.yml/badge.svg)](https://github.com/CorniiDog/OPEMOS.EXE/actions/workflows/checks.yml)
 [![Documentation](https://github.com/CorniiDog/OPEMOS.EXE/actions/workflows/pages.yml/badge.svg)](https://github.com/CorniiDog/OPEMOS.EXE/actions/workflows/pages.yml)
