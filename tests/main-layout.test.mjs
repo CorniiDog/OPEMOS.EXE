@@ -63,11 +63,13 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /Verified existing NVIDIA.*No rebuild needed; select a USB drive/);
   assert.doesNotMatch(script, /Existing NVIDIA output and adjacent manifest match byte-for-byte/);
   assert.match(script, /Boolean\(completedOutput\) \|\| buildRunning/);
-  assert.match(css, /\.build-card\.completed-output-selected \.build-side-column,[\s\S]*#build-button\s*\{\s*display:\s*none;/);
+  assert.match(css, /\.build-card\.completed-output-selected \.nvidia-choice,[\s\S]*#build-button\s*\{\s*display:\s*none;/);
+  assert.doesNotMatch(css, /\.build-card\.completed-output-selected \.build-side-column,[\s\S]{0,100}display:\s*none;/);
   assert.match(script, /elements\.appShell\.classList\.add\("completed-output-selected"\)/);
   assert.match(script, /elements\.appShell\.classList\.remove\("completed-output-selected"\)/);
-  assert.match(css, /\.app-shell\.completed-output-selected \.drop-zone\s*\{[^}]*flex:\s*0 0 94px;[^}]*min-height:\s*94px;/);
-  assert.match(css, /\.app-shell\.completed-output-selected \.selection-card h2,[\s\S]*text-overflow:\s*ellipsis;[\s\S]*white-space:\s*nowrap;/);
+  assert.match(css, /\.build-card\.completed-output-selected\s*\{[^}]*min-height:\s*188px;/);
+  assert.match(css, /\.readiness-grid\.has-selection \.selection-card h2,[\s\S]*text-overflow:\s*ellipsis;[\s\S]*white-space:\s*nowrap;/);
+  assert.doesNotMatch(css, /\.app-shell\.completed-output-selected \.drop-zone/);
 });
 
 test("builder readiness expands while no image has been selected", () => {

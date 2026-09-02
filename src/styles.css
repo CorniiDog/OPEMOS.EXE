@@ -336,25 +336,19 @@ footer p { color: #aab4c5; }
 .usb-picker.is-loading .usb-picker-message { color: #a7bfd0; }
 .usb-picker-message { min-height: 15px; margin: 0; color: #8490a3; font-size: 10px; line-height: 1.35; }
 #review-usb-target { width: 100%; margin-top: 1px; }
-.build-card.completed-output-selected .build-options-grid { grid-template-columns: minmax(0, 1fr); }
-.build-card.completed-output-selected .build-side-column,
+.build-card.completed-output-selected { min-height: 188px; }
+.build-card.completed-output-selected .nvidia-choice,
+.build-card.completed-output-selected .source-warning,
 .build-card.completed-output-selected #build-button { display: none; }
-.app-shell.completed-output-selected .readiness-grid .environment-card,
-.app-shell.completed-output-selected .readiness-grid .selection-card { min-height: 92px; max-height: 92px; }
-.app-shell.completed-output-selected .selection-card h2,
-.app-shell.completed-output-selected .readiness-grid .path {
+.build-card.completed-output-selected .build-options-grid { margin-bottom: 5px; }
+.build-card.completed-output-selected .build-side-column { min-height: 100%; }
+.build-card.completed-output-selected .build-side-column .build-summary { margin: 0; }
+.readiness-grid.has-selection .selection-card h2,
+.readiness-grid.has-selection .path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.app-shell.completed-output-selected .drop-zone {
-  flex: 0 0 94px;
-  min-height: 94px;
-  padding-top: 11px;
-  padding-bottom: 11px;
-}
-.app-shell.completed-output-selected .build-card { padding-top: 9px; padding-bottom: 9px; }
-.app-shell.completed-output-selected .build-options-grid { margin-bottom: 5px; }
 .app-shell.completed-output-selected .result-message { margin-top: 4px; }
 .source-choice { margin-bottom: 9px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .source-choice span { min-width: 0; }
