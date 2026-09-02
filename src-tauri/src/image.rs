@@ -1560,7 +1560,7 @@ pub(crate) fn usb_candidate_from_diskutil_info(
     if !identifier.starts_with("disk")
         || identifier.len() <= 4
         || !identifier[4..].bytes().all(|byte| byte.is_ascii_digit())
-        || object.get("Whole").and_then(|value| value.as_bool()) != Some(true)
+        || object.get("WholeDisk").and_then(|value| value.as_bool()) != Some(true)
         || object.get("Internal").and_then(|value| value.as_bool()) != Some(false)
         || object.get("Writable").and_then(|value| value.as_bool()) != Some(true)
         || object

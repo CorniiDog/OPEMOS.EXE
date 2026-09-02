@@ -849,11 +849,11 @@ esac
     }
 
     #[test]
-    fn usb_candidate_parser_rejects_internal_virtual_and_undersized_disks() {
+    fn usb_candidate_parser_uses_real_macos_keys_and_rejects_unsafe_disks() {
         let removable = serde_json::json!({
             "DeviceIdentifier": "disk7",
             "DeviceNode": "/dev/disk7",
-            "Whole": true,
+            "WholeDisk": true,
             "Internal": false,
             "VirtualOrPhysical": "Physical",
             "RemovableMedia": true,
@@ -869,6 +869,16 @@ esac
             .expect("safe removable disk");
         assert_eq!(candidate.device_identifier, "disk7");
         assert_eq!(candidate.device_node, "/dev/disk7");
+
+        let mut partition_metadata = removable.clone();
+        partition_metadata["WholeDisk"] = serde_json::json!(false);
+        partition_metadata["Whole"] = serde_json::json!(true);
+        assert!(usb_candidate_from_diskutil_info(
+            &partition_metadata,
+            32_000_000_000,
+            Some("disk7")
+        )
+        .is_none());
 
         let mut internal = removable.clone();
         internal["Internal"] = serde_json::json!(true);
