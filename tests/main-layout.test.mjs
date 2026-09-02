@@ -81,6 +81,24 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.doesNotMatch(css, /\.app-shell\.completed-output-selected \.drop-zone/);
 });
 
+test("image selection is transactional across plain and completed outputs", () => {
+  assert.match(script, /let imageSelectionGeneration = 0;/);
+  assert.match(script, /const selectionGeneration = \+\+imageSelectionGeneration;/);
+  assert.match(script, /function hasUsbTargets\(\)[\s\S]*some\(\(option\) => Boolean\(option\.value\)\)/);
+  assert.match(script, /completedOutput = null;[\s\S]*currentImage = null;[\s\S]*elements\.buildCard\.classList\.add\("hidden"\);[\s\S]*updateBuildButton\(\);/);
+  assert.match(script, /invoke\("validate_image"[\s\S]*if \(selectionGeneration !== imageSelectionGeneration\) return;[\s\S]*invoke\("inspect_completed_nvidia_image"/);
+  assert.match(script, /invoke\("inspect_completed_nvidia_image"[\s\S]*if \(selectionGeneration !== imageSelectionGeneration\) return;[\s\S]*invoke\("preview_image_output"/);
+  assert.match(script, /if \(buildRunning \|\| usbWriting\)[\s\S]*cannot be changed while a build is running/);
+  assert.match(script, /buildRunning = true;[\s\S]*elements\.chooseImage\.disabled = true;/);
+  assert.match(script, /usbWriting = true;[\s\S]*elements\.chooseImage\.disabled = true;/);
+  assert.match(script, /elements\.nvidiaSource\.disabled = true;[\s\S]*elements\.allowUpstreamBuild\.disabled = true;/);
+  assert.match(script, /selectionError = String\(error\);[\s\S]*Choose another SteamOS image[\s\S]*elements\.dropMessage\.title = selectionError \|\| "";/);
+  assert.match(script, /elements\.usbTarget\.disabled = !hasUsbTargets\(\);/);
+  assert.match(script, /if \(completedOutput\?\.path \|\| !currentImage \|\| !hostReady \|\| !exportMode \|\| buildRunning \|\| usbWriting\) return;/);
+  assert.match(script, /const completionSelectionGeneration = imageSelectionGeneration;[\s\S]*invoke\("inspect_completed_nvidia_image"[\s\S]*completionSelectionGeneration !== imageSelectionGeneration \|\| inputPath !== currentImage/);
+  assert.doesNotMatch(script, /buildRunning = true;[\s\S]{0,900}refreshUsbTargets\.textContent = "Scanning…";/);
+});
+
 test("builder readiness expands while no image has been selected", () => {
   assert.match(css, /\.readiness-grid > \.environment-card\s*\{\s*grid-column:\s*1 \/ -1;/);
   assert.match(css, /\.readiness-grid\.has-selection > \.environment-card\s*\{\s*grid-column:\s*auto;/);
