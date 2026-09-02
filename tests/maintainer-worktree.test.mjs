@@ -14,4 +14,5 @@ test("maintainer workspace offers a bounded managed-checkout action", async () =
   assert.match(script, /invoke\("list_recent_maintainer_worktrees", \{ repository \}\)/);
   assert.match(script, /Revalidating the recent folder before selecting it/);
   assert.match(script, /Creating or reopening a dedicated checkout at the exact verified commit/);
+  assert.match(script, /installKeyboardBindings[\s\S]*key: "Enter"[\s\S]*accelerator: true[\s\S]*document\.activeElement === elements\.commitMessage[\s\S]*runKeyboardDefaultAction\(elements\.reviewStaged\)/);
 });

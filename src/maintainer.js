@@ -1,5 +1,6 @@
 import { operationContextMatches } from "./operation-context.js";
 import { installWindowDrag } from "./window-drag.js";
+import { installKeyboardBindings, runKeyboardDefaultAction } from "./keyboard.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
@@ -44,6 +45,16 @@ let localWorktree = null;
 let commitReview = null;
 let branchReview = null;
 let workspaceGeneration = 0;
+
+installKeyboardBindings([
+  {
+    key: "Enter",
+    accelerator: true,
+    allowInEditable: true,
+    when: () => document.activeElement === elements.commitMessage,
+    run: () => runKeyboardDefaultAction(elements.reviewStaged),
+  },
+]);
 
 function sourceKey(source) {
   return JSON.stringify([

@@ -1,6 +1,10 @@
 import { operationContextMatches } from "./operation-context.js";
 import { installWindowDrag } from "./window-drag.js";
-import { installKeyboardBindings, keepKeyboardFocusInside } from "./keyboard.js";
+import {
+  installKeyboardBindings,
+  keepKeyboardFocusInside,
+  runKeyboardDefaultAction,
+} from "./keyboard.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getAllWebviewWindows, getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
@@ -983,6 +987,14 @@ elements.closeUsbMenu.addEventListener("click", () => { void dismissUsbMenu(); }
 elements.usbScrim.addEventListener("click", () => { void dismissUsbMenu(); });
 
 installKeyboardBindings([
+  {
+    key: "Enter",
+    allowInEditable: true,
+    when: () => !elements.usbCard.classList.contains("hidden")
+      && document.activeElement === elements.usbConfirmation
+      && elements.usbConfirmation.value === `ERASE ${elements.usbTarget.value}`,
+    run: () => runKeyboardDefaultAction(elements.armUsbPreflight),
+  },
   {
     key: "Tab",
     shift: "any",

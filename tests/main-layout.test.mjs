@@ -48,8 +48,8 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(script, /function renderUsbConfirmationPhase\(prepared = Boolean\(usbPreflightSession\)\)/);
   assert.match(script, /renderUsbConfirmationPhase\(true\)/);
   assert.match(script, /async function dismissUsbMenu\(\)[\s\S]*usbContextGeneration \+= 1;[\s\S]*cancel_usb_write_preflight/);
-  assert.match(script, /import \{ installKeyboardBindings, keepKeyboardFocusInside \} from "\.\/keyboard\.js";/);
-  assert.match(script, /installKeyboardBindings\(\[[\s\S]*key: "Tab"[\s\S]*keepKeyboardFocusInside[\s\S]*key: "Escape"[\s\S]*dismissUsbMenu\(\)[\s\S]*key: "Escape"[\s\S]*setSettingsOpen\(false\)/);
+  assert.match(script, /installKeyboardBindings[\s\S]*keepKeyboardFocusInside[\s\S]*runKeyboardDefaultAction[\s\S]*from "\.\/keyboard\.js";/);
+  assert.match(script, /installKeyboardBindings\(\[[\s\S]*key: "Enter"[\s\S]*usbConfirmation\.value === `ERASE \$\{elements\.usbTarget\.value\}`[\s\S]*runKeyboardDefaultAction\(elements\.armUsbPreflight\)[\s\S]*key: "Tab"[\s\S]*keepKeyboardFocusInside[\s\S]*key: "Escape"[\s\S]*dismissUsbMenu\(\)[\s\S]*key: "Escape"[\s\S]*setSettingsOpen\(false\)/);
   assert.match(script, /const wasOpen = !elements\.usbCard\.classList\.contains\("hidden"\);[\s\S]*else if \(wasOpen/);
   assert.match(script, /armUsbPreflight\.setAttribute\("aria-busy", "true"\)[\s\S]*armUsbPreflight\.textContent = "Revalidating…"/);
   assert.match(script, /usbCancelPending \|\| !usbPreflightSession\?\.sessionToken[\s\S]*cancelUsbPreflight\.textContent = "Cancelling…"/);

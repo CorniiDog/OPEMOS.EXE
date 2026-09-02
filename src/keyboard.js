@@ -92,3 +92,14 @@ export function selectKeyboardRegionContents(element, {
   selection.addRange(range);
   return true;
 }
+
+export function runKeyboardDefaultAction(control) {
+  if (!control
+      || control.disabled
+      || control.getAttribute?.("aria-disabled") === "true"
+      || control.getClientRects?.().length === 0) {
+    return false;
+  }
+  control.click();
+  return true;
+}

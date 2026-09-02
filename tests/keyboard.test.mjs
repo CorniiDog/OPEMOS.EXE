@@ -7,6 +7,7 @@ import {
   keepKeyboardFocusInside,
   matchesKeyboardBinding,
   normalizeKeyboardKey,
+  runKeyboardDefaultAction,
 } from "../src/keyboard.js";
 
 function keyboardEvent(overrides = {}) {
@@ -67,4 +68,22 @@ test("overlay focus wraps only at visible boundary controls", () => {
   assert.equal(keepKeyboardFocusInside({ shiftKey: true }, container, { activeElement: first }), true);
   assert.equal(focused, "last");
   assert.equal(keepKeyboardFocusInside({ shiftKey: false }, container, { activeElement: middle }), false);
+});
+
+test("default actions reject hidden and disabled controls", () => {
+  let clicks = 0;
+  const control = {
+    disabled: false,
+    click: () => { clicks += 1; },
+    getAttribute: () => null,
+    getClientRects: () => [1],
+  };
+  assert.equal(runKeyboardDefaultAction(control), true);
+  assert.equal(clicks, 1);
+  control.disabled = true;
+  assert.equal(runKeyboardDefaultAction(control), false);
+  control.disabled = false;
+  control.getClientRects = () => [];
+  assert.equal(runKeyboardDefaultAction(control), false);
+  assert.equal(clicks, 1);
 });
