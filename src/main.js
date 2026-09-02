@@ -53,6 +53,7 @@ let currentImage = null;
 let currentImageName = null;
 let plannedOutput = null;
 let completedOutput = null;
+let completedOutputImported = false;
 let imageSelectionGeneration = 0;
 let usbPreflightSession = null;
 let usbContextGeneration = 0;
@@ -235,6 +236,7 @@ function renderSourceWarning() {
 
 function applyCompletedOutput(output, imported = false) {
   completedOutput = output;
+  completedOutputImported = imported;
   plannedOutput = output.path;
   elements.buildCard.classList.add("completed-output-selected");
   elements.appShell.classList.add("completed-output-selected");
@@ -437,6 +439,7 @@ async function selectImage(path) {
   const previousUsbSession = usbPreflightSession;
   usbPreflightSession = null;
   completedOutput = null;
+  completedOutputImported = false;
   currentImage = null;
   currentImageName = null;
   plannedOutput = null;
@@ -1053,7 +1056,9 @@ elements.writeUsbImage.addEventListener("click", async () => {
     elements.usbMessage.className = "result-message success";
     elements.writeUsbImage.classList.add("hidden");
     elements.cancelUsbPreflight.classList.add("hidden");
-    if (activeExportMode === "both") {
+    // An imported image already exists at a user-selected path. Revealing it
+    // after a USB-only operation falsely implies that this run exported it.
+    if (activeExportMode === "both" && !completedOutputImported) {
       const revealed = await revealCompletedImage(completedOutput.path);
       if (revealed) elements.usbMessage.textContent = `${result.message} Finder opened the retained image.`;
     }

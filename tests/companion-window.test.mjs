@@ -43,5 +43,5 @@ test("USB builds reselect only the exact pre-build device and defer Finder until
   assert.match(main, /deviceIdentifier: selectedUsb\.value,[\s\S]*identityToken: selectedUsb\.dataset\.identityToken/);
   assert.match(main, /option\.value === preferredTarget\.deviceIdentifier[\s\S]*option\.dataset\.identityToken === preferredTarget\.identityToken/);
   assert.match(main, /if \(restored\) \{\s*setUsbMenuOpen\(true\);/);
-  assert.match(main, /if \(activeExportMode === "both"\) \{\s*const revealed = await revealCompletedImage\(completedOutput\.path\);/);
+  assert.match(main, /if \(activeExportMode === "both" && !completedOutputImported\) \{\s*const revealed = await revealCompletedImage\(completedOutput\.path\);/);
 });

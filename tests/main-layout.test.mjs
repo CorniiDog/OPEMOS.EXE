@@ -92,6 +92,9 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(css, /\.build-card\.completed-output-selected\s*\{[^}]*min-height:\s*188px;/);
   assert.match(css, /\.readiness-grid\.has-selection \.selection-card h2,[\s\S]*text-overflow:\s*ellipsis;[\s\S]*white-space:\s*nowrap;/);
   assert.doesNotMatch(css, /\.app-shell\.completed-output-selected \.drop-zone/);
+  assert.match(script, /let completedOutputImported = false;/);
+  assert.match(script, /completedOutputImported = imported;/);
+  assert.match(script, /activeExportMode === "both" && !completedOutputImported/);
 });
 
 test("image selection is transactional across plain and completed outputs", () => {
