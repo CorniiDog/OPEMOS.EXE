@@ -426,7 +426,7 @@ pub(crate) async fn update_builder_settings(
         settings.schema_version = BUILDER_SETTINGS_SCHEMA;
         if settings.omit_optional_cuda {
             return Err(
-                "Optional CUDA omission is unavailable until the pinned support repository provides a reviewed gaming payload profile."
+                "Optional CUDA omission is unavailable because the pinned support repository has no audited target-specific gaming payload. The complete NVIDIA driver will be used."
                     .into(),
             );
         }

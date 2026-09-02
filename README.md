@@ -186,9 +186,10 @@ nonduplicated GRUB kernel arguments, layout, and source immutability before
 finalization.
 
 Settings also show a disabled, off-by-default “Omit optional CUDA” preference.
-It remains unavailable until the support repository defines a reviewed,
-package-owned gaming payload profile; the application will not delete arbitrary
-files from `nvidia-utils`. Deterministic repacking of an existing raw-module
+The support repository defines the preservation policy, but its pinned policy
+currently contains no audited target-specific payloads. The UI therefore says
+that current builds use the complete NVIDIA driver. The application will not
+delete arbitrary files from `nvidia-utils`. Deterministic repacking of an existing raw-module
 publication into `.ko.zst` assets likewise belongs to the canonical support
 publisher so hashes, provenance, release revisions, and create-only semantics
 remain authoritative.

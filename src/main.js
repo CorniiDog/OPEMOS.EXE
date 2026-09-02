@@ -117,7 +117,7 @@ function renderSettings() {
   elements.includeUpstreamNvidia.disabled = settingsSavePending;
   elements.omitOptionalCuda.checked = builderSettings.omitOptionalCuda;
   elements.omitOptionalCuda.disabled = true;
-  elements.omitCudaStatus.textContent = "Awaiting a reviewed support-repository payload profile";
+  elements.omitCudaStatus.textContent = "Unavailable for current builds — the complete NVIDIA driver will be used.";
   elements.autoReleaseNvidia.checked = builderSettings.autoReleaseVerifiedNvidia;
   elements.autoReleaseNvidia.disabled = settingsSavePending || !githubMaintainer?.authorized;
   elements.autoReleaseSetting.classList.toggle("pending", autoReleaseVerificationPending);
