@@ -198,17 +198,17 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 26] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 28] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "26f506d27a466b20604ea864c569492bc39ab47f5d4c03dddaa7011ca6a31aff",
-        bytes: 58_464,
+        sha256: "4bcb351d99608ff1cc6be3cf891d219e5fe78f0584f716d5a352891dbcf3f222",
+        bytes: 59_191,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/common.sh",
-        sha256: "484390ce35347c8783258b79ad9e1e54aad3c59e5247a60562876981adb4e9be",
-        bytes: 7_129,
+        sha256: "72451b4d70230959337de5f933d88c36b60d0ef2147403e1d5ba7285b9a8936f",
+        bytes: 7_110,
         executable: false,
     },
     PinnedInstallerFile {
@@ -231,8 +231,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 26] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "4c0c77d58c1c1df2f835332c7d56b2912552c4aee1cf817fedf13d647123ab7e",
-        bytes: 91_199,
+        sha256: "aff7ceedf9d3fe34ac3fcced1beef437b7be605de82a162fbda9b1390e94dc5c",
+        bytes: 91_333,
         executable: true,
     },
     PinnedInstallerFile {
@@ -249,8 +249,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 26] = [
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "8bd4eb1b8878ac1f1363e2c45277f7207d62947c7188f9f8b27ba1bc59f497db",
-        bytes: 59_789,
+        sha256: "7152fd316772bb04532fb37ad34f6066518d0e81a60b6c8209e659ff50bc62e8",
+        bytes: 63_307,
         executable: true,
     },
     PinnedInstallerFile {
@@ -315,8 +315,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 26] = [
     },
     PinnedInstallerFile {
         path: "lib/snapshot_install_input.py",
-        sha256: "61c25cf137e56a4b0c4e5bacabef5b76c403fcdc02f1368aaeff36ddc471c7b1",
-        bytes: 2_616,
+        sha256: "37ef81c3c304d0548ad0edea3ae81e9afd0e0375c94beff1d75afb4ec4cbb8ba",
+        bytes: 4_059,
         executable: false,
     },
     PinnedInstallerFile {
@@ -330,6 +330,18 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 26] = [
         sha256: "cc2cbf20fd2f8453ec6db18ed14a4162b3bdc8bd5f70135eae5e4b51f1ec1a00",
         bytes: 10_229,
         executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/validate_install_contract.py",
+        sha256: "3a0520b0b6d476b2c9c1ae4c2ca7b4b25c8a496fc98374e26d75edd83c40ea65",
+        bytes: 23_592,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/payload_receipt.py",
+        sha256: "8a0f75698ebd27a9f608c316e4bc38360c254af8cc27d8a995eb7fc5a6ef7884",
+        bytes: 11_428,
+        executable: false,
     },
     PinnedInstallerFile {
         path: "trust/nvidia-userspace-package-signers.json",
@@ -360,14 +372,14 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 26] = [
 pub(crate) const PINNED_PUBLISHER_FILES: [PinnedInstallerFile; 2] = [
     PinnedInstallerFile {
         path: "bootstrap/publish_artifacts.sh",
-        sha256: "ce7cb271a73ab0f13f701965d49b103e6d228714e171ac16c22b89b776ba0cde",
-        bytes: 3_726,
+        sha256: "683943eea91c0367419cef9362857dae3b26617ab448d295a929c90d1c06de68",
+        bytes: 3_693,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/validate_publish_inputs.py",
-        sha256: "a45c6ed32154a1fb4961e91396c3b5ca0392bcd7853d80026d752486fe0bdb87",
-        bytes: 16_258,
+        sha256: "b547d16179d7d706093fa916769e080a0e33073a555b0fa80425b669b57b94e9",
+        bytes: 16_225,
         executable: true,
     },
 ];
@@ -745,8 +757,113 @@ pub(crate) struct SupportInstallResult {
     pub(crate) trust: String,
     pub(crate) cleanup: SupportInstallCleanup,
     pub(crate) validation: Option<SupportInstallValidationDocument>,
+    pub(crate) module_verification: Option<SupportModuleVerification>,
+    pub(crate) userspace_verification: Option<SupportUserspaceVerification>,
     pub(crate) initramfs_workspace: Option<SupportInitramfsWorkspace>,
     pub(crate) initramfs_verification: Option<SupportInitramfsVerification>,
+    pub(crate) payload_receipt: Option<SupportPayloadReceipt>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportModuleVerification {
+    pub(crate) schema_version: u32,
+    pub(crate) status: String,
+    pub(crate) reason: String,
+    pub(crate) modules: Vec<SupportInstalledModule>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportInstalledModule {
+    pub(crate) module_name: String,
+    pub(crate) target_relative_path: String,
+    pub(crate) representation: String,
+    pub(crate) expected_payload_sha256: String,
+    pub(crate) actual_payload_sha256: String,
+    pub(crate) expected_mode: String,
+    pub(crate) actual_mode: String,
+    pub(crate) expected_uid: u32,
+    pub(crate) actual_uid: u32,
+    pub(crate) expected_gid: u32,
+    pub(crate) actual_gid: u32,
+    pub(crate) compressed_size_bytes: u64,
+    pub(crate) decompression_status: String,
+    pub(crate) invalid_fields: Vec<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportUserspaceVerification {
+    pub(crate) schema_version: u32,
+    pub(crate) status: String,
+    pub(crate) reason: String,
+    pub(crate) packages: Vec<SupportVerifiedUserspacePackage>,
+    pub(crate) pacman_database: SupportVerifiedPacmanDatabase,
+    pub(crate) gsp_firmware: SupportVerifiedGspFirmware,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportVerifiedUserspacePackage {
+    pub(crate) package_name: String,
+    pub(crate) version: String,
+    pub(crate) package_sha256: String,
+    pub(crate) package_query_verified: bool,
+    pub(crate) pacman_integrity_verified: bool,
+    pub(crate) payload_verified: bool,
+    pub(crate) directories: u64,
+    pub(crate) regular_files: u64,
+    pub(crate) symlinks: u64,
+    pub(crate) hardlinks: u64,
+    pub(crate) shared_libraries: u64,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportVerifiedPacmanDatabase {
+    pub(crate) path: String,
+    pub(crate) status: String,
+    pub(crate) verified_package_count: u64,
+    pub(crate) consistency_verified: bool,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportVerifiedGspFirmware {
+    pub(crate) status: String,
+    pub(crate) version: String,
+    pub(crate) target_relative_files: Vec<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportPayloadReceipt {
+    pub(crate) schema_version: u32,
+    pub(crate) status: String,
+    pub(crate) reason: String,
+    pub(crate) target: SupportPayloadReceiptTarget,
+    pub(crate) receipt_id: String,
+    pub(crate) rootfs_relative_path: String,
+    pub(crate) records: Vec<SupportPayloadReceiptRecord>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportPayloadReceiptTarget {
+    pub(crate) steamos_version: String,
+    pub(crate) kernel_version: String,
+    pub(crate) nvidia_version: String,
+    pub(crate) architecture: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportPayloadReceiptRecord {
+    pub(crate) role: String,
+    pub(crate) filename: String,
+    pub(crate) size_bytes: u64,
+    pub(crate) sha256: String,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -1116,6 +1233,12 @@ pub(crate) struct NvidiaInstallHandoffResult {
     pub(crate) initramfs_workspace: SupportInitramfsWorkspace,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) initramfs_verification: Option<SupportInitramfsVerification>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) module_verification: Option<SupportModuleVerification>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) userspace_verification: Option<SupportUserspaceVerification>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) payload_receipt: Option<SupportPayloadReceipt>,
     pub(crate) packages: Vec<SupportInstallPackage>,
     pub(crate) storage: SupportInstallStorage,
     pub(crate) compression: SupportInstallCompression,

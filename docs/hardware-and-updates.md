@@ -86,6 +86,27 @@ text/rescue environment without starting Gaming Mode. The exact SteamOS boot
 entry and rollback edits remain hardware-test gates; they must not be inferred
 from generic systemd behavior or applied to an unrecognized Valve layout.
 
+### Recovery graphics tiers
+
+A fallback should be prepared before an update, not downloaded after graphics
+have already failed:
+
+1. On hybrid systems, prefer the already installed Intel or AMD in-kernel
+   driver and Mesa stack when that GPU can own a display.
+2. Keep a console-only entry that avoids the NVIDIA modules and Gaming Mode
+   while retaining the firmware-provided framebuffer where the machine
+   supports it. This is intended for status, diagnostics, and rollback—not
+   accelerated gaming.
+3. Offer Nouveau only for GPU/kernel combinations that pass a hardware profile
+   test. Its kernel component follows the installed kernel, but modern NVIDIA
+   generations may still depend on GSP firmware and compatible Mesa userspace.
+
+Nouveau and the NVIDIA open modules must never race to bind the same GPU. A
+Nouveau recovery entry therefore needs its own validated command line and
+initramfs policy that disables NVIDIA and does not inherit the normal boot's
+Nouveau blacklist. Failure of that entry must still leave recovery from the
+known-good USB image available.
+
 ## Wi-Fi diagnosis on non-Deck hardware
 
 Start by identifying the controller and its current kernel binding. Run:
@@ -128,9 +149,11 @@ silently treated as compatible.
 
 ## References
 
-- [Current `steamos-nvidia-installer` implementation](https://github.com/CorniiDog/steamos-nvidia-installer/blob/main/steamos-nvidia-installer.sh)
 - [NVIDIA open kernel-module build and matching-component requirements](https://github.com/NVIDIA/open-gpu-kernel-modules/blob/main/README.md)
-- [NetworkManager `nmcli` reference](https://networkmanager.dev/docs/api/latest/nmcli.html)
-- [NetworkManager device state and missing-firmware properties](https://www.networkmanager.dev/docs/api/latest/gdbus-org.freedesktop.NetworkManager.Device.html)
-- [Linux kernel firmware-request documentation](https://docs.kernel.org/next/driver-api/firmware/request_firmware.html)
+- [Linux kernel Nouveau documentation](https://docs.kernel.org/gpu/nouveau.html)
+- [Nouveau project status and GSP support](https://nouveau.freedesktop.org/)
+- [Linux kernel firmware API](https://docs.kernel.org/driver-api/firmware/index.html)
+- [NetworkManager device state and missing-firmware reporting](https://networkmanager.dev/docs/api/latest/gdbus-org.freedesktop.NetworkManager.Device.html)
+- [NetworkManager command-line reference](https://networkmanager.dev/docs/api/latest/nmcli.html)
+- [Legacy SteamOS NVIDIA installer's update-repair implementation](https://github.com/CorniiDog/steamos-nvidia-installer/blob/main/steamos-nvidia-installer.sh)
 - [systemd rescue and emergency boot guidance](https://wiki.freedesktop.org/www/Software/systemd/Debugging/)

@@ -1367,6 +1367,187 @@ pub(crate) fn validate_support_initramfs_workspace(
     }
 }
 
+fn validate_support_module_verification(
+    verification: &SupportModuleVerification,
+    expected_kernel: &str,
+) -> Result<(), String> {
+    const EXPECTED: [&str; 5] = [
+        "nvidia.ko",
+        "nvidia-drm.ko",
+        "nvidia-modeset.ko",
+        "nvidia-peermem.ko",
+        "nvidia-uvm.ko",
+    ];
+    if verification.schema_version != 1
+        || verification.status != "verified"
+        || verification.reason != "installed_modules_verified"
+        || verification.modules.len() != EXPECTED.len()
+    {
+        return Err("Offline installer returned incomplete module verification evidence.".into());
+    }
+    let mut names = HashSet::new();
+    let prefix = format!("usr/lib/modules/{expected_kernel}/updates/");
+    for module in &verification.modules {
+        let expected_basename = match module.representation.as_str() {
+            ".ko" => module.module_name.clone(),
+            ".ko.zst" => format!("{}.zst", module.module_name),
+            _ => {
+                return Err(
+                    "Offline installer returned an unsupported module representation.".into(),
+                );
+            }
+        };
+        if !EXPECTED.contains(&module.module_name.as_str())
+            || !names.insert(module.module_name.as_str())
+            || !safe_initramfs_path(&module.target_relative_path)
+            || !module.target_relative_path.starts_with(&prefix)
+            || module
+                .target_relative_path
+                .rsplit('/')
+                .next()
+                .unwrap_or_default()
+                != expected_basename
+            || !exact_sha256(&module.expected_payload_sha256)
+            || module.actual_payload_sha256 != module.expected_payload_sha256
+            || module.expected_mode != "0644"
+            || module.actual_mode != "0644"
+            || module.expected_uid != 0
+            || module.actual_uid != 0
+            || module.expected_gid != 0
+            || module.actual_gid != 0
+            || !module.invalid_fields.is_empty()
+            || !(1..=1024 * 1024 * 1024).contains(&module.compressed_size_bytes)
+            || module.decompression_status
+                != if module.representation == ".ko.zst" {
+                    "verified"
+                } else {
+                    "not-required"
+                }
+        {
+            return Err("Offline installer module verification evidence is inconsistent.".into());
+        }
+    }
+    if names.len() != EXPECTED.len() {
+        return Err("Offline installer module verification omitted a required module.".into());
+    }
+    Ok(())
+}
+
+fn validate_support_userspace_verification(
+    verification: &SupportUserspaceVerification,
+    validation: &SupportInstallValidation,
+    expected_nvidia: &str,
+) -> Result<(), String> {
+    if verification.schema_version != 1
+        || verification.status != "verified"
+        || verification.reason != "installed_userspace_verified"
+        || verification.packages.len() != validation.packages.len()
+        || verification.pacman_database.path != "/usr/lib/holo/pacmandb"
+        || verification.pacman_database.status != "verified"
+        || !verification.pacman_database.consistency_verified
+        || verification.pacman_database.verified_package_count != verification.packages.len() as u64
+        || verification.gsp_firmware.status != "verified"
+        || verification.gsp_firmware.version != expected_nvidia
+        || !(1..=16).contains(&verification.gsp_firmware.target_relative_files.len())
+    {
+        return Err(
+            "Offline installer returned incomplete userspace verification evidence.".into(),
+        );
+    }
+    let mut package_names = HashSet::new();
+    for package in &verification.packages {
+        let expected = validation
+            .packages
+            .iter()
+            .find(|candidate| candidate.name == package.package_name)
+            .ok_or("Offline userspace verification returned an unexpected package.")?;
+        let payload_entries = package
+            .regular_files
+            .checked_add(package.symlinks)
+            .and_then(|value| value.checked_add(package.hardlinks))
+            .ok_or("Offline userspace verification counters overflowed.")?;
+        if !package_names.insert(package.package_name.as_str())
+            || package.version != expected.full_version
+            || package.package_sha256 != expected.sha256
+            || !exact_sha256(&package.package_sha256)
+            || !package.package_query_verified
+            || !package.pacman_integrity_verified
+            || !package.payload_verified
+            || [
+                package.directories,
+                package.regular_files,
+                package.symlinks,
+                package.hardlinks,
+                package.shared_libraries,
+            ]
+            .into_iter()
+            .any(|count| count > 250_000)
+            || package.shared_libraries > payload_entries
+        {
+            return Err(
+                "Offline installer userspace verification evidence is inconsistent.".into(),
+            );
+        }
+    }
+    let firmware_prefix = format!("usr/lib/firmware/nvidia/{expected_nvidia}/");
+    let mut firmware_files = HashSet::new();
+    for relative in &verification.gsp_firmware.target_relative_files {
+        let basename = relative.rsplit('/').next().unwrap_or_default();
+        if !safe_initramfs_path(relative)
+            || !relative.starts_with(&firmware_prefix)
+            || !basename.starts_with("gsp")
+            || !basename.ends_with(".bin")
+            || !firmware_files.insert(relative.as_str())
+        {
+            return Err("Offline installer GSP firmware verification is inconsistent.".into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_support_payload_receipt(
+    receipt: &SupportPayloadReceipt,
+    inputs: &NvidiaInstallInputs,
+) -> Result<(), String> {
+    const RECEIPT_PATH: &str =
+        "usr/lib/open-gpu-kernel-modules-steamos-support/offline-install/receipt.json";
+    const ROLES: [(&str, &str); 6] = [
+        ("buildInfo", "BUILD-INFO.txt"),
+        ("provenance", "PROVENANCE.json"),
+        ("validation", "validation.json"),
+        ("moduleVerification", "module-verification.json"),
+        ("userspaceVerification", "userspace-verification.json"),
+        ("initramfsVerification", "initramfs-verification.json"),
+    ];
+    if receipt.schema_version != 1
+        || receipt.status != "verified"
+        || receipt.reason != "payload_receipt_verified"
+        || receipt.target.steamos_version != inputs.steamos_version
+        || receipt.target.kernel_version != inputs.kernel_version
+        || receipt.target.nvidia_version != inputs.nvidia_version
+        || receipt.target.architecture != "x86_64"
+        || !exact_sha256(&receipt.receipt_id)
+        || receipt.rootfs_relative_path != RECEIPT_PATH
+        || receipt.records.len() != ROLES.len()
+    {
+        return Err("Offline installer returned invalid rootfs payload-receipt evidence.".into());
+    }
+    let mut filenames = HashSet::new();
+    for (record, (role, filename)) in receipt.records.iter().zip(ROLES) {
+        if record.role != role
+            || record.filename != filename
+            || !filenames.insert(record.filename.as_str())
+            || record.filename.contains('/')
+            || record.filename.contains('\\')
+            || !(1..=16 * 1024 * 1024).contains(&record.size_bytes)
+            || !exact_sha256(&record.sha256)
+        {
+            return Err("Offline installer payload-receipt records are inconsistent.".into());
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_nvidia_install_result(
     document: SupportInstallResult,
     inputs: &NvidiaInstallInputs,
@@ -1400,6 +1581,9 @@ pub(crate) fn validate_nvidia_install_result(
         .clone()
         .ok_or("Offline installer result omitted its initramfs workspace verification.")?;
     let initramfs_verification = document.initramfs_verification.clone();
+    let module_verification = document.module_verification.clone();
+    let userspace_verification = document.userspace_verification.clone();
+    let payload_receipt = document.payload_receipt.clone();
     if expected_status == "success" {
         let initramfs = document
             .initramfs_verification
@@ -1415,6 +1599,34 @@ pub(crate) fn validate_nvidia_install_result(
             );
         }
     };
+    if expected_status == "success" {
+        validate_support_module_verification(
+            module_verification
+                .as_ref()
+                .ok_or("Offline installer success omitted module verification evidence.")?,
+            &inputs.kernel_version,
+        )?;
+        validate_support_userspace_verification(
+            userspace_verification
+                .as_ref()
+                .ok_or("Offline installer success omitted userspace verification evidence.")?,
+            &validation,
+            &inputs.nvidia_version,
+        )?;
+        validate_support_payload_receipt(
+            payload_receipt
+                .as_ref()
+                .ok_or("Offline installer success omitted its rootfs payload receipt.")?,
+            inputs,
+        )?;
+    } else if module_verification.is_some()
+        || userspace_verification.is_some()
+        || payload_receipt.is_some()
+    {
+        return Err(
+            "Validation-only result unexpectedly contained mutation success proofs.".into(),
+        );
+    }
     validate_support_initramfs_workspace(
         &initramfs_workspace,
         &validation.storage,
@@ -1658,6 +1870,9 @@ pub(crate) fn validate_nvidia_install_result(
         keyring_sha256: validation.keyring.sha256,
         initramfs_workspace,
         initramfs_verification,
+        module_verification,
+        userspace_verification,
+        payload_receipt,
         packages: validation.packages,
         storage: validation.storage,
         compression: validation.compression,
@@ -1992,7 +2207,13 @@ test -d /var/tmp
 test "$(findmnt -rn -T /var/tmp -o FSTYPE)" != tmpfs
 test -f "$WORK/support/{keyring_path}"
 test -f "$WORK/support/{lock_path}"
-sudo env TMPDIR=/var/tmp bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --compression-profile {compression_profile} --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --progress-attempt {validation_attempt} --result-json "$WORK/install-result.json"
+set +e
+sudo env TMPDIR=/var/tmp bash "$WORK/support/bootstrap/install_to_root.sh" --validate-only --compression-profile {compression_profile} --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --progress-attempt {validation_attempt} --result-json "$WORK/install-result.json" 2>&1 | tee "$WORK/install-progress.log"
+INSTALL_PIPE_STATUS=("${{PIPESTATUS[@]}}")
+set -e
+test "${{INSTALL_PIPE_STATUS[1]}}" -eq 0
+python3 "$WORK/support/lib/validate_install_contract.py" --result "$WORK/install-result.json" --progress "$WORK/install-progress.log"
+test "${{INSTALL_PIPE_STATUS[0]}}" -eq 0
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
 sudo umount "$ROOT/var"
@@ -2245,7 +2466,13 @@ sudo mount -o rw "${{BOOT_PARTS[0]}}" "$ROOT/efi"
 EFI_MOUNTED=1
 test -d /var/tmp
 test "$(findmnt -rn -T /var/tmp -o FSTYPE)" != tmpfs
-sudo env TMPDIR=/var/tmp bash "$WORK/support/bootstrap/install_to_root.sh" --compression-profile {compression_profile} --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --progress-attempt {mutation_attempt} --result-json "$WORK/install-mutation-result.json"
+set +e
+sudo env TMPDIR=/var/tmp bash "$WORK/support/bootstrap/install_to_root.sh" --compression-profile {compression_profile} --root "$ROOT" --archive /tmp/nvidia-modules.tar.gz --checksum /tmp/nvidia-modules.tar.gz.sha256 --provenance /tmp/nvidia-modules.provenance.json --kernel {kernel}{userspace_arguments} --package-keyring "$WORK/support/{keyring_path}" --userspace-lock "$WORK/support/{lock_path}" --progress-attempt {mutation_attempt} --result-json "$WORK/install-mutation-result.json" 2>&1 | tee "$WORK/install-mutation-progress.log"
+INSTALL_PIPE_STATUS=("${{PIPESTATUS[@]}}")
+set -e
+test "${{INSTALL_PIPE_STATUS[1]}}" -eq 0
+python3 "$WORK/support/lib/validate_install_contract.py" --result "$WORK/install-mutation-result.json" --progress "$WORK/install-mutation-progress.log"
+test "${{INSTALL_PIPE_STATUS[0]}}" -eq 0
 test "$(root_compression_option)" = "$ORIGINAL_ROOT_COMPRESSION"
 INITRAMFS_OK=0
 while IFS= read -r INITRAMFS; do

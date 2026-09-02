@@ -82,6 +82,124 @@ mod tests {
         serde_json::from_value(value).expect("typed initramfs verification fixture")
     }
 
+    fn successful_install_proofs(
+        kernel: &str,
+        nvidia: &str,
+        packages: &[SupportInstallPackage],
+    ) -> (
+        SupportModuleVerification,
+        SupportUserspaceVerification,
+        SupportPayloadReceipt,
+    ) {
+        let module_names = [
+            "nvidia.ko",
+            "nvidia-drm.ko",
+            "nvidia-modeset.ko",
+            "nvidia-peermem.ko",
+            "nvidia-uvm.ko",
+        ];
+        let modules = module_names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| SupportInstalledModule {
+                module_name: (*name).into(),
+                target_relative_path: format!(
+                    "usr/lib/modules/{kernel}/updates/open-gpu-kernel-modules-steamos/{name}.zst"
+                ),
+                representation: ".ko.zst".into(),
+                expected_payload_sha256: ((b'a' + index as u8) as char)
+                    .to_string()
+                    .repeat(64),
+                actual_payload_sha256: ((b'a' + index as u8) as char)
+                    .to_string()
+                    .repeat(64),
+                expected_mode: "0644".into(),
+                actual_mode: "0644".into(),
+                expected_uid: 0,
+                actual_uid: 0,
+                expected_gid: 0,
+                actual_gid: 0,
+                compressed_size_bytes: 1,
+                decompression_status: "verified".into(),
+                invalid_fields: Vec::new(),
+            })
+            .collect();
+        let verified_packages = packages
+            .iter()
+            .map(|package| SupportVerifiedUserspacePackage {
+                package_name: package.name.clone(),
+                version: package.full_version.clone(),
+                package_sha256: package.sha256.clone(),
+                package_query_verified: true,
+                pacman_integrity_verified: true,
+                payload_verified: true,
+                directories: 1,
+                regular_files: 1,
+                symlinks: 0,
+                hardlinks: 0,
+                shared_libraries: 1,
+            })
+            .collect::<Vec<_>>();
+        let receipt_roles = [
+            ("buildInfo", "BUILD-INFO.txt"),
+            ("provenance", "PROVENANCE.json"),
+            ("validation", "validation.json"),
+            ("moduleVerification", "module-verification.json"),
+            ("userspaceVerification", "userspace-verification.json"),
+            ("initramfsVerification", "initramfs-verification.json"),
+        ];
+        (
+            SupportModuleVerification {
+                schema_version: 1,
+                status: "verified".into(),
+                reason: "installed_modules_verified".into(),
+                modules,
+            },
+            SupportUserspaceVerification {
+                schema_version: 1,
+                status: "verified".into(),
+                reason: "installed_userspace_verified".into(),
+                pacman_database: SupportVerifiedPacmanDatabase {
+                    path: "/usr/lib/holo/pacmandb".into(),
+                    status: "verified".into(),
+                    verified_package_count: verified_packages.len() as u64,
+                    consistency_verified: true,
+                },
+                packages: verified_packages,
+                gsp_firmware: SupportVerifiedGspFirmware {
+                    status: "verified".into(),
+                    version: nvidia.into(),
+                    target_relative_files: vec![format!(
+                        "usr/lib/firmware/nvidia/{nvidia}/gsp.bin"
+                    )],
+                },
+            },
+            SupportPayloadReceipt {
+                schema_version: 1,
+                status: "verified".into(),
+                reason: "payload_receipt_verified".into(),
+                target: SupportPayloadReceiptTarget {
+                    steamos_version: "3.8.14".into(),
+                    kernel_version: kernel.into(),
+                    nvidia_version: nvidia.into(),
+                    architecture: "x86_64".into(),
+                },
+                receipt_id: "f".repeat(64),
+                rootfs_relative_path: "usr/lib/open-gpu-kernel-modules-steamos-support/offline-install/receipt.json".into(),
+                records: receipt_roles
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (role, filename))| SupportPayloadReceiptRecord {
+                        role: (*role).into(),
+                        filename: (*filename).into(),
+                        size_bytes: 1,
+                        sha256: ((b'1' + index as u8) as char).to_string().repeat(64),
+                    })
+                    .collect(),
+            },
+        )
+    }
+
     #[test]
     fn validates_bounded_initramfs_verification_contract() {
         let kernel = "6.16.12-valve-fixture";
@@ -2176,8 +2294,8 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 419_988);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 26);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 460_811);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 28);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
@@ -2196,6 +2314,12 @@ esac
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/snapshot_install_input.py" && !file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/validate_install_contract.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/payload_receipt.py" && !file.executable));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/run_pacman_transaction.py" && file.executable));
@@ -2276,7 +2400,7 @@ esac
 
     #[test]
     fn pinned_publisher_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_publisher_contract().unwrap(), 19_984);
+        assert_eq!(validate_pinned_publisher_contract().unwrap(), 19_918);
         assert_eq!(PINNED_PUBLISHER_FILES.len(), 2);
         assert!(PINNED_PUBLISHER_FILES
             .iter()
@@ -2398,6 +2522,14 @@ esac
         assert!(
             source.contains(r#"(steamenv_boot[[:space:]]+)?(linux|linuxefi|linux16)[[:space:]]+"#)
         );
+        assert_eq!(
+            source
+                .matches("lib/validate_install_contract.py\" --result")
+                .count(),
+            2
+        );
+        assert!(source.contains("install-progress.log"));
+        assert!(source.contains("install-mutation-progress.log"));
     }
 
     #[test]
@@ -2629,6 +2761,9 @@ esac
                 mode: Some("1777".into()),
             }),
             initramfs_verification: None,
+            module_verification: None,
+            userspace_verification: None,
+            payload_receipt: None,
             validation: Some(SupportInstallValidationDocument::Verified(Box::new(
                 SupportInstallValidation {
                     input_source: SupportInstallInputSource::default(),
@@ -2953,6 +3088,18 @@ esac
                 .replace("6.16.12-valve-fixture", &inputs.kernel_version));
         }
         successful.initramfs_verification = Some(parse_initramfs_fixture(initramfs));
+        let successful_packages = match successful.validation.as_ref().unwrap() {
+            SupportInstallValidationDocument::Verified(validation) => validation.packages.clone(),
+            SupportInstallValidationDocument::Failed(_) => unreachable!(),
+        };
+        let (modules, userspace, receipt) = successful_install_proofs(
+            &inputs.kernel_version,
+            &inputs.nvidia_version,
+            &successful_packages,
+        );
+        successful.module_verification = Some(modules);
+        successful.userspace_verification = Some(userspace);
+        successful.payload_receipt = Some(receipt);
         let installed = validate_nvidia_install_result(
             successful.clone(),
             &inputs,
@@ -2976,6 +3123,65 @@ esac
             installed.initramfs_workspace.inode_capacity_mode.as_deref(),
             Some("dynamic-probed")
         );
+        assert_eq!(
+            installed
+                .payload_receipt
+                .as_ref()
+                .expect("retained payload receipt")
+                .receipt_id,
+            "f".repeat(64)
+        );
+
+        let mut missing_modules = successful.clone();
+        missing_modules.module_verification = None;
+        assert!(validate_nvidia_install_result(
+            missing_modules,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )
+        .is_err());
+        let mut changed_module = successful.clone();
+        changed_module
+            .module_verification
+            .as_mut()
+            .unwrap()
+            .modules[0]
+            .actual_payload_sha256 = "0".repeat(64);
+        assert!(validate_nvidia_install_result(
+            changed_module,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )
+        .is_err());
+        let mut unchecked_userspace = successful.clone();
+        unchecked_userspace
+            .userspace_verification
+            .as_mut()
+            .unwrap()
+            .packages[0]
+            .pacman_integrity_verified = false;
+        assert!(validate_nvidia_install_result(
+            unchecked_userspace,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )
+        .is_err());
+        let mut changed_receipt = successful.clone();
+        changed_receipt.payload_receipt.as_mut().unwrap().receipt_id = "F".repeat(64);
+        assert!(validate_nvidia_install_result(
+            changed_receipt,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )
+        .is_err());
 
         let mut contradictory_workspace = successful.clone();
         contradictory_workspace
@@ -3123,6 +3329,9 @@ esac
                 mode: Some("1777".into()),
             }),
             initramfs_verification: None,
+            module_verification: None,
+            userspace_verification: None,
+            payload_receipt: None,
             validation: Some(SupportInstallValidationDocument::Failed(Box::new(
                 SupportInstallFailureValidation {
                     storage: Some(insufficient_storage),
@@ -3247,6 +3456,9 @@ esac
                 mode: Some("1777".into()),
             }),
             initramfs_verification: None,
+            module_verification: None,
+            userspace_verification: None,
+            payload_receipt: None,
             validation: Some(SupportInstallValidationDocument::Verified(Box::new(
                 SupportInstallValidation {
                     input_source: SupportInstallInputSource::default(),
@@ -3823,6 +4035,9 @@ esac
                 mode: Some("1777".into()),
             },
             initramfs_verification: None,
+            module_verification: None,
+            userspace_verification: None,
+            payload_receipt: None,
             packages: Vec::new(),
             storage: SupportInstallStorage {
                 root_available_bytes: 256 * 1024 * 1024,

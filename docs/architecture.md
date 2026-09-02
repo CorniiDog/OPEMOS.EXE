@@ -104,10 +104,18 @@ Normal NVIDIA installation accepts only:
 - an exact reviewed userspace lock and minimal keyring;
 - package and detached-signature bytes matching that lock; and
 - a structured installer result independently revalidated by Rust.
+- a rootfs-resident payload receipt binding the validated module, userspace,
+  firmware, and initramfs evidence so later Valve-installer propagation can be
+  checked by exact `receiptId`.
 
 Logs are diagnostic only. A missing lock, changed signer, unavailable historical
 input, ambiguous kernel/root/EFI/var partition, or mismatched result fails
 closed and becomes a maintainer compatibility issue.
+
+The support-owned bounded result/progress validator runs inside the x86_64
+appliance after both validation-only and mutation attempts. Rust separately
+requires and cross-checks the mandatory success proofs; neither an installer
+exit code nor a receipt by itself can promote an image.
 
 ## macOS development bootstrap
 
