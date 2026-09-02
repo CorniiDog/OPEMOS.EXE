@@ -16,6 +16,7 @@ pub(crate) const INSTALL_MEDIA_DESKTOP: &[u8] =
     include_bytes!("../../builder/welcome/Open-OPEMOS.desktop");
 pub(crate) const INSTALL_MEDIA_ICON: &[u8] =
     include_bytes!("../../docs/assets/images/opemos-app-icon.svg");
+pub(crate) const INSTALL_MEDIA_GTK_CSS: &[u8] = include_bytes!("../../builder/welcome/gtk.css");
 
 struct InstallMediaWelcomeDigests {
     welcome: String,
@@ -23,6 +24,7 @@ struct InstallMediaWelcomeDigests {
     patcher: String,
     desktop: String,
     icon: String,
+    gtk_css: String,
 }
 
 fn sha256_bytes(bytes: &[u8]) -> String {
@@ -55,6 +57,7 @@ fn stage_install_media_welcome_assets(
         ("patch_repair_device.py", INSTALL_MEDIA_PATCHER),
         ("Open-OPEMOS.desktop", INSTALL_MEDIA_DESKTOP),
         ("opemos.svg", INSTALL_MEDIA_ICON),
+        ("gtk.css", INSTALL_MEDIA_GTK_CSS),
     ];
     for (name, bytes) in assets {
         let path = connection.runtime_dir.join(name);
@@ -69,6 +72,7 @@ fn stage_install_media_welcome_assets(
         patcher: sha256_bytes(INSTALL_MEDIA_PATCHER),
         desktop: sha256_bytes(INSTALL_MEDIA_DESKTOP),
         icon: sha256_bytes(INSTALL_MEDIA_ICON),
+        gtk_css: sha256_bytes(INSTALL_MEDIA_GTK_CSS),
     })
 }
 
@@ -2592,6 +2596,7 @@ test "$(sha256sum /tmp/opemos-install-helper | awk '{{print $1}}')" = "{welcome_
 test "$(sha256sum /tmp/patch_repair_device.py | awk '{{print $1}}')" = "{welcome_patcher_sha256}"
 test "$(sha256sum /tmp/Open-OPEMOS.desktop | awk '{{print $1}}')" = "{welcome_desktop_sha256}"
 test "$(sha256sum /tmp/opemos.svg | awk '{{print $1}}')" = "{welcome_icon_sha256}"
+test "$(sha256sum /tmp/gtk.css | awk '{{print $1}}')" = "{welcome_gtk_css_sha256}"
 DECK_ID=$(awk -F: '$1 == "deck" {{print $3 ":" $4}}' "$ROOT/etc/passwd")
 test -n "$DECK_ID"
 test "$(printf '%s\n' "$DECK_ID" | wc -l | tr -d ' ')" = 1
@@ -2620,6 +2625,21 @@ if test -e "$ROOT/usr/lib/opemos-install-media"; then
   test ! -L "$ROOT/usr/lib/opemos-install-media"
 fi
 sudo install -d -m 0755 -o root -g root "$ROOT/usr/lib/opemos-install-media"
+if test -e "$ROOT/usr/lib/opemos-install-media/support"; then
+  test -d "$ROOT/usr/lib/opemos-install-media/support"
+  test ! -L "$ROOT/usr/lib/opemos-install-media/support"
+  ! sudo find "$ROOT/usr/lib/opemos-install-media/support" -type l -print -quit | grep -q .
+else
+  sudo install -d -m 0755 -o root -g root "$ROOT/usr/lib/opemos-install-media/support"
+fi
+for DIRECTORY in "$ROOT/usr/share" "$ROOT/usr/share/opemos-install-media" "$ROOT/usr/share/opemos-install-media/ui" "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0"; do
+  if test -e "$DIRECTORY"; then
+    test -d "$DIRECTORY"
+    test ! -L "$DIRECTORY"
+  else
+    sudo install -d -m 0755 -o root -g root "$DIRECTORY"
+  fi
+done
 sudo install -m 0755 -o root -g root /tmp/opemos-install-helper "$ROOT/usr/lib/opemos-install-media/opemos-install-helper"
 sudo python3 /tmp/patch_repair_device.py "$ROOT/home/deck/tools/repair_device.sh" "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 sudo chown root:root "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
@@ -2629,6 +2649,7 @@ printf '%s\n' '{support_commit}' | sudo tee "$ROOT/usr/lib/opemos-install-media/
 printf '%s\n' '{nvidia_version}' | sudo tee "$ROOT/usr/lib/opemos-install-media/nvidia-version" >/dev/null
 sudo chown root:root "$ROOT/usr/lib/opemos-install-media/support-revision" "$ROOT/usr/lib/opemos-install-media/nvidia-version"
 sudo chmod 0644 "$ROOT/usr/lib/opemos-install-media/support-revision" "$ROOT/usr/lib/opemos-install-media/nvidia-version"
+sudo install -m 0644 -o root -g root /tmp/gtk.css "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css"
 sudo install -m 0755 /tmp/opemos-rollback-last-update "$ROOT/home/deck/tools/opemos-rollback-last-update"
 sudo install -m 0755 /tmp/OPEMOS-Rollback.desktop "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
 sudo install -m 0755 /tmp/open-opemos-welcome "$ROOT/home/deck/tools/open-opemos-welcome"
@@ -2659,6 +2680,8 @@ test "$(cat "$ROOT/usr/lib/opemos-install-media/support-revision")" = "{support_
 test "$(cat "$ROOT/usr/lib/opemos-install-media/nvidia-version")" = "{nvidia_version}"
 test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/support-revision")" = root:root:644
 test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/nvidia-version")" = root:root:644
+test "$(sha256sum "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css" | awk '{{print $1}}')" = "{welcome_gtk_css_sha256}"
+test "$(stat -c '%U:%G:%a' "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css")" = root:root:644
 test -x "$ROOT/usr/lib/opemos-install-media/support/bootstrap/install_recovery_guardian_to_root.sh"
 test -x "$ROOT/usr/lib/opemos-install-media/support/bootstrap/recoveryctl.sh"
 test -x "$ROOT/usr/lib/opemos-install-media/support/lib/validate_recovery_install_path.py"
@@ -2699,6 +2722,7 @@ trap - EXIT INT TERM"#,
         welcome_patcher_sha256 = welcome_digests.patcher,
         welcome_desktop_sha256 = welcome_digests.desktop,
         welcome_icon_sha256 = welcome_digests.icon,
+        welcome_gtk_css_sha256 = welcome_digests.gtk_css,
         install_media_support_commands = install_media_support_commands,
         support_commit = NVIDIA_SUPPORT_COMMIT,
         nvidia_version = inputs.nvidia_version,

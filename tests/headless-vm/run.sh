@@ -10,6 +10,7 @@ RESULT_ROOT="$STATE_ROOT/results"
 RESULT_PATH="$RESULT_ROOT/latest.json"
 TIMEOUT_SECONDS="${STEAMOS_HEADLESS_VM_TIMEOUT_SECONDS:-180}"
 SYNTHETIC_BYTES=$((64 * 1024 * 1024))
+WELCOME_DISK_BYTES=$((16 * 1024 * 1024 * 1024))
 
 state_identity()
 {
@@ -137,11 +138,13 @@ SEED_ISO="$RUNTIME/seed.iso"
 OVERLAY="$RUNTIME/system-overlay.qcow2"
 SYNTHETIC_DISK="$RUNTIME/synthetic-test-disk.raw"
 UNEXPECTED_DISK="$RUNTIME/unexpected-test-disk.raw"
+WELCOME_DISK="$RUNTIME/welcome-inventory-disk.raw"
 SERIAL_LOG="$RUNTIME/serial.log"
 UEFI_VARS="$RUNTIME/uefi-vars.fd"
 mkdir -p "$SEED_DIR"
 cp "$SCRIPT_DIR/user-data" "$SEED_DIR/user-data"
 cp "$SCRIPT_DIR/meta-data" "$SEED_DIR/meta-data"
+cp "$REPOSITORY_ROOT/builder/welcome/opemos-install-helper" "$SEED_DIR/opemos-install-helper"
 lifecycle_checkpoint seed
 require_state_identity "$WORK_ROOT" "$WORK_IDENTITY"
 require_state_identity "$RESULT_ROOT" "$RESULT_IDENTITY"
@@ -184,6 +187,7 @@ cp "$UEFI_VARS_TEMPLATE" "$UEFI_VARS"
 qemu-img create -q -f qcow2 -F qcow2 -b "$BASE_IMAGE" "$OVERLAY"
 qemu-img create -q -f raw "$SYNTHETIC_DISK" "$SYNTHETIC_BYTES"
 qemu-img create -q -f raw "$UNEXPECTED_DISK" "$SYNTHETIC_BYTES"
+qemu-img create -q -f raw "$WELCOME_DISK" "$WELCOME_DISK_BYTES"
 
 qemu-system-x86_64 \
     -machine q35,accel=tcg \
@@ -202,6 +206,8 @@ qemu-system-x86_64 \
     -device "virtio-blk-pci,drive=synthetic,serial=STEAMOS_SYNTH_V1" \
     -drive "if=none,id=unexpected,format=raw,readonly=off,file=$UNEXPECTED_DISK" \
     -device "virtio-blk-pci,drive=unexpected,serial=STEAMOS_WRONG_V1" \
+    -drive "if=none,id=welcome,format=raw,readonly=off,file=$WELCOME_DISK" \
+    -device "virtio-blk-pci,drive=welcome,serial=OPEMOS_WELCOME_V1" \
     -drive "if=virtio,media=cdrom,format=raw,readonly=on,file=$SEED_ISO" &
 QEMU_PID="$!"
 lifecycle_checkpoint qemu
@@ -228,7 +234,18 @@ fi
 GUEST_RESULT="$RUNTIME/guest-result.json"
 printf '%s\n' "${RESULT_LINE#STEAMOS_HEADLESS_RESULT }" > "$GUEST_RESULT"
 grep -ao 'STEAMOS_HEADLESS_PROGRESS {[^}]*}' "$SERIAL_LOG" | sed 's/^STEAMOS_HEADLESS_PROGRESS //' > "$RUNTIME/progress.jsonl"
-node "$SCRIPT_DIR/validate-result.mjs" "$GUEST_RESULT" "$RUNTIME/progress.jsonl"
+if ! node "$SCRIPT_DIR/validate-result.mjs" "$GUEST_RESULT" "$RUNTIME/progress.jsonl"; then
+    GUEST_REASON="$(node -e '
+const fs = require("fs");
+try {
+  const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const reason = typeof value.reason === "string" ? value.reason : "invalid guest result";
+  process.stdout.write(reason.replace(/[^ -~]/g, " ").slice(0, 512));
+} catch { process.stdout.write("malformed guest result"); }
+' "$GUEST_RESULT")"
+    write_result failed "guest result validation failed: $GUEST_REASON"
+    exit 1
+fi
 lifecycle_checkpoint result
 require_state_identity "$WORK_ROOT" "$WORK_IDENTITY"
 require_state_identity "$RESULT_ROOT" "$RESULT_IDENTITY"

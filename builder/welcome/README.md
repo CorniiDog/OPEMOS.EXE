@@ -7,12 +7,21 @@ installed-system Desktop application owned by the support repository.
 The current frontend uses Zenity because Valve's inspected SteamOS 3.8.14
 recovery image already requires and ships it. `open-opemos-welcome` is an
 unprivileged presentation layer. It may be replaced by the native frosted-glass
-frontend without changing the helper protocol.
+frontend without changing the helper protocol. A bundled GTK stylesheet gives
+this guaranteed-runtime fallback the OPEMOS blue/green glass language with an
+opaque fallback when compositor transparency is unavailable.
+
+Only one welcome instance can run in a recovery session. Its diagnostics view
+shows the pinned NVIDIA/support identity and currently eligible disks. Complete
+installation output is retained under the recovery user's private state
+directory and remains viewable after closing and reopening the window.
 
 `opemos-install-helper` is installed root-owned at
 `/usr/lib/opemos-install-media/`. It exposes only:
 
 - `inventory`
+- `inventory-report`
+- `media-info`
 - `identity DEVICE`
 - `install all DEVICE IDENTITY --confirm "ERASE NAME"`
 - `install system DEVICE IDENTITY --confirm "REINSTALL NAME"`
@@ -33,3 +42,8 @@ The fresh-install path is destructive and deliberately has no mid-write cancel
 button. Interruption cannot be rolled back once Valve has rewritten the target
 partition table. The UI keeps the original media usable, preserves a diagnostic
 log, and clearly treats a failed target as incomplete.
+
+After Valve's operation returns, the helper installs the immutable support
+snapshot into both target root slots and independently verifies the persistent
+recovery scripts, services, symlinks, support revision, and NVIDIA version in
+each slot before reporting success.

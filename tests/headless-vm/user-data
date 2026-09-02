@@ -9,7 +9,7 @@ write_files:
       result='failed'
       reason='unexpected guest failure'
       finish() {
-        printf 'STEAMOS_HEADLESS_RESULT {"schemaVersion":1,"status":"%s","reason":"%s","checks":["usb-identity","usb-capacity","usb-helper-protocol","usb-progress","usb-cancellation-cleanup","usb-readback","recovery-ab-rollback"]}\n' "$result" "$reason" > /dev/ttyS0
+        printf 'STEAMOS_HEADLESS_RESULT {"schemaVersion":1,"status":"%s","reason":"%s","checks":["usb-identity","usb-capacity","usb-helper-protocol","usb-progress","usb-cancellation-cleanup","usb-readback","recovery-ab-rollback","welcome-disk-inventory"]}\n' "$result" "$reason" > /dev/ttyS0
         sync
         poweroff -f
       }
@@ -18,6 +18,8 @@ write_files:
       unexpected_disk='/dev/disk/by-id/virtio-STEAMOS_WRONG_V1'
       [[ -b "$disk" ]] || { reason='synthetic virtio disk missing'; exit 1; }
       [[ -b "$unexpected_disk" ]] || { reason='unexpected-identity fixture disk missing'; exit 1; }
+      welcome_disk='/dev/disk/by-id/virtio-OPEMOS_WELCOME_V1'
+      [[ -b "$welcome_disk" ]] || { reason='welcome inventory fixture disk missing'; exit 1; }
       root_source="$(findmnt -n -o SOURCE /)"
       root_device="$(readlink -f "$root_source" 2>/dev/null || printf '%s' "$root_source")"
       test_device="$(readlink -f "$disk")"
@@ -104,8 +106,22 @@ write_files:
       dd if=/tmp/rootfs-b.backup of="$partition_b" bs=1M count=1 conv=fsync status=none
       restored="$(dd if="$partition_b" bs=1M count=1 status=none | sha256sum | awk '{print $1}')"
       [[ "$restored" = "$before" ]] || { reason='synthetic recovery B rollback mismatch'; exit 1; }
+      mkdir /mnt/opemos-seed
+      mount -o ro /dev/disk/by-label/cidata /mnt/opemos-seed
+      printf '#!/usr/bin/env bash\nexit 1\n' > /usr/local/sbin/steamos-chroot
+      chmod 0755 /usr/local/sbin/steamos-chroot
+      inventory="$(/mnt/opemos-seed/opemos-install-helper inventory)"
+      inventory_device="$(printf '%s\n' "$inventory" | awk -F '\t' 'NF == 7 { print $1 }')"
+      inventory_bytes="$(printf '%s\n' "$inventory" | awk -F '\t' 'NF == 7 { print $2 }')"
+      inventory_token="$(printf '%s\n' "$inventory" | awk -F '\t' 'NF == 7 { print $3 }')"
+      [[ "$(printf '%s\n' "$inventory_device" | sed '/^$/d' | wc -l)" = 1 ]] || { reason="welcome helper returned an ambiguous disk inventory: $(/mnt/opemos-seed/opemos-install-helper inventory-report | tr '\n' ';' | head -c 300)"; exit 1; }
+      [[ "$(readlink -f "$inventory_device")" = "$(readlink -f "$welcome_disk")" ]] || { reason='welcome helper selected the wrong physical disk'; exit 1; }
+      [[ "$inventory_bytes" = 17179869184 ]] || { reason='welcome helper reported the wrong disk capacity'; exit 1; }
+      [[ "$inventory_token" =~ ^[0-9a-f]{64}$ ]] || { reason='welcome helper returned a malformed identity token'; exit 1; }
+      [[ "$(/mnt/opemos-seed/opemos-install-helper identity "$inventory_device")" = "$inventory_token" ]] || { reason='welcome helper identity was not stable'; exit 1; }
+      umount /mnt/opemos-seed
       result='passed'
-      reason='synthetic USB identity, capacity, helper protocol, progress, cancellation cleanup, readback, and recovery A-B rollback succeeded'
+      reason='synthetic USB identity, capacity, helper protocol, progress, cancellation cleanup, readback, recovery A-B rollback, and welcome inventory succeeded'
 runcmd:
   - [ /usr/local/sbin/steamos-headless-harness ]
 final_message: STEAMOS_HEADLESS_CLOUD_INIT_COMPLETE

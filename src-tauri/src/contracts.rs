@@ -1669,6 +1669,7 @@ pub(crate) fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json:
             "/usr/lib/opemos-install-media/support",
             "/usr/lib/opemos-install-media/support-revision",
             "/usr/lib/opemos-install-media/nvidia-version",
+            "/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css",
             "/boot"
         ])
     } else {

@@ -1143,6 +1143,7 @@ pub(crate) fn verify_nvidia_from_validation_overlay(
     let welcome_helper_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_HELPER));
     let welcome_desktop_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_DESKTOP));
     let welcome_icon_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_ICON));
+    let welcome_gtk_css_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_GTK_CSS));
     let mut install_media_support_assertions = String::new();
     for file in &PINNED_INSTALLER_FILES {
         let mode = if file.executable { "755" } else { "644" };
@@ -1311,6 +1312,14 @@ test "$(cat "$ROOT/usr/lib/opemos-install-media/support-revision")" = "{}"
 test "$(cat "$ROOT/usr/lib/opemos-install-media/nvidia-version")" = "{}"
 test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/support-revision")" = 644:0:0
 test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/nvidia-version")" = 644:0:0
+for DIRECTORY in "$ROOT/usr/share" "$ROOT/usr/share/opemos-install-media" "$ROOT/usr/share/opemos-install-media/ui" "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0"; do
+  test -d "$DIRECTORY"
+  test ! -L "$DIRECTORY"
+done
+test -f "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css"
+test ! -L "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css"
+test "$(sha256sum "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css" | awk '{{print $1}}')" = "{}"
+test "$(stat -c '%a:%u:%g' "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css")" = 644:0:0
 {}
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
@@ -1343,6 +1352,7 @@ trap - EXIT INT TERM"#,
         welcome_helper_sha256,
         NVIDIA_SUPPORT_COMMIT,
         installation.nvidia_version,
+        welcome_gtk_css_sha256,
         install_media_support_assertions,
     );
     run_guest_command(session, &command).map(|_| ())

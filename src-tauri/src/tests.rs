@@ -2570,6 +2570,8 @@ esac
             2
         );
         assert!(source.contains("install-progress.log"));
+        assert!(source.contains("opemos-install-media/support\" -type l"));
+        assert!(source.contains("opemos-install-media/ui/gtk-3.0"));
         assert!(source.contains("install-mutation-progress.log"));
         assert_eq!(source.matches("mapfile -t HOME_PARTS").count(), 2);
         assert_eq!(
@@ -2619,6 +2621,7 @@ esac
         let helper = std::str::from_utf8(INSTALL_MEDIA_HELPER).unwrap();
         let patcher = std::str::from_utf8(INSTALL_MEDIA_PATCHER).unwrap();
         let desktop = std::str::from_utf8(INSTALL_MEDIA_DESKTOP).unwrap();
+        let gtk_css = std::str::from_utf8(INSTALL_MEDIA_GTK_CSS).unwrap();
 
         assert!(desktop.contains("Name=Open OPEMOS"));
         assert!(desktop.contains("Exec=/home/deck/tools/open-opemos-welcome"));
@@ -2628,10 +2631,16 @@ esac
         assert!(welcome.contains("Reinstall OPEMOS"));
         assert!(welcome.contains("Do not power off the computer or disconnect either drive"));
         assert!(welcome.contains("sudo \"$HELPER\" install"));
+        assert!(welcome.contains("Diagnostics — review media identity"));
+        assert!(welcome.contains("last-install-log"));
+        assert!(welcome.contains("flock -n 8"));
         assert!(!welcome.contains("eval "));
+        assert!(gtk_css.contains("@define-color opemos_blue"));
+        assert!(gtk_css.contains("linear-gradient(to right, @opemos_blue, @opemos_green)"));
 
         assert!(helper.contains("MINIMUM_INSTALL_BYTES"));
         assert!(helper.contains("is_recovery_disk \"$device\""));
+        assert!(helper.contains("lsblk -snrpo PATH,TYPE \"$resolved\""));
         assert!(helper.contains("mounted_child \"$device\""));
         assert!(helper.contains("disk_identity \"$device\""));
         assert!(helper.contains("typed confirmation did not match; nothing changed"));
@@ -2639,6 +2648,10 @@ esac
         assert!(helper.contains("OPEMOS_FAIL_FAST=1"));
         assert!(helper.contains("install_recovery_guardian_to_root.sh"));
         assert!(helper.contains("for slot in A B"));
+        assert!(helper.contains("media-info)"));
+        assert!(helper.contains("verify_guardian_slot"));
+        assert!(helper.contains("installed recovery guardian verification failed"));
+        assert!(helper.contains("ui_stage \"Installing the recovery guardian into rootfs-$slot"));
         assert!(!helper.contains("eval "));
 
         assert!(patcher.contains("unsupported Valve installer structure for guarded anchor"));

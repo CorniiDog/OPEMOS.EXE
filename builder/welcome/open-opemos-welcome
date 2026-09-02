@@ -4,7 +4,11 @@ set -euo pipefail
 
 readonly HELPER=/usr/lib/opemos-install-media/opemos-install-helper
 readonly ROLLBACK=/home/deck/tools/opemos-rollback-last-update
+readonly UI_CONFIG=/usr/share/opemos-install-media/ui
+readonly STATE_DIRECTORY=/home/deck/.local/state/open-opemos
+readonly LAST_LOG_FILE="$STATE_DIRECTORY/last-install-log"
 export GTK_THEME="${GTK_THEME:-Breeze-Dark}"
+[[ -d "$UI_CONFIG" ]] && export XDG_CONFIG_HOME="$UI_CONFIG"
 
 message() {
   zenity --info --title="Open OPEMOS" --width=520 --no-wrap --text="$1" || true
@@ -19,23 +23,83 @@ human_size() {
 }
 
 choose_action() {
+  local media summary
+  media=$("$HELPER" media-info 2>/dev/null || true)
+  summary=$(printf '%s\n' "$media" | awk -F= '
+    $1 == "nvidiaVersion" { nvidia=$2 }
+    $1 == "supportRevision" { revision=substr($2, 1, 12) }
+    END { if (nvidia != "" && revision != "") printf "NVIDIA %s · recovery %s", nvidia, revision }
+  ')
   zenity --list --radiolist \
     --title="Open OPEMOS" \
-    --text="Welcome to OPEMOS\n\nChoose what you want to do on this computer." \
+    --text="Welcome to OPEMOS\n${summary:+$summary\n}\nChoose what you want to do on this computer." \
     --column="" --column="Action" --column="What it does" \
     --hide-column=2 --print-column=2 \
     --width=760 --height=390 \
     TRUE install "Install OPEMOS — erase one selected disk and install this image" \
     FALSE reinstall "Reinstall OPEMOS — preserve games and personal files on a recognized SteamOS disk" \
-    FALSE rollback "Recovery — select a previously working NVIDIA-ready A/B slot"
+    FALSE rollback "Recovery — select a previously working NVIDIA-ready A/B slot" \
+    FALSE diagnostics "Diagnostics — review media identity, eligible disks, and the last installation log"
+}
+
+prepare_state_directory() {
+  if [[ -L "$STATE_DIRECTORY" ]]; then
+    failure "The OPEMOS diagnostic directory is an unsafe symbolic link. Installation has not started."
+    return 1
+  fi
+  mkdir -p "$STATE_DIRECTORY"
+  chmod 0700 "$STATE_DIRECTORY"
+}
+
+last_log() {
+  local candidate
+  [[ -f "$LAST_LOG_FILE" && ! -L "$LAST_LOG_FILE" ]] || return 1
+  IFS= read -r candidate <"$LAST_LOG_FILE"
+  [[ "$candidate" == "$STATE_DIRECTORY"/*.log && -f "$candidate" && ! -L "$candidate" ]] || return 1
+  printf '%s\n' "$candidate"
+}
+
+show_diagnostics() {
+  local report inventory latest
+  report=$(mktemp /tmp/open-opemos-diagnostics.XXXXXX)
+  inventory=$(mktemp /tmp/open-opemos-diagnostic-inventory.XXXXXX)
+  {
+    printf 'Open OPEMOS installation-media diagnostics\n\n'
+    if "$HELPER" media-info; then
+      printf '\nEligible whole physical disks\n'
+      if "$HELPER" inventory-report >"$inventory" && [[ -s "$inventory" ]]; then
+        awk -F '\t' '{ printf "  %s  %.1f GB  %s  [%s]\n", $1, $2 / 1000000000, $3, $4 }' "$inventory"
+      else
+        printf '  None. The boot media, mounted/read-only media, and disks below 12 GiB are excluded.\n'
+      fi
+    else
+      printf '\nMedia readiness validation failed.\n'
+    fi
+    if latest=$(last_log); then
+      printf '\nLast installation log\n  %s\n' "$latest"
+    else
+      printf '\nNo installation attempt has been logged in this booted environment.\n'
+    fi
+  } >"$report" 2>&1
+  zenity --text-info --title="Open OPEMOS diagnostics" --width=780 --height=500 \
+    --filename="$report" --ok-label="Back" || true
+  if latest=$(last_log); then
+    if zenity --question --title="Installation log" --width=520 \
+      --ok-label="View Log" --cancel-label="Back" \
+      --text="Open the complete last installation log?"; then
+      zenity --text-info --title="Open OPEMOS installation log" --width=900 --height=600 \
+        --filename="$latest" --ok-label="Back" || true
+    fi
+  fi
+  rm -f "$report" "$inventory"
 }
 
 choose_disk() {
-  local mode=$1 inventory line device bytes token model serial transport layout
+  local mode=$1 inventory line device bytes token model serial transport layout selection
   local -a rows=()
   inventory=$(mktemp /tmp/open-opemos-inventory.XXXXXX)
-  trap 'rm -f "$inventory"' RETURN
   if ! "$HELPER" inventory >"$inventory"; then
+    rm -f "$inventory"
     failure "OPEMOS could not inspect the available physical disks. No disk was changed."
     return 1
   fi
@@ -45,15 +109,21 @@ choose_disk() {
     rows+=(FALSE "$device" "$(human_size "$bytes")" "$model" "$serial" "$transport" "${device}|${token}")
   done <"$inventory"
   (( ${#rows[@]} > 0 )) || {
+    rm -f "$inventory"
     failure "No eligible target disk was found.\n\nOPEMOS excludes the booted installation media, mounted disks, read-only disks, and disks smaller than 12 GiB. Reinstall also requires one exact SteamOS A/B layout."
     return 1
   }
-  zenity --list --radiolist \
+  selection=$(zenity --list --radiolist \
     --title="Select installation disk" \
     --text="Choose the whole physical disk OPEMOS may use. The installation media is excluded automatically." \
     --column="" --column="Device" --column="Capacity" --column="Model" --column="Serial" --column="Bus" --column="Identity" \
     --hide-column=7 --print-column=7 \
-    --width=920 --height=430 "${rows[@]}"
+    --width=920 --height=430 "${rows[@]}") || {
+      rm -f "$inventory"
+      return 1
+    }
+  rm -f "$inventory"
+  printf '%s\n' "$selection"
 }
 
 run_install() {
@@ -81,7 +151,10 @@ run_install() {
     return 0
   }
 
-  log="/tmp/open-opemos-install-$(date +%Y%m%d-%H%M%S).log"
+  prepare_state_directory || return 0
+  log="$STATE_DIRECTORY/install-$(date +%Y%m%d-%H%M%S).log"
+  printf '%s\n' "$log" >"$LAST_LOG_FILE"
+  chmod 0600 "$LAST_LOG_FILE"
   set +e
   sudo "$HELPER" install "$mode" "$device" "$token" --confirm "$confirmation" 2>&1 |
     tee "$log" |
@@ -94,7 +167,7 @@ run_install() {
   if (( status == 0 )); then
     if zenity --question --title="OPEMOS installation complete" --width=560 \
       --ok-label="Shut Down" --cancel-label="Stay Here" \
-      --text="OPEMOS was installed and the target was finalized.\n\nChoose Shut Down, remove the installation media, then start the computer from $device."; then
+      --text="OPEMOS was installed, its A/B recovery guardian was verified, and the target was finalized.\n\nChoose Shut Down, remove the installation media, then start the computer from $device."; then
       systemctl poweroff
     fi
   else
@@ -102,7 +175,7 @@ run_install() {
   fi
 }
 
-for tool in awk sudo tee zenity; do
+for tool in awk flock sudo tee zenity; do
   command -v "$tool" >/dev/null 2>&1 || {
     printf 'Open OPEMOS requires %s in the recovery environment.\n' "$tool" >&2
     exit 1
@@ -112,6 +185,13 @@ if [[ ! -x "$HELPER" ]]; then
   failure "The protected OPEMOS installation helper is missing from this media."
   exit 1
 fi
+
+exec 8>/tmp/open-opemos-welcome.lock
+if ! flock -n 8; then
+  message "Open OPEMOS is already running in this recovery session."
+  exit 0
+fi
+prepare_state_directory || exit 1
 
 while true; do
   action=$(choose_action) || exit 0
@@ -129,5 +209,6 @@ while true; do
         failure "The rollback tool is not present on this installation media."
       fi
       ;;
+    diagnostics) show_diagnostics ;;
   esac
 done

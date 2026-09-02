@@ -9,8 +9,9 @@ const expectedChecks = [
   "usb-cancellation-cleanup",
   "usb-readback",
   "recovery-ab-rollback",
+  "welcome-disk-inventory",
 ];
-const expectedReason = "synthetic USB identity, capacity, helper protocol, progress, cancellation cleanup, readback, and recovery A-B rollback succeeded";
+const expectedReason = "synthetic USB identity, capacity, helper protocol, progress, cancellation cleanup, readback, recovery A-B rollback, and welcome inventory succeeded";
 const blockBytes = 4 * 1024 * 1024;
 const totalBytes = 64 * 1024 * 1024;
 const expectedProgress = [

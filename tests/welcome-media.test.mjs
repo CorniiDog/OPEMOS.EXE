@@ -8,6 +8,7 @@ import test from "node:test";
 const helper = readFileSync("builder/welcome/opemos-install-helper", "utf8");
 const welcome = readFileSync("builder/welcome/open-opemos-welcome", "utf8");
 const desktop = readFileSync("builder/welcome/Open-OPEMOS.desktop", "utf8");
+const gtkCss = readFileSync("builder/welcome/gtk.css", "utf8");
 
 test("installation-media UI delegates only bounded operations", () => {
   assert.match(desktop, /^Name=Open OPEMOS$/m);
@@ -17,12 +18,17 @@ test("installation-media UI delegates only bounded operations", () => {
   assert.match(welcome, /run_install all/);
   assert.match(welcome, /run_install system/);
   assert.match(welcome, /Do not power off the computer or disconnect either drive/);
+  assert.match(welcome, /Diagnostics — review media identity/);
+  assert.match(welcome, /last-install-log/);
+  assert.match(welcome, /flock -n 8/);
+  assert.match(gtkCss, /linear-gradient\(to right, @opemos_blue, @opemos_green\)/);
   assert.doesNotMatch(welcome, /\beval\b/);
   assert.doesNotMatch(helper, /\beval\b/);
 });
 
 test("install helper binds and revalidates a physical device identity", () => {
   assert.match(helper, /is_recovery_disk "\$device"/);
+  assert.match(helper, /lsblk -snrpo PATH,TYPE "\$resolved"/);
   assert.match(helper, /mounted_child "\$device"/);
   assert.match(helper, /blockdev --getsize64/);
   assert.match(helper, /disk_identity "\$device"/);
@@ -33,6 +39,10 @@ test("install helper binds and revalidates a physical device identity", () => {
   assert.match(helper, /install_recovery_guardian_to_root\.sh/);
   assert.match(helper, /for slot in A B/);
   assert.match(helper, /--support-revision "\$support_revision"/);
+  assert.match(helper, /media-info\)/);
+  assert.match(helper, /verify_guardian_slot/);
+  assert.match(helper, /installed recovery guardian verification failed/);
+  assert.match(helper, /ui_stage "Installing the recovery guardian into rootfs-\$slot/);
 });
 
 test("guarded patcher accepts the audited Valve contract without broad rewriting", (context) => {

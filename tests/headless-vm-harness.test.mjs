@@ -18,8 +18,11 @@ test("headless VM harness exposes no GUI, network, monitor, SSH, or host disks",
   assert.doesNotMatch(run, /hostfwd|tap,|bridge,|\/dev\/disk|\/dev\/rdisk|ssh\b/);
   assert.match(run, /synthetic-test-disk\.raw/);
   assert.match(run, /unexpected-test-disk\.raw/);
+  assert.match(run, /welcome-inventory-disk\.raw/);
   assert.match(run, /STEAMOS_SYNTH_V1/);
   assert.match(run, /STEAMOS_WRONG_V1/);
+  assert.match(run, /OPEMOS_WELCOME_V1/);
+  assert.match(run, /builder\/welcome\/opemos-install-helper/);
 });
 
 test("guest writes only the exact disposable synthetic virtio disk", () => {
@@ -36,6 +39,8 @@ test("guest writes only the exact disposable synthetic virtio disk", () => {
   assert.match(guest, /name=rootfs-A/);
   assert.match(guest, /name=rootfs-B/);
   assert.match(guest, /synthetic recovery B rollback mismatch/);
+  assert.match(guest, /welcome helper selected the wrong physical disk/);
+  assert.match(guest, /welcome helper identity was not stable/);
   assert.match(guest, /STEAMOS_HEADLESS_RESULT/);
 });
 

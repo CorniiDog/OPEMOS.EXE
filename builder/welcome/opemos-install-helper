@@ -14,6 +14,10 @@ die() {
   exit 1
 }
 
+ui_stage() {
+  printf '# %s\n' "$*" >&2
+}
+
 need() {
   command -v "$1" >/dev/null 2>&1 || die "required recovery tool is missing: $1"
 }
@@ -26,27 +30,15 @@ clean_field() {
   printf '%s' "$1" | tr '\t\r\n' '   ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//'
 }
 
-parent_disk() {
-  local source parent type
-  source=$(readlink -f -- "$1" 2>/dev/null || true)
-  [[ -b "$source" ]] || return 1
-  type=$(lsblk -dnro TYPE "$source" 2>/dev/null || true)
-  if [[ "$type" == disk ]]; then
-    printf '%s\n' "$source"
-    return 0
-  fi
-  parent=$(lsblk -dnro PKNAME "$source" 2>/dev/null | head -n 1)
-  [[ -n "$parent" ]] || return 1
-  printf '/dev/%s\n' "$parent"
-}
-
 recovery_disks() {
-  local source disk target
+  local source resolved target
   for target in /home/deck /home /; do
     source=$(findmnt -nro SOURCE -T "$target" 2>/dev/null || true)
     [[ -n "$source" ]] || continue
-    disk=$(parent_disk "$source" 2>/dev/null || true)
-    [[ -n "$disk" ]] && printf '%s\n' "$disk"
+    resolved=$(readlink -f -- "$source" 2>/dev/null || true)
+    [[ -b "$resolved" ]] || continue
+    lsblk -snrpo PATH,TYPE "$resolved" 2>/dev/null |
+      awk '$2 == "disk" { print $1 }'
   done | awk 'NF && !seen[$0]++'
 }
 
@@ -104,14 +96,20 @@ disk_identity() {
 }
 
 eligible_disk() {
+  [[ "$(disk_status "$1")" == eligible ]]
+}
+
+disk_status() {
   local requested=$1 device bytes ro
-  device=$(canonical_whole_disk "$requested") || return 1
-  is_recovery_disk "$device" && return 1
+  device=$(canonical_whole_disk "$requested") || { printf 'not-whole-physical-disk\n'; return 0; }
+  is_recovery_disk "$device" && { printf 'recovery-medium\n'; return 0; }
   ro=$(lsblk -dnro RO "$device" | tr -d '[:space:]')
-  [[ "$ro" == 0 ]] || return 1
+  [[ "$ro" == 0 ]] || { printf 'read-only\n'; return 0; }
   bytes=$(disk_bytes "$device")
-  [[ "$bytes" =~ ^[0-9]+$ ]] && (( bytes >= MINIMUM_INSTALL_BYTES )) || return 1
-  mounted_child "$device" && return 1
+  [[ "$bytes" =~ ^[0-9]+$ ]] || { printf 'capacity-unavailable\n'; return 0; }
+  (( bytes >= MINIMUM_INSTALL_BYTES )) || { printf 'too-small\n'; return 0; }
+  mounted_child "$device" && { printf 'mounted-or-swap-active\n'; return 0; }
+  printf 'eligible\n'
 }
 
 has_exact_steamos_layout() {
@@ -145,10 +143,57 @@ inventory() {
   done < <(lsblk -dnpo PATH,TYPE | awk '$2 == "disk" { print $1 }')
 }
 
+inventory_report() {
+  local candidate device bytes model status
+  while IFS= read -r candidate; do
+    device=$(readlink -f -- "$candidate" 2>/dev/null || printf '%s' "$candidate")
+    bytes=$(disk_bytes "$device" 2>/dev/null || printf '0')
+    model=$(clean_field "$(lsblk -dnro MODEL "$device" 2>/dev/null || true)")
+    status=$(disk_status "$candidate")
+    printf '%s\t%s\t%s\t%s\n' "$device" "$bytes" "${model:-Unknown model}" "$status"
+  done < <(lsblk -dnpo PATH,TYPE | awk '$2 == "disk" { print $1 }')
+}
+
+media_info() {
+  local support_revision nvidia_version
+  [[ -f "$SUPPORT_REVISION_FILE" && ! -L "$SUPPORT_REVISION_FILE" ]] ||
+    die "the pinned recovery support revision is unavailable"
+  [[ -f "$NVIDIA_VERSION_FILE" && ! -L "$NVIDIA_VERSION_FILE" ]] ||
+    die "the pinned recovery NVIDIA version is unavailable"
+  support_revision=$(<"$SUPPORT_REVISION_FILE")
+  nvidia_version=$(<"$NVIDIA_VERSION_FILE")
+  [[ "$support_revision" =~ ^[0-9a-f]{40}$ ]] || die "the pinned recovery support revision is malformed"
+  [[ "$nvidia_version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] ||
+    die "the pinned recovery NVIDIA version is malformed"
+  [[ -x "$REPAIR_DEVICE" && ! -L "$REPAIR_DEVICE" ]] ||
+    die "the protected Valve installer delegate is unavailable"
+  [[ -x "$SUPPORT_ROOT/bootstrap/install_recovery_guardian_to_root.sh" ]] ||
+    die "the pinned installed-system recovery guardian is unavailable"
+  printf 'schema=1\nsupportRevision=%s\nnvidiaVersion=%s\nstatus=ready\n' \
+    "$support_revision" "$nvidia_version"
+}
+
+verify_guardian_slot() {
+  local device=$1 slot=$2 support_revision=$3 nvidia_version=$4
+  steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- \
+    sh -eu -c '
+      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/recoveryctl.sh
+      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/online_install.sh
+      test -f /etc/systemd/system/opemos-nvidia-guardian.service
+      test -f /etc/systemd/system/opemos-nvidia-repair.service
+      test -L /etc/systemd/system/multi-user.target.wants/opemos-nvidia-guardian.service
+      test -L /etc/systemd/system/timers.target.wants/opemos-nvidia-repair.timer
+      test "$(cat /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/support-revision)" = "$1"
+      test "$(cat /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/nvidia-version)" = "$2"
+    ' opemos-guardian-verifier "$support_revision" "$nvidia_version" ||
+    die "installed recovery guardian verification failed for rootfs-$slot"
+}
+
 install_to_disk() {
   local mode=$1 requested=$2 expected_identity=$3 confirmation=$4
   local device current_identity basename majmin phrase
 
+  ui_stage "Validating the selected physical disk. Nothing has been changed yet."
   [[ ${EUID:-$(id -u)} -eq 0 ]] || die "installation must be started through sudo"
   case "$mode" in all|system) ;; *) die "unsupported installation mode" ;; esac
   [[ "$expected_identity" =~ ^[0-9a-f]{64}$ ]] || die "selected disk identity is malformed"
@@ -191,7 +236,7 @@ install_to_disk() {
   [[ -x "$SUPPORT_ROOT/bootstrap/install_recovery_guardian_to_root.sh" ]] ||
     die "the pinned installed-system recovery guardian is unavailable"
 
-  printf 'Open OPEMOS is installing to %s. Do not power off or disconnect either drive.\n' "$device" >&2
+  ui_stage "Installing OPEMOS to $device. Do not power off or disconnect either drive."
   env \
     STEAMOS_TARGET_DISK="$device" \
     NOPROMPT=1 \
@@ -200,22 +245,35 @@ install_to_disk() {
     OPEMOS_SKIP_JUPITER_FIRMWARE=1 \
     "$REPAIR_DEVICE" "$mode"
 
-  printf 'Valve installation finished. Installing the exact-kernel recovery guardian into both A/B slots.\n' >&2
+  ui_stage "Valve installation finished. Preparing offline and delayed-network recovery."
   for slot in A B; do
+    ui_stage "Installing the recovery guardian into rootfs-$slot."
     steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- \
       "$SUPPORT_ROOT/bootstrap/install_recovery_guardian_to_root.sh" \
         --root / \
         --support-revision "$support_revision" \
         --nvidia "$nvidia_version"
   done
+  ui_stage "Independently verifying recovery-guardian identity in both A/B slots."
+  for slot in A B; do
+    verify_guardian_slot "$device" "$slot" "$support_revision" "$nvidia_version"
+  done
   sync
-  printf 'Open OPEMOS installation and A/B recovery-guardian staging completed.\n' >&2
+  ui_stage "Installation and A/B recovery verification completed."
 }
 
 case "${1:-}" in
   inventory)
     [[ $# -eq 1 ]] || die "inventory takes no arguments"
     inventory
+    ;;
+  inventory-report)
+    [[ $# -eq 1 ]] || die "inventory-report takes no arguments"
+    inventory_report
+    ;;
+  media-info)
+    [[ $# -eq 1 ]] || die "media-info takes no arguments"
+    media_info
     ;;
   identity)
     [[ $# -eq 2 ]] || die "identity requires one device"
@@ -229,6 +287,6 @@ case "${1:-}" in
     install_to_disk "$2" "$3" "$4" "$6"
     ;;
   *)
-    die "usage: $0 inventory | identity DEVICE | install MODE DEVICE IDENTITY --confirm PHRASE"
+    die "usage: $0 media-info | inventory | inventory-report | identity DEVICE | install MODE DEVICE IDENTITY --confirm PHRASE"
     ;;
 esac

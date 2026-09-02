@@ -68,7 +68,8 @@ in place; select the original Valve recovery image to build that version.
 Newly generated images stage **Open OPEMOS** in the recovery desktop and launch
 it automatically. The first implementation intentionally uses the recovery
 image's known Zenity runtime while the frosted-glass native surface is built.
-The safety contract does not depend on that presentation layer.
+The fallback loads a bundled OPEMOS glass GTK theme with an opaque compositor
+fallback. The safety contract does not depend on that presentation layer.
 
 The welcome flow offers separate actions for a fresh installation, a SteamOS
 system reinstall that preserves the recognized home partition, and A/B
@@ -78,6 +79,10 @@ booted installation medium is excluded. The selected disk is bound to its
 device path, capacity, kernel major/minor and sequence values, and available
 hardware identifiers. The protected helper rechecks all of them after the
 typed confirmation and immediately before Valve's installer starts.
+The diagnostics view reports why each whole disk is eligible or excluded,
+shows the pinned NVIDIA/support identity, and can reopen the complete private
+installation log after the welcome window is restarted. A session lock prevents
+two welcome instances from starting competing operations.
 
 The frontend runs as `deck`. The only privileged installation code is stored
 root-owned in the recovery root filesystem, accepts the fixed `all` or `system`
