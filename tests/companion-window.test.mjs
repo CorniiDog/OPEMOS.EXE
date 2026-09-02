@@ -29,3 +29,17 @@ test("both companion close paths release the rear-window interaction lock", () =
   assert.match(maintainer, /emitTo\("main", "companion-window-hidden", \{ label: "maintainer-workspace" \}\)/);
   assert.match(main, /listen\("companion-window-hidden"/);
 });
+
+test("build completion waits for the progress window before changing the main workflow", () => {
+  assert.match(main, /if \(activeCompanion === "build-progress"\) \{\s*pendingBuildFinished = event\.payload;\s*return;/);
+  assert.match(main, /payload\.label === "build-progress" && pendingBuildFinished/);
+  assert.match(build, /export_marker_image", \{ revealInFinder: false \}/);
+  assert.match(main, /if \(activeExportMode === "image"\) \{\s*await revealCompletedImage\(output\.path\);/);
+});
+
+test("USB builds reselect only the exact pre-build device and defer Finder until verified", () => {
+  assert.match(main, /deviceIdentifier: selectedUsb\.value,[\s\S]*identityToken: selectedUsb\.dataset\.identityToken/);
+  assert.match(main, /option\.value === preferredTarget\.deviceIdentifier[\s\S]*option\.dataset\.identityToken === preferredTarget\.identityToken/);
+  assert.match(main, /if \(restored\) \{\s*setUsbMenuOpen\(true\);/);
+  assert.match(main, /if \(activeExportMode === "both"\) \{\s*const revealed = await revealCompletedImage\(completedOutput\.path\);/);
+});

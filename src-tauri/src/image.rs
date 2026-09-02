@@ -1539,6 +1539,68 @@ pub(crate) async fn export_marker_image(
 }
 
 #[tauri::command]
+pub(crate) fn reveal_completed_image(path: String) -> Result<(), String> {
+    let output = fs::canonicalize(&path)
+        .map_err(|error| format!("Could not resolve the completed image: {error}"))?;
+    let metadata = fs::metadata(&output)
+        .map_err(|error| format!("Could not inspect the completed image: {error}"))?;
+    if !metadata.is_file() || output.extension().and_then(|value| value.to_str()) != Some("img") {
+        return Err("Only a completed raw image can be revealed.".into());
+    }
+    let manifest_bytes = fs::read(manifest_path_for_output(&output))
+        .map_err(|error| format!("Could not read the completed-image manifest: {error}"))?;
+    if manifest_bytes.len() > 1024 * 1024 {
+        return Err("The completed-image manifest is unexpectedly large.".into());
+    }
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)
+        .map_err(|error| format!("Could not parse the completed-image manifest: {error}"))?;
+    let filename = output.file_name().and_then(|value| value.to_str());
+    if manifest
+        .pointer("/validation/passed")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+        || manifest
+            .pointer("/output/filename")
+            .and_then(serde_json::Value::as_str)
+            != filename
+        || manifest
+            .pointer("/output/bytes")
+            .and_then(serde_json::Value::as_u64)
+            != Some(metadata.len())
+    {
+        return Err("The image is not bound to a successful matching build manifest.".into());
+    }
+
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg("-R").arg(&output);
+        command
+    };
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("explorer.exe");
+        command.arg(format!("/select,{}", output.display()));
+        command
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(
+            output
+                .parent()
+                .ok_or("Completed output has no parent folder.")?,
+        );
+        command
+    };
+
+    command
+        .spawn()
+        .map_err(|error| format!("Could not reveal the completed image: {error}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) fn validate_image(path: String) -> Result<ImageInfo, String> {
     let path = PathBuf::from(path);
     if !path.is_file() {

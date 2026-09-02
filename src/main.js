@@ -53,6 +53,8 @@ let usbArmPending = false;
 let usbWriting = false;
 let buildRunning = false;
 let activeExportMode = "image";
+let pendingBuildFinished = null;
+let pendingUsbTarget = null;
 let hostReady = false;
 let progressReady = false;
 let builderSettings = {
@@ -105,7 +107,13 @@ await mainWindow.onFocusChanged(({ payload: focused }) => {
   if (focused && activeCompanion) void focusActiveCompanion();
 });
 await mainWindow.listen("companion-window-hidden", ({ payload }) => {
-  if (payload?.label === activeCompanion) setCompanionMode();
+  if (payload?.label !== activeCompanion) return;
+  setCompanionMode();
+  if (payload.label === "build-progress" && pendingBuildFinished) {
+    const completion = pendingBuildFinished;
+    pendingBuildFinished = null;
+    void applyBuildFinished(completion);
+  }
 });
 
 async function waitForProgressWindow(progressWindow) {
@@ -533,6 +541,13 @@ elements.buildButton.addEventListener("click", async () => {
   elements.buildButton.disabled = true;
   buildRunning = true;
   activeExportMode = exportMode;
+  const selectedUsb = elements.usbTarget.selectedOptions[0];
+  pendingUsbTarget = selectedUsb?.value && exportMode !== "image"
+    ? {
+      deviceIdentifier: selectedUsb.value,
+      identityToken: selectedUsb.dataset.identityToken,
+    }
+    : null;
   elements.exportImage.disabled = true;
   elements.usbTarget.disabled = true;
   elements.refreshUsbTargets.disabled = true;
@@ -568,8 +583,19 @@ elements.buildButton.addEventListener("click", async () => {
   }
 });
 
-await mainWindow.listen("build-finished", async (event) => {
-  const { state, message, output, inputPath } = event.payload;
+async function revealCompletedImage(path) {
+  try {
+    await invoke("reveal_completed_image", { path });
+    return true;
+  } catch (error) {
+    elements.resultMessage.textContent += ` The image is complete, but it could not be revealed automatically: ${error}`;
+    elements.resultMessage.className = "result-message error";
+    return false;
+  }
+}
+
+async function applyBuildFinished(completion) {
+  const { state, message, output, inputPath } = completion;
   elements.resultMessage.textContent = message;
   elements.resultMessage.className = `result-message ${state === "complete" ? "success" : state === "failed" ? "error" : ""}`;
   buildRunning = false;
@@ -584,17 +610,36 @@ await mainWindow.listen("build-finished", async (event) => {
       requestedNvidiaVersion: null,
     }).catch(() => null);
     applyCompletedOutput(completed || output);
-    if (activeExportMode !== "image") {
-      elements.usbTarget.replaceChildren();
-      elements.usbTarget.disabled = true;
-      elements.usbTargetDetail.textContent = "Refresh after the build, then select the drive again before writing.";
-      elements.usbPickerMessage.textContent = "The image is ready. Refresh to revalidate every removable-drive identity.";
-      elements.reviewUsbTarget.classList.add("hidden");
+    if (activeExportMode === "image") {
+      await revealCompletedImage(output.path);
+    } else {
+      const preferredTarget = pendingUsbTarget;
+      pendingUsbTarget = null;
+      elements.resultMessage.textContent = "The image is complete. Revalidating the exported bytes and matching the previously selected USB drive…";
+      elements.resultMessage.className = "result-message";
+      const restored = await refreshUsbTargets(preferredTarget);
+      if (restored) {
+        setUsbMenuOpen(true);
+      } else {
+        elements.resultMessage.textContent = "The image is complete, but the previously selected USB drive could not be matched exactly. Reconnect it, refresh drives, and select it again.";
+        elements.resultMessage.className = "result-message error";
+      }
     }
+  } else {
+    pendingUsbTarget = null;
   }
+}
+
+await mainWindow.listen("build-finished", async (event) => {
+  buildRunning = false;
+  if (activeCompanion === "build-progress") {
+    pendingBuildFinished = event.payload;
+    return;
+  }
+  await applyBuildFinished(event.payload);
 });
 
-elements.refreshUsbTargets.addEventListener("click", async () => {
+async function refreshUsbTargets(preferredTarget = null) {
   if (!completedOutput?.path && !currentImage) return;
   usbContextGeneration += 1;
   const generation = usbContextGeneration;
@@ -630,6 +675,19 @@ elements.refreshUsbTargets.addEventListener("click", async () => {
     elements.clearUsbTarget.classList.add("hidden");
     elements.usbMessage.textContent = preflight.message;
     elements.usbPickerMessage.textContent = preflight.message;
+    if (preferredTarget) {
+      const preferred = [...elements.usbTarget.options].find((option) => (
+        option.value === preferredTarget.deviceIdentifier
+          && option.dataset.identityToken === preferredTarget.identityToken
+      ));
+      if (preferred) {
+        preferred.selected = true;
+        elements.usbTarget.dispatchEvent(new Event("change"));
+        elements.refreshUsbTargets.disabled = false;
+        return true;
+      }
+    }
+    return false;
   } catch (error) {
     if (generation !== usbContextGeneration) return;
     elements.usbMessage.textContent = String(error);
@@ -638,6 +696,11 @@ elements.refreshUsbTargets.addEventListener("click", async () => {
   } finally {
     if (generation === usbContextGeneration) elements.refreshUsbTargets.disabled = false;
   }
+  return false;
+}
+
+elements.refreshUsbTargets.addEventListener("click", async () => {
+  await refreshUsbTargets();
 });
 
 elements.usbTarget.addEventListener("change", async () => {
@@ -875,6 +938,10 @@ elements.writeUsbImage.addEventListener("click", async () => {
     elements.writeUsbImage.classList.add("hidden");
     elements.checkUsbPreflight.classList.add("hidden");
     elements.cancelUsbPreflight.classList.add("hidden");
+    if (activeExportMode === "both") {
+      const revealed = await revealCompletedImage(completedOutput.path);
+      if (revealed) elements.usbMessage.textContent = `${result.message} Finder opened the retained image.`;
+    }
   } catch (error) {
     usbPreflightSession = null;
     elements.usbMessage.textContent = String(error);

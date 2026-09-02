@@ -82,6 +82,7 @@ pub fn run() {
             validate_nvidia_install_handoff,
             install_nvidia_to_working_image,
             export_marker_image,
+            reveal_completed_image,
             stop_appliance,
             stop_nvidia_build_appliance,
             validate_image,
