@@ -29,7 +29,7 @@ const elements = {
   usbMessage: $("#usb-message"), usbConfirmationRow: $("#usb-confirmation-row"),
   usbConfirmation: $("#usb-confirmation"), usbConfirmationHelp: $("#usb-confirmation-help"),
   armUsbPreflight: $("#arm-usb-preflight"), cancelUsbPreflight: $("#cancel-usb-preflight"),
-  checkUsbPreflight: $("#check-usb-preflight"), writeUsbImage: $("#write-usb-image"),
+  writeUsbImage: $("#write-usb-image"),
   closeUsbMenu: $("#close-usb-menu"), reviewUsbTarget: $("#review-usb-target"),
   environmentMessage: $("#environment-message"), environmentDetails: $("#environment-details"),
   environmentStatus: $("#environment-status"),
@@ -164,6 +164,16 @@ function setUsbMenuOpen(opened) {
   elements.usbCard.classList.toggle("hidden", !opened);
   elements.usbScrim.classList.toggle("hidden", !opened);
   if (opened) requestAnimationFrame(() => elements.closeUsbMenu.focus());
+}
+
+function renderUsbConfirmationPhase(prepared = Boolean(usbPreflightSession)) {
+  const canConfirm = Boolean(elements.usbTarget.value && completedOutput?.path);
+  elements.usbConfirmationRow.classList.toggle("hidden", !canConfirm || prepared);
+  elements.armUsbPreflight.classList.toggle("hidden", !canConfirm || prepared);
+  elements.writeUsbImage.classList.toggle("hidden", !prepared || !usbPreflightSession?.writesAllowed);
+  elements.cancelUsbPreflight.classList.toggle("hidden", !prepared);
+  elements.armUsbPreflight.disabled = usbArmPending
+    || elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
 }
 
 function renderSourceWarning() {
@@ -399,7 +409,6 @@ async function selectImage(path) {
   elements.usbConfirmationRow.classList.add("hidden");
   elements.armUsbPreflight.classList.add("hidden");
   elements.cancelUsbPreflight.classList.add("hidden");
-  elements.checkUsbPreflight.classList.add("hidden");
   elements.writeUsbImage.classList.add("hidden");
   elements.dropZone.classList.add("processing");
   elements.chooseImage.disabled = true;
@@ -666,7 +675,6 @@ async function refreshUsbTargets(preferredTarget = null) {
     usbPreflightSession = null;
   }
   elements.cancelUsbPreflight.classList.add("hidden");
-  elements.checkUsbPreflight.classList.add("hidden");
   elements.refreshUsbTargets.disabled = true;
   elements.usbTarget.disabled = true;
   elements.usbPicker.classList.add("is-empty", "is-loading");
@@ -740,15 +748,13 @@ elements.usbTarget.addEventListener("change", async () => {
   }
   usbPreflightSession = null;
   elements.cancelUsbPreflight.classList.add("hidden");
-  elements.checkUsbPreflight.classList.add("hidden");
   elements.writeUsbImage.classList.add("hidden");
   elements.usbConfirmation.value = "";
+  elements.usbMessage.removeAttribute("title");
   const identifier = elements.usbTarget.value;
   elements.clearUsbTarget.classList.toggle("hidden", !identifier);
   const canConfirm = Boolean(identifier && completedOutput?.path);
-  elements.usbConfirmationRow.classList.toggle("hidden", !canConfirm);
-  elements.armUsbPreflight.classList.toggle("hidden", !canConfirm);
-  elements.armUsbPreflight.disabled = true;
+  renderUsbConfirmationPhase(false);
   elements.usbConfirmationHelp.textContent = canConfirm
     ? `Type ERASE ${identifier} exactly. A final warning still appears before writing.`
     : "Select a target first.";
@@ -810,10 +816,11 @@ elements.armUsbPreflight.addEventListener("click", async () => {
       return;
     }
     usbPreflightSession = session;
-    elements.usbMessage.textContent = usbPreflightSession.message;
-    elements.cancelUsbPreflight.classList.remove("hidden");
-    elements.checkUsbPreflight.classList.remove("hidden");
-    elements.writeUsbImage.classList.toggle("hidden", !usbPreflightSession.writesAllowed);
+    elements.usbMessage.title = usbPreflightSession.message;
+    elements.usbMessage.textContent = usbPreflightSession.writesAllowed
+      ? "Image and drive identity confirmed. Continue when you are ready to erase and write the selected USB drive."
+      : usbPreflightSession.message;
+    renderUsbConfirmationPhase(true);
   } catch (error) {
     if (generation !== usbContextGeneration) return;
     usbPreflightSession = null;
@@ -823,64 +830,6 @@ elements.armUsbPreflight.addEventListener("click", async () => {
     usbArmPending = false;
     if (generation === usbContextGeneration) {
       elements.armUsbPreflight.disabled = elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
-    }
-  }
-});
-
-elements.checkUsbPreflight.addEventListener("click", async () => {
-  if (!usbPreflightSession?.sessionToken) return;
-  const context = {
-    generation: usbContextGeneration,
-    imagePath: completedOutput?.path,
-    sessionToken: usbPreflightSession.sessionToken,
-  };
-  elements.checkUsbPreflight.disabled = true;
-  try {
-    const status = await invoke("get_usb_write_preflight_status", {
-      sessionToken: context.sessionToken,
-    });
-    if (!operationContextMatches(context, {
-      generation: usbContextGeneration,
-      imagePath: completedOutput?.path,
-      sessionToken: usbPreflightSession?.sessionToken,
-    })) return;
-    const identityMatches =
-      status.deviceIdentifier === usbPreflightSession.deviceIdentifier &&
-      status.imageSha256 === usbPreflightSession.imageSha256 &&
-      status.identityToken === usbPreflightSession.identityToken;
-    if (status.active && !identityMatches) {
-      usbPreflightSession = null;
-      elements.checkUsbPreflight.classList.add("hidden");
-      elements.cancelUsbPreflight.classList.add("hidden");
-      elements.writeUsbImage.classList.add("hidden");
-      elements.usbMessage.textContent = "USB intent status no longer matches the confirmed device and image. Revalidate before continuing.";
-      elements.usbMessage.className = "result-message error";
-      return;
-    }
-    const remaining = status.active ? ` ${Math.ceil(Number(status.expiresInMs) / 1000)} seconds remain.` : "";
-    const identity = status.deviceIdentifier && status.imageSha256
-      ? ` Target /dev/${status.deviceIdentifier}; image SHA-256 ${status.imageSha256.slice(0, 12)}….`
-      : "";
-    elements.usbMessage.textContent = `${status.message}${identity}${remaining}`;
-    elements.usbMessage.className = "result-message";
-    if (!status.active) {
-      usbPreflightSession = null;
-      elements.checkUsbPreflight.classList.add("hidden");
-      elements.cancelUsbPreflight.classList.add("hidden");
-      elements.writeUsbImage.classList.add("hidden");
-    }
-  } catch (error) {
-    if (!operationContextMatches(context, {
-      generation: usbContextGeneration,
-      imagePath: completedOutput?.path,
-      sessionToken: usbPreflightSession?.sessionToken,
-    })) return;
-    elements.usbMessage.textContent = String(error);
-    elements.usbMessage.className = "result-message error";
-  } finally {
-    if (context.generation === usbContextGeneration
-      && context.sessionToken === usbPreflightSession?.sessionToken) {
-      elements.checkUsbPreflight.disabled = false;
     }
   }
 });
@@ -922,10 +871,8 @@ elements.cancelUsbPreflight.addEventListener("click", async () => {
       sessionToken: usbPreflightSession?.sessionToken,
     })) {
       usbPreflightSession = null;
-      elements.cancelUsbPreflight.classList.add("hidden");
-      elements.checkUsbPreflight.classList.add("hidden");
-      elements.writeUsbImage.classList.add("hidden");
-      elements.armUsbPreflight.disabled = elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
+      elements.usbMessage.removeAttribute("title");
+      renderUsbConfirmationPhase(false);
     }
   }
 });
@@ -936,8 +883,12 @@ elements.reviewUsbTarget.addEventListener("click", () => {
     setUsbMenuOpen(true);
   }
 });
-elements.closeUsbMenu.addEventListener("click", () => setUsbMenuOpen(false));
-elements.usbScrim.addEventListener("click", () => setUsbMenuOpen(false));
+elements.closeUsbMenu.addEventListener("click", () => {
+  if (!usbWriting) setUsbMenuOpen(false);
+});
+elements.usbScrim.addEventListener("click", () => {
+  if (!usbWriting) setUsbMenuOpen(false);
+});
 
 await mainWindow.listen("usb-write-progress", (event) => {
   if (!usbWriting) return;
@@ -954,7 +905,7 @@ elements.writeUsbImage.addEventListener("click", async () => {
   usbWriting = true;
   elements.writeUsbImage.disabled = true;
   elements.refreshUsbTargets.disabled = true;
-  elements.checkUsbPreflight.disabled = true;
+  elements.closeUsbMenu.disabled = true;
   elements.buildButton.disabled = true;
   elements.usbMessage.textContent = "Unmounting and revalidating the selected removable disk…";
   try {
@@ -966,7 +917,6 @@ elements.writeUsbImage.addEventListener("click", async () => {
     elements.usbMessage.textContent = result.message;
     elements.usbMessage.className = "result-message success";
     elements.writeUsbImage.classList.add("hidden");
-    elements.checkUsbPreflight.classList.add("hidden");
     elements.cancelUsbPreflight.classList.add("hidden");
     if (activeExportMode === "both") {
       const revealed = await revealCompletedImage(completedOutput.path);
@@ -976,14 +926,13 @@ elements.writeUsbImage.addEventListener("click", async () => {
     usbPreflightSession = null;
     elements.usbMessage.textContent = String(error);
     elements.usbMessage.className = "result-message error";
-    elements.writeUsbImage.classList.add("hidden");
-    elements.checkUsbPreflight.classList.add("hidden");
-    elements.cancelUsbPreflight.classList.add("hidden");
+    elements.usbMessage.removeAttribute("title");
+    renderUsbConfirmationPhase(false);
   } finally {
     usbWriting = false;
     elements.writeUsbImage.disabled = false;
     elements.refreshUsbTargets.disabled = false;
-    elements.checkUsbPreflight.disabled = false;
+    elements.closeUsbMenu.disabled = false;
     updateBuildButton();
   }
 });

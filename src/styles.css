@@ -262,6 +262,10 @@ footer p { color: #aab4c5; }
 #usb-card .usb-heading { margin-bottom: 12px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 #usb-card .usb-heading .build-summary { flex: 1; min-width: 0; margin: 0; }
 #usb-card .usb-close { position: static; flex: none; }
+.usb-dialog-actions { display: flex; align-items: center; gap: 9px; }
+.usb-dialog-actions .primary { flex: 1 1 auto; }
+.usb-dialog-actions .secondary { flex: 0 0 auto; min-width: 72px; }
+#usb-card > .result-message { max-height: none; margin-top: 8px; font-size: 12px; }
 .usb-dialog-target { margin-bottom: 10px; padding: 9px 11px; border: 1px solid var(--glass-border); border-radius: 10px; background: rgba(9, 19, 28, .46); }
 .usb-dialog-target span { display: block; color: #8490a3; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
 .usb-dialog-target strong { display: block; margin-top: 3px; overflow: hidden; color: #dce5ff; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -328,7 +332,7 @@ footer p { color: #aab4c5; }
   line-height: 1;
 }
 .usb-clear:hover { color: #dff5ff; }
-.usb-picker select { width: 100% !important; min-height: 64px; padding: 4px; }
+.usb-picker select { width: 100% !important; height: 68px; min-height: 68px; padding: 4px; box-sizing: border-box; }
 .usb-picker select {
   scrollbar-color: rgba(142, 172, 192, .48) transparent;
   scrollbar-width: thin;
@@ -345,7 +349,7 @@ footer p { color: #aab4c5; }
   background-clip: padding-box;
 }
 .usb-picker select::-webkit-scrollbar-thumb:hover { background: rgba(174, 203, 221, .58); background-clip: padding-box; }
-.usb-picker.is-empty select { display: none; }
+.usb-picker.is-empty select { opacity: .7; }
 .usb-picker.is-loading .usb-picker-message { color: #a7bfd0; }
 .usb-picker-message { min-height: 15px; margin: 0; color: #8490a3; font-size: 10px; line-height: 1.35; }
 #review-usb-target { width: 100%; min-height: 35px; margin-top: 1px; }

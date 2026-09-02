@@ -138,10 +138,11 @@
                 <span><strong>Destructive-intent phrase</strong><small id="usb-confirmation-help">Select a target first.</small></span>
                 <input id="usb-confirmation" type="text" autocomplete="off" spellcheck="false">
             </label>
-            <button id="arm-usb-preflight" class="primary hidden" type="button" disabled>Revalidate Target &amp; Confirm Intent</button>
-            <button id="write-usb-image" class="primary hidden" type="button">Write &amp; Verify USB</button>
-            <button id="check-usb-preflight" class="secondary hidden" type="button">Check Preparation Status</button>
-            <button id="cancel-usb-preflight" class="secondary hidden" type="button">Cancel USB Preparation</button>
+            <div class="usb-dialog-actions">
+                <button id="arm-usb-preflight" class="primary hidden" type="button" disabled>Confirm &amp; Prepare USB</button>
+                <button id="write-usb-image" class="primary hidden" type="button">Write &amp; Verify USB</button>
+                <button id="cancel-usb-preflight" class="secondary hidden" type="button">Back</button>
+            </div>
             <p id="usb-message" class="result-message"></p>
         </section>
 
@@ -288,7 +289,9 @@
                                 <button id="refresh-usb-targets" class="secondary" type="button">Refresh Drives</button>
                             </span>
                         </div>
-                        <select id="usb-target" size="3" disabled aria-label="Detected removable USB drives"></select>
+                        <select id="usb-target" size="3" disabled aria-label="Detected removable USB drives">
+                            <option value="" disabled selected>Connect a USB drive, then refresh…</option>
+                        </select>
                         <p id="usb-picker-message" class="usb-picker-message">No USB drive will be written unless one is selected.</p>
                     </div>
                     <button id="review-usb-target" class="secondary hidden" type="button">Review &amp; Write Selected USB…</button>

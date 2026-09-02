@@ -24,7 +24,7 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(script, /function selectedExportMode\(\)[\s\S]*if \(image && usb\) return "both";/);
   assert.match(script, /exportImage\.addEventListener\("change", renderExportMode\)/);
   assert.match(script, /if \(currentImage\) elements\.refreshUsbTargets\.click\(\);/);
-  assert.match(html, /id="usb-target" size="3" disabled[^>]*><\/select>/);
+  assert.match(html, /id="usb-target" size="3" disabled[^>]*>[\s\S]*Connect a USB drive, then refresh…[\s\S]*<\/select>/);
   assert.match(html, /id="usb-target-detail"[\s\S]*class="usb-picker-actions"[\s\S]*id="clear-usb-target"[\s\S]*id="refresh-usb-targets"/);
   assert.doesNotMatch(script, /Select a removable drive for review/);
   assert.match(script, /placeholder\.value = "";[\s\S]*placeholder\.disabled = true;[\s\S]*placeholder\.selected = true;/);
@@ -34,7 +34,8 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(css, /\.usb-picker select::\-webkit-scrollbar-track,[\s\S]*\.usb-picker select::\-webkit-scrollbar-corner\s*\{[^}]*background:\s*transparent !important;/);
   assert.match(css, /\.usb-picker-actions\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;/);
   assert.match(html, /id="usb-picker" class="usb-picker is-empty"/);
-  assert.match(css, /\.usb-picker\.is-empty select\s*\{\s*display:\s*none;/);
+  assert.match(css, /\.usb-picker select\s*\{[^}]*height:\s*68px;[^}]*min-height:\s*68px;/);
+  assert.match(css, /\.usb-picker\.is-empty select\s*\{\s*opacity:\s*\.7;/);
   assert.match(script, /elements\.usbPicker\.classList\.add\("is-empty", "is-loading"\)/);
   assert.match(script, /elements\.usbPicker\.classList\.toggle\("is-empty", !preflight\.targets\.length\)/);
   assert.match(script, /placeholder\.textContent = "Select a removable drive…";/);
@@ -42,6 +43,9 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(script, /elements\.refreshUsbTargets\.textContent = "Scanning…";/);
   assert.match(script, /elements\.refreshUsbTargets\.textContent = "Refresh Drives";/);
   assert.match(css, /\.usb-picker\.is-loading #refresh-usb-targets::before\s*\{[^}]*animation:\s*glass-control-spin \.8s linear infinite;/);
+  assert.doesNotMatch(html, /Check Preparation Status/);
+  assert.match(script, /function renderUsbConfirmationPhase\(prepared = Boolean\(usbPreflightSession\)\)/);
+  assert.match(script, /renderUsbConfirmationPhase\(true\)/);
 });
 
 test("image chooser uses a rounded glass download mark", () => {
