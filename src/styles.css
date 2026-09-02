@@ -373,6 +373,7 @@ footer p { color: #aab4c5; }
 }
 .build-options-grid .source-choice select { width: 100%; }
 .source-choice select:disabled { opacity: .55; }
+.source-choice input[type="text"] { flex: 0 1 280px; width: min(280px, 46%); padding: 8px 10px; }
 .source-warning {
   margin: 0 0 9px;
   padding: 8px 10px;

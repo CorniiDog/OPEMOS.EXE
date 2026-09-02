@@ -4,6 +4,7 @@ import test from "node:test";
 
 const cssFiles = ["styles.css", "build.css", "maintainer.css"];
 const htmlFiles = ["index.html", "build.html", "maintainer.html"];
+const controlsCss = await readFile(new URL("../src/glass-controls.css", import.meta.url), "utf8");
 
 test("every application surface shares the Steam glass material tokens", async () => {
   const chromeCss = await readFile(new URL("../src/window-chrome.css", import.meta.url), "utf8");
@@ -33,6 +34,7 @@ test("preload and native window backgrounds preserve translucent dark fallback",
     assert.match(html, /<header[^>]*data-tauri-drag-region/, `${name} cannot drag its overlay title bar`);
     assert.match(html, /class="window-drag-region" data-tauri-drag-region/, `${name} is missing its top-edge drag target`);
     assert.match(html, /href="\/window-chrome\.css"/, `${name} does not load the shared window chrome`);
+    assert.match(html, /href="\/glass-controls\.css"/, `${name} does not load the shared glass controls`);
   }
 
   const config = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
@@ -72,6 +74,19 @@ test("preload and native window backgrounds preserve translucent dark fallback",
 
   const capabilities = JSON.parse(await readFile(new URL("../src-tauri/capabilities/default.json", import.meta.url), "utf8"));
   assert.ok(capabilities.permissions.includes("core:window:allow-start-dragging"));
+});
+
+test("interactive controls share one rounded glass component language", async () => {
+  assert.match(controlsCss, /input\[type="checkbox"\]\s*\{[^}]*appearance:\s*none;[^}]*border-radius:\s*7px;/);
+  assert.match(controlsCss, /input\[type="checkbox"\]:checked\s*\{[^}]*linear-gradient\(135deg, rgba\(26, 159, 255, \.94\)/);
+  assert.match(controlsCss, /select:not\(\[size\]\)\s*\{[^}]*appearance:\s*none;[^}]*background-image:/);
+  assert.match(controlsCss, /\.danger\s*\{[^}]*linear-gradient\(180deg, rgba\(126, 57, 65, \.88\)/);
+  assert.match(controlsCss, /\.status\s*\{[^}]*border:\s*1px solid rgba\(151, 211, 88, \.16\);/);
+  assert.match(controlsCss, /button:focus-visible,[\s\S]*input:focus-visible\s*\{[^}]*outline:\s*2px solid rgba\(102, 192, 244, \.78\);/);
+
+  const mainHtml = await readFile(new URL("../src/index.html", import.meta.url), "utf8");
+  assert.equal([...mainHtml.matchAll(/class="close-icon"/g)].length, 2);
+  assert.doesNotMatch(mainHtml, /aria-label="Close (?:settings|USB menu)">×/);
 });
 
 test("build progress uses two rounded glass channels inside one glass pill", async () => {

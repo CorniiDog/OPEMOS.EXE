@@ -19,6 +19,7 @@
         href="/styles.css"
     >
     <link rel="stylesheet" href="/window-chrome.css">
+    <link rel="stylesheet" href="/glass-controls.css">
 </head>
 
 <body>
@@ -53,7 +54,9 @@
                     <p class="eyebrow">Preferences</p>
                     <h2>Settings</h2>
                 </div>
-                <button id="settings-close" class="icon-button compact" type="button" aria-label="Close settings">×</button>
+                <button id="settings-close" class="icon-button compact" type="button" aria-label="Close settings">
+                    <svg class="close-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+                </button>
             </div>
 
             <label class="setting-row">
@@ -123,7 +126,9 @@
                     </div>
                     <p>Only whole external physical media are eligible. The final image and device identity are revalidated immediately before writing.</p>
                 </div>
-                <button id="close-usb-menu" class="icon-button compact usb-close" type="button" aria-label="Close USB menu">×</button>
+                <button id="close-usb-menu" class="icon-button compact usb-close" type="button" aria-label="Close USB menu">
+                    <svg class="close-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+                </button>
             </div>
             <div class="usb-dialog-target">
                 <span>Selected removable target</span>
