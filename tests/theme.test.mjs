@@ -10,8 +10,11 @@ test("every application surface shares the Steam glass material tokens", async (
     const css = await readFile(new URL(`../src/${name}`, import.meta.url), "utf8");
     assert.match(css, /--steam-blue:\s*#1a9fff;/, `${name} is missing the Steam accent`);
     assert.match(css, /--nvidia-green:\s*#76b900;/, `${name} is missing the NVIDIA accent`);
-    assert.match(css, /--glass-canvas:\s*rgba\(11, 17, 24, \.68\);/, `${name} is missing its translucent dark tint`);
+    assert.match(css, /--glass-canvas:\s*rgba\(11, 17, 24, \.58\);/, `${name} is missing its translucent dark tint`);
     assert.match(css, /body::after[\s\S]*linear-gradient\(to left, rgba\(118, 185, 0, \.08\), transparent 8%\)/, `${name} is missing the diffuse NVIDIA edge glare`);
+    assert.match(css, /body::after[\s\S]*inset 0 0 0 1px rgba\(220, 239, 249, \.12\)/, `${name} is missing the refractive glass rim`);
+    assert.match(css, /\.platform-macos body\s*\{[^}]*backdrop-filter:\s*blur\(24px\)/, `${name} is missing macOS frosted blur`);
+    assert.match(css, /\.platform-macos \.window-drag-region\s*\{[^}]*height:\s*38px;/, `${name} is missing the dedicated macOS drag strip`);
     assert.doesNotMatch(css, /body::before[\s\S]{0,160}border:/, `${name} still draws the rejected inset window border`);
     assert.doesNotMatch(css, /--brand-gradient/, `${name} still uses the rejected full-surface gradient`);
   }
@@ -20,9 +23,10 @@ test("every application surface shares the Steam glass material tokens", async (
 test("preload and native window backgrounds preserve translucent dark fallback", async () => {
   for (const name of htmlFiles) {
     const html = await readFile(new URL(`../src/${name}`, import.meta.url), "utf8");
-    assert.match(html, /html, body \{ background: rgba\(11, 17, 24, \.74\);/, `${name} can flash an un-tinted transparent canvas`);
+    assert.match(html, /html, body \{ background: rgba\(11, 17, 24, \.64\);/, `${name} can flash an un-tinted transparent canvas`);
     assert.match(html, /navigator\.platform\.startsWith\("Mac"\)/, `${name} cannot reserve macOS traffic-light space conditionally`);
     assert.match(html, /<header[^>]*data-tauri-drag-region/, `${name} cannot drag its overlay title bar`);
+    assert.match(html, /class="window-drag-region" data-tauri-drag-region/, `${name} is missing its top-edge drag target`);
   }
 
   const config = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
