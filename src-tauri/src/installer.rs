@@ -1283,6 +1283,73 @@ pub(crate) fn validate_support_initramfs_verification(
     Ok(())
 }
 
+pub(crate) fn validate_support_initramfs_workspace(
+    workspace: &SupportInitramfsWorkspace,
+    storage: &SupportInstallStorage,
+    expected_status: &str,
+) -> Result<(), String> {
+    let available_bytes = workspace
+        .available_bytes
+        .filter(|available| *available >= workspace.required_bytes)
+        .ok_or("Initramfs workspace metadata reports insufficient or missing byte capacity.")?;
+    if workspace.schema_version != 1 || available_bytes > i64::MAX as u64 {
+        return Err("Offline installer returned invalid initramfs workspace metadata.".into());
+    }
+    let inode_capacity_valid = match workspace.inode_capacity_mode.as_deref() {
+        Some("finite-statvfs") => workspace
+            .available_inodes
+            .is_some_and(|available| available >= workspace.required_inodes),
+        Some("dynamic-probed") | Some("not-applicable-bind-target") => {
+            workspace.available_inodes.is_none()
+        }
+        _ => false,
+    };
+    if !inode_capacity_valid {
+        return Err("Offline installer returned invalid initramfs inode-capacity evidence.".into());
+    }
+    match expected_status {
+        "validated"
+            if workspace.phase == "target_directory"
+                && workspace.required_bytes == 4_096
+                && workspace.required_inodes == 1
+                && matches!(
+                    workspace.inode_capacity_mode.as_deref(),
+                    Some("finite-statvfs" | "not-applicable-bind-target")
+                ) =>
+        {
+            if (workspace.status == "verified"
+                && workspace.reason == "initramfs_workspace_target_available"
+                && workspace.condition == "available"
+                && workspace.mode.as_deref() == Some("1777"))
+                || (workspace.status == "preparation-required"
+                    && workspace.reason == "initramfs_workspace_target_missing"
+                    && workspace.condition == "missing_directory"
+                    && workspace.mode.is_none())
+            {
+                Ok(())
+            } else {
+                Err("Initramfs target workspace evidence is inconsistent.".into())
+            }
+        }
+        "success"
+            if workspace.status == "verified"
+                && workspace.reason == "initramfs_workspace_available"
+                && workspace.phase == "mounted_workspace"
+                && workspace.condition == "available"
+                && workspace.mode.as_deref() == Some("1777")
+                && workspace.required_bytes == storage.initramfs_reserve_bytes
+                && workspace.required_inodes == 4_096
+                && matches!(
+                    workspace.inode_capacity_mode.as_deref(),
+                    Some("finite-statvfs" | "dynamic-probed")
+                ) =>
+        {
+            Ok(())
+        }
+        _ => Err("Initramfs workspace evidence does not match the installer phase.".into()),
+    }
+}
+
 pub(crate) fn validate_nvidia_install_result(
     document: SupportInstallResult,
     inputs: &NvidiaInstallInputs,
@@ -1311,6 +1378,10 @@ pub(crate) fn validate_nvidia_install_result(
             "Offline installer validation result does not match the handoff target.".into(),
         );
     }
+    let initramfs_workspace = document
+        .initramfs_workspace
+        .clone()
+        .ok_or("Offline installer result omitted its initramfs workspace verification.")?;
     let initramfs_verification = document.initramfs_verification.clone();
     if expected_status == "success" {
         let initramfs = document
@@ -1327,6 +1398,11 @@ pub(crate) fn validate_nvidia_install_result(
             );
         }
     };
+    validate_support_initramfs_workspace(
+        &initramfs_workspace,
+        &validation.storage,
+        expected_status,
+    )?;
     validate_support_storage(&validation.storage, &validation.compression, true)?;
     if validation.gaming_payload.schema_version != 1
         || validation.gaming_payload.status != "not-requested"
@@ -1563,6 +1639,7 @@ pub(crate) fn validate_nvidia_install_result(
         grub_configuration: validation.boot.grub_configuration,
         required_kernel_arguments: validation.boot.required_kernel_arguments,
         keyring_sha256: validation.keyring.sha256,
+        initramfs_workspace,
         initramfs_verification,
         packages: validation.packages,
         storage: validation.storage,

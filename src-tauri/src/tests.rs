@@ -1999,7 +1999,7 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 412_807);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 418_266);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 26);
         assert!(PINNED_INSTALLER_FILES
             .iter()
@@ -2438,6 +2438,19 @@ esac
                 runtime_mounts_released: 4,
                 compression_policy_restored: true,
             },
+            initramfs_workspace: Some(SupportInitramfsWorkspace {
+                schema_version: 1,
+                status: "verified".into(),
+                reason: "initramfs_workspace_target_available".into(),
+                phase: "target_directory".into(),
+                condition: "available".into(),
+                required_bytes: 4_096,
+                required_inodes: 1,
+                available_bytes: Some(32 * 1024 * 1024),
+                available_inodes: Some(8_192),
+                inode_capacity_mode: Some("finite-statvfs".into()),
+                mode: Some("1777".into()),
+            }),
             initramfs_verification: None,
             validation: Some(SupportInstallValidationDocument::Verified(Box::new(
                 SupportInstallValidation {
@@ -2737,6 +2750,19 @@ esac
         successful.status = "success".into();
         successful.reason = "install_complete".into();
         successful.phase = "complete".into();
+        successful.initramfs_workspace = Some(SupportInitramfsWorkspace {
+            schema_version: 1,
+            status: "verified".into(),
+            reason: "initramfs_workspace_available".into(),
+            phase: "mounted_workspace".into(),
+            condition: "available".into(),
+            required_bytes: 64 * 1024 * 1024,
+            required_inodes: 4_096,
+            available_bytes: Some(128 * 1024 * 1024),
+            available_inodes: None,
+            inode_capacity_mode: Some("dynamic-probed".into()),
+            mode: Some("1777".into()),
+        });
         let mut initramfs = initramfs_verification_fixture();
         initramfs["kernelVersion"] = serde_json::json!(inputs.kernel_version.clone());
         for path in initramfs["images"][0]["modules"]
@@ -2769,6 +2795,27 @@ esac
         );
         assert_eq!(installed.input_source_mode, "direct");
         assert!(installed.input_bundle_cache_id.is_none());
+        assert_eq!(
+            installed.initramfs_workspace.inode_capacity_mode.as_deref(),
+            Some("dynamic-probed")
+        );
+
+        let mut contradictory_workspace = successful.clone();
+        contradictory_workspace
+            .initramfs_workspace
+            .as_mut()
+            .expect("workspace fixture")
+            .available_inodes = Some(4_096);
+        assert!(validate_nvidia_install_result(
+            contradictory_workspace,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )
+        .err()
+        .expect("dynamic inode evidence with a finite count must fail")
+        .contains("inode-capacity"));
 
         let mut authenticated_inputs = inputs.clone();
         authenticated_inputs.input_source_mode = "authenticated-bundle".into();
@@ -2885,6 +2932,19 @@ esac
                 runtime_mounts_released: 4,
                 compression_policy_restored: true,
             },
+            initramfs_workspace: Some(SupportInitramfsWorkspace {
+                schema_version: 1,
+                status: "verified".into(),
+                reason: "initramfs_workspace_available".into(),
+                phase: "mounted_workspace".into(),
+                condition: "available".into(),
+                required_bytes: 64 * 1024 * 1024,
+                required_inodes: 4_096,
+                available_bytes: Some(128 * 1024 * 1024),
+                available_inodes: None,
+                inode_capacity_mode: Some("dynamic-probed".into()),
+                mode: Some("1777".into()),
+            }),
             initramfs_verification: None,
             validation: Some(SupportInstallValidationDocument::Failed(Box::new(
                 SupportInstallFailureValidation {
@@ -2996,6 +3056,19 @@ esac
                 runtime_mounts_released: 4,
                 compression_policy_restored: true,
             },
+            initramfs_workspace: Some(SupportInitramfsWorkspace {
+                schema_version: 1,
+                status: "verified".into(),
+                reason: "initramfs_workspace_target_available".into(),
+                phase: "target_directory".into(),
+                condition: "available".into(),
+                required_bytes: 4_096,
+                required_inodes: 1,
+                available_bytes: Some(32 * 1024 * 1024),
+                available_inodes: Some(8_192),
+                inode_capacity_mode: Some("finite-statvfs".into()),
+                mode: Some("1777".into()),
+            }),
             initramfs_verification: None,
             validation: Some(SupportInstallValidationDocument::Verified(Box::new(
                 SupportInstallValidation {
@@ -3538,6 +3611,19 @@ esac
             grub_configuration: "/efi/EFI/steamos/grub.cfg".into(),
             required_kernel_arguments: NVIDIA_REQUIRED_KERNEL_ARGUMENTS.map(str::to_owned).to_vec(),
             keyring_sha256: "b".repeat(64),
+            initramfs_workspace: SupportInitramfsWorkspace {
+                schema_version: 1,
+                status: "verified".into(),
+                reason: "initramfs_workspace_available".into(),
+                phase: "mounted_workspace".into(),
+                condition: "available".into(),
+                required_bytes: 64 * 1024 * 1024,
+                required_inodes: 4_096,
+                available_bytes: Some(128 * 1024 * 1024),
+                available_inodes: None,
+                inode_capacity_mode: Some("dynamic-probed".into()),
+                mode: Some("1777".into()),
+            },
             initramfs_verification: None,
             packages: Vec::new(),
             storage: SupportInstallStorage {

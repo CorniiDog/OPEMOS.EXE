@@ -249,8 +249,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 26] = [
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "7685a111127f189ecfa54642109662b8f3c26a7fade46e8d04267a4ad121ad1a",
-        bytes: 57_806,
+        sha256: "015a7190ccc15f2f7268986d85e8d2c7f42c6ac580db0be8b7fa9dd14dd710f6",
+        bytes: 59_197,
         executable: true,
     },
     PinnedInstallerFile {
@@ -303,8 +303,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 26] = [
     },
     PinnedInstallerFile {
         path: "lib/check_initramfs_workspace.py",
-        sha256: "b26eed0dc0d9fc4088e2f4e667e684794bf950174641f4d48efa4aa30878514e",
-        bytes: 12_031,
+        sha256: "b5be7223222f02029ccf3a979d4f60bf5c60a56d9ea0aa322192ad17400560e3",
+        bytes: 15_967,
         executable: true,
     },
     PinnedInstallerFile {
@@ -321,8 +321,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 26] = [
     },
     PinnedInstallerFile {
         path: "lib/snapshot_target_execution.py",
-        sha256: "7f27c2fddf657c2faa069e039f531736c8751e4d41adb2e8f504b79d444b203f",
-        bytes: 13_204,
+        sha256: "9d7946b39639dfe185af95dacd7a585fa127cf4c3bd694ed6e1de5492e2a2b72",
+        bytes: 13_336,
         executable: true,
     },
     PinnedInstallerFile {
@@ -745,7 +745,24 @@ pub(crate) struct SupportInstallResult {
     pub(crate) trust: String,
     pub(crate) cleanup: SupportInstallCleanup,
     pub(crate) validation: Option<SupportInstallValidationDocument>,
+    pub(crate) initramfs_workspace: Option<SupportInitramfsWorkspace>,
     pub(crate) initramfs_verification: Option<SupportInitramfsVerification>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupportInitramfsWorkspace {
+    pub(crate) schema_version: u32,
+    pub(crate) status: String,
+    pub(crate) reason: String,
+    pub(crate) phase: String,
+    pub(crate) condition: String,
+    pub(crate) required_bytes: u64,
+    pub(crate) required_inodes: u64,
+    pub(crate) available_bytes: Option<u64>,
+    pub(crate) available_inodes: Option<u64>,
+    pub(crate) inode_capacity_mode: Option<String>,
+    pub(crate) mode: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -1094,6 +1111,7 @@ pub(crate) struct NvidiaInstallHandoffResult {
     pub(crate) grub_configuration: String,
     pub(crate) required_kernel_arguments: Vec<String>,
     pub(crate) keyring_sha256: String,
+    pub(crate) initramfs_workspace: SupportInitramfsWorkspace,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) initramfs_verification: Option<SupportInitramfsVerification>,
     pub(crate) packages: Vec<SupportInstallPackage>,
