@@ -16,6 +16,33 @@ mod tests {
         assert!(detail.chars().count() <= 2 * 1024 + 1);
     }
 
+    #[test]
+    fn final_grub_validator_is_portable_and_rejects_duplicate_arguments() {
+        let run = |grub: &str| {
+            let mut child = std::process::Command::new("awk")
+                .arg(crate::image::NVIDIA_GRUB_VALIDATION_AWK)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("launch the host AWK implementation");
+            let mut stdin = child.stdin.take().expect("open AWK stdin");
+            std::io::Write::write_all(&mut stdin, grub.as_bytes()).expect("write GRUB fixture");
+            drop(stdin);
+            child.wait_with_output().expect("wait for AWK")
+        };
+        let valid = "steamenv_boot linux /vmlinuz rd.driver.blacklist=nouveau modprobe.blacklist=nouveau nvidia-drm.modeset=1 nvidia-drm.fbdev=1\n";
+        let output = run(valid);
+        assert!(
+            output.status.success(),
+            "portable AWK validator rejected a valid entry: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let duplicate = format!("{valid}linux /vmlinuz rd.driver.blacklist=nouveau rd.driver.blacklist=nouveau modprobe.blacklist=nouveau nvidia-drm.modeset=1 nvidia-drm.fbdev=1\n");
+        assert!(!run(&duplicate).status.success());
+    }
+
     fn initramfs_verification_fixture() -> serde_json::Value {
         let kernel = "6.16.12-valve-fixture";
         let module_path = |name: &str| format!("usr/lib/modules/{kernel}/kernel/nvidia/{name}.zst");

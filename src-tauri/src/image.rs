@@ -1073,6 +1073,35 @@ test "$(sudo blockdev --getro "$WORK")" = 1
     run_guest_command(session, VERIFY_COMMAND).map(|_| ())
 }
 
+pub(crate) const NVIDIA_GRUB_VALIDATION_AWK: &str = r#"BEGIN {
+  required[1]="rd.driver.blacklist=nouveau"
+  required[2]="modprobe.blacklist=nouveau"
+  required[3]="nvidia-drm.modeset=1"
+  required[4]="nvidia-drm.fbdev=1"
+  for (slot=1; slot<=4; slot++) {
+    key[slot]=required[slot]
+    sub(/=.*/, "", key[slot])
+  }
+}
+/^[[:space:]]*(steamenv_boot[[:space:]]+)?(linux|linuxefi|linux16)[[:space:]]+/ {
+  entries++
+  delete count
+  for (field=1; field<=NF; field++) {
+    if ($field ~ /^#/) break
+    token_key=$field
+    sub(/=.*/, "", token_key)
+    for (slot=1; slot<=4; slot++) {
+      if (token_key == key[slot]) {
+        if ($field != required[slot]) invalid=1
+        count[slot]++
+      }
+    }
+  }
+  for (slot=1; slot<=4; slot++) if (count[slot] != 1) invalid=1
+}
+END { if (entries == 0 || invalid) exit 1 }
+"#;
+
 pub(crate) fn verify_nvidia_from_validation_overlay(
     session: &ImageInspectionSession,
     installation: &NvidiaInstallHandoffResult,
@@ -1150,35 +1179,7 @@ grep -qx 'MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)' "$ROOT/etc/mkin
 GRUB="$ROOT/efi/EFI/steamos/grub.cfg"
 test -f "$GRUB"
 test ! -L "$GRUB"
-awk '
-BEGIN {{
-  required[1]="rd.driver.blacklist=nouveau"
-  required[2]="modprobe.blacklist=nouveau"
-  required[3]="nvidia-drm.modeset=1"
-  required[4]="nvidia-drm.fbdev=1"
-  for (index=1; index<=4; index++) {{
-    key[index]=required[index]
-    sub(/=.*/, "", key[index])
-  }}
-}}
-/^[[:space:]]*(steamenv_boot[[:space:]]+)?(linux|linuxefi|linux16)[[:space:]]+/ {{
-  entries++
-  delete count
-  for (field=1; field<=NF; field++) {{
-    if ($field ~ /^#/) break
-    token_key=$field
-    sub(/=.*/, "", token_key)
-    for (index=1; index<=4; index++) {{
-      if (token_key == key[index]) {{
-        if ($field != required[index]) invalid=1
-        count[index]++
-      }}
-    }}
-  }}
-  for (index=1; index<=4; index++) if (count[index] != 1) invalid=1
-}}
-END {{ if (entries == 0 || invalid) exit 1 }}
-' "$GRUB"
+awk '{}' "$GRUB"
 STATE="$ROOT/var/lib/open-gpu-kernel-modules-steamos-support/offline-install"
 test "$(cat "$STATE/kernel-version")" = "{}"
 test "$(cat "$STATE/nvidia-version")" = "{}"
@@ -1217,6 +1218,7 @@ trap - EXIT INT TERM"#,
         installation.kernel_version,
         installation.nvidia_version,
         installation.kernel_version,
+        NVIDIA_GRUB_VALIDATION_AWK,
         installation.kernel_version,
         installation.nvidia_version,
         installation.provenance_sha256,
