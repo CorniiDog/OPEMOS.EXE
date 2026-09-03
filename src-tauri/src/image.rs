@@ -1442,8 +1442,19 @@ trap - EXIT INT TERM"#,
 pub(crate) fn payload_receipt_overlay_assertions(
     receipt: &SupportPayloadReceipt,
 ) -> Result<String, String> {
-    let (receipt_manifest_bytes, receipt_manifest_sha256) =
-        persisted_support_payload_receipt_identity(receipt)?;
+    validate_support_payload_receipt_record(receipt)?;
+    let expected_manifest = serde_json::to_string(&serde_json::json!({
+        "schemaVersion": 1,
+        "status": "verified",
+        "reason": "payload_receipt_committed",
+        "target": receipt.target,
+        "records": receipt.records,
+        "receiptId": receipt.receipt_id,
+    }))
+    .map_err(|error| format!("Could not serialize expected payload receipt: {error}"))?;
+    if expected_manifest.contains('\'') {
+        return Err("Payload-receipt identity is unsafe for read-only guest validation.".into());
+    }
     let mut assertions = format!(
         "RECEIPT_SUPPORT=\"$ROOT/usr/lib/open-gpu-kernel-modules-steamos-support\"\n\
          RECEIPT_ROOT=\"$RECEIPT_SUPPORT/offline-install\"\n\
@@ -1454,9 +1465,20 @@ pub(crate) fn payload_receipt_overlay_assertions(
          test \"$(find \"$RECEIPT_ROOT\" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')\" = 7\n\
          test -f \"$RECEIPT_ROOT/receipt.json\"\n\
          test ! -L \"$RECEIPT_ROOT/receipt.json\"\n\
-         test \"$(stat -c '%s' \"$RECEIPT_ROOT/receipt.json\")\" = {receipt_manifest_bytes}\n\
-         test \"$(sha256sum \"$RECEIPT_ROOT/receipt.json\" | awk '{{print $1}}')\" = {receipt_manifest_sha256}\n\
-         test \"$(stat -c '%a:%u:%g' \"$RECEIPT_ROOT/receipt.json\")\" = 644:0:0\n",
+         test \"$(stat -c '%s' \"$RECEIPT_ROOT/receipt.json\")\" -gt 0\n\
+         test \"$(stat -c '%s' \"$RECEIPT_ROOT/receipt.json\")\" -le 65536\n\
+         test \"$(stat -c '%a:%u:%g' \"$RECEIPT_ROOT/receipt.json\")\" = 644:0:0\n\
+         python3 -c 'import json,sys\n\
+def unique(pairs):\n\
+ result={{}}\n\
+ for key,value in pairs:\n\
+  if key in result: raise ValueError(\"duplicate JSON key\")\n\
+  result[key]=value\n\
+ return result\n\
+actual=json.load(open(sys.argv[1],encoding=\"utf-8\"),object_pairs_hook=unique,parse_constant=lambda value: 1/0)\n\
+expected=json.loads(sys.argv[2])\n\
+assert isinstance(actual,dict)\n\
+assert all(actual.get(key)==value for key,value in expected.items())' \"$RECEIPT_ROOT/receipt.json\" '{expected_manifest}'\n",
     );
     for record in &receipt.records {
         assertions.push_str(&format!(

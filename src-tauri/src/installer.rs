@@ -2092,24 +2092,6 @@ pub(crate) fn validate_support_payload_receipt_record(
     Ok(())
 }
 
-pub(crate) fn persisted_support_payload_receipt_identity(
-    receipt: &SupportPayloadReceipt,
-) -> Result<(u64, String), String> {
-    validate_support_payload_receipt_record(receipt)?;
-    let document = serde_json::json!({
-        "schemaVersion": 1,
-        "status": "verified",
-        "reason": "payload_receipt_committed",
-        "target": receipt.target,
-        "records": receipt.records,
-        "receiptId": receipt.receipt_id,
-    });
-    let mut bytes = serde_json::to_vec(&document)
-        .map_err(|error| format!("Could not canonicalize persisted payload receipt: {error}"))?;
-    bytes.push(b'\n');
-    Ok((bytes.len() as u64, format!("{:x}", Sha256::digest(bytes))))
-}
-
 pub(crate) fn validate_nvidia_install_result(
     document: SupportInstallResult,
     inputs: &NvidiaInstallInputs,
