@@ -303,8 +303,16 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
 
 - [ ] Give every build, appliance, handoff, USB operation, and async worker a
   generation ID so stale completions cannot overwrite newer state.
+- [x] Add the inactive descriptor-bound source/output reservation foundation:
+  pinned source and parent descriptors, exclusive immutable locks, strict
+  basenames, and a closed durable record that preserves torn or stale state.
 - [ ] Add a cross-process exclusive lock for each source image, working image,
-  output reservation, and USB target. Hold it through cleanup.
+  output reservation, and USB target. Before activation, use one fixed private
+  app-owned root, retain the source guard through descriptor-bound consumption,
+  close lock-inode/verify-to-action races, and hold every lock through cleanup.
+- [ ] Add separately reviewed image-first/manifest-last publication, staged-file
+  receipts, crash reconciliation, and an explicit recovery UI. Never infer
+  deletion authority from a mutable reservation record.
 - [ ] Formalize lock ordering and prove status polling, cancellation, close,
   and worker completion cannot deadlock.
 - [ ] Route normal cancellation, window close, process failure, and next-launch

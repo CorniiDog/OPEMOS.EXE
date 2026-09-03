@@ -68,6 +68,9 @@ mod core_generation_contracts;
 mod image;
 mod installer;
 mod nvidia;
+#[cfg(unix)]
+#[allow(dead_code)]
+mod output_transaction;
 mod settings;
 mod windows;
 
