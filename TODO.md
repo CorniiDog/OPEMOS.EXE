@@ -120,12 +120,12 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   identity-pinned candidate. Freshly verify the exact disk inventory inside
   atomic cache commit without changing active state. This has no production
   transport, trust root, command, or UI entry point.
-- [x] Prove inactive bootstrap activation using only sealed verifier-created
-  generation capabilities and an exact-digest-bound checkpoint capability.
-  Bound lineage before use and preserve fresh, forward, catch-up,
-  rotated-policy, target-mismatch, and rolled-back high-water behavior.
-  Production must still load the installed checkpoint and durable state under
-  the host cache lock; fixture-supplied trust and state are never authority.
+- [x] Bind inactive bootstrap activation to the host cache using only sealed
+  generation/checkpoint capabilities. Authorize durable state under the cache
+  lock, verify exact inventory through the pinned directory descriptor, and
+  publish only pending state across replay, lineage, race, and cancellation
+  tests. Production still requires root-confined installed trust; fixtures are
+  never authority.
 - [x] Consume Core's closed userspace-lock discovery and generation-manifest
   schema-1 models plus all 74 inactive compatibility cases and additive
   consumer handoff metadata preserved at exact local successor commit

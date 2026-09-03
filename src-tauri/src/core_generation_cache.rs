@@ -21,6 +21,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(test)]
+mod activation;
+
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
