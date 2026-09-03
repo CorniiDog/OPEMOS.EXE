@@ -109,8 +109,9 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 - [ ] After equivalence passes, make the authenticated Core resolver the only
   normal release decision. Retain Rust parsing, bounds, session binding, error
   presentation, artifact verification, and fail-closed behavior.
-- [x] Consume Core’s structured inputs, verification records, cleanup evidence,
-  and payload receipt while keeping OPEMOS.EXE’s independent final inspection.
+- [x] Consume Core’s bounded installer-result fixture matrix plus structured
+  inputs, verification records, cleanup evidence, and payload receipt while
+  keeping OPEMOS.EXE’s independent final inspection.
 - [ ] Repin Core only after its complete Fedora suite and this repository’s full
   suite pass against the same immutable bundle.
 

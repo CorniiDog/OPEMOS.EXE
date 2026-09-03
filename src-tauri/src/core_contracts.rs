@@ -5,6 +5,7 @@ pub(crate) const CORE_RESOLVER_RESULT_LIMIT: usize = 1024 * 1024;
 pub(crate) const CORE_PROGRESS_RECORD_LIMIT: usize = 4096;
 pub(crate) const CORE_BUNDLE_MANIFEST_LIMIT: usize = 2 * 1024 * 1024;
 pub(crate) const CORE_RESOLVER_FIXTURE_LIMIT: usize = 512 * 1024;
+pub(crate) const CORE_INSTALLER_RESULT_FIXTURE_LIMIT: usize = 512 * 1024;
 const CORE_BUNDLE_FILE_LIMIT: u64 = 128 * 1024 * 1024;
 const CORE_BUNDLE_TOTAL_LIMIT: u64 = 256 * 1024 * 1024;
 const CORE_BUNDLE_FILE_COUNT_LIMIT: usize = 256;
@@ -344,6 +345,114 @@ pub(crate) fn parse_core_resolver_compatibility_fixtures(
     }
     if names != required_names {
         return Err("OPEMOS Core resolver fixture matrix omits a required safety case.".into());
+    }
+    Ok(fixtures)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerResultCompatibilityFixtures {
+    pub(crate) schema_version: u32,
+    pub(crate) kind: String,
+    pub(crate) result_schema_version: u32,
+    pub(crate) unfrozen_fields: Vec<String>,
+    pub(crate) cases: Vec<CoreInstallerResultCompatibilityCase>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerResultCompatibilityCase {
+    pub(crate) name: String,
+    pub(crate) expected: CoreInstallerResultCompatibilityExpectation,
+    #[serde(default)]
+    pub(crate) document: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) raw_document: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerResultCompatibilityExpectation {
+    pub(crate) accepted: bool,
+    #[serde(default)]
+    pub(crate) status: Option<String>,
+}
+
+pub(crate) fn parse_core_installer_result_compatibility_fixtures(
+    bytes: &[u8],
+) -> Result<CoreInstallerResultCompatibilityFixtures, String> {
+    if bytes.is_empty() || bytes.len() > CORE_INSTALLER_RESULT_FIXTURE_LIMIT {
+        return Err("OPEMOS Core installer-result fixtures are empty or exceed 512 KiB.".into());
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core installer-result fixtures")?;
+    let fixtures: CoreInstallerResultCompatibilityFixtures = serde_json::from_slice(bytes)
+        .map_err(|error| {
+            format!("OPEMOS Core installer-result fixtures are invalid JSON: {error}")
+        })?;
+    let required_names = HashSet::from([
+        "validated-success",
+        "mutation-success",
+        "safe-additive-fields",
+        "missing-module-verification",
+        "missing-userspace-verification",
+        "missing-workspace-verification",
+        "missing-initramfs-verification",
+        "missing-payload-receipt",
+        "target-proof-mismatch",
+        "unsafe-input-identity",
+        "cleanup-incomplete",
+        "malformed-json",
+        "duplicate-json-key",
+    ]);
+    if fixtures.schema_version != 1
+        || fixtures.kind != "opemos-installer-result-compatibility-fixtures"
+        || fixtures.result_schema_version != 1
+        || fixtures.unfrozen_fields != ["message"]
+        || !(1..=64).contains(&fixtures.cases.len())
+    {
+        return Err("OPEMOS Core installer-result fixture envelope is invalid.".into());
+    }
+    let mut names = HashSet::new();
+    for case in &fixtures.cases {
+        let has_document = case.document.is_some();
+        let has_raw_document = case.raw_document.is_some();
+        let expected_status = case.expected.status.as_deref();
+        let expected_contract = match case.name.as_str() {
+            "validated-success" => (true, Some("validated"), false),
+            "mutation-success" | "safe-additive-fields" => (true, Some("success"), false),
+            "malformed-json" | "duplicate-json-key" => (false, None, true),
+            _ => (false, None, false),
+        };
+        let document_status = case
+            .document
+            .as_ref()
+            .and_then(serde_json::Value::as_object)
+            .and_then(|document| document.get("status"))
+            .and_then(serde_json::Value::as_str);
+        if !safe_kebab_token(&case.name, 64)
+            || !names.insert(case.name.as_str())
+            || has_document == has_raw_document
+            || case.expected.accepted != expected_contract.0
+            || expected_status != expected_contract.1
+            || has_raw_document != expected_contract.2
+            || case.raw_document.as_ref().is_some_and(|raw| {
+                raw.is_empty() || raw.len() > CORE_INSTALLER_RESULT_FIXTURE_LIMIT
+            })
+            || (case.expected.accepted
+                && (!matches!(expected_status, Some("validated" | "success"))
+                    || document_status != expected_status
+                    || !has_document))
+            || (!case.expected.accepted && expected_status.is_some())
+        {
+            return Err(
+                "OPEMOS Core installer-result fixture case is unsafe or incomplete.".into(),
+            );
+        }
+    }
+    if names != required_names {
+        return Err(
+            "OPEMOS Core installer-result fixture matrix omits a required safety case.".into(),
+        );
     }
     Ok(fixtures)
 }
@@ -1620,6 +1729,101 @@ mod tests {
         assert!(parse_core_resolver_compatibility_fixtures(&vec![
             b' ';
             CORE_RESOLVER_FIXTURE_LIMIT + 1
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn local_successor_installer_result_fixtures_are_bounded_and_rust_compatible() {
+        let Some(repository) = core_repository() else {
+            eprintln!(
+                "skipping local successor installer-result fixtures: sibling Core repository is absent"
+            );
+            return;
+        };
+        let generator = repository.join("lib/generate_installer_result_fixtures.py");
+        let generate = || {
+            let output = Command::new("python3")
+                .arg(&generator)
+                .current_dir(&repository)
+                .output()
+                .expect("run Core installer-result fixture generator");
+            assert!(output.status.success());
+            assert!(output.stderr.is_empty());
+            output.stdout
+        };
+        let first = generate();
+        let second = generate();
+        assert_eq!(
+            first, second,
+            "Core installer-result fixtures changed between runs"
+        );
+        let fixtures = parse_core_installer_result_compatibility_fixtures(&first)
+            .expect("consume bounded Core installer-result fixtures");
+        for case in &fixtures.cases {
+            if !case.expected.accepted {
+                continue;
+            }
+            let result: SupportInstallResult = serde_json::from_value(
+                case.document
+                    .clone()
+                    .expect("accepted installer fixture document"),
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "accepted Core installer-result fixture {} is incompatible with Rust: {error}",
+                    case.name
+                )
+            });
+            assert_eq!(result.schema_version, fixtures.result_schema_version);
+            assert_eq!(
+                Some(result.status.as_str()),
+                case.expected.status.as_deref()
+            );
+            assert!(matches!(
+                result.validation,
+                Some(SupportInstallValidationDocument::Verified(_))
+            ));
+            assert!(result.initramfs_workspace.is_some());
+            if result.status == "success" {
+                assert!(result.module_verification.is_some());
+                assert!(result.userspace_verification.is_some());
+                assert!(result.initramfs_verification.is_some());
+                assert!(result.payload_receipt.is_some());
+            } else {
+                assert!(result.module_verification.is_none());
+                assert!(result.userspace_verification.is_none());
+                assert!(result.initramfs_verification.is_none());
+                assert!(result.payload_receipt.is_none());
+            }
+        }
+
+        let mut missing_case: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        missing_case["cases"].as_array_mut().unwrap().pop();
+        assert!(parse_core_installer_result_compatibility_fixtures(
+            &serde_json::to_vec(&missing_case).unwrap()
+        )
+        .is_err());
+        let mut relabelled: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        relabelled["cases"][0]["expected"] = serde_json::json!({"accepted": false});
+        assert!(parse_core_installer_result_compatibility_fixtures(
+            &serde_json::to_vec(&relabelled).unwrap()
+        )
+        .is_err());
+        let duplicate_key = first
+            .strip_suffix(b"\n")
+            .unwrap()
+            .strip_suffix(b"}")
+            .unwrap()
+            .iter()
+            .copied()
+            .chain(b",\"schemaVersion\":1}".iter().copied())
+            .collect::<Vec<_>>();
+        assert!(parse_core_installer_result_compatibility_fixtures(&duplicate_key).is_err());
+        assert!(parse_core_installer_result_compatibility_fixtures(&vec![
+            b' ';
+            CORE_INSTALLER_RESULT_FIXTURE_LIMIT
+                + 1
         ])
         .is_err());
     }
