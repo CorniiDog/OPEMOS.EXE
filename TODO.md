@@ -1474,6 +1474,74 @@ physical NVIDIA boot compatibility.
 * [x] Atomically finalize completed output and its manifest before revealing success, independently of later runtime cleanup.
 * [ ] Keep state machine recoverable after frontend reload.
 
+## Stable graphical shell and independently updateable backend
+
+Treat the persistent installed-system application as two products with one
+versioned protocol. The graphical shell should become intentionally boring and
+stable; compatibility, recovery, resolver, and transaction fixes should ship as
+smaller backend generations without closing, replacing, or visually resetting
+the open window.
+
+* [x] Embed the pinned support repository's signed, content-addressed A/B
+  desktop-generation manager, atomic activation marker, startup-health deadline,
+  last-known-good rollback, lifecycle lock, and fail-closed signer policy as the
+  initial update foundation.
+* [ ] Split the persistent Open OPEMOS Desktop into an unprivileged graphical
+  shell and a separately launched backend process. Do not load downloaded code
+  into the GUI process or grant the backend unrestricted shell execution.
+* [ ] Define a strict, bounded schema-1 shell/backend protocol with capability
+  discovery, request IDs, cancellation, heartbeats, structured errors, maximum
+  message sizes, and explicit minimum/maximum compatible protocol versions.
+* [ ] Version the shell and backend independently. A backend release manifest
+  must bind its exact version, protocol range, OS/architecture, executable hash,
+  support revision, required guardian schema, release channel, and signer.
+* [ ] Let a compatible backend generation stage while the current backend keeps
+  serving the visible shell. Start the candidate separately, require a bounded
+  ready/health handshake, switch new requests atomically, drain or cancel old
+  requests safely, and only then acknowledge the candidate as healthy.
+* [ ] Keep the graphical window resident through backend download, activation,
+  crash, timeout, and rollback. Show a small truthful status such as
+  `Updating services`, `Checking update`, or `Restored previous service`; do not
+  blank, reload, resize, or replace the window merely because the backend moved.
+* [ ] If the candidate crashes, misses its health deadline, loses its channel,
+  or returns an incompatible schema, reconnect the shell to the last-known-good
+  backend and retain bounded diagnostics. Never strand the UI on a dead socket.
+* [ ] Require a conventional full-application update when a backend's protocol
+  is outside the installed shell's compatible range or when a security fix must
+  change the UI boundary. Never force a nominally backend-only update across an
+  incompatible shell.
+* [ ] Add signed release-channel metadata that distinguishes `stable`, `beta`,
+  and explicit maintainer/development generations. Automatic mode may consume
+  only a reviewed production signer and may never downgrade or cross channels.
+* [ ] Check for backend updates only after connectivity is available, with
+  bounded exponential backoff and jitter. Offline or delayed networking must
+  continue using the last-known-good generation without blocking the desktop,
+  boot, recovery, or local diagnostics.
+* [ ] Download into a private content-addressed staging directory, enforce disk
+  and byte limits, rehash before every trust boundary, verify the detached
+  signature and reviewed signer before activation, and retain no trusted state
+  for a partial or cancelled download.
+* [ ] Make update checks and downloads cancellable, but never interrupt an
+  active image/slot mutation at an unsafe point. Defer activation until the
+  backend reports an idle or explicitly resumable transaction boundary.
+* [ ] Keep one verified previous generation plus the active generation, bound
+  cache growth, and prune only generations that are neither active, pending,
+  last-known-good, nor referenced by a recoverable transaction.
+* [ ] Support signed key rotation and emergency revocation without allowing
+  release metadata, GitHub availability, TLS alone, or a backend generation to
+  expand its own trust policy.
+* [ ] Persist only non-secret update state outside replaceable SteamOS root
+  slots. Reconcile interrupted staging/activation after power loss and expose
+  the same state through the graphical shell and console-safe diagnostics.
+* [ ] Test backend hot-swap with active requests, slow and disconnected clients,
+  offline startup, delayed internet, corrupt/truncated downloads, disk
+  exhaustion, signature failure, incompatible protocol ranges, crash loops,
+  power loss at every durable-write boundary, and rollback while the GUI remains
+  usable.
+* [ ] Hardware-test backend-only updates across SteamOS A/B updates and prove
+  that the stable shell can reconnect to the correct last-known-good backend
+  from either slot before enabling automatic production updates.
+
 ---
 
 # 54. Release packaging

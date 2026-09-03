@@ -105,6 +105,42 @@ graphics update can terminate the compositor, the same status must also be
 written to a persistent log and shown through a console-safe fallback. A
 progress window alone is not a recovery mechanism.
 
+### Stable shell, updateable services
+
+The installed graphical application should not need to be replaced for every
+resolver, recovery, or transaction fix. Its visible shell and its backend are
+separate compatibility domains:
+
+- The unprivileged shell owns presentation, accessibility, and a bounded
+  versioned request protocol. It remains open while services update.
+- A separately signed backend generation owns network resolution, update state,
+  validation, and calls into the fixed privileged support-helper protocol. A
+  downloaded backend is never loaded into the GUI process.
+- The current backend continues serving the shell while a candidate downloads
+  and starts. The shell changes channels only after the candidate proves its
+  signed identity, compatible protocol range, and bounded startup health.
+- Failure before health acknowledgement restores the last-known-good backend.
+  The existing signed A/B desktop-generation manager supplies the initial
+  content-addressed staging, activation, health-deadline, and rollback
+  foundation; it still needs a shell/backend protocol split before this can be
+  described as seamless.
+- Offline and delayed-network startup always uses the last-known-good backend.
+  Internet access is an update opportunity, not a prerequisite for opening the
+  UI, reading local status, or invoking recovery.
+
+A backend manifest must bind the exact backend version, supported shell
+protocol interval, target OS and architecture, executable hash, support
+revision, guardian schema, release channel, and reviewed signer. If its protocol
+does not overlap the installed shell, the update is a normal full-application
+release—not a hot swap. Release discovery and TLS never substitute for manifest
+signature verification.
+
+Activation must also wait for a safe transaction boundary. An update may not
+take ownership midway through package installation, initramfs creation, slot
+selection, device writing, or another destructive operation. Once healthy, new
+requests move to the candidate and the previous backend is retained for bounded
+rollback; the graphical window does not reload or disappear.
+
 OPEMOS should additionally install an explicit recovery entry that can reach a
 text/rescue environment without starting Gaming Mode. The exact SteamOS boot
 entry and rollback edits remain hardware-test gates; they must not be inferred

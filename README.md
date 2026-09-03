@@ -57,6 +57,7 @@ progress window, and permission-gated maintainer workspace.
 - [Developer guide](docs/developer-guide.md)
 - [Architecture and trust boundaries](docs/architecture.md)
 - [Hardware and update recovery](docs/hardware-and-updates.md)
+- [Stable graphical shell and backend updates](docs/hardware-and-updates.md#stable-shell-updateable-services)
 - [Security model](docs/security.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Roadmap](TODO.md)
