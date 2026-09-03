@@ -1,5 +1,8 @@
 use crate::{
-    core_generation_cache::{CandidateLease, CoreGenerationCache, CoreGenerationIdentity},
+    core_generation_cache::{
+        CandidateAdmissionError, CandidateLease, CoreGenerationCache, CoreGenerationIdentity,
+        FilesystemCapacityProbe,
+    },
     core_generation_contracts::{
         validate_discovery_bytes, validate_manifest_bytes, validate_openpgp_status, validate_pair,
         GenerationAuthority, GenerationDiscovery, GenerationFile, GenerationManifest,
@@ -93,11 +96,16 @@ struct StagedControls<'a> {
     trust_record: &'a [u8],
 }
 
+pub(crate) struct InactiveAcquisitionPolicy<'a> {
+    pub(crate) authority: &'a GenerationAuthority,
+    pub(crate) target: &'a GenerationTarget,
+    pub(crate) capacity_probe: &'a dyn FilesystemCapacityProbe,
+}
+
 pub(crate) fn acquire_inactive_generation<T, V, C>(
     cache: &CoreGenerationCache,
     operation_id: &str,
-    expected_authority: &GenerationAuthority,
-    expected_target: &GenerationTarget,
+    policy: &InactiveAcquisitionPolicy<'_>,
     transport: &mut T,
     verifier: &mut V,
     cancelled: C,
@@ -125,10 +133,10 @@ where
         verifier.authenticate_discovery(&discovery_bytes, &discovery_signature, &cancelled)?;
     poll_cancelled(&cancelled)?;
     let discovery_signature_status =
-        validate_authenticated_evidence(discovery_evidence, expected_authority)?;
+        validate_authenticated_evidence(discovery_evidence, policy.authority)?;
     let discovery =
         validate_discovery_bytes(&discovery_bytes).map_err(AcquisitionError::Contract)?;
-    if &discovery.authority != expected_authority {
+    if &discovery.authority != policy.authority {
         return Err(AcquisitionError::Authentication(
             "Validated discovery authority differs from installed policy.".into(),
         ));
@@ -158,7 +166,7 @@ where
     )?;
     poll_cancelled(&cancelled)?;
     let manifest_signature_status =
-        validate_authenticated_evidence(manifest_evidence, expected_authority)?;
+        validate_authenticated_evidence(manifest_evidence, policy.authority)?;
     if manifest_signature_status.primary_fingerprint
         != discovery_signature_status.primary_fingerprint
     {
@@ -168,7 +176,7 @@ where
     }
     let manifest = validate_manifest_bytes(&manifest_bytes).map_err(AcquisitionError::Contract)?;
     let manifest_hash = validate_pair(&discovery, &manifest).map_err(AcquisitionError::Contract)?;
-    require_exact_target(&discovery, &manifest, expected_target)?;
+    require_exact_target(&discovery, &manifest, policy.target)?;
     let trust_record = canonical_trust_record(
         &discovery_signature_status,
         &manifest_signature_status,
@@ -193,10 +201,25 @@ where
         &trust_record,
         &manifest,
     )?;
+    let reservation_file_nodes = u64::try_from(inventory.len())
+        .ok()
+        // Candidate directory and its lease sidecar are also newly allocated.
+        .and_then(|count| count.checked_add(2))
+        .ok_or_else(|| {
+            AcquisitionError::Contract("Generation file-node count overflowed.".into())
+        })?;
     poll_cancelled(&cancelled)?;
     let lease = cache
-        .create_candidate(operation_id, reservation)
-        .map_err(AcquisitionError::Cache)?;
+        .create_candidate_admitted(
+            operation_id,
+            reservation,
+            reservation_file_nodes,
+            policy.capacity_probe,
+        )
+        .map_err(|error| match error {
+            CandidateAdmissionError::NoSpace(detail) => AcquisitionError::NoSpace(detail),
+            CandidateAdmissionError::Cache(detail) => AcquisitionError::Cache(detail),
+        })?;
     let staged = stage_all(
         &lease,
         transport,
@@ -226,10 +249,13 @@ where
     // Cancellation deliberately stops here: cache commit is the atomic,
     // non-cancellable publication boundary and does not alter activation state.
     cache
-        .commit_candidate(&lease, &identity, |root| {
+        .commit_candidate_admitted(&lease, &identity, |root| {
             verify_flat_inventory(root, &inventory)
         })
-        .map_err(AcquisitionError::Cache)?;
+        .map_err(|error| match error {
+            CandidateAdmissionError::NoSpace(detail) => AcquisitionError::NoSpace(detail),
+            CandidateAdmissionError::Cache(detail) => AcquisitionError::Cache(detail),
+        })?;
     Ok(identity)
 }
 
@@ -638,6 +664,7 @@ fn abort_with_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core_generation_cache::FilesystemCapacity;
     use crate::core_generation_contracts::{
         DiscoveryGeneration, GenerationAuthority, GenerationCompatibility, GenerationLock,
         GenerationTargetLock, MAX_GENERATION_BYTES,
@@ -668,6 +695,51 @@ mod tests {
     struct DevelopmentVerifier {
         reject_discovery: bool,
         reject_manifest: bool,
+    }
+
+    #[derive(Clone, Copy)]
+    struct FixedCapacity(FilesystemCapacity);
+
+    impl FilesystemCapacityProbe for FixedCapacity {
+        fn probe(&self, _pinned_root: &fs::File) -> std::io::Result<FilesystemCapacity> {
+            Ok(self.0)
+        }
+    }
+
+    fn ample_capacity() -> FixedCapacity {
+        FixedCapacity(FilesystemCapacity {
+            available_bytes: u64::MAX,
+            allocation_unit_bytes: 4096,
+            available_inodes: None,
+        })
+    }
+
+    fn policy<'a>(
+        authority: &'a GenerationAuthority,
+        target: &'a GenerationTarget,
+        capacity_probe: &'a dyn FilesystemCapacityProbe,
+    ) -> InactiveAcquisitionPolicy<'a> {
+        InactiveAcquisitionPolicy {
+            authority,
+            target,
+            capacity_probe,
+        }
+    }
+
+    struct PanicCapacity;
+
+    impl FilesystemCapacityProbe for PanicCapacity {
+        fn probe(&self, _pinned_root: &fs::File) -> std::io::Result<FilesystemCapacity> {
+            panic!("capacity probe must not run after cancellation")
+        }
+    }
+
+    struct ErrorCapacity(i32);
+
+    impl FilesystemCapacityProbe for ErrorCapacity {
+        fn probe(&self, _pinned_root: &fs::File) -> std::io::Result<FilesystemCapacity> {
+            Err(std::io::Error::from_raw_os_error(self.0))
+        }
     }
 
     fn valid_status(signing: char, primary: char) -> Vec<u8> {
@@ -860,8 +932,7 @@ mod tests {
         let first = acquire_inactive_generation(
             &cache,
             "acquire-first",
-            &authority,
-            &target,
+            &policy(&authority, &target, &ample_capacity()),
             &mut transport,
             &mut verifier,
             || false,
@@ -873,8 +944,7 @@ mod tests {
         let second = acquire_inactive_generation(
             &cache,
             "acquire-repeat",
-            &authority,
-            &target,
+            &policy(&authority, &target, &ample_capacity()),
             &mut transport,
             &mut verifier,
             || false,
@@ -901,8 +971,7 @@ mod tests {
             acquire_inactive_generation(
                 &cache,
                 "reject",
-                &authority,
-                &target,
+                &policy(&authority, &target, &ample_capacity()),
                 &mut transport,
                 &mut verifier,
                 || false
@@ -933,8 +1002,7 @@ mod tests {
             acquire_inactive_generation(
                 &cache,
                 "bad-hash",
-                &authority,
-                &target,
+                &policy(&authority, &target, &ample_capacity()),
                 &mut transport,
                 &mut verifier,
                 || false
@@ -960,8 +1028,7 @@ mod tests {
             acquire_inactive_generation(
                 &cache,
                 "wrong-authority",
-                &authority,
-                &target,
+                &policy(&authority, &target, &ample_capacity()),
                 &mut transport,
                 &mut verifier,
                 || false
@@ -989,8 +1056,7 @@ mod tests {
             acquire_inactive_generation(
                 &cache,
                 "cancelled",
-                &authority,
-                &target,
+                &policy(&authority, &target, &PanicCapacity),
                 &mut transport,
                 &mut verifier,
                 || true
@@ -999,6 +1065,63 @@ mod tests {
         );
         assert!(transport.requests.is_empty());
         assert_eq!(fs::read_dir(root.join("candidates")).unwrap().count(), 0);
+        assert_eq!(cache.load_state().unwrap(), Default::default());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn physical_admission_shortage_maps_to_no_space_without_cache_state_change() {
+        let root = temporary_cache("admission-no-space");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let (authority, target, mut transport) = fixture();
+        let mut verifier = DevelopmentVerifier {
+            reject_discovery: false,
+            reject_manifest: false,
+        };
+        let no_capacity = FixedCapacity(FilesystemCapacity {
+            available_bytes: 0,
+            allocation_unit_bytes: 4096,
+            available_inodes: Some(0),
+        });
+        assert!(matches!(
+            acquire_inactive_generation(
+                &cache,
+                "no-space",
+                &policy(&authority, &target, &no_capacity),
+                &mut transport,
+                &mut verifier,
+                || false,
+            ),
+            Err(AcquisitionError::NoSpace(_))
+        ));
+        assert_eq!(fs::read_dir(root.join("candidates")).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root.join("leases")).unwrap().count(), 0);
+        assert_eq!(cache.load_state().unwrap(), Default::default());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn enospc_probe_failure_is_preserved_as_typed_no_space() {
+        let root = temporary_cache("probe-enospc");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let (authority, target, mut transport) = fixture();
+        let mut verifier = DevelopmentVerifier {
+            reject_discovery: false,
+            reject_manifest: false,
+        };
+        assert!(matches!(
+            acquire_inactive_generation(
+                &cache,
+                "probe-enospc",
+                &policy(&authority, &target, &ErrorCapacity(libc::ENOSPC)),
+                &mut transport,
+                &mut verifier,
+                || false,
+            ),
+            Err(AcquisitionError::NoSpace(_))
+        ));
+        assert_eq!(fs::read_dir(root.join("candidates")).unwrap().count(), 0);
+        assert_eq!(cache.load_state().unwrap(), Default::default());
         cleanup(&root);
     }
 
@@ -1021,8 +1144,7 @@ mod tests {
             acquire_inactive_generation(
                 &cache,
                 "wrong-target",
-                &authority,
-                &different,
+                &policy(&authority, &different, &ample_capacity()),
                 &mut transport,
                 &mut verifier,
                 || false

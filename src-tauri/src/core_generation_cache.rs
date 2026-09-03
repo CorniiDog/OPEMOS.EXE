@@ -32,14 +32,20 @@ static CACHE_TRANSACTION_LOCK: Mutex<()> = Mutex::new(());
 const CACHE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const CACHE_LOCK_RETRY: Duration = Duration::from_millis(20);
 const CANDIDATE_LEASE_LIMIT: u64 = 1024;
+const COMMIT_MARKER_MAX_BYTES: u64 = 20 + 1 + 64 + 1;
 const CACHE_DIRECTORY_ENTRY_LIMIT: usize = MAX_FILES + MAX_LINEAGE_GENERATIONS + 256;
 const MAX_TREE_DEPTH: usize = 64;
 const MAX_TREE_NODES: usize = MAX_FILES * 2 + 1;
 const MAX_GENERATION_STORAGE_FILES: usize = MAX_FILES + 5;
+const GENERIC_CANDIDATE_FILE_NODES: u64 = (MAX_TREE_NODES + 1) as u64;
 const MAX_RETAINED_GENERATIONS: usize = 4;
 const MAX_TOTAL_GENERATION_BYTES: u64 =
     MAX_GENERATION_STORAGE_BYTES * MAX_RETAINED_GENERATIONS as u64;
 const TOMBSTONE_BATCH_OPERATIONS: usize = 256;
+const CACHE_FREE_BYTE_RESERVE: u64 = 64 * 1024 * 1024;
+const CACHE_FREE_INODE_RESERVE: u64 = 128;
+const MAX_FILESYSTEM_ALLOCATION_UNIT_BYTES: u64 = 1024 * 1024;
+const STORAGE_NO_SPACE_PREFIX: &str = "storage-admission-no-space: ";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -84,6 +90,33 @@ pub(crate) enum GenerationCommit {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FilesystemCapacity {
+    pub(crate) available_bytes: u64,
+    pub(crate) allocation_unit_bytes: u64,
+    /// `None` represents filesystems whose inode accounting is dynamic or not
+    /// applicable (`statvfs.f_files == 0`).
+    pub(crate) available_inodes: Option<u64>,
+}
+
+pub(crate) trait FilesystemCapacityProbe {
+    fn probe(&self, pinned_root: &File) -> std::io::Result<FilesystemCapacity>;
+}
+
+pub(crate) struct StatvfsCapacityProbe;
+
+impl FilesystemCapacityProbe for StatvfsCapacityProbe {
+    fn probe(&self, pinned_root: &File) -> std::io::Result<FilesystemCapacity> {
+        probe_statvfs_capacity(pinned_root)
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum CandidateAdmissionError {
+    NoSpace(String),
+    Cache(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FilesystemIdentity {
     device: u64,
     inode: u64,
@@ -121,11 +154,55 @@ struct CandidateLeaseDocument<'a> {
     device: u64,
     inode: u64,
     reservation_bytes: u64,
+    reservation_file_nodes: u64,
+    allocation_unit_bytes: u64,
+    reservation_physical_bytes: u64,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Eq, PartialEq)]
+enum CandidateLeaseWireFormat {
+    Current,
+    FileNodes,
+    Legacy,
+}
+
+#[derive(Debug, Eq, PartialEq)]
 struct OwnedCandidateLeaseDocument {
+    candidate_basename: String,
+    device: u64,
+    inode: u64,
+    reservation_bytes: u64,
+    reservation_file_nodes: u64,
+    allocation_unit_bytes: u64,
+    reservation_physical_bytes: u64,
+    wire_format: CandidateLeaseWireFormat,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CurrentCandidateLeaseDocument {
+    candidate_basename: String,
+    device: u64,
+    inode: u64,
+    reservation_bytes: u64,
+    reservation_file_nodes: u64,
+    allocation_unit_bytes: u64,
+    reservation_physical_bytes: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FileNodesCandidateLeaseDocument {
+    candidate_basename: String,
+    device: u64,
+    inode: u64,
+    reservation_bytes: u64,
+    reservation_file_nodes: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyCandidateLeaseDocument {
     candidate_basename: String,
     device: u64,
     inode: u64,
@@ -141,6 +218,9 @@ pub(crate) struct CacheReconciliationReport {
     pub(crate) removed_generations: usize,
     pub(crate) removed_commit_markers: usize,
     pub(crate) live_candidates: usize,
+    pub(crate) live_reserved_bytes: u64,
+    pub(crate) live_reserved_physical_bytes: u64,
+    pub(crate) live_reserved_file_nodes: u64,
     pub(crate) retained_generations: usize,
     pub(crate) protected_over_budget: bool,
 }
@@ -462,15 +542,37 @@ impl CoreGenerationCache {
         self.create_candidate_with_prepare(
             operation_id,
             reservation_bytes,
+            GENERIC_CANDIDATE_FILE_NODES,
+            None,
             prepare_candidate_directory,
             |_lease_path| Ok(()),
         )
+    }
+
+    pub(crate) fn create_candidate_admitted(
+        &self,
+        operation_id: &str,
+        reservation_bytes: u64,
+        reservation_file_nodes: u64,
+        capacity_probe: &dyn FilesystemCapacityProbe,
+    ) -> Result<CandidateLease, CandidateAdmissionError> {
+        self.create_candidate_with_prepare(
+            operation_id,
+            reservation_bytes,
+            reservation_file_nodes,
+            Some(capacity_probe),
+            prepare_candidate_directory,
+            |_lease_path| Ok(()),
+        )
+        .map_err(classify_admission_error)
     }
 
     fn create_candidate_with_prepare(
         &self,
         operation_id: &str,
         reservation_bytes: u64,
+        reservation_file_nodes: u64,
+        capacity_probe: Option<&dyn FilesystemCapacityProbe>,
         prepare: impl FnOnce(&Path, &Path) -> Result<(), String>,
         after_lease_open: impl FnOnce(&Path) -> Result<(), String>,
     ) -> Result<CandidateLease, String> {
@@ -480,10 +582,53 @@ impl CoreGenerationCache {
         if !(1..=MAX_GENERATION_STORAGE_BYTES).contains(&reservation_bytes) {
             return Err("Core generation candidate reservation is invalid.".into());
         }
+        if !(2..=GENERIC_CANDIDATE_FILE_NODES).contains(&reservation_file_nodes) {
+            return Err("Core generation candidate file-node reservation is invalid.".into());
+        }
         let _process_guard = CACHE_TRANSACTION_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _file_guard = self.acquire_lock()?;
+        let capacity = if let Some(probe) = capacity_probe {
+            let report = self.reconcile_locked()?;
+            require_bound_root(&self.root, &self.root_file, self.root_identity)?;
+            let capacity = probe.probe(&self.root_file).map_err(|error| {
+                if error.raw_os_error() == Some(libc::ENOSPC)
+                    || error.kind() == ErrorKind::StorageFull
+                {
+                    format!("{STORAGE_NO_SPACE_PREFIX}Could not inspect Core generation filesystem capacity: {error}")
+                } else {
+                    format!("Could not inspect Core generation filesystem capacity: {error}")
+                }
+            })?;
+            let reservation_physical_bytes = physical_reservation_bytes(
+                reservation_bytes,
+                reservation_file_nodes,
+                capacity.allocation_unit_bytes,
+            )?;
+            require_storage_admission(
+                capacity,
+                reservation_physical_bytes,
+                reservation_file_nodes,
+                report.live_reserved_physical_bytes,
+                report.live_reserved_file_nodes,
+            )?;
+            capacity
+        } else {
+            StatvfsCapacityProbe
+                .probe(&self.root_file)
+                .map_err(|error| {
+                    storage_io_error(
+                        "Could not inspect Core generation filesystem capacity",
+                        error,
+                    )
+                })?
+        };
+        let reservation_physical_bytes = physical_reservation_bytes(
+            reservation_bytes,
+            reservation_file_nodes,
+            capacity.allocation_unit_bytes,
+        )?;
         let candidates_root = self.root.join("candidates");
         let leases_root = self.root.join("leases");
         let mut created = None;
@@ -497,9 +642,10 @@ impl CoreGenerationCache {
                 }
                 Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
                 Err(error) => {
-                    return Err(format!(
-                        "Could not create a private Core generation candidate: {error}"
-                    ));
+                    return Err(storage_io_error(
+                        "Could not create a private Core generation candidate",
+                        error,
+                    ))
                 }
             }
         }
@@ -532,8 +678,14 @@ impl CoreGenerationCache {
                 .and_then(|name| name.to_str())
                 .ok_or("New Core generation candidate name is invalid.")?;
             let lease_path = leases_root.join(basename);
-            let expected_bytes =
-                candidate_lease_bytes(basename, candidate_identity, reservation_bytes)?;
+            let expected_bytes = candidate_lease_bytes(
+                basename,
+                candidate_identity,
+                reservation_bytes,
+                reservation_file_nodes,
+                capacity.allocation_unit_bytes,
+                reservation_physical_bytes,
+            )?;
             let mut options = OpenOptions::new();
             options
                 .read(true)
@@ -542,7 +694,10 @@ impl CoreGenerationCache {
                 .mode(0o600)
                 .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
             let mut lease_file = options.open(&lease_path).map_err(|error| {
-                format!("Could not create the Core generation candidate lease: {error}")
+                storage_io_error(
+                    "Could not create the Core generation candidate lease",
+                    error,
+                )
             })?;
             let lease_metadata = lease_file.metadata().map_err(|error| {
                 format!("Could not identify the Core generation candidate lease: {error}")
@@ -556,7 +711,10 @@ impl CoreGenerationCache {
             lease_file
                 .set_permissions(fs::Permissions::from_mode(0o600))
                 .map_err(|error| {
-                    format!("Could not secure the Core generation candidate lease: {error}")
+                    storage_io_error(
+                        "Could not secure the Core generation candidate lease",
+                        error,
+                    )
                 })?;
             match lease_file.try_lock() {
                 Ok(()) => {}
@@ -572,10 +730,10 @@ impl CoreGenerationCache {
                 }
             }
             lease_file.write_all(&expected_bytes).map_err(|error| {
-                format!("Could not write the Core generation candidate lease: {error}")
+                storage_io_error("Could not write the Core generation candidate lease", error)
             })?;
             lease_file.sync_all().map_err(|error| {
-                format!("Could not sync the Core generation candidate lease: {error}")
+                storage_io_error("Could not sync the Core generation candidate lease", error)
             })?;
             sync_directory(&candidates_root)?;
             sync_directory(&leases_root)?;
@@ -626,6 +784,8 @@ impl CoreGenerationCache {
         let lease = self.create_candidate_with_prepare(
             operation_id,
             reservation_bytes,
+            GENERIC_CANDIDATE_FILE_NODES,
+            None,
             prepare_candidate_directory,
             |_lease_path| Ok(()),
         )?;
@@ -709,6 +869,16 @@ impl CoreGenerationCache {
         }
     }
 
+    pub(crate) fn commit_candidate_admitted(
+        &self,
+        lease: &CandidateLease,
+        identity: &CoreGenerationIdentity,
+        verify: impl Fn(&Path) -> Result<(), String>,
+    ) -> Result<GenerationCommit, CandidateAdmissionError> {
+        self.commit_candidate(lease, identity, verify)
+            .map_err(classify_admission_error)
+    }
+
     fn commit_candidate_locked(
         &self,
         candidate: &Path,
@@ -751,13 +921,16 @@ impl CoreGenerationCache {
         // macOS requires the moved directory itself to remain owner-writable
         // during rename. Its contents stay sealed, and the destination root is
         // resealed and reverified before this method returns.
-        fs::set_permissions(candidate, fs::Permissions::from_mode(0o700))
-            .map_err(|error| format!("Could not prepare sealed Core generation commit: {error}"))?;
-        fs::rename(candidate, &destination)
-            .map_err(|error| format!("Could not commit the Core generation atomically: {error}"))?;
+        fs::set_permissions(candidate, fs::Permissions::from_mode(0o700)).map_err(|error| {
+            storage_io_error("Could not prepare sealed Core generation commit", error)
+        })?;
+        fs::rename(candidate, &destination).map_err(|error| {
+            storage_io_error("Could not commit the Core generation atomically", error)
+        })?;
         let publication = (|| {
-            fs::set_permissions(&destination, fs::Permissions::from_mode(0o500))
-                .map_err(|error| format!("Could not reseal committed Core generation: {error}"))?;
+            fs::set_permissions(&destination, fs::Permissions::from_mode(0o500)).map_err(
+                |error| storage_io_error("Could not reseal committed Core generation", error),
+            )?;
             sync_directory(&self.root.join("generations"))?;
             sync_directory(&self.root.join("candidates"))?;
             sync_closed_tree(&destination)?;
@@ -996,7 +1169,10 @@ impl CoreGenerationCache {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _file_guard = self.acquire_lock()?;
+        self.reconcile_locked()
+    }
 
+    fn reconcile_locked(&self) -> Result<CacheReconciliationReport, String> {
         // State is the authority for retention. It must be loaded before any
         // residue is inspected or removed.
         let state = self.load_state_unlocked()?;
@@ -1083,6 +1259,8 @@ impl CoreGenerationCache {
         let mut live = BTreeSet::new();
         let mut acquired = BTreeMap::new();
         let mut live_reservation_bytes = 0_u64;
+        let mut live_reservation_physical_bytes = 0_u64;
+        let mut live_reservation_file_nodes = 0_u64;
         let mut removable_candidate_bytes = 0_u64;
         for (name, path) in &leases {
             match inspect_reconciliation_lease(path, name)? {
@@ -1098,6 +1276,14 @@ impl CoreGenerationCache {
                     live_reservation_bytes = live_reservation_bytes
                         .checked_add(document.reservation_bytes)
                         .ok_or("Core generation candidate reservation count overflowed.")?;
+                    live_reservation_physical_bytes = live_reservation_physical_bytes
+                        .checked_add(document.reservation_physical_bytes)
+                        .ok_or(
+                            "Core generation candidate physical reservation count overflowed.",
+                        )?;
+                    live_reservation_file_nodes = live_reservation_file_nodes
+                        .checked_add(document.reservation_file_nodes)
+                        .ok_or("Core generation candidate file-node count overflowed.")?;
                     live.insert(name.clone());
                 }
                 ReconciliationLeaseState::Acquired(lease) => {
@@ -1141,6 +1327,9 @@ impl CoreGenerationCache {
 
         let mut report = CacheReconciliationReport {
             live_candidates: live.len(),
+            live_reserved_bytes: live_reservation_bytes,
+            live_reserved_physical_bytes: live_reservation_physical_bytes,
+            live_reserved_file_nodes: live_reservation_file_nodes,
             protected_over_budget: protected.len() > MAX_RETAINED_GENERATIONS
                 || protected_bytes > MAX_TOTAL_GENERATION_BYTES,
             ..CacheReconciliationReport::default()
@@ -1505,16 +1694,18 @@ impl CoreGenerationCache {
                 .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
             let mut file = options
                 .open(&temporary)
-                .map_err(|error| format!("Could not stage Core commit evidence: {error}"))?;
+                .map_err(|error| storage_io_error("Could not stage Core commit evidence", error))?;
             file.write_all(&bytes)
                 .and_then(|()| file.sync_all())
-                .map_err(|error| format!("Could not sync Core commit evidence: {error}"))?;
+                .map_err(|error| storage_io_error("Could not sync Core commit evidence", error))?;
             file.set_permissions(fs::Permissions::from_mode(0o400))
-                .map_err(|error| format!("Could not seal Core commit evidence: {error}"))?;
-            file.sync_all()
-                .map_err(|error| format!("Could not sync sealed Core commit evidence: {error}"))?;
-            fs::rename(&temporary, &path)
-                .map_err(|error| format!("Could not publish Core commit evidence: {error}"))?;
+                .map_err(|error| storage_io_error("Could not seal Core commit evidence", error))?;
+            file.sync_all().map_err(|error| {
+                storage_io_error("Could not sync sealed Core commit evidence", error)
+            })?;
+            fs::rename(&temporary, &path).map_err(|error| {
+                storage_io_error("Could not publish Core commit evidence", error)
+            })?;
             sync_directory(&commits)?;
             self.require_generation_committed(identity)
         })();
@@ -2419,15 +2610,11 @@ fn inspect_reconciliation_lease(
     {
         return Err("Core generation lease changed while it was read.".into());
     }
-    let document: OwnedCandidateLeaseDocument = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("Core generation lease is invalid: {error}"))?;
-    let identity = FilesystemIdentity {
-        device: document.device,
-        inode: document.inode,
-    };
+    let document = parse_candidate_lease_bytes(&bytes)?;
     if document.candidate_basename != name
         || !(1..=MAX_GENERATION_STORAGE_BYTES).contains(&document.reservation_bytes)
-        || candidate_lease_bytes(name, identity, document.reservation_bytes)? != bytes
+        || !(2..=GENERIC_CANDIDATE_FILE_NODES).contains(&document.reservation_file_nodes)
+        || canonical_owned_candidate_lease_bytes(&document)? != bytes
     {
         return Err("Core generation lease is not canonical.".into());
     }
@@ -2668,16 +2855,96 @@ fn random_candidate_token() -> Result<String, String> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+fn capacity_from_statvfs_fields(
+    available_blocks: u64,
+    fragment_size: u64,
+    total_inodes: u64,
+    available_inodes: u64,
+) -> Result<FilesystemCapacity, String> {
+    let available_bytes = available_blocks
+        .checked_mul(fragment_size)
+        .ok_or("Core generation filesystem capacity overflowed.")?;
+    Ok(FilesystemCapacity {
+        available_bytes,
+        allocation_unit_bytes: fragment_size,
+        available_inodes: (total_inodes != 0).then_some(available_inodes),
+    })
+}
+
+fn probe_statvfs_capacity(pinned_root: &File) -> std::io::Result<FilesystemCapacity> {
+    let mut status = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    if unsafe { libc::fstatvfs(pinned_root.as_raw_fd(), status.as_mut_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let status = unsafe { status.assume_init() };
+    #[cfg(target_os = "macos")]
+    let fields = (
+        u64::from(status.f_bavail),
+        status.f_frsize,
+        u64::from(status.f_files),
+        u64::from(status.f_favail),
+    );
+    #[cfg(not(target_os = "macos"))]
+    let fields = (
+        status.f_bavail,
+        status.f_frsize,
+        status.f_files,
+        status.f_favail,
+    );
+    capacity_from_statvfs_fields(fields.0, fields.1, fields.2, fields.3)
+        .map_err(std::io::Error::other)
+}
+
+fn require_storage_admission(
+    capacity: FilesystemCapacity,
+    requested_physical_bytes: u64,
+    requested_file_nodes: u64,
+    live_reserved_bytes: u64,
+    live_reserved_file_nodes: u64,
+) -> Result<(), String> {
+    // statvfs already excludes committed generations. Full physical live
+    // reservations are added conservatively because their written fraction is
+    // intentionally not traversed while another process owns the lease.
+    let required_bytes = requested_physical_bytes
+        .checked_add(live_reserved_bytes)
+        .and_then(|value| value.checked_add(CACHE_FREE_BYTE_RESERVE))
+        .ok_or("Core generation storage admission byte accounting overflowed.")?;
+    if capacity.available_bytes < required_bytes {
+        return Err(format!(
+            "storage-admission-no-space: Core generation cache requires {required_bytes} available bytes but only {} are available.",
+            capacity.available_bytes
+        ));
+    }
+    if let Some(available_inodes) = capacity.available_inodes {
+        let required_inodes = requested_file_nodes
+            .checked_add(live_reserved_file_nodes)
+            .and_then(|value| value.checked_add(CACHE_FREE_INODE_RESERVE))
+            .ok_or("Core generation storage admission inode accounting overflowed.")?;
+        if available_inodes < required_inodes {
+            return Err(format!(
+                "storage-admission-no-space: Core generation cache requires {required_inodes} available file nodes but only {available_inodes} are available."
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn candidate_lease_bytes(
     candidate_basename: &str,
     identity: FilesystemIdentity,
     reservation_bytes: u64,
+    reservation_file_nodes: u64,
+    allocation_unit_bytes: u64,
+    reservation_physical_bytes: u64,
 ) -> Result<Vec<u8>, String> {
     let mut bytes = serde_json::to_vec(&CandidateLeaseDocument {
         candidate_basename,
         device: identity.device,
         inode: identity.inode,
         reservation_bytes,
+        reservation_file_nodes,
+        allocation_unit_bytes,
+        reservation_physical_bytes,
     })
     .map_err(|error| format!("Could not encode the Core generation candidate lease: {error}"))?;
     bytes.push(b'\n');
@@ -2685,6 +2952,148 @@ fn candidate_lease_bytes(
         return Err("Core generation candidate lease exceeds its size limit.".into());
     }
     Ok(bytes)
+}
+
+fn physical_reservation_bytes(
+    logical_bytes: u64,
+    file_nodes: u64,
+    allocation_unit_bytes: u64,
+) -> Result<u64, String> {
+    if !(1..=MAX_FILESYSTEM_ALLOCATION_UNIT_BYTES).contains(&allocation_unit_bytes) {
+        return Err("Core generation filesystem allocation unit is unsupported.".into());
+    }
+    // Each staged object may consume a partial final allocation unit. Lease and
+    // commit-marker content are bounded separately so this remains sound even
+    // when the reported allocation unit is one byte.
+    let allocation_nodes = file_nodes
+        .checked_add(1)
+        .ok_or("Core generation physical reservation node count overflowed.")?;
+    logical_bytes
+        .checked_add(
+            allocation_nodes
+                .checked_mul(allocation_unit_bytes)
+                .ok_or("Core generation physical reservation byte count overflowed.")?,
+        )
+        .and_then(|value| value.checked_add(CANDIDATE_LEASE_LIMIT))
+        .and_then(|value| value.checked_add(COMMIT_MARKER_MAX_BYTES))
+        .ok_or("Core generation physical reservation byte count overflowed.".into())
+}
+
+fn legacy_physical_reservation_bytes(logical_bytes: u64, file_nodes: u64) -> Result<u64, String> {
+    physical_reservation_bytes(
+        logical_bytes,
+        file_nodes,
+        MAX_FILESYSTEM_ALLOCATION_UNIT_BYTES,
+    )
+}
+
+fn parse_candidate_lease_bytes(bytes: &[u8]) -> Result<OwnedCandidateLeaseDocument, String> {
+    if let Ok(document) = serde_json::from_slice::<CurrentCandidateLeaseDocument>(bytes) {
+        let expected_physical = physical_reservation_bytes(
+            document.reservation_bytes,
+            document.reservation_file_nodes,
+            document.allocation_unit_bytes,
+        )?;
+        if document.reservation_physical_bytes != expected_physical {
+            return Err("Core generation lease physical reservation is invalid.".into());
+        }
+        return Ok(OwnedCandidateLeaseDocument {
+            candidate_basename: document.candidate_basename,
+            device: document.device,
+            inode: document.inode,
+            reservation_bytes: document.reservation_bytes,
+            reservation_file_nodes: document.reservation_file_nodes,
+            allocation_unit_bytes: document.allocation_unit_bytes,
+            reservation_physical_bytes: document.reservation_physical_bytes,
+            wire_format: CandidateLeaseWireFormat::Current,
+        });
+    }
+    if let Ok(document) = serde_json::from_slice::<FileNodesCandidateLeaseDocument>(bytes) {
+        return Ok(OwnedCandidateLeaseDocument {
+            candidate_basename: document.candidate_basename,
+            device: document.device,
+            inode: document.inode,
+            reservation_bytes: document.reservation_bytes,
+            reservation_file_nodes: document.reservation_file_nodes,
+            allocation_unit_bytes: MAX_FILESYSTEM_ALLOCATION_UNIT_BYTES,
+            reservation_physical_bytes: legacy_physical_reservation_bytes(
+                document.reservation_bytes,
+                document.reservation_file_nodes,
+            )?,
+            wire_format: CandidateLeaseWireFormat::FileNodes,
+        });
+    }
+    if let Ok(document) = serde_json::from_slice::<LegacyCandidateLeaseDocument>(bytes) {
+        let reservation_file_nodes = GENERIC_CANDIDATE_FILE_NODES;
+        return Ok(OwnedCandidateLeaseDocument {
+            candidate_basename: document.candidate_basename,
+            device: document.device,
+            inode: document.inode,
+            reservation_bytes: document.reservation_bytes,
+            reservation_file_nodes,
+            allocation_unit_bytes: MAX_FILESYSTEM_ALLOCATION_UNIT_BYTES,
+            reservation_physical_bytes: legacy_physical_reservation_bytes(
+                document.reservation_bytes,
+                reservation_file_nodes,
+            )?,
+            wire_format: CandidateLeaseWireFormat::Legacy,
+        });
+    }
+    Err("Core generation lease is invalid.".into())
+}
+
+fn canonical_owned_candidate_lease_bytes(
+    document: &OwnedCandidateLeaseDocument,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = match document.wire_format {
+        CandidateLeaseWireFormat::Current => serde_json::to_vec(&CurrentCandidateLeaseDocument {
+            candidate_basename: document.candidate_basename.clone(),
+            device: document.device,
+            inode: document.inode,
+            reservation_bytes: document.reservation_bytes,
+            reservation_file_nodes: document.reservation_file_nodes,
+            allocation_unit_bytes: document.allocation_unit_bytes,
+            reservation_physical_bytes: document.reservation_physical_bytes,
+        }),
+        CandidateLeaseWireFormat::FileNodes => {
+            serde_json::to_vec(&FileNodesCandidateLeaseDocument {
+                candidate_basename: document.candidate_basename.clone(),
+                device: document.device,
+                inode: document.inode,
+                reservation_bytes: document.reservation_bytes,
+                reservation_file_nodes: document.reservation_file_nodes,
+            })
+        }
+        CandidateLeaseWireFormat::Legacy => serde_json::to_vec(&LegacyCandidateLeaseDocument {
+            candidate_basename: document.candidate_basename.clone(),
+            device: document.device,
+            inode: document.inode,
+            reservation_bytes: document.reservation_bytes,
+        }),
+    }
+    .map_err(|error| format!("Could not encode the Core generation candidate lease: {error}"))?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn is_storage_full(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(libc::ENOSPC) || error.kind() == ErrorKind::StorageFull
+}
+
+fn storage_io_error(context: &str, error: std::io::Error) -> String {
+    if is_storage_full(&error) {
+        format!("{STORAGE_NO_SPACE_PREFIX}{context}: {error}")
+    } else {
+        format!("{context}: {error}")
+    }
+}
+
+fn classify_admission_error(error: String) -> CandidateAdmissionError {
+    if let Some(detail) = error.strip_prefix(STORAGE_NO_SPACE_PREFIX) {
+        CandidateAdmissionError::NoSpace(detail.into())
+    } else {
+        CandidateAdmissionError::Cache(error)
+    }
 }
 
 fn generation_commit_marker_bytes(identity: &CoreGenerationIdentity) -> Vec<u8> {
@@ -2765,7 +3174,10 @@ fn ensure_state_required_marker(root: &Path) -> Result<(), String> {
 fn set_private_directory_permissions(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| {
-        format!("Could not restrict Core generation cache permissions: {error}")
+        storage_io_error(
+            "Could not restrict Core generation cache permissions",
+            error,
+        )
     })?;
     Ok(())
 }
@@ -2811,7 +3223,7 @@ fn remove_new_lease_if_same(
 fn sync_directory(path: &Path) -> Result<(), String> {
     File::open(path)
         .and_then(|directory| directory.sync_all())
-        .map_err(|error| format!("Could not sync Core generation cache metadata: {error}"))
+        .map_err(|error| storage_io_error("Could not sync Core generation cache metadata", error))
 }
 
 fn sync_closed_tree(root: &Path) -> Result<(), String> {
@@ -2853,8 +3265,9 @@ fn sync_closed_tree(root: &Path) -> Result<(), String> {
                 {
                     return Err("Core generation entry changed while it was opened.".into());
                 }
-                file.sync_all()
-                    .map_err(|error| format!("Could not sync Core generation entry: {error}"))?;
+                file.sync_all().map_err(|error| {
+                    storage_io_error("Could not sync Core generation entry", error)
+                })?;
             } else {
                 return Err("Core generation candidate contains a linked or special entry.".into());
             }
@@ -2888,11 +3301,14 @@ fn seal_closed_tree(root: &Path) -> Result<(), String> {
                 if metadata.nlink() != 1 {
                     return Err("Core generation contains a multiply linked file.".into());
                 }
-                fs::set_permissions(&path, fs::Permissions::from_mode(0o400))
-                    .map_err(|error| format!("Could not seal Core generation file: {error}"))?;
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).map_err(|error| {
+                    storage_io_error("Could not seal Core generation file", error)
+                })?;
                 File::open(&path)
                     .and_then(|file| file.sync_all())
-                    .map_err(|error| format!("Could not sync sealed Core generation: {error}"))?;
+                    .map_err(|error| {
+                        storage_io_error("Could not sync sealed Core generation", error)
+                    })?;
             } else {
                 return Err("Core generation contains a linked or special entry.".into());
             }
@@ -2900,7 +3316,7 @@ fn seal_closed_tree(root: &Path) -> Result<(), String> {
     }
     for directory in directories.iter().rev() {
         fs::set_permissions(directory, fs::Permissions::from_mode(0o500))
-            .map_err(|error| format!("Could not seal Core generation directory: {error}"))?;
+            .map_err(|error| storage_io_error("Could not seal Core generation directory", error))?;
         sync_directory(directory)?;
     }
     Ok(())
@@ -3039,6 +3455,15 @@ mod tests {
 
     const TEST_RESERVATION: u64 = 1024;
 
+    #[derive(Clone, Copy)]
+    struct FixedCapacity(FilesystemCapacity);
+
+    impl FilesystemCapacityProbe for FixedCapacity {
+        fn probe(&self, _pinned_root: &File) -> std::io::Result<FilesystemCapacity> {
+            Ok(self.0)
+        }
+    }
+
     fn temporary_cache(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -3091,6 +3516,304 @@ mod tests {
         }
         make_writable(root);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn physical_admission_enforces_byte_and_inode_reserves() {
+        let root = temporary_cache("physical-admission");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let requested_bytes = 4096;
+        let requested_nodes = 7;
+        let allocation_unit_bytes = 4096;
+        let requested_physical =
+            physical_reservation_bytes(requested_bytes, requested_nodes, allocation_unit_bytes)
+                .unwrap();
+        let exact = FilesystemCapacity {
+            available_bytes: requested_physical + CACHE_FREE_BYTE_RESERVE,
+            allocation_unit_bytes,
+            available_inodes: Some(requested_nodes + CACHE_FREE_INODE_RESERVE),
+        };
+        let lease = cache
+            .create_candidate_admitted(
+                "admitted",
+                requested_bytes,
+                requested_nodes,
+                &FixedCapacity(exact),
+            )
+            .unwrap();
+        cache.abort_candidate(&lease).unwrap();
+
+        for (operation, capacity) in [
+            (
+                "byte-short",
+                FilesystemCapacity {
+                    available_bytes: exact.available_bytes - 1,
+                    allocation_unit_bytes,
+                    available_inodes: exact.available_inodes,
+                },
+            ),
+            (
+                "inode-short",
+                FilesystemCapacity {
+                    available_bytes: exact.available_bytes,
+                    allocation_unit_bytes,
+                    available_inodes: Some(requested_nodes + CACHE_FREE_INODE_RESERVE - 1),
+                },
+            ),
+        ] {
+            assert!(matches!(
+                cache.create_candidate_admitted(
+                    operation,
+                    requested_bytes,
+                    requested_nodes,
+                    &FixedCapacity(capacity),
+                ),
+                Err(CandidateAdmissionError::NoSpace(_))
+            ));
+        }
+        assert_eq!(fs::read_dir(root.join("candidates")).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root.join("leases")).unwrap().count(), 0);
+
+        let dynamic_inode_lease = cache
+            .create_candidate_admitted(
+                "dynamic-inodes",
+                requested_bytes,
+                requested_nodes,
+                &FixedCapacity(FilesystemCapacity {
+                    available_bytes: exact.available_bytes,
+                    allocation_unit_bytes,
+                    available_inodes: None,
+                }),
+            )
+            .unwrap();
+        cache.abort_candidate(&dynamic_inode_lease).unwrap();
+        cleanup(&root);
+    }
+
+    #[test]
+    fn physical_admission_counts_live_reservations_without_committed_double_counting() {
+        let root = temporary_cache("physical-live-accounting");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let committed = identity(1, 'a');
+        let committed_candidate = cache.create_candidate("committed", 1).unwrap();
+        cache
+            .commit_candidate(&committed_candidate, &committed, |_| Ok(()))
+            .unwrap();
+        let live = cache.create_candidate("live", 2048).unwrap();
+        let requested = 1024;
+        let requested_nodes = 2;
+        let live_nodes = GENERIC_CANDIDATE_FILE_NODES;
+        let live_physical = parse_candidate_lease_bytes(&live.expected_bytes)
+            .unwrap()
+            .reservation_physical_bytes;
+        let requested_physical =
+            physical_reservation_bytes(requested, requested_nodes, 4096).unwrap();
+        let admitted = cache
+            .create_candidate_admitted(
+                "next",
+                requested,
+                requested_nodes,
+                &FixedCapacity(FilesystemCapacity {
+                    available_bytes: requested_physical + live_physical + CACHE_FREE_BYTE_RESERVE,
+                    allocation_unit_bytes: 4096,
+                    available_inodes: Some(requested_nodes + live_nodes + CACHE_FREE_INODE_RESERVE),
+                }),
+            )
+            .unwrap();
+        cache.abort_candidate(&admitted).unwrap();
+        cache.abort_candidate(&live).unwrap();
+        assert!(cache.generation_path(&committed).unwrap().exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn statvfs_capacity_handles_dynamic_inodes_and_overflow() {
+        assert_eq!(
+            capacity_from_statvfs_fields(2, 4096, 0, 0).unwrap(),
+            FilesystemCapacity {
+                available_bytes: 8192,
+                allocation_unit_bytes: 4096,
+                available_inodes: None,
+            }
+        );
+        assert!(capacity_from_statvfs_fields(u64::MAX, 2, 1, 1).is_err());
+        assert!(require_storage_admission(
+            FilesystemCapacity {
+                available_bytes: u64::MAX,
+                allocation_unit_bytes: 1,
+                available_inodes: None,
+            },
+            u64::MAX,
+            1,
+            1,
+            0,
+        )
+        .is_err());
+        for allocation_unit in [1, 4096, 16 * 1024, 64 * 1024] {
+            assert_eq!(
+                physical_reservation_bytes(1, 2, allocation_unit).unwrap(),
+                1 + 3 * allocation_unit + CANDIDATE_LEASE_LIMIT + COMMIT_MARKER_MAX_BYTES
+            );
+        }
+        assert!(physical_reservation_bytes(u64::MAX, 2, 4096).is_err());
+        assert!(physical_reservation_bytes(1, u64::MAX, 4096).is_err());
+        assert!(
+            physical_reservation_bytes(1, 2, MAX_FILESYSTEM_ALLOCATION_UNIT_BYTES + 1).is_err()
+        );
+    }
+
+    #[test]
+    fn physical_admission_persists_and_counts_multiple_live_reservations() {
+        let root = temporary_cache("physical-multiple-live");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let capacity = FixedCapacity(FilesystemCapacity {
+            available_bytes: u64::MAX,
+            allocation_unit_bytes: 64 * 1024,
+            available_inodes: None,
+        });
+        let first = cache
+            .create_candidate_admitted("physical-first", 101, 3, &capacity)
+            .unwrap();
+        let second = cache
+            .create_candidate_admitted("physical-second", 202, 4, &capacity)
+            .unwrap();
+        let first_physical = physical_reservation_bytes(101, 3, 64 * 1024).unwrap();
+        let second_physical = physical_reservation_bytes(202, 4, 64 * 1024).unwrap();
+        let report = cache.reconcile().unwrap();
+        assert_eq!(
+            report.live_reserved_physical_bytes,
+            first_physical + second_physical
+        );
+        assert_eq!(report.live_reserved_bytes, 303);
+        assert_eq!(report.live_reserved_file_nodes, 7);
+
+        let requested_physical = physical_reservation_bytes(303, 5, 64 * 1024).unwrap();
+        let exact = FilesystemCapacity {
+            available_bytes: first_physical
+                + second_physical
+                + requested_physical
+                + CACHE_FREE_BYTE_RESERVE,
+            allocation_unit_bytes: 64 * 1024,
+            available_inodes: Some(7 + 5 + CACHE_FREE_INODE_RESERVE),
+        };
+        assert!(matches!(
+            cache.create_candidate_admitted(
+                "physical-short",
+                303,
+                5,
+                &FixedCapacity(FilesystemCapacity {
+                    available_bytes: exact.available_bytes - 1,
+                    ..exact
+                })
+            ),
+            Err(CandidateAdmissionError::NoSpace(_))
+        ));
+        let third = cache
+            .create_candidate_admitted("physical-exact", 303, 5, &FixedCapacity(exact))
+            .unwrap();
+        cache.abort_candidate(&third).unwrap();
+        cache.abort_candidate(&second).unwrap();
+        cache.abort_candidate(&first).unwrap();
+        cleanup(&root);
+    }
+
+    #[test]
+    fn reconciliation_accepts_legacy_live_lease_and_reclaims_it_after_restart() {
+        let root = temporary_cache("legacy-live-lease");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let lease = cache.create_candidate("legacy", 77).unwrap();
+        let basename = lease.path().file_name().unwrap().to_str().unwrap();
+        let mut legacy = serde_json::to_vec(&LegacyCandidateLeaseDocument {
+            candidate_basename: basename.into(),
+            device: lease.candidate_identity.device,
+            inode: lease.candidate_identity.inode,
+            reservation_bytes: 77,
+        })
+        .unwrap();
+        legacy.push(b'\n');
+        fs::write(&lease.lease_path, &legacy).unwrap();
+        lease.lease_file.sync_all().unwrap();
+
+        let report = cache.reconcile().unwrap();
+        assert_eq!(report.live_candidates, 1);
+        assert_eq!(report.live_reserved_bytes, 77);
+        assert_eq!(
+            report.live_reserved_file_nodes,
+            GENERIC_CANDIDATE_FILE_NODES
+        );
+        assert_eq!(
+            report.live_reserved_physical_bytes,
+            legacy_physical_reservation_bytes(77, GENERIC_CANDIDATE_FILE_NODES).unwrap()
+        );
+        drop(lease);
+        let report = cache.reconcile().unwrap();
+        assert_eq!(report.removed_candidates, 1);
+        assert_eq!(report.removed_leases, 1);
+        assert_eq!(fs::read_dir(root.join("candidates")).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root.join("leases")).unwrap().count(), 0);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn post_probe_enospc_is_typed_and_candidate_creation_is_cleaned() {
+        let root = temporary_cache("post-probe-enospc");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let error = cache
+            .create_candidate_with_prepare(
+                "post-probe-enospc",
+                1,
+                2,
+                Some(&FixedCapacity(FilesystemCapacity {
+                    available_bytes: u64::MAX,
+                    allocation_unit_bytes: 4096,
+                    available_inodes: None,
+                })),
+                prepare_candidate_directory,
+                |_| {
+                    Err(storage_io_error(
+                        "synthetic lease write",
+                        std::io::Error::from_raw_os_error(libc::ENOSPC),
+                    ))
+                },
+            )
+            .map_err(classify_admission_error)
+            .unwrap_err();
+        assert!(matches!(error, CandidateAdmissionError::NoSpace(_)));
+        assert_eq!(fs::read_dir(root.join("candidates")).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root.join("leases")).unwrap().count(), 0);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn admitted_commit_preserves_typed_enospc_and_cleans_candidate() {
+        let root = temporary_cache("commit-enospc");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let lease = cache
+            .create_candidate_admitted(
+                "commit-enospc",
+                1,
+                2,
+                &FixedCapacity(FilesystemCapacity {
+                    available_bytes: u64::MAX,
+                    allocation_unit_bytes: 4096,
+                    available_inodes: None,
+                }),
+            )
+            .unwrap();
+        populate(lease.path(), "x");
+        let error = cache
+            .commit_candidate_admitted(&lease, &identity(1, 'e'), |_| {
+                Err(storage_io_error(
+                    "synthetic commit sync",
+                    std::io::Error::from_raw_os_error(libc::ENOSPC),
+                ))
+            })
+            .unwrap_err();
+        assert!(matches!(error, CandidateAdmissionError::NoSpace(_)));
+        assert_eq!(fs::read_dir(root.join("candidates")).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root.join("leases")).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root.join("generations")).unwrap().count(), 0);
+        cleanup(&root);
     }
 
     fn create_private_file(path: &Path) {
@@ -3300,6 +4023,8 @@ mod tests {
             .create_candidate_with_prepare(
                 "retryable",
                 1,
+                2,
+                None,
                 |_candidate, _parent| Err("synthetic post-mkdir metadata failure".into()),
                 |_lease_path| Ok(()),
             )
@@ -3320,6 +4045,8 @@ mod tests {
             .create_candidate_with_prepare(
                 "retryable",
                 1,
+                2,
+                None,
                 prepare_candidate_directory,
                 |_lease_path| Err("synthetic post-open lease failure".into()),
             )
@@ -3339,9 +4066,23 @@ mod tests {
         let cache = CoreGenerationCache::open(&root).unwrap();
         let reservation = 123_456;
         let lease = cache.create_candidate("bound", reservation).unwrap();
+        let document = parse_candidate_lease_bytes(&lease.expected_bytes).unwrap();
+        assert_eq!(document.reservation_file_nodes, MAX_TREE_NODES as u64 + 1);
+        assert!(document.reservation_file_nodes > (MAX_GENERATION_STORAGE_FILES + 2) as u64);
         let basename = lease.path().file_name().unwrap().to_str().unwrap();
-        let expected =
-            candidate_lease_bytes(basename, lease.candidate_identity, reservation).unwrap();
+        let expected = candidate_lease_bytes(
+            basename,
+            lease.candidate_identity,
+            reservation,
+            GENERIC_CANDIDATE_FILE_NODES,
+            parse_candidate_lease_bytes(&lease.expected_bytes)
+                .unwrap()
+                .allocation_unit_bytes,
+            parse_candidate_lease_bytes(&lease.expected_bytes)
+                .unwrap()
+                .reservation_physical_bytes,
+        )
+        .unwrap();
         assert_eq!(fs::read(&lease.lease_path).unwrap(), expected);
         let metadata = fs::symlink_metadata(&lease.lease_path).unwrap();
         assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
@@ -3505,7 +4246,19 @@ mod tests {
         };
         fs::write(
             &lease.lease_path,
-            candidate_lease_bytes(basename, wrong, 64).unwrap(),
+            candidate_lease_bytes(
+                basename,
+                wrong,
+                64,
+                GENERIC_CANDIDATE_FILE_NODES,
+                parse_candidate_lease_bytes(&lease.expected_bytes)
+                    .unwrap()
+                    .allocation_unit_bytes,
+                parse_candidate_lease_bytes(&lease.expected_bytes)
+                    .unwrap()
+                    .reservation_physical_bytes,
+            )
+            .unwrap(),
         )
         .unwrap();
 
@@ -3834,6 +4587,43 @@ mod tests {
             cache.load_state().unwrap().active.as_ref(),
             Some(&generations[0])
         );
+        cleanup(&root);
+    }
+
+    #[test]
+    fn physical_admission_runs_retention_before_probing_and_staging() {
+        let root = temporary_cache("admission-retention");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generations = (1_u64..=5)
+            .map(|sequence| {
+                let generation = identity(sequence, char::from_digit(sequence as u32, 16).unwrap());
+                let candidate = cache
+                    .create_candidate(&format!("admission-retention-{sequence}"), 1)
+                    .unwrap();
+                cache
+                    .commit_candidate(&candidate, &generation, |_| Ok(()))
+                    .unwrap();
+                generation
+            })
+            .collect::<Vec<_>>();
+        let lease = cache
+            .create_candidate_admitted(
+                "after-retention",
+                1,
+                2,
+                &FixedCapacity(FilesystemCapacity {
+                    available_bytes: CACHE_FREE_BYTE_RESERVE
+                        + physical_reservation_bytes(1, 2, 4096).unwrap(),
+                    allocation_unit_bytes: 4096,
+                    available_inodes: Some(CACHE_FREE_INODE_RESERVE + 2),
+                }),
+            )
+            .unwrap();
+        assert!(!cache.generation_path(&generations[0]).unwrap().exists());
+        for generation in &generations[1..] {
+            assert!(cache.generation_path(generation).unwrap().exists());
+        }
+        cache.abort_candidate(&lease).unwrap();
         cleanup(&root);
     }
 
