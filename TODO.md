@@ -310,9 +310,15 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   output reservation, and USB target. Before activation, use one fixed private
   app-owned root, retain the source guard through descriptor-bound consumption,
   close lock-inode/verify-to-action races, and hold every lock through cleanup.
-- [ ] Add separately reviewed image-first/manifest-last publication, staged-file
-  receipts, crash reconciliation, and an explicit recovery UI. Never infer
-  deletion authority from a mutable reservation record.
+- [x] Add an inactive image-first/manifest-last publication prototype with an
+  unpredictable operation identity, create-only per-file receipt chain,
+  exclusive no-replace renames, descriptor-bound exact-byte resume, and
+  fail-closed preservation of unreceipted or mismatched residue.
+- [ ] Independently review and activate output publication only after real
+  subprocess/SIGKILL, ENOSPC/EDQUOT/fsync, replacement-race, and platform
+  no-replace tests pass. Add explicit recovery UI and durable quarantine before
+  any restart-time deletion; never infer deletion authority from a mutable
+  reservation record.
 - [ ] Formalize lock ordering and prove status polling, cancellation, close,
   and worker completion cannot deadlock.
 - [ ] Route normal cancellation, window close, process failure, and next-launch
