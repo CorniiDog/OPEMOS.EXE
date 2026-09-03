@@ -87,6 +87,9 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 - [ ] Independently pin the production manifest SHA-256, then verify its exact
   support commit and every file path, role, size, SHA-256, and executable mode.
   Reject missing, extra, duplicate, unsafe, linked, or mismatched entries.
+- [x] Implement bounded successor-manifest acquisition and create-only,
+  cancellation-safe staging of its closed 55-file tree. Keep this path inactive
+  until the canonical release asset exists and passes its independent pins.
 - [ ] Replace the active 50-entry `PINNED_INSTALLER_FILES` inventory only after
   the canonical 55-file manifest path passes equivalent download, staging,
   cancellation, and tamper tests.

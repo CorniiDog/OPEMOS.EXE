@@ -91,12 +91,9 @@ const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 // Compatibility target only. This does not become the production installer pin
 // until its canonical manifest is published through an immutable channel.
-#[cfg(test)]
 const OPEMOS_CORE_COMPATIBILITY_COMMIT: &str = "a1c03c9658c5ed885f094b5f8e0896d818fee785";
-#[cfg(test)]
 const OPEMOS_CORE_COMPATIBILITY_MANIFEST_SHA256: &str =
     "34fa1dfa0351f3bfede0451632063b496ca41da3544d07296a5e4a42a9756cd1";
-#[cfg(test)]
 const OPEMOS_CORE_COMPATIBILITY_BUNDLE_ID: &str =
     "225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa";
 #[cfg(test)]

@@ -5,6 +5,7 @@ pub(crate) const CORE_RESOLVER_RESULT_LIMIT: usize = 1024 * 1024;
 pub(crate) const CORE_PROGRESS_RECORD_LIMIT: usize = 4096;
 pub(crate) const CORE_BUNDLE_MANIFEST_LIMIT: usize = 2 * 1024 * 1024;
 const CORE_BUNDLE_FILE_LIMIT: u64 = 128 * 1024 * 1024;
+const CORE_BUNDLE_TOTAL_LIMIT: u64 = 256 * 1024 * 1024;
 const CORE_BUNDLE_FILE_COUNT_LIMIT: usize = 256;
 const CORE_RESOLVER_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -359,6 +360,182 @@ pub(crate) struct CoreBundleManifest {
     pub(crate) support_commit: String,
     pub(crate) files: Vec<CoreBundleFile>,
     pub(crate) bundle_id: String,
+}
+
+#[derive(Debug)]
+pub(crate) enum CoreBundleManifestAvailability {
+    Verified(CoreBundleManifest),
+    Unavailable(String),
+}
+
+#[derive(Debug)]
+pub(crate) struct AuthenticatedCoreBundle {
+    pub(crate) root: PathBuf,
+    pub(crate) manifest: CoreBundleManifest,
+}
+
+pub(crate) fn core_bundle_release_url() -> String {
+    let tag = format!("opemos-installer-bundle-{OPEMOS_CORE_COMPATIBILITY_COMMIT}");
+    format!("https://github.com/{NVIDIA_SUPPORT_REPOSITORY}/releases/download/{tag}/{tag}.json")
+}
+
+fn read_bounded_response(
+    response: &mut reqwest::blocking::Response,
+    limit: usize,
+    description: &str,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(format!("{description} exceeds its size limit."));
+    }
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 32 * 1024];
+    loop {
+        let count = response
+            .read(&mut buffer)
+            .map_err(|_| format!("Could not read {description}."))?;
+        if count == 0 {
+            break;
+        }
+        if bytes.len().saturating_add(count) > limit {
+            return Err(format!("{description} exceeds its size limit."));
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+    }
+    Ok(bytes)
+}
+
+pub(crate) fn acquire_core_bundle_manifest(
+    client: &reqwest::blocking::Client,
+) -> Result<CoreBundleManifestAvailability, String> {
+    let mut response = match client
+        .get(core_bundle_release_url())
+        .header("Accept", "application/octet-stream")
+        .send()
+    {
+        Ok(response) => response,
+        Err(_) => {
+            return Ok(CoreBundleManifestAvailability::Unavailable(
+                "The immutable OPEMOS Core bundle release is currently unreachable.".into(),
+            ));
+        }
+    };
+    if !response.status().is_success() {
+        return Ok(CoreBundleManifestAvailability::Unavailable(format!(
+            "The immutable OPEMOS Core bundle release is unavailable (HTTP {}).",
+            response.status().as_u16()
+        )));
+    }
+    let bytes = read_bounded_response(
+        &mut response,
+        CORE_BUNDLE_MANIFEST_LIMIT,
+        "the OPEMOS Core bundle manifest",
+    )?;
+    let manifest = parse_core_bundle_manifest(
+        &bytes,
+        OPEMOS_CORE_COMPATIBILITY_MANIFEST_SHA256,
+        OPEMOS_CORE_COMPATIBILITY_COMMIT,
+    )?;
+    if manifest.bundle_id != OPEMOS_CORE_COMPATIBILITY_BUNDLE_ID {
+        return Err("OPEMOS Core bundle manifest has an unexpected bundle identity.".into());
+    }
+    Ok(CoreBundleManifestAvailability::Verified(manifest))
+}
+
+fn stage_core_bundle_with_loader<F>(
+    runtime_dir: &Path,
+    manifest: CoreBundleManifest,
+    cancel: &AtomicBool,
+    progress: &impl Fn(&str, u64, u64),
+    mut load: F,
+) -> Result<AuthenticatedCoreBundle, String>
+where
+    F: FnMut(&CoreBundleFile) -> Result<Vec<u8>, String>,
+{
+    validate_core_bundle_manifest(&manifest, OPEMOS_CORE_COMPATIBILITY_COMMIT)?;
+    if manifest.bundle_id != OPEMOS_CORE_COMPATIBILITY_BUNDLE_ID {
+        return Err("Refusing to stage an unexpected OPEMOS Core bundle identity.".into());
+    }
+    let total = manifest.files.iter().try_fold(0_u64, |total, file| {
+        total
+            .checked_add(file.size)
+            .filter(|value| *value <= CORE_BUNDLE_TOTAL_LIMIT)
+            .ok_or("OPEMOS Core bundle exceeds its aggregate size limit.")
+    })?;
+    let root = runtime_dir.join(format!("opemos-core-{}", manifest.bundle_id));
+    fs::create_dir(&root)
+        .map_err(|error| format!("Could not create OPEMOS Core bundle staging: {error}"))?;
+    let mut root_guard = StagingDirectoryGuard {
+        path: root.clone(),
+        armed: true,
+    };
+    let mut completed = 0_u64;
+    for file in &manifest.files {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("OPEMOS Core bundle staging cancelled.".into());
+        }
+        let bytes = load(file)?;
+        if bytes.len() as u64 != file.size || format!("{:x}", Sha256::digest(&bytes)) != file.sha256
+        {
+            return Err(format!(
+                "OPEMOS Core bundle file failed manifest verification: {}.",
+                file.path
+            ));
+        }
+        let destination = root.join(&file.path);
+        let parent = destination
+            .parent()
+            .ok_or("OPEMOS Core bundle file omitted its parent directory.")?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create OPEMOS Core directory: {error}"))?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut output = options
+            .open(&destination)
+            .map_err(|error| format!("Could not stage OPEMOS Core file: {error}"))?;
+        output
+            .write_all(&bytes)
+            .and_then(|_| output.flush())
+            .map_err(|error| format!("Could not finish OPEMOS Core file: {error}"))?;
+        drop(output);
+        apply_pinned_file_permissions(&destination, file.mode == "0755")?;
+        completed += file.size;
+        progress("downloading-opemos-core-bundle", completed, total);
+    }
+    validate_core_bundle_tree(&root, &manifest)?;
+    root_guard.armed = false;
+    Ok(AuthenticatedCoreBundle { root, manifest })
+}
+
+pub(crate) fn download_and_stage_core_bundle(
+    runtime_dir: &Path,
+    client: &reqwest::blocking::Client,
+    manifest: CoreBundleManifest,
+    cancel: &AtomicBool,
+    progress: &impl Fn(&str, u64, u64),
+) -> Result<AuthenticatedCoreBundle, String> {
+    stage_core_bundle_with_loader(runtime_dir, manifest, cancel, progress, |file| {
+        let url = format!(
+            "https://raw.githubusercontent.com/{NVIDIA_SUPPORT_REPOSITORY}/{}/{path}",
+            OPEMOS_CORE_COMPATIBILITY_COMMIT,
+            path = file.path
+        );
+        let mut response = client
+            .get(url)
+            .header("Accept", "application/octet-stream")
+            .send()
+            .and_then(reqwest::blocking::Response::error_for_status)
+            .map_err(|_| format!("Could not download authenticated Core file {}.", file.path))?;
+        read_bounded_response(
+            &mut response,
+            file.size as usize,
+            "an authenticated OPEMOS Core file",
+        )
+    })
 }
 
 fn lowercase_hex(value: &str, length: usize) -> bool {
@@ -1020,7 +1197,97 @@ mod tests {
             file.path == "locks/userspace/steamos-3.8.14-nvidia-575.64.05.json"
                 && file.role == "userspace-lock"
         }));
+        assert_eq!(
+            core_bundle_release_url(),
+            format!(
+                "https://github.com/{NVIDIA_SUPPORT_REPOSITORY}/releases/download/\
+                 opemos-installer-bundle-{OPEMOS_CORE_COMPATIBILITY_COMMIT}/\
+                 opemos-installer-bundle-{OPEMOS_CORE_COMPATIBILITY_COMMIT}.json"
+            )
+        );
+
+        let staging = root.join("staging");
+        fs::create_dir(&staging).unwrap();
+        let cancel = AtomicBool::new(false);
+        let staged = stage_core_bundle_with_loader(
+            &staging,
+            manifest.clone(),
+            &cancel,
+            &|_, _, _| {},
+            |file| {
+                let output = Command::new("git")
+                    .arg("-C")
+                    .arg(&repository)
+                    .args([
+                        "show",
+                        &format!("{OPEMOS_CORE_COMPATIBILITY_COMMIT}:{}", file.path),
+                    ])
+                    .output()
+                    .map_err(|error| format!("could not load pinned Core blob: {error}"))?;
+                if !output.status.success() {
+                    return Err("pinned Core blob is unavailable".into());
+                }
+                Ok(output.stdout)
+            },
+        )
+        .expect("stage the complete authenticated Core tree");
+        assert_eq!(staged.manifest.files.len(), 55);
+        validate_core_bundle_tree(&staged.root, &staged.manifest).unwrap();
+
+        let cancelled_staging = root.join("cancelled-staging");
+        fs::create_dir(&cancelled_staging).unwrap();
+        let cancelled = AtomicBool::new(true);
+        assert!(stage_core_bundle_with_loader(
+            &cancelled_staging,
+            manifest.clone(),
+            &cancelled,
+            &|_, _, _| {},
+            |_| Ok(Vec::new()),
+        )
+        .is_err());
+        assert_eq!(fs::read_dir(&cancelled_staging).unwrap().count(), 0);
+
+        let corrupt_staging = root.join("corrupt-staging");
+        fs::create_dir(&corrupt_staging).unwrap();
+        assert!(stage_core_bundle_with_loader(
+            &corrupt_staging,
+            manifest,
+            &AtomicBool::new(false),
+            &|_, _, _| {},
+            |_| Ok(b"tampered".to_vec()),
+        )
+        .is_err());
+        assert_eq!(fs::read_dir(&corrupt_staging).unwrap().count(), 0);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "downloads the announced immutable OPEMOS Core release"]
+    fn live_successor_core_bundle_downloads_and_stages() {
+        let runtime = std::env::temp_dir().join(format!(
+            "opemos-core-live-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&runtime).unwrap();
+        let client = nvidia_http_client().unwrap();
+        let manifest = match acquire_core_bundle_manifest(&client).unwrap() {
+            CoreBundleManifestAvailability::Verified(manifest) => manifest,
+            CoreBundleManifestAvailability::Unavailable(message) => panic!("{message}"),
+        };
+        let bundle = download_and_stage_core_bundle(
+            &runtime,
+            &client,
+            manifest,
+            &AtomicBool::new(false),
+            &|_, _, _| {},
+        )
+        .unwrap();
+        validate_core_bundle_tree(&bundle.root, &bundle.manifest).unwrap();
+        fs::remove_dir_all(runtime).unwrap();
     }
 
     #[test]
