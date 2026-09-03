@@ -1019,7 +1019,7 @@ pub(crate) struct SupportPayloadReceipt {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportPayloadReceiptTarget {
     pub(crate) steamos_version: String,
     pub(crate) kernel_version: String,
@@ -1028,7 +1028,7 @@ pub(crate) struct SupportPayloadReceiptTarget {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportPayloadReceiptRecord {
     pub(crate) role: String,
     pub(crate) filename: String,

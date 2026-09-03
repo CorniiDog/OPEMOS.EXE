@@ -2026,6 +2026,19 @@ fn validate_support_payload_receipt(
     receipt: &SupportPayloadReceipt,
     inputs: &NvidiaInstallInputs,
 ) -> Result<(), String> {
+    validate_support_payload_receipt_record(receipt)?;
+    if receipt.target.steamos_version != inputs.steamos_version
+        || receipt.target.kernel_version != inputs.kernel_version
+        || receipt.target.nvidia_version != inputs.nvidia_version
+    {
+        return Err("Offline installer payload receipt targets different inputs.".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_support_payload_receipt_record(
+    receipt: &SupportPayloadReceipt,
+) -> Result<(), String> {
     const RECEIPT_PATH: &str =
         "usr/lib/open-gpu-kernel-modules-steamos-support/offline-install/receipt.json";
     const ROLES: [(&str, &str, u64); 6] = [
@@ -2051,9 +2064,10 @@ fn validate_support_payload_receipt(
     if receipt.schema_version != 1
         || receipt.status != "verified"
         || receipt.reason != "payload_receipt_verified"
-        || receipt.target.steamos_version != inputs.steamos_version
-        || receipt.target.kernel_version != inputs.kernel_version
-        || receipt.target.nvidia_version != inputs.nvidia_version
+        || !valid_numeric_version(&receipt.target.steamos_version, 2..=3)
+        || !valid_kernel_version(&receipt.target.kernel_version)
+        || receipt.target.kernel_version == "unknown"
+        || !valid_numeric_version(&receipt.target.nvidia_version, 2..=3)
         || receipt.target.architecture != "x86_64"
         || !exact_sha256(&receipt.receipt_id)
         || support_payload_receipt_id(receipt)? != receipt.receipt_id
@@ -2076,6 +2090,24 @@ fn validate_support_payload_receipt(
         }
     }
     Ok(())
+}
+
+pub(crate) fn persisted_support_payload_receipt_identity(
+    receipt: &SupportPayloadReceipt,
+) -> Result<(u64, String), String> {
+    validate_support_payload_receipt_record(receipt)?;
+    let document = serde_json::json!({
+        "schemaVersion": 1,
+        "status": "verified",
+        "reason": "payload_receipt_committed",
+        "target": receipt.target,
+        "records": receipt.records,
+        "receiptId": receipt.receipt_id,
+    });
+    let mut bytes = serde_json::to_vec(&document)
+        .map_err(|error| format!("Could not canonicalize persisted payload receipt: {error}"))?;
+    bytes.push(b'\n');
+    Ok((bytes.len() as u64, format!("{:x}", Sha256::digest(bytes))))
 }
 
 pub(crate) fn validate_nvidia_install_result(

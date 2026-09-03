@@ -3524,6 +3524,40 @@ esac
                 .receipt_id,
             support_payload_receipt_id(installed.payload_receipt.as_ref().unwrap()).unwrap()
         );
+        assert_eq!(
+            persisted_support_payload_receipt_identity(
+                installed.payload_receipt.as_ref().unwrap()
+            )
+            .unwrap(),
+            (
+                1_228,
+                "6e90cd82c8c94b72f567f1a0677d6e5e6ac4509de4551cd41594e463e3b85f21"
+                    .into()
+            ),
+            "persisted receipt identity must match Core's canonical JSON bytes"
+        );
+        let overlay_assertions =
+            payload_receipt_overlay_assertions(installed.payload_receipt.as_ref().unwrap())
+                .expect("render independent receipt checks");
+        assert_eq!(overlay_assertions.matches("test -f ").count(), 7);
+        assert!(overlay_assertions.contains(
+            "6e90cd82c8c94b72f567f1a0677d6e5e6ac4509de4551cd41594e463e3b85f21"
+        ));
+        for filename in [
+            "receipt.json",
+            "BUILD-INFO.txt",
+            "PROVENANCE.json",
+            "validation.json",
+            "module-verification.json",
+            "userspace-verification.json",
+            "initramfs-verification.json",
+        ] {
+            assert!(overlay_assertions.contains(filename));
+        }
+        let mut extra_record_field =
+            serde_json::to_value(installed.payload_receipt.as_ref().unwrap()).unwrap();
+        extra_record_field["records"][0]["unexpected"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<SupportPayloadReceipt>(extra_record_field).is_err());
 
         let mut missing_modules = successful.clone();
         missing_modules.module_verification = None;

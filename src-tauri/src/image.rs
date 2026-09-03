@@ -1243,6 +1243,12 @@ pub(crate) fn verify_nvidia_from_validation_overlay(
             package.name, package.full_version
         ));
     }
+    let receipt_assertions = payload_receipt_overlay_assertions(
+        installation
+            .payload_receipt
+            .as_ref()
+            .ok_or("Installed NVIDIA result omitted its rootfs payload receipt.")?,
+    )?;
     let command = format!(
         r#"set -euo pipefail
 WORK=/dev/disk/by-id/virtio-steamos-user-working
@@ -1393,6 +1399,7 @@ test "$(sha256sum "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css" | aw
 test "$(stat -c '%a:%u:%g' "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css")" = 644:0:0
 {}
 {}
+{}
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
 sudo umount "$ROOT/var"
@@ -1427,8 +1434,43 @@ trap - EXIT INT TERM"#,
         welcome_gtk_css_sha256,
         welcome_asset_assertions,
         install_media_support_assertions,
+        receipt_assertions,
     );
     run_guest_command(session, &command).map(|_| ())
+}
+
+pub(crate) fn payload_receipt_overlay_assertions(
+    receipt: &SupportPayloadReceipt,
+) -> Result<String, String> {
+    let (receipt_manifest_bytes, receipt_manifest_sha256) =
+        persisted_support_payload_receipt_identity(receipt)?;
+    let mut assertions = format!(
+        "RECEIPT_SUPPORT=\"$ROOT/usr/lib/open-gpu-kernel-modules-steamos-support\"\n\
+         RECEIPT_ROOT=\"$RECEIPT_SUPPORT/offline-install\"\n\
+         test -d \"$RECEIPT_SUPPORT\"\n\
+         test ! -L \"$RECEIPT_SUPPORT\"\n\
+         test -d \"$RECEIPT_ROOT\"\n\
+         test ! -L \"$RECEIPT_ROOT\"\n\
+         test \"$(find \"$RECEIPT_ROOT\" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')\" = 7\n\
+         test -f \"$RECEIPT_ROOT/receipt.json\"\n\
+         test ! -L \"$RECEIPT_ROOT/receipt.json\"\n\
+         test \"$(stat -c '%s' \"$RECEIPT_ROOT/receipt.json\")\" = {receipt_manifest_bytes}\n\
+         test \"$(sha256sum \"$RECEIPT_ROOT/receipt.json\" | awk '{{print $1}}')\" = {receipt_manifest_sha256}\n\
+         test \"$(stat -c '%a:%u:%g' \"$RECEIPT_ROOT/receipt.json\")\" = 644:0:0\n",
+    );
+    for record in &receipt.records {
+        assertions.push_str(&format!(
+            "test -f \"$RECEIPT_ROOT/{filename}\"\n\
+             test ! -L \"$RECEIPT_ROOT/{filename}\"\n\
+             test \"$(stat -c '%s' \"$RECEIPT_ROOT/{filename}\")\" = {size}\n\
+             test \"$(sha256sum \"$RECEIPT_ROOT/{filename}\" | awk '{{print $1}}')\" = {sha256}\n\
+             test \"$(stat -c '%a:%u:%g' \"$RECEIPT_ROOT/{filename}\")\" = 644:0:0\n",
+            filename = record.filename,
+            size = record.size_bytes,
+            sha256 = record.sha256,
+        ));
+    }
+    Ok(assertions)
 }
 
 pub(crate) fn wait_for_ready(
