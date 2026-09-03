@@ -133,6 +133,28 @@ pub(crate) fn numeric_version(
         .collect()
 }
 
+fn validate_ready_nvidia_target(target: &NvidiaTargetReadiness) -> Result<(), String> {
+    if !target.ready {
+        return Ok(());
+    }
+    let steamos = target
+        .steamos_version
+        .as_deref()
+        .ok_or("Ready NVIDIA target omitted its SteamOS version.")?;
+    let kernel = target
+        .kernel_version
+        .as_deref()
+        .ok_or("Ready NVIDIA target omitted its kernel version.")?;
+    if target.status != "exact-target"
+        || target.architecture != "x86_64"
+        || numeric_version(steamos, 3..=3).is_none()
+        || !valid_kernel_version(kernel)
+    {
+        return Err("Ready NVIDIA target contains contradictory or invalid metadata.".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn published_release_identity(tag: &str) -> Option<PublishedReleaseIdentity> {
     let remainder = tag.strip_prefix("steamos-")?;
     let (steamos_version, remainder) = remainder.split_once("-nvidia-")?;
@@ -154,6 +176,7 @@ pub(crate) fn select_published_nvidia_release(
     target: &NvidiaTargetReadiness,
     releases: &[GithubRelease],
 ) -> Result<Option<(PublishedReleaseIdentity, GithubRelease, String)>, String> {
+    validate_ready_nvidia_target(target)?;
     if !target.ready {
         return Ok(None);
     }
@@ -218,6 +241,7 @@ pub(crate) fn select_nvidia_build_baseline(
     target: &NvidiaTargetReadiness,
     releases: &[GithubRelease],
 ) -> Result<Option<PublishedReleaseIdentity>, String> {
+    validate_ready_nvidia_target(target)?;
     if !target.ready {
         return Ok(None);
     }
@@ -283,6 +307,7 @@ pub(crate) fn explicit_nvidia_build_resolution(
     source: &NvidiaSourceBranch,
     baseline_release: String,
 ) -> Result<NvidiaPublishedResolution, String> {
+    validate_ready_nvidia_target(&target)?;
     if !target.ready {
         return Err("An explicit NVIDIA source requires a ready exact image target.".into());
     }
@@ -2156,6 +2181,7 @@ pub(crate) fn resolve_published_nvidia_for_target(
             build_plan: None,
         });
     }
+    validate_ready_nvidia_target(&target)?;
     let Some((identity, release, compatibility)) =
         select_published_nvidia_release(&target, releases)?
     else {

@@ -2213,6 +2213,31 @@ esac
             &duplicated,
         )
         .is_err());
+
+        for invalid in [
+            NvidiaTargetReadiness {
+                architecture: "aarch64".into(),
+                ..ready_published_target("3.8.16", kernel)
+            },
+            NvidiaTargetReadiness {
+                status: "unsupported-target".into(),
+                ..ready_published_target("3.8.16", kernel)
+            },
+            ready_published_target("3.8", kernel),
+            ready_published_target("3.8.16", "invalid kernel"),
+        ] {
+            assert!(select_published_nvidia_release(&invalid, &releases).is_err());
+            assert!(select_nvidia_build_baseline(&invalid, &releases).is_err());
+            assert!(resolve_published_nvidia_for_target(
+                invalid,
+                &std::env::temp_dir(),
+                &nvidia_http_client().unwrap(),
+                &releases,
+                &AtomicBool::new(false),
+                &|_, _, _| {},
+            )
+            .is_err());
+        }
     }
 
     #[test]
