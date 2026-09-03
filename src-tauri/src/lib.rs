@@ -44,6 +44,11 @@ mod core_generation_acquisition;
 #[cfg(unix)]
 #[allow(dead_code)]
 mod core_generation_bootstrap;
+// Private sealed authentication capability and verifier-evidence contract for
+// inactive generation planning. No production verifier or trust path is wired.
+#[cfg(unix)]
+#[allow(dead_code)]
+mod core_generation_verifier;
 // Closed request-plan compatibility derived from snapshot-bound evidence. No
 // production verifier, network, command, cache, or UI path is wired.
 #[cfg(unix)]

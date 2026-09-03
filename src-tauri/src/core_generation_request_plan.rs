@@ -2,17 +2,22 @@
 //! plan. It derives data only and has no HTTP, endpoint activation, keyring,
 //! cache, command, UI, or production callsite.
 
+#[cfg(test)]
+use crate::core_generation_verifier::{
+    parse_verifier_evidence_record, verify_generation_snapshots, DetachedVerifierOutput,
+    MAX_EVIDENCE_BYTES,
+};
+use crate::core_generation_verifier::{RequestPlanInputs, SnapshotBoundAuthenticationEvidence};
 use crate::{
     core_contracts::reject_duplicate_contract_keys,
     core_generation_bootstrap::{
-        expected_generation_authority, parse_bootstrap_policy, BootstrapPolicy, MAX_KEYRING_BYTES,
+        expected_generation_authority, parse_bootstrap_policy, BootstrapPolicy,
     },
     core_generation_contracts::{
-        validate_discovery_bytes, validate_manifest_bytes, validate_openpgp_status, validate_pair,
-        GenerationDiscovery, OpenPgpValidSignature, DISCOVERY_MAX_BYTES, MANIFEST_MAX_BYTES,
-        MAX_FILES, MAX_GENERATION_STORAGE_BYTES, MAX_OPENPGP_STATUS_BYTES, MAX_SIGNATURE_BYTES,
-        OPENPGP_HASH_ALGORITHM_IDS,
+        validate_discovery_bytes, validate_manifest_bytes, validate_pair, GenerationDiscovery,
+        MAX_FILES, MAX_GENERATION_STORAGE_BYTES, MAX_SIGNATURE_BYTES,
     },
+    core_generation_verifier::validate_evidence_capability,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -21,12 +26,8 @@ pub(crate) const MAX_REQUESTS: usize = MAX_FILES + 4;
 pub(crate) const MAX_URL_BYTES: usize = 2048;
 pub(crate) const MAX_REQUEST_METADATA_BYTES: u64 = 16 * 1024 * 1024;
 pub(crate) const MAX_PLAN_BYTES: usize = 32 * 1024 * 1024;
-pub(crate) const MAX_EVIDENCE_BYTES: usize = 64 * 1024;
 
 const PLAN_KIND: &str = "opemos-userspace-lock-generation-request-plan";
-const EVIDENCE_KIND: &str = "opemos-userspace-lock-verifier-evidence";
-const VERIFICATION_PROFILE: &str = "openpgp-detached-validsig-v1";
-const KEYRING_FILENAME: &str = "opemos-userspace-lock-generations.gpg";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -58,57 +59,6 @@ pub(crate) struct GenerationRequest {
     pub(crate) url: String,
     pub(crate) expected_size: u64,
     pub(crate) expected_sha256: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct VerifierEvidenceRecord {
-    pub(crate) schema_version: u32,
-    pub(crate) kind: String,
-    pub(crate) status: String,
-    pub(crate) verification_profile: String,
-    pub(crate) policy_sha256: String,
-    pub(crate) keyring_filename: String,
-    pub(crate) keyring_sha256: String,
-    pub(crate) primary_signing_fingerprint: String,
-    pub(crate) documents: [VerifierEvidenceDocument; 2],
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct VerifierEvidenceDocument {
-    pub(crate) role: String,
-    pub(crate) payload_sha256: String,
-    pub(crate) payload_size: u64,
-    pub(crate) signature_sha256: String,
-    pub(crate) signature_size: u64,
-    pub(crate) signing_fingerprint: String,
-    pub(crate) primary_signing_fingerprint: String,
-    pub(crate) hash_algorithm_id: u32,
-}
-
-/// Opaque evidence produced only after an internal verifier binds its exact
-/// policy/keyring snapshot and authenticated document bytes. There is
-/// intentionally no public constructor or Deserialize implementation: caller
-/// assertions and wire documents are never accepted as proof.
-pub(crate) struct SnapshotBoundAuthenticationEvidence {
-    record: VerifierEvidenceRecord,
-    _seal: CapabilitySeal,
-}
-
-struct CapabilitySeal;
-
-struct DetachedVerifierOutput {
-    exit_status: i32,
-    status: Vec<u8>,
-}
-
-pub(crate) struct RequestPlanInputs<'a> {
-    pub(crate) policy_payload: &'a [u8],
-    pub(crate) discovery_payload: &'a [u8],
-    pub(crate) discovery_signature: &'a [u8],
-    pub(crate) manifest_payload: &'a [u8],
-    pub(crate) manifest_signature: &'a [u8],
 }
 
 fn parse_canonical<T: DeserializeOwned>(
@@ -158,8 +108,8 @@ pub(crate) fn build_request_plan(
         return Err("Generation identity differs from authenticated inputs.".into());
     }
     validate_evidence_capability(evidence, inputs)?;
-    if evidence.record.keyring_sha256 != policy.authority.keyring_sha256
-        || evidence.record.primary_signing_fingerprint
+    if evidence.record().keyring_sha256 != policy.authority.keyring_sha256
+        || evidence.record().primary_signing_fingerprint
             != policy.authority.primary_signing_fingerprint
     {
         return Err("Verifier evidence authority differs from bootstrap policy.".into());
@@ -268,7 +218,7 @@ pub(crate) fn build_request_plan(
     {
         return Err("Generation request plan is excessive.".into());
     }
-    let record = &evidence.record;
+    let record = evidence.record();
     let plan = GenerationRequestPlan {
         schema_version: 1,
         kind: PLAN_KIND.into(),
@@ -337,219 +287,6 @@ fn request_record(
     })
 }
 
-/// Parse a canonical audit record for diagnostics. This never returns or
-/// recreates the verifier-owned capability required by request planning.
-pub(crate) fn parse_verifier_evidence_record(
-    payload: &[u8],
-) -> Result<VerifierEvidenceRecord, String> {
-    let record: VerifierEvidenceRecord =
-        parse_canonical(payload, MAX_EVIDENCE_BYTES, "Core verifier evidence")?;
-    validate_evidence_record(&record)?;
-    Ok(record)
-}
-
-fn validate_evidence_record(record: &VerifierEvidenceRecord) -> Result<(), String> {
-    if record.schema_version != 1
-        || record.kind != EVIDENCE_KIND
-        || record.status != "authenticated"
-        || record.verification_profile != VERIFICATION_PROFILE
-        || !lower_sha256(&record.policy_sha256)
-        || record.keyring_filename != KEYRING_FILENAME
-        || !lower_sha256(&record.keyring_sha256)
-        || !upper_fingerprint(&record.primary_signing_fingerprint)
-    {
-        return Err("Verifier evidence identity is invalid.".into());
-    }
-    for (index, role) in ["discovery", "generation-manifest"].iter().enumerate() {
-        let document = &record.documents[index];
-        let maximum = if index == 0 {
-            DISCOVERY_MAX_BYTES as u64
-        } else {
-            MANIFEST_MAX_BYTES as u64
-        };
-        if document.role != *role
-            || !lower_sha256(&document.payload_sha256)
-            || !(1..=maximum).contains(&document.payload_size)
-            || !lower_sha256(&document.signature_sha256)
-            || !(1..=MAX_SIGNATURE_BYTES).contains(&document.signature_size)
-            || !upper_fingerprint(&document.signing_fingerprint)
-            || document.primary_signing_fingerprint != record.primary_signing_fingerprint
-            || !OPENPGP_HASH_ALGORITHM_IDS.contains(&document.hash_algorithm_id)
-        {
-            return Err("Verifier evidence document identity is invalid.".into());
-        }
-    }
-    Ok(())
-}
-
-fn verify_generation_snapshots<F>(
-    inputs: &RequestPlanInputs<'_>,
-    keyring_payload: &[u8],
-    mut verify_detached: F,
-) -> Result<SnapshotBoundAuthenticationEvidence, String>
-where
-    F: FnMut(&[u8], &[u8], &[u8], &str) -> Result<DetachedVerifierOutput, String>,
-{
-    let policy = parse_bootstrap_policy(inputs.policy_payload)?;
-    let expected_authority = expected_generation_authority(&policy, inputs.policy_payload)?;
-    let authority = &policy.authority;
-    if keyring_payload.is_empty()
-        || keyring_payload.len() > MAX_KEYRING_BYTES
-        || sha256(keyring_payload) != authority.keyring_sha256
-    {
-        return Err("Verifier inputs differ from installed bootstrap authority.".into());
-    }
-    if inputs.discovery_payload.is_empty()
-        || inputs.discovery_payload.len() > DISCOVERY_MAX_BYTES
-        || inputs.manifest_payload.is_empty()
-        || inputs.manifest_payload.len() > MANIFEST_MAX_BYTES
-        || !(1..=MAX_SIGNATURE_BYTES as usize).contains(&inputs.discovery_signature.len())
-        || !(1..=MAX_SIGNATURE_BYTES as usize).contains(&inputs.manifest_signature.len())
-    {
-        return Err("Document or detached signature snapshot is empty or excessive.".into());
-    }
-
-    let discovery_verified = verifier_result(
-        &mut verify_detached,
-        inputs.discovery_payload,
-        inputs.discovery_signature,
-        keyring_payload,
-        &authority.primary_signing_fingerprint,
-        "discovery",
-    )?;
-    let discovery = validate_discovery_bytes(inputs.discovery_payload)?;
-    if discovery.authority != expected_authority {
-        return Err("Verifier inputs differ from installed bootstrap authority.".into());
-    }
-    if discovery.generation.signature_size != inputs.manifest_signature.len() as u64
-        || discovery.generation.signature_sha256 != sha256(inputs.manifest_signature)
-    {
-        return Err("Manifest signature differs from authenticated discovery.".into());
-    }
-    let manifest_verified = verifier_result(
-        &mut verify_detached,
-        inputs.manifest_payload,
-        inputs.manifest_signature,
-        keyring_payload,
-        &authority.primary_signing_fingerprint,
-        "generation-manifest",
-    )?;
-    let manifest = validate_manifest_bytes(inputs.manifest_payload)?;
-    validate_pair(&discovery, &manifest)?;
-    if !authority
-        .allowed_hash_algorithm_ids
-        .contains(&discovery_verified.hash_algorithm_id)
-        || !authority
-            .allowed_hash_algorithm_ids
-            .contains(&manifest_verified.hash_algorithm_id)
-    {
-        return Err("Detached signature hash algorithm is not authorized.".into());
-    }
-    let record = VerifierEvidenceRecord {
-        schema_version: 1,
-        kind: EVIDENCE_KIND.into(),
-        status: "authenticated".into(),
-        verification_profile: VERIFICATION_PROFILE.into(),
-        policy_sha256: sha256(inputs.policy_payload),
-        keyring_filename: authority.keyring_filename.clone(),
-        keyring_sha256: authority.keyring_sha256.clone(),
-        primary_signing_fingerprint: authority.primary_signing_fingerprint.clone(),
-        documents: [
-            document_record(
-                "discovery",
-                inputs.discovery_payload,
-                inputs.discovery_signature,
-                &discovery_verified,
-            ),
-            document_record(
-                "generation-manifest",
-                inputs.manifest_payload,
-                inputs.manifest_signature,
-                &manifest_verified,
-            ),
-        ],
-    };
-    validate_evidence_record(&record)?;
-    if canonical_bytes(&record)?.len() > MAX_EVIDENCE_BYTES {
-        return Err("Verifier evidence is excessive.".into());
-    }
-    Ok(SnapshotBoundAuthenticationEvidence {
-        record,
-        _seal: CapabilitySeal,
-    })
-}
-
-fn verifier_result<F>(
-    verifier: &mut F,
-    payload: &[u8],
-    signature: &[u8],
-    keyring: &[u8],
-    primary: &str,
-    role: &str,
-) -> Result<OpenPgpValidSignature, String>
-where
-    F: FnMut(&[u8], &[u8], &[u8], &str) -> Result<DetachedVerifierOutput, String>,
-{
-    let output = verifier(payload, signature, keyring, role)
-        .map_err(|_| "Detached signature verifier failed.".to_string())?;
-    if output.exit_status != 0
-        || output.status.is_empty()
-        || output.status.len() > MAX_OPENPGP_STATUS_BYTES
-    {
-        return Err("Detached signature verifier did not report bounded success.".into());
-    }
-    validate_openpgp_status(&output.status, primary)
-}
-
-fn document_record(
-    role: &str,
-    payload: &[u8],
-    signature: &[u8],
-    verified: &OpenPgpValidSignature,
-) -> VerifierEvidenceDocument {
-    VerifierEvidenceDocument {
-        role: role.into(),
-        payload_sha256: sha256(payload),
-        payload_size: payload.len() as u64,
-        signature_sha256: sha256(signature),
-        signature_size: signature.len() as u64,
-        signing_fingerprint: verified.signing_fingerprint.clone(),
-        primary_signing_fingerprint: verified.primary_fingerprint.clone(),
-        hash_algorithm_id: verified.hash_algorithm_id,
-    }
-}
-
-fn validate_evidence_capability(
-    evidence: &SnapshotBoundAuthenticationEvidence,
-    inputs: &RequestPlanInputs<'_>,
-) -> Result<(), String> {
-    if evidence.record.policy_sha256 != sha256(inputs.policy_payload) {
-        return Err("Verifier evidence belongs to another bootstrap policy.".into());
-    }
-    for (stored, (role, payload, signature)) in evidence.record.documents.iter().zip([
-        (
-            "discovery",
-            inputs.discovery_payload,
-            inputs.discovery_signature,
-        ),
-        (
-            "generation-manifest",
-            inputs.manifest_payload,
-            inputs.manifest_signature,
-        ),
-    ]) {
-        if stored.role != role
-            || stored.payload_size != payload.len() as u64
-            || stored.payload_sha256 != sha256(payload)
-            || stored.signature_size != signature.len() as u64
-            || stored.signature_sha256 != sha256(signature)
-        {
-            return Err("Verifier evidence belongs to different snapshots.".into());
-        }
-    }
-    Ok(())
-}
-
 fn require_supported_compatibility(
     policy: &BootstrapPolicy,
     discovery: &GenerationDiscovery,
@@ -585,20 +322,6 @@ fn canonical_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
 
 fn sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
-}
-
-fn lower_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
-fn upper_fingerprint(value: &str) -> bool {
-    matches!(value.len(), 40 | 64)
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'A'..=b'F').contains(&byte))
 }
 
 #[cfg(test)]
@@ -1136,10 +859,10 @@ mod tests {
         let evidence = fixture_evidence(&valid.inputs, &inputs).unwrap();
         let plan = build_request_plan(&inputs, &evidence).unwrap();
         assert!(!plan.redirects);
-        assert_eq!(plan.keyring_sha256, evidence.record.keyring_sha256);
+        assert_eq!(plan.keyring_sha256, evidence.record().keyring_sha256);
         assert_eq!(
             plan.primary_signing_fingerprint,
-            evidence.record.primary_signing_fingerprint
+            evidence.record().primary_signing_fingerprint
         );
         assert_eq!(plan.discovery_hash_algorithm_id, 10);
         assert_eq!(plan.manifest_hash_algorithm_id, 8);
@@ -1373,12 +1096,12 @@ mod tests {
         assert_eq!(calls[0].1, discovery_signature);
         assert_eq!(calls[0].2, valid.inputs.keyring_payload.as_bytes());
         assert_eq!(
-            canonical_bytes(&capability.record).unwrap(),
+            canonical_bytes(capability.record()).unwrap(),
             canonical(valid.record.as_ref().unwrap())
         );
         let parsed =
             parse_verifier_evidence_record(&canonical(valid.record.as_ref().unwrap())).unwrap();
-        assert_eq!(parsed, capability.record);
+        assert_eq!(&parsed, capability.record());
         let different_discovery = [inputs.discovery_payload, b" "].concat();
         let different_inputs = RequestPlanInputs {
             policy_payload: inputs.policy_payload,
