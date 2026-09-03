@@ -621,8 +621,29 @@ fn sync_closed_tree(root: &Path) -> Result<(), String> {
             if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
                 directories.push(entry.path());
             } else if metadata.file_type().is_file() {
-                File::open(entry.path())
-                    .and_then(|file| file.sync_all())
+                use std::os::unix::fs::MetadataExt as _;
+                if metadata.nlink() != 1 {
+                    return Err("Core generation candidate contains a multiply linked file.".into());
+                }
+                let mut options = OpenOptions::new();
+                options
+                    .read(true)
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+                let file = options.open(entry.path()).map_err(|error| {
+                    format!("Could not safely open Core generation entry: {error}")
+                })?;
+                let opened = file.metadata().map_err(|error| {
+                    format!("Could not identify opened Core generation entry: {error}")
+                })?;
+                if !opened.is_file()
+                    || opened.nlink() != 1
+                    || opened.dev() != metadata.dev()
+                    || opened.ino() != metadata.ino()
+                    || opened.len() != metadata.len()
+                {
+                    return Err("Core generation entry changed while it was opened.".into());
+                }
+                file.sync_all()
                     .map_err(|error| format!("Could not sync Core generation entry: {error}"))?;
             } else {
                 return Err("Core generation candidate contains a linked or special entry.".into());
@@ -966,6 +987,28 @@ mod tests {
             .commit_candidate(&candidate, &identity('8'), |_| Ok(()))
             .is_err());
         assert!(candidate.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn hard_linked_generation_content_is_rejected_before_commit() {
+        let root = temporary_cache("hard-link");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let candidate = cache.create_candidate("hard-linked").unwrap();
+        let external = root.parent().unwrap().join(format!(
+            "opemos-core-hard-link-external-{}",
+            std::process::id()
+        ));
+        fs::write(&external, "mutable-outside-cache").unwrap();
+        fs::hard_link(&external, candidate.join("linked-file")).unwrap();
+        assert!(cache
+            .commit_candidate(&candidate, &identity('7'), |_| Ok(()))
+            .is_err());
+        assert_eq!(
+            fs::read_to_string(&external).unwrap(),
+            "mutable-outside-cache"
+        );
+        fs::remove_file(external).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 }
