@@ -54,4 +54,6 @@ if (( FAILED )); then
     exit 1
 fi
 
+python3 tests/boundary_policy.py
+
 printf '[repository-hygiene] Repository file checks passed.\n'

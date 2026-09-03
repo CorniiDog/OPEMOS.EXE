@@ -13,6 +13,10 @@ Valve image.
 
 ## Responsibility boundaries
 
+The read-only governance authority is
+[`BOUNDARIES.md`](https://github.com/CorniiDog/OPEMOS.EXE/blob/main/BOUNDARIES.md).
+The table below is only an implementation summary.
+
 | Component | Owns | Must not own |
 | --- | --- | --- |
 | Main/progress UI | Image selection, explicit user choices, status, cancellation, and diagnostics | Compatibility decisions, shell commands, credentials, or filesystem mutation |

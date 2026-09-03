@@ -103,6 +103,9 @@ virtual media, or macOS authorization.
 
 ## Repository boundaries
 
+The authoritative cross-project ownership contract is
+[`BOUNDARIES.md`](BOUNDARIES.md). Repository summaries are non-authoritative.
+
 | Repository | Responsibility |
 | --- | --- |
 | [`OPEMOS.EXE`](https://github.com/CorniiDog/OPEMOS.EXE) | Host image builder, recovery-image inspection, QEMU lifecycle, safe export/USB workflow, independent validation, and the welcome/installer UI embedded in bootable media |

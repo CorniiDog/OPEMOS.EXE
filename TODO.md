@@ -29,6 +29,9 @@ or invoke it as part of the macOS application runtime.
 
 ## Ownership boundary
 
+Authority: [`BOUNDARIES.md`](BOUNDARIES.md). This checklist summarizes the
+contract but must not redefine it.
+
 OPEMOS.EXE owns:
 
 - macOS windows, menus, accessibility, progress weighting, and diagnostics.
