@@ -5,11 +5,13 @@
 use crate::{
     core_contracts::reject_duplicate_contract_keys,
     core_generation_bootstrap::{
-        expected_generation_authority, parse_bootstrap_policy, BootstrapPolicy,
+        expected_generation_authority, parse_bootstrap_policy, BootstrapPolicy, MAX_KEYRING_BYTES,
     },
     core_generation_contracts::{
-        validate_discovery_bytes, validate_manifest_bytes, validate_pair, GenerationDiscovery,
-        MAX_FILES, MAX_GENERATION_STORAGE_BYTES, MAX_SIGNATURE_BYTES,
+        validate_discovery_bytes, validate_manifest_bytes, validate_openpgp_status, validate_pair,
+        GenerationDiscovery, OpenPgpValidSignature, DISCOVERY_MAX_BYTES, MANIFEST_MAX_BYTES,
+        MAX_FILES, MAX_GENERATION_STORAGE_BYTES, MAX_OPENPGP_STATUS_BYTES, MAX_SIGNATURE_BYTES,
+        OPENPGP_HASH_ALGORITHM_IDS,
     },
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -20,8 +22,12 @@ pub(crate) const MAX_REQUESTS: usize = MAX_FILES + 4;
 pub(crate) const MAX_URL_BYTES: usize = 2048;
 pub(crate) const MAX_REQUEST_METADATA_BYTES: u64 = 16 * 1024 * 1024;
 pub(crate) const MAX_PLAN_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_EVIDENCE_BYTES: usize = 64 * 1024;
 
 const PLAN_KIND: &str = "opemos-userspace-lock-generation-request-plan";
+const EVIDENCE_KIND: &str = "opemos-userspace-lock-verifier-evidence";
+const VERIFICATION_PROFILE: &str = "openpgp-detached-validsig-v1";
+const KEYRING_FILENAME: &str = "opemos-userspace-lock-generations.gpg";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -55,28 +61,47 @@ pub(crate) struct GenerationRequest {
     pub(crate) expected_sha256: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct AuthenticationRecord {
-    schema_version: u32,
-    status: String,
-    policy_sha256: String,
-    keyring_sha256: String,
-    primary_signing_fingerprint: String,
-    discovery_payload_sha256: String,
-    discovery_signature_sha256: String,
-    discovery_hash_algorithm_id: u32,
-    manifest_payload_sha256: String,
-    manifest_signature_sha256: String,
-    manifest_hash_algorithm_id: u32,
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct VerifierEvidenceRecord {
+    pub(crate) schema_version: u32,
+    pub(crate) kind: String,
+    pub(crate) status: String,
+    pub(crate) verification_profile: String,
+    pub(crate) policy_sha256: String,
+    pub(crate) keyring_filename: String,
+    pub(crate) keyring_sha256: String,
+    pub(crate) primary_signing_fingerprint: String,
+    pub(crate) documents: [VerifierEvidenceDocument; 2],
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct VerifierEvidenceDocument {
+    pub(crate) role: String,
+    pub(crate) payload_sha256: String,
+    pub(crate) payload_size: u64,
+    pub(crate) signature_sha256: String,
+    pub(crate) signature_size: u64,
+    pub(crate) signing_fingerprint: String,
+    pub(crate) primary_signing_fingerprint: String,
+    pub(crate) hash_algorithm_id: u32,
 }
 
 /// Opaque evidence produced only after an internal verifier binds its exact
 /// policy/keyring snapshot and authenticated document bytes. There is
 /// intentionally no public constructor or Deserialize implementation: caller
 /// assertions and wire documents are never accepted as proof.
-#[derive(Clone, Debug)]
 pub(crate) struct SnapshotBoundAuthenticationEvidence {
-    record: AuthenticationRecord,
+    record: VerifierEvidenceRecord,
+    _seal: CapabilitySeal,
+}
+
+struct CapabilitySeal;
+
+struct DetachedVerifierOutput {
+    exit_status: i32,
+    status: Vec<u8>,
 }
 
 pub(crate) struct RequestPlanInputs<'a> {
@@ -134,7 +159,13 @@ pub(crate) fn build_request_plan(
     {
         return Err("Generation identity differs from authenticated inputs.".into());
     }
-    validate_snapshot_evidence(&evidence.record, &policy, inputs)?;
+    validate_evidence_capability(evidence, inputs)?;
+    if evidence.record.keyring_sha256 != policy.authority.keyring_sha256
+        || evidence.record.primary_signing_fingerprint
+            != policy.authority.primary_signing_fingerprint
+    {
+        return Err("Verifier evidence authority differs from bootstrap policy.".into());
+    }
     if inputs.payloads.len() != manifest.files.len()
         || manifest
             .files
@@ -254,8 +285,8 @@ pub(crate) fn build_request_plan(
         policy_sha256: sha256(inputs.policy_payload),
         keyring_sha256: record.keyring_sha256.clone(),
         primary_signing_fingerprint: record.primary_signing_fingerprint.clone(),
-        discovery_hash_algorithm_id: record.discovery_hash_algorithm_id,
-        manifest_hash_algorithm_id: record.manifest_hash_algorithm_id,
+        discovery_hash_algorithm_id: record.documents[0].hash_algorithm_id,
+        manifest_hash_algorithm_id: record.documents[1].hash_algorithm_id,
         sequence: discovery.sequence,
         release_tag: generation.release_tag.clone(),
         origin: origin.clone(),
@@ -315,29 +346,215 @@ fn request_record(
     })
 }
 
-fn validate_snapshot_evidence(
-    record: &AuthenticationRecord,
-    policy: &BootstrapPolicy,
+/// Parse a canonical audit record for diagnostics. This never returns or
+/// recreates the verifier-owned capability required by request planning.
+pub(crate) fn parse_verifier_evidence_record(
+    payload: &[u8],
+) -> Result<VerifierEvidenceRecord, String> {
+    let record: VerifierEvidenceRecord =
+        parse_canonical(payload, MAX_EVIDENCE_BYTES, "Core verifier evidence")?;
+    validate_evidence_record(&record)?;
+    Ok(record)
+}
+
+fn validate_evidence_record(record: &VerifierEvidenceRecord) -> Result<(), String> {
+    if record.schema_version != 1
+        || record.kind != EVIDENCE_KIND
+        || record.status != "authenticated"
+        || record.verification_profile != VERIFICATION_PROFILE
+        || !lower_sha256(&record.policy_sha256)
+        || record.keyring_filename != KEYRING_FILENAME
+        || !lower_sha256(&record.keyring_sha256)
+        || !upper_fingerprint(&record.primary_signing_fingerprint)
+    {
+        return Err("Verifier evidence identity is invalid.".into());
+    }
+    for (index, role) in ["discovery", "generation-manifest"].iter().enumerate() {
+        let document = &record.documents[index];
+        let maximum = if index == 0 {
+            DISCOVERY_MAX_BYTES as u64
+        } else {
+            MANIFEST_MAX_BYTES as u64
+        };
+        if document.role != *role
+            || !lower_sha256(&document.payload_sha256)
+            || !(1..=maximum).contains(&document.payload_size)
+            || !lower_sha256(&document.signature_sha256)
+            || !(1..=MAX_SIGNATURE_BYTES).contains(&document.signature_size)
+            || !upper_fingerprint(&document.signing_fingerprint)
+            || document.primary_signing_fingerprint != record.primary_signing_fingerprint
+            || !OPENPGP_HASH_ALGORITHM_IDS.contains(&document.hash_algorithm_id)
+        {
+            return Err("Verifier evidence document identity is invalid.".into());
+        }
+    }
+    Ok(())
+}
+
+fn verify_generation_snapshots<F>(
+    inputs: &RequestPlanInputs<'_>,
+    keyring_payload: &[u8],
+    mut verify_detached: F,
+) -> Result<SnapshotBoundAuthenticationEvidence, String>
+where
+    F: FnMut(&[u8], &[u8], &[u8], &str) -> Result<DetachedVerifierOutput, String>,
+{
+    let policy = parse_bootstrap_policy(inputs.policy_payload)?;
+    let expected_authority = expected_generation_authority(&policy, inputs.policy_payload)?;
+    let authority = &policy.authority;
+    if keyring_payload.is_empty()
+        || keyring_payload.len() > MAX_KEYRING_BYTES
+        || sha256(keyring_payload) != authority.keyring_sha256
+    {
+        return Err("Verifier inputs differ from installed bootstrap authority.".into());
+    }
+    if inputs.discovery_payload.is_empty()
+        || inputs.discovery_payload.len() > DISCOVERY_MAX_BYTES
+        || inputs.manifest_payload.is_empty()
+        || inputs.manifest_payload.len() > MANIFEST_MAX_BYTES
+        || !(1..=MAX_SIGNATURE_BYTES as usize).contains(&inputs.discovery_signature.len())
+        || !(1..=MAX_SIGNATURE_BYTES as usize).contains(&inputs.manifest_signature.len())
+    {
+        return Err("Document or detached signature snapshot is empty or excessive.".into());
+    }
+
+    let discovery_verified = verifier_result(
+        &mut verify_detached,
+        inputs.discovery_payload,
+        inputs.discovery_signature,
+        keyring_payload,
+        &authority.primary_signing_fingerprint,
+        "discovery",
+    )?;
+    let discovery = validate_discovery_bytes(inputs.discovery_payload)?;
+    if discovery.authority != expected_authority {
+        return Err("Verifier inputs differ from installed bootstrap authority.".into());
+    }
+    if discovery.generation.signature_size != inputs.manifest_signature.len() as u64
+        || discovery.generation.signature_sha256 != sha256(inputs.manifest_signature)
+    {
+        return Err("Manifest signature differs from authenticated discovery.".into());
+    }
+    let manifest_verified = verifier_result(
+        &mut verify_detached,
+        inputs.manifest_payload,
+        inputs.manifest_signature,
+        keyring_payload,
+        &authority.primary_signing_fingerprint,
+        "generation-manifest",
+    )?;
+    let manifest = validate_manifest_bytes(inputs.manifest_payload)?;
+    validate_pair(&discovery, &manifest)?;
+    if !authority
+        .allowed_hash_algorithm_ids
+        .contains(&discovery_verified.hash_algorithm_id)
+        || !authority
+            .allowed_hash_algorithm_ids
+            .contains(&manifest_verified.hash_algorithm_id)
+    {
+        return Err("Detached signature hash algorithm is not authorized.".into());
+    }
+    let record = VerifierEvidenceRecord {
+        schema_version: 1,
+        kind: EVIDENCE_KIND.into(),
+        status: "authenticated".into(),
+        verification_profile: VERIFICATION_PROFILE.into(),
+        policy_sha256: sha256(inputs.policy_payload),
+        keyring_filename: authority.keyring_filename.clone(),
+        keyring_sha256: authority.keyring_sha256.clone(),
+        primary_signing_fingerprint: authority.primary_signing_fingerprint.clone(),
+        documents: [
+            document_record(
+                "discovery",
+                inputs.discovery_payload,
+                inputs.discovery_signature,
+                &discovery_verified,
+            ),
+            document_record(
+                "generation-manifest",
+                inputs.manifest_payload,
+                inputs.manifest_signature,
+                &manifest_verified,
+            ),
+        ],
+    };
+    validate_evidence_record(&record)?;
+    if canonical_bytes(&record)?.len() > MAX_EVIDENCE_BYTES {
+        return Err("Verifier evidence is excessive.".into());
+    }
+    Ok(SnapshotBoundAuthenticationEvidence {
+        record,
+        _seal: CapabilitySeal,
+    })
+}
+
+fn verifier_result<F>(
+    verifier: &mut F,
+    payload: &[u8],
+    signature: &[u8],
+    keyring: &[u8],
+    primary: &str,
+    role: &str,
+) -> Result<OpenPgpValidSignature, String>
+where
+    F: FnMut(&[u8], &[u8], &[u8], &str) -> Result<DetachedVerifierOutput, String>,
+{
+    let output = verifier(payload, signature, keyring, role)
+        .map_err(|_| "Detached signature verifier failed.".to_string())?;
+    if output.exit_status != 0
+        || output.status.is_empty()
+        || output.status.len() > MAX_OPENPGP_STATUS_BYTES
+    {
+        return Err("Detached signature verifier did not report bounded success.".into());
+    }
+    validate_openpgp_status(&output.status, primary)
+}
+
+fn document_record(
+    role: &str,
+    payload: &[u8],
+    signature: &[u8],
+    verified: &OpenPgpValidSignature,
+) -> VerifierEvidenceDocument {
+    VerifierEvidenceDocument {
+        role: role.into(),
+        payload_sha256: sha256(payload),
+        payload_size: payload.len() as u64,
+        signature_sha256: sha256(signature),
+        signature_size: signature.len() as u64,
+        signing_fingerprint: verified.signing_fingerprint.clone(),
+        primary_signing_fingerprint: verified.primary_fingerprint.clone(),
+        hash_algorithm_id: verified.hash_algorithm_id,
+    }
+}
+
+fn validate_evidence_capability(
+    evidence: &SnapshotBoundAuthenticationEvidence,
     inputs: &RequestPlanInputs<'_>,
 ) -> Result<(), String> {
-    let authority = &policy.authority;
-    if record.schema_version != 1
-        || record.status != "authenticated"
-        || record.policy_sha256 != sha256(inputs.policy_payload)
-        || record.keyring_sha256 != authority.keyring_sha256
-        || record.primary_signing_fingerprint != authority.primary_signing_fingerprint
-        || record.discovery_payload_sha256 != sha256(inputs.discovery_payload)
-        || record.discovery_signature_sha256 != sha256(inputs.discovery_signature)
-        || record.manifest_payload_sha256 != sha256(inputs.manifest_payload)
-        || record.manifest_signature_sha256 != sha256(inputs.manifest_signature)
-        || !authority
-            .allowed_hash_algorithm_ids
-            .contains(&record.discovery_hash_algorithm_id)
-        || !authority
-            .allowed_hash_algorithm_ids
-            .contains(&record.manifest_hash_algorithm_id)
-    {
-        return Err("Request inputs lack exact snapshot-bound authentication evidence.".into());
+    if evidence.record.policy_sha256 != sha256(inputs.policy_payload) {
+        return Err("Verifier evidence belongs to another bootstrap policy.".into());
+    }
+    for (stored, (role, payload, signature)) in evidence.record.documents.iter().zip([
+        (
+            "discovery",
+            inputs.discovery_payload,
+            inputs.discovery_signature,
+        ),
+        (
+            "generation-manifest",
+            inputs.manifest_payload,
+            inputs.manifest_signature,
+        ),
+    ]) {
+        if stored.role != role
+            || stored.payload_size != payload.len() as u64
+            || stored.payload_sha256 != sha256(payload)
+            || stored.signature_size != signature.len() as u64
+            || stored.signature_sha256 != sha256(signature)
+        {
+            return Err("Verifier evidence belongs to different snapshots.".into());
+        }
     }
     Ok(())
 }
@@ -379,6 +596,20 @@ fn sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+fn lower_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn upper_fingerprint(value: &str) -> bool {
+    matches!(value.len(), 40 | 64)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'A'..=b'F').contains(&byte))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,16 +620,17 @@ mod tests {
         io::Read,
         os::unix::process::CommandExt as _,
         path::{Path, PathBuf},
-        process::{Child, Command, Stdio},
+        process::{Child, Command, ExitStatus, Stdio},
         sync::atomic::{AtomicU64, Ordering},
         thread,
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
-    const CONTRACT_COMMIT: &str = "ed3917cc3126aa4401eb96ce070e2081ecbbdd4f";
+    const CONTRACT_COMMIT: &str = "7af099596895a0dd5a6a3c5cd18dfdf03f2bad29";
     const FIXTURE_LIMIT: usize = 1024 * 1024;
     const STDERR_LIMIT: usize = 64 * 1024;
     static EXPORT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+    const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
     type FixtureArguments = (
         Vec<u8>,
         Vec<u8>,
@@ -407,6 +639,12 @@ mod tests {
         Vec<u8>,
         BTreeMap<String, Vec<u8>>,
     );
+
+    struct BoundedCommandOutput {
+        status: ExitStatus,
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+    }
 
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -451,28 +689,23 @@ mod tests {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     struct FixtureInputs {
         policy: serde_json::Value,
+        keyring_payload: String,
         discovery: serde_json::Value,
         discovery_signature: String,
         manifest: serde_json::Value,
         manifest_signature: String,
-        authentication: Option<serde_json::Value>,
+        verifier: FixtureVerifier,
+        evidence_record: serde_json::Value,
         payloads: BTreeMap<String, String>,
     }
 
-    #[derive(Clone, Debug, Deserialize)]
+    #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
-    struct FixtureAuthentication {
-        schema_version: u32,
-        status: String,
-        policy_sha256: String,
-        keyring_sha256: String,
-        primary_signing_fingerprint: String,
-        discovery_payload_sha256: String,
-        discovery_signature_sha256: String,
-        discovery_hash_algorithm_id: u32,
-        manifest_payload_sha256: String,
-        manifest_signature_sha256: String,
-        manifest_hash_algorithm_id: u32,
+    struct FixtureVerifier {
+        discovery_exit_status: i32,
+        discovery_status: String,
+        manifest_exit_status: i32,
+        manifest_status: String,
     }
 
     #[derive(Debug, Deserialize)]
@@ -482,10 +715,57 @@ mod tests {
         count: usize,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct EvidenceFixtureEnvelope {
+        schema_version: u32,
+        kind: String,
+        limits: EvidenceFixtureLimits,
+        cases: Vec<EvidenceFixtureCase>,
+    }
+
+    #[derive(Debug, Deserialize, Eq, PartialEq)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct EvidenceFixtureLimits {
+        max_evidence_bytes: usize,
+        max_cases: usize,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct EvidenceFixtureCase {
+        name: String,
+        expected: EvidenceFixtureExpected,
+        inputs: FixtureInputs,
+        #[serde(default)]
+        record: Option<serde_json::Value>,
+        #[serde(default)]
+        raw_record: Option<String>,
+        #[serde(default)]
+        raw_record_recipe: Option<RawPlanRecipe>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct EvidenceFixtureExpected {
+        capability_accepted: bool,
+        record_accepted: bool,
+    }
+
     fn canonical(value: &serde_json::Value) -> Vec<u8> {
         let mut bytes = serde_json::to_vec(value).unwrap();
         bytes.push(b'\n');
         bytes
+    }
+
+    fn bounded_recipe_bytes(recipe: &RawPlanRecipe, maximum: usize) -> Result<Vec<u8>, String> {
+        let allocation_limit = maximum
+            .checked_add(1)
+            .ok_or_else(|| "Fixture recipe limit overflowed.".to_string())?;
+        if recipe.text != " " || recipe.count > allocation_limit {
+            return Err("Fixture recipe is invalid or excessive.".into());
+        }
+        Ok(vec![b' '; recipe.count])
     }
 
     fn local_core_repository() -> Option<PathBuf> {
@@ -508,11 +788,17 @@ mod tests {
             assert!(!required, "configured immutable Core repository is absent");
             return None;
         }
-        let output = match Command::new(git_program)
+        let mut command = Command::new(git_program);
+        command
             .args(["cat-file", "-e", &format!("{CONTRACT_COMMIT}^{{commit}}")])
-            .current_dir(&repository)
-            .output()
-        {
+            .current_dir(&repository);
+        let output = match run_bounded_command(
+            &mut command,
+            1024,
+            STDERR_LIMIT,
+            COMMAND_TIMEOUT,
+            "inspect immutable Core repository",
+        ) {
             Ok(output) => output,
             Err(error) => {
                 assert!(
@@ -543,19 +829,29 @@ mod tests {
         fs::create_dir(&root).unwrap();
         for relative in [
             "lib/generate_userspace_lock_request_plan_fixtures.py",
+            "lib/generate_userspace_lock_verifier_evidence_fixtures.py",
             "lib/generate_userspace_lock_bootstrap_fixtures.py",
             "lib/generate_userspace_lock_generation_fixtures.py",
+            "lib/generate_openpgp_status_fixtures.py",
             "lib/userspace_lock_request_plan.py",
+            "lib/userspace_lock_verifier_evidence.py",
             "lib/userspace_lock_bootstrap_contract.py",
             "lib/userspace_lock_generation_contract.py",
         ] {
-            let output = Command::new("git")
+            let mut command = Command::new("git");
+            command
                 .args(["show", &format!("{CONTRACT_COMMIT}:{relative}")])
-                .current_dir(repository)
-                .output()
-                .unwrap();
+                .current_dir(repository);
+            let output = run_bounded_command(
+                &mut command,
+                1024 * 1024,
+                STDERR_LIMIT,
+                COMMAND_TIMEOUT,
+                "export exact Core fixture source",
+            )
+            .unwrap();
             assert!(output.status.success() && output.stderr.is_empty());
-            assert!(!output.stdout.is_empty() && output.stdout.len() <= 1024 * 1024);
+            assert!(!output.stdout.is_empty());
             let destination = root.join(relative);
             fs::create_dir_all(destination.parent().unwrap()).unwrap();
             fs::write(destination, output.stdout).unwrap();
@@ -582,7 +878,7 @@ mod tests {
     }
 
     fn run_generator(path: &Path) -> Vec<u8> {
-        run_generator_with_timeout(path, Duration::from_secs(15))
+        run_generator_with_timeout(path, COMMAND_TIMEOUT)
     }
 
     fn kill_process_group_and_reap(child: &mut Child) {
@@ -599,43 +895,93 @@ mod tests {
         let _ = child.wait();
     }
 
-    fn run_generator_with_timeout(path: &Path, timeout: Duration) -> Vec<u8> {
-        let mut command = Command::new("python3");
-        command
-            .arg(path)
-            .current_dir("/")
-            .env("PYTHONDONTWRITEBYTECODE", "1")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+    fn run_bounded_command(
+        command: &mut Command,
+        stdout_limit: usize,
+        stderr_limit: usize,
+        timeout: Duration,
+        label: &str,
+    ) -> Result<BoundedCommandOutput, String> {
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
         command.process_group(0);
-        let mut child = command.spawn().unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
-        let stdout_thread = thread::spawn(move || bounded_pipe(stdout, FIXTURE_LIMIT));
-        let stderr_thread = thread::spawn(move || bounded_pipe(stderr, STDERR_LIMIT));
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("Could not {label}: {error}"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| format!("Could not capture {label} stdout."))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| format!("Could not capture {label} stderr."))?;
+        let stdout_thread = thread::spawn(move || bounded_pipe(stdout, stdout_limit));
+        let stderr_thread = thread::spawn(move || bounded_pipe(stderr, stderr_limit));
         let deadline = Instant::now() + timeout;
         let status = loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                break status;
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    // The leader can exit while descendants retain its pipes.
+                    // End the isolated group before joining either reader.
+                    kill_process_group_and_reap(&mut child);
+                    break status;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    kill_process_group_and_reap(&mut child);
+                    let _ = stdout_thread.join();
+                    let _ = stderr_thread.join();
+                    return Err(format!("Could not wait for {label}: {error}"));
+                }
             }
             if Instant::now() >= deadline {
                 kill_process_group_and_reap(&mut child);
                 let _ = stdout_thread.join();
                 let _ = stderr_thread.join();
-                panic!("Core request-plan fixture generator exceeded its deadline");
+                return Err(format!("{label} exceeded its deadline."));
             }
             thread::sleep(Duration::from_millis(10));
         };
-        let (stdout, stdout_excessive) = stdout_thread.join().unwrap();
-        let (stderr, stderr_excessive) = stderr_thread.join().unwrap();
-        assert!(!stdout_excessive && !stderr_excessive);
-        assert!(status.success(), "{}", String::from_utf8_lossy(&stderr));
-        assert!(stderr.is_empty() && stdout.ends_with(b"\n"));
-        stdout
+        let (stdout, stdout_excessive) = stdout_thread
+            .join()
+            .map_err(|_| format!("Could not read {label} stdout."))?;
+        let (stderr, stderr_excessive) = stderr_thread
+            .join()
+            .map_err(|_| format!("Could not read {label} stderr."))?;
+        if stdout_excessive || stderr_excessive {
+            return Err(format!("{label} output exceeded its bound."));
+        }
+        Ok(BoundedCommandOutput {
+            status,
+            stdout,
+            stderr,
+        })
     }
 
-    fn fixture_arguments(case: &FixtureCase) -> FixtureArguments {
-        let inputs = &case.inputs;
+    fn run_generator_with_timeout(path: &Path, timeout: Duration) -> Vec<u8> {
+        let mut command = Command::new("python3");
+        command
+            .arg(path)
+            .current_dir("/")
+            .env("PYTHONDONTWRITEBYTECODE", "1");
+        let output = run_bounded_command(
+            &mut command,
+            FIXTURE_LIMIT,
+            STDERR_LIMIT,
+            timeout,
+            "run Core request-plan fixture generator",
+        )
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty() && output.stdout.ends_with(b"\n"));
+        output.stdout
+    }
+
+    fn fixture_arguments(inputs: &FixtureInputs) -> FixtureArguments {
         (
             canonical(&inputs.policy),
             canonical(&inputs.discovery),
@@ -651,27 +997,32 @@ mod tests {
     }
 
     fn fixture_evidence(
-        authentication: &serde_json::Value,
+        fixture: &FixtureInputs,
+        inputs: &RequestPlanInputs<'_>,
     ) -> Result<SnapshotBoundAuthenticationEvidence, String> {
-        // Test-only stand-in for the future internal verifier. Production code
-        // cannot deserialize or construct the opaque evidence type.
-        let authentication: FixtureAuthentication = serde_json::from_value(authentication.clone())
-            .map_err(|_| "authentication evidence is invalid".to_string())?;
-        Ok(SnapshotBoundAuthenticationEvidence {
-            record: AuthenticationRecord {
-                schema_version: authentication.schema_version,
-                status: authentication.status.clone(),
-                policy_sha256: authentication.policy_sha256.clone(),
-                keyring_sha256: authentication.keyring_sha256.clone(),
-                primary_signing_fingerprint: authentication.primary_signing_fingerprint.clone(),
-                discovery_payload_sha256: authentication.discovery_payload_sha256.clone(),
-                discovery_signature_sha256: authentication.discovery_signature_sha256.clone(),
-                discovery_hash_algorithm_id: authentication.discovery_hash_algorithm_id,
-                manifest_payload_sha256: authentication.manifest_payload_sha256.clone(),
-                manifest_signature_sha256: authentication.manifest_signature_sha256.clone(),
-                manifest_hash_algorithm_id: authentication.manifest_hash_algorithm_id,
+        // Only this defining module can exchange exact verifier output for the
+        // sealed capability. The fixture's serialized audit record is ignored.
+        verify_generation_snapshots(
+            inputs,
+            fixture.keyring_payload.as_bytes(),
+            |_payload, _signature, _keyring, role| {
+                let (exit_status, status) = if role == "discovery" {
+                    (
+                        fixture.verifier.discovery_exit_status,
+                        &fixture.verifier.discovery_status,
+                    )
+                } else {
+                    (
+                        fixture.verifier.manifest_exit_status,
+                        &fixture.verifier.manifest_status,
+                    )
+                };
+                Ok(DetachedVerifierOutput {
+                    exit_status,
+                    status: status.as_bytes().to_vec(),
+                })
             },
-        })
+        )
     }
 
     #[test]
@@ -701,18 +1052,15 @@ mod tests {
                 max_plan_bytes: MAX_PLAN_BYTES,
             }
         );
-        assert_eq!(fixtures.cases.len(), 41);
+        assert_eq!(fixtures.cases.len(), 38);
         let expected = [
             "valid-canonical-plan",
             "unauthenticated-policy",
-            "unauthenticated-discovery",
-            "unauthenticated-discovery-signature",
-            "unauthenticated-manifest",
-            "unauthenticated-manifest-signature",
-            "unauthenticated-status",
-            "missing-authentication-evidence",
-            "unknown-authentication-field",
-            "weak-signature-hash",
+            "unauthenticated-keyring",
+            "discovery-verifier-failed",
+            "manifest-weak-signature-hash",
+            "manifest-wrong-primary",
+            "forged-json-evidence-ignored",
             "missing-payload",
             "unexpected-payload",
             "payload-hash-mismatch",
@@ -758,7 +1106,7 @@ mod tests {
 
         for case in &fixtures.cases {
             let (policy, discovery, discovery_signature, manifest, manifest_signature, payloads) =
-                fixture_arguments(case);
+                fixture_arguments(&case.inputs);
             let inputs = RequestPlanInputs {
                 policy_payload: &policy,
                 discovery_payload: &discovery,
@@ -767,12 +1115,7 @@ mod tests {
                 manifest_signature: &manifest_signature,
                 payloads: &payloads,
             };
-            let input_result = case
-                .inputs
-                .authentication
-                .as_ref()
-                .ok_or_else(|| "authentication evidence is absent".to_string())
-                .and_then(fixture_evidence)
+            let input_result = fixture_evidence(&case.inputs, &inputs)
                 .and_then(|evidence| build_request_plan(&inputs, &evidence));
             assert_eq!(
                 input_result.is_ok(),
@@ -787,15 +1130,9 @@ mod tests {
                     raw.as_bytes().to_vec()
                 } else {
                     let recipe = case.raw_plan_recipe.as_ref().unwrap();
-                    assert_eq!(recipe.text, " ");
-                    vec![b' '; recipe.count]
+                    bounded_recipe_bytes(recipe, MAX_PLAN_BYTES).unwrap()
                 };
-                let plan_result = case
-                    .inputs
-                    .authentication
-                    .as_ref()
-                    .ok_or_else(|| "authentication evidence is absent".to_string())
-                    .and_then(fixture_evidence)
+                let plan_result = fixture_evidence(&case.inputs, &inputs)
                     .and_then(|evidence| parse_request_plan(&plan, &inputs, &evidence));
                 assert_eq!(
                     plan_result.is_ok(),
@@ -812,7 +1149,7 @@ mod tests {
             .find(|case| case.name == "valid-canonical-plan")
             .unwrap();
         let (policy, discovery, discovery_signature, manifest, manifest_signature, payloads) =
-            fixture_arguments(valid);
+            fixture_arguments(&valid.inputs);
         let inputs = RequestPlanInputs {
             policy_payload: &policy,
             discovery_payload: &discovery,
@@ -821,7 +1158,7 @@ mod tests {
             manifest_signature: &manifest_signature,
             payloads: &payloads,
         };
-        let evidence = fixture_evidence(valid.inputs.authentication.as_ref().unwrap()).unwrap();
+        let evidence = fixture_evidence(&valid.inputs, &inputs).unwrap();
         let plan = build_request_plan(&inputs, &evidence).unwrap();
         assert!(!plan.redirects);
         assert_eq!(plan.keyring_sha256, evidence.record.keyring_sha256);
@@ -832,6 +1169,10 @@ mod tests {
         assert_eq!(plan.discovery_hash_algorithm_id, 10);
         assert_eq!(plan.manifest_hash_algorithm_id, 8);
         assert_eq!(plan.request_count, plan.requests.len());
+        assert_eq!(
+            plan.request_count,
+            valid.inputs.manifest["files"].as_array().unwrap().len() + 4
+        );
         assert_eq!(
             plan.requests
                 .iter()
@@ -869,6 +1210,214 @@ mod tests {
                 })
                 .sum::<u64>()
         );
+        let forged = fixtures
+            .cases
+            .iter()
+            .find(|case| case.name == "forged-json-evidence-ignored")
+            .unwrap();
+        assert_ne!(forged.inputs.evidence_record, valid.inputs.evidence_record);
+        let (policy, discovery, discovery_signature, manifest, manifest_signature, payloads) =
+            fixture_arguments(&forged.inputs);
+        let forged_inputs = RequestPlanInputs {
+            policy_payload: &policy,
+            discovery_payload: &discovery,
+            discovery_signature: &discovery_signature,
+            manifest_payload: &manifest,
+            manifest_signature: &manifest_signature,
+            payloads: &payloads,
+        };
+        let capability = fixture_evidence(&forged.inputs, &forged_inputs).unwrap();
+        assert!(build_request_plan(&forged_inputs, &capability).is_ok());
+        fs::remove_dir_all(exported).unwrap();
+    }
+
+    fn evidence_record_payload(case: &EvidenceFixtureCase) -> Result<Vec<u8>, String> {
+        if let Some(record) = &case.record {
+            Ok(canonical(record))
+        } else if let Some(raw) = &case.raw_record {
+            Ok(raw.as_bytes().to_vec())
+        } else {
+            let recipe = case.raw_record_recipe.as_ref().unwrap();
+            bounded_recipe_bytes(recipe, MAX_EVIDENCE_BYTES)
+        }
+    }
+
+    #[test]
+    fn local_core_verifier_evidence_matrix_matches_sealed_rust_capability() {
+        let Some(repository) = local_core_repository() else {
+            return;
+        };
+        let exported = export_fixture_sources(&repository);
+        let generator = exported.join("lib/generate_userspace_lock_verifier_evidence_fixtures.py");
+        let bytes = run_generator(&generator);
+        assert_eq!(bytes, run_generator(&generator));
+        reject_duplicate_contract_keys(&bytes, "Core verifier-evidence fixtures").unwrap();
+        let fixture_value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(canonical(&fixture_value), bytes);
+        let fixtures: EvidenceFixtureEnvelope = serde_json::from_value(fixture_value).unwrap();
+        assert_eq!(fixtures.schema_version, 1);
+        assert_eq!(
+            fixtures.kind,
+            "opemos-userspace-lock-verifier-evidence-compatibility"
+        );
+        assert_eq!(
+            fixtures.limits,
+            EvidenceFixtureLimits {
+                max_evidence_bytes: MAX_EVIDENCE_BYTES,
+                max_cases: 48,
+            }
+        );
+        assert_eq!(fixtures.cases.len(), 28);
+        let expected = [
+            "valid-subkey-evidence",
+            "valid-primary-and-subkey",
+            "wrong-keyring",
+            "discovery-verifier-nonzero",
+            "manifest-verifier-nonzero",
+            "weak-hash",
+            "wrong-primary",
+            "multiple-signatures",
+            "malformed-status",
+            "excessive-status",
+            "empty-signature",
+            "manifest-signature-snapshot-mismatch",
+            "generation-authority-mismatch",
+            "unknown-evidence-field",
+            "missing-evidence-field",
+            "wrong-verification-profile",
+            "reordered-documents",
+            "duplicate-document",
+            "missing-document",
+            "extra-document",
+            "structural-document-hash-change",
+            "zero-document-size",
+            "wrong-document-primary",
+            "unknown-document-field",
+            "malformed-json",
+            "duplicate-json-key",
+            "non-finite-json",
+            "oversized-record",
+        ]
+        .into_iter()
+        .collect::<HashSet<_>>();
+        assert_eq!(
+            fixtures
+                .cases
+                .iter()
+                .map(|case| case.name.as_str())
+                .collect::<HashSet<_>>(),
+            expected
+        );
+
+        for case in &fixtures.cases {
+            let (policy, discovery, discovery_signature, manifest, manifest_signature, payloads) =
+                fixture_arguments(&case.inputs);
+            let inputs = RequestPlanInputs {
+                policy_payload: &policy,
+                discovery_payload: &discovery,
+                discovery_signature: &discovery_signature,
+                manifest_payload: &manifest,
+                manifest_signature: &manifest_signature,
+                payloads: &payloads,
+            };
+            assert_eq!(
+                fixture_evidence(&case.inputs, &inputs).is_ok(),
+                case.expected.capability_accepted,
+                "{} capability",
+                case.name
+            );
+            if case.record.is_some()
+                || case.raw_record.is_some()
+                || case.raw_record_recipe.is_some()
+            {
+                assert_eq!(
+                    evidence_record_payload(case)
+                        .and_then(|payload| parse_verifier_evidence_record(&payload))
+                        .is_ok(),
+                    case.expected.record_accepted,
+                    "{} audit record",
+                    case.name
+                );
+            }
+        }
+
+        let valid = fixtures
+            .cases
+            .iter()
+            .find(|case| case.name == "valid-subkey-evidence")
+            .unwrap();
+        let (policy, discovery, discovery_signature, manifest, manifest_signature, payloads) =
+            fixture_arguments(&valid.inputs);
+        let inputs = RequestPlanInputs {
+            policy_payload: &policy,
+            discovery_payload: &discovery,
+            discovery_signature: &discovery_signature,
+            manifest_payload: &manifest,
+            manifest_signature: &manifest_signature,
+            payloads: &payloads,
+        };
+        let mut calls = Vec::new();
+        let capability = verify_generation_snapshots(
+            &inputs,
+            valid.inputs.keyring_payload.as_bytes(),
+            |payload, signature, keyring, role| {
+                calls.push((
+                    payload.to_vec(),
+                    signature.to_vec(),
+                    keyring.to_vec(),
+                    role.to_string(),
+                ));
+                let (exit_status, status) = if role == "discovery" {
+                    (
+                        valid.inputs.verifier.discovery_exit_status,
+                        &valid.inputs.verifier.discovery_status,
+                    )
+                } else {
+                    (
+                        valid.inputs.verifier.manifest_exit_status,
+                        &valid.inputs.verifier.manifest_status,
+                    )
+                };
+                Ok(DetachedVerifierOutput {
+                    exit_status,
+                    status: status.as_bytes().to_vec(),
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            calls.iter().map(|call| call.3.as_str()).collect::<Vec<_>>(),
+            ["discovery", "generation-manifest"]
+        );
+        assert_eq!(calls[0].0, discovery);
+        assert_eq!(calls[0].1, discovery_signature);
+        assert_eq!(calls[0].2, valid.inputs.keyring_payload.as_bytes());
+        assert_eq!(
+            canonical_bytes(&capability.record).unwrap(),
+            canonical(valid.record.as_ref().unwrap())
+        );
+        let parsed =
+            parse_verifier_evidence_record(&canonical(valid.record.as_ref().unwrap())).unwrap();
+        assert_eq!(parsed, capability.record);
+        let different_discovery = [inputs.discovery_payload, b" "].concat();
+        let different_inputs = RequestPlanInputs {
+            policy_payload: inputs.policy_payload,
+            discovery_payload: &different_discovery,
+            discovery_signature: inputs.discovery_signature,
+            manifest_payload: inputs.manifest_payload,
+            manifest_signature: inputs.manifest_signature,
+            payloads: inputs.payloads,
+        };
+        assert!(validate_evidence_capability(&capability, &different_inputs).is_err());
+        let error = verify_generation_snapshots(
+            &inputs,
+            valid.inputs.keyring_payload.as_bytes(),
+            |_payload, _signature, _keyring, _role| Err("sensitive verifier failure".into()),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error, "Detached signature verifier failed.");
+        assert!(!error.contains("sensitive"));
         fs::remove_dir_all(exported).unwrap();
     }
 
@@ -888,6 +1437,25 @@ mod tests {
         let (bytes, excessive) = bounded_pipe(OneReadThenPanic(false), 3);
         assert_eq!(bytes, b"xxx");
         assert!(excessive);
+    }
+
+    #[test]
+    fn fixture_recipes_reject_counts_before_allocation() {
+        let excessive_plan = RawPlanRecipe {
+            text: " ".into(),
+            count: MAX_PLAN_BYTES.checked_add(2).unwrap(),
+        };
+        let excessive_evidence = RawPlanRecipe {
+            text: " ".into(),
+            count: MAX_EVIDENCE_BYTES.checked_add(2).unwrap(),
+        };
+        let overflowing_limit = RawPlanRecipe {
+            text: " ".into(),
+            count: 1,
+        };
+        assert!(bounded_recipe_bytes(&excessive_plan, MAX_PLAN_BYTES).is_err());
+        assert!(bounded_recipe_bytes(&excessive_evidence, MAX_EVIDENCE_BYTES).is_err());
+        assert!(bounded_recipe_bytes(&overflowing_limit, usize::MAX).is_err());
     }
 
     #[test]
@@ -921,6 +1489,29 @@ mod tests {
         });
         assert!(result.is_err());
         assert!(started.elapsed() < Duration::from_secs(3));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn completed_fixture_leader_cannot_leave_descendant_pipes_open() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-core-request-plan-descendant-pipe-{}-{}",
+            std::process::id(),
+            EXPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        let generator = root.join("descendant.py");
+        fs::write(
+            &generator,
+            b"import subprocess, sys\nprint('{}', flush=True)\nsubprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n",
+        )
+        .unwrap();
+        let started = Instant::now();
+        assert_eq!(
+            run_generator_with_timeout(&generator, Duration::from_secs(2)),
+            b"{}\n"
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
         fs::remove_dir_all(root).unwrap();
     }
 }
