@@ -3,7 +3,7 @@
 const view = document.querySelector("#view");
 const state = { action: "install", disk: null, progress: 0, timer: null };
 const disks = [
-  { id: "vda", name: "Synthetic OPEMOS Target", detail: "/dev/vda · 32.0 GB · VirtIO", eligible: true },
+  { id: "vda", name: "Synthetic SteamOS target", detail: "/dev/vda · 32.0 GB · VirtIO", eligible: true },
   { id: "vdb", name: "Booted installation media", detail: "/dev/vdb · 8.0 GB · USB", eligible: false, reason: "recovery-medium" },
   { id: "vdc", name: "Mounted data disk", detail: "/dev/vdc · 64.0 GB · VirtIO", eligible: false, reason: "mounted-or-swap-active" },
 ];
@@ -19,8 +19,8 @@ function home() {
       <div>
         <p class="lead">Choose an installation or recovery operation. Every device and result shown in this preview is synthetic.</p>
         <div class="choices">
-          <button class="choice" data-action="choose-install"><strong>Install OPEMOS</strong><span>Erase one explicitly selected disk and install this image.</span></button>
-          <button class="choice" data-action="choose-reinstall"><strong>Reinstall OPEMOS</strong><span>Preserve games and personal files on a recognized SteamOS layout.</span></button>
+          <button class="choice" data-action="choose-install"><strong>Install SteamOS with NVIDIA drivers</strong><span>Erase one explicitly selected disk and install this image.</span></button>
+          <button class="choice" data-action="choose-reinstall"><strong>Reinstall SteamOS with NVIDIA drivers</strong><span>Preserve games and personal files on a recognized SteamOS layout.</span></button>
           <button class="choice" data-action="rollback"><strong>Recovery</strong><span>Select a previously working NVIDIA-ready A/B slot.</span></button>
           <button class="choice" data-action="diagnostics"><strong>Diagnostics</strong><span>Review media identity, eligible disks, and the last installation result.</span></button>
         </div>
@@ -29,7 +29,7 @@ function home() {
         <img src="assets/install.svg" alt="A recovery image flowing safely into a computer">
         <span class="label">Designed for recovery</span>
         <h2>Install with the target clearly in view.</h2>
-        <p>OPEMOS rechecks the physical disk immediately before Valve's installer begins.</p>
+        <p>The OPEMOS-maintained installer rechecks the physical disk immediately before Valve's installer begins.</p>
       </aside>
     </div>`;
 }
@@ -86,7 +86,7 @@ function begin() {
     [56, "Running the protected Valve installation", "assets/gaming.svg", "Built for the big screen", "Matching NVIDIA graphics, Vulkan, video, and firmware are carried into the installed system."],
     [76, "Installing recovery into rootfs-A", "assets/recovery.svg", "Recovery follows every slot", "The persistent guardian records exact kernel and driver identity outside replaceable roots."],
     [88, "Installing recovery into rootfs-B", "assets/recovery.svg", "Both A/B slots are covered", "Updates do not need to leave the alternate system slot without a recovery path."],
-    [96, "Verifying both A/B guardians", "assets/recovery.svg", "Trust, then verify", "OPEMOS reopens both slots and checks the installed recovery identity before success."],
+    [96, "Verifying both A/B guardians", "assets/recovery.svg", "Trust, then verify", "The installer reopens both slots and checks the installed recovery identity before success."],
     [100, "Installation simulation complete", "assets/gaming.svg", "Ready for hardware testing", "Remove the installation medium after shutdown, then boot from the installed drive."],
   ];
   let index = 0;
@@ -114,7 +114,7 @@ supportRevision=2f6f133485f68ed09abf58b8a49ad67b985dd2e6
 nvidiaVersion=575.64.05
 status=ready
 
-Synthetic OPEMOS Target  32.0 GB  [eligible]
+Synthetic SteamOS target  32.0 GB  [eligible]
 Booted installation media  8.0 GB  [recovery-medium]
 Mounted data disk  64.0 GB  [mounted-or-swap-active]</pre>
       <div class="actions">${button("Back", "home", "secondary")}</div>
@@ -124,7 +124,7 @@ Mounted data disk  64.0 GB  [mounted-or-swap-active]</pre>
 function completionScreen() {
   view.innerHTML = `<div class="panel completion-layout">
     <img src="assets/recovery.svg" alt="Verified A/B recovery slots">
-    <div><span class="label">Installation complete</span><h2>OPEMOS is ready to boot</h2>
+    <div><span class="label">Installation complete · Maintained by OPEMOS</span><h2>SteamOS with NVIDIA drivers is ready to boot</h2>
       <p class="lead">Shut Down is recommended. Remove the installation USB after power-off, then boot from the installed disk.</p>
       <p class="lead warning">If you restart, remove the USB as the screen turns off or choose the installed disk from the boot menu.</p>
       <div class="actions">${button("Stay Here", "home", "secondary")}${button("Restart", "simulate-restart", "secondary")}${button("Shut Down", "simulate-shutdown", "primary")}</div>

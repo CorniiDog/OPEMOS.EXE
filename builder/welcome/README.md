@@ -1,14 +1,15 @@
-# Open OPEMOS installation-media welcome app
+# SteamOS with NVIDIA drivers installation-media welcome app
 
 This directory owns the welcome/installer experience that runs after booting a
-newly generated OPEMOS recovery image. It is separate from the persistent
-installed-system Desktop application owned by the support repository.
+newly generated SteamOS image with NVIDIA drivers. The experience is maintained
+by OPEMOS and is separate from the persistent installed-system Desktop
+application owned by the support repository.
 
 The current frontend uses Zenity because Valve's inspected SteamOS 3.8.14
 recovery image already requires and ships it. `open-opemos-welcome` is an
 unprivileged presentation layer. It may be replaced by the native frosted-glass
 frontend without changing the helper protocol. A bundled GTK stylesheet gives
-this guaranteed-runtime fallback the OPEMOS blue/green glass language with an
+this guaranteed-runtime fallback the OPEMOS-maintained blue/green glass language with an
 opaque fallback when compositor transparency is unavailable.
 
 Only one welcome instance can run in a recovery session. Its diagnostics view
@@ -61,6 +62,6 @@ visual/interaction test; the generated SteamOS media continues to use the
 audited Zenity frontend above.
 
 The preview follows the centered-choice and installation-slideshow principles
-used by modern graphical installers. Its original OPEMOS illustrations explain
-target selection, gaming graphics, and A/B recovery without borrowing another
-distribution's branding.
+used by modern graphical installers. Its original illustrations explain target
+selection, gaming graphics, and A/B recovery without presenting OPEMOS as the
+operating system or borrowing another distribution's branding.

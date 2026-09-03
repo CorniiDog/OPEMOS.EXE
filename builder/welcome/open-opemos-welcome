@@ -20,11 +20,11 @@ opemos_zenity() {
 }
 
 message() {
-  opemos_zenity --info --title="Open OPEMOS" --width=520 --no-wrap --text="$1" || true
+  opemos_zenity --info --title="SteamOS with NVIDIA drivers" --width=520 --no-wrap --text="$1" || true
 }
 
 failure() {
-  opemos_zenity --error --title="Open OPEMOS" --width=560 --no-wrap --text="$1" || true
+  opemos_zenity --error --title="SteamOS with NVIDIA drivers" --width=560 --no-wrap --text="$1" || true
 }
 
 human_size() {
@@ -40,20 +40,20 @@ choose_action() {
     END { if (nvidia != "" && revision != "") printf "NVIDIA %s · recovery %s", nvidia, revision }
   ')
   opemos_zenity --list --radiolist \
-    --title="Open OPEMOS" \
-    --text="Welcome to OPEMOS\n${summary:+$summary\n}\nChoose what you want to do on this computer." \
+    --title="SteamOS with NVIDIA drivers" \
+    --text="SteamOS with NVIDIA drivers\nMaintained by OPEMOS\n${summary:+$summary\n}\nChoose what you want to do on this computer." \
     --column="" --column="Action" --column="What it does" \
     --hide-column=2 --print-column=2 \
     --width=760 --height=390 \
-    TRUE install "Install OPEMOS — erase one selected disk and install this image" \
-    FALSE reinstall "Reinstall OPEMOS — preserve games and personal files on a recognized SteamOS disk" \
+    TRUE install "Install SteamOS with NVIDIA drivers — erase one selected disk and install this image" \
+    FALSE reinstall "Reinstall SteamOS with NVIDIA drivers — preserve games and personal files on a recognized SteamOS disk" \
     FALSE rollback "Recovery — select a previously working NVIDIA-ready A/B slot" \
     FALSE diagnostics "Diagnostics — review media identity, eligible disks, and the last installation log"
 }
 
 prepare_state_directory() {
   if [[ -L "$STATE_DIRECTORY" ]]; then
-    failure "The OPEMOS diagnostic directory is an unsafe symbolic link. Installation has not started."
+    failure "The installer diagnostic directory is an unsafe symbolic link. Installation has not started."
     return 1
   fi
   mkdir -p "$STATE_DIRECTORY"
@@ -73,7 +73,7 @@ show_diagnostics() {
   report=$(mktemp /tmp/open-opemos-diagnostics.XXXXXX)
   inventory=$(mktemp /tmp/open-opemos-diagnostic-inventory.XXXXXX)
   {
-    printf 'Open OPEMOS installation-media diagnostics\n\n'
+    printf 'SteamOS with NVIDIA drivers installation-media diagnostics\nMaintained by OPEMOS\n\n'
     if "$HELPER" media-info; then
       printf '\nEligible whole physical disks\n'
       if "$HELPER" inventory-report >"$inventory" && [[ -s "$inventory" ]]; then
@@ -90,13 +90,13 @@ show_diagnostics() {
       printf '\nNo installation attempt has been logged in this booted environment.\n'
     fi
   } >"$report" 2>&1
-  opemos_zenity --text-info --title="Open OPEMOS diagnostics" --width=780 --height=500 \
+  opemos_zenity --text-info --title="SteamOS NVIDIA diagnostics" --width=780 --height=500 \
     --filename="$report" --ok-label="Back" || true
   if latest=$(last_log); then
     if opemos_zenity --question --title="Installation log" --width=520 \
       --ok-label="View Log" --cancel-label="Back" \
       --text="Open the complete last installation log?"; then
-      opemos_zenity --text-info --title="Open OPEMOS installation log" --width=900 --height=600 \
+      opemos_zenity --text-info --title="SteamOS NVIDIA installation log" --width=900 --height=600 \
         --filename="$latest" --ok-label="Back" || true
     fi
   fi
@@ -109,7 +109,7 @@ choose_disk() {
   inventory=$(mktemp /tmp/open-opemos-inventory.XXXXXX)
   if ! "$HELPER" inventory >"$inventory"; then
     rm -f "$inventory"
-    failure "OPEMOS could not inspect the available physical disks. No disk was changed."
+    failure "The installer could not inspect the available physical disks. No disk was changed."
     return 1
   fi
   while IFS=$'\t' read -r device bytes token model serial transport layout; do
@@ -119,12 +119,12 @@ choose_disk() {
   done <"$inventory"
   (( ${#rows[@]} > 0 )) || {
     rm -f "$inventory"
-    failure "No eligible target disk was found.\n\nOPEMOS excludes the booted installation media, mounted disks, read-only disks, and disks smaller than 12 GiB. Reinstall also requires one exact SteamOS A/B layout."
+    failure "No eligible target disk was found.\n\nThe installer excludes the booted installation media, mounted disks, read-only disks, and disks smaller than 12 GiB. Reinstall also requires one exact SteamOS A/B layout."
     return 1
   }
   selection=$(opemos_zenity --list --radiolist \
     --title="Select installation disk" \
-    --text="Choose the whole physical disk OPEMOS may use. The installation media is excluded automatically." \
+    --text="Choose the whole physical disk the installer may use. The installation media is excluded automatically." \
     --column="" --column="Device" --column="Capacity" --column="Model" --column="Serial" --column="Bus" --column="Identity" \
     --hide-column=7 --print-column=7 \
     --width=920 --height=430 "${rows[@]}") || {
@@ -149,7 +149,7 @@ run_install() {
     warning="Everything on $device will be permanently erased."
   else
     phrase="REINSTALL $basename"
-    warning="OPEMOS will replace both OS slots and var data on $device while preserving its recognized home partition."
+    warning="The installer will replace both OS slots and var data on $device while preserving its recognized home partition."
   fi
   confirmation=$(opemos_zenity --entry \
     --title="Final disk confirmation" \
@@ -168,15 +168,15 @@ run_install() {
   sudo "$HELPER" install "$mode" "$device" "$token" --confirm "$confirmation" 2>&1 |
     tee "$log" |
     opemos_zenity --progress --pulsate --no-cancel --auto-close \
-      --title="Installing OPEMOS" \
+      --title="Installing SteamOS with NVIDIA drivers" \
       --width=620 \
       --text="Installing to $device. Do not power off the computer or disconnect either drive."
   status=${PIPESTATUS[0]}
   set -e
   if (( status == 0 )); then
     power_action=$(opemos_zenity --list --radiolist \
-      --title="OPEMOS installation complete" \
-      --text="OPEMOS and its A/B recovery guardian were verified.\n\nShut Down is recommended. Remove the installation USB after power-off, then boot from $device. If you restart, remove the USB as the screen turns off or select the installed disk from the boot menu." \
+      --title="SteamOS NVIDIA installation complete" \
+      --text="SteamOS with NVIDIA drivers and its A/B recovery guardian were verified. Maintained by OPEMOS.\n\nShut Down is recommended. Remove the installation USB after power-off, then boot from $device. If you restart, remove the USB as the screen turns off or select the installed disk from the boot menu." \
       --column="" --column="Action" --column="What happens next" \
       --hide-column=2 --print-column=2 --width=720 --height=340 \
       TRUE shutdown "Shut down safely, then remove the installation USB" \
@@ -194,18 +194,18 @@ run_install() {
 
 for tool in awk flock sudo tee zenity; do
   command -v "$tool" >/dev/null 2>&1 || {
-    printf 'Open OPEMOS requires %s in the recovery environment.\n' "$tool" >&2
+    printf 'The SteamOS NVIDIA installer requires %s in the recovery environment.\n' "$tool" >&2
     exit 1
   }
 done
 if [[ ! -x "$HELPER" ]]; then
-  failure "The protected OPEMOS installation helper is missing from this media."
+  failure "The protected installation helper is missing from this media."
   exit 1
 fi
 
 exec 8>/tmp/open-opemos-welcome.lock
 if ! flock -n 8; then
-  message "Open OPEMOS is already running in this recovery session."
+  message "The SteamOS NVIDIA installer is already running in this recovery session."
   exit 0
 fi
 prepare_state_directory || exit 1

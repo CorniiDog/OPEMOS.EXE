@@ -2,12 +2,12 @@
   <title id="title">Gaming-ready graphics</title>
   <desc id="desc">A game controller sits below a display with blue and green graphics.</desc>
   <defs><linearGradient id="g" x1="0" x2="1"><stop stop-color="#57c4fb"/><stop offset="1" stop-color="#78da70"/></linearGradient></defs>
-  <rect id="gaming-display" x="98" y="34" width="324" height="130" rx="24" fill="#0b202c" stroke="url(#g)" stroke-width="4"/>
-  <path id="gaming-scene" d="M122 142 190 84l48 38 80-58 80 60v18H122z" fill="url(#g)" opacity=".24"/>
-  <path id="controller" data-left="120" data-right="400" data-top="179" data-bottom="328" d="M188 179h144c22 0 41 15 48 36l18 55c10 31-12 58-43 58-20 0-36-11-51-32l-15-20h-58l-15 20c-15 21-31 32-51 32-31 0-53-27-43-58l18-55c7-21 26-36 48-36z" fill="#193747" stroke="url(#g)" stroke-width="4" stroke-linejoin="round"/>
-  <path id="direction-pad" d="M202 212v52m-26-26h52" stroke="#ecfaff" stroke-width="10" stroke-linecap="round"/>
-  <circle cx="330" cy="222" r="8" fill="#78da70"/>
-  <circle cx="350" cy="242" r="8" fill="#57c4fb"/>
-  <circle cx="310" cy="242" r="8" fill="#57c4fb"/>
-  <circle cx="330" cy="262" r="8" fill="#78da70"/>
+  <rect id="gaming-display" x="102" y="28" width="316" height="116" rx="22" fill="#0b202c" stroke="url(#g)" stroke-width="4"/>
+  <path id="gaming-scene" d="M126 124 190 72l48 36 80-56 76 56v16H126z" fill="url(#g)" opacity=".24"/>
+  <path id="controller" data-left="119" data-right="401" data-top="162" data-bottom="342" d="M196 162h128c22 0 40 15 47 37l19 67c11 40-13 76-51 76-24 0-43-13-57-36l-14-20h-16l-14 20c-14 23-33 36-57 36-38 0-62-36-51-76l19-67c7-22 25-37 47-37z" fill="#193747" stroke="url(#g)" stroke-width="4" stroke-linejoin="round"/>
+  <path id="direction-pad" d="M200 210v54m-27-27h54" stroke="#ecfaff" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="320" cy="217" r="8" fill="#78da70"/>
+  <circle cx="341" cy="238" r="8" fill="#57c4fb"/>
+  <circle cx="299" cy="238" r="8" fill="#57c4fb"/>
+  <circle cx="320" cy="259" r="8" fill="#78da70"/>
 </svg>

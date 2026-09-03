@@ -11,10 +11,11 @@ const desktop = readFileSync("builder/welcome/Open-OPEMOS.desktop", "utf8");
 const gtkCss = readFileSync("builder/welcome/gtk.css", "utf8");
 
 test("installation-media UI delegates only bounded operations", () => {
-  assert.match(desktop, /^Name=Open OPEMOS$/m);
+  assert.match(desktop, /^Name=Install SteamOS with NVIDIA drivers$/m);
   assert.match(desktop, /^Terminal=false$/m);
   assert.match(desktop, /^X-KDE-AutostartScript=true$/m);
-  assert.match(welcome, /Welcome to OPEMOS/);
+  assert.match(welcome, /SteamOS with NVIDIA drivers/);
+  assert.match(welcome, /Maintained by OPEMOS/);
   assert.match(welcome, /run_install all/);
   assert.match(welcome, /run_install system/);
   assert.match(welcome, /Do not power off the computer or disconnect either drive/);

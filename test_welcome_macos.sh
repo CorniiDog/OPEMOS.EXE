@@ -5,7 +5,7 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 PREVIEW="$ROOT/builder/welcome/preview.html"
 
 [[ -f "$PREVIEW" && ! -L "$PREVIEW" ]] || {
-  printf 'Open OPEMOS graphical preview is missing or unsafe: %s\n' "$PREVIEW" >&2
+  printf 'SteamOS with NVIDIA drivers graphical preview is missing or unsafe: %s\n' "$PREVIEW" >&2
   exit 1
 }
 
@@ -23,6 +23,6 @@ command -v open >/dev/null 2>&1 || {
   exit 2
 }
 
-printf 'Opening the safe Open OPEMOS graphical simulation.\n'
+printf 'Opening the safe SteamOS with NVIDIA drivers graphical simulation.\n'
 printf 'No disks, privileges, QEMU processes, or installers are used.\n'
 open "$PREVIEW"

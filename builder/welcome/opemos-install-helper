@@ -239,7 +239,7 @@ install_to_disk() {
   [[ -x "$SUPPORT_ROOT/bootstrap/install_recovery_guardian_to_root.sh" ]] ||
     die "the pinned installed-system recovery guardian is unavailable"
 
-  ui_stage "Installing OPEMOS to $device. Do not power off or disconnect either drive."
+  ui_stage "Installing SteamOS with NVIDIA drivers to $device. Do not power off or disconnect either drive."
   env \
     STEAMOS_TARGET_DISK="$device" \
     NOPROMPT=1 \

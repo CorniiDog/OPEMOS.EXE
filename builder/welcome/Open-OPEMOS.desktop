@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Open OPEMOS
-GenericName=Install or Repair OPEMOS
-Comment=Choose a target disk and install, reinstall, or recover OPEMOS
+Name=Install SteamOS with NVIDIA drivers
+GenericName=SteamOS NVIDIA Installer
+Comment=Install, reinstall, or recover SteamOS with NVIDIA drivers; maintained by OPEMOS
 Icon=/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg
 Terminal=false
 Exec=/home/deck/tools/open-opemos-welcome

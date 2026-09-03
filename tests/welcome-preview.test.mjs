@@ -34,8 +34,11 @@ test("graphical preview cannot reach disks, privileges, installers, or QEMU", ()
 test("preview covers the welcome workflow and clearly labels synthetic state", () => {
   assert.match(html, /Safe simulation/);
   assert.match(html, /physical disks and privileged helpers are unreachable/);
-  assert.match(javascript, /Install OPEMOS/);
-  assert.match(javascript, /Reinstall OPEMOS/);
+  assert.match(html, /SteamOS with NVIDIA drivers/);
+  assert.match(html, /MAINTAINED BY OPEMOS/);
+  assert.match(javascript, /Install SteamOS with NVIDIA drivers/);
+  assert.match(javascript, /Reinstall SteamOS with NVIDIA drivers/);
+  assert.doesNotMatch(`${html}\n${javascript}`, /Welcome to OPEMOS|OPEMOS is ready to boot/);
   assert.match(javascript, /Recovery simulation/);
   assert.match(javascript, /Installation-media diagnostics/);
   assert.match(javascript, /Do not disconnect the target/);
@@ -85,6 +88,8 @@ test("welcome illustrations preserve balanced geometry and intentional layering"
   const slotB = elementWithId(recovery, "slot-b");
   assert.equal(numericAttribute(slotA, "width"), numericAttribute(slotB, "width"));
   assert.equal(numericAttribute(slotA, "height"), numericAttribute(slotB, "height"));
+  assert.match(recovery, /<text x="200" y="170" text-anchor="middle" dominant-baseline="middle"/);
+  assert.match(recovery, /<text x="320" y="170" text-anchor="middle" dominant-baseline="middle"/);
   assert.equal(
     numericAttribute(slotA, "x") + numericAttribute(slotA, "width") / 2,
     520 - (numericAttribute(slotB, "x") + numericAttribute(slotB, "width") / 2),

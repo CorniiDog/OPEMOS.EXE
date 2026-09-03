@@ -2632,12 +2632,13 @@ esac
         let desktop = std::str::from_utf8(INSTALL_MEDIA_DESKTOP).unwrap();
         let gtk_css = std::str::from_utf8(INSTALL_MEDIA_GTK_CSS).unwrap();
 
-        assert!(desktop.contains("Name=Open OPEMOS"));
+        assert!(desktop.contains("Name=Install SteamOS with NVIDIA drivers"));
         assert!(desktop.contains("Exec=/home/deck/tools/open-opemos-welcome"));
         assert!(desktop.contains("X-KDE-AutostartScript=true"));
-        assert!(welcome.contains("Welcome to OPEMOS"));
-        assert!(welcome.contains("Install OPEMOS"));
-        assert!(welcome.contains("Reinstall OPEMOS"));
+        assert!(welcome.contains("SteamOS with NVIDIA drivers"));
+        assert!(welcome.contains("Maintained by OPEMOS"));
+        assert!(welcome.contains("Install SteamOS with NVIDIA drivers"));
+        assert!(welcome.contains("Reinstall SteamOS with NVIDIA drivers"));
         assert!(welcome.contains("Do not power off the computer or disconnect either drive"));
         assert!(welcome.contains("sudo \"$HELPER\" install"));
         assert!(welcome.contains("Diagnostics — review media identity"));
