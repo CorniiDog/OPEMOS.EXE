@@ -115,4 +115,12 @@ test("welcome illustrations preserve balanced geometry and intentional layering"
   const controllerHeight = numericAttribute(controller, "data-bottom") - numericAttribute(controller, "data-top");
   assert.ok(controllerHeight >= 140, "controller must retain full-height grips");
   assert.ok(controllerWidth / controllerHeight < 2, "controller must not become visually squashed");
+
+  const leftStick = elementWithId(gaming, "left-stick");
+  const rightStick = elementWithId(gaming, "right-stick");
+  const stickSpacing = numericAttribute(rightStick, "cx") - numericAttribute(leftStick, "cx");
+  assert.ok(stickSpacing >= 72, "thumbsticks must retain independent breathing room");
+  assert.equal(numericAttribute(leftStick, "cy"), numericAttribute(rightStick, "cy"));
+  assert.equal(numericAttribute(leftStick, "r"), numericAttribute(rightStick, "r"));
+  assert.equal(numericAttribute(leftStick, "cx"), 520 - numericAttribute(rightStick, "cx"));
 });

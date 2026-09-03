@@ -19,6 +19,6 @@
   <circle cx="345" cy="225" r="8" fill="#57c4fb"/>
   <circle cx="303" cy="225" r="8" fill="#57c4fb"/>
   <circle cx="324" cy="246" r="8" fill="#78da70"/>
-  <circle cx="232" cy="270" r="12" fill="#0d2633" stroke="#57c4fb" stroke-width="4"/>
-  <circle cx="288" cy="270" r="12" fill="#0d2633" stroke="#78da70" stroke-width="4"/>
+  <circle id="left-stick" cx="218" cy="274" r="11" fill="#0d2633" stroke="#57c4fb" stroke-width="3"/>
+  <circle id="right-stick" cx="302" cy="274" r="11" fill="#0d2633" stroke="#78da70" stroke-width="3"/>
 </svg>
