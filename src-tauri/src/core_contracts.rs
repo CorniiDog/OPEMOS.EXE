@@ -685,12 +685,32 @@ pub(crate) fn parse_core_installer_module_verification_fixtures(
             "oversized-document",
         ])
         .collect::<HashSet<_>>();
+    let expected_modules = HashSet::from([
+        "nvidia.ko",
+        "nvidia-drm.ko",
+        "nvidia-modeset.ko",
+        "nvidia-peermem.ko",
+        "nvidia-uvm.ko",
+    ]);
+    let exact_lower_sha256 = |value: &str| {
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    };
+    let mut validation_module_names = HashSet::new();
     if fixtures.schema_version != 1
         || fixtures.kind != "opemos-installer-module-verification-compatibility-fixtures"
         || fixtures.module_verification_schema_version != 1
-        || fixtures.target_kernel.is_empty()
         || fixtures.target_kernel.len() > 255
+        || !valid_kernel_version(&fixtures.target_kernel)
         || fixtures.validation_modules.len() != 5
+        || fixtures.validation_modules.iter().any(|module| {
+            !expected_modules.contains(module.name.as_str())
+                || !validation_module_names.insert(module.name.as_str())
+                || !exact_lower_sha256(&module.payload_sha256)
+        })
+        || validation_module_names != expected_modules
         || fixtures.unfrozen_fields != ["message"]
         || fixtures.limits.max_document_bytes != CORE_INSTALLER_MODULE_VERIFICATION_DOCUMENT_LIMIT
         || !(1..=64).contains(&fixtures.cases.len())
@@ -2676,6 +2696,20 @@ mod tests {
         missing_case["cases"].as_array_mut().unwrap().pop();
         assert!(parse_core_installer_module_verification_fixtures(
             &serde_json::to_vec(&missing_case).unwrap()
+        )
+        .is_err());
+        let mut duplicate_validation_module: serde_json::Value =
+            serde_json::from_slice(&first).unwrap();
+        duplicate_validation_module["validationModules"][1] =
+            duplicate_validation_module["validationModules"][0].clone();
+        assert!(parse_core_installer_module_verification_fixtures(
+            &serde_json::to_vec(&duplicate_validation_module).unwrap()
+        )
+        .is_err());
+        let mut unsafe_target_kernel: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        unsafe_target_kernel["targetKernel"] = serde_json::json!("../unsafe");
+        assert!(parse_core_installer_module_verification_fixtures(
+            &serde_json::to_vec(&unsafe_target_kernel).unwrap()
         )
         .is_err());
         assert!(parse_core_installer_module_verification_fixtures(&vec![
