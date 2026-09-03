@@ -23,14 +23,17 @@ use std::{
 const TRUST_RECORD_FILENAME: &str = "acquisition-trust-v1.json";
 const STREAM_BUFFER_BYTES: usize = 64 * 1024;
 
-pub(crate) trait GenerationTransport {
+// Raw transport and verifier adapters are test-only acquisition internals. They
+// must never become production authority or escape this module; future
+// reachability must accept only a sealed verifier-owned capability.
+trait GenerationTransport {
     // A production implementation must bound open/read time and own, cancel,
     // terminate, and reap any helper process. This inactive trait deliberately
     // has no network implementation yet.
     fn open(&mut self, canonical_filename: &str) -> Result<Box<dyn Read>, String>;
 }
 
-pub(crate) trait InactiveTrustVerifier {
+trait InactiveTrustVerifier {
     // Implementations must snapshot the installed policy/keyring independently
     // of the document and honor cancellation while terminating/reaping helpers.
     // Production wiring remains forbidden until that concrete handle exists.
@@ -51,9 +54,9 @@ pub(crate) trait InactiveTrustVerifier {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct AuthenticatedOpenPgpEvidence {
+struct AuthenticatedOpenPgpEvidence {
     /// Bounded stdout from a successful `gpgv --status-fd` invocation.
-    pub(crate) status: Vec<u8>,
+    status: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
@@ -72,7 +75,7 @@ struct AuthenticatedTrustRecord<'a> {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) enum AcquisitionError {
+enum AcquisitionError {
     Cancelled,
     NoSpace(String),
     Contract(String),
@@ -96,13 +99,13 @@ struct StagedControls<'a> {
     trust_record: &'a [u8],
 }
 
-pub(crate) struct InactiveAcquisitionPolicy<'a> {
-    pub(crate) authority: &'a GenerationAuthority,
-    pub(crate) target: &'a GenerationTarget,
-    pub(crate) capacity_probe: &'a dyn FilesystemCapacityProbe,
+struct InactiveAcquisitionPolicy<'a> {
+    authority: &'a GenerationAuthority,
+    target: &'a GenerationTarget,
+    capacity_probe: &'a dyn FilesystemCapacityProbe,
 }
 
-pub(crate) fn acquire_inactive_generation<T, V, C>(
+fn acquire_inactive_generation<T, V, C>(
     cache: &CoreGenerationCache,
     operation_id: &str,
     policy: &InactiveAcquisitionPolicy<'_>,

@@ -208,7 +208,10 @@ pub(crate) fn expected_generation_authority(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn validate_bootstrap_activation(
+// This raw fixture adapter is module-private and must not be exposed as
+// production authority. Future reachability must enter through the sealed,
+// verifier-owned activation capability.
+fn validate_bootstrap_activation(
     policy: &BootstrapPolicy,
     policy_payload: &[u8],
     keyring_payload: &[u8],
