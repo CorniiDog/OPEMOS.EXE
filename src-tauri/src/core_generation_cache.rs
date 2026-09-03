@@ -2,6 +2,7 @@ use crate::core_generation_contracts::{
     MAX_FILES, MAX_GENERATION_STORAGE_BYTES, MAX_LINEAGE_GENERATIONS,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::{CStr, CString},
@@ -123,6 +124,124 @@ pub(crate) enum CandidateAdmissionError {
 struct FilesystemIdentity {
     device: u64,
     inode: u64,
+}
+
+struct PinnedGenerationDirectory {
+    file: File,
+    identity: FilesystemIdentity,
+    uid: u32,
+    nlink: u64,
+    mode: u32,
+    modified_seconds: i64,
+    modified_nanoseconds: i64,
+    changed_seconds: i64,
+    changed_nanoseconds: i64,
+    tree: GenerationTreeSnapshot,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct GenerationTreeSnapshot {
+    nodes: BTreeMap<Vec<u8>, GenerationNodeSnapshot>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct GenerationNodeSnapshot {
+    kind: u8,
+    identity: FilesystemIdentity,
+    uid: u32,
+    nlink: u64,
+    mode: u32,
+    len: u64,
+    modified_seconds: i64,
+    modified_nanoseconds: i64,
+    changed_seconds: i64,
+    changed_nanoseconds: i64,
+    sha256: Option<[u8; 32]>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct GenerationTreeMetadataSnapshot {
+    nodes: BTreeMap<Vec<u8>, GenerationNodeMetadata>,
+}
+
+struct GenerationTreeMetadataObservation {
+    metadata: GenerationTreeMetadataSnapshot,
+    complete: bool,
+    error: Option<GenerationIntegrityError>,
+}
+
+impl GenerationTreeMetadataObservation {
+    fn proves_mismatch(&self, expected: &GenerationTreeMetadataSnapshot) -> bool {
+        self.metadata
+            .nodes
+            .iter()
+            .any(|(path, observed)| expected.nodes.get(path) != Some(observed))
+            || (self.complete && self.metadata != *expected)
+            || matches!(self.error, Some(GenerationIntegrityError::Mismatch(_)))
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct GenerationNodeMetadata {
+    kind: u8,
+    identity: FilesystemIdentity,
+    uid: u32,
+    nlink: u64,
+    mode: u32,
+    len: u64,
+    modified_seconds: i64,
+    modified_nanoseconds: i64,
+    changed_seconds: i64,
+    changed_nanoseconds: i64,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct SealedGenerationEntry {
+    kind: u8,
+    identity: FilesystemIdentity,
+    mode: u32,
+}
+
+impl GenerationTreeSnapshot {
+    fn metadata(&self) -> GenerationTreeMetadataSnapshot {
+        GenerationTreeMetadataSnapshot {
+            nodes: self
+                .nodes
+                .iter()
+                .map(|(path, node)| {
+                    (
+                        path.clone(),
+                        GenerationNodeMetadata {
+                            kind: node.kind,
+                            identity: node.identity,
+                            uid: node.uid,
+                            nlink: node.nlink,
+                            mode: node.mode,
+                            len: node.len,
+                            modified_seconds: node.modified_seconds,
+                            modified_nanoseconds: node.modified_nanoseconds,
+                            changed_seconds: node.changed_seconds,
+                            changed_nanoseconds: node.changed_nanoseconds,
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum GenerationIntegrityError {
+    Mismatch(String),
+    Indeterminate(String),
+}
+
+impl GenerationIntegrityError {
+    fn message(self) -> String {
+        match self {
+            Self::Mismatch(message) | Self::Indeterminate(message) => message,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -468,7 +587,14 @@ impl CoreGenerationCache {
             return Err("Core generation cache root changed while resolving it.".into());
         }
         require_directory(&root, "Core generation cache")?;
-        set_private_directory_permissions(&root)?;
+        set_open_private_directory_permissions(
+            &root_handle,
+            &root,
+            FilesystemIdentity {
+                device: opened.dev(),
+                inode: opened.ino(),
+            },
+        )?;
         for child in ["candidates", "generations", "commits", "leases", "trash"] {
             let path = root.join(child);
             fs::create_dir(&path)
@@ -832,10 +958,10 @@ impl CoreGenerationCache {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _file_guard = self.acquire_lock()?;
         self.require_valid_candidate_lease(lease)?;
+        let result = identity
+            .validate()
+            .and_then(|()| self.commit_candidate_locked(lease, identity, verify, |_, _| {}));
         let candidate = lease.path();
-        let result = identity.validate().and_then(|()| {
-            self.commit_candidate_locked(candidate, lease.reservation_bytes, identity, verify)
-        });
         match result {
             Ok(outcome) => {
                 self.remove_candidate_lease(lease)?;
@@ -884,26 +1010,76 @@ impl CoreGenerationCache {
 
     fn commit_candidate_locked(
         &self,
-        candidate: &Path,
-        reservation_bytes: u64,
+        lease: &CandidateLease,
         identity: &CoreGenerationIdentity,
         verify: impl Fn(&Path) -> Result<(), String>,
+        mut publication_hook: impl FnMut(&'static str, &Path),
     ) -> Result<GenerationCommit, String> {
+        let candidate = lease.path();
         let usage = scan_bounded_tree(candidate, "Core generation candidate")?;
-        if usage.logical_bytes > reservation_bytes {
+        if usage.logical_bytes > lease.reservation_bytes {
             return Err("Core generation candidate exceeds its reserved size.".into());
         }
         verify(candidate)?;
+        lease.require_bound_candidate_file()?;
         sync_closed_tree(candidate)?;
+        lease.require_bound_candidate_file()?;
+
+        self.require_unique_committed_sequence(identity)?;
 
         let destination = self.generation_path(identity)?;
         match fs::symlink_metadata(&destination) {
             Ok(_) => {
-                require_directory(&destination, "cached Core generation")?;
                 seal_closed_tree(&destination)?;
-                verify(&destination)?;
-                self.ensure_generation_commit_marker(identity)?;
-                remove_owned_candidate(candidate, &self.root.join("candidates"))?;
+                let pinned = pin_generation_directory(&destination, "cached Core generation")?;
+                let reuse = (|| {
+                    verify(&destination)?;
+                    require_pinned_generation_directory(
+                        &destination,
+                        &pinned,
+                        "cached Core generation",
+                    )?;
+                    self.require_unique_committed_sequence(identity)?;
+                    verify(&destination)?;
+                    require_pinned_generation_directory(
+                        &destination,
+                        &pinned,
+                        "cached Core generation",
+                    )?;
+                    self.ensure_generation_commit_marker(identity)?;
+                    self.require_unique_committed_sequence(identity)?;
+                    require_pinned_generation_directory(
+                        &destination,
+                        &pinned,
+                        "cached Core generation",
+                    )
+                })();
+                if let Err(error) = reuse {
+                    // Verifiers can fail due to cancellation or transient I/O.
+                    // Preserve pre-existing trust unless the pinned tree proves
+                    // that the generation changed during verification.
+                    let invalidation = match check_pinned_generation_directory(
+                        &destination,
+                        &pinned,
+                        "cached Core generation",
+                    ) {
+                        Ok(()) => Ok(()),
+                        Err(GenerationIntegrityError::Mismatch(_)) => {
+                            self.invalidate_generation_commit_marker(identity)
+                        }
+                        // Failure to perform the corruption check is itself
+                        // indeterminate (including transient I/O), not proof
+                        // that durable trust should be revoked.
+                        Err(GenerationIntegrityError::Indeterminate(_)) => Ok(()),
+                    };
+                    return match invalidation {
+                        Ok(()) => Err(error),
+                        Err(invalidation) => Err(format!(
+                            "{error} Commit-evidence invalidation also failed: {invalidation}"
+                        )),
+                    };
+                }
+                self.quarantine_redundant_candidate(lease)?;
                 return Ok(GenerationCommit::AlreadyPresent);
             }
             Err(error) if error.kind() == ErrorKind::NotFound => {}
@@ -920,33 +1096,87 @@ impl CoreGenerationCache {
         self.invalidate_generation_commit_marker(identity)?;
 
         seal_closed_tree(candidate)?;
+        // The cache lock serializes cooperative writers. This bounded snapshot
+        // additionally detects non-cooperative child changes at each explicit
+        // verification/publication boundary; it does not claim to make the
+        // pathname-addressed tree kernel-immutable between those boundaries.
+        let candidate_tree =
+            snapshot_generation_tree(candidate, "sealed Core generation candidate")?;
         verify(candidate)?;
+        require_generation_tree_snapshot(
+            candidate,
+            &candidate_tree,
+            "sealed Core generation candidate",
+        )?;
+        lease.require_bound_candidate_file()?;
         // macOS requires the moved directory itself to remain owner-writable
         // during rename. Its contents stay sealed, and the destination root is
         // resealed and reverified before this method returns.
-        fs::set_permissions(candidate, fs::Permissions::from_mode(0o700)).map_err(|error| {
-            storage_io_error("Could not prepare sealed Core generation commit", error)
-        })?;
+        publication_hook("before-candidate-fchmod", candidate);
+        if unsafe { libc::fchmod(lease.candidate_file.as_raw_fd(), 0o700) } != 0 {
+            return Err(storage_io_error(
+                "Could not prepare sealed Core generation commit",
+                std::io::Error::last_os_error(),
+            ));
+        }
+        lease.require_bound_candidate_file()?;
         fs::rename(candidate, &destination).map_err(|error| {
             storage_io_error("Could not commit the Core generation atomically", error)
         })?;
         let publication = (|| {
-            fs::set_permissions(&destination, fs::Permissions::from_mode(0o500)).map_err(
-                |error| storage_io_error("Could not reseal committed Core generation", error),
+            require_pinned_generation_directory_from_identity(
+                &destination,
+                &lease.candidate_file,
+                lease.candidate_identity,
+                "committed Core generation",
+            )?;
+            publication_hook("before-destination-fchmod", &destination);
+            if unsafe { libc::fchmod(lease.candidate_file.as_raw_fd(), 0o500) } != 0 {
+                return Err(storage_io_error(
+                    "Could not reseal committed Core generation",
+                    std::io::Error::last_os_error(),
+                ));
+            }
+            require_pinned_generation_directory_from_identity(
+                &destination,
+                &lease.candidate_file,
+                lease.candidate_identity,
+                "committed Core generation",
             )?;
             sync_directory(&self.root.join("generations"))?;
             sync_directory(&self.root.join("candidates"))?;
             sync_closed_tree(&destination)?;
             verify(&destination)?;
-            self.ensure_generation_commit_marker(identity)
+            require_generation_tree_snapshot(
+                &destination,
+                &candidate_tree,
+                "committed Core generation",
+            )?;
+            require_pinned_generation_directory_from_identity(
+                &destination,
+                &lease.candidate_file,
+                lease.candidate_identity,
+                "committed Core generation",
+            )?;
+            let pinned = pin_generation_directory(&destination, "committed Core generation")?;
+            self.require_unique_committed_sequence(identity)?;
+            verify(&destination)?;
+            require_pinned_generation_directory(
+                &destination,
+                &pinned,
+                "committed Core generation",
+            )?;
+            self.ensure_generation_commit_marker(identity)?;
+            self.require_unique_committed_sequence(identity)?;
+            require_pinned_generation_directory(&destination, &pinned, "committed Core generation")
         })();
         if let Err(error) = publication {
             let cleanup = cleanup_failed_publication(
                 &destination,
-                &self.root.join("generations"),
-                &self.root.join("candidates"),
+                &self.root,
                 &self.generation_commit_marker_path(identity)?,
-                &self.root.join("commits"),
+                lease.candidate_identity,
+                self.trash_identity,
             );
             return match cleanup {
                 Ok(()) => Err(error),
@@ -956,6 +1186,65 @@ impl CoreGenerationCache {
             };
         }
         Ok(GenerationCommit::Installed)
+    }
+
+    fn require_unique_committed_sequence(
+        &self,
+        expected: &CoreGenerationIdentity,
+    ) -> Result<(), String> {
+        let state = self.load_state_unlocked()?;
+        for protected in [
+            state.active.as_ref(),
+            state.pending.as_ref(),
+            state.last_known_good.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.require_generation_committed(protected)
+                .map_err(|error| {
+                    format!(
+                        "Protected Core generation has no valid durable commit evidence: {error}"
+                    )
+                })?;
+            if protected.sequence == expected.sequence && protected != expected {
+                return Err(format!(
+                    "Core generation sequence {} is already durable in cache state for a different identity.",
+                    expected.sequence
+                ));
+            }
+        }
+        for (name, marker) in inventory_commit_files(&self.root.join("commits"))?.markers {
+            let committed = read_commit_marker_identity(&marker, &name)?;
+            if committed.sequence == expected.sequence && committed != *expected {
+                return Err(format!(
+                    "Core generation sequence {} is already committed to a different identity.",
+                    expected.sequence
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn quarantine_redundant_candidate(&self, lease: &CandidateLease) -> Result<(), String> {
+        // The verifier is application code and may have run for an arbitrary
+        // amount of time. Change permissions only through the descriptor held
+        // by this lease, then prove that the candidate pathname still names
+        // that exact directory before detaching it from the live namespace.
+        if unsafe { libc::fchmod(lease.candidate_file.as_raw_fd(), 0o700) } != 0 {
+            return Err(storage_io_error(
+                "Could not prepare redundant Core generation candidate quarantine",
+                std::io::Error::last_os_error(),
+            ));
+        }
+        lease.require_bound_candidate_file()?;
+        quarantine_directory(
+            &lease.candidate,
+            &self.root.join("candidates"),
+            &self.root.join("trash"),
+            lease.candidate_identity,
+            self.trash_identity,
+        )
     }
 
     fn require_valid_candidate_lease(&self, lease: &CandidateLease) -> Result<(), String> {
@@ -1047,9 +1336,11 @@ impl CoreGenerationCache {
             return Err("Core generation activation operation identity is invalid.".into());
         }
         let generation = self.generation_path(identity)?;
-        require_directory(&generation, "cached Core generation")?;
+        let pinned = pin_generation_directory(&generation, "cached Core generation")?;
         self.require_generation_committed(identity)?;
         verify(&generation)?;
+        require_pinned_generation_directory(&generation, &pinned, "cached Core generation")?;
+        self.require_unique_committed_sequence(identity)?;
         let mut state = self.load_state_unlocked()?;
         if let Some(pending) = state.pending.as_ref() {
             if pending == identity && state.pending_operation_id.as_deref() == Some(operation_id) {
@@ -1066,6 +1357,9 @@ impl CoreGenerationCache {
         }
         state.pending = Some(identity.clone());
         state.pending_operation_id = Some(operation_id.into());
+        verify(&generation)?;
+        require_pinned_generation_directory(&generation, &pinned, "cached Core generation")?;
+        self.require_unique_committed_sequence(identity)?;
         self.save_next_state(state)
     }
 
@@ -1081,9 +1375,11 @@ impl CoreGenerationCache {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _file_guard = self.acquire_lock()?;
         let generation = self.generation_path(identity)?;
-        require_directory(&generation, "cached Core generation")?;
+        let pinned = pin_generation_directory(&generation, "cached Core generation")?;
         self.require_generation_committed(identity)?;
         verify(&generation)?;
+        require_pinned_generation_directory(&generation, &pinned, "cached Core generation")?;
+        self.require_unique_committed_sequence(identity)?;
         let mut state = self.load_state_unlocked()?;
         require_expected_revision(&state, expected_revision)?;
         if state.pending.as_ref() != Some(identity)
@@ -1099,6 +1395,9 @@ impl CoreGenerationCache {
         state.pending = None;
         state.pending_operation_id = None;
         state.last_known_good = previous.filter(|prior| prior != identity);
+        verify(&generation)?;
+        require_pinned_generation_directory(&generation, &pinned, "cached Core generation")?;
+        self.require_unique_committed_sequence(identity)?;
         self.save_next_state(state)
     }
 
@@ -1148,14 +1447,27 @@ impl CoreGenerationCache {
             .clone()
             .ok_or("No last-known-good Core generation is available.")?;
         let generation = self.generation_path(&target)?;
-        require_directory(&generation, "last-known-good Core generation")?;
+        let pinned = pin_generation_directory(&generation, "last-known-good Core generation")?;
         self.require_generation_committed(&target)?;
         verify(&generation)?;
+        require_pinned_generation_directory(
+            &generation,
+            &pinned,
+            "last-known-good Core generation",
+        )?;
+        self.require_unique_committed_sequence(&target)?;
         if state.active.as_ref() == Some(&target) {
             return Ok(state);
         }
         state.active = Some(target.clone());
-        state.last_known_good = Some(target);
+        state.last_known_good = Some(target.clone());
+        verify(&generation)?;
+        require_pinned_generation_directory(
+            &generation,
+            &pinned,
+            "last-known-good Core generation",
+        )?;
+        self.require_unique_committed_sequence(&target)?;
         self.save_next_state(state)
     }
 
@@ -2215,6 +2527,488 @@ fn open_bound_directory(
     Ok(file)
 }
 
+fn pin_generation_directory(
+    path: &Path,
+    description: &str,
+) -> Result<PinnedGenerationDirectory, String> {
+    let file = open_bound_directory(path, None, description)?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Could not identify pinned {description}: {error}"))?;
+    use std::os::unix::fs::MetadataExt as _;
+    if metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.permissions().mode() & 0o7777 != 0o500
+    {
+        return Err(format!("Pinned {description} ownership or mode is unsafe."));
+    }
+    Ok(PinnedGenerationDirectory {
+        identity: FilesystemIdentity {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        },
+        uid: metadata.uid(),
+        nlink: metadata.nlink(),
+        mode: metadata.permissions().mode() & 0o7777,
+        modified_seconds: metadata.mtime(),
+        modified_nanoseconds: metadata.mtime_nsec(),
+        changed_seconds: metadata.ctime(),
+        changed_nanoseconds: metadata.ctime_nsec(),
+        tree: snapshot_generation_tree(path, description)?,
+        file,
+    })
+}
+
+fn require_pinned_generation_directory(
+    path: &Path,
+    pinned: &PinnedGenerationDirectory,
+    description: &str,
+) -> Result<(), String> {
+    check_pinned_generation_directory(path, pinned, description)
+        .map_err(GenerationIntegrityError::message)
+}
+
+fn check_pinned_generation_directory(
+    path: &Path,
+    pinned: &PinnedGenerationDirectory,
+    description: &str,
+) -> Result<(), GenerationIntegrityError> {
+    let opened = pinned.file.metadata().map_err(|error| {
+        GenerationIntegrityError::Indeterminate(format!(
+            "Could not identify pinned {description}: {error}"
+        ))
+    })?;
+    let current = fs::symlink_metadata(path).map_err(|error| {
+        let message = format!("Could not recheck pinned {description}: {error}");
+        if error.kind() == ErrorKind::NotFound {
+            GenerationIntegrityError::Mismatch(message)
+        } else {
+            GenerationIntegrityError::Indeterminate(message)
+        }
+    })?;
+    use std::os::unix::fs::MetadataExt as _;
+    if !opened.is_dir()
+        || opened.dev() != pinned.identity.device
+        || opened.ino() != pinned.identity.inode
+        || opened.uid() != pinned.uid
+        || opened.nlink() != pinned.nlink
+        || opened.permissions().mode() & 0o7777 != pinned.mode
+        || opened.mtime() != pinned.modified_seconds
+        || opened.mtime_nsec() != pinned.modified_nanoseconds
+        || opened.ctime() != pinned.changed_seconds
+        || opened.ctime_nsec() != pinned.changed_nanoseconds
+        || current.file_type().is_symlink()
+        || !current.is_dir()
+        || current.dev() != pinned.identity.device
+        || current.ino() != pinned.identity.inode
+        || current.uid() != pinned.uid
+        || current.nlink() != pinned.nlink
+        || current.permissions().mode() & 0o7777 != pinned.mode
+        || current.mtime() != pinned.modified_seconds
+        || current.mtime_nsec() != pinned.modified_nanoseconds
+        || current.ctime() != pinned.changed_seconds
+        || current.ctime_nsec() != pinned.changed_nanoseconds
+    {
+        return Err(GenerationIntegrityError::Mismatch(format!(
+            "Pinned {description} identity or metadata changed."
+        )));
+    }
+    let tree = match snapshot_generation_tree_integrity(path, description) {
+        Ok(tree) => tree,
+        Err(GenerationIntegrityError::Mismatch(error)) => {
+            return Err(GenerationIntegrityError::Mismatch(error));
+        }
+        Err(GenerationIntegrityError::Indeterminate(error)) => {
+            return Err(classify_indeterminate_snapshot_failure(
+                path,
+                pinned,
+                description,
+                error,
+            ));
+        }
+    };
+    if tree != pinned.tree {
+        return Err(GenerationIntegrityError::Mismatch(format!(
+            "Pinned {description} child identity, metadata, or content changed."
+        )));
+    }
+    Ok(())
+}
+
+fn classify_indeterminate_snapshot_failure(
+    path: &Path,
+    pinned: &PinnedGenerationDirectory,
+    description: &str,
+    content_error: String,
+) -> GenerationIntegrityError {
+    // A content read can become unavailable after a mode/ownership change.
+    // Compare all still-observable bounded metadata before treating that I/O
+    // failure as transient.
+    let expected = pinned.tree.metadata();
+    let observation = snapshot_generation_tree_metadata(path, description);
+    if observation.proves_mismatch(&expected) {
+        GenerationIntegrityError::Mismatch(format!(
+                "Pinned {description} child metadata changed while content verification was unavailable."
+            ))
+    } else {
+        GenerationIntegrityError::Indeterminate(content_error)
+    }
+}
+
+fn snapshot_generation_tree(
+    root: &Path,
+    description: &str,
+) -> Result<GenerationTreeSnapshot, String> {
+    snapshot_generation_tree_integrity(root, description).map_err(GenerationIntegrityError::message)
+}
+
+fn snapshot_generation_tree_integrity(
+    root: &Path,
+    description: &str,
+) -> Result<GenerationTreeSnapshot, GenerationIntegrityError> {
+    snapshot_generation_tree_integrity_with_hook(root, description, |_| {})
+}
+
+fn snapshot_generation_tree_integrity_with_hook(
+    root: &Path,
+    description: &str,
+    mut after_child_metadata: impl FnMut(&Path),
+) -> Result<GenerationTreeSnapshot, GenerationIntegrityError> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let mut nodes = BTreeMap::new();
+    let mut directories = vec![(root.to_path_buf(), Vec::<u8>::new(), 0_usize)];
+    let mut index = 0;
+    let mut file_count = 0_usize;
+    let mut logical_bytes = 0_u64;
+    while index < directories.len() {
+        let (directory, relative, depth) = directories[index].clone();
+        index += 1;
+        let entries = bounded_directory_entries(&directory, description).map_err(|error| {
+            if bounded_scan_limit(&error) {
+                GenerationIntegrityError::Mismatch(error)
+            } else {
+                GenerationIntegrityError::Indeterminate(error)
+            }
+        })?;
+        for entry in entries {
+            if nodes.len() + 2 > MAX_TREE_NODES {
+                return Err(GenerationIntegrityError::Mismatch(format!(
+                    "{description} contains too many nodes."
+                )));
+            }
+            let name = entry.file_name();
+            let name = name.as_bytes();
+            if name.contains(&b'/') || name.contains(&0) {
+                return Err(GenerationIntegrityError::Mismatch(format!(
+                    "{description} contains an invalid name."
+                )));
+            }
+            let mut child_relative = relative.clone();
+            if !child_relative.is_empty() {
+                child_relative.push(b'/');
+            }
+            child_relative.extend_from_slice(name);
+            let path = entry.path();
+            let before = fs::symlink_metadata(&path).map_err(|error| {
+                let message = format!("Could not inspect {description} entry: {error}");
+                if error.kind() == ErrorKind::NotFound {
+                    GenerationIntegrityError::Mismatch(message)
+                } else {
+                    GenerationIntegrityError::Indeterminate(message)
+                }
+            })?;
+            after_child_metadata(&path);
+            if before.file_type().is_symlink() {
+                return Err(GenerationIntegrityError::Mismatch(format!(
+                    "{description} contains a link."
+                )));
+            }
+            let (kind, sha256) = if before.is_dir() {
+                let child_depth = depth.checked_add(1).ok_or_else(|| {
+                    GenerationIntegrityError::Mismatch(format!("{description} depth overflowed."))
+                })?;
+                if child_depth > MAX_TREE_DEPTH {
+                    return Err(GenerationIntegrityError::Mismatch(format!(
+                        "{description} is too deeply nested."
+                    )));
+                }
+                directories.push((path.clone(), child_relative.clone(), child_depth));
+                (b'd', None)
+            } else if before.is_file() {
+                if before.nlink() != 1 {
+                    return Err(GenerationIntegrityError::Mismatch(format!(
+                        "{description} contains a multiply linked file."
+                    )));
+                }
+                file_count += 1;
+                if file_count > MAX_GENERATION_STORAGE_FILES {
+                    return Err(GenerationIntegrityError::Mismatch(format!(
+                        "{description} contains too many files."
+                    )));
+                }
+                logical_bytes = logical_bytes.checked_add(before.len()).ok_or_else(|| {
+                    GenerationIntegrityError::Mismatch(format!(
+                        "{description} byte count overflowed."
+                    ))
+                })?;
+                if logical_bytes > MAX_GENERATION_STORAGE_BYTES {
+                    return Err(GenerationIntegrityError::Mismatch(format!(
+                        "{description} exceeds its size bound."
+                    )));
+                }
+                let mut file = OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+                    .open(&path)
+                    .map_err(|error| {
+                        let message = format!("Could not open {description} entry: {error}");
+                        if error.kind() == ErrorKind::NotFound {
+                            GenerationIntegrityError::Mismatch(message)
+                        } else {
+                            GenerationIntegrityError::Indeterminate(message)
+                        }
+                    })?;
+                let opened = file.metadata().map_err(|error| {
+                    GenerationIntegrityError::Indeterminate(format!(
+                        "Could not identify {description} entry: {error}"
+                    ))
+                })?;
+                if !opened.is_file() || opened.dev() != before.dev() || opened.ino() != before.ino()
+                {
+                    return Err(GenerationIntegrityError::Mismatch(format!(
+                        "{description} entry identity changed."
+                    )));
+                }
+                let mut hasher = Sha256::new();
+                let mut buffer = [0_u8; 8192];
+                loop {
+                    let read = file.read(&mut buffer).map_err(|error| {
+                        GenerationIntegrityError::Indeterminate(format!(
+                            "Could not read {description} entry: {error}"
+                        ))
+                    })?;
+                    if read == 0 {
+                        break;
+                    }
+                    hasher.update(&buffer[..read]);
+                }
+                let after = file.metadata().map_err(|error| {
+                    GenerationIntegrityError::Indeterminate(format!(
+                        "Could not recheck {description} entry: {error}"
+                    ))
+                })?;
+                let current = fs::symlink_metadata(&path).map_err(|error| {
+                    let message = format!("Could not recheck {description} entry: {error}");
+                    if error.kind() == ErrorKind::NotFound {
+                        GenerationIntegrityError::Mismatch(message)
+                    } else {
+                        GenerationIntegrityError::Indeterminate(message)
+                    }
+                })?;
+                if metadata_fingerprint(&before) != metadata_fingerprint(&opened)
+                    || metadata_fingerprint(&before) != metadata_fingerprint(&after)
+                    || metadata_fingerprint(&before) != metadata_fingerprint(&current)
+                {
+                    return Err(GenerationIntegrityError::Mismatch(format!(
+                        "{description} entry changed while being snapshotted."
+                    )));
+                }
+                (b'f', Some(hasher.finalize().into()))
+            } else {
+                return Err(GenerationIntegrityError::Mismatch(format!(
+                    "{description} contains a special entry."
+                )));
+            };
+            nodes.insert(
+                child_relative,
+                GenerationNodeSnapshot {
+                    kind,
+                    identity: FilesystemIdentity {
+                        device: before.dev(),
+                        inode: before.ino(),
+                    },
+                    uid: before.uid(),
+                    nlink: before.nlink(),
+                    mode: before.permissions().mode() & 0o7777,
+                    len: before.len(),
+                    modified_seconds: before.mtime(),
+                    modified_nanoseconds: before.mtime_nsec(),
+                    changed_seconds: before.ctime(),
+                    changed_nanoseconds: before.ctime_nsec(),
+                    sha256,
+                },
+            );
+        }
+    }
+    Ok(GenerationTreeSnapshot { nodes })
+}
+
+fn snapshot_generation_tree_metadata(
+    root: &Path,
+    description: &str,
+) -> GenerationTreeMetadataObservation {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let mut nodes = BTreeMap::new();
+    macro_rules! stop {
+        ($error:expr) => {
+            return GenerationTreeMetadataObservation {
+                metadata: GenerationTreeMetadataSnapshot { nodes },
+                complete: false,
+                error: Some($error),
+            }
+        };
+    }
+    let mut directories = vec![(root.to_path_buf(), Vec::<u8>::new(), 0_usize)];
+    let mut index = 0;
+    while index < directories.len() {
+        let (directory, relative, depth) = directories[index].clone();
+        index += 1;
+        let entries = match bounded_directory_entries(&directory, description) {
+            Ok(entries) => entries,
+            Err(error) if bounded_scan_limit(&error) => {
+                stop!(GenerationIntegrityError::Mismatch(error))
+            }
+            Err(error) => stop!(GenerationIntegrityError::Indeterminate(error)),
+        };
+        for entry in entries {
+            if nodes.len() + 2 > MAX_TREE_NODES {
+                stop!(GenerationIntegrityError::Mismatch(format!(
+                    "{description} contains too many nodes."
+                )));
+            }
+            let name = entry.file_name();
+            let name = name.as_bytes();
+            let mut child_relative = relative.clone();
+            if !child_relative.is_empty() {
+                child_relative.push(b'/');
+            }
+            child_relative.extend_from_slice(name);
+            let path = entry.path();
+            let metadata = match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    let message =
+                        format!("Could not inspect {description} entry metadata: {error}");
+                    if error.kind() == ErrorKind::NotFound {
+                        stop!(GenerationIntegrityError::Mismatch(message));
+                    } else {
+                        stop!(GenerationIntegrityError::Indeterminate(message));
+                    }
+                }
+            };
+            let kind = if metadata.file_type().is_symlink() {
+                stop!(GenerationIntegrityError::Mismatch(format!(
+                    "{description} contains a link."
+                )));
+            } else if metadata.is_dir() {
+                let Some(child_depth) = depth.checked_add(1) else {
+                    stop!(GenerationIntegrityError::Mismatch(format!(
+                        "{description} depth overflowed."
+                    )));
+                };
+                if child_depth > MAX_TREE_DEPTH {
+                    stop!(GenerationIntegrityError::Mismatch(format!(
+                        "{description} is too deeply nested."
+                    )));
+                }
+                directories.push((path, child_relative.clone(), child_depth));
+                b'd'
+            } else if metadata.is_file() {
+                if metadata.nlink() != 1 {
+                    stop!(GenerationIntegrityError::Mismatch(format!(
+                        "{description} contains a multiply linked file."
+                    )));
+                }
+                b'f'
+            } else {
+                stop!(GenerationIntegrityError::Mismatch(format!(
+                    "{description} contains a special entry."
+                )));
+            };
+            nodes.insert(
+                child_relative,
+                GenerationNodeMetadata {
+                    kind,
+                    identity: FilesystemIdentity {
+                        device: metadata.dev(),
+                        inode: metadata.ino(),
+                    },
+                    uid: metadata.uid(),
+                    nlink: metadata.nlink(),
+                    mode: metadata.permissions().mode() & 0o7777,
+                    len: metadata.len(),
+                    modified_seconds: metadata.mtime(),
+                    modified_nanoseconds: metadata.mtime_nsec(),
+                    changed_seconds: metadata.ctime(),
+                    changed_nanoseconds: metadata.ctime_nsec(),
+                },
+            );
+        }
+    }
+    GenerationTreeMetadataObservation {
+        metadata: GenerationTreeMetadataSnapshot { nodes },
+        complete: true,
+        error: None,
+    }
+}
+
+fn require_generation_tree_snapshot(
+    root: &Path,
+    expected: &GenerationTreeSnapshot,
+    description: &str,
+) -> Result<(), String> {
+    if snapshot_generation_tree(root, description)? != *expected {
+        return Err(format!(
+            "Pinned {description} child identity, metadata, or content changed."
+        ));
+    }
+    Ok(())
+}
+
+fn metadata_fingerprint(
+    metadata: &fs::Metadata,
+) -> (u64, u64, u32, u64, u32, u64, i64, i64, i64, i64) {
+    use std::os::unix::fs::MetadataExt as _;
+    (
+        metadata.dev(),
+        metadata.ino(),
+        metadata.uid(),
+        metadata.nlink(),
+        metadata.permissions().mode() & 0o7777,
+        metadata.len(),
+        metadata.mtime(),
+        metadata.mtime_nsec(),
+        metadata.ctime(),
+        metadata.ctime_nsec(),
+    )
+}
+
+fn require_pinned_generation_directory_from_identity(
+    path: &Path,
+    pinned: &File,
+    expected: FilesystemIdentity,
+    description: &str,
+) -> Result<(), String> {
+    let opened = pinned
+        .metadata()
+        .map_err(|error| format!("Could not identify pinned {description}: {error}"))?;
+    let current = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not recheck pinned {description}: {error}"))?;
+    use std::os::unix::fs::MetadataExt as _;
+    if !opened.is_dir()
+        || opened.dev() != expected.device
+        || opened.ino() != expected.inode
+        || current.file_type().is_symlink()
+        || !current.is_dir()
+        || current.dev() != expected.device
+        || current.ino() != expected.inode
+    {
+        return Err(format!("Pinned {description} identity changed."));
+    }
+    Ok(())
+}
+
 fn openat_bound_directory(
     parent_fd: libc::c_int,
     name: &CStr,
@@ -2656,7 +3450,7 @@ fn inspect_reconciliation_lease(
     options
         .read(true)
         .write(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
     let mut file = options
         .open(path)
         .map_err(|error| format!("Could not safely open Core generation lease: {error}"))?;
@@ -3675,14 +4469,38 @@ fn select_state_slots(
 }
 
 fn set_private_directory_permissions(path: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| {
-        storage_io_error(
-            "Could not restrict Core generation cache permissions",
-            error,
-        )
+    set_private_directory_permissions_with_hook(path, || {})
+}
+
+fn set_private_directory_permissions_with_hook(
+    path: &Path,
+    after_open: impl FnOnce(),
+) -> Result<(), String> {
+    let directory = open_bound_directory(path, None, "Core generation private directory")?;
+    let metadata = directory.metadata().map_err(|error| {
+        format!("Could not identify opened Core generation private directory: {error}")
     })?;
-    Ok(())
+    use std::os::unix::fs::MetadataExt as _;
+    let identity = FilesystemIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    };
+    after_open();
+    set_open_private_directory_permissions(&directory, path, identity)
+}
+
+fn set_open_private_directory_permissions(
+    directory: &File,
+    path: &Path,
+    expected: FilesystemIdentity,
+) -> Result<(), String> {
+    if unsafe { libc::fchmod(directory.as_raw_fd(), 0o700) } != 0 {
+        return Err(storage_io_error(
+            "Could not restrict Core generation cache permissions",
+            std::io::Error::last_os_error(),
+        ));
+    }
+    require_current_directory_identity(path, expected, "Core generation private directory")
 }
 
 fn prepare_candidate_directory(path: &Path, candidates_root: &Path) -> Result<(), String> {
@@ -3730,6 +4548,13 @@ fn sync_directory(path: &Path) -> Result<(), String> {
 }
 
 fn sync_closed_tree(root: &Path) -> Result<(), String> {
+    sync_closed_tree_with_hook(root, |_| {})
+}
+
+fn sync_closed_tree_with_hook(
+    root: &Path,
+    mut after_child_metadata: impl FnMut(&Path),
+) -> Result<(), String> {
     require_directory(root, "Core generation candidate")?;
     let mut directories = vec![root.to_path_buf()];
     let mut index = 0;
@@ -3743,6 +4568,7 @@ fn sync_closed_tree(root: &Path) -> Result<(), String> {
                 .map_err(|error| format!("Could not inspect Core generation candidate: {error}"))?;
             let metadata = fs::symlink_metadata(entry.path())
                 .map_err(|error| format!("Could not inspect Core generation entry: {error}"))?;
+            after_child_metadata(&entry.path());
             if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
                 directories.push(entry.path());
             } else if metadata.file_type().is_file() {
@@ -3753,7 +4579,7 @@ fn sync_closed_tree(root: &Path) -> Result<(), String> {
                 let mut options = OpenOptions::new();
                 options
                     .read(true)
-                    .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
                 let file = options.open(entry.path()).map_err(|error| {
                     format!("Could not safely open Core generation entry: {error}")
                 })?;
@@ -3783,69 +4609,311 @@ fn sync_closed_tree(root: &Path) -> Result<(), String> {
 }
 
 fn seal_closed_tree(root: &Path) -> Result<(), String> {
-    sync_closed_tree(root)?;
-    let mut directories = vec![root.to_path_buf()];
-    let mut index = 0;
-    while index < directories.len() {
-        let directory = directories[index].clone();
-        index += 1;
-        for entry in fs::read_dir(&directory)
-            .map_err(|error| format!("Could not seal Core generation directory: {error}"))?
-        {
-            let entry =
-                entry.map_err(|error| format!("Could not seal Core generation entry: {error}"))?;
-            let path = entry.path();
-            let metadata = fs::symlink_metadata(&path)
-                .map_err(|error| format!("Could not inspect Core generation entry: {error}"))?;
-            if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
-                directories.push(path);
-            } else if metadata.is_file() && !metadata.file_type().is_symlink() {
-                use std::os::unix::fs::MetadataExt as _;
-                if metadata.nlink() != 1 {
-                    return Err("Core generation contains a multiply linked file.".into());
-                }
-                fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).map_err(|error| {
-                    storage_io_error("Could not seal Core generation file", error)
-                })?;
-                File::open(&path)
-                    .and_then(|file| file.sync_all())
-                    .map_err(|error| {
-                        storage_io_error("Could not sync sealed Core generation", error)
-                    })?;
-            } else {
-                return Err("Core generation contains a linked or special entry.".into());
-            }
-        }
+    seal_closed_tree_bound_with_hook(root, |_, _| {})
+}
+
+fn openat_sealed_generation_entry(
+    parent: &File,
+    name: &CStr,
+    kind_flags: libc::c_int,
+    kind: &str,
+) -> Result<File, String> {
+    let descriptor = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            kind_flags | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
+        )
+    };
+    if descriptor < 0 {
+        return Err(format!(
+            "Could not safely open Core generation {kind}: {}",
+            std::io::Error::last_os_error()
+        ));
     }
-    for directory in directories.iter().rev() {
-        fs::set_permissions(directory, fs::Permissions::from_mode(0o500))
-            .map_err(|error| storage_io_error("Could not seal Core generation directory", error))?;
-        sync_directory(directory)?;
+    Ok(unsafe { File::from_raw_fd(descriptor) })
+}
+
+fn seal_closed_tree_bound_with_hook(
+    root: &Path,
+    mut hook: impl FnMut(&CStr, bool),
+) -> Result<(), String> {
+    let root = open_bound_directory(root, None, "Core generation directory")?;
+    let mut expected = BTreeMap::new();
+    let mut nodes = 1_usize;
+    let mut files = 0_usize;
+    seal_open_generation_directory(
+        &root,
+        0,
+        Vec::new(),
+        &mut nodes,
+        &mut files,
+        &mut expected,
+        &mut hook,
+    )?;
+    let mut observed = BTreeMap::new();
+    let mut verify_nodes = 1_usize;
+    verify_open_sealed_generation_directory(
+        &root,
+        0,
+        Vec::new(),
+        &mut verify_nodes,
+        &mut observed,
+    )?;
+    if observed != expected {
+        return Err("Core generation tree changed after sealing.".into());
+    }
+    Ok(())
+}
+
+fn seal_open_generation_directory(
+    directory: &File,
+    depth: usize,
+    relative: Vec<u8>,
+    nodes: &mut usize,
+    files: &mut usize,
+    expected: &mut BTreeMap<Vec<u8>, SealedGenerationEntry>,
+    hook: &mut impl FnMut(&CStr, bool),
+) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt as _;
+    let remaining = MAX_TREE_NODES.saturating_sub(*nodes);
+    let names = directory_names_bounded(directory, remaining.saturating_add(1))?;
+    if names.len() > remaining {
+        return Err("Core generation contains too many nodes.".into());
+    }
+    *nodes += names.len();
+    for name in names {
+        let before = statat_nofollow(directory.as_raw_fd(), &name)?;
+        hook(&name, false);
+        let mut child_relative = relative.clone();
+        if !child_relative.is_empty() {
+            child_relative.push(b'/');
+        }
+        child_relative.extend_from_slice(name.to_bytes());
+        let (child, kind, mode) = if stat_is_directory(&before) {
+            let child_depth = depth
+                .checked_add(1)
+                .ok_or("Core generation depth overflowed.")?;
+            if child_depth > MAX_TREE_DEPTH {
+                return Err("Core generation is too deeply nested.".into());
+            }
+            let child = openat_sealed_generation_entry(
+                directory,
+                &name,
+                libc::O_RDONLY | libc::O_DIRECTORY,
+                "directory",
+            )?;
+            require_opened_generation_entry(&child, &before, true)?;
+            hook(&name, true);
+            seal_open_generation_directory(
+                &child,
+                child_depth,
+                child_relative.clone(),
+                nodes,
+                files,
+                expected,
+                hook,
+            )?;
+            (child, b'd', 0o500)
+        } else if stat_is_regular(&before) {
+            if before.st_nlink != 1 {
+                return Err("Core generation contains a multiply linked file.".into());
+            }
+            *files += 1;
+            if *files > MAX_GENERATION_STORAGE_FILES {
+                return Err("Core generation contains too many files.".into());
+            }
+            let child = openat_sealed_generation_entry(directory, &name, libc::O_RDONLY, "file")?;
+            require_opened_generation_entry(&child, &before, false)?;
+            hook(&name, true);
+            if unsafe { libc::fchmod(child.as_raw_fd(), 0o400) } != 0 {
+                return Err(storage_io_error(
+                    "Could not seal Core generation file",
+                    std::io::Error::last_os_error(),
+                ));
+            }
+            child.sync_all().map_err(|error| {
+                storage_io_error("Could not sync sealed Core generation", error)
+            })?;
+            (child, b'f', 0o400)
+        } else {
+            return Err("Core generation contains a linked or special entry.".into());
+        };
+        let opened = child
+            .metadata()
+            .map_err(|error| format!("Could not recheck sealed Core generation entry: {error}"))?;
+        let rebound = statat_nofollow(directory.as_raw_fd(), &name)?;
+        if rebound.st_dev as u64 != opened.dev()
+            || rebound.st_ino != opened.ino()
+            || opened.permissions().mode() & 0o7777 != mode
+        {
+            return Err("Core generation entry changed after sealing.".into());
+        }
+        expected.insert(
+            child_relative,
+            SealedGenerationEntry {
+                kind,
+                identity: FilesystemIdentity {
+                    device: opened.dev(),
+                    inode: opened.ino(),
+                },
+                mode,
+            },
+        );
+    }
+    if unsafe { libc::fchmod(directory.as_raw_fd(), 0o500) } != 0 {
+        return Err(storage_io_error(
+            "Could not seal Core generation directory",
+            std::io::Error::last_os_error(),
+        ));
+    }
+    directory
+        .sync_all()
+        .map_err(|error| storage_io_error("Could not sync sealed Core generation directory", error))
+}
+
+fn require_opened_generation_entry(
+    opened: &File,
+    expected: &libc::stat,
+    directory: bool,
+) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt as _;
+    let metadata = opened
+        .metadata()
+        .map_err(|error| format!("Could not identify opened Core generation entry: {error}"))?;
+    if metadata.dev() != expected.st_dev as u64
+        || metadata.ino() != expected.st_ino
+        || metadata.nlink() != expected.st_nlink as u64
+        || metadata.is_dir() != directory
+        || metadata.is_file() == directory
+    {
+        return Err("Core generation entry changed while opening it.".into());
+    }
+    Ok(())
+}
+
+fn verify_open_sealed_generation_directory(
+    directory: &File,
+    depth: usize,
+    relative: Vec<u8>,
+    nodes: &mut usize,
+    observed: &mut BTreeMap<Vec<u8>, SealedGenerationEntry>,
+) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt as _;
+    let root_metadata = directory
+        .metadata()
+        .map_err(|error| format!("Could not identify sealed Core generation directory: {error}"))?;
+    if !root_metadata.is_dir() || root_metadata.permissions().mode() & 0o7777 != 0o500 {
+        return Err("Core generation directory is not sealed.".into());
+    }
+    let remaining = MAX_TREE_NODES.saturating_sub(*nodes);
+    let names = directory_names_bounded(directory, remaining.saturating_add(1))?;
+    if names.len() > remaining {
+        return Err("Core generation contains too many nodes after sealing.".into());
+    }
+    *nodes += names.len();
+    for name in names {
+        let stat = statat_nofollow(directory.as_raw_fd(), &name)?;
+        let (child, kind, mode) = if stat_is_directory(&stat) {
+            if depth >= MAX_TREE_DEPTH {
+                return Err("Core generation is too deeply nested after sealing.".into());
+            }
+            (
+                openat_sealed_generation_entry(
+                    directory,
+                    &name,
+                    libc::O_RDONLY | libc::O_DIRECTORY,
+                    "sealed directory",
+                )?,
+                b'd',
+                0o500,
+            )
+        } else if stat_is_regular(&stat) {
+            (
+                openat_sealed_generation_entry(directory, &name, libc::O_RDONLY, "sealed file")?,
+                b'f',
+                0o400,
+            )
+        } else {
+            return Err("Core generation contains a linked or special entry after sealing.".into());
+        };
+        require_opened_generation_entry(&child, &stat, kind == b'd')?;
+        let metadata = child
+            .metadata()
+            .map_err(|error| format!("Could not recheck sealed Core generation entry: {error}"))?;
+        if metadata.permissions().mode() & 0o7777 != mode {
+            return Err("Core generation entry mode changed after sealing.".into());
+        }
+        let mut child_relative = relative.clone();
+        if !child_relative.is_empty() {
+            child_relative.push(b'/');
+        }
+        child_relative.extend_from_slice(name.to_bytes());
+        observed.insert(
+            child_relative.clone(),
+            SealedGenerationEntry {
+                kind,
+                identity: FilesystemIdentity {
+                    device: metadata.dev(),
+                    inode: metadata.ino(),
+                },
+                mode,
+            },
+        );
+        if kind == b'd' {
+            verify_open_sealed_generation_directory(
+                &child,
+                depth + 1,
+                child_relative,
+                nodes,
+                observed,
+            )?;
+        }
+        let rebound = statat_nofollow(directory.as_raw_fd(), &name)?;
+        if rebound.st_dev as u64 != metadata.dev() || rebound.st_ino != metadata.ino() {
+            return Err("Core generation entry changed during final verification.".into());
+        }
     }
     Ok(())
 }
 
 fn make_tree_removable(root: &Path) -> Result<(), String> {
-    require_directory(root, "Core generation candidate")?;
-    let mut directories = vec![root.to_path_buf()];
-    let mut index = 0;
-    while index < directories.len() {
-        let directory = directories[index].clone();
-        index += 1;
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
-            .map_err(|error| format!("Could not unlock Core candidate cleanup: {error}"))?;
-        for entry in fs::read_dir(&directory)
-            .map_err(|error| format!("Could not inspect failed Core candidate: {error}"))?
-        {
-            let entry = entry
-                .map_err(|error| format!("Could not inspect failed Core candidate: {error}"))?;
-            let metadata = fs::symlink_metadata(entry.path())
-                .map_err(|error| format!("Could not inspect failed Core candidate: {error}"))?;
-            if metadata.is_dir() && !metadata.file_type().is_symlink() {
-                directories.push(entry.path());
-            } else if metadata.is_file() && !metadata.file_type().is_symlink() {
-                fs::set_permissions(entry.path(), fs::Permissions::from_mode(0o600))
-                    .map_err(|error| format!("Could not unlock Core candidate file: {error}"))?;
+    let root = open_bound_directory(root, None, "Core generation candidate cleanup")?;
+    make_open_tree_removable(&root, 0)
+}
+
+fn make_open_tree_removable(directory: &File, depth: usize) -> Result<(), String> {
+    if depth > MAX_TREE_DEPTH {
+        return Err("Core generation cleanup tree is too deeply nested.".into());
+    }
+    if unsafe { libc::fchmod(directory.as_raw_fd(), 0o700) } != 0 {
+        return Err(format!(
+            "Could not unlock Core candidate cleanup: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let names = directory_names_bounded(directory, CACHE_DIRECTORY_ENTRY_LIMIT + 1)?;
+    if names.len() > CACHE_DIRECTORY_ENTRY_LIMIT {
+        return Err("Core generation cleanup directory contains too many entries.".into());
+    }
+    for name in names {
+        let stat = statat_nofollow(directory.as_raw_fd(), &name)?;
+        if stat_is_directory(&stat) {
+            let child = openat_sealed_generation_entry(
+                directory,
+                &name,
+                libc::O_RDONLY | libc::O_DIRECTORY,
+                "cleanup directory",
+            )?;
+            make_open_tree_removable(&child, depth + 1)?;
+        } else if stat_is_regular(&stat) {
+            let child =
+                openat_sealed_generation_entry(directory, &name, libc::O_RDONLY, "cleanup file")?;
+            if unsafe { libc::fchmod(child.as_raw_fd(), 0o600) } != 0 {
+                return Err(format!(
+                    "Could not unlock Core candidate file: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
         }
     }
@@ -3853,43 +4921,119 @@ fn make_tree_removable(root: &Path) -> Result<(), String> {
 }
 
 fn cleanup_candidate_tree(candidate: &Path, candidates_root: &Path) -> Result<(), String> {
-    let mut failures = Vec::new();
-    if let Err(error) = make_tree_removable(candidate) {
-        failures.push(error);
+    cleanup_candidate_tree_with_hook(candidate, candidates_root, || {})
+}
+
+fn cleanup_candidate_tree_with_hook(
+    candidate: &Path,
+    candidates_root: &Path,
+    after_root_open: impl FnOnce(),
+) -> Result<(), String> {
+    let cache_root = candidates_root
+        .parent()
+        .ok_or("Core generation cleanup store has no cache root.")?;
+    let trash_root = cache_root.join("trash");
+    let expected = candidate_directory_identity(candidate)?
+        .ok_or("Core generation cleanup candidate disappeared.")?;
+    let expected_trash = candidate_directory_identity(&trash_root)?
+        .ok_or("Core generation trash directory disappeared.")?;
+    let directory = open_bound_directory(candidate, Some(expected), "Core generation cleanup")?;
+    after_root_open();
+    if unsafe { libc::fchmod(directory.as_raw_fd(), 0o700) } != 0 {
+        return Err(format!(
+            "Could not prepare Core generation quarantine: {}",
+            std::io::Error::last_os_error()
+        ));
     }
-    if let Err(error) = remove_owned_candidate(candidate, candidates_root) {
-        failures.push(error);
-    }
-    if let Err(error) = sync_directory(candidates_root) {
-        failures.push(error);
-    }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(failures.join(" "))
-    }
+    require_current_directory_identity(candidate, expected, "Core generation cleanup")?;
+    quarantine_directory(
+        candidate,
+        candidates_root,
+        &trash_root,
+        expected,
+        expected_trash,
+    )
 }
 
 fn cleanup_failed_publication(
     destination: &Path,
-    generations_root: &Path,
-    candidates_root: &Path,
+    cache_root: &Path,
     commit_marker: &Path,
-    commits_root: &Path,
+    expected_identity: FilesystemIdentity,
+    expected_trash_identity: FilesystemIdentity,
 ) -> Result<(), String> {
+    cleanup_failed_publication_with_hook(
+        destination,
+        cache_root,
+        commit_marker,
+        expected_identity,
+        expected_trash_identity,
+        || {},
+    )
+}
+
+fn cleanup_failed_publication_with_hook(
+    destination: &Path,
+    cache_root: &Path,
+    commit_marker: &Path,
+    expected_identity: FilesystemIdentity,
+    expected_trash_identity: FilesystemIdentity,
+    after_marker_revoked: impl FnOnce(),
+) -> Result<(), String> {
+    let generations_root = cache_root.join("generations");
+    let candidates_root = cache_root.join("candidates");
+    let commits_root = cache_root.join("commits");
+    let trash_root = cache_root.join("trash");
     let mut failures = Vec::new();
     // Revoke trust first. A crash after this point can leave an unmarked
     // generation residue, but never evidence that authorizes that residue.
-    if let Err(error) = invalidate_commit_marker_path(commit_marker, commits_root) {
+    // This is deliberately independent of destination identity validation.
+    if let Err(error) = invalidate_commit_marker_path(commit_marker, &commits_root) {
         failures.push(error);
     }
-    if let Err(error) = make_tree_removable(destination) {
-        failures.push(error);
+    if failures.is_empty() {
+        after_marker_revoked();
+        match open_bound_directory(
+            destination,
+            Some(expected_identity),
+            "failed committed Core generation",
+        ) {
+            Ok(directory) => {
+                // macOS requires the moved directory itself to be writable.
+                // Change the mode through the already identity-bound descriptor,
+                // never through a pathname that could have been replaced.
+                if unsafe { libc::fchmod(directory.as_raw_fd(), 0o700) } != 0 {
+                    failures.push(format!(
+                        "Could not prepare failed Core generation quarantine: {}",
+                        std::io::Error::last_os_error()
+                    ));
+                }
+                if let Err(error) = require_current_directory_identity(
+                    destination,
+                    expected_identity,
+                    "failed committed Core generation",
+                ) {
+                    failures.push(format!("{error} Cache reconciliation is required."));
+                }
+            }
+            Err(error) => failures.push(format!("{error} Cache reconciliation is required.")),
+        }
     }
-    if let Err(error) = remove_owned_candidate(destination, generations_root) {
-        failures.push(error);
+    // Atomically detach the exact failed publication from the generation
+    // namespace. Reconciliation performs bounded descriptor-relative deletion
+    // later, so cleanup never recursively follows a replaced destination path.
+    if failures.is_empty() {
+        if let Err(error) = quarantine_directory(
+            destination,
+            &generations_root,
+            &trash_root,
+            expected_identity,
+            expected_trash_identity,
+        ) {
+            failures.push(error);
+        }
     }
-    for directory in [generations_root, candidates_root] {
+    for directory in [&generations_root, &candidates_root] {
         if let Err(error) = sync_directory(directory) {
             failures.push(error);
         }
@@ -3923,22 +5067,6 @@ fn invalidate_commit_marker_path(commit_marker: &Path, commits_root: &Path) -> R
     fs::remove_file(commit_marker)
         .map_err(|error| format!("Could not remove stale Core commit evidence: {error}"))?;
     sync_directory(commits_root)
-}
-
-fn remove_owned_candidate(candidate: &Path, candidates_root: &Path) -> Result<(), String> {
-    let metadata = fs::symlink_metadata(candidate)
-        .map_err(|error| format!("Could not inspect redundant Core candidate: {error}"))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err("Redundant Core candidate is not a safe directory.".into());
-    }
-    let resolved = fs::canonicalize(candidate)
-        .map_err(|error| format!("Could not resolve redundant Core candidate: {error}"))?;
-    if resolved != candidate || resolved.parent() != Some(candidates_root) {
-        return Err("Refusing to remove a Core candidate outside the cache.".into());
-    }
-    fs::remove_dir_all(candidate)
-        .map_err(|error| format!("Could not remove redundant Core candidate: {error}"))?;
-    sync_directory(candidates_root)
 }
 
 fn canonical_state_bytes(state: &CoreGenerationCacheState) -> Result<Vec<u8>, String> {
@@ -4004,6 +5132,50 @@ mod tests {
         }
     }
 
+    fn destination_manifest(
+        cache: &CoreGenerationCache,
+        identity: &CoreGenerationIdentity,
+    ) -> PathBuf {
+        cache
+            .generation_path(identity)
+            .unwrap()
+            .join("contracts/manifest.json")
+    }
+
+    fn replace_generation_directory(path: &Path, value: &str) {
+        let backup = path.with_extension(format!("replaced-{}", random_candidate_token().unwrap()));
+        fs::rename(path, backup).unwrap();
+        fs::create_dir(path).unwrap();
+        populate(path, value);
+        seal_closed_tree(path).unwrap();
+    }
+
+    fn mutate_generation_file_in_place(path: &Path, value: &str) {
+        let manifest = path.join("contracts/manifest.json");
+        fs::set_permissions(&manifest, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&manifest, value).unwrap();
+        fs::set_permissions(&manifest, fs::Permissions::from_mode(0o400)).unwrap();
+    }
+
+    fn remove_generation_directory_for_test(path: &Path) {
+        make_tree_removable(path).unwrap();
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    fn replace_generation_with_symlink_for_test(path: &Path) {
+        let backup = path.with_extension(format!("linked-{}", random_candidate_token().unwrap()));
+        fs::rename(path, &backup).unwrap();
+        std::os::unix::fs::symlink(&backup, path).unwrap();
+    }
+
+    fn add_special_generation_child_for_test(path: &Path) {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        let fifo = path.join("special-fifo");
+        let fifo = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        fs::set_permissions(path, fs::Permissions::from_mode(0o500)).unwrap();
+    }
+
     fn cleanup(root: &Path) {
         fn make_writable(path: &Path) {
             let Ok(metadata) = fs::symlink_metadata(path) else {
@@ -4020,6 +5192,29 @@ mod tests {
         }
         make_writable(root);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn run_test_worker_bounded(test_name: &str, environment: &str) {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg(test_name)
+            .arg("--nocapture")
+            .env(environment, "1")
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success());
+                return;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                let _ = child.wait();
+                panic!("bounded cache race worker timed out");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]
@@ -4924,6 +6119,995 @@ mod tests {
     }
 
     #[test]
+    fn already_present_cleanup_preserves_candidate_replacement_during_verification() {
+        let root = temporary_cache("already-present-candidate-replacement");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, '2');
+        let installed = cache
+            .create_candidate("installed", TEST_RESERVATION)
+            .unwrap();
+        populate(&installed, "verified");
+        assert_eq!(
+            cache
+                .commit_candidate(&installed, &generation, verify_value("verified"))
+                .unwrap(),
+            GenerationCommit::Installed
+        );
+
+        let duplicate = cache
+            .create_candidate("duplicate", TEST_RESERVATION)
+            .unwrap();
+        populate(&duplicate, "verified");
+        let displaced = duplicate.with_extension("leased-original");
+        let destination = cache.generation_path(&generation).unwrap();
+        let destination_verifications = AtomicU64::new(0);
+        let result = cache.commit_candidate(&duplicate, &generation, |path| {
+            if path == destination && destination_verifications.fetch_add(1, Ordering::SeqCst) == 0
+            {
+                fs::rename(duplicate.path(), &displaced).unwrap();
+                fs::create_dir(duplicate.path()).unwrap();
+                populate(&duplicate, "replacement");
+            }
+            verify_value("verified")(path)
+        });
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(duplicate.join("contracts/manifest.json")).unwrap(),
+            "replacement"
+        );
+        assert_eq!(
+            fs::read_to_string(displaced.join("contracts/manifest.json")).unwrap(),
+            "verified"
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("contracts/manifest.json")).unwrap(),
+            "verified"
+        );
+        assert!(cache
+            .generation_commit_marker_path(&generation)
+            .unwrap()
+            .is_file());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn commit_and_activation_reject_distinct_identities_reusing_a_sequence() {
+        let root = temporary_cache("duplicate-sequence-admission");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let first = identity(9, 'a');
+        let conflicting = identity(9, 'b');
+
+        let first_candidate = cache.create_candidate("first", 1).unwrap();
+        cache
+            .commit_candidate(&first_candidate, &first, |_| Ok(()))
+            .unwrap();
+        let conflicting_candidate = cache.create_candidate("conflicting", 1).unwrap();
+        let error = cache
+            .commit_candidate(&conflicting_candidate, &conflicting, |_| Ok(()))
+            .unwrap_err();
+        assert!(error.contains("already committed to a different identity"));
+        assert!(!cache.generation_path(&conflicting).unwrap().exists());
+        assert!(!cache
+            .generation_commit_marker_path(&conflicting)
+            .unwrap()
+            .exists());
+
+        let conflicting_path = cache.generation_path(&conflicting).unwrap();
+        fs::create_dir(&conflicting_path).unwrap();
+        fs::set_permissions(&conflicting_path, fs::Permissions::from_mode(0o500)).unwrap();
+        let marker = cache.generation_commit_marker_path(&conflicting).unwrap();
+        fs::write(&marker, generation_commit_marker_bytes(&conflicting)).unwrap();
+        fs::set_permissions(&marker, fs::Permissions::from_mode(0o400)).unwrap();
+        assert!(cache
+            .begin_activation(&conflicting, "conflicting", 0, |_| Ok(()))
+            .unwrap_err()
+            .contains("already committed to a different identity"));
+        assert_eq!(
+            cache.load_state().unwrap(),
+            CoreGenerationCacheState::default()
+        );
+        cleanup(&root);
+    }
+
+    #[test]
+    fn sequence_admission_fails_closed_when_protected_state_loses_durable_evidence() {
+        let root = temporary_cache("sequence-missing-protected-evidence");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let active = identity(1, 'a');
+        let candidate = cache.create_candidate("active", TEST_RESERVATION).unwrap();
+        populate(&candidate, "active");
+        cache
+            .commit_candidate(&candidate, &active, verify_value("active"))
+            .unwrap();
+        let pending = cache
+            .begin_activation(&active, "active", 0, verify_value("active"))
+            .unwrap();
+        cache
+            .acknowledge_healthy(&active, "active", pending.revision, verify_value("active"))
+            .unwrap();
+        fs::remove_file(cache.generation_commit_marker_path(&active).unwrap()).unwrap();
+
+        let conflicting = identity(1, 'b');
+        let candidate = cache
+            .create_candidate("conflicting", TEST_RESERVATION)
+            .unwrap();
+        populate(&candidate, "conflicting");
+        let error = cache
+            .commit_candidate(&candidate, &conflicting, verify_value("conflicting"))
+            .unwrap_err();
+        assert!(error.contains("no valid durable commit evidence"));
+        assert!(!cache.generation_path(&conflicting).unwrap().exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn commit_rejects_candidate_and_destination_replacement_without_trust_publication() {
+        for replace_destination in [false, true] {
+            let root = temporary_cache(if replace_destination {
+                "commit-destination-replacement"
+            } else {
+                "commit-candidate-replacement"
+            });
+            let cache = CoreGenerationCache::open(&root).unwrap();
+            let generation = identity(1, if replace_destination { 'c' } else { 'd' });
+            let candidate = cache.create_candidate("replace", TEST_RESERVATION).unwrap();
+            populate(&candidate, "verified");
+            let calls = AtomicU64::new(0);
+            let error = cache
+                .commit_candidate(&candidate, &generation, |path| {
+                    let value = fs::read_to_string(path.join("contracts/manifest.json"))
+                        .map_err(|error| error.to_string())?;
+                    if value != "verified" {
+                        return Err("candidate content mismatch".into());
+                    }
+                    let call = calls.fetch_add(1, Ordering::SeqCst);
+                    if (!replace_destination && call == 0) || (replace_destination && call == 2) {
+                        replace_generation_directory(path, "verified");
+                    }
+                    Ok(())
+                })
+                .unwrap_err();
+            assert!(
+                error.contains("identity changed")
+                    || error.contains("while leased")
+                    || error.contains("child identity, metadata, or content changed")
+            );
+            if replace_destination {
+                assert!(error.contains("Cache reconciliation is required"));
+                assert_eq!(
+                    fs::read_to_string(destination_manifest(&cache, &generation)).unwrap(),
+                    "verified"
+                );
+            }
+            assert!(!cache
+                .generation_commit_marker_path(&generation)
+                .unwrap()
+                .exists());
+            assert_eq!(
+                cache.load_state().unwrap(),
+                CoreGenerationCacheState::default()
+            );
+            cleanup(&root);
+        }
+    }
+
+    #[test]
+    fn publication_fchmod_does_not_follow_candidate_or_destination_replacement() {
+        for point in ["before-candidate-fchmod", "before-destination-fchmod"] {
+            let root = temporary_cache(point);
+            let external_root = temporary_cache(&format!("{point}-external"));
+            fs::create_dir(&external_root).unwrap();
+            let external_file = external_root.join("outside");
+            fs::write(&external_file, "outside").unwrap();
+            fs::set_permissions(&external_file, fs::Permissions::from_mode(0o600)).unwrap();
+            fs::set_permissions(&external_root, fs::Permissions::from_mode(0o700)).unwrap();
+            let cache = CoreGenerationCache::open(&root).unwrap();
+            let generation = identity(1, 'b');
+            let candidate = cache
+                .create_candidate("generation", TEST_RESERVATION)
+                .unwrap();
+            populate(&candidate, "inside");
+
+            let _process_guard = CACHE_TRANSACTION_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let _file_guard = cache.acquire_lock().unwrap();
+            cache.require_valid_candidate_lease(&candidate).unwrap();
+            let replaced = std::cell::Cell::new(false);
+            let error = cache
+                .commit_candidate_locked(
+                    &candidate,
+                    &generation,
+                    verify_value("inside"),
+                    |reached, path| {
+                        if reached == point && !replaced.replace(true) {
+                            let backup = path.with_extension(format!(
+                                "replacement-{}",
+                                random_candidate_token().unwrap()
+                            ));
+                            fs::rename(path, backup).unwrap();
+                            std::os::unix::fs::symlink(&external_root, path).unwrap();
+                        }
+                    },
+                )
+                .unwrap_err();
+            assert!(replaced.get());
+            assert!(error.contains("identity") || error.contains("reconciliation"));
+            assert_eq!(fs::read_to_string(&external_file).unwrap(), "outside");
+            assert_eq!(
+                fs::metadata(&external_root).unwrap().permissions().mode() & 0o7777,
+                0o700
+            );
+            assert_eq!(
+                fs::metadata(&external_file).unwrap().permissions().mode() & 0o7777,
+                0o600
+            );
+            assert!(!cache
+                .generation_commit_marker_path(&generation)
+                .unwrap()
+                .exists());
+            assert_eq!(
+                cache.load_state_unlocked().unwrap(),
+                CoreGenerationCacheState::default()
+            );
+            drop(_file_guard);
+            drop(_process_guard);
+            cleanup(&root);
+            cleanup(&external_root);
+        }
+    }
+
+    #[test]
+    fn failed_publication_revokes_marker_before_preserving_a_post_revoke_replacement() {
+        let root = temporary_cache("failed-publication-post-marker-replacement");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, 'c');
+        let candidate = cache
+            .create_candidate("generation", TEST_RESERVATION)
+            .unwrap();
+        populate(&candidate, "original");
+        cache
+            .commit_candidate(&candidate, &generation, verify_value("original"))
+            .unwrap();
+        let destination = cache.generation_path(&generation).unwrap();
+        let expected = candidate_directory_identity(&destination).unwrap().unwrap();
+        let marker = cache.generation_commit_marker_path(&generation).unwrap();
+
+        let error = cleanup_failed_publication_with_hook(
+            &destination,
+            &cache.root,
+            &marker,
+            expected,
+            cache.trash_identity,
+            || replace_generation_directory(&destination, "replacement"),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("Cache reconciliation is required"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("contracts/manifest.json")).unwrap(),
+            "replacement"
+        );
+        assert!(!marker.exists());
+        assert_eq!(
+            cache.load_state().unwrap(),
+            CoreGenerationCacheState::default()
+        );
+        cleanup(&root);
+    }
+
+    #[test]
+    fn already_present_replacement_revokes_commit_evidence() {
+        let root = temporary_cache("already-present-replacement");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, 'e');
+        let first = cache.create_candidate("first", TEST_RESERVATION).unwrap();
+        populate(&first, "verified");
+        cache
+            .commit_candidate(&first, &generation, verify_value("verified"))
+            .unwrap();
+
+        let duplicate = cache
+            .create_candidate("duplicate", TEST_RESERVATION)
+            .unwrap();
+        populate(&duplicate, "verified");
+        let calls = AtomicU64::new(0);
+        assert!(cache
+            .commit_candidate(&duplicate, &generation, |path| {
+                let value = fs::read_to_string(path.join("contracts/manifest.json"))
+                    .map_err(|error| error.to_string())?;
+                if value != "verified" {
+                    return Err("candidate content mismatch".into());
+                }
+                if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    replace_generation_directory(path, "verified");
+                }
+                Ok(())
+            })
+            .is_err());
+        assert!(!cache
+            .generation_commit_marker_path(&generation)
+            .unwrap()
+            .exists());
+        assert_eq!(
+            cache.load_state().unwrap(),
+            CoreGenerationCacheState::default()
+        );
+        cleanup(&root);
+    }
+
+    #[test]
+    fn already_present_transient_verifier_failure_preserves_active_and_fallback_trust() {
+        let root = temporary_cache("already-present-transient-failure");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let first = identity(1, '1');
+        let second = identity(2, '2');
+        for (operation, generation, value) in
+            [("first", &first, "first"), ("second", &second, "second")]
+        {
+            let candidate = cache.create_candidate(operation, TEST_RESERVATION).unwrap();
+            populate(&candidate, value);
+            cache
+                .commit_candidate(&candidate, generation, verify_value(value))
+                .unwrap();
+        }
+        let pending = cache
+            .begin_activation(&first, "first", 0, verify_value("first"))
+            .unwrap();
+        let first_active = cache
+            .acknowledge_healthy(&first, "first", pending.revision, verify_value("first"))
+            .unwrap();
+        let pending = cache
+            .begin_activation(
+                &second,
+                "second",
+                first_active.revision,
+                verify_value("second"),
+            )
+            .unwrap();
+        let state = cache
+            .acknowledge_healthy(&second, "second", pending.revision, verify_value("second"))
+            .unwrap();
+
+        for (operation, generation, expected, transient) in [
+            ("retry-active", &second, "second", "verification cancelled"),
+            (
+                "retry-lkg",
+                &first,
+                "first",
+                "temporary verifier I/O failure",
+            ),
+        ] {
+            let duplicate = cache.create_candidate(operation, TEST_RESERVATION).unwrap();
+            populate(&duplicate, expected);
+            let destination = cache.generation_path(generation).unwrap();
+            let error = cache
+                .commit_candidate(&duplicate, generation, |path| {
+                    if path == destination {
+                        Err(transient.into())
+                    } else {
+                        verify_value(expected)(path)
+                    }
+                })
+                .unwrap_err();
+            assert!(error.contains(transient));
+            assert!(cache
+                .generation_commit_marker_path(generation)
+                .unwrap()
+                .is_file());
+            assert_eq!(cache.load_state().unwrap(), state);
+        }
+        cleanup(&root);
+    }
+
+    #[test]
+    fn already_present_rejects_same_inode_child_mutation_and_revokes_trust() {
+        let root = temporary_cache("already-present-child-mutation");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, '3');
+        let first = cache.create_candidate("first", TEST_RESERVATION).unwrap();
+        populate(&first, "before");
+        cache
+            .commit_candidate(&first, &generation, verify_value("before"))
+            .unwrap();
+        let duplicate = cache
+            .create_candidate("duplicate", TEST_RESERVATION)
+            .unwrap();
+        populate(&duplicate, "before");
+        let destination = cache.generation_path(&generation).unwrap();
+        let inode = fs::metadata(destination_manifest(&cache, &generation))
+            .unwrap()
+            .ino();
+        let calls = AtomicU64::new(0);
+        let error = cache
+            .commit_candidate(&duplicate, &generation, |path| {
+                if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    mutate_generation_file_in_place(path, "after!");
+                }
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(error.contains("child identity, metadata, or content changed"));
+        assert_eq!(
+            fs::metadata(destination.join("contracts/manifest.json"))
+                .unwrap()
+                .ino(),
+            inode
+        );
+        assert!(!cache
+            .generation_commit_marker_path(&generation)
+            .unwrap()
+            .exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn already_present_positive_removal_link_and_special_corruption_revoke_trust() {
+        let cases = [
+            ("removed", remove_generation_directory_for_test as fn(&Path)),
+            (
+                "linked",
+                replace_generation_with_symlink_for_test as fn(&Path),
+            ),
+            (
+                "special",
+                add_special_generation_child_for_test as fn(&Path),
+            ),
+        ];
+        for (case, corrupt) in cases {
+            let root = temporary_cache(case);
+            let cache = CoreGenerationCache::open(&root).unwrap();
+            let generation = identity(1, 'd');
+            let first = cache.create_candidate("first", TEST_RESERVATION).unwrap();
+            populate(&first, "before");
+            cache
+                .commit_candidate(&first, &generation, verify_value("before"))
+                .unwrap();
+            let duplicate = cache
+                .create_candidate("duplicate", TEST_RESERVATION)
+                .unwrap();
+            populate(&duplicate, "before");
+            let calls = AtomicU64::new(0);
+            assert!(cache
+                .commit_candidate(&duplicate, &generation, |path| {
+                    if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                        corrupt(path);
+                    }
+                    Ok(())
+                })
+                .is_err());
+            assert!(
+                !cache
+                    .generation_commit_marker_path(&generation)
+                    .unwrap()
+                    .exists(),
+                "commit evidence survived positive {case} corruption"
+            );
+            assert_eq!(
+                cache.load_state().unwrap(),
+                CoreGenerationCacheState::default()
+            );
+            cleanup(&root);
+        }
+    }
+
+    #[test]
+    fn already_present_unreadable_nested_child_metadata_change_revokes_trust() {
+        let root = temporary_cache("unreadable-child-metadata");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, 'e');
+        let first = cache.create_candidate("first", TEST_RESERVATION).unwrap();
+        populate(&first, "before");
+        cache
+            .commit_candidate(&first, &generation, verify_value("before"))
+            .unwrap();
+        let destination = cache.generation_path(&generation).unwrap();
+        let pinned = pin_generation_directory(&destination, "cached Core generation").unwrap();
+        assert!(matches!(
+            classify_indeterminate_snapshot_failure(
+                &destination,
+                &pinned,
+                "cached Core generation",
+                "temporary read failure".into(),
+            ),
+            GenerationIntegrityError::Indeterminate(_)
+        ));
+        fs::set_permissions(
+            destination.join("contracts/manifest.json"),
+            fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+        assert!(matches!(
+            classify_indeterminate_snapshot_failure(
+                &destination,
+                &pinned,
+                "cached Core generation",
+                "permission denied".into(),
+            ),
+            GenerationIntegrityError::Mismatch(_)
+        ));
+        fs::set_permissions(
+            destination.join("contracts/manifest.json"),
+            fs::Permissions::from_mode(0o400),
+        )
+        .unwrap();
+        fs::set_permissions(
+            destination.join("contracts"),
+            fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+        assert!(matches!(
+            classify_indeterminate_snapshot_failure(
+                &destination,
+                &pinned,
+                "cached Core generation",
+                "nested directory permission denied".into(),
+            ),
+            GenerationIntegrityError::Mismatch(_)
+        ));
+        fs::set_permissions(
+            destination.join("contracts"),
+            fs::Permissions::from_mode(0o500),
+        )
+        .unwrap();
+        let duplicate = cache
+            .create_candidate("duplicate", TEST_RESERVATION)
+            .unwrap();
+        populate(&duplicate, "before");
+        let calls = AtomicU64::new(0);
+        assert!(cache
+            .commit_candidate(&duplicate, &generation, |path| {
+                if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    fs::set_permissions(
+                        path.join("contracts/manifest.json"),
+                        fs::Permissions::from_mode(0o000),
+                    )
+                    .unwrap();
+                }
+                Ok(())
+            })
+            .is_err());
+        assert!(!cache
+            .generation_commit_marker_path(&generation)
+            .unwrap()
+            .exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn snapshot_rejects_regular_to_fifo_race_without_blocking() {
+        run_test_worker_bounded(
+            "core_generation_cache::tests::snapshot_rejects_regular_to_fifo_race_worker",
+            "CORE_CACHE_SNAPSHOT_FIFO_WORKER",
+        );
+    }
+
+    #[test]
+    fn snapshot_rejects_regular_to_fifo_race_worker() {
+        if std::env::var_os("CORE_CACHE_SNAPSHOT_FIFO_WORKER").is_none() {
+            return;
+        }
+        let root = temporary_cache("snapshot-regular-to-fifo");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, 'f');
+        let candidate = cache
+            .create_candidate("generation", TEST_RESERVATION)
+            .unwrap();
+        populate(&candidate, "before");
+        cache
+            .commit_candidate(&candidate, &generation, verify_value("before"))
+            .unwrap();
+        let destination = cache.generation_path(&generation).unwrap();
+        let replaced = std::cell::Cell::new(false);
+        let result = snapshot_generation_tree_integrity_with_hook(
+            &destination,
+            "raced Core generation",
+            |path| {
+                if path.ends_with("contracts/manifest.json") && !replaced.replace(true) {
+                    let parent = path.parent().unwrap();
+                    fs::set_permissions(parent, fs::Permissions::from_mode(0o700)).unwrap();
+                    fs::remove_file(path).unwrap();
+                    let fifo = CString::new(path.as_os_str().as_bytes()).unwrap();
+                    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o400) }, 0);
+                    fs::set_permissions(parent, fs::Permissions::from_mode(0o500)).unwrap();
+                }
+            },
+        );
+        assert!(replaced.get());
+        assert!(matches!(result, Err(GenerationIntegrityError::Mismatch(_))));
+        cleanup(&root);
+    }
+
+    #[test]
+    fn sync_rejects_regular_to_fifo_race_without_blocking_or_commit() {
+        run_test_worker_bounded(
+            "core_generation_cache::tests::sync_rejects_regular_to_fifo_race_worker",
+            "CORE_CACHE_SYNC_FIFO_WORKER",
+        );
+    }
+
+    #[test]
+    fn sync_rejects_regular_to_fifo_race_worker() {
+        if std::env::var_os("CORE_CACHE_SYNC_FIFO_WORKER").is_none() {
+            return;
+        }
+        let root = temporary_cache("sync-regular-to-fifo");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, 'a');
+        let candidate = cache
+            .create_candidate("generation", TEST_RESERVATION)
+            .unwrap();
+        populate(&candidate, "before");
+        let replaced = std::cell::Cell::new(false);
+        let error = sync_closed_tree_with_hook(&candidate, |path| {
+            if path.ends_with("contracts/manifest.json") && !replaced.replace(true) {
+                fs::remove_file(path).unwrap();
+                let fifo = CString::new(path.as_os_str().as_bytes()).unwrap();
+                assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+            }
+        })
+        .unwrap_err();
+        assert!(replaced.get());
+        assert!(error.contains("changed while it was opened"));
+        assert!(!cache.generation_path(&generation).unwrap().exists());
+        assert!(!cache
+            .generation_commit_marker_path(&generation)
+            .unwrap()
+            .exists());
+        cache.abort_candidate(&candidate).unwrap();
+        cleanup(&root);
+    }
+
+    #[test]
+    fn descriptor_relative_seal_does_not_follow_file_or_directory_replacement_symlinks() {
+        // Regular child replacement.
+        let root = temporary_cache("seal-file-symlink");
+        let external_root = temporary_cache("seal-file-external");
+        fs::create_dir(&external_root).unwrap();
+        let external = external_root.join("outside");
+        fs::write(&external, "outside").unwrap();
+        fs::set_permissions(&external, fs::Permissions::from_mode(0o600)).unwrap();
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let candidate = cache
+            .create_candidate("generation", TEST_RESERVATION)
+            .unwrap();
+        populate(&candidate, "inside");
+        let replaced = std::cell::Cell::new(false);
+        assert!(
+            seal_closed_tree_bound_with_hook(&candidate, |name, after_open| {
+                if !after_open && name.to_bytes() == b"manifest.json" && !replaced.replace(true) {
+                    let manifest = candidate.join("contracts/manifest.json");
+                    fs::remove_file(&manifest).unwrap();
+                    std::os::unix::fs::symlink(&external, manifest).unwrap();
+                }
+            })
+            .is_err()
+        );
+        assert!(replaced.get());
+        assert_eq!(fs::read_to_string(&external).unwrap(), "outside");
+        assert_eq!(
+            fs::metadata(&external).unwrap().permissions().mode() & 0o7777,
+            0o600
+        );
+        cache.abort_candidate(&candidate).unwrap();
+        cleanup(&root);
+        cleanup(&external_root);
+
+        // Queued directory replacement.
+        let root = temporary_cache("seal-directory-symlink");
+        let external_root = temporary_cache("seal-directory-external");
+        fs::create_dir(&external_root).unwrap();
+        fs::write(external_root.join("outside"), "outside").unwrap();
+        fs::set_permissions(&external_root, fs::Permissions::from_mode(0o700)).unwrap();
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let candidate = cache
+            .create_candidate("generation", TEST_RESERVATION)
+            .unwrap();
+        populate(&candidate, "inside");
+        let replaced = std::cell::Cell::new(false);
+        assert!(
+            seal_closed_tree_bound_with_hook(&candidate, |name, after_open| {
+                if !after_open && name.to_bytes() == b"contracts" && !replaced.replace(true) {
+                    let contracts = candidate.join("contracts");
+                    fs::rename(&contracts, candidate.join("contracts-backup")).unwrap();
+                    std::os::unix::fs::symlink(&external_root, contracts).unwrap();
+                }
+            })
+            .is_err()
+        );
+        assert!(replaced.get());
+        assert_eq!(
+            fs::read_to_string(external_root.join("outside")).unwrap(),
+            "outside"
+        );
+        assert_eq!(
+            fs::metadata(&external_root).unwrap().permissions().mode() & 0o7777,
+            0o700
+        );
+        cache.abort_candidate(&candidate).unwrap();
+        cleanup(&root);
+        cleanup(&external_root);
+    }
+
+    #[test]
+    fn descriptor_relative_seal_rebinds_file_and_directory_after_open() {
+        let root = temporary_cache("seal-file-after-open");
+        let external_root = temporary_cache("seal-file-after-open-external");
+        fs::create_dir(&external_root).unwrap();
+        let external = external_root.join("outside");
+        fs::write(&external, "outside").unwrap();
+        fs::set_permissions(&external, fs::Permissions::from_mode(0o600)).unwrap();
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let candidate = cache
+            .create_candidate("generation", TEST_RESERVATION)
+            .unwrap();
+        populate(&candidate, "inside");
+        let replaced = std::cell::Cell::new(false);
+        assert!(
+            seal_closed_tree_bound_with_hook(&candidate, |name, after_open| {
+                if after_open && name.to_bytes() == b"manifest.json" && !replaced.replace(true) {
+                    let manifest = candidate.join("contracts/manifest.json");
+                    fs::rename(&manifest, candidate.join("contracts/original.json")).unwrap();
+                    std::os::unix::fs::symlink(&external, manifest).unwrap();
+                }
+            })
+            .is_err()
+        );
+        assert!(replaced.get());
+        assert_eq!(fs::read_to_string(&external).unwrap(), "outside");
+        assert_eq!(
+            fs::metadata(&external).unwrap().permissions().mode() & 0o7777,
+            0o600
+        );
+        cache.abort_candidate(&candidate).unwrap();
+        cleanup(&root);
+        cleanup(&external_root);
+
+        let root = temporary_cache("seal-directory-after-open");
+        let external_root = temporary_cache("seal-directory-after-open-external");
+        fs::create_dir(&external_root).unwrap();
+        fs::write(external_root.join("outside"), "outside").unwrap();
+        fs::set_permissions(&external_root, fs::Permissions::from_mode(0o700)).unwrap();
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let candidate = cache
+            .create_candidate("generation", TEST_RESERVATION)
+            .unwrap();
+        populate(&candidate, "inside");
+        let replaced = std::cell::Cell::new(false);
+        assert!(
+            seal_closed_tree_bound_with_hook(&candidate, |name, after_open| {
+                if after_open && name.to_bytes() == b"contracts" && !replaced.replace(true) {
+                    let contracts = candidate.join("contracts");
+                    fs::rename(&contracts, candidate.join("contracts-original")).unwrap();
+                    std::os::unix::fs::symlink(&external_root, contracts).unwrap();
+                }
+            })
+            .is_err()
+        );
+        assert!(replaced.get());
+        assert_eq!(
+            fs::read_to_string(external_root.join("outside")).unwrap(),
+            "outside"
+        );
+        assert_eq!(
+            fs::metadata(&external_root).unwrap().permissions().mode() & 0o7777,
+            0o700
+        );
+        cache.abort_candidate(&candidate).unwrap();
+        cleanup(&root);
+        cleanup(&external_root);
+    }
+
+    #[test]
+    fn identity_bound_candidate_cleanup_does_not_follow_replacement_symlinks() {
+        for replace_directory in [false, true] {
+            let root = temporary_cache(if replace_directory {
+                "cleanup-directory-symlink"
+            } else {
+                "cleanup-file-symlink"
+            });
+            let external_root = temporary_cache(if replace_directory {
+                "cleanup-directory-external"
+            } else {
+                "cleanup-file-external"
+            });
+            fs::create_dir(&external_root).unwrap();
+            let external_file = external_root.join("outside");
+            fs::write(&external_file, "outside").unwrap();
+            fs::set_permissions(&external_file, fs::Permissions::from_mode(0o600)).unwrap();
+            fs::set_permissions(&external_root, fs::Permissions::from_mode(0o700)).unwrap();
+            let cache = CoreGenerationCache::open(&root).unwrap();
+            let candidate = cache
+                .create_candidate("generation", TEST_RESERVATION)
+                .unwrap();
+            populate(&candidate, "inside");
+            cleanup_candidate_tree_with_hook(&candidate, &cache.root.join("candidates"), || {
+                if replace_directory {
+                    let contracts = candidate.join("contracts");
+                    fs::rename(&contracts, candidate.join("contracts-original")).unwrap();
+                    std::os::unix::fs::symlink(&external_root, contracts).unwrap();
+                } else {
+                    let manifest = candidate.join("contracts/manifest.json");
+                    fs::remove_file(&manifest).unwrap();
+                    std::os::unix::fs::symlink(&external_file, manifest).unwrap();
+                }
+            })
+            .unwrap();
+            assert!(!candidate.exists());
+            assert_eq!(fs::read_to_string(&external_file).unwrap(), "outside");
+            assert_eq!(
+                fs::metadata(&external_file).unwrap().permissions().mode() & 0o7777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(&external_root).unwrap().permissions().mode() & 0o7777,
+                0o700
+            );
+            drop(candidate);
+            cleanup(&root);
+            cleanup(&external_root);
+        }
+    }
+
+    #[test]
+    fn private_directory_fchmod_does_not_follow_root_child_or_candidate_replacements() {
+        for role in ["root", "child"] {
+            let container = temporary_cache(&format!("private-{role}-container"));
+            let external = temporary_cache(&format!("private-{role}-external"));
+            fs::create_dir(&container).unwrap();
+            let target = container.join(role);
+            fs::create_dir(&target).unwrap();
+            fs::create_dir(&external).unwrap();
+            fs::write(external.join("outside"), "outside").unwrap();
+            fs::set_permissions(&external, fs::Permissions::from_mode(0o755)).unwrap();
+            let error = set_private_directory_permissions_with_hook(&target, || {
+                fs::rename(&target, container.join(format!("{role}-original"))).unwrap();
+                std::os::unix::fs::symlink(&external, &target).unwrap();
+            })
+            .unwrap_err();
+            assert!(error.contains("changed before cleanup"));
+            assert_eq!(
+                fs::read_to_string(external.join("outside")).unwrap(),
+                "outside"
+            );
+            assert_eq!(
+                fs::metadata(&external).unwrap().permissions().mode() & 0o7777,
+                0o755
+            );
+            cleanup(&container);
+            cleanup(&external);
+        }
+
+        let root = temporary_cache("private-candidate");
+        let external = temporary_cache("private-candidate-external");
+        fs::create_dir(&external).unwrap();
+        fs::write(external.join("outside"), "outside").unwrap();
+        fs::set_permissions(&external, fs::Permissions::from_mode(0o755)).unwrap();
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let result = cache.create_candidate_with_prepare(
+            "replacement",
+            TEST_RESERVATION,
+            GENERIC_CANDIDATE_FILE_NODES,
+            None,
+            |path, _| {
+                set_private_directory_permissions_with_hook(path, || {
+                    let backup = path.with_extension("original");
+                    fs::rename(path, backup).unwrap();
+                    std::os::unix::fs::symlink(&external, path).unwrap();
+                })
+            },
+            |_| Ok(()),
+        );
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(external.join("outside")).unwrap(),
+            "outside"
+        );
+        assert_eq!(
+            fs::metadata(&external).unwrap().permissions().mode() & 0o7777,
+            0o755
+        );
+        cleanup(&root);
+        cleanup(&external);
+    }
+
+    #[test]
+    fn activation_lifecycle_rejects_same_inode_child_mutation_without_state_publication() {
+        // Begin activation.
+        let root = temporary_cache("begin-child-mutation");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, '4');
+        let candidate = cache
+            .create_candidate("generation", TEST_RESERVATION)
+            .unwrap();
+        populate(&candidate, "before");
+        cache
+            .commit_candidate(&candidate, &generation, verify_value("before"))
+            .unwrap();
+        let calls = AtomicU64::new(0);
+        assert!(cache
+            .begin_activation(&generation, "activate", 0, |path| {
+                if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    mutate_generation_file_in_place(path, "after!");
+                }
+                Ok(())
+            })
+            .is_err());
+        assert_eq!(
+            cache.load_state().unwrap(),
+            CoreGenerationCacheState::default()
+        );
+        cleanup(&root);
+
+        // Health acknowledgement.
+        let root = temporary_cache("ack-child-mutation");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, '5');
+        let candidate = cache
+            .create_candidate("generation", TEST_RESERVATION)
+            .unwrap();
+        populate(&candidate, "before");
+        cache
+            .commit_candidate(&candidate, &generation, verify_value("before"))
+            .unwrap();
+        let pending = cache
+            .begin_activation(&generation, "activate", 0, verify_value("before"))
+            .unwrap();
+        let calls = AtomicU64::new(0);
+        assert!(cache
+            .acknowledge_healthy(&generation, "activate", pending.revision, |path| {
+                if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    mutate_generation_file_in_place(path, "after!");
+                }
+                Ok(())
+            })
+            .is_err());
+        assert_eq!(cache.load_state().unwrap(), pending);
+        cleanup(&root);
+
+        // Rollback.
+        let root = temporary_cache("rollback-child-mutation");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let first = identity(1, '6');
+        let second = identity(2, '7');
+        for (operation, generation, value) in
+            [("first", &first, "first!"), ("second", &second, "second")]
+        {
+            let candidate = cache.create_candidate(operation, TEST_RESERVATION).unwrap();
+            populate(&candidate, value);
+            cache
+                .commit_candidate(&candidate, generation, verify_value(value))
+                .unwrap();
+        }
+        let pending = cache
+            .begin_activation(&first, "first", 0, verify_value("first!"))
+            .unwrap();
+        let active = cache
+            .acknowledge_healthy(&first, "first", pending.revision, verify_value("first!"))
+            .unwrap();
+        let pending = cache
+            .begin_activation(&second, "second", active.revision, verify_value("second"))
+            .unwrap();
+        let active = cache
+            .acknowledge_healthy(&second, "second", pending.revision, verify_value("second"))
+            .unwrap();
+        let calls = AtomicU64::new(0);
+        assert!(cache
+            .rollback_to_last_known_good(&second, active.revision, |path| {
+                if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    mutate_generation_file_in_place(path, "changed");
+                }
+                Ok(())
+            })
+            .is_err());
+        assert_eq!(cache.load_state().unwrap(), active);
+        cleanup(&root);
+    }
+
+    #[test]
     fn activation_rejects_unmarked_publication_and_verified_retry_recovers_it() {
         let root = temporary_cache("interrupted-publication");
         let cache = CoreGenerationCache::open(&root).unwrap();
@@ -4975,7 +7159,7 @@ mod tests {
         assert!(marker.is_file());
 
         make_tree_removable(&destination).unwrap();
-        remove_owned_candidate(&destination, &cache.root.join("generations")).unwrap();
+        cleanup_candidate_tree(&destination, &cache.root.join("generations")).unwrap();
         assert!(marker.is_file());
         let interrupted = cache.create_candidate("fresh", TEST_RESERVATION).unwrap();
         populate(&interrupted, "verified");
@@ -5041,7 +7225,11 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("late verification failed"));
         assert_eq!(fs::read_dir(root.join("candidates")).unwrap().count(), 0);
-        assert_eq!(fs::read_dir(root.join("generations")).unwrap().count(), 0);
+        assert_eq!(
+            fs::read_dir(root.join("generations")).unwrap().count(),
+            0,
+            "{error}"
+        );
         assert_eq!(fs::read_dir(root.join("commits")).unwrap().count(), 0);
 
         assert_eq!(
@@ -5720,12 +7908,16 @@ mod tests {
         let cache = CoreGenerationCache::open(&root).unwrap();
         let first = identity(7, 'a');
         let second = identity(7, 'b');
-        for (operation, generation) in [("duplicate-a", &first), ("duplicate-b", &second)] {
-            let candidate = cache.create_candidate(operation, 1).unwrap();
-            cache
-                .commit_candidate(&candidate, generation, |_| Ok(()))
-                .unwrap();
-        }
+        let candidate = cache.create_candidate("duplicate-a", 1).unwrap();
+        cache
+            .commit_candidate(&candidate, &first, |_| Ok(()))
+            .unwrap();
+        let second_path = cache.generation_path(&second).unwrap();
+        fs::create_dir(&second_path).unwrap();
+        fs::set_permissions(&second_path, fs::Permissions::from_mode(0o500)).unwrap();
+        let second_marker = cache.generation_commit_marker_path(&second).unwrap();
+        fs::write(&second_marker, generation_commit_marker_bytes(&second)).unwrap();
+        fs::set_permissions(&second_marker, fs::Permissions::from_mode(0o400)).unwrap();
 
         assert!(cache.reconcile().is_err());
         for generation in [&first, &second] {
@@ -5962,6 +8154,163 @@ mod tests {
         assert_eq!(later.active.as_ref(), Some(&third));
         assert_eq!(later.last_known_good.as_ref(), Some(&first));
         assert_eq!(later.high_water_sequence, 3);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn activation_health_and_rollback_reject_generation_replacement_without_state_change() {
+        // Activation publication.
+        let root = temporary_cache("activation-generation-replacement");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, '7');
+        let candidate = cache
+            .create_candidate("generation", TEST_RESERVATION)
+            .unwrap();
+        populate(&candidate, "generation");
+        cache
+            .commit_candidate(&candidate, &generation, verify_value("generation"))
+            .unwrap();
+        let calls = AtomicU64::new(0);
+        assert!(cache
+            .begin_activation(&generation, "activate", 0, |path| {
+                let value = fs::read_to_string(path.join("contracts/manifest.json"))
+                    .map_err(|error| error.to_string())?;
+                if value != "generation" {
+                    return Err("generation content mismatch".into());
+                }
+                if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    replace_generation_directory(path, "generation");
+                }
+                Ok(())
+            })
+            .is_err());
+        assert_eq!(
+            cache.load_state().unwrap(),
+            CoreGenerationCacheState::default()
+        );
+        cleanup(&root);
+
+        // Health acknowledgement publication.
+        let root = temporary_cache("health-generation-replacement");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, '8');
+        let candidate = cache
+            .create_candidate("generation", TEST_RESERVATION)
+            .unwrap();
+        populate(&candidate, "generation");
+        cache
+            .commit_candidate(&candidate, &generation, verify_value("generation"))
+            .unwrap();
+        let pending = cache
+            .begin_activation(&generation, "activate", 0, verify_value("generation"))
+            .unwrap();
+        let calls = AtomicU64::new(0);
+        assert!(cache
+            .acknowledge_healthy(&generation, "activate", pending.revision, |path| {
+                let value = fs::read_to_string(path.join("contracts/manifest.json"))
+                    .map_err(|error| error.to_string())?;
+                if value != "generation" {
+                    return Err("generation content mismatch".into());
+                }
+                if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    replace_generation_directory(path, "generation");
+                }
+                Ok(())
+            })
+            .is_err());
+        assert_eq!(cache.load_state().unwrap(), pending);
+        cleanup(&root);
+
+        // Last-known-good rollback publication.
+        let root = temporary_cache("rollback-generation-replacement");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let first = identity(1, '9');
+        let second = identity(2, 'a');
+        for (operation, generation, value) in
+            [("first", &first, "first"), ("second", &second, "second")]
+        {
+            let candidate = cache.create_candidate(operation, TEST_RESERVATION).unwrap();
+            populate(&candidate, value);
+            cache
+                .commit_candidate(&candidate, generation, verify_value(value))
+                .unwrap();
+        }
+        let first_pending = cache
+            .begin_activation(&first, "first", 0, verify_value("first"))
+            .unwrap();
+        let first_active = cache
+            .acknowledge_healthy(
+                &first,
+                "first",
+                first_pending.revision,
+                verify_value("first"),
+            )
+            .unwrap();
+        let second_pending = cache
+            .begin_activation(
+                &second,
+                "second",
+                first_active.revision,
+                verify_value("second"),
+            )
+            .unwrap();
+        let second_active = cache
+            .acknowledge_healthy(
+                &second,
+                "second",
+                second_pending.revision,
+                verify_value("second"),
+            )
+            .unwrap();
+        let calls = AtomicU64::new(0);
+        assert!(cache
+            .rollback_to_last_known_good(&second, second_active.revision, |path| {
+                let value = fs::read_to_string(path.join("contracts/manifest.json"))
+                    .map_err(|error| error.to_string())?;
+                if value != "first" {
+                    return Err("generation content mismatch".into());
+                }
+                if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    replace_generation_directory(path, "first");
+                }
+                Ok(())
+            })
+            .is_err());
+        assert_eq!(cache.load_state().unwrap(), second_active);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn activation_rejects_same_inode_generation_metadata_change() {
+        let root = temporary_cache("activation-generation-metadata-change");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, 'f');
+        let candidate = cache
+            .create_candidate("generation", TEST_RESERVATION)
+            .unwrap();
+        populate(&candidate, "generation");
+        cache
+            .commit_candidate(&candidate, &generation, verify_value("generation"))
+            .unwrap();
+        let calls = AtomicU64::new(0);
+        assert!(cache
+            .begin_activation(&generation, "activate", 0, |path| {
+                let value = fs::read_to_string(path.join("contracts/manifest.json"))
+                    .map_err(|error| error.to_string())?;
+                if value != "generation" {
+                    return Err("generation content mismatch".into());
+                }
+                if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok(())
+            })
+            .is_err());
+        assert_eq!(
+            cache.load_state().unwrap(),
+            CoreGenerationCacheState::default()
+        );
         cleanup(&root);
     }
 
