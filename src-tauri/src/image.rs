@@ -1526,7 +1526,7 @@ pub(crate) fn wait_for_ready(
 
 pub(crate) fn export_marker_image_blocking(
     app: tauri::AppHandle,
-    reveal_in_finder: bool,
+    _reveal_in_finder: bool,
 ) -> Result<ExportedImage, String> {
     let manager_state = app.state::<Mutex<ApplianceManager>>();
     let (mut session, cancel) = {
@@ -1743,7 +1743,7 @@ pub(crate) fn export_marker_image_blocking(
         partial_guard.armed = false;
         manifest_guard.armed = false;
         #[cfg(target_os = "macos")]
-        if reveal_in_finder {
+        if _reveal_in_finder {
             let _ = Command::new("open").arg("-R").arg(&final_path).spawn();
         }
         Ok(ExportedImage {

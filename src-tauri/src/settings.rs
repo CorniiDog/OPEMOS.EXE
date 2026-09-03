@@ -608,12 +608,11 @@ pub(crate) async fn get_github_maintainer_status() -> Result<GithubMaintainerSta
 #[tauri::command]
 pub(crate) async fn connect_github_maintainer() -> Result<GithubMaintainerStatus, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let gh = find_binary("gh").ok_or(
-            "GitHub CLI is not available. Install it for development; release packages will bundle it.",
-        )?;
-
         #[cfg(target_os = "macos")]
         {
+            let gh = find_binary("gh").ok_or(
+                "GitHub CLI is not available. Install it for development; release packages will bundle it.",
+            )?;
             let quoted_gh = format!("'{}'", gh.to_string_lossy().replace('\'', "'\\''"));
             let terminal_command = format!(
                 "{quoted_gh} auth login --hostname github.com --git-protocol https --web --clipboard --skip-ssh-key"

@@ -1104,7 +1104,7 @@ fn validate_core_module_verification_failure(value: &serde_json::Value) -> Resul
     };
     let nullable_unsigned = |field: Option<&serde_json::Value>| {
         field.is_some_and(|value| {
-            value.is_null() || value.as_u64().is_some_and(|n| n <= u32::MAX.into())
+            value.is_null() || value.as_u64().is_some_and(|n| n <= u64::from(u32::MAX))
         })
     };
     for mismatch in mismatches {
