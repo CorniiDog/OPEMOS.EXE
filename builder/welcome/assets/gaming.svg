@@ -21,8 +21,8 @@
   <circle id="button-bottom" cx="350" cy="190" r="8" fill="#78da70"/>
   <circle id="steam-button" cx="260" cy="153" r="10" fill="#0d2633" stroke="#dff5fb" stroke-opacity=".7" stroke-width="3"/>
   <path d="M214 148h14m64 0h14" stroke="#9ec4d3" stroke-width="5" stroke-linecap="round"/>
-  <circle id="left-stick" cx="220" cy="195" r="14" fill="#dff5fb" fill-opacity=".92" stroke="#57c4fb" stroke-width="4"/>
-  <circle id="right-stick" cx="300" cy="195" r="14" fill="#e7f9e3" fill-opacity=".92" stroke="#78da70" stroke-width="4"/>
+  <circle id="left-stick" cx="220" cy="195" r="14" fill="#0d2633" stroke="#57c4fb" stroke-width="4"/>
+  <circle id="right-stick" cx="300" cy="195" r="14" fill="#0d2633" stroke="#78da70" stroke-width="4"/>
   <rect id="left-trackpad" x="170" y="220" width="64" height="54" rx="13" transform="rotate(6 202 247)" fill="#0d2633" stroke="#57c4fb" stroke-opacity=".75" stroke-width="4"/>
   <rect id="right-trackpad" x="286" y="220" width="64" height="54" rx="13" transform="rotate(-6 318 247)" fill="#0d2633" stroke="#78da70" stroke-opacity=".75" stroke-width="4"/>
 </svg>

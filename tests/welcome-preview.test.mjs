@@ -159,6 +159,9 @@ test("welcome illustrations preserve balanced geometry and intentional layering"
 
   const leftTrackpad = elementWithId(gaming, "left-trackpad");
   const rightTrackpad = elementWithId(gaming, "right-trackpad");
+  const fillAttribute = (element) => element.match(/\bfill="([^"]+)"/)?.[1];
+  assert.equal(fillAttribute(leftStick), fillAttribute(leftTrackpad));
+  assert.equal(fillAttribute(rightStick), fillAttribute(rightTrackpad));
   assert.equal(numericAttribute(leftTrackpad, "width"), numericAttribute(rightTrackpad, "width"));
   assert.equal(numericAttribute(leftTrackpad, "height"), numericAttribute(rightTrackpad, "height"));
   assert.equal(
