@@ -113,8 +113,20 @@ test("image selection is transactional across plain and completed outputs", () =
   assert.match(script, /selectionError = String\(error\);[\s\S]*Choose another SteamOS image[\s\S]*elements\.dropMessage\.title = selectionError \|\| "";/);
   assert.match(script, /elements\.usbTarget\.disabled = !hasUsbTargets\(\);/);
   assert.match(script, /if \(completedOutput\?\.path \|\| !currentImage \|\| !hostReady \|\| !exportMode \|\| buildRunning \|\| usbWriting\) return;/);
-  assert.match(script, /const completionSelectionGeneration = imageSelectionGeneration;[\s\S]*invoke\("inspect_completed_nvidia_image"[\s\S]*completionSelectionGeneration !== imageSelectionGeneration \|\| inputPath !== currentImage/);
+  assert.match(script, /const buildContext = activeBuildContext;[\s\S]*invoke\("inspect_completed_nvidia_image"[\s\S]*buildContext\.selectionGeneration !== imageSelectionGeneration[\s\S]*inputPath !== currentImage/);
   assert.doesNotMatch(script, /buildRunning = true;[\s\S]{0,900}refreshUsbTargets\.textContent = "Scanning…";/);
+});
+
+test("stale build completions cannot overwrite a newer build context", () => {
+  assert.match(script, /import \{ buildCompletionMatches, operationContextMatches \}/);
+  assert.match(script, /let buildContextGeneration = 0;/);
+  assert.match(script, /requestId: crypto\.randomUUID\(\)/);
+  assert.match(script, /activeBuildContext = buildContext;/);
+  assert.match(script, /progressWindow\.emit\("build-requested", \{\s*requestId: buildContext\.requestId,/);
+  assert.match(script, /if \(!buildCompletionMatches\(event\.payload, activeBuildContext\)\) return;/);
+  assert.match(script, /if \(pendingBuildFinished\) return;/);
+  assert.match(script, /selectionGeneration: imageSelectionGeneration/);
+  assert.match(script, /activeBuildContext = null;[\s\S]*buildRunning = false;/);
 });
 
 test("builder readiness expands while no image has been selected", () => {

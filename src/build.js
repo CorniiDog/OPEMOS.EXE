@@ -30,6 +30,7 @@ const progressWindow = getCurrentWebviewWindow();
 installWindowDrag(progressWindow);
 let running = false;
 let activeRequestPath = null;
+let activeRequestId = null;
 let cancelling = false;
 let lastApplianceLog = "";
 let lastNvidiaApplianceLog = "";
@@ -441,9 +442,10 @@ async function finish(state, message, output = null) {
   elements.cancelBuild.classList.add("hidden");
   elements.closeWindow.classList.remove("hidden");
   await progressWindow.emitTo("main", "build-finished", {
-    state, message, output, inputPath: activeRequestPath,
+    state, message, output, inputPath: activeRequestPath, requestId: activeRequestId,
   });
   activeRequestPath = null;
+  activeRequestId = null;
 }
 
 async function stopAllWorkers() {
@@ -498,8 +500,13 @@ async function cancelBuild() {
 
 async function runBuild(request) {
   if (running) return;
+  if (typeof request.requestId !== "string"
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(request.requestId)) {
+    throw new Error("Build request omitted its operation identity.");
+  }
   running = true;
   activeRequestPath = request.path;
+  activeRequestId = request.requestId;
   cancelling = false;
   lastApplianceLog = "";
   lastNvidiaApplianceLog = "";

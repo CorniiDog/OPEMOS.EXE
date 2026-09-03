@@ -1,4 +1,4 @@
-import { operationContextMatches } from "./operation-context.js";
+import { buildCompletionMatches, operationContextMatches } from "./operation-context.js";
 import { installWindowDrag } from "./window-drag.js";
 import {
   installKeyboardBindings,
@@ -63,6 +63,8 @@ let usbWriting = false;
 let buildRunning = false;
 let activeExportMode = "image";
 let pendingBuildFinished = null;
+let buildContextGeneration = 0;
+let activeBuildContext = null;
 let pendingUsbTarget = null;
 let hostReady = false;
 let progressReady = false;
@@ -647,6 +649,13 @@ elements.openMaintainer.addEventListener("click", async () => {
 elements.buildButton.addEventListener("click", async () => {
   const exportMode = selectedExportMode();
   if (completedOutput?.path || !currentImage || !hostReady || !exportMode || buildRunning || usbWriting) return;
+  const buildContext = {
+    generation: ++buildContextGeneration,
+    requestId: crypto.randomUUID(),
+    inputPath: currentImage,
+    selectionGeneration: imageSelectionGeneration,
+  };
+  activeBuildContext = buildContext;
   elements.buildButton.disabled = true;
   buildRunning = true;
   activeExportMode = exportMode;
@@ -674,6 +683,7 @@ elements.buildButton.addEventListener("click", async () => {
     if (!progressWindow) throw new Error("The build progress window is unavailable.");
     await waitForProgressWindow(progressWindow);
     await progressWindow.emit("build-requested", {
+      requestId: buildContext.requestId,
       path: currentImage,
       name: currentImageName,
       sourceSelection: elements.nvidiaSource.value,
@@ -682,6 +692,8 @@ elements.buildButton.addEventListener("click", async () => {
       exportMode: activeExportMode,
     });
   } catch (error) {
+    if (!operationContextMatches(buildContext, activeBuildContext || {})) return;
+    activeBuildContext = null;
     if (activeCompanion === "build-progress") setCompanionMode();
     elements.resultMessage.textContent = String(error);
     elements.resultMessage.className = "result-message error";
@@ -707,22 +719,20 @@ async function revealCompletedImage(path) {
 
 async function applyBuildFinished(completion) {
   const { state, message, output, inputPath } = completion;
-  const completionSelectionGeneration = imageSelectionGeneration;
+  const buildContext = activeBuildContext;
+  if (!buildCompletionMatches(completion, buildContext)
+    || buildContext.selectionGeneration !== imageSelectionGeneration) return;
   elements.resultMessage.textContent = message;
   elements.resultMessage.className = `result-message ${state === "complete" ? "success" : state === "failed" ? "error" : ""}`;
-  buildRunning = false;
-  elements.exportImage.disabled = false;
-  elements.chooseImage.disabled = false;
-  elements.usbTarget.disabled = !hasUsbTargets();
-  elements.refreshUsbTargets.disabled = false;
-  updateBuildButton();
   if (state === "complete" && output?.path && inputPath === currentImage) {
     usbContextGeneration += 1;
     const completed = await invoke("inspect_completed_nvidia_image", {
       path: output.path,
       requestedNvidiaVersion: null,
     }).catch(() => null);
-    if (completionSelectionGeneration !== imageSelectionGeneration || inputPath !== currentImage) return;
+    if (!operationContextMatches(buildContext, activeBuildContext || {})
+      || buildContext.selectionGeneration !== imageSelectionGeneration
+      || inputPath !== currentImage) return;
     applyCompletedOutput(completed || output);
     if (activeExportMode === "image") {
       await revealCompletedImage(output.path);
@@ -755,11 +765,20 @@ async function applyBuildFinished(completion) {
   } else {
     pendingUsbTarget = null;
   }
+  if (!operationContextMatches(buildContext, activeBuildContext || {})) return;
+  activeBuildContext = null;
+  buildRunning = false;
+  elements.exportImage.disabled = false;
+  elements.chooseImage.disabled = false;
+  elements.usbTarget.disabled = !hasUsbTargets();
+  elements.refreshUsbTargets.disabled = false;
+  updateBuildButton();
 }
 
 await mainWindow.listen("build-finished", async (event) => {
-  buildRunning = false;
+  if (!buildCompletionMatches(event.payload, activeBuildContext)) return;
   if (activeCompanion === "build-progress") {
+    if (pendingBuildFinished) return;
     pendingBuildFinished = event.payload;
     return;
   }

@@ -43,3 +43,11 @@ test("normal builds never export a marker-only image", () => {
   assert.match(script, /if \(!nvidiaInstalled\) \{[\s\S]*no output image will be exported/);
   assert.doesNotMatch(script, /continuing with a marker-only output|Marker image complete|Marker image.*ready for USB/);
 });
+
+test("build completion carries the originating request identity", () => {
+  assert.match(script, /let activeRequestId = null;/);
+  assert.match(script, /request\.requestId[\s\S]*Build request omitted its operation identity/);
+  assert.match(script, /activeRequestId = request\.requestId;/);
+  assert.match(script, /"build-finished"[\s\S]*requestId: activeRequestId/);
+  assert.match(script, /activeRequestPath = null;[\s\S]*activeRequestId = null;/);
+});

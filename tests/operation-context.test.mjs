@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { operationContextMatches } from "../src/operation-context.js";
+import { buildCompletionMatches, operationContextMatches } from "../src/operation-context.js";
 
 function deferred() {
   let resolve;
@@ -49,4 +49,45 @@ test("an unchanged operation context accepts its completion", async () => {
   ));
   response.resolve("accepted");
   assert.equal(await completion, "accepted");
+});
+
+test("a stale build completion cannot terminate a newer build for the same image", () => {
+  const previous = {
+    generation: 10,
+    requestId: "request-a",
+    inputPath: "/same-image.raw",
+    selectionGeneration: 3,
+  };
+  const current = {
+    generation: 11,
+    requestId: "request-b",
+    inputPath: "/same-image.raw",
+    selectionGeneration: 3,
+  };
+
+  assert.equal(operationContextMatches(previous, current), false);
+  assert.equal(operationContextMatches(current, { ...current }), true);
+});
+
+test("operation contexts fail closed for absent values", () => {
+  assert.equal(operationContextMatches(null, {}), false);
+  assert.equal(operationContextMatches({}, null), false);
+});
+
+test("build completions require matching identity and a valid terminal shape", () => {
+  const context = { requestId: "request-a", inputPath: "/image.raw" };
+  const complete = {
+    requestId: "request-a",
+    inputPath: "/image.raw",
+    state: "complete",
+    message: "verified",
+    output: { path: "/output.raw" },
+  };
+  assert.equal(buildCompletionMatches(complete, context), true);
+  assert.equal(buildCompletionMatches({ ...complete, requestId: "request-b" }, context), false);
+  assert.equal(buildCompletionMatches({ ...complete, output: null }, context), false);
+  assert.equal(buildCompletionMatches({ ...complete, state: "unknown" }, context), false);
+  assert.equal(buildCompletionMatches({
+    ...complete, state: "failed", output: { path: "/untrusted.raw" },
+  }, context), false);
 });

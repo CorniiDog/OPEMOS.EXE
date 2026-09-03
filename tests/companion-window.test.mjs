@@ -31,7 +31,7 @@ test("both companion close paths release the rear-window interaction lock", () =
 });
 
 test("image-only completion waits for the progress window before changing the main workflow", () => {
-  assert.match(main, /if \(activeCompanion === "build-progress"\) \{\s*pendingBuildFinished = event\.payload;\s*return;/);
+  assert.match(main, /if \(activeCompanion === "build-progress"\) \{\s*if \(pendingBuildFinished\) return;\s*pendingBuildFinished = event\.payload;\s*return;/);
   assert.match(main, /payload\.label === "build-progress" && pendingBuildFinished/);
   assert.match(build, /export_marker_image", \{ revealInFinder: false \}/);
   assert.match(main, /if \(activeExportMode === "image"\) \{\s*await revealCompletedImage\(output\.path\);/);
