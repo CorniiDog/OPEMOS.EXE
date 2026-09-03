@@ -167,10 +167,17 @@ commit `c07de7cf5b40e1a52b1db83126436fda2fe611d4` adds a durable activation-inte
 journal and restart recovery around device-side state publication. Core commit
 `34ee1d22a519fadaccfd12657d56c478316c74d5` adds a development-only injected
 acquisition path into a separate authenticated device download cache without
-changing active state; production networking remains inactive. None changes the
-shared generation identity or 74-case discovery contract. Device acquisition,
-health, persistence, activation, and physical cache implementation remain
-Core-owned; OPEMOS.EXE must not copy that frontend or updater.
+changing active state; Core commit
+`22b2beb5d9e2aabe517fabf0b1e9947ed06ba408` contains transport descendants
+across owner termination through a bundled watchdog. Production networking
+remains inactive. Core commit
+`fda5de265c685b95c3e61daeb084ed7188998f96` clarifies the shared consumer
+handoff without changing schema-1 wire documents: discovery is authenticated by
+canonical external OpenPGP evidence, generation payloads are non-executable
+data, storage accounting includes bounded control artifacts, and persisted
+discovery names are canonical. Device acquisition, health, persistence,
+activation, and physical cache implementation remain Core-owned; OPEMOS.EXE
+must not copy that frontend or updater.
 
 Compatibility fixture only—never use this as a permanent global trust root:
 
