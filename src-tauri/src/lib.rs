@@ -34,6 +34,11 @@ mod contracts;
 #[cfg(unix)]
 #[allow(dead_code)]
 mod core_generation_cache;
+// Inactive, dependency-injected host acquisition. No production transport,
+// trust root, command, or activation path is wired to this module.
+#[cfg(unix)]
+#[allow(dead_code)]
+mod core_generation_acquisition;
 // The migration adapter is exercised before activation. Its production entry
 // points remain deliberately unused until Core publishes an immutable manifest.
 #[allow(dead_code)]

@@ -23,6 +23,7 @@ pub(crate) const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub(crate) const MAX_GENERATION_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 pub(crate) const MAX_SIGNATURE_BYTES: u64 = 1024 * 1024;
 pub(crate) const MAX_TRUST_RECORD_BYTES: u64 = 64 * 1024;
+pub(crate) const MAX_OPENPGP_STATUS_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_GENERATION_CONTROL_BYTES: u64 = DISCOVERY_MAX_BYTES as u64
     + MANIFEST_MAX_BYTES as u64
     + 2 * MAX_SIGNATURE_BYTES
@@ -37,6 +38,18 @@ pub(crate) const OPENPGP_REQUIRED_SIGNATURES: usize = 1;
 pub(crate) const OPENPGP_HASH_ALGORITHM_IDS: [u32; 3] = [8, 9, 10];
 pub(crate) const GENERATION_FILE_MODE: &str = "0400";
 pub(crate) const GENERATION_DIRECTORY_MODE: &str = "0500";
+
+const OPENPGP_REJECTED_STATUS: [&str; 9] = [
+    "BADSIG",
+    "ERRSIG",
+    "EXPKEYSIG",
+    "EXPSIG",
+    "FAILURE",
+    "KEYEXPIRED",
+    "NO_PUBKEY",
+    "REVKEYSIG",
+    "SIGEXPIRED",
+];
 
 const POLICY_ID: &str = "opemos-userspace-lock-generations";
 const DISCOVERY_KIND: &str = "opemos-userspace-lock-discovery";
@@ -149,6 +162,89 @@ pub(crate) struct DurableGenerationIdentity {
 pub(crate) struct GenerationActivationState {
     pub(crate) high_water_sequence: u64,
     pub(crate) active: Option<DurableGenerationIdentity>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OpenPgpValidSignature {
+    pub(crate) signing_fingerprint: String,
+    pub(crate) primary_fingerprint: String,
+    pub(crate) hash_algorithm_id: u32,
+}
+
+/// Parses bounded `gpgv --status-fd` evidence after the verifier exits
+/// successfully. This validates Core's evidence contract; it does not perform
+/// cryptography and must never receive stderr or human-readable diagnostics.
+pub(crate) fn validate_openpgp_status(
+    payload: &[u8],
+    expected_primary_fingerprint: &str,
+) -> Result<OpenPgpValidSignature, String> {
+    if payload.is_empty()
+        || payload.len() > MAX_OPENPGP_STATUS_BYTES
+        || !upper_hex_fingerprint(expected_primary_fingerprint)
+        || !payload.is_ascii()
+    {
+        return Err("OpenPGP signature status is invalid.".into());
+    }
+
+    let text = std::str::from_utf8(payload)
+        .map_err(|_| "OpenPGP signature status is malformed.".to_string())?;
+    let mut valid = Vec::new();
+    let mut rejected = false;
+    // Match Python's `str.splitlines()` over the ASCII-only verifier status
+    // accepted above, including VT/FF and record separators.
+    for line in text.split(|character| {
+        matches!(
+            character,
+            '\n' | '\r' | '\u{000b}' | '\u{000c}' | '\u{001c}' | '\u{001d}' | '\u{001e}'
+        )
+    }) {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        if fields.is_empty() {
+            continue;
+        }
+        if fields.len() < 2 || fields[0] != "[GNUPG:]" {
+            return Err("OpenPGP signature status is malformed.".into());
+        }
+        let keyword = fields[1];
+        rejected |= OPENPGP_REJECTED_STATUS.contains(&keyword);
+        if keyword != "VALIDSIG" {
+            continue;
+        }
+        if fields.len() != 12
+            || !upper_hex_fingerprint(fields[2])
+            || !valid_calendar_date(fields[3])
+            || !decimal(fields[4])
+            || !decimal(fields[5])
+            || fields[6] != OPENPGP_SIGNATURE_VERSION.to_string()
+            || fields[7] != "0"
+            || !positive_decimal(fields[8])
+            || !decimal(fields[9])
+            || fields[10] != "00"
+            || !upper_hex_fingerprint(fields[11])
+        {
+            return Err("OpenPGP VALIDSIG status is unsupported.".into());
+        }
+        let hash_algorithm_id = fields[9]
+            .parse::<u32>()
+            .map_err(|_| "OpenPGP VALIDSIG status is unsupported.".to_string())?;
+        if !OPENPGP_HASH_ALGORITHM_IDS.contains(&hash_algorithm_id) {
+            return Err("OpenPGP VALIDSIG status is unsupported.".into());
+        }
+        valid.push(OpenPgpValidSignature {
+            signing_fingerprint: fields[2].into(),
+            primary_fingerprint: fields[11].into(),
+            hash_algorithm_id,
+        });
+    }
+
+    if rejected
+        || valid.len() != OPENPGP_REQUIRED_SIGNATURES
+        || valid[0].primary_fingerprint != expected_primary_fingerprint
+    {
+        return Err("OpenPGP signature authority is invalid.".into());
+    }
+    Ok(valid.remove(0))
 }
 
 fn parse_canonical<T: DeserializeOwned>(
@@ -625,6 +721,46 @@ fn upper_hex_fingerprint(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'A'..=b'F').contains(&byte))
 }
 
+fn decimal(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn positive_decimal(value: &str) -> bool {
+    value.as_bytes().split_first().is_some_and(|(first, rest)| {
+        (b'1'..=b'9').contains(first) && rest.iter().all(u8::is_ascii_digit)
+    })
+}
+
+fn valid_calendar_date(value: &str) -> bool {
+    if value.len() != 10
+        || value.as_bytes().get(4) != Some(&b'-')
+        || value.as_bytes().get(7) != Some(&b'-')
+    {
+        return false;
+    }
+    let Ok(year) = value[0..4].parse::<u32>() else {
+        return false;
+    };
+    let Ok(month) = value[5..7].parse::<u32>() else {
+        return false;
+    };
+    let Ok(day) = value[8..10].parse::<u32>() else {
+        return false;
+    };
+    if year == 0 {
+        return false;
+    }
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days).contains(&day)
+}
+
 fn plain_filename(value: &str) -> bool {
     if value.is_empty()
         || value.len() > 255
@@ -715,11 +851,13 @@ mod tests {
         fs,
         path::{Path, PathBuf},
         process::Command,
+        sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
 
     const FIXTURE_LIMIT: usize = 512 * 1024;
-    const CONTRACT_COMMIT: &str = "fda5de265c685b95c3e61daeb084ed7188998f96";
+    const CONTRACT_COMMIT: &str = "f2030ab5277c18ae4320747d8e1c4f8120efd0bb";
+    static FIXTURE_EXPORT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -865,6 +1003,49 @@ mod tests {
         manifest: serde_json::Value,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct OpenPgpFixtureEnvelope {
+        schema_version: u32,
+        kind: String,
+        signature_scheme: String,
+        expected_primary_fingerprint: String,
+        limits: OpenPgpFixtureLimits,
+        cases: Vec<OpenPgpFixtureCase>,
+    }
+
+    #[derive(Debug, Deserialize, Eq, PartialEq)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct OpenPgpFixtureLimits {
+        max_status_bytes: usize,
+        max_cases: usize,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct OpenPgpFixtureCase {
+        name: String,
+        expected: OpenPgpFixtureExpected,
+        #[serde(default)]
+        status: Option<String>,
+        #[serde(default)]
+        status_recipe: Option<OpenPgpFixtureRecipe>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct OpenPgpFixtureExpected {
+        accepted: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct OpenPgpFixtureRecipe {
+        kind: String,
+        base_case: String,
+        padding_bytes: usize,
+    }
+
     fn canonical_value(value: &serde_json::Value) -> Vec<u8> {
         let mut bytes = serde_json::to_vec(value).unwrap();
         bytes.push(b'\n');
@@ -999,12 +1180,14 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "opemos-core-generation-fixtures-{}-{nonce}",
-            std::process::id()
+            "opemos-core-generation-fixtures-{}-{nonce}-{}",
+            std::process::id(),
+            FIXTURE_EXPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();
         for relative in [
             "lib/generate_userspace_lock_generation_fixtures.py",
+            "lib/generate_openpgp_status_fixtures.py",
             "lib/userspace_lock_generation_contract.py",
         ] {
             let output = Command::new("git")
@@ -1021,6 +1204,23 @@ mod tests {
             fs::write(destination, output.stdout).unwrap();
         }
         fs::canonicalize(root).unwrap()
+    }
+
+    fn run_fixture_generator(path: &Path) -> Vec<u8> {
+        let output = Command::new("python3")
+            .arg(path)
+            .current_dir("/")
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .output()
+            .expect("run exact Core fixture generator");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        assert!(output.stdout.ends_with(b"\n"));
+        output.stdout
     }
 
     fn exact_case_names() -> HashSet<&'static str> {
@@ -1183,6 +1383,94 @@ mod tests {
     }
 
     #[test]
+    fn local_core_openpgp_status_matrix_matches_rust_contract() {
+        let Some(repository) = local_core_repository() else {
+            eprintln!("skipping local Core OpenPGP fixtures: immutable repository is absent");
+            return;
+        };
+        let exported = export_fixture_sources(&repository);
+        let generator = exported.join("lib/generate_openpgp_status_fixtures.py");
+        let bytes = run_fixture_generator(&generator);
+        assert_eq!(bytes, run_fixture_generator(&generator));
+        assert!(!bytes.is_empty() && bytes.len() <= 256 * 1024);
+        reject_duplicate_contract_keys(&bytes, "Core OpenPGP status fixtures").unwrap();
+        let fixtures: OpenPgpFixtureEnvelope = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(fixtures.schema_version, 1);
+        assert_eq!(
+            fixtures.kind,
+            "opemos-openpgp-status-compatibility-fixtures"
+        );
+        assert_eq!(fixtures.signature_scheme, DISCOVERY_SIGNATURE_SCHEME);
+        assert_eq!(
+            fixtures.limits,
+            OpenPgpFixtureLimits {
+                max_status_bytes: MAX_OPENPGP_STATUS_BYTES,
+                max_cases: 32,
+            }
+        );
+        assert_eq!(fixtures.cases.len(), 16);
+        let expected_names = [
+            "valid-sha256-subkey",
+            "valid-sha384-primary",
+            "valid-sha512-subkey",
+            "weak-sha1",
+            "wrong-primary",
+            "missing-primary",
+            "multiple-valid-signatures",
+            "valid-plus-revoked",
+            "valid-plus-expired",
+            "signature-version-five",
+            "text-signature-class",
+            "lowercase-signing-fingerprint",
+            "invalid-creation-date",
+            "non-status-output",
+            "empty-status",
+            "oversized-status",
+        ]
+        .into_iter()
+        .collect::<HashSet<_>>();
+        assert_eq!(
+            fixtures
+                .cases
+                .iter()
+                .map(|case| case.name.as_str())
+                .collect::<HashSet<_>>(),
+            expected_names
+        );
+        let direct = fixtures
+            .cases
+            .iter()
+            .filter_map(|case| Some((case.name.as_str(), case.status.as_ref()?)))
+            .collect::<HashMap<_, _>>();
+        for case in &fixtures.cases {
+            assert_ne!(case.status.is_some(), case.status_recipe.is_some());
+            let status = if let Some(status) = &case.status {
+                status.as_bytes().to_vec()
+            } else {
+                let recipe = case.status_recipe.as_ref().unwrap();
+                assert_eq!(recipe.kind, "append-padding");
+                let mut status = direct
+                    .get(recipe.base_case.as_str())
+                    .unwrap()
+                    .as_bytes()
+                    .to_vec();
+                status.extend(std::iter::repeat_n(b'X', recipe.padding_bytes));
+                status
+            };
+            let result = validate_openpgp_status(&status, &fixtures.expected_primary_fingerprint);
+            assert_eq!(
+                result.is_ok(),
+                case.expected.accepted,
+                "Core OpenPGP case {} differed",
+                case.name
+            );
+        }
+        assert!(validate_openpgp_status(b"\xff", &fixtures.expected_primary_fingerprint).is_err());
+        assert!(validate_openpgp_status(b"[GNUPG:] NEWSIG\n", &"a".repeat(40)).is_err());
+        fs::remove_dir_all(exported).unwrap();
+    }
+
+    #[test]
     fn local_core_generation_matrix_matches_closed_rust_contract() {
         let Some(repository) = local_core_repository() else {
             eprintln!("skipping local Core generation fixtures: immutable repository is absent");
@@ -1190,21 +1478,7 @@ mod tests {
         };
         let exported = export_fixture_sources(&repository);
         let generator = exported.join("lib/generate_userspace_lock_generation_fixtures.py");
-        let generate = || {
-            let output = Command::new("python3")
-                .arg(&generator)
-                .current_dir("/")
-                .env("PYTHONDONTWRITEBYTECODE", "1")
-                .output()
-                .expect("run Core generation fixture generator");
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            assert!(output.stderr.is_empty());
-            output.stdout
-        };
+        let generate = || run_fixture_generator(&generator);
         let bytes = generate();
         assert_eq!(
             bytes,

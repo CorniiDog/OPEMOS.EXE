@@ -113,10 +113,17 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   unprotected generations to bounded count and byte budgets. Keep this
   disconnected from production until a compatible generation is published
   through an authenticated trust root and bootstrap checkpoint.
+- [x] Add inactive dependency-injected host acquisition that authenticates raw
+  discovery and manifest bytes before parsing, binds the exact installed
+  authority and target, streams bounded payloads into an identity-pinned
+  candidate directory, rehashes the exact disk inventory, and commits without
+  changing active state. This has no production transport, keyring, command, or
+  UI entry point.
 - [x] Consume Core's closed userspace-lock discovery and generation-manifest
   schema-1 models plus all 74 inactive compatibility cases and additive
-  consumer handoff metadata from exact local commit
-  `fda5de265c685b95c3e61daeb084ed7188998f96`. Bind durable cache identity
+  consumer handoff metadata preserved at exact local successor commit
+  `f2030ab5277c18ae4320747d8e1c4f8120efd0bb`. Also consume its separate
+  16-case bounded OpenPGP status matrix. Bind durable cache identity
   to `{sequence, manifestSha256}`, retain a monotonic high-water sequence, and
   keep rollback on the previously healthy generation. Provide fixture-tested,
   root-confined snapshot readers for future staged documents. This is contract
@@ -139,10 +146,13 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   final-image verification.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
-- [ ] After Core pushes `fda5de265c685b95c3e61daeb084ed7188998f96`, repin CI
-  to that exact commit so the new
-  74-case generation matrix runs remotely. A commit pin does not activate its
+- [ ] After Core pushes `f2030ab5277c18ae4320747d8e1c4f8120efd0bb` or a
+  reviewed successor preserving these contracts, repin CI so the 74 generation
+  and 16 OpenPGP cases run remotely. A commit pin does not activate its
   unpublished candidate bundle.
+- [ ] Before production wiring, bind the verifier to an identity-pinned snapshot
+  of the exact installed policy and keyring hashes, and run transport/verifier
+  children in an owned cancellable executor with timeout and descendant reaping.
 - [ ] Repin or activate a generation only after Core’s complete Fedora suite and
   this repository’s unit, integration, cancellation, cleanup, malformed-input,
   lifecycle, ENOSPC, replay/downgrade, and final-image tests pass against the
@@ -180,6 +190,9 @@ data, storage accounting includes bounded control artifacts, and persisted
 discovery names are canonical. Device acquisition, health, persistence,
 activation, and physical cache implementation remain Core-owned; OPEMOS.EXE
 must not copy that frontend or updater.
+Core commit `f2030ab5277c18ae4320747d8e1c4f8120efd0bb` preserves those wire
+documents and adds the separate canonical bounded OpenPGP verifier-status
+contract. It is compatibility evidence, not a production key or endpoint.
 
 Compatibility fixture only—never use this as a permanent global trust root:
 

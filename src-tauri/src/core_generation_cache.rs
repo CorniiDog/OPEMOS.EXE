@@ -1,4 +1,6 @@
-use crate::core_generation_contracts::{MAX_FILES, MAX_GENERATION_BYTES, MAX_LINEAGE_GENERATIONS};
+use crate::core_generation_contracts::{
+    MAX_FILES, MAX_GENERATION_STORAGE_BYTES, MAX_LINEAGE_GENERATIONS,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -33,8 +35,10 @@ const CANDIDATE_LEASE_LIMIT: u64 = 1024;
 const CACHE_DIRECTORY_ENTRY_LIMIT: usize = MAX_FILES + MAX_LINEAGE_GENERATIONS + 256;
 const MAX_TREE_DEPTH: usize = 64;
 const MAX_TREE_NODES: usize = MAX_FILES * 2 + 1;
+const MAX_GENERATION_STORAGE_FILES: usize = MAX_FILES + 5;
 const MAX_RETAINED_GENERATIONS: usize = 4;
-const MAX_TOTAL_GENERATION_BYTES: u64 = MAX_GENERATION_BYTES * MAX_RETAINED_GENERATIONS as u64;
+const MAX_TOTAL_GENERATION_BYTES: u64 =
+    MAX_GENERATION_STORAGE_BYTES * MAX_RETAINED_GENERATIONS as u64;
 const TOMBSTONE_BATCH_OPERATIONS: usize = 256;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -102,6 +106,7 @@ struct CoreGenerationCacheLock {
 pub(crate) struct CandidateLease {
     candidate: PathBuf,
     candidate_identity: FilesystemIdentity,
+    candidate_file: File,
     lease_path: PathBuf,
     lease_identity: FilesystemIdentity,
     lease_file: File,
@@ -183,6 +188,61 @@ impl Drop for CandidateLease {
 impl CandidateLease {
     pub(crate) fn path(&self) -> &Path {
         &self.candidate
+    }
+
+    pub(crate) fn create_file(&self, name: &str) -> std::io::Result<File> {
+        if name.is_empty()
+            || name.len() > 255
+            || name == "."
+            || name == ".."
+            || name.as_bytes().contains(&b'/')
+            || name.as_bytes().contains(&0)
+        {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidInput,
+                "Core generation staged filename is unsafe.",
+            ));
+        }
+        self.require_bound_candidate_file()
+            .map_err(std::io::Error::other)?;
+        let name = CString::new(name).map_err(|_| {
+            std::io::Error::new(
+                ErrorKind::InvalidInput,
+                "Core generation staged filename is unsafe.",
+            )
+        })?;
+        let descriptor = unsafe {
+            libc::openat(
+                self.candidate_file.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if descriptor < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let file = unsafe { File::from_raw_fd(descriptor) };
+        self.require_bound_candidate_file()
+            .map_err(std::io::Error::other)?;
+        Ok(file)
+    }
+
+    fn require_bound_candidate_file(&self) -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt as _;
+        let opened = self.candidate_file.metadata().map_err(|error| {
+            format!("Could not identify leased Core generation candidate: {error}")
+        })?;
+        let path = candidate_directory_identity(&self.candidate)?
+            .ok_or("Leased Core generation candidate disappeared.")?;
+        if !opened.is_dir()
+            || opened.dev() != self.candidate_identity.device
+            || opened.ino() != self.candidate_identity.inode
+            || path != self.candidate_identity
+        {
+            return Err("Leased Core generation candidate identity changed.".into());
+        }
+        Ok(())
     }
 }
 
@@ -417,7 +477,7 @@ impl CoreGenerationCache {
         if !safe_operation_id(operation_id) {
             return Err("Core generation cache operation identity is invalid.".into());
         }
-        if !(1..=MAX_GENERATION_BYTES).contains(&reservation_bytes) {
+        if !(1..=MAX_GENERATION_STORAGE_BYTES).contains(&reservation_bytes) {
             return Err("Core generation candidate reservation is invalid.".into());
         }
         let _process_guard = CACHE_TRANSACTION_LOCK
@@ -451,6 +511,22 @@ impl CoreGenerationCache {
             let candidate_identity = candidate_directory_identity(&path)?.ok_or_else(|| {
                 "New Core generation candidate disappeared during creation.".to_string()
             })?;
+            let mut candidate_options = OpenOptions::new();
+            candidate_options
+                .read(true)
+                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC);
+            let candidate_file = candidate_options.open(&path).map_err(|error| {
+                format!("Could not pin the Core generation candidate directory: {error}")
+            })?;
+            let opened_candidate = candidate_file.metadata().map_err(|error| {
+                format!("Could not identify the opened Core generation candidate: {error}")
+            })?;
+            use std::os::unix::fs::MetadataExt as _;
+            if opened_candidate.dev() != candidate_identity.device
+                || opened_candidate.ino() != candidate_identity.inode
+            {
+                return Err("Core generation candidate changed while opening.".into());
+            }
             let basename = path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -471,7 +547,6 @@ impl CoreGenerationCache {
             let lease_metadata = lease_file.metadata().map_err(|error| {
                 format!("Could not identify the Core generation candidate lease: {error}")
             })?;
-            use std::os::unix::fs::MetadataExt as _;
             let lease_identity = FilesystemIdentity {
                 device: lease_metadata.dev(),
                 inode: lease_metadata.ino(),
@@ -507,6 +582,7 @@ impl CoreGenerationCache {
             let lease = CandidateLease {
                 candidate: path.clone(),
                 candidate_identity,
+                candidate_file,
                 lease_path,
                 lease_identity,
                 lease_file,
@@ -992,7 +1068,7 @@ impl CoreGenerationCache {
                 Err(error) => return Err(error),
             };
             if protected.contains_key(name) {
-                if usage.logical_bytes > MAX_GENERATION_BYTES {
+                if usage.logical_bytes > MAX_GENERATION_STORAGE_BYTES {
                     return Err("Protected Core generation exceeds its size bound.".into());
                 }
                 protected_bytes = protected_bytes
@@ -1148,7 +1224,7 @@ impl CoreGenerationCache {
                 report.removed_generations += 1;
                 continue;
             }
-            if generation_usage[name].logical_bytes > MAX_GENERATION_BYTES {
+            if generation_usage[name].logical_bytes > MAX_GENERATION_STORAGE_BYTES {
                 if protected.contains_key(name) {
                     return Err("A protected Core generation exceeds its size bound.".into());
                 }
@@ -2350,7 +2426,7 @@ fn inspect_reconciliation_lease(
         inode: document.inode,
     };
     if document.candidate_basename != name
-        || !(1..=MAX_GENERATION_BYTES).contains(&document.reservation_bytes)
+        || !(1..=MAX_GENERATION_STORAGE_BYTES).contains(&document.reservation_bytes)
         || candidate_lease_bytes(name, identity, document.reservation_bytes)? != bytes
     {
         return Err("Core generation lease is not canonical.".into());
@@ -2554,7 +2630,7 @@ fn scan_bounded_tree(root: &Path, description: &str) -> Result<TreeUsage, String
                     .files
                     .checked_add(1)
                     .ok_or_else(|| format!("{description} file count overflowed."))?;
-                if usage.files > MAX_FILES {
+                if usage.files > MAX_GENERATION_STORAGE_FILES {
                     return Err(format!("{description} contains too many files."));
                 }
                 usage.logical_bytes = usage
@@ -3337,6 +3413,48 @@ mod tests {
     }
 
     #[test]
+    fn descriptor_relative_staging_rejects_candidate_path_replacement() {
+        let root = temporary_cache("lease-staging-replacement");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let lease = cache.create_candidate("stage-replacement", 11).unwrap();
+        let moved = root.join("candidates/moved-candidate");
+        let outside = root.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::rename(lease.path(), &moved).unwrap();
+        std::os::unix::fs::symlink(&outside, lease.path()).unwrap();
+
+        assert!(lease.create_file("must-not-escape").is_err());
+        assert!(!outside.join("must-not-escape").exists());
+
+        fs::remove_file(lease.path()).unwrap();
+        fs::rename(&moved, lease.path()).unwrap();
+        cache.abort_candidate(&lease).unwrap();
+        cleanup(&root);
+    }
+
+    #[test]
+    fn cache_accepts_manifest_maximum_plus_control_file_envelope() {
+        let root = temporary_cache("storage-file-envelope");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let lease = cache.create_candidate("max-files", 1).unwrap();
+        for index in 0..MAX_GENERATION_STORAGE_FILES {
+            lease
+                .create_file(&format!("entry-{index:04}"))
+                .unwrap()
+                .sync_all()
+                .unwrap();
+        }
+        let generation = identity(1, 'c');
+        assert_eq!(
+            cache
+                .commit_candidate(&lease, &generation, |_| Ok(()))
+                .unwrap(),
+            GenerationCommit::Installed
+        );
+        cleanup(&root);
+    }
+
+    #[test]
     fn dropping_candidate_lease_only_unlocks_and_preserves_residue() {
         let root = temporary_cache("lease-drop");
         let cache = CoreGenerationCache::open(&root).unwrap();
@@ -3470,7 +3588,7 @@ mod tests {
         let path = cache.generation_path(&generation).unwrap();
         fs::create_dir(&path).unwrap();
         let file = File::create(path.join("sparse-residue")).unwrap();
-        file.set_len(MAX_GENERATION_BYTES + 1).unwrap();
+        file.set_len(MAX_GENERATION_STORAGE_BYTES + 1).unwrap();
 
         let report = cache.reconcile().unwrap();
         assert_eq!(report.removed_generations, 1);
@@ -3733,7 +3851,10 @@ mod tests {
         let leases = (0..MAX_RETAINED_GENERATIONS)
             .map(|index| {
                 cache
-                    .create_candidate(&format!("live-budget-{index}"), MAX_GENERATION_BYTES)
+                    .create_candidate(
+                        &format!("live-budget-{index}"),
+                        MAX_GENERATION_STORAGE_BYTES,
+                    )
                     .unwrap()
             })
             .collect::<Vec<_>>();
@@ -4009,7 +4130,7 @@ mod tests {
         assert!(cache.create_candidate("../escape", 1).is_err());
         assert!(cache.create_candidate("invalid-reservation", 0).is_err());
         assert!(cache
-            .create_candidate("invalid-reservation", MAX_GENERATION_BYTES + 1)
+            .create_candidate("invalid-reservation", MAX_GENERATION_STORAGE_BYTES + 1)
             .is_err());
 
         fs::write(root.join("state.json"), b"{\"schemaVersion\":1}\n").unwrap();
