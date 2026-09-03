@@ -39,6 +39,11 @@ mod core_generation_cache;
 #[cfg(unix)]
 #[allow(dead_code)]
 mod core_generation_acquisition;
+// Closed policy/checkpoint parsing and fixture compatibility for Core's
+// inactive bootstrap contract. No production authority or endpoint is wired.
+#[cfg(unix)]
+#[allow(dead_code)]
+mod core_generation_bootstrap;
 // The migration adapter is exercised before activation. Its production entry
 // points remain deliberately unused until Core publishes an immutable manifest.
 #[allow(dead_code)]

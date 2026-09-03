@@ -128,6 +128,10 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   keep rollback on the previously healthy generation. Provide fixture-tested,
   root-confined snapshot readers for future staged documents. This is contract
   testing, not a production trust or release pin.
+- [x] Consume Core's closed bootstrap policy/checkpoint contract and exact
+  49-case compatibility matrix from local commit
+  `0c16ccd7ba68095ea8a6655b0d2bb8b6e97d32f3`. This adds no production key,
+  keyring, endpoint, checkpoint, networking, activation, command, or UI path.
 - [ ] Show the available, selected, active, and last-known-good Core generations
   plus exact-target support in normal and maintainer UI. Preserve explicit source
   intent; never substitute a nearby target, lock, or generation.
@@ -146,10 +150,10 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   final-image verification.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
-- [ ] After Core pushes `f2030ab5277c18ae4320747d8e1c4f8120efd0bb` or a
+- [ ] After Core pushes `0c16ccd7ba68095ea8a6655b0d2bb8b6e97d32f3` or a
   reviewed successor preserving these contracts, repin CI so the 74 generation
-  and 16 OpenPGP cases run remotely. A commit pin does not activate its
-  unpublished candidate bundle.
+  16 OpenPGP, and 49 bootstrap cases run remotely. A commit pin does not
+  activate its unpublished candidate bundle.
 - [ ] Before production wiring, bind the verifier to an identity-pinned snapshot
   of the exact installed policy and keyring hashes, and run transport/verifier
   children in an owned cancellable executor with timeout and descendant reaping.
@@ -193,6 +197,10 @@ must not copy that frontend or updater.
 Core commit `f2030ab5277c18ae4320747d8e1c4f8120efd0bb` preserves those wire
 documents and adds the separate canonical bounded OpenPGP verifier-status
 contract. It is compatibility evidence, not a production key or endpoint.
+Core commit `0c16ccd7ba68095ea8a6655b0d2bb8b6e97d32f3` defines and hardens the closed
+inactive bootstrap policy and checkpoint compatibility contract, including
+portable immutable namespace identities. It ships no production trust material
+or service location.
 
 Compatibility fixture only—never use this as a permanent global trust root:
 
