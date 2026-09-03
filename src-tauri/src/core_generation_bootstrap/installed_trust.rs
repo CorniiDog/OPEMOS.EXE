@@ -54,6 +54,18 @@ pub(crate) struct InstalledTrustPins {
 
 struct InstalledTrustPinsSeal;
 
+#[cfg(test)]
+impl InstalledTrustPins {
+    pub(crate) fn fixture(policy: &[u8], keyring: &[u8], checkpoint: &[u8]) -> Self {
+        Self {
+            policy_sha256: sha256(policy),
+            keyring_sha256: sha256(keyring),
+            checkpoint_sha256: sha256(checkpoint),
+            _seal: InstalledTrustPinsSeal,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FileIdentity {
     dev: u64,

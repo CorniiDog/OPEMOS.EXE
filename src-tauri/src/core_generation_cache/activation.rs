@@ -22,7 +22,7 @@ use std::os::unix::fs::MetadataExt as _;
 const TRUST_RECORD_FILENAME: &str = "acquisition-trust-v1.json";
 const INVENTORY_READ_BUFFER_BYTES: usize = 64 * 1024;
 
-type ExpectedInventory = BTreeMap<String, (u64, String)>;
+pub(super) type ExpectedInventory = BTreeMap<String, (u64, String)>;
 
 /// Begins an inactive host-cache activation using only verifier-created and
 /// checkpoint-sealed capabilities. Production wiring remains intentionally
@@ -268,7 +268,7 @@ where
     cache.save_next_state(state)
 }
 
-fn expected_authenticated_inventory(
+pub(super) fn expected_authenticated_inventory(
     generation: &AuthenticatedGeneration,
 ) -> Result<ExpectedInventory, String> {
     let inputs = generation.request_plan_inputs();
@@ -318,7 +318,7 @@ fn insert_inventory_record(
     Ok(())
 }
 
-fn verify_authenticated_inventory(
+pub(super) fn verify_authenticated_inventory(
     pinned: &PinnedGenerationDirectory,
     expected: &ExpectedInventory,
     cancelled: &impl Fn() -> bool,

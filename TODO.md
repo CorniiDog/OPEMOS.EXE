@@ -148,9 +148,16 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 - [ ] Show the available, selected, active, and last-known-good Core generations
   plus exact-target support in normal and maintainer UI. Preserve explicit source
   intent; never substitute a nearby target, lock, or generation.
-- [ ] Stage only the selected authenticated generation into managed appliances.
-  A routine compatible lock addition must require neither a new EXE binary nor a
-  reimage; an unknown schema or trust-policy version must stop safely.
+- [x] Add an inactive descriptor-bound host-cache-to-appliance staging bridge.
+  It requires the exact pending identity, operation, target, lineage, installed
+  trust, and committed inventory; publishes a canonical non-executable handoff
+  create-only under a destination lock; and supports exact reuse and explicit
+  retirement without exposing a raw path or descriptor.
+- [ ] Wire staged generations into managed appliances only after Core publishes
+  the guest-consumption contract and EXE adds a durable handoff lease/journal
+  for crash/SIGKILL reconciliation. A routine compatible lock addition must
+  require neither a new EXE binary nor a reimage; unknown schema or trust-policy
+  versions must stop safely.
 - [ ] Keep EXE binary updates and Core data-generation updates as distinct
   channels. A data-only lock update must not replace application code, broaden
   trust, or bypass the generation compatibility contract.

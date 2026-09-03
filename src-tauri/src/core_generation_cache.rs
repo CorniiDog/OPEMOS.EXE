@@ -24,6 +24,9 @@ use std::{
 #[cfg(test)]
 pub(crate) mod activation;
 
+#[cfg(test)]
+pub(crate) mod appliance_staging;
+
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
