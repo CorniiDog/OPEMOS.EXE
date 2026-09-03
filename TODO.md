@@ -175,10 +175,15 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 - [x] Add an inactive Unix verifier-child lifecycle substrate with an exact
   executable digest, bounded output, deterministic cancellation/timeout,
   process-group descendant reaping, and descriptor-confined cleanup tests.
-- [ ] Before production wiring, bind the verifier to an identity-pinned snapshot
-  of the exact installed policy, keyring, and checkpoint. Retain those guards
-  through activation and choose a reviewed signed/platform launch path for
-  macOS; the current pathname fallback is lifecycle-test-only.
+- [x] Add an inactive Unix installed-trust adapter that pins an exact private
+  three-file policy/keyring/checkpoint inventory to independent hashes, retains
+  descriptor-bound guards through sealed two-phase verification and pending
+  activation, and rejects replacement, mixed lineage, cancellation, and unsafe
+  filesystem inputs under adversarial tests.
+- [ ] Before production wiring, provide the reviewed install/config channel that
+  creates those independent pins, reject macOS ACL grants in addition to Unix
+  modes, and choose a reviewed signed/platform verifier launch path. Current
+  trust and pathname adapters remain test-only and cannot activate production.
 - [ ] Repin or activate a generation only after Core’s complete Fedora suite and
   this repository’s unit, integration, cancellation, cleanup, malformed-input,
   lifecycle, ENOSPC, replay/downgrade, and final-image tests pass against the

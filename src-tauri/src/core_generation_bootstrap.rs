@@ -20,6 +20,9 @@ use crate::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+#[cfg(all(test, unix))]
+pub(crate) mod installed_trust;
+
 pub(crate) const MAX_POLICY_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CHECKPOINT_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_KEYRING_BYTES: usize = 16 * 1024 * 1024;

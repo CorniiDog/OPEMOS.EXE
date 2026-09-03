@@ -22,7 +22,7 @@ use std::{
 };
 
 #[cfg(test)]
-mod activation;
+pub(crate) mod activation;
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};

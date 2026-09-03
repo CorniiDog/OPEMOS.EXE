@@ -5,11 +5,15 @@
 use super::*;
 use crate::{
     core_generation_bootstrap::{
+        installed_trust::{
+            revalidate_installed_capabilities, InstalledAuthenticatedCheckpoint,
+            InstalledAuthenticatedGeneration,
+        },
         validate_authenticated_bootstrap_activation, AuthenticatedBootstrapCheckpoint,
     },
     core_generation_contracts::{
         DurableGenerationIdentity, GenerationActivationState, GenerationTarget, DISCOVERY_FILENAME,
-        DISCOVERY_SIGNATURE_FILENAME,
+        DISCOVERY_SIGNATURE_FILENAME, MAX_LINEAGE_GENERATIONS,
     },
     core_generation_verifier::AuthenticatedGeneration,
 };
@@ -47,8 +51,67 @@ where
     )
 }
 
+pub(crate) fn begin_installed_authenticated_activation<C>(
+    cache: &CoreGenerationCache,
+    generation: &InstalledAuthenticatedGeneration,
+    checkpoint: &InstalledAuthenticatedCheckpoint,
+    expected_target: &GenerationTarget,
+    lineage: &[&InstalledAuthenticatedGeneration],
+    operation_id: &str,
+    cancelled: C,
+) -> Result<CoreGenerationCacheState, String>
+where
+    C: Fn() -> bool,
+{
+    begin_installed_authenticated_activation_with_hook(
+        cache,
+        generation,
+        checkpoint,
+        expected_target,
+        lineage,
+        operation_id,
+        cancelled,
+        |_| {},
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
-fn begin_authenticated_activation_with_hook<C, H>(
+pub(crate) fn begin_installed_authenticated_activation_with_hook<C, H>(
+    cache: &CoreGenerationCache,
+    generation: &InstalledAuthenticatedGeneration,
+    checkpoint: &InstalledAuthenticatedCheckpoint,
+    expected_target: &GenerationTarget,
+    lineage: &[&InstalledAuthenticatedGeneration],
+    operation_id: &str,
+    cancelled: C,
+    hook: H,
+) -> Result<CoreGenerationCacheState, String>
+where
+    C: Fn() -> bool,
+    H: FnMut(&'static str),
+{
+    if lineage.len() > MAX_LINEAGE_GENERATIONS {
+        return Err("Authenticated lineage exceeds its generation limit.".into());
+    }
+    let raw_lineage = lineage
+        .iter()
+        .map(|predecessor| predecessor.generation())
+        .collect::<Vec<_>>();
+    begin_authenticated_activation_inner(
+        cache,
+        generation.generation(),
+        checkpoint.checkpoint(),
+        expected_target,
+        &raw_lineage,
+        operation_id,
+        &cancelled,
+        hook,
+        || revalidate_installed_capabilities(generation, checkpoint, lineage, &|| false),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn begin_authenticated_activation_with_hook<C, H>(
     cache: &CoreGenerationCache,
     generation: &AuthenticatedGeneration,
     checkpoint: &AuthenticatedBootstrapCheckpoint,
@@ -56,13 +119,43 @@ fn begin_authenticated_activation_with_hook<C, H>(
     lineage: &[&AuthenticatedGeneration],
     operation_id: &str,
     cancelled: C,
-    mut hook: H,
+    hook: H,
 ) -> Result<CoreGenerationCacheState, String>
 where
     C: Fn() -> bool,
     H: FnMut(&'static str),
 {
-    poll_cancelled(&cancelled)?;
+    begin_authenticated_activation_inner(
+        cache,
+        generation,
+        checkpoint,
+        expected_target,
+        lineage,
+        operation_id,
+        &cancelled,
+        hook,
+        || Ok(()),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn begin_authenticated_activation_inner<C, H, R>(
+    cache: &CoreGenerationCache,
+    generation: &AuthenticatedGeneration,
+    checkpoint: &AuthenticatedBootstrapCheckpoint,
+    expected_target: &GenerationTarget,
+    lineage: &[&AuthenticatedGeneration],
+    operation_id: &str,
+    cancelled: &C,
+    mut hook: H,
+    mut revalidate_trust: R,
+) -> Result<CoreGenerationCacheState, String>
+where
+    C: Fn() -> bool,
+    H: FnMut(&'static str),
+    R: FnMut() -> Result<(), String>,
+{
+    poll_cancelled(cancelled)?;
     if !safe_operation_id(operation_id) {
         return Err("Core generation activation operation identity is invalid.".into());
     }
@@ -73,7 +166,8 @@ where
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _file_guard = cache.acquire_lock()?;
     hook("after-lock");
-    poll_cancelled(&cancelled)?;
+    poll_cancelled(cancelled)?;
+    revalidate_trust()?;
 
     let mut state = cache.load_state_unlocked()?;
     let activation_state = GenerationActivationState {
@@ -105,7 +199,7 @@ where
         pin_generation_directory(&generation_path, "authenticated cached Core generation")?;
     cache.require_generation_committed(&identity)?;
     hook("after-pin-before-inventory");
-    verify_authenticated_inventory(&pinned, &expected_inventory, &cancelled)?;
+    verify_authenticated_inventory(&pinned, &expected_inventory, cancelled)?;
     hook("after-first-inventory");
     require_pinned_generation_directory(
         &generation_path,
@@ -116,16 +210,29 @@ where
 
     if let Some(pending) = state.pending.as_ref() {
         if pending == &identity && state.pending_operation_id.as_deref() == Some(operation_id) {
+            hook("before-idempotent-return");
+            poll_cancelled(cancelled)?;
+            verify_authenticated_inventory(&pinned, &expected_inventory, &|| false)?;
+            require_pinned_generation_directory(
+                &generation_path,
+                &pinned,
+                "authenticated cached Core generation",
+            )?;
+            cache.require_unique_committed_sequence(&identity)?;
+            if cache.load_state_unlocked()? != state {
+                return Err("Core generation cache state changed before activation.".into());
+            }
+            revalidate_trust()?;
             return Ok(state);
         }
         return Err("Another Core generation is already pending health validation.".into());
     }
     hook("before-state-save");
-    poll_cancelled(&cancelled)?;
+    poll_cancelled(cancelled)?;
     // Cancellation is intentionally polled before the final, uninterrupted
     // verification-to-state-publication boundary. All cache evidence is then
     // rechecked under the same process and file locks immediately before CAS.
-    verify_authenticated_inventory(&pinned, &expected_inventory, &cancelled)?;
+    verify_authenticated_inventory(&pinned, &expected_inventory, cancelled)?;
     require_pinned_generation_directory(
         &generation_path,
         &pinned,
@@ -139,7 +246,22 @@ where
     // This is the cancellation linearization point. Once it passes, the
     // durable state publication is intentionally non-cancellable so callers
     // cannot receive an ambiguous cancelled-but-pending result.
-    poll_cancelled(&cancelled)?;
+    poll_cancelled(cancelled)?;
+    // The installed-trust closure is intentionally non-cancellable here. It
+    // and all cache checks run after the final caller-controlled hook and
+    // cancellation poll. Nothing caller-controlled runs between these checks
+    // and the non-cancellable CAS.
+    verify_authenticated_inventory(&pinned, &expected_inventory, &|| false)?;
+    require_pinned_generation_directory(
+        &generation_path,
+        &pinned,
+        "authenticated cached Core generation",
+    )?;
+    cache.require_unique_committed_sequence(&identity)?;
+    if cache.load_state_unlocked()? != state {
+        return Err("Core generation cache state changed before activation.".into());
+    }
+    revalidate_trust()?;
 
     state.pending = Some(identity);
     state.pending_operation_id = Some(operation_id.into());
