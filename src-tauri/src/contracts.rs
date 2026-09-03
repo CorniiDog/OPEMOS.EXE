@@ -1098,11 +1098,28 @@ pub(crate) struct SupportInitramfsImage {
     pub(crate) config_path: String,
 }
 
-#[derive(Clone, Deserialize)]
-#[serde(untagged)]
+#[derive(Clone)]
 pub(crate) enum SupportInstallValidationDocument {
     Verified(Box<SupportInstallValidation>),
     Failed(Box<SupportInstallFailureValidation>),
+}
+
+impl<'de> Deserialize<'de> for SupportInstallValidationDocument {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = Box::<serde_json::value::RawValue>::deserialize(deserializer)?;
+        if let Ok(validation) = serde_json::from_str::<SupportInstallValidation>(raw.get()) {
+            return Ok(Self::Verified(Box::new(validation)));
+        }
+        if let Ok(validation) = serde_json::from_str::<SupportInstallFailureValidation>(raw.get()) {
+            return Ok(Self::Failed(Box::new(validation)));
+        }
+        Err(serde::de::Error::custom(
+            "installer validation is neither a verified nor failed document",
+        ))
+    }
 }
 
 #[derive(Clone, Deserialize)]
@@ -1123,12 +1140,73 @@ pub(crate) struct SupportInstallCleanup {
     pub(crate) compression_policy_restored: bool,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportInstallGamingPayload {
     pub(crate) schema_version: u32,
     pub(crate) status: String,
     pub(crate) profile_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) policy_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) target: Option<SupportInstallGamingTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) delivery: Option<SupportInstallGamingDelivery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) omitted_capabilities: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) preserved_capabilities: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) package_ownership: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) saved_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) package_records: Option<Vec<SupportInstallGamingPackage>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SupportInstallGamingTarget {
+    pub(crate) steamos_version: String,
+    pub(crate) kernel_version: String,
+    pub(crate) nvidia_version: String,
+    pub(crate) architecture: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SupportInstallGamingDelivery {
+    pub(crate) strategy: String,
+    pub(crate) package_ownership: String,
+    pub(crate) source_authentication: String,
+    pub(crate) repacker: SupportInstallGamingRepacker,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SupportInstallGamingRepacker {
+    pub(crate) name: String,
+    pub(crate) schema_version: u32,
+    pub(crate) zstd_version: String,
+    pub(crate) compression: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SupportInstallGamingPackage {
+    pub(crate) name: String,
+    pub(crate) source_filename: String,
+    pub(crate) source_signature_filename: String,
+    pub(crate) source_sha256: String,
+    pub(crate) source_signature_sha256: String,
+    pub(crate) source_signer_fingerprint: String,
+    pub(crate) filename: String,
+    pub(crate) version: String,
+    pub(crate) sha256: String,
+    pub(crate) installed_size: u64,
+    pub(crate) saved_bytes: u64,
 }
 
 #[derive(Clone, Deserialize)]
@@ -1144,7 +1222,7 @@ pub(crate) struct SupportInstallValidation {
     pub(crate) packages: Vec<SupportInstallPackage>,
     pub(crate) modules: Vec<SupportInstallValidatedModule>,
     pub(crate) package_dependency_closure: Vec<SupportInstallDependency>,
-    pub(crate) gaming_payload: SupportInstallGamingPayload,
+    pub(crate) gaming_payload: Box<serde_json::value::RawValue>,
     pub(crate) compression: SupportInstallCompression,
     pub(crate) storage: SupportInstallStorage,
 }

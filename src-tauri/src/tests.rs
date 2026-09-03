@@ -2584,6 +2584,18 @@ esac
         fs::write(&path, br#"{"schemaVersion":1,"cleanup":{"mountsReleased":true,"mountsReleased":false}}"#)
             .expect("write duplicate nested result");
         assert!(read_support_install_result(&path).is_err());
+        let padded_gaming_payload = format!(
+            "{{\"validation\":{{\"gamingPayload\":{{{}\"schemaVersion\":1,\"status\":\"not-requested\",\"profileId\":\"gaming-no-cuda-v1\"}}}}}}",
+            " ".repeat(
+                crate::core_contracts::CORE_INSTALLER_GAMING_PAYLOAD_DOCUMENT_LIMIT
+            )
+        );
+        fs::write(&path, padded_gaming_payload).expect("write padded gaming payload");
+        let error = match read_support_install_result(&path) {
+            Ok(_) => panic!("raw oversized gaming payload passed typed parsing"),
+            Err(error) => error,
+        };
+        assert!(error.contains("gaming-payload metadata is excessive"));
         let file = File::create(&path).expect("create excessive result");
         file.set_len(32 * 1024 * 1024 + 1)
             .expect("size excessive result");
@@ -3180,11 +3192,12 @@ esac
                             source: "incoming".into(),
                         },
                     ],
-                    gaming_payload: SupportInstallGamingPayload {
-                        schema_version: 1,
-                        status: "not-requested".into(),
-                        profile_id: "gaming-no-cuda-v1".into(),
-                    },
+                    gaming_payload: serde_json::value::to_raw_value(&serde_json::json!({
+                        "schemaVersion": 1,
+                        "status": "not-requested",
+                        "profileId": "gaming-no-cuda-v1"
+                    }))
+                    .unwrap(),
                     compression: compression.clone(),
                     storage: storage.clone(),
                 },
@@ -3404,9 +3417,13 @@ esac
             Some(NVIDIA_COMPRESSION_PROFILE)
         );
         let mut wrong_gaming_payload = result.clone();
-        verified_validation(&mut wrong_gaming_payload)
-            .gaming_payload
-            .status = "applied".into();
+        verified_validation(&mut wrong_gaming_payload).gaming_payload =
+            serde_json::value::to_raw_value(&serde_json::json!({
+                "schemaVersion": 1,
+                "status": "applied",
+                "profileId": "gaming-no-cuda-v1"
+            }))
+            .unwrap();
         assert!(validate_nvidia_install_result(
             wrong_gaming_payload,
             &inputs,
@@ -4040,11 +4057,12 @@ esac
                             source: "incoming".into(),
                         },
                     ],
-                    gaming_payload: SupportInstallGamingPayload {
-                        schema_version: 1,
-                        status: "not-requested".into(),
-                        profile_id: "gaming-no-cuda-v1".into(),
-                    },
+                    gaming_payload: serde_json::value::to_raw_value(&serde_json::json!({
+                        "schemaVersion": 1,
+                        "status": "not-requested",
+                        "profileId": "gaming-no-cuda-v1"
+                    }))
+                    .unwrap(),
                     compression: compression.clone(),
                     storage,
                 },

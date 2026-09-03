@@ -42,6 +42,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Check out immutable OPEMOS Core contract fixtures
+        uses: actions/checkout@v4
+        with:
+          repository: CorniiDog/open-gpu-kernel-modules-steamos-support
+          ref: 82241699497fb605b3d8b3fbc0015ec952f81ef3
+          path: opemos-core-contracts
+          persist-credentials: false
+
       - name: Install Tauri Linux dependencies
         run: >-
           sudo apt-get update && sudo apt-get install --yes
@@ -63,3 +71,6 @@ jobs:
 
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
+        env:
+          OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
+          OPEMOS_CORE_EXPECTED_COMMIT: 82241699497fb605b3d8b3fbc0015ec952f81ef3

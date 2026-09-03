@@ -217,6 +217,33 @@ fn reject_duplicate_json_keys(bytes: &[u8]) -> Result<(), String> {
         .map_err(|error| format!("NVIDIA installer result is invalid JSON: {error}"))
 }
 
+#[derive(Deserialize)]
+struct SupportInstallResultRawProbe {
+    validation: Option<Box<serde_json::value::RawValue>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportInstallValidationRawProbe {
+    gaming_payload: Option<Box<serde_json::value::RawValue>>,
+}
+
+fn validate_raw_gaming_payload_span(bytes: &[u8]) -> Result<(), String> {
+    let result: SupportInstallResultRawProbe = serde_json::from_slice(bytes)
+        .map_err(|error| format!("NVIDIA installer result is invalid JSON: {error}"))?;
+    let Some(validation) = result.validation else {
+        return Ok(());
+    };
+    let validation: SupportInstallValidationRawProbe = serde_json::from_str(validation.get())
+        .map_err(|error| format!("NVIDIA installer validation is invalid JSON: {error}"))?;
+    if validation.gaming_payload.as_ref().is_some_and(|payload| {
+        payload.get().len() > crate::core_contracts::CORE_INSTALLER_GAMING_PAYLOAD_DOCUMENT_LIMIT
+    }) {
+        return Err("Offline installer gaming-payload metadata is excessive.".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn read_support_install_result(path: &Path) -> Result<SupportInstallResult, String> {
     let path_metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("Could not inspect the NVIDIA installer result: {error}"))?;
@@ -250,6 +277,7 @@ pub(crate) fn read_support_install_result(path: &Path) -> Result<SupportInstallR
         return Err("NVIDIA installer result changed size while being read.".into());
     }
     reject_duplicate_json_keys(&bytes)?;
+    validate_raw_gaming_payload_span(&bytes)?;
     serde_json::from_slice(&bytes)
         .map_err(|error| format!("NVIDIA installer result is invalid JSON: {error}"))
 }
@@ -1097,6 +1125,201 @@ pub(crate) fn validate_support_storage(
     Ok(())
 }
 
+pub(crate) fn validate_support_gaming_payload_record(
+    bytes: &[u8],
+) -> Result<SupportInstallGamingPayload, String> {
+    const PRESERVED_CAPABILITIES: [&str; 8] = [
+        "gaming-32bit",
+        "glvnd-egl",
+        "graphics",
+        "gsp-firmware",
+        "nvdec",
+        "nvenc",
+        "recovery-rendering",
+        "vulkan",
+    ];
+    let safe_plain_filename = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 255
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"@._+~:-".contains(&byte))
+    };
+    let safe_package_token = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 256
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"@._+:-".contains(&byte))
+    };
+    let numeric_version = |value: &str| {
+        let components = value.split('.').collect::<Vec<_>>();
+        matches!(components.len(), 2 | 3)
+            && components.iter().all(|component| {
+                !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit())
+            })
+    };
+    if bytes.is_empty()
+        || bytes.len() > crate::core_contracts::CORE_INSTALLER_GAMING_PAYLOAD_DOCUMENT_LIMIT
+    {
+        return Err("Offline installer gaming-payload metadata is empty or excessive.".into());
+    }
+    crate::core_contracts::reject_duplicate_contract_keys(
+        bytes,
+        "Offline installer gaming-payload metadata",
+    )?;
+    let payload: SupportInstallGamingPayload = serde_json::from_slice(bytes).map_err(|error| {
+        format!("Offline installer gaming-payload metadata is invalid: {error}")
+    })?;
+    if payload.schema_version != 1 || payload.profile_id != "gaming-no-cuda-v1" {
+        return Err("Offline installer gaming-payload metadata has an invalid identity.".into());
+    }
+    let optional_fields_absent = payload.sha256.is_none()
+        && payload.policy_sha256.is_none()
+        && payload.target.is_none()
+        && payload.delivery.is_none()
+        && payload.omitted_capabilities.is_none()
+        && payload.preserved_capabilities.is_none()
+        && payload.package_ownership.is_none()
+        && payload.saved_bytes.is_none()
+        && payload.package_records.is_none();
+    if payload.status == "not-requested" {
+        if optional_fields_absent {
+            return Ok(payload);
+        }
+        return Err(
+            "Unrequested gaming-payload metadata contains unexpected policy fields.".into(),
+        );
+    }
+    if payload.status != "reviewed" {
+        return Err("Offline installer gaming-payload status is unsupported.".into());
+    }
+    let target = payload
+        .target
+        .as_ref()
+        .ok_or("Reviewed gaming-payload metadata omitted its target.")?;
+    let delivery = payload
+        .delivery
+        .as_ref()
+        .ok_or("Reviewed gaming-payload metadata omitted its delivery policy.")?;
+    let records = payload
+        .package_records
+        .as_ref()
+        .ok_or("Reviewed gaming-payload metadata omitted its packages.")?;
+    if !payload.sha256.as_deref().is_some_and(exact_sha256)
+        || !payload.policy_sha256.as_deref().is_some_and(exact_sha256)
+        || !numeric_version(&target.steamos_version)
+        || target.kernel_version == "unknown"
+        || target.kernel_version.is_empty()
+        || target.kernel_version.len() > 255
+        || !target
+            .kernel_version
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._+~-".contains(&byte))
+        || !numeric_version(&target.nvidia_version)
+        || target.architecture != "x86_64"
+        || delivery.strategy != "deterministic-authenticated-source-repack-v1"
+        || delivery.package_ownership != "archive-and-pacman-database-exact"
+        || delivery.source_authentication != "arch-detached-signatures-and-reviewed-userspace-lock"
+        || delivery.repacker.name != "repack_gaming_userspace.py"
+        || delivery.repacker.schema_version != 1
+        || delivery.repacker.zstd_version != "1.5.7"
+        || delivery.repacker.compression != "zstd-19-t1"
+        || payload.omitted_capabilities.as_deref() != Some(&["cuda-compute".to_owned()])
+        || payload.preserved_capabilities.as_deref()
+            != Some(PRESERVED_CAPABILITIES.map(str::to_owned).as_slice())
+        || payload.package_ownership.as_deref() != Some("archive-and-pacman-database-exact")
+        || !payload
+            .saved_bytes
+            .is_some_and(|value| (1..=i64::MAX as u64).contains(&value))
+        || records.len() != 2
+    {
+        return Err("Reviewed gaming-payload metadata has an invalid policy or target.".into());
+    }
+    let expected_names = ["lib32-nvidia-utils", "nvidia-utils"];
+    let mut saved_bytes = 0_u64;
+    for (record, expected_name) in records.iter().zip(expected_names) {
+        let signer_valid = matches!(record.source_signer_fingerprint.len(), 40 | 64)
+            && record
+                .source_signer_fingerprint
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'A'..=b'F').contains(&byte));
+        if record.name != expected_name
+            || !safe_plain_filename(&record.source_filename)
+            || !safe_plain_filename(&record.source_signature_filename)
+            || !safe_plain_filename(&record.filename)
+            || !exact_sha256(&record.source_sha256)
+            || !exact_sha256(&record.source_signature_sha256)
+            || !exact_sha256(&record.sha256)
+            || !signer_valid
+            || !safe_package_token(&record.version)
+            || record.installed_size > i64::MAX as u64
+            || !(1..=i64::MAX as u64).contains(&record.saved_bytes)
+        {
+            return Err("Reviewed gaming-payload package metadata is invalid.".into());
+        }
+        saved_bytes = saved_bytes
+            .checked_add(record.saved_bytes)
+            .ok_or("Reviewed gaming-payload saved-byte total overflowed.")?;
+    }
+    if Some(saved_bytes) != payload.saved_bytes {
+        return Err("Reviewed gaming-payload saved-byte total is inconsistent.".into());
+    }
+    Ok(payload)
+}
+
+pub(crate) fn validate_support_gaming_payload_binding(
+    payload: &SupportInstallGamingPayload,
+    target: &SupportInstallTarget,
+    userspace_lock: &SupportInstallPinnedIdentity,
+    packages: &[SupportInstallPackage],
+    authority: Option<(&SupportInstallGamingPayload, &str, &str)>,
+) -> Result<(), String> {
+    if payload.status == "not-requested" {
+        return Ok(());
+    }
+    let (expected_payload, expected_lock_name, expected_lock_sha256) = authority.ok_or(
+        "Reviewed gaming-payload authority is unavailable from the authenticated Core bundle.",
+    )?;
+    let payload_target = payload
+        .target
+        .as_ref()
+        .ok_or("Reviewed gaming-payload target is missing.")?;
+    if payload != expected_payload
+        || payload_target.steamos_version != target.steamos_version
+        || payload_target.kernel_version != target.kernel_version
+        || payload_target.nvidia_version != target.nvidia_version
+        || payload_target.architecture != target.architecture
+        || userspace_lock.name != expected_lock_name
+        || userspace_lock.sha256 != expected_lock_sha256
+    {
+        return Err(
+            "Reviewed gaming payload does not match its Core policy, lock, or exact target.".into(),
+        );
+    }
+    for record in payload
+        .package_records
+        .as_deref()
+        .ok_or("Reviewed gaming-payload packages are missing.")?
+    {
+        let package = packages
+            .iter()
+            .find(|package| package.name == record.name)
+            .ok_or("Reviewed gaming payload omitted a validated package.")?;
+        if package.filename != record.filename
+            || package.signature_filename != record.source_signature_filename
+            || package.full_version != record.version
+            || package.sha256 != record.sha256
+            || package.signature_sha256 != record.source_signature_sha256
+            || package.signer != record.source_signer_fingerprint
+            || package.installed_size != record.installed_size
+        {
+            return Err("Reviewed gaming payload differs from validated package metadata.".into());
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_support_validation_contract(
     validation: &SupportInstallValidation,
 ) -> Result<(), String> {
@@ -1232,12 +1455,7 @@ pub(crate) fn validate_support_validation_contract(
             return Err("Offline installer validation proof has invalid module metadata.".into());
         }
     }
-    if validation.gaming_payload.schema_version != 1
-        || validation.gaming_payload.status != "not-requested"
-        || validation.gaming_payload.profile_id != "gaming-no-cuda-v1"
-    {
-        return Err("Offline installer returned unexpected gaming-payload metadata.".into());
-    }
+    validate_support_gaming_payload_record(validation.gaming_payload.get().as_bytes())?;
     validate_support_storage(&validation.storage, &validation.compression, true)
 }
 
@@ -2353,6 +2571,15 @@ pub(crate) fn validate_nvidia_install_result(
         }
     };
     validate_support_validation_contract(&validation)?;
+    let gaming_payload =
+        validate_support_gaming_payload_record(validation.gaming_payload.get().as_bytes())?;
+    validate_support_gaming_payload_binding(
+        &gaming_payload,
+        &document.target,
+        &validation.userspace_lock,
+        &validation.packages,
+        None,
+    )?;
     if expected_status == "success" {
         validate_support_module_verification(
             module_verification

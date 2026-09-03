@@ -17,6 +17,8 @@ pub(crate) const CORE_INSTALLER_PAYLOAD_RECEIPT_FIXTURE_LIMIT: usize = 512 * 102
 pub(crate) const CORE_INSTALLER_PAYLOAD_RECEIPT_DOCUMENT_LIMIT: usize = 64 * 1024;
 pub(crate) const CORE_INSTALLER_INITRAMFS_WORKSPACE_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_INSTALLER_INITRAMFS_WORKSPACE_DOCUMENT_LIMIT: usize = 16 * 1024;
+pub(crate) const CORE_INSTALLER_GAMING_PAYLOAD_FIXTURE_LIMIT: usize = 512 * 1024;
+pub(crate) const CORE_INSTALLER_GAMING_PAYLOAD_DOCUMENT_LIMIT: usize = 1024 * 1024;
 pub(crate) const CORE_INSTALLER_PROGRESS_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_PROGRESS_STREAM_LIMIT: usize = 16 * 1024 * 1024;
 const CORE_PROGRESS_PREFIX: &str = "STEAMOS_NVIDIA_PROGRESS ";
@@ -261,6 +263,213 @@ pub(crate) struct CoreResolverResult {
     pub(crate) next_action: Option<CoreResolverNextAction>,
     #[serde(flatten)]
     pub(crate) extensions: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerGamingPayloadCompatibilityFixtures {
+    pub(crate) schema_version: u32,
+    pub(crate) kind: String,
+    pub(crate) gaming_payload_schema_version: u32,
+    pub(crate) validation: CoreInstallerGamingPayloadValidation,
+    pub(crate) additive_policy: String,
+    pub(crate) unfrozen_fields: Vec<String>,
+    pub(crate) limits: CoreInstallerGamingPayloadFixtureLimits,
+    pub(crate) cases: Vec<CoreInstallerGamingPayloadCompatibilityCase>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerGamingPayloadValidation {
+    pub(crate) target: SupportInstallGamingTarget,
+    pub(crate) userspace_lock: CoreInstallerGamingPayloadLock,
+    pub(crate) packages: Vec<CoreInstallerGamingPayloadValidationPackage>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CoreInstallerGamingPayloadLock {
+    pub(crate) name: String,
+    pub(crate) sha256: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerGamingPayloadValidationPackage {
+    pub(crate) name: String,
+    pub(crate) filename: String,
+    pub(crate) signature_filename: String,
+    pub(crate) full_version: String,
+    pub(crate) sha256: String,
+    pub(crate) signature_sha256: String,
+    pub(crate) signer: String,
+    pub(crate) installed_size: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerGamingPayloadFixtureLimits {
+    pub(crate) max_document_bytes: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerGamingPayloadCompatibilityCase {
+    pub(crate) name: String,
+    pub(crate) expected: CoreInstallerGamingPayloadExpectation,
+    #[serde(default)]
+    pub(crate) document: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) raw_document: Option<String>,
+    #[serde(default)]
+    pub(crate) document_recipe: Option<CoreInstallerGamingPayloadDocumentRecipe>,
+    #[serde(default)]
+    pub(crate) validation_patch: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerGamingPayloadExpectation {
+    pub(crate) record_accepted: bool,
+    pub(crate) terminal_binding_accepted: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerGamingPayloadDocumentRecipe {
+    pub(crate) kind: String,
+    pub(crate) base_case: String,
+    pub(crate) padding_bytes: usize,
+}
+
+pub(crate) fn parse_core_installer_gaming_payload_fixtures(
+    bytes: &[u8],
+) -> Result<CoreInstallerGamingPayloadCompatibilityFixtures, String> {
+    if bytes.is_empty() || bytes.len() > CORE_INSTALLER_GAMING_PAYLOAD_FIXTURE_LIMIT {
+        return Err("OPEMOS Core gaming-payload fixtures are empty or exceed 512 KiB.".into());
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core gaming-payload fixtures")?;
+    let fixtures: CoreInstallerGamingPayloadCompatibilityFixtures =
+        serde_json::from_slice(bytes)
+            .map_err(|error| format!("OPEMOS Core gaming-payload fixtures are invalid: {error}"))?;
+    let record_accepted = HashSet::from([
+        "valid-not-requested",
+        "valid-reviewed",
+        "profile-hash-binding-mismatch",
+        "policy-hash-binding-mismatch",
+        "userspace-lock-binding-mismatch",
+        "target-binding-mismatch",
+        "package-hash-binding-mismatch",
+        "package-version-binding-mismatch",
+        "source-hash-binding-mismatch",
+    ]);
+    let binding_accepted = HashSet::from(["valid-not-requested", "valid-reviewed"]);
+    let required_names = record_accepted
+        .iter()
+        .copied()
+        .chain([
+            "top-level-addition-rejected",
+            "not-requested-addition-rejected",
+            "unsupported-status",
+            "unreviewed-status",
+            "unknown-profile",
+            "missing-profile-id",
+            "missing-package",
+            "extra-package",
+            "duplicate-package",
+            "package-order-mismatch",
+            "unsafe-package-filename",
+            "empty-source-filename",
+            "malformed-signer",
+            "negative-installed-size",
+            "zero-package-saved-bytes",
+            "saved-byte-total-mismatch",
+            "missing-package-field",
+            "unknown-package-field",
+            "wrong-omitted-capability",
+            "missing-preserved-capability",
+            "duplicate-preserved-capability",
+            "reordered-preserved-capabilities",
+            "wrong-delivery-strategy",
+            "unknown-delivery-field",
+            "unknown-repacker-field",
+            "unknown-target-field",
+            "wrong-architecture",
+            "malformed-profile-hash",
+            "non-string-profile-hash",
+            "non-string-target-version",
+            "non-string-package-filename",
+            "non-object-package-record",
+            "zero-saved-bytes",
+            "malformed-json",
+            "duplicate-json-key",
+            "non-finite-json",
+            "oversized-document",
+        ])
+        .collect::<HashSet<_>>();
+    if fixtures.schema_version != 1
+        || fixtures.kind != "opemos-installer-gaming-payload-compatibility-fixtures"
+        || fixtures.gaming_payload_schema_version != 1
+        || fixtures.additive_policy != "closed-security-critical-record"
+        || !fixtures.unfrozen_fields.is_empty()
+        || fixtures.limits.max_document_bytes != CORE_INSTALLER_GAMING_PAYLOAD_DOCUMENT_LIMIT
+        || fixtures.validation.target.architecture != "x86_64"
+        || !exact_lower_sha256(&fixtures.validation.userspace_lock.sha256)
+        || fixtures.validation.packages.len() != 2
+        || !(1..=64).contains(&fixtures.cases.len())
+    {
+        return Err("OPEMOS Core gaming-payload fixture envelope is invalid.".into());
+    }
+    let mut names = HashSet::new();
+    for case in &fixtures.cases {
+        let variants = usize::from(case.document.is_some())
+            + usize::from(case.raw_document.is_some())
+            + usize::from(case.document_recipe.is_some());
+        let expected_variant = match case.name.as_str() {
+            "malformed-json" | "duplicate-json-key" | "non-finite-json" => "raw",
+            "oversized-document" => "recipe",
+            _ => "document",
+        };
+        let patch_valid = match (case.name.as_str(), case.validation_patch.as_ref()) {
+            ("userspace-lock-binding-mismatch", Some(patch)) => {
+                patch == &serde_json::json!({"userspaceLock": {"sha256": "0".repeat(64)}})
+            }
+            (_, None) => true,
+            _ => false,
+        };
+        if !safe_kebab_token(&case.name, 64)
+            || !names.insert(case.name.as_str())
+            || case.expected.record_accepted != record_accepted.contains(case.name.as_str())
+            || case.expected.terminal_binding_accepted
+                != binding_accepted.contains(case.name.as_str())
+            || (case.expected.terminal_binding_accepted && !case.expected.record_accepted)
+            || variants != 1
+            || (case.document.is_some()) != (expected_variant == "document")
+            || (case.raw_document.is_some()) != (expected_variant == "raw")
+            || (case.document_recipe.is_some()) != (expected_variant == "recipe")
+            || case.raw_document.as_ref().is_some_and(|raw| {
+                raw.is_empty() || raw.len() > CORE_INSTALLER_GAMING_PAYLOAD_DOCUMENT_LIMIT
+            })
+            || !patch_valid
+        {
+            return Err("OPEMOS Core gaming-payload fixture case is unsafe or incomplete.".into());
+        }
+        if let Some(recipe) = &case.document_recipe {
+            if case.name != "oversized-document"
+                || recipe.kind != "top-level-padding"
+                || recipe.base_case != "valid-not-requested"
+                || recipe.padding_bytes != CORE_INSTALLER_GAMING_PAYLOAD_DOCUMENT_LIMIT
+            {
+                return Err("OPEMOS Core gaming-payload fixture recipe is invalid.".into());
+            }
+        }
+    }
+    if names != required_names {
+        return Err(
+            "OPEMOS Core gaming-payload fixture matrix omits a required safety case.".into(),
+        );
+    }
+    Ok(fixtures)
 }
 
 #[derive(Debug, Deserialize)]
@@ -2079,6 +2288,13 @@ fn safe_kebab_token(value: &str, maximum: usize) -> bool {
         })
 }
 
+fn exact_lower_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn safe_camel_token(value: &str, maximum: usize) -> bool {
     !value.is_empty()
         && value.len() <= maximum
@@ -2831,7 +3047,10 @@ impl<'de> serde::de::Visitor<'de> for UniqueContractVisitor {
     }
 }
 
-fn reject_duplicate_contract_keys(bytes: &[u8], description: &str) -> Result<(), String> {
+pub(crate) fn reject_duplicate_contract_keys(
+    bytes: &[u8],
+    description: &str,
+) -> Result<(), String> {
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     UniqueContractJson
         .deserialize(&mut deserializer)
@@ -3280,6 +3499,37 @@ mod tests {
     }
 
     fn core_repository() -> Option<PathBuf> {
+        if let Some(configured) = std::env::var_os("OPEMOS_CORE_CONTRACT_ROOT") {
+            let candidate = PathBuf::from(configured);
+            assert!(
+                candidate.is_absolute(),
+                "configured Core fixture root is relative"
+            );
+            let expected = std::env::var("OPEMOS_CORE_EXPECTED_COMMIT")
+                .expect("configured Core fixture root requires an exact expected commit");
+            assert!(
+                expected.len() == 40
+                    && expected
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+                "configured Core fixture commit is invalid"
+            );
+            let output = Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&candidate)
+                .output()
+                .expect("inspect configured Core fixture checkout");
+            assert!(
+                output.status.success(),
+                "configured Core fixture checkout is not Git"
+            );
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap().trim(),
+                expected,
+                "configured Core fixture checkout is not the immutable expected commit"
+            );
+            return Some(candidate);
+        }
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let candidate = root.join("open-gpu-kernel-modules-steamos-support");
         candidate.join(".git").exists().then_some(candidate)
@@ -3422,10 +3672,27 @@ mod tests {
             if !case.expected.accepted {
                 continue;
             }
-            let result: SupportInstallResult = serde_json::from_value(
-                case.document
-                    .clone()
-                    .expect("accepted installer fixture document"),
+            let document = case
+                .document
+                .as_ref()
+                .expect("accepted installer fixture document");
+            if matches!(
+                case.expected.status.as_deref(),
+                Some("success" | "validated")
+            ) {
+                serde_json::from_slice::<SupportInstallValidation>(
+                    &serde_json::to_vec(&document["validation"])
+                        .expect("serialize installer validation fixture"),
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "accepted Core installer validation in {} is incompatible with Rust: {error}",
+                        case.name
+                    )
+                });
+            }
+            let result: SupportInstallResult = serde_json::from_slice(
+                &serde_json::to_vec(document).expect("serialize accepted installer fixture"),
             )
             .unwrap_or_else(|error| {
                 panic!(
@@ -4127,6 +4394,167 @@ mod tests {
         assert!(parse_core_installer_initramfs_workspace_fixtures(&vec![
             b' ';
             CORE_INSTALLER_INITRAMFS_WORKSPACE_FIXTURE_LIMIT
+                + 1
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn local_successor_gaming_payload_fixtures_match_rust_semantics() {
+        let Some(repository) = core_repository() else {
+            eprintln!(
+                "skipping local successor gaming-payload fixtures: sibling Core repository is absent"
+            );
+            return;
+        };
+        let generator = repository.join("lib/generate_installer_gaming_payload_fixtures.py");
+        let generate = || {
+            let output = Command::new("python3")
+                .arg(&generator)
+                .current_dir(&repository)
+                .output()
+                .expect("run Core gaming-payload fixture generator");
+            assert!(output.status.success());
+            assert!(output.stderr.is_empty());
+            output.stdout
+        };
+        let first = generate();
+        assert_eq!(
+            first,
+            generate(),
+            "Core gaming-payload fixtures were nondeterministic"
+        );
+        let fixtures = parse_core_installer_gaming_payload_fixtures(&first)
+            .expect("consume bounded Core gaming-payload fixtures");
+        let base_not_requested = fixtures
+            .cases
+            .iter()
+            .find(|case| case.name == "valid-not-requested")
+            .and_then(|case| case.document.clone())
+            .expect("gaming-payload recipe base");
+        let reviewed_authority = fixtures
+            .cases
+            .iter()
+            .find(|case| case.name == "valid-reviewed")
+            .and_then(|case| case.document.as_ref())
+            .map(|document| serde_json::to_vec(document).unwrap())
+            .map(|bytes| validate_support_gaming_payload_record(&bytes).unwrap())
+            .expect("reviewed gaming-payload authority");
+        let authority_lock_name = fixtures.validation.userspace_lock.name.clone();
+        let authority_lock_sha256 = fixtures.validation.userspace_lock.sha256.clone();
+        for case in &fixtures.cases {
+            let document_bytes = if let Some(document) = &case.document {
+                serde_json::to_vec(document).expect("serialize gaming-payload fixture")
+            } else if let Some(raw) = &case.raw_document {
+                raw.as_bytes().to_vec()
+            } else {
+                let recipe = case
+                    .document_recipe
+                    .as_ref()
+                    .expect("gaming-payload fixture recipe");
+                let mut document = base_not_requested.clone();
+                document["padding"] = serde_json::Value::String("x".repeat(recipe.padding_bytes));
+                serde_json::to_vec(&document).expect("expand gaming-payload fixture recipe")
+            };
+            let result = validate_support_gaming_payload_record(&document_bytes);
+            assert_eq!(
+                result.is_ok(),
+                case.expected.record_accepted,
+                "Rust gaming-payload acceptance diverged for {}: {:?}",
+                case.name,
+                result.as_ref().err()
+            );
+            let mut validation = fixtures.validation.clone();
+            if case.validation_patch.is_some() {
+                validation.userspace_lock.sha256 = "0".repeat(64);
+            }
+            let target = SupportInstallTarget {
+                steamos_version: validation.target.steamos_version,
+                kernel_version: validation.target.kernel_version,
+                nvidia_version: validation.target.nvidia_version,
+                architecture: validation.target.architecture,
+            };
+            let lock = SupportInstallPinnedIdentity {
+                name: validation.userspace_lock.name,
+                sha256: validation.userspace_lock.sha256,
+            };
+            let packages = validation
+                .packages
+                .into_iter()
+                .map(|package| SupportInstallPackage {
+                    name: package.name,
+                    role: "nvidia-userspace".into(),
+                    filename: package.filename,
+                    signature_filename: package.signature_filename,
+                    full_version: package.full_version,
+                    pkgver: "575.64.05".into(),
+                    pkgrel: "1".into(),
+                    architecture: "x86_64".into(),
+                    signer: package.signer,
+                    sha256: package.sha256,
+                    signature_sha256: package.signature_sha256,
+                    installed_size: package.installed_size,
+                    dependencies: Vec::new(),
+                    provides: Vec::new(),
+                })
+                .collect::<Vec<_>>();
+            let binding_accepted = result.as_ref().is_ok_and(|payload| {
+                validate_support_gaming_payload_binding(
+                    payload,
+                    &target,
+                    &lock,
+                    &packages,
+                    Some((
+                        &reviewed_authority,
+                        &authority_lock_name,
+                        &authority_lock_sha256,
+                    )),
+                )
+                .is_ok()
+            });
+            if case.name == "valid-reviewed" {
+                assert!(
+                    validate_support_gaming_payload_binding(
+                        result.as_ref().unwrap(),
+                        &target,
+                        &lock,
+                        &packages,
+                        None,
+                    )
+                    .expect_err(
+                        "reviewed payload must remain inactive without authenticated authority",
+                    )
+                    .contains("authority is unavailable")
+                );
+            }
+            assert_eq!(
+                binding_accepted, case.expected.terminal_binding_accepted,
+                "Rust gaming-payload binding diverged for {}",
+                case.name
+            );
+        }
+
+        let mut changed_expectation: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        changed_expectation["cases"][0]["expected"]["recordAccepted"] = serde_json::json!(false);
+        assert!(parse_core_installer_gaming_payload_fixtures(
+            &serde_json::to_vec(&changed_expectation).unwrap()
+        )
+        .is_err());
+        let mut missing_case: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        missing_case["cases"].as_array_mut().unwrap().pop();
+        assert!(parse_core_installer_gaming_payload_fixtures(
+            &serde_json::to_vec(&missing_case).unwrap()
+        )
+        .is_err());
+        let mut changed_limit: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        changed_limit["limits"]["maxDocumentBytes"] = serde_json::json!(1024 * 1024 - 1);
+        assert!(parse_core_installer_gaming_payload_fixtures(
+            &serde_json::to_vec(&changed_limit).unwrap()
+        )
+        .is_err());
+        assert!(parse_core_installer_gaming_payload_fixtures(&vec![
+            b' ';
+            CORE_INSTALLER_GAMING_PAYLOAD_FIXTURE_LIMIT
                 + 1
         ])
         .is_err());

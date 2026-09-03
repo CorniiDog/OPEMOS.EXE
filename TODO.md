@@ -77,7 +77,7 @@ this repository.
 - [x] Add fixture-tested schema-compatible consumers for Core resolver schema 2
   and installer validation, result, progress, module-verification, and
   userspace-verification, initramfs-workspace, initramfs-verification, and
-  payload-receipt schema 1.
+  payload-receipt and gaming-payload schema 1.
 
 Current outputs remain `nvidia-mutation-valid`. Do not call them
 `install-ready`, hardware-certified, or update-safe until the gates below pass.
@@ -129,9 +129,13 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 - [x] Consume Core’s bounded payload-receipt matrix, recompute its canonical
   identity, enforce each evidence role’s byte ceiling, and independently hash
   the closed receipt directory during final-image inspection.
-- [ ] Give CI an immutable, digest-pinned Core fixture source so every Core
+- [x] Consume Core’s closed gaming-payload matrix and distinguish structural
+  validity from exact policy, lock, target, and package binding. Keep reviewed
+  CUDA omission inactive until its authority comes from an authenticated bundle.
+- [x] Give CI an immutable, commit-pinned Core fixture source so every Core
   compatibility matrix runs in GitHub Actions instead of safely skipping when
-  the sibling checkout is absent. Never test against mutable Core `main`.
+  the sibling checkout is absent. CI currently uses Core `8224169`; never test
+  against mutable Core `main`.
 - [ ] Repin Core only after its complete Fedora suite and this repository’s full
   suite pass against the same immutable bundle.
 
