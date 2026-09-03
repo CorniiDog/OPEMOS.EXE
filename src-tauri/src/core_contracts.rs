@@ -56,6 +56,28 @@ pub(crate) struct CoreResolverPublication {
     pub(crate) published_at: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CoreResolverNextAction {
+    pub(crate) schema_version: u32,
+    pub(crate) kind: String,
+    pub(crate) entrypoint: String,
+    pub(crate) execution_architecture: String,
+    pub(crate) kernel_policy: String,
+    #[serde(flatten)]
+    pub(crate) extensions: HashMap<String, serde_json::Value>,
+}
+
+impl CoreResolverNextAction {
+    fn is_exact_target_build(&self) -> bool {
+        self.schema_version == 1
+            && self.kind == "build_exact_target"
+            && self.entrypoint == "bootstrap/build_for_target.sh"
+            && self.execution_architecture == "x86_64"
+            && self.kernel_policy == "exact"
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CoreResolverResult {
@@ -74,6 +96,8 @@ pub(crate) struct CoreResolverResult {
     pub(crate) artifact: Option<CoreResolverArtifact>,
     #[serde(default)]
     pub(crate) capabilities: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) next_action: Option<CoreResolverNextAction>,
     #[serde(flatten)]
     pub(crate) extensions: HashMap<String, serde_json::Value>,
 }
@@ -150,7 +174,8 @@ pub(crate) fn validate_core_resolver_result(result: &CoreResolverResult) -> Resu
             .artifact
             .as_ref()
             .ok_or("OPEMOS Core compatible result omitted artifact metadata.")?;
-        if result.capabilities.is_none()
+        if result.next_action.is_some()
+            || result.capabilities.is_none()
             || !valid_three_part_version(&publication.steamos_version)
             || !safe_token(&publication.kernel_version, 255)
             || !valid_nvidia_version(&publication.nvidia_version)
@@ -204,6 +229,19 @@ pub(crate) fn validate_core_resolver_result(result: &CoreResolverResult) -> Resu
         if result.artifact.is_some() {
             return Err(
                 "OPEMOS Core incompatible result unexpectedly contains an artifact.".into(),
+            );
+        }
+        let exact_build_absence = result.status == "no_compatible_artifact"
+            && result.reason.as_deref() == Some("no_compatible_release");
+        if exact_build_absence
+            != result
+                .next_action
+                .as_ref()
+                .is_some_and(CoreResolverNextAction::is_exact_target_build)
+        {
+            return Err(
+                "OPEMOS Core exact-target build action is missing or attached to an unsafe result."
+                    .into(),
             );
         }
     }
@@ -684,12 +722,43 @@ pub(crate) fn compare_core_and_legacy_resolver(
     legacy: &NvidiaPublishedResolution,
 ) -> Result<(), String> {
     validate_core_resolver_result(core)?;
-    if core.status != legacy.status
-        || core.target.steamos_version
-            != legacy.target.steamos_version.as_deref().unwrap_or_default()
+    let exact_build_equivalent = core.status == "no_compatible_artifact"
+        && core.reason.as_deref() == Some("no_compatible_release")
+        && core
+            .next_action
+            .as_ref()
+            .is_some_and(CoreResolverNextAction::is_exact_target_build)
+        && legacy.status == "build_required"
+        && legacy.reason == "exact_kernel_artifact_missing"
+        && legacy.compatibility.as_deref() == Some("on_demand_exact_kernel")
+        && legacy.build_plan.as_ref().is_some_and(|plan| {
+            let baseline = published_release_identity(&plan.baseline_release);
+            plan.steamos_version == core.target.steamos_version
+                && plan.kernel_version == core.target.kernel_version
+                && plan.support_commit == NVIDIA_SUPPORT_BUILD_COMMIT
+                && plan.expected_trust == "locally-built-verified"
+                && plan.source_origin == "project"
+                && plan.source_repository == NVIDIA_SOURCE_REPOSITORY
+                && plan.source_branch == format!("nvidia/{}", plan.nvidia_version)
+                && plan.source_commit.is_empty()
+                && valid_nvidia_version(&plan.nvidia_version)
+                && baseline.as_ref().is_some_and(|identity| {
+                    identity.nvidia_version == plan.nvidia_version
+                        && numeric_version(&identity.steamos_version, 3..=3)
+                            .zip(numeric_version(&plan.steamos_version, 3..=3))
+                            .is_some_and(|(baseline_version, target_version)| {
+                                baseline_version[..2] == target_version[..2]
+                                    && baseline_version <= target_version
+                            })
+                })
+        });
+    if core.status != legacy.status && !exact_build_equivalent {
+        return Err("OPEMOS Core and legacy Rust resolver decisions are not equivalent.".into());
+    }
+    if core.target.steamos_version != legacy.target.steamos_version.as_deref().unwrap_or_default()
         || core.target.kernel_version != legacy.target.kernel_version.as_deref().unwrap_or_default()
         || core.target.architecture != legacy.target.architecture
-        || core.compatibility != legacy.compatibility
+        || (!exact_build_equivalent && core.compatibility != legacy.compatibility)
     {
         return Err("OPEMOS Core and legacy Rust resolver decisions are not equivalent.".into());
     }
@@ -710,7 +779,7 @@ pub(crate) fn compare_core_and_legacy_resolver(
         {
             return Err("OPEMOS Core and legacy Rust resolver publications differ.".into());
         }
-    } else if core.reason.as_deref() != Some(legacy.reason.as_str()) {
+    } else if !exact_build_equivalent && core.reason.as_deref() != Some(legacy.reason.as_str()) {
         return Err("OPEMOS Core and legacy Rust resolver failure reasons differ.".into());
     }
     Ok(())
@@ -745,6 +814,25 @@ mod tests {
             incompatible.reason.as_deref(),
             Some("no_compatible_release")
         );
+        assert!(incompatible
+            .next_action
+            .as_ref()
+            .is_some_and(CoreResolverNextAction::is_exact_target_build));
+
+        let mut missing_action: serde_json::Value =
+            serde_json::from_slice(&fixture("resolver-incompatible-v2.json")).unwrap();
+        missing_action.as_object_mut().unwrap().remove("nextAction");
+        assert!(parse_core_resolver_result(&serde_json::to_vec(&missing_action).unwrap()).is_err());
+        let mut misplaced_action: serde_json::Value =
+            serde_json::from_slice(&fixture("resolver-incompatible-v2.json")).unwrap();
+        misplaced_action["reason"] = "release_assets_missing".into();
+        assert!(
+            parse_core_resolver_result(&serde_json::to_vec(&misplaced_action).unwrap()).is_err()
+        );
+        let mut unsafe_action: serde_json::Value =
+            serde_json::from_slice(&fixture("resolver-incompatible-v2.json")).unwrap();
+        unsafe_action["nextAction"]["kernelPolicy"] = "closest".into();
+        assert!(parse_core_resolver_result(&serde_json::to_vec(&unsafe_action).unwrap()).is_err());
 
         let duplicate = br#"{"schemaVersion":2,"schemaVersion":2,"status":"unsupported_target","target":{"steamosVersion":"3.8.14","kernelVersion":"k","architecture":"aarch64"},"reason":"unsupported_architecture","message":"unsupported"}"#;
         assert!(parse_core_resolver_result(duplicate).is_err());
@@ -924,6 +1012,7 @@ mod tests {
         )
         .expect("consume canonical pinned Core manifest");
         assert_eq!(manifest.files.len(), 55);
+        assert_eq!(manifest.bundle_id, OPEMOS_CORE_COMPATIBILITY_BUNDLE_ID);
         assert!(manifest.files.iter().any(|file| {
             file.path == "lib/resolve_target.py" && file.role == "resolver" && file.mode == "0755"
         }));
@@ -1017,6 +1106,96 @@ mod tests {
         non_equivalent.compatibility = Some("on_demand_exact_kernel".into());
         non_equivalent.publication = None;
         assert!(compare_core_and_legacy_resolver(&core, &non_equivalent).is_err());
+
+        let missing_target = NvidiaTargetReadiness {
+            kernel_version: Some("6.16.12-valve24.5-fixture".into()),
+            ..legacy.target.clone()
+        };
+        let core_missing = invoke_core_resolver(&root, &root, &missing_target, &releases).unwrap();
+        assert_eq!(
+            core_missing.reason.as_deref(),
+            Some("no_compatible_release")
+        );
+        assert!(core_missing.next_action.is_some());
+        let baseline = select_nvidia_build_baseline(&missing_target, &releases)
+            .unwrap()
+            .expect("legacy resolver finds an exact-build baseline");
+        let build_plan = NvidiaOnDemandBuildPlan {
+            steamos_version: missing_target.steamos_version.clone().unwrap(),
+            kernel_version: missing_target.kernel_version.clone().unwrap(),
+            nvidia_version: baseline.nvidia_version.clone(),
+            baseline_release: baseline.tag,
+            support_commit: NVIDIA_SUPPORT_BUILD_COMMIT.into(),
+            expected_trust: "locally-built-verified".into(),
+            source_origin: "project".into(),
+            source_repository: NVIDIA_SOURCE_REPOSITORY.into(),
+            source_branch: format!("nvidia/{}", baseline.nvidia_version),
+            source_commit: String::new(),
+        };
+        let legacy_build = NvidiaPublishedResolution {
+            schema_version: 2,
+            status: "build_required".into(),
+            reason: "exact_kernel_artifact_missing".into(),
+            message: "fixture".into(),
+            compatibility: Some("on_demand_exact_kernel".into()),
+            target: missing_target,
+            publication: None,
+            artifact: None,
+            build_plan: Some(build_plan),
+        };
+        compare_core_and_legacy_resolver(&core_missing, &legacy_build).unwrap();
+        let mut wrong_kernel = legacy_build;
+        wrong_kernel.build_plan.as_mut().unwrap().kernel_version = "wrong".into();
+        assert!(compare_core_and_legacy_resolver(&core_missing, &wrong_kernel).is_err());
+
+        let mut incomplete_releases = releases.clone();
+        incomplete_releases[0].assets.clear();
+        let incomplete =
+            invoke_core_resolver(&root, &root, &legacy.target, &incomplete_releases).unwrap();
+        assert_eq!(incomplete.reason.as_deref(), Some("release_assets_missing"));
+        assert!(incomplete.next_action.is_none());
+
+        let duplicated_release = invoke_core_resolver(
+            &root,
+            &root,
+            &legacy.target,
+            &[releases[0].clone(), releases[0].clone()],
+        )
+        .unwrap();
+        assert_eq!(
+            duplicated_release.reason.as_deref(),
+            Some("release_metadata_ambiguous")
+        );
+        assert!(duplicated_release.next_action.is_none());
+
+        let fallback_target = NvidiaTargetReadiness {
+            steamos_version: Some("3.8.15".into()),
+            ..legacy.target.clone()
+        };
+        let core_fallback =
+            invoke_core_resolver(&root, &root, &fallback_target, &releases).unwrap();
+        let (fallback_identity, fallback_release, fallback_compatibility) =
+            select_published_nvidia_release(&fallback_target, &releases)
+                .unwrap()
+                .expect("legacy Rust resolver selects the same-series fixture");
+        let legacy_fallback = NvidiaPublishedResolution {
+            schema_version: 2,
+            status: "compatible".into(),
+            reason: "published_exact_match".into(),
+            message: "fixture".into(),
+            compatibility: Some(fallback_compatibility),
+            target: fallback_target,
+            publication: Some(NvidiaPublishedPublication {
+                tag: fallback_identity.tag,
+                steamos_version: fallback_identity.steamos_version,
+                kernel_version: fallback_identity.kernel_version,
+                nvidia_version: fallback_identity.nvidia_version,
+                published_at: fallback_release.published_at,
+            }),
+            artifact: None,
+            build_plan: None,
+        };
+        compare_core_and_legacy_resolver(&core_fallback, &legacy_fallback).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 }
