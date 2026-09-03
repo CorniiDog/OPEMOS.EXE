@@ -1663,11 +1663,12 @@ pub(crate) fn validate_support_initramfs_workspace(
     }
 }
 
-fn validate_support_module_verification(
+pub(crate) fn validate_support_module_verification(
     verification: &SupportModuleVerification,
     validated_modules: &[SupportInstallValidatedModule],
     expected_kernel: &str,
 ) -> Result<(), String> {
+    validate_support_module_verification_record(verification)?;
     const EXPECTED: [&str; 5] = [
         "nvidia.ko",
         "nvidia-drm.ko",
@@ -1675,12 +1676,7 @@ fn validate_support_module_verification(
         "nvidia-peermem.ko",
         "nvidia-uvm.ko",
     ];
-    if verification.schema_version != 1
-        || verification.status != "verified"
-        || verification.reason != "installed_modules_verified"
-        || verification.modules.len() != EXPECTED.len()
-        || validated_modules.len() != EXPECTED.len()
-    {
+    if validated_modules.len() != EXPECTED.len() {
         return Err("Offline installer returned incomplete module verification evidence.".into());
     }
     let mut validated_hashes = HashMap::new();
@@ -1696,22 +1692,42 @@ fn validate_support_module_verification(
             );
         }
     }
-    let mut names = HashSet::new();
     let prefix = format!("usr/lib/modules/{expected_kernel}/updates/");
     for module in &verification.modules {
-        let expected_basename = match module.representation.as_str() {
-            ".ko" => module.module_name.clone(),
-            ".ko.zst" => format!("{}.zst", module.module_name),
-            _ => {
-                return Err(
-                    "Offline installer returned an unsupported module representation.".into(),
-                );
-            }
-        };
+        if !module.target_relative_path.starts_with(&prefix)
+            || validated_hashes.get(module.module_name.as_str()).copied()
+                != Some(module.expected_payload_sha256.as_str())
+        {
+            return Err("Offline installer module verification evidence is inconsistent.".into());
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_support_module_verification_record(
+    verification: &SupportModuleVerification,
+) -> Result<(), String> {
+    const EXPECTED: [&str; 5] = [
+        "nvidia.ko",
+        "nvidia-drm.ko",
+        "nvidia-modeset.ko",
+        "nvidia-peermem.ko",
+        "nvidia-uvm.ko",
+    ];
+    if verification.schema_version != 1
+        || verification.status != "verified"
+        || verification.reason != "installed_modules_verified"
+        || verification.modules.len() != EXPECTED.len()
+    {
+        return Err("Offline installer returned incomplete module verification evidence.".into());
+    }
+    let mut names = HashSet::new();
+    for module in &verification.modules {
+        let expected_basename = format!("{}.zst", module.module_name);
         if !EXPECTED.contains(&module.module_name.as_str())
             || !names.insert(module.module_name.as_str())
+            || module.representation != ".ko.zst"
             || !safe_initramfs_path(&module.target_relative_path)
-            || !module.target_relative_path.starts_with(&prefix)
             || module
                 .target_relative_path
                 .rsplit('/')
@@ -1719,8 +1735,6 @@ fn validate_support_module_verification(
                 .unwrap_or_default()
                 != expected_basename
             || !exact_sha256(&module.expected_payload_sha256)
-            || validated_hashes.get(module.module_name.as_str()).copied()
-                != Some(module.expected_payload_sha256.as_str())
             || module.actual_payload_sha256 != module.expected_payload_sha256
             || module.expected_mode != "0644"
             || module.actual_mode != "0644"
@@ -1730,12 +1744,7 @@ fn validate_support_module_verification(
             || module.actual_gid != 0
             || !module.invalid_fields.is_empty()
             || !(1..=1024 * 1024 * 1024).contains(&module.compressed_size_bytes)
-            || module.decompression_status
-                != if module.representation == ".ko.zst" {
-                    "verified"
-                } else {
-                    "not-required"
-                }
+            || module.decompression_status != "verified"
         {
             return Err("Offline installer module verification evidence is inconsistent.".into());
         }

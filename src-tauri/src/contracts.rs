@@ -928,7 +928,7 @@ pub(crate) struct SupportModuleVerification {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportInstalledModule {
     pub(crate) module_name: String,
     pub(crate) target_relative_path: String,
@@ -1127,7 +1127,7 @@ pub(crate) struct SupportInstallValidation {
     pub(crate) storage: SupportInstallStorage,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportInstallValidatedModule {
     pub(crate) name: String,

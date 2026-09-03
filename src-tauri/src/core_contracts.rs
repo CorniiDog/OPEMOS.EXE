@@ -7,6 +7,8 @@ pub(crate) const CORE_BUNDLE_MANIFEST_LIMIT: usize = 2 * 1024 * 1024;
 pub(crate) const CORE_RESOLVER_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_INSTALLER_RESULT_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_INSTALLER_VALIDATION_FIXTURE_LIMIT: usize = 512 * 1024;
+pub(crate) const CORE_INSTALLER_MODULE_VERIFICATION_FIXTURE_LIMIT: usize = 512 * 1024;
+pub(crate) const CORE_INSTALLER_MODULE_VERIFICATION_DOCUMENT_LIMIT: usize = 1024 * 1024;
 pub(crate) const CORE_INSTALLER_PROGRESS_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_PROGRESS_STREAM_LIMIT: usize = 16 * 1024 * 1024;
 const CORE_PROGRESS_PREFIX: &str = "STEAMOS_NVIDIA_PROGRESS ";
@@ -591,6 +593,352 @@ pub(crate) fn parse_core_installer_validation_compatibility_fixtures(
         );
     }
     Ok(fixtures)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerModuleVerificationCompatibilityFixtures {
+    pub(crate) schema_version: u32,
+    pub(crate) kind: String,
+    pub(crate) module_verification_schema_version: u32,
+    pub(crate) target_kernel: String,
+    pub(crate) validation_modules: Vec<SupportInstallValidatedModule>,
+    pub(crate) unfrozen_fields: Vec<String>,
+    pub(crate) limits: CoreInstallerModuleVerificationFixtureLimits,
+    pub(crate) cases: Vec<CoreInstallerModuleVerificationCompatibilityCase>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerModuleVerificationFixtureLimits {
+    pub(crate) max_document_bytes: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerModuleVerificationCompatibilityCase {
+    pub(crate) name: String,
+    pub(crate) expected: CoreInstallerModuleVerificationExpectation,
+    #[serde(default)]
+    pub(crate) document: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) raw_document: Option<String>,
+    #[serde(default)]
+    pub(crate) document_recipe: Option<CoreInstallerModuleVerificationDocumentRecipe>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerModuleVerificationExpectation {
+    pub(crate) record_accepted: bool,
+    pub(crate) success_proof_accepted: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerModuleVerificationDocumentRecipe {
+    pub(crate) kind: String,
+    pub(crate) base_case: String,
+    pub(crate) padding_bytes: usize,
+}
+
+pub(crate) fn parse_core_installer_module_verification_fixtures(
+    bytes: &[u8],
+) -> Result<CoreInstallerModuleVerificationCompatibilityFixtures, String> {
+    if bytes.is_empty() || bytes.len() > CORE_INSTALLER_MODULE_VERIFICATION_FIXTURE_LIMIT {
+        return Err("OPEMOS Core module-verification fixtures are empty or exceed 512 KiB.".into());
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core module-verification fixtures")?;
+    let fixtures: CoreInstallerModuleVerificationCompatibilityFixtures =
+        serde_json::from_slice(bytes).map_err(|error| {
+            format!("OPEMOS Core module-verification fixtures are invalid JSON: {error}")
+        })?;
+    let record_accepted = HashSet::from([
+        "valid-normalized-success",
+        "safe-additive-top-level",
+        "valid-failure-diagnostic",
+        "payload-hash-binding-mismatch",
+        "wrong-kernel-path",
+    ]);
+    let success_accepted = HashSet::from(["valid-normalized-success", "safe-additive-top-level"]);
+    let required_names = record_accepted
+        .iter()
+        .copied()
+        .chain([
+            "missing-module",
+            "duplicate-module-identity",
+            "unknown-module-identity",
+            "oversized-module-set",
+            "actual-payload-hash-mismatch",
+            "raw-representation",
+            "path-traversal",
+            "mode-mismatch",
+            "uid-mismatch",
+            "gid-mismatch",
+            "decompression-mismatch",
+            "zero-compressed-size",
+            "missing-required-field",
+            "unknown-record-field",
+            "malformed-json",
+            "duplicate-json-key",
+            "non-finite-json",
+            "oversized-document",
+        ])
+        .collect::<HashSet<_>>();
+    if fixtures.schema_version != 1
+        || fixtures.kind != "opemos-installer-module-verification-compatibility-fixtures"
+        || fixtures.module_verification_schema_version != 1
+        || fixtures.target_kernel.is_empty()
+        || fixtures.target_kernel.len() > 255
+        || fixtures.validation_modules.len() != 5
+        || fixtures.unfrozen_fields != ["message"]
+        || fixtures.limits.max_document_bytes != CORE_INSTALLER_MODULE_VERIFICATION_DOCUMENT_LIMIT
+        || !(1..=64).contains(&fixtures.cases.len())
+    {
+        return Err("OPEMOS Core module-verification fixture envelope is invalid.".into());
+    }
+    let mut names = HashSet::new();
+    for case in &fixtures.cases {
+        let variants = usize::from(case.document.is_some())
+            + usize::from(case.raw_document.is_some())
+            + usize::from(case.document_recipe.is_some());
+        let expected_variant = match case.name.as_str() {
+            "malformed-json" | "duplicate-json-key" | "non-finite-json" => "raw",
+            "oversized-document" => "recipe",
+            _ => "document",
+        };
+        if !safe_kebab_token(&case.name, 64)
+            || !names.insert(case.name.as_str())
+            || case.expected.record_accepted != record_accepted.contains(case.name.as_str())
+            || case.expected.success_proof_accepted != success_accepted.contains(case.name.as_str())
+            || (case.expected.success_proof_accepted && !case.expected.record_accepted)
+            || variants != 1
+            || (case.document.is_some()) != (expected_variant == "document")
+            || (case.raw_document.is_some()) != (expected_variant == "raw")
+            || (case.document_recipe.is_some()) != (expected_variant == "recipe")
+            || case.raw_document.as_ref().is_some_and(|raw| {
+                raw.is_empty() || raw.len() > CORE_INSTALLER_MODULE_VERIFICATION_DOCUMENT_LIMIT
+            })
+        {
+            return Err(
+                "OPEMOS Core module-verification fixture case is unsafe or incomplete.".into(),
+            );
+        }
+        if let Some(recipe) = &case.document_recipe {
+            if case.name != "oversized-document"
+                || recipe.kind != "top-level-padding"
+                || recipe.base_case != "valid-normalized-success"
+                || recipe.padding_bytes != CORE_INSTALLER_MODULE_VERIFICATION_DOCUMENT_LIMIT
+            {
+                return Err("OPEMOS Core module-verification fixture recipe is invalid.".into());
+            }
+        }
+    }
+    if names != required_names {
+        return Err(
+            "OPEMOS Core module-verification fixture matrix omits a required safety case.".into(),
+        );
+    }
+    Ok(fixtures)
+}
+
+pub(crate) fn validate_core_installer_module_verification_document(
+    bytes: &[u8],
+) -> Result<bool, String> {
+    if bytes.is_empty() || bytes.len() > CORE_INSTALLER_MODULE_VERIFICATION_DOCUMENT_LIMIT {
+        return Err("OPEMOS Core module-verification document is empty or exceeds 1 MiB.".into());
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core module-verification document")?;
+    let value: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("OPEMOS Core module-verification document is invalid: {error}"))?;
+    match value.get("status").and_then(serde_json::Value::as_str) {
+        Some("verified") => {
+            let verification: SupportModuleVerification =
+                serde_json::from_value(value).map_err(|error| {
+                    format!("OPEMOS Core verified-module record is invalid: {error}")
+                })?;
+            validate_support_module_verification_record(&verification)?;
+            Ok(true)
+        }
+        Some("failed") => {
+            validate_core_module_verification_failure(&value)?;
+            Ok(false)
+        }
+        _ => Err("OPEMOS Core module-verification status is invalid.".into()),
+    }
+}
+
+fn validate_core_module_verification_failure(value: &serde_json::Value) -> Result<(), String> {
+    let exact_lower_sha256 = |value: &str| {
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    };
+    let object = value
+        .as_object()
+        .ok_or("OPEMOS Core module-verification failure is not an object.")?;
+    let message = object
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .filter(|message| !message.is_empty() && message.len() <= 2_048)
+        .ok_or("OPEMOS Core module-verification failure message is invalid.")?;
+    let _ = message;
+    if object
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+        || object.get("status").and_then(serde_json::Value::as_str) != Some("failed")
+        || object.get("reason").and_then(serde_json::Value::as_str)
+            != Some("installed_module_mismatch")
+    {
+        return Err("OPEMOS Core module-verification failure identity is invalid.".into());
+    }
+    let mismatches = object
+        .get("moduleMismatches")
+        .and_then(serde_json::Value::as_array)
+        .filter(|mismatches| (1..=6).contains(&mismatches.len()))
+        .ok_or("OPEMOS Core module-verification mismatch list is invalid.")?;
+    let required_keys = HashSet::from([
+        "moduleName",
+        "targetRelativePath",
+        "representation",
+        "expectedPayloadSha256",
+        "actualPayloadSha256",
+        "expectedMode",
+        "actualMode",
+        "expectedUid",
+        "actualUid",
+        "expectedGid",
+        "actualGid",
+        "compressedSizeBytes",
+        "decompressionStatus",
+        "invalidFields",
+    ]);
+    let module_names = HashSet::from([
+        "nvidia.ko",
+        "nvidia-drm.ko",
+        "nvidia-modeset.ko",
+        "nvidia-peermem.ko",
+        "nvidia-uvm.ko",
+        "unexpected",
+    ]);
+    let invalid_field_names = HashSet::from([
+        "presence",
+        "representation",
+        "payloadSha256",
+        "mode",
+        "uid",
+        "gid",
+        "decompression",
+    ]);
+    let decompression_states = HashSet::from([
+        "verified",
+        "not-required",
+        "failed",
+        "timeout",
+        "size-limit",
+        "empty",
+        "not-attempted",
+        "missing",
+        "ambiguous",
+        "unreadable",
+    ]);
+    let nullable_hash = |field: Option<&serde_json::Value>| {
+        field.is_some_and(|value| value.is_null() || value.as_str().is_some_and(exact_lower_sha256))
+    };
+    let nullable_mode = |field: Option<&serde_json::Value>| {
+        field.is_some_and(|value| {
+            value.is_null()
+                || value.as_str().is_some_and(|mode| {
+                    mode.len() == 4 && mode.bytes().all(|byte| (b'0'..=b'7').contains(&byte))
+                })
+        })
+    };
+    let nullable_unsigned = |field: Option<&serde_json::Value>| {
+        field.is_some_and(|value| {
+            value.is_null() || value.as_u64().is_some_and(|n| n <= u32::MAX.into())
+        })
+    };
+    for mismatch in mismatches {
+        let record = mismatch
+            .as_object()
+            .ok_or("OPEMOS Core module mismatch is not an object.")?;
+        let keys = record.keys().map(String::as_str).collect::<HashSet<_>>();
+        if !required_keys.is_subset(&keys)
+            || keys
+                .iter()
+                .any(|key| !required_keys.contains(key) && *key != "unexpectedEntries")
+            || record
+                .get("moduleName")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|name| !module_names.contains(name))
+            || record
+                .get("targetRelativePath")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|path| {
+                    path.len() > 512
+                        || !path.starts_with("usr/lib/modules/")
+                        || path.split('/').any(|part| part == "..")
+                        || !path
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || b"._+~/-".contains(&byte))
+                })
+            || record.get("representation").is_none_or(|value| {
+                !(value.is_null() || matches!(value.as_str(), Some(".ko" | ".ko.zst")))
+            })
+            || !nullable_hash(record.get("expectedPayloadSha256"))
+            || !nullable_hash(record.get("actualPayloadSha256"))
+            || !nullable_mode(record.get("expectedMode"))
+            || !nullable_mode(record.get("actualMode"))
+            || !nullable_unsigned(record.get("expectedUid"))
+            || !nullable_unsigned(record.get("actualUid"))
+            || !nullable_unsigned(record.get("expectedGid"))
+            || !nullable_unsigned(record.get("actualGid"))
+            || record.get("compressedSizeBytes").is_none_or(|value| {
+                !(value.is_null() || value.as_u64().is_some_and(|n| n <= 1024 * 1024 * 1024))
+            })
+            || record
+                .get("decompressionStatus")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|status| !decompression_states.contains(status))
+        {
+            return Err("OPEMOS Core module mismatch metadata is invalid.".into());
+        }
+        let invalid_fields = record
+            .get("invalidFields")
+            .and_then(serde_json::Value::as_array)
+            .filter(|fields| (1..=7).contains(&fields.len()))
+            .ok_or("OPEMOS Core module mismatch invalid-field list is invalid.")?;
+        let mut unique_fields = HashSet::new();
+        if invalid_fields.iter().any(|field| {
+            field.as_str().is_none_or(|field| {
+                !invalid_field_names.contains(field) || !unique_fields.insert(field)
+            })
+        }) {
+            return Err("OPEMOS Core module mismatch invalid-field list is inconsistent.".into());
+        }
+        if let Some(unexpected_entries) = record.get("unexpectedEntries") {
+            let entries = unexpected_entries
+                .as_array()
+                .filter(|entries| (1..=16).contains(&entries.len()))
+                .ok_or("OPEMOS Core unexpected module entries are invalid.")?;
+            let mut unique_entries = HashSet::new();
+            if entries.iter().any(|entry| {
+                entry.as_str().is_none_or(|entry| {
+                    entry.is_empty()
+                        || entry.len() > 255
+                        || !entry
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || b"@._+~:-".contains(&byte))
+                        || !unique_entries.insert(entry)
+                })
+            }) {
+                return Err("OPEMOS Core unexpected module entries are unsafe.".into());
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -2243,6 +2591,99 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn local_successor_module_verification_fixtures_match_rust_semantics() {
+        let Some(repository) = core_repository() else {
+            eprintln!(
+                "skipping local successor module-verification fixtures: sibling Core repository is absent"
+            );
+            return;
+        };
+        let generator = repository.join("lib/generate_installer_module_verification_fixtures.py");
+        let generate = || {
+            let output = Command::new("python3")
+                .arg(&generator)
+                .current_dir(&repository)
+                .output()
+                .expect("run Core module-verification fixture generator");
+            assert!(output.status.success());
+            assert!(output.stderr.is_empty());
+            output.stdout
+        };
+        let first = generate();
+        assert_eq!(
+            first,
+            generate(),
+            "Core module-verification fixtures were nondeterministic"
+        );
+        let fixtures = parse_core_installer_module_verification_fixtures(&first)
+            .expect("consume bounded Core module-verification fixtures");
+        let base_document = fixtures
+            .cases
+            .iter()
+            .find(|case| case.name == "valid-normalized-success")
+            .and_then(|case| case.document.clone())
+            .expect("module-verification fixture base document");
+        for case in &fixtures.cases {
+            let document_bytes = if let Some(document) = &case.document {
+                serde_json::to_vec(document).expect("serialize module-verification fixture")
+            } else if let Some(raw) = &case.raw_document {
+                raw.as_bytes().to_vec()
+            } else {
+                let recipe = case
+                    .document_recipe
+                    .as_ref()
+                    .expect("module-verification fixture recipe");
+                let mut document = base_document.clone();
+                document["padding"] = serde_json::Value::String("x".repeat(recipe.padding_bytes));
+                serde_json::to_vec(&document).expect("expand module-verification fixture recipe")
+            };
+            let result = validate_core_installer_module_verification_document(&document_bytes);
+            assert_eq!(
+                result.is_ok(),
+                case.expected.record_accepted,
+                "Rust module-record acceptance diverged for {}: {:?}",
+                case.name,
+                result.as_ref().err()
+            );
+            let success_proof_accepted = result.as_ref().is_ok_and(|verified| *verified)
+                && serde_json::from_slice::<SupportModuleVerification>(&document_bytes)
+                    .ok()
+                    .is_some_and(|verification| {
+                        validate_support_module_verification(
+                            &verification,
+                            &fixtures.validation_modules,
+                            &fixtures.target_kernel,
+                        )
+                        .is_ok()
+                    });
+            assert_eq!(
+                success_proof_accepted, case.expected.success_proof_accepted,
+                "Rust module success-proof acceptance diverged for {}",
+                case.name
+            );
+        }
+
+        let mut relabelled: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        relabelled["cases"][0]["expected"]["successProofAccepted"] = serde_json::json!(false);
+        assert!(parse_core_installer_module_verification_fixtures(
+            &serde_json::to_vec(&relabelled).unwrap()
+        )
+        .is_err());
+        let mut missing_case: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        missing_case["cases"].as_array_mut().unwrap().pop();
+        assert!(parse_core_installer_module_verification_fixtures(
+            &serde_json::to_vec(&missing_case).unwrap()
+        )
+        .is_err());
+        assert!(parse_core_installer_module_verification_fixtures(&vec![
+            b' ';
+            CORE_INSTALLER_MODULE_VERIFICATION_FIXTURE_LIMIT
+                + 1
+        ])
+        .is_err());
     }
 
     #[test]
