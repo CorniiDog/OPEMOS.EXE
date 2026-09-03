@@ -6,7 +6,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::{CStr, CString},
     fs::{self, File, OpenOptions},
-    io::{ErrorKind, Read, Write},
+    io::{ErrorKind, Read, Seek, SeekFrom, Write},
     os::unix::{
         ffi::OsStrExt,
         io::{AsRawFd, FromRawFd},
@@ -27,6 +27,9 @@ const CACHE_STATE_LIMIT: usize = 16 * 1024;
 const CACHE_STATE_SCHEMA: u32 = 2;
 const CACHE_STATE_KIND: &str = "opemos-core-host-generation-state";
 const CACHE_STATE_REQUIRED_MARKER: &str = "state-required";
+const CACHE_STATE_LEGACY: &str = "state.json";
+const CACHE_STATE_A: &str = "state-a.json";
+const CACHE_STATE_B: &str = "state-b.json";
 static STATE_WRITE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static CACHE_TRANSACTION_LOCK: Mutex<()> = Mutex::new(());
 const CACHE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1539,83 +1542,91 @@ impl CoreGenerationCache {
     }
 
     fn load_state_unlocked(&self) -> Result<CoreGenerationCacheState, String> {
-        let path = self.root.join("state.json");
-        let before = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                if safe_regular_file(&self.root.join(CACHE_STATE_REQUIRED_MARKER))? {
+        let legacy_path = self.root.join(CACHE_STATE_LEGACY);
+        let slot_a_path = self.root.join(CACHE_STATE_A);
+        let slot_b_path = self.root.join(CACHE_STATE_B);
+        let marker_present = state_marker_present(&self.root)?;
+        let legacy = read_state_snapshot(&legacy_path, "legacy Core generation cache state")?;
+        let slot_a = read_state_snapshot(&slot_a_path, "Core generation cache state slot A")?;
+        let slot_b = read_state_snapshot(&slot_b_path, "Core generation cache state slot B")?;
+
+        if let Some(legacy) = legacy {
+            for slot in [slot_a.as_ref(), slot_b.as_ref()].into_iter().flatten() {
+                if slot.bytes != legacy.bytes {
                     return Err(
-                        "Core generation cache state is missing after prior activation.".into(),
+                        "Partial Core generation state migration conflicts with legacy state."
+                            .into(),
                     );
                 }
-                return Ok(CoreGenerationCacheState::default());
             }
-            Err(error) => {
-                return Err(format!(
-                    "Could not read Core generation cache state: {error}"
-                ));
+            if slot_a.is_none() {
+                write_state_slot_create(&slot_a_path, &legacy.bytes, &self.root)?;
             }
-        };
-        use std::os::unix::fs::MetadataExt as _;
-        if before.file_type().is_symlink()
-            || !before.is_file()
-            || before.nlink() != 1
-            || before.len() == 0
-            || before.len() > CACHE_STATE_LIMIT as u64
-        {
-            return Err("Core generation cache state is not a bounded regular file.".into());
+            if slot_b.is_none() {
+                write_state_slot_create(&slot_b_path, &legacy.bytes, &self.root)?;
+            }
+            if !marker_present {
+                ensure_state_required_marker(&self.root)?;
+            }
+            remove_safe_regular_file(
+                &legacy_path,
+                &self.root,
+                legacy.identity,
+                "legacy Core generation cache state",
+            )?;
+            sync_directory(&self.root)?;
+            return Ok(legacy.state);
         }
-        let mut options = OpenOptions::new();
-        options
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-        let mut file = options
-            .open(&path)
-            .map_err(|error| format!("Could not open Core generation cache state: {error}"))?;
-        let opened = file
-            .metadata()
-            .map_err(|error| format!("Could not inspect opened Core cache state: {error}"))?;
-        if before.dev() != opened.dev()
-            || before.ino() != opened.ino()
-            || before.len() != opened.len()
-            || opened.nlink() != 1
-        {
-            return Err("Core generation cache state changed while opening it.".into());
+
+        match (slot_a, slot_b, marker_present) {
+            (None, None, false) => {
+                let state = CoreGenerationCacheState::default();
+                let bytes = canonical_state_bytes(&state)?;
+                write_state_slot_create(&slot_a_path, &bytes, &self.root)?;
+                write_state_slot_create(&slot_b_path, &bytes, &self.root)?;
+                ensure_state_required_marker(&self.root)?;
+                Ok(state)
+            }
+            (Some(slot), None, false) if slot.state == CoreGenerationCacheState::default() => {
+                write_state_slot_create(&slot_b_path, &slot.bytes, &self.root)?;
+                ensure_state_required_marker(&self.root)?;
+                Ok(slot.state)
+            }
+            (None, Some(slot), false) if slot.state == CoreGenerationCacheState::default() => {
+                write_state_slot_create(&slot_a_path, &slot.bytes, &self.root)?;
+                ensure_state_required_marker(&self.root)?;
+                Ok(slot.state)
+            }
+            (Some(slot_a), Some(slot_b), false)
+                if slot_a.state == CoreGenerationCacheState::default()
+                    && slot_a.bytes == slot_b.bytes =>
+            {
+                ensure_state_required_marker(&self.root)?;
+                Ok(slot_a.state)
+            }
+            (Some(slot_a), Some(slot_b), true) => select_state_slots(slot_a, slot_b),
+            _ => Err("Core generation cache state slots are incomplete or inconsistent.".into()),
         }
-        let mut bytes = Vec::with_capacity(opened.len() as usize);
-        Read::by_ref(&mut file)
-            .take(CACHE_STATE_LIMIT.saturating_add(1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|error| format!("Could not read Core generation cache state: {error}"))?;
-        let after = file
-            .metadata()
-            .map_err(|error| format!("Could not recheck opened Core cache state: {error}"))?;
-        if opened.dev() != after.dev()
-            || opened.ino() != after.ino()
-            || opened.len() != after.len()
-            || opened.mtime() != after.mtime()
-            || opened.mtime_nsec() != after.mtime_nsec()
-            || after.nlink() != 1
-            || bytes.len() as u64 != opened.len()
-        {
-            return Err("Core generation cache state changed while it was read.".into());
-        }
-        if bytes.is_empty() || bytes.len() > CACHE_STATE_LIMIT {
-            return Err("Core generation cache state is empty or excessive.".into());
-        }
-        let state: CoreGenerationCacheState = serde_json::from_slice(&bytes)
-            .map_err(|error| format!("Core generation cache state is invalid: {error}"))?;
-        state.validate()?;
-        if canonical_state_bytes(&state)? != bytes {
-            return Err("Core generation cache state is not canonical.".into());
-        }
-        Ok(state)
     }
 
     fn save_next_state(
         &self,
-        mut state: CoreGenerationCacheState,
+        state: CoreGenerationCacheState,
     ) -> Result<CoreGenerationCacheState, String> {
+        self.save_next_state_with_hook(state, |_| {})
+    }
+
+    fn save_next_state_with_hook(
+        &self,
+        mut state: CoreGenerationCacheState,
+        mut hook: impl FnMut(&'static str),
+    ) -> Result<CoreGenerationCacheState, String> {
+        let durable = self.load_state_unlocked()?;
+        if durable.revision != state.revision
+            || state.high_water_sequence < durable.high_water_sequence
+        {
+            return Err("Core generation cache state changed before publication.".into());
+        }
         state.revision = state
             .revision
             .checked_add(1)
@@ -1628,27 +1639,95 @@ impl CoreGenerationCache {
             std::process::id(),
             sequence
         ));
-        let path = self.root.join("state.json");
+        let slot_name = state_slot_name(state.revision);
+        let path = self.root.join(slot_name);
+        let target = read_state_snapshot(&path, "Core generation cache target state slot")?
+            .ok_or("Core generation cache target state slot is missing.")?;
+        let mut temporary_identity = None;
         let result = (|| {
             let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            options.mode(0o600);
+            options
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
             let mut file = options
                 .open(&temporary)
                 .map_err(|error| format!("Could not stage Core generation state: {error}"))?;
+            let metadata = file.metadata().map_err(|error| {
+                format!("Could not identify staged Core generation state: {error}")
+            })?;
+            use std::os::unix::fs::MetadataExt as _;
+            temporary_identity = Some(FilesystemIdentity {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            });
+            file.set_permissions(fs::Permissions::from_mode(0o600))
+                .map_err(|error| {
+                    format!("Could not secure staged Core generation state: {error}")
+                })?;
             file.write_all(&bytes)
-                .and_then(|_| file.sync_all())
+                .and_then(|()| file.sync_all())
                 .map_err(|error| format!("Could not sync Core generation state: {error}"))?;
-            ensure_state_required_marker(&self.root)?;
+            let staged =
+                temporary_identity.ok_or("Core generation state temporary identity is missing.")?;
+            verify_open_private_file(&mut file, staged, &bytes, "staged Core generation state")?;
+            require_current_regular_file_identity(
+                &temporary,
+                staged,
+                "staged Core generation state",
+            )?;
+            hook("after-state-temporary-sync");
+            verify_open_private_file(&mut file, staged, &bytes, "staged Core generation state")?;
+            require_current_regular_file_identity(
+                &path,
+                target.identity,
+                "Core generation cache target state slot",
+            )?;
+            require_current_regular_file_identity(
+                &temporary,
+                staged,
+                "staged Core generation state",
+            )?;
             fs::rename(&temporary, &path)
                 .map_err(|error| format!("Could not activate Core generation state: {error}"))?;
-            sync_directory(&self.root)
+            require_current_regular_file_identity(
+                &path,
+                staged,
+                "published Core generation state slot",
+            )?;
+            hook("after-state-slot-rename");
+            verify_open_private_file(&mut file, staged, &bytes, "published Core generation state")?;
+            require_current_regular_file_identity(
+                &path,
+                staged,
+                "published Core generation state slot",
+            )?;
+            sync_directory(&self.root)?;
+            hook("after-state-root-sync");
+            verify_open_private_file(&mut file, staged, &bytes, "published Core generation state")?;
+            require_current_regular_file_identity(
+                &path,
+                staged,
+                "published Core generation state slot",
+            )?;
+            Ok(())
         })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
+        if let Err(error) = result {
+            if let Some(identity) = temporary_identity {
+                if let Err(cleanup_error) = durably_remove_failed_private_publication(
+                    &temporary,
+                    &self.root,
+                    identity,
+                    "staged Core generation state",
+                ) {
+                    return Err(format!("{error} Cleanup failed: {cleanup_error}"));
+                }
+            }
+            return Err(error);
         }
-        result.map(|_| state)
+        Ok(state)
     }
 
     fn generation_path(&self, identity: &CoreGenerationIdentity) -> Result<PathBuf, String> {
@@ -1895,7 +1974,11 @@ fn validate_cache_root_inventory(
         );
         let known_file = matches!(
             name.as_str(),
-            "cache.lock" | "state.json" | CACHE_STATE_REQUIRED_MARKER
+            "cache.lock"
+                | CACHE_STATE_LEGACY
+                | CACHE_STATE_A
+                | CACHE_STATE_B
+                | CACHE_STATE_REQUIRED_MARKER
         );
         use std::os::unix::fs::MetadataExt as _;
         if known_directory {
@@ -2678,6 +2761,22 @@ fn remove_safe_regular_file(
     fs::remove_file(path).map_err(|error| format!("Could not remove {description}: {error}"))
 }
 
+fn durably_remove_failed_private_publication(
+    path: &Path,
+    parent: &Path,
+    expected: FilesystemIdentity,
+    description: &str,
+) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => sync_directory(parent),
+        Err(error) => Err(format!("Could not inspect {description}: {error}")),
+        Ok(_) => {
+            remove_safe_regular_file(path, parent, expected, description)?;
+            sync_directory(parent)
+        }
+    }
+}
+
 fn require_current_directory_identity(
     path: &Path,
     expected: FilesystemIdentity,
@@ -3153,22 +3252,426 @@ fn safe_regular_file(path: &Path) -> Result<bool, String> {
 }
 
 fn ensure_state_required_marker(root: &Path) -> Result<(), String> {
+    ensure_state_required_marker_with_hook(root, |_| {})
+}
+
+fn ensure_state_required_marker_with_hook(
+    root: &Path,
+    mut hook: impl FnMut(&'static str),
+) -> Result<(), String> {
     let path = root.join(CACHE_STATE_REQUIRED_MARKER);
-    if safe_regular_file(&path)? {
+    if state_marker_present(root)? {
         return Ok(());
     }
     let mut options = OpenOptions::new();
     options
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    let mut file = options
+        .open(&path)
+        .map_err(|error| format!("Could not create Core cache state marker: {error}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Could not identify Core cache state marker: {error}"))?;
+    use std::os::unix::fs::MetadataExt as _;
+    let identity = FilesystemIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    };
+    let result = (|| {
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| format!("Could not secure Core cache state marker: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("Could not sync Core cache state marker: {error}"))?;
+        verify_open_private_file(&mut file, identity, b"", "Core cache state marker")?;
+        require_current_regular_file_identity(&path, identity, "Core cache state marker")?;
+        hook("after-state-marker-sync");
+        verify_open_private_file(&mut file, identity, b"", "Core cache state marker")?;
+        require_current_regular_file_identity(&path, identity, "Core cache state marker")?;
+        sync_directory(root)?;
+        hook("after-state-marker-root-sync");
+        verify_open_private_file(&mut file, identity, b"", "Core cache state marker")?;
+        require_current_regular_file_identity(&path, identity, "Core cache state marker")
+    })();
+    if let Err(error) = result {
+        if let Err(cleanup_error) = durably_remove_failed_private_publication(
+            &path,
+            root,
+            identity,
+            "Core cache state marker",
+        ) {
+            return Err(format!("{error} Cleanup failed: {cleanup_error}"));
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn state_marker_present(root: &Path) -> Result<bool, String> {
+    let path = root.join(CACHE_STATE_REQUIRED_MARKER);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("Could not inspect Core state marker: {error}")),
+    };
+    use std::os::unix::fs::MetadataExt as _;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.nlink() != 1
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.permissions().mode() & 0o7777 != 0o600
+        || metadata.len() != 0
+    {
+        return Err("Core generation cache state marker is unsafe.".into());
+    }
+    let identity = FilesystemIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    };
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    let file = options
+        .open(&path)
+        .map_err(|error| format!("Could not open Core state marker: {error}"))?;
+    let opened = file
+        .metadata()
+        .map_err(|error| format!("Could not identify opened Core state marker: {error}"))?;
+    if opened.dev() != identity.device
+        || opened.ino() != identity.inode
+        || !opened.is_file()
+        || opened.nlink() != 1
+        || opened.uid() != unsafe { libc::geteuid() }
+        || opened.permissions().mode() & 0o7777 != 0o600
+        || opened.len() != 0
+    {
+        return Err("Core generation cache state marker changed while opening it.".into());
+    }
+    require_current_regular_file_identity(&path, identity, "Core cache state marker")?;
+    Ok(true)
+}
+
+#[derive(Clone)]
+struct StateSnapshot {
+    state: CoreGenerationCacheState,
+    bytes: Vec<u8>,
+    identity: FilesystemIdentity,
+}
+
+fn read_state_snapshot(path: &Path, label: &str) -> Result<Option<StateSnapshot>, String> {
+    let before = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Could not inspect {label}: {error}")),
+    };
+    use std::os::unix::fs::MetadataExt as _;
+    if before.file_type().is_symlink()
+        || !before.is_file()
+        || before.nlink() != 1
+        || before.uid() != unsafe { libc::geteuid() }
+        || before.permissions().mode() & 0o7777 != 0o600
+        || before.len() == 0
+        || before.len() > CACHE_STATE_LIMIT as u64
+    {
+        return Err(format!("{label} is not a private bounded regular file."));
+    }
+    let identity = FilesystemIdentity {
+        device: before.dev(),
+        inode: before.ino(),
+    };
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    let mut file = options
+        .open(path)
+        .map_err(|error| format!("Could not open {label}: {error}"))?;
+    let opened = file
+        .metadata()
+        .map_err(|error| format!("Could not inspect opened {label}: {error}"))?;
+    if opened.dev() != identity.device
+        || opened.ino() != identity.inode
+        || !opened.is_file()
+        || opened.nlink() != 1
+        || opened.uid() != unsafe { libc::geteuid() }
+        || opened.permissions().mode() & 0o7777 != 0o600
+        || opened.len() != before.len()
+    {
+        return Err(format!("{label} changed while opening it."));
+    }
+    let mut bytes = Vec::with_capacity(opened.len() as usize);
+    Read::by_ref(&mut file)
+        .take(CACHE_STATE_LIMIT.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not read {label}: {error}"))?;
+    let after = file
+        .metadata()
+        .map_err(|error| format!("Could not recheck opened {label}: {error}"))?;
+    require_current_regular_file_identity(path, identity, label)?;
+    if opened.dev() != after.dev()
+        || opened.ino() != after.ino()
+        || opened.len() != after.len()
+        || opened.mtime() != after.mtime()
+        || opened.mtime_nsec() != after.mtime_nsec()
+        || after.nlink() != 1
+        || after.uid() != unsafe { libc::geteuid() }
+        || after.permissions().mode() & 0o7777 != 0o600
+        || bytes.len() as u64 != opened.len()
+    {
+        return Err(format!("{label} changed while it was read."));
+    }
+    let state: CoreGenerationCacheState =
+        serde_json::from_slice(&bytes).map_err(|error| format!("{label} is invalid: {error}"))?;
+    state.validate()?;
+    if canonical_state_bytes(&state)? != bytes {
+        return Err(format!("{label} is not canonical."));
+    }
+    Ok(Some(StateSnapshot {
+        state,
+        bytes,
+        identity,
+    }))
+}
+
+fn require_current_regular_file_identity(
+    path: &Path,
+    expected: FilesystemIdentity,
+    label: &str,
+) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not recheck {label}: {error}"))?;
+    use std::os::unix::fs::MetadataExt as _;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.nlink() != 1
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.permissions().mode() & 0o7777 != 0o600
+        || metadata.dev() != expected.device
+        || metadata.ino() != expected.inode
+    {
+        return Err(format!("{label} identity changed."));
+    }
+    Ok(())
+}
+
+fn verify_open_private_file(
+    file: &mut File,
+    expected_identity: FilesystemIdentity,
+    expected_bytes: &[u8],
+    label: &str,
+) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt as _;
+    let before = file
+        .metadata()
+        .map_err(|error| format!("Could not inspect opened {label}: {error}"))?;
+    if !before.is_file()
+        || before.dev() != expected_identity.device
+        || before.ino() != expected_identity.inode
+        || before.nlink() != 1
+        || before.uid() != unsafe { libc::geteuid() }
+        || before.permissions().mode() & 0o7777 != 0o600
+        || before.len() != expected_bytes.len() as u64
+    {
+        return Err(format!("Opened {label} metadata is unsafe or changed."));
+    }
+    file.seek(SeekFrom::Start(0))
+        .map_err(|error| format!("Could not rewind opened {label}: {error}"))?;
+    let mut actual = Vec::with_capacity(expected_bytes.len());
+    Read::by_ref(file)
+        .take(expected_bytes.len().saturating_add(1) as u64)
+        .read_to_end(&mut actual)
+        .map_err(|error| format!("Could not verify opened {label}: {error}"))?;
+    let after = file
+        .metadata()
+        .map_err(|error| format!("Could not recheck opened {label}: {error}"))?;
+    if actual != expected_bytes
+        || before.dev() != after.dev()
+        || before.ino() != after.ino()
+        || before.len() != after.len()
+        || before.mtime() != after.mtime()
+        || before.mtime_nsec() != after.mtime_nsec()
+        || after.nlink() != 1
+        || after.uid() != unsafe { libc::geteuid() }
+        || after.permissions().mode() & 0o7777 != 0o600
+    {
+        return Err(format!("Opened {label} content or metadata changed."));
+    }
+    Ok(())
+}
+
+fn write_state_slot_create(path: &Path, bytes: &[u8], root: &Path) -> Result<(), String> {
+    write_state_slot_create_with_hook(path, bytes, root, |_| {})
+}
+
+fn write_state_slot_create_with_hook(
+    path: &Path,
+    bytes: &[u8],
+    root: &Path,
+    mut hook: impl FnMut(&'static str),
+) -> Result<(), String> {
+    let sequence = STATE_WRITE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = root.join(format!(
+        ".state.json.{}.{}.tmp",
+        std::process::id(),
+        sequence
+    ));
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
         .write(true)
         .create_new(true)
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    let file = options
-        .open(&path)
-        .map_err(|error| format!("Could not create Core cache state marker: {error}"))?;
-    file.sync_all()
-        .map_err(|error| format!("Could not sync Core cache state marker: {error}"))?;
-    sync_directory(root)
+    let mut file = options
+        .open(&temporary)
+        .map_err(|error| format!("Could not create Core generation state slot: {error}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Could not identify staged Core generation state: {error}"))?;
+    use std::os::unix::fs::MetadataExt as _;
+    let temporary_identity = FilesystemIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    };
+    let mut published = false;
+    let result = file
+        .set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(|error| format!("Could not secure staged Core generation state slot: {error}"))
+        .and_then(|()| file.write_all(bytes).map_err(|error| error.to_string()))
+        .and_then(|()| {
+            file.sync_all()
+                .map_err(|error| format!("Could not sync Core generation state slot: {error}"))
+        })
+        .and_then(|()| {
+            verify_open_private_file(
+                &mut file,
+                temporary_identity,
+                bytes,
+                "staged Core generation state slot",
+            )
+        })
+        .and_then(|()| {
+            require_current_regular_file_identity(
+                &temporary,
+                temporary_identity,
+                "staged Core generation state slot",
+            )
+        })
+        .map(|()| hook("after-baseline-slot-temporary-sync"))
+        .and_then(|()| {
+            verify_open_private_file(
+                &mut file,
+                temporary_identity,
+                bytes,
+                "staged Core generation state slot",
+            )
+        })
+        .and_then(|()| {
+            require_current_regular_file_identity(
+                &temporary,
+                temporary_identity,
+                "staged Core generation state slot",
+            )
+        })
+        .and_then(|()| match fs::symlink_metadata(path) {
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Ok(_) => Err("Core generation state slot appeared during initialization.".into()),
+            Err(error) => Err(format!(
+                "Could not inspect Core generation state slot: {error}"
+            )),
+        })
+        .and_then(|()| {
+            fs::rename(&temporary, path).map_err(|error| {
+                format!("Could not publish Core generation state slot: {error}")
+            })?;
+            published = true;
+            Ok(())
+        })
+        .and_then(|()| {
+            require_current_regular_file_identity(
+                path,
+                temporary_identity,
+                "published Core generation state slot",
+            )
+        })
+        .map(|()| hook("after-baseline-slot-rename"))
+        .and_then(|()| {
+            verify_open_private_file(
+                &mut file,
+                temporary_identity,
+                bytes,
+                "published Core generation state slot",
+            )?;
+            require_current_regular_file_identity(
+                path,
+                temporary_identity,
+                "published Core generation state slot",
+            )
+        })
+        .and_then(|()| sync_directory(root))
+        .map(|()| hook("after-baseline-slot-root-sync"))
+        .and_then(|()| {
+            verify_open_private_file(
+                &mut file,
+                temporary_identity,
+                bytes,
+                "published Core generation state slot",
+            )?;
+            require_current_regular_file_identity(
+                path,
+                temporary_identity,
+                "published Core generation state slot",
+            )
+        });
+    if let Err(error) = result {
+        let cleanup_path = if published { path } else { &temporary };
+        if let Err(cleanup_error) = durably_remove_failed_private_publication(
+            cleanup_path,
+            root,
+            temporary_identity,
+            "failed Core generation state publication",
+        ) {
+            return Err(format!("{error} Cleanup failed: {cleanup_error}"));
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn state_slot_name(revision: u64) -> &'static str {
+    if revision.is_multiple_of(2) {
+        CACHE_STATE_A
+    } else {
+        CACHE_STATE_B
+    }
+}
+
+fn select_state_slots(
+    slot_a: StateSnapshot,
+    slot_b: StateSnapshot,
+) -> Result<CoreGenerationCacheState, String> {
+    if slot_a.state.revision == slot_b.state.revision {
+        if slot_a.bytes == slot_b.bytes {
+            return Ok(slot_a.state);
+        }
+        return Err("Core generation cache state slots diverge at one revision.".into());
+    }
+    let (newer, older, newer_name) = if slot_a.state.revision > slot_b.state.revision {
+        (&slot_a, &slot_b, CACHE_STATE_A)
+    } else {
+        (&slot_b, &slot_a, CACHE_STATE_B)
+    };
+    if newer.state.revision.checked_sub(older.state.revision) != Some(1)
+        || state_slot_name(newer.state.revision) != newer_name
+        || newer.state.high_water_sequence < older.state.high_water_sequence
+    {
+        return Err("Core generation cache state slots have an invalid revision sequence.".into());
+    }
+    Ok(newer.state.clone())
 }
 
 fn set_private_directory_permissions(path: &Path) -> Result<(), String> {
@@ -3451,6 +3954,7 @@ fn canonical_state_bytes(state: &CoreGenerationCacheState) -> Result<Vec<u8>, St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::MetadataExt as _;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const TEST_RESERVATION: u64 = 1024;
@@ -3821,6 +4325,554 @@ mod tests {
         options.write(true).create_new(true).mode(0o600);
         options.open(path).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    fn write_private_state(path: &Path, state: &CoreGenerationCacheState) {
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).truncate(true).mode(0o600);
+        let mut file = options.open(path).unwrap();
+        file.write_all(&canonical_state_bytes(state).unwrap())
+            .unwrap();
+        file.sync_all().unwrap();
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .unwrap();
+    }
+
+    #[test]
+    fn state_slots_initialize_identically_and_alternate_by_revision() {
+        let root = temporary_cache("state-slots");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let baseline = cache.load_state().unwrap();
+        assert_eq!(
+            fs::read(root.join(CACHE_STATE_A)).unwrap(),
+            fs::read(root.join(CACHE_STATE_B)).unwrap()
+        );
+        assert!(state_marker_present(&root).unwrap());
+        for name in [CACHE_STATE_A, CACHE_STATE_B, CACHE_STATE_REQUIRED_MARKER] {
+            let metadata = fs::symlink_metadata(root.join(name)).unwrap();
+            assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
+            assert_eq!(metadata.nlink(), 1);
+            assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+        }
+
+        let _process_guard = CACHE_TRANSACTION_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _file_guard = cache.acquire_lock().unwrap();
+        let revision_one = cache.save_next_state(baseline).unwrap();
+        assert_eq!(revision_one.revision, 1);
+        assert_eq!(
+            read_state_snapshot(&root.join(CACHE_STATE_A), "slot A")
+                .unwrap()
+                .unwrap()
+                .state
+                .revision,
+            0
+        );
+        assert_eq!(
+            read_state_snapshot(&root.join(CACHE_STATE_B), "slot B")
+                .unwrap()
+                .unwrap()
+                .state
+                .revision,
+            1
+        );
+        let revision_two = cache.save_next_state(revision_one).unwrap();
+        assert_eq!(revision_two.revision, 2);
+        assert_eq!(cache.load_state_unlocked().unwrap(), revision_two);
+        drop(_file_guard);
+        drop(_process_guard);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn legacy_state_migration_completes_safe_partial_copy_and_rejects_conflict() {
+        let root = temporary_cache("state-migration");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let legacy = CoreGenerationCacheState::default();
+        write_private_state(&root.join(CACHE_STATE_LEGACY), &legacy);
+        write_private_state(&root.join(CACHE_STATE_A), &legacy);
+        assert_eq!(cache.load_state().unwrap(), legacy);
+        assert!(!root.join(CACHE_STATE_LEGACY).exists());
+        assert_eq!(
+            fs::read(root.join(CACHE_STATE_A)).unwrap(),
+            fs::read(root.join(CACHE_STATE_B)).unwrap()
+        );
+        assert!(state_marker_present(&root).unwrap());
+        cleanup(&root);
+
+        let root = temporary_cache("state-migration-active");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let active_legacy = CoreGenerationCacheState {
+            revision: 9,
+            high_water_sequence: 1,
+            active: Some(identity(1, 'a')),
+            ..CoreGenerationCacheState::default()
+        };
+        write_private_state(&root.join(CACHE_STATE_LEGACY), &active_legacy);
+        assert_eq!(cache.load_state().unwrap(), active_legacy);
+        assert!(!root.join(CACHE_STATE_LEGACY).exists());
+        cleanup(&root);
+
+        let root = temporary_cache("state-migration-conflict");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        write_private_state(&root.join(CACHE_STATE_LEGACY), &legacy);
+        let mut conflicting = legacy.clone();
+        conflicting.revision = 1;
+        write_private_state(&root.join(CACHE_STATE_A), &conflicting);
+        assert!(cache.load_state().is_err());
+        assert!(root.join(CACHE_STATE_LEGACY).exists());
+        assert!(!root.join(CACHE_STATE_B).exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn state_slot_crash_points_reopen_to_prior_or_next_complete_revision() {
+        for (point, expected_revision) in [
+            ("after-state-temporary-sync", 0),
+            ("after-state-slot-rename", 1),
+            ("after-state-root-sync", 1),
+        ] {
+            let root = temporary_cache(point);
+            let cache = CoreGenerationCache::open(&root).unwrap();
+            let baseline = cache.load_state().unwrap();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _process_guard = CACHE_TRANSACTION_LOCK
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let _file_guard = cache.acquire_lock().unwrap();
+                let _ = cache.save_next_state_with_hook(baseline, |reached| {
+                    assert_ne!(reached, point, "synthetic crash at {point}");
+                });
+            }));
+            assert!(result.is_err());
+            assert_eq!(cache.load_state().unwrap().revision, expected_revision);
+            cleanup(&root);
+        }
+    }
+
+    #[test]
+    fn baseline_slot_interruption_recovers_and_replacement_is_not_published() {
+        let root = temporary_cache("baseline-slot-crash");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let bytes = canonical_state_bytes(&CoreGenerationCacheState::default()).unwrap();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = write_state_slot_create_with_hook(
+                &root.join(CACHE_STATE_A),
+                &bytes,
+                &root,
+                |point| assert_ne!(point, "after-baseline-slot-temporary-sync"),
+            );
+        }));
+        assert!(result.is_err());
+        assert!(!root.join(CACHE_STATE_A).exists());
+        assert_eq!(cache.load_state().unwrap(), Default::default());
+        assert!(root.join(CACHE_STATE_A).exists());
+        assert!(root.join(CACHE_STATE_B).exists());
+        assert_eq!(cache.reconcile().unwrap().removed_state_temporaries, 1);
+        cleanup(&root);
+
+        let root = temporary_cache("baseline-slot-replacement");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let bytes = canonical_state_bytes(&CoreGenerationCacheState::default()).unwrap();
+        let held = root.join("held-state-temporary");
+        let error =
+            write_state_slot_create_with_hook(&root.join(CACHE_STATE_A), &bytes, &root, |point| {
+                if point == "after-baseline-slot-temporary-sync" {
+                    let temporary = fs::read_dir(&root)
+                        .unwrap()
+                        .map(|entry| entry.unwrap().path())
+                        .find(|path| {
+                            path.file_name()
+                                .and_then(|name| name.to_str())
+                                .is_some_and(valid_state_temporary_name)
+                        })
+                        .unwrap();
+                    fs::rename(&temporary, &held).unwrap();
+                    write_private_state(&temporary, &CoreGenerationCacheState::default());
+                }
+            })
+            .unwrap_err();
+        assert!(error.contains("identity changed"));
+        assert!(!root.join(CACHE_STATE_A).exists());
+        for entry in fs::read_dir(&root).unwrap() {
+            let path = entry.unwrap().path();
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(valid_state_temporary_name)
+            {
+                fs::remove_file(path).unwrap();
+            }
+        }
+        fs::remove_file(held).unwrap();
+        drop(cache);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn state_publication_rejects_same_inode_content_mutation() {
+        let root = temporary_cache("baseline-slot-same-inode-mutation");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let bytes = canonical_state_bytes(&CoreGenerationCacheState::default()).unwrap();
+        let error =
+            write_state_slot_create_with_hook(&root.join(CACHE_STATE_A), &bytes, &root, |point| {
+                if point == "after-baseline-slot-temporary-sync" {
+                    let temporary = fs::read_dir(&root)
+                        .unwrap()
+                        .map(|entry| entry.unwrap().path())
+                        .find(|path| {
+                            path.file_name()
+                                .and_then(|name| name.to_str())
+                                .is_some_and(valid_state_temporary_name)
+                        })
+                        .unwrap();
+                    let mut file = OpenOptions::new()
+                        .write(true)
+                        .truncate(true)
+                        .open(temporary)
+                        .unwrap();
+                    file.write_all(b"{}\n").unwrap();
+                    file.sync_all().unwrap();
+                }
+            })
+            .unwrap_err();
+        assert!(
+            error.contains("unsafe") || error.contains("changed"),
+            "{error}"
+        );
+        assert!(!root.join(CACHE_STATE_A).exists());
+        assert!(!fs::read_dir(&root).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_str()
+                .is_some_and(valid_state_temporary_name)
+        }));
+        cleanup(&root);
+
+        let root = temporary_cache("baseline-slot-post-rename-mutation");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let bytes = canonical_state_bytes(&CoreGenerationCacheState::default()).unwrap();
+        let error =
+            write_state_slot_create_with_hook(&root.join(CACHE_STATE_A), &bytes, &root, |point| {
+                if point == "after-baseline-slot-rename" {
+                    let mut file = OpenOptions::new()
+                        .write(true)
+                        .truncate(true)
+                        .open(root.join(CACHE_STATE_A))
+                        .unwrap();
+                    file.write_all(b"{}\n").unwrap();
+                    file.sync_all().unwrap();
+                }
+            })
+            .unwrap_err();
+        assert!(
+            error.contains("unsafe") || error.contains("changed"),
+            "{error}"
+        );
+        assert!(!root.join(CACHE_STATE_A).exists());
+        cleanup(&root);
+
+        let root = temporary_cache("incremental-slot-same-inode-mutation");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let baseline = cache.load_state().unwrap();
+        let process_guard = CACHE_TRANSACTION_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let file_guard = cache.acquire_lock().unwrap();
+        let error = cache
+            .save_next_state_with_hook(baseline, |point| {
+                if point == "after-state-temporary-sync" {
+                    let temporary = fs::read_dir(&root)
+                        .unwrap()
+                        .map(|entry| entry.unwrap().path())
+                        .find(|path| {
+                            path.file_name()
+                                .and_then(|name| name.to_str())
+                                .is_some_and(valid_state_temporary_name)
+                        })
+                        .unwrap();
+                    let mut file = OpenOptions::new()
+                        .write(true)
+                        .truncate(true)
+                        .open(temporary)
+                        .unwrap();
+                    file.write_all(b"{}\n").unwrap();
+                    file.sync_all().unwrap();
+                }
+            })
+            .unwrap_err();
+        assert!(
+            error.contains("unsafe") || error.contains("changed"),
+            "{error}"
+        );
+        assert_eq!(cache.load_state_unlocked().unwrap().revision, 0);
+        drop(file_guard);
+        drop(process_guard);
+        cleanup(&root);
+
+        let root = temporary_cache("marker-same-inode-mutation");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let error = ensure_state_required_marker_with_hook(&root, |point| {
+            if point == "after-state-marker-sync" {
+                let mut file = OpenOptions::new()
+                    .write(true)
+                    .open(root.join(CACHE_STATE_REQUIRED_MARKER))
+                    .unwrap();
+                file.write_all(b"x").unwrap();
+                file.sync_all().unwrap();
+            }
+        })
+        .unwrap_err();
+        assert!(
+            error.contains("unsafe") || error.contains("changed"),
+            "{error}"
+        );
+        assert!(!root.join(CACHE_STATE_REQUIRED_MARKER).exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn state_publication_repairs_restrictive_umask() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("core_generation_cache::tests::state_publication_repairs_restrictive_umask_worker")
+            .arg("--nocapture")
+            .env("CORE_CACHE_RESTRICTIVE_UMASK_WORKER", "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
+    fn failed_published_state_cleanup_is_durable_after_each_root_sync_boundary() {
+        let bytes = canonical_state_bytes(&CoreGenerationCacheState::default()).unwrap();
+        for point in [
+            "after-baseline-slot-rename",
+            "after-baseline-slot-root-sync",
+        ] {
+            let root = temporary_cache(point);
+            fs::create_dir(&root).unwrap();
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+            let error = write_state_slot_create_with_hook(
+                &root.join(CACHE_STATE_A),
+                &bytes,
+                &root,
+                |reached| {
+                    if reached == point {
+                        let mut file = OpenOptions::new()
+                            .write(true)
+                            .truncate(true)
+                            .open(root.join(CACHE_STATE_A))
+                            .unwrap();
+                        file.write_all(b"{}\n").unwrap();
+                        file.sync_all().unwrap();
+                    }
+                },
+            )
+            .unwrap_err();
+            assert!(error.contains("unsafe") || error.contains("changed"));
+            assert!(!root.join(CACHE_STATE_A).exists());
+            sync_directory(&root).unwrap();
+            cleanup(&root);
+        }
+
+        for point in ["after-state-marker-sync", "after-state-marker-root-sync"] {
+            let root = temporary_cache(point);
+            fs::create_dir(&root).unwrap();
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+            let error = ensure_state_required_marker_with_hook(&root, |reached| {
+                if reached == point {
+                    let mut file = OpenOptions::new()
+                        .write(true)
+                        .open(root.join(CACHE_STATE_REQUIRED_MARKER))
+                        .unwrap();
+                    file.write_all(b"x").unwrap();
+                    file.sync_all().unwrap();
+                }
+            })
+            .unwrap_err();
+            assert!(error.contains("unsafe") || error.contains("changed"));
+            assert!(!root.join(CACHE_STATE_REQUIRED_MARKER).exists());
+            sync_directory(&root).unwrap();
+            cleanup(&root);
+        }
+    }
+
+    #[test]
+    fn state_publication_repairs_restrictive_umask_worker() {
+        if std::env::var_os("CORE_CACHE_RESTRICTIVE_UMASK_WORKER").is_none() {
+            return;
+        }
+        struct UmaskGuard(libc::mode_t);
+        impl Drop for UmaskGuard {
+            fn drop(&mut self) {
+                unsafe { libc::umask(self.0) };
+            }
+        }
+
+        let root = temporary_cache("state-restrictive-umask");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let process_guard = CACHE_TRANSACTION_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let file_guard = cache.acquire_lock().unwrap();
+        let old_umask = unsafe { libc::umask(0o777) };
+        let umask_guard = UmaskGuard(old_umask);
+        let bytes = canonical_state_bytes(&CoreGenerationCacheState::default()).unwrap();
+        write_state_slot_create(&root.join(CACHE_STATE_A), &bytes, &root).unwrap();
+        write_state_slot_create(&root.join(CACHE_STATE_B), &bytes, &root).unwrap();
+        ensure_state_required_marker(&root).unwrap();
+        let next = cache
+            .save_next_state(CoreGenerationCacheState::default())
+            .unwrap();
+        assert_eq!(next.revision, 1);
+        for name in [CACHE_STATE_A, CACHE_STATE_B, CACHE_STATE_REQUIRED_MARKER] {
+            assert_eq!(
+                fs::symlink_metadata(root.join(name))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                0o600
+            );
+        }
+        drop(umask_guard);
+        drop(file_guard);
+        drop(process_guard);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn state_slots_and_publication_reject_high_water_regression() {
+        let root = temporary_cache("state-high-water");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let older = CoreGenerationCacheState {
+            revision: 1,
+            high_water_sequence: 1,
+            active: Some(identity(1, 'a')),
+            ..CoreGenerationCacheState::default()
+        };
+        let newer = CoreGenerationCacheState {
+            revision: 2,
+            ..CoreGenerationCacheState::default()
+        };
+        write_private_state(&root.join(CACHE_STATE_B), &older);
+        write_private_state(&root.join(CACHE_STATE_A), &newer);
+        let marker = root.join(CACHE_STATE_REQUIRED_MARKER);
+        create_private_file(&marker);
+        assert!(cache.load_state().is_err());
+        cleanup(&root);
+
+        let root = temporary_cache("state-save-high-water");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        write_private_state(&root.join(CACHE_STATE_LEGACY), &older);
+        let durable = cache.load_state().unwrap();
+        let proposed = CoreGenerationCacheState {
+            revision: durable.revision,
+            ..CoreGenerationCacheState::default()
+        };
+        let _process_guard = CACHE_TRANSACTION_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _file_guard = cache.acquire_lock().unwrap();
+        assert!(cache.save_next_state(proposed).is_err());
+        drop(_file_guard);
+        drop(_process_guard);
+        assert_eq!(cache.load_state().unwrap(), durable);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn state_slots_reject_missing_corrupt_divergent_gapped_and_wrong_parity() {
+        let root = temporary_cache("state-corruption");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        cache.load_state().unwrap();
+        fs::remove_file(root.join(CACHE_STATE_B)).unwrap();
+        assert!(cache.load_state().is_err());
+        cleanup(&root);
+
+        let root = temporary_cache("state-corrupt-bytes");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        cache.load_state().unwrap();
+        fs::write(root.join(CACHE_STATE_B), b"{}\n").unwrap();
+        fs::set_permissions(root.join(CACHE_STATE_B), fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(cache.load_state().is_err());
+        cleanup(&root);
+
+        let root = temporary_cache("state-wrong-mode");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        cache.load_state().unwrap();
+        fs::set_permissions(root.join(CACHE_STATE_B), fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(cache.load_state().is_err());
+        cleanup(&root);
+
+        let root = temporary_cache("state-hardlink");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        cache.load_state().unwrap();
+        let alias = root.join("slot-alias");
+        fs::hard_link(root.join(CACHE_STATE_A), &alias).unwrap();
+        assert!(cache.load_state().is_err());
+        fs::remove_file(alias).unwrap();
+        cleanup(&root);
+
+        let root = temporary_cache("state-partial-fresh");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        write_private_state(
+            &root.join(CACHE_STATE_A),
+            &CoreGenerationCacheState::default(),
+        );
+        assert_eq!(cache.load_state().unwrap(), Default::default());
+        assert!(root.join(CACHE_STATE_B).exists());
+        assert!(state_marker_present(&root).unwrap());
+        cleanup(&root);
+
+        let root = temporary_cache("state-divergent");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        cache.load_state().unwrap();
+        let divergent = CoreGenerationCacheState {
+            revision: 1,
+            ..CoreGenerationCacheState::default()
+        };
+        write_private_state(&root.join(CACHE_STATE_A), &divergent);
+        write_private_state(&root.join(CACHE_STATE_B), &divergent);
+        let mut other = divergent.clone();
+        other.high_water_sequence = 1;
+        other.active = Some(identity(1, 'd'));
+        write_private_state(&root.join(CACHE_STATE_A), &other);
+        assert!(cache.load_state().is_err());
+        cleanup(&root);
+
+        let root = temporary_cache("state-gap");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        cache.load_state().unwrap();
+        let gap = CoreGenerationCacheState {
+            revision: 2,
+            ..CoreGenerationCacheState::default()
+        };
+        write_private_state(&root.join(CACHE_STATE_A), &gap);
+        assert!(cache.load_state().is_err());
+        cleanup(&root);
+
+        let root = temporary_cache("state-parity");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        cache.load_state().unwrap();
+        let older = CoreGenerationCacheState {
+            revision: 1,
+            ..CoreGenerationCacheState::default()
+        };
+        let newer = CoreGenerationCacheState {
+            revision: 2,
+            ..CoreGenerationCacheState::default()
+        };
+        write_private_state(&root.join(CACHE_STATE_A), &older);
+        write_private_state(&root.join(CACHE_STATE_B), &newer);
+        assert!(cache.load_state().is_err());
+        cleanup(&root);
     }
 
     #[test]
@@ -5076,7 +6128,7 @@ mod tests {
         cache
             .acknowledge_healthy(&identity, "activate", 1, verify_value("sealed"))
             .unwrap();
-        fs::remove_file(root.join("state.json")).unwrap();
+        fs::remove_file(root.join(CACHE_STATE_A)).unwrap();
         assert!(cache.load_state().is_err());
         cleanup(&root);
     }
