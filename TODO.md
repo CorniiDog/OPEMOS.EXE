@@ -103,8 +103,10 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 - [x] Add an inactive Unix host-cache substrate with private create-only
   candidates, closed-tree durability, cross-process serialization, canonical
   bounded state, revision/operation compare-and-swap, pending health approval,
-  and independently reverified last-known-good rollback. Keep it disconnected
-  until Core's authenticated discovery schemas and fixtures pass.
+  independently reverified last-known-good rollback, and cleanup of partial,
+  cancelled, ENOSPC, or late-verification candidates without changing active
+  state. Keep it disconnected from production until a compatible generation is
+  published through an authenticated trust root and bootstrap checkpoint.
 - [x] Consume Core's closed userspace-lock discovery and generation-manifest
   schema-1 models plus all 74 inactive compatibility cases from exact local
   commit `e9ad58a1c1d5908627186782ef32388d45c21187`. Bind durable cache identity
@@ -148,6 +150,11 @@ The consumers share identities, schemas, and fixtures—not updater code, physic
 caches, activation state, credentials, or health state. Unknown authority or
 schema, replay/downgrade, target mismatch, partial download, ENOSPC, or failed
 health validation must leave each consumer's last-known-good generation active.
+
+Core commit `510e843c9ef7fea3e1f9b0c9a3f0c8480ddc596d` adds the separate
+inactive installed-device lifecycle without changing the shared generation
+identity or 74-case discovery contract. Its health and activation logic remain
+Core-owned; OPEMOS.EXE must not copy that frontend or updater.
 
 Compatibility fixture only—never use this as a permanent global trust root:
 

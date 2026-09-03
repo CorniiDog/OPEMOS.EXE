@@ -955,14 +955,13 @@ mod tests {
             return None;
         }
         let output = Command::new("git")
-            .args(["rev-parse", "HEAD"])
+            .args(["cat-file", "-e", &format!("{CONTRACT_COMMIT}^{{commit}}")])
             .current_dir(&repository)
             .output()
             .ok()?;
-        assert!(output.status.success());
-        assert_eq!(
-            String::from_utf8_lossy(&output.stdout).trim(),
-            CONTRACT_COMMIT
+        assert!(
+            output.status.success(),
+            "configured Core repository does not contain immutable contract commit {CONTRACT_COMMIT}"
         );
         Some(repository)
     }

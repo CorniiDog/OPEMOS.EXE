@@ -65,6 +65,12 @@ pub(crate) enum GenerationCommit {
     AlreadyPresent,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CandidateDirectoryIdentity {
+    device: u64,
+    inode: u64,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CoreGenerationCache {
     root: PathBuf,
@@ -280,19 +286,103 @@ impl CoreGenerationCache {
     }
 
     pub(crate) fn create_candidate(&self, operation_id: &str) -> Result<PathBuf, String> {
+        self.create_candidate_with_prepare(operation_id, prepare_candidate_directory)
+            .map(|(path, _identity)| path)
+    }
+
+    fn create_candidate_with_prepare(
+        &self,
+        operation_id: &str,
+        prepare: impl FnOnce(&Path, &Path) -> Result<(), String>,
+    ) -> Result<(PathBuf, CandidateDirectoryIdentity), String> {
         if !safe_operation_id(operation_id) {
             return Err("Core generation cache operation identity is invalid.".into());
         }
-        let path = self
-            .root
-            .join("candidates")
-            .join(format!("candidate-{operation_id}"));
-        fs::create_dir(&path).map_err(|error| {
-            format!("Could not create a private Core generation candidate: {error}")
-        })?;
-        set_private_directory_permissions(&path)?;
-        sync_directory(&self.root.join("candidates"))?;
-        Ok(path)
+        let _process_guard = CACHE_TRANSACTION_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _file_guard = self.acquire_lock()?;
+        let candidates_root = self.root.join("candidates");
+        let mut created = None;
+        for _ in 0..8 {
+            let token = random_candidate_token()?;
+            let path = candidates_root.join(format!("candidate-{operation_id}-{token}"));
+            match fs::create_dir(&path) {
+                Ok(()) => {
+                    created = Some(path);
+                    break;
+                }
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(format!(
+                        "Could not create a private Core generation candidate: {error}"
+                    ));
+                }
+            }
+        }
+        let path = created.ok_or(
+            "Could not allocate a unique private Core generation candidate after 8 attempts.",
+        )?;
+        let prepared = prepare(&path, &candidates_root).and_then(|()| {
+            candidate_directory_identity(&path)?
+                .ok_or_else(|| "New Core generation candidate disappeared during creation.".into())
+        });
+        match prepared {
+            Ok(identity) => Ok((path, identity)),
+            Err(error) => {
+                let cleanup = cleanup_candidate_tree(&path, &candidates_root);
+                match cleanup {
+                    Ok(()) => Err(error),
+                    Err(cleanup) => Err(format!(
+                        "{error} Candidate creation cleanup also failed: {cleanup}"
+                    )),
+                }
+            }
+        }
+    }
+
+    pub(crate) fn stage_candidate(
+        &self,
+        operation_id: &str,
+        identity: &CoreGenerationIdentity,
+        populate: impl FnOnce(&Path) -> Result<(), String>,
+        verify: impl Fn(&Path) -> Result<(), String>,
+    ) -> Result<GenerationCommit, String> {
+        let (candidate, candidate_identity) =
+            self.create_candidate_with_prepare(operation_id, prepare_candidate_directory)?;
+        let result =
+            populate(&candidate).and_then(|()| self.commit_candidate(&candidate, identity, verify));
+        match result {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => {
+                let cleanup = self.discard_candidate_if_same(&candidate, candidate_identity);
+                match cleanup {
+                    Ok(()) => Err(error),
+                    Err(cleanup) => {
+                        Err(format!("{error} Candidate cleanup also failed: {cleanup}"))
+                    }
+                }
+            }
+        }
+    }
+
+    fn discard_candidate_if_same(
+        &self,
+        candidate: &Path,
+        expected: CandidateDirectoryIdentity,
+    ) -> Result<(), String> {
+        let _process_guard = CACHE_TRANSACTION_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _file_guard = self.acquire_lock()?;
+        let Some(current) = candidate_directory_identity(candidate)? else {
+            return Ok(());
+        };
+        if current != expected {
+            return Err("Refusing to discard a replacement Core generation candidate.".into());
+        }
+        self.require_owned_candidate(candidate)?;
+        cleanup_candidate_tree(candidate, &self.root.join("candidates"))
     }
 
     pub(crate) fn commit_candidate(
@@ -336,12 +426,27 @@ impl CoreGenerationCache {
             .map_err(|error| format!("Could not prepare sealed Core generation commit: {error}"))?;
         fs::rename(candidate, &destination)
             .map_err(|error| format!("Could not commit the Core generation atomically: {error}"))?;
-        fs::set_permissions(&destination, fs::Permissions::from_mode(0o500))
-            .map_err(|error| format!("Could not reseal committed Core generation: {error}"))?;
-        sync_directory(&self.root.join("generations"))?;
-        sync_directory(&self.root.join("candidates"))?;
-        sync_closed_tree(&destination)?;
-        verify(&destination)?;
+        let publication = (|| {
+            fs::set_permissions(&destination, fs::Permissions::from_mode(0o500))
+                .map_err(|error| format!("Could not reseal committed Core generation: {error}"))?;
+            sync_directory(&self.root.join("generations"))?;
+            sync_directory(&self.root.join("candidates"))?;
+            sync_closed_tree(&destination)?;
+            verify(&destination)
+        })();
+        if let Err(error) = publication {
+            let cleanup = cleanup_failed_publication(
+                &destination,
+                &self.root.join("generations"),
+                &self.root.join("candidates"),
+            );
+            return match cleanup {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(format!(
+                    "{error} Failed committed-generation cleanup also failed: {cleanup}"
+                )),
+            };
+        }
         Ok(GenerationCommit::Installed)
     }
 
@@ -614,10 +719,11 @@ impl CoreGenerationCache {
             .file_name()
             .and_then(|value| value.to_str())
             .ok_or("Core generation candidate name is invalid.")?;
-        if !name
-            .strip_prefix("candidate-")
-            .is_some_and(safe_operation_id)
-        {
+        let valid_name = name.strip_prefix("candidate-").and_then(|suffix| {
+            let (operation, token) = suffix.rsplit_once('-')?;
+            Some(safe_operation_id(operation) && lowercase_hex(token, 64))
+        });
+        if valid_name != Some(true) {
             return Err("Core generation candidate name is invalid.".into());
         }
         require_directory(&resolved, "Core generation candidate")
@@ -639,6 +745,14 @@ fn safe_operation_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
+fn random_candidate_token() -> Result<String, String> {
+    let mut bytes = [0_u8; 32];
+    File::open("/dev/urandom")
+        .and_then(|mut random| random.read_exact(&mut bytes))
+        .map_err(|error| format!("Could not create a Core candidate identity: {error}"))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
 fn require_expected_revision(
     state: &CoreGenerationCacheState,
     expected_revision: u64,
@@ -656,6 +770,26 @@ fn require_directory(path: &Path, description: &str) -> Result<(), String> {
         return Err(format!("{description} is not a safe directory."));
     }
     Ok(())
+}
+
+fn candidate_directory_identity(path: &Path) -> Result<Option<CandidateDirectoryIdentity>, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect the Core generation candidate identity: {error}"
+            ));
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("Core generation candidate identity is not a safe directory.".into());
+    }
+    use std::os::unix::fs::MetadataExt as _;
+    Ok(Some(CandidateDirectoryIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    }))
 }
 
 fn safe_regular_file(path: &Path) -> Result<bool, String> {
@@ -696,6 +830,11 @@ fn set_private_directory_permissions(path: &Path) -> Result<(), String> {
         format!("Could not restrict Core generation cache permissions: {error}")
     })?;
     Ok(())
+}
+
+fn prepare_candidate_directory(path: &Path, candidates_root: &Path) -> Result<(), String> {
+    set_private_directory_permissions(path)?;
+    sync_directory(candidates_root)
 }
 
 fn sync_directory(path: &Path) -> Result<(), String> {
@@ -794,6 +933,75 @@ fn seal_closed_tree(root: &Path) -> Result<(), String> {
         sync_directory(directory)?;
     }
     Ok(())
+}
+
+fn make_tree_removable(root: &Path) -> Result<(), String> {
+    require_directory(root, "Core generation candidate")?;
+    let mut directories = vec![root.to_path_buf()];
+    let mut index = 0;
+    while index < directories.len() {
+        let directory = directories[index].clone();
+        index += 1;
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("Could not unlock Core candidate cleanup: {error}"))?;
+        for entry in fs::read_dir(&directory)
+            .map_err(|error| format!("Could not inspect failed Core candidate: {error}"))?
+        {
+            let entry = entry
+                .map_err(|error| format!("Could not inspect failed Core candidate: {error}"))?;
+            let metadata = fs::symlink_metadata(entry.path())
+                .map_err(|error| format!("Could not inspect failed Core candidate: {error}"))?;
+            if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                directories.push(entry.path());
+            } else if metadata.is_file() && !metadata.file_type().is_symlink() {
+                fs::set_permissions(entry.path(), fs::Permissions::from_mode(0o600))
+                    .map_err(|error| format!("Could not unlock Core candidate file: {error}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cleanup_candidate_tree(candidate: &Path, candidates_root: &Path) -> Result<(), String> {
+    let mut failures = Vec::new();
+    if let Err(error) = make_tree_removable(candidate) {
+        failures.push(error);
+    }
+    if let Err(error) = remove_owned_candidate(candidate, candidates_root) {
+        failures.push(error);
+    }
+    if let Err(error) = sync_directory(candidates_root) {
+        failures.push(error);
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join(" "))
+    }
+}
+
+fn cleanup_failed_publication(
+    destination: &Path,
+    generations_root: &Path,
+    candidates_root: &Path,
+) -> Result<(), String> {
+    let mut failures = Vec::new();
+    if let Err(error) = make_tree_removable(destination) {
+        failures.push(error);
+    }
+    if let Err(error) = remove_owned_candidate(destination, generations_root) {
+        failures.push(error);
+    }
+    for directory in [generations_root, candidates_root] {
+        if let Err(error) = sync_directory(directory) {
+            failures.push(error);
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join(" "))
+    }
 }
 
 fn remove_owned_candidate(candidate: &Path, candidates_root: &Path) -> Result<(), String> {
@@ -919,6 +1127,119 @@ mod tests {
             )
             .unwrap(),
             "verified"
+        );
+        cleanup(&root);
+    }
+
+    #[test]
+    fn failed_candidate_staging_cleans_partial_data_without_changing_state() {
+        let root = temporary_cache("staging-failure");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, 'c');
+        for (operation, reason) in [
+            ("cancelled", "generation download cancelled"),
+            ("no-space", "generation staging ran out of space"),
+        ] {
+            let error = cache
+                .stage_candidate(
+                    operation,
+                    &generation,
+                    |candidate| {
+                        populate(candidate, "partial");
+                        Err(reason.into())
+                    },
+                    verify_value("complete"),
+                )
+                .unwrap_err();
+            assert!(error.contains(reason));
+            assert_eq!(fs::read_dir(root.join("candidates")).unwrap().count(), 0);
+            assert_eq!(
+                cache.load_state().unwrap(),
+                CoreGenerationCacheState::default()
+            );
+        }
+
+        let verify_calls = AtomicU64::new(0);
+        let error = cache
+            .stage_candidate(
+                "late-verification",
+                &generation,
+                |candidate| {
+                    populate(candidate, "complete");
+                    Ok(())
+                },
+                |candidate| {
+                    verify_value("complete")(candidate)?;
+                    if verify_calls.fetch_add(1, Ordering::Relaxed) < 2 {
+                        Ok(())
+                    } else {
+                        Err("late verification failed".into())
+                    }
+                },
+            )
+            .unwrap_err();
+        assert!(error.contains("late verification failed"));
+        assert_eq!(fs::read_dir(root.join("candidates")).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root.join("generations")).unwrap().count(), 0);
+
+        assert_eq!(
+            cache
+                .stage_candidate(
+                    "complete",
+                    &generation,
+                    |candidate| {
+                        populate(candidate, "complete");
+                        Ok(())
+                    },
+                    verify_value("complete"),
+                )
+                .unwrap(),
+            GenerationCommit::Installed
+        );
+        assert_eq!(fs::read_dir(root.join("candidates")).unwrap().count(), 0);
+        assert_eq!(
+            cache.load_state().unwrap(),
+            CoreGenerationCacheState::default()
+        );
+        cleanup(&root);
+    }
+
+    #[test]
+    fn candidate_creation_failure_after_mkdir_is_transactional_and_retryable() {
+        let root = temporary_cache("create-failure");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let error = cache
+            .create_candidate_with_prepare("retryable", |_candidate, _parent| {
+                Err("synthetic post-mkdir metadata failure".into())
+            })
+            .unwrap_err();
+        assert!(error.contains("synthetic post-mkdir metadata failure"));
+        assert_eq!(fs::read_dir(root.join("candidates")).unwrap().count(), 0);
+
+        let retry = cache.create_candidate("retryable").unwrap();
+        assert!(retry.is_dir());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn same_operation_retries_use_distinct_cleanup_targets() {
+        let root = temporary_cache("stale-cleanup");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let original = cache.create_candidate("shared-operation").unwrap();
+        let original_identity = candidate_directory_identity(&original).unwrap().unwrap();
+        cache
+            .discard_candidate_if_same(&original, original_identity)
+            .unwrap();
+
+        let replacement = cache.create_candidate("shared-operation").unwrap();
+        let replacement_identity = candidate_directory_identity(&replacement).unwrap().unwrap();
+        assert_ne!(original, replacement);
+        cache
+            .discard_candidate_if_same(&original, original_identity)
+            .unwrap();
+        assert_eq!(
+            candidate_directory_identity(&replacement).unwrap(),
+            Some(replacement_identity)
         );
         cleanup(&root);
     }
