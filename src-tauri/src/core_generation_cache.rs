@@ -212,7 +212,7 @@ impl CoreGenerationCache {
         }
         require_directory(&root, "Core generation cache")?;
         set_private_directory_permissions(&root)?;
-        for child in ["candidates", "generations"] {
+        for child in ["candidates", "generations", "commits"] {
             let path = root.join(child);
             fs::create_dir(&path)
                 .or_else(|error| {
@@ -406,6 +406,7 @@ impl CoreGenerationCache {
                 require_directory(&destination, "cached Core generation")?;
                 seal_closed_tree(&destination)?;
                 verify(&destination)?;
+                self.ensure_generation_commit_marker(identity)?;
                 remove_owned_candidate(candidate, &self.root.join("candidates"))?;
                 return Ok(GenerationCommit::AlreadyPresent);
             }
@@ -416,6 +417,11 @@ impl CoreGenerationCache {
                 ));
             }
         }
+
+        // A marker without its generation can survive a prior interrupted
+        // cleanup. Invalidate and durably forget it before exposing a fresh
+        // directory at the same identity.
+        self.invalidate_generation_commit_marker(identity)?;
 
         seal_closed_tree(candidate)?;
         verify(candidate)?;
@@ -432,13 +438,16 @@ impl CoreGenerationCache {
             sync_directory(&self.root.join("generations"))?;
             sync_directory(&self.root.join("candidates"))?;
             sync_closed_tree(&destination)?;
-            verify(&destination)
+            verify(&destination)?;
+            self.ensure_generation_commit_marker(identity)
         })();
         if let Err(error) = publication {
             let cleanup = cleanup_failed_publication(
                 &destination,
                 &self.root.join("generations"),
                 &self.root.join("candidates"),
+                &self.generation_commit_marker_path(identity)?,
+                &self.root.join("commits"),
             );
             return match cleanup {
                 Ok(()) => Err(error),
@@ -466,6 +475,7 @@ impl CoreGenerationCache {
         }
         let generation = self.generation_path(identity)?;
         require_directory(&generation, "cached Core generation")?;
+        self.require_generation_committed(identity)?;
         verify(&generation)?;
         let mut state = self.load_state_unlocked()?;
         if let Some(pending) = state.pending.as_ref() {
@@ -499,6 +509,7 @@ impl CoreGenerationCache {
         let _file_guard = self.acquire_lock()?;
         let generation = self.generation_path(identity)?;
         require_directory(&generation, "cached Core generation")?;
+        self.require_generation_committed(identity)?;
         verify(&generation)?;
         let mut state = self.load_state_unlocked()?;
         require_expected_revision(&state, expected_revision)?;
@@ -565,6 +576,7 @@ impl CoreGenerationCache {
             .ok_or("No last-known-good Core generation is available.")?;
         let generation = self.generation_path(&target)?;
         require_directory(&generation, "last-known-good Core generation")?;
+        self.require_generation_committed(&target)?;
         verify(&generation)?;
         if state.active.as_ref() == Some(&target) {
             return Ok(state);
@@ -700,6 +712,136 @@ impl CoreGenerationCache {
         Ok(self.root.join("generations").join(&identity.generation_id))
     }
 
+    fn generation_commit_marker_path(
+        &self,
+        identity: &CoreGenerationIdentity,
+    ) -> Result<PathBuf, String> {
+        identity.validate()?;
+        Ok(self.root.join("commits").join(&identity.generation_id))
+    }
+
+    fn ensure_generation_commit_marker(
+        &self,
+        identity: &CoreGenerationIdentity,
+    ) -> Result<(), String> {
+        let path = self.generation_commit_marker_path(identity)?;
+        match fs::symlink_metadata(&path) {
+            Ok(_) => return self.require_generation_committed(identity),
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "Could not inspect Core generation commit evidence: {error}"
+                ));
+            }
+        }
+        let bytes = generation_commit_marker_bytes(identity);
+        let commits = self.root.join("commits");
+        let temporary = commits.join(format!(
+            ".commit-{}-{}.tmp",
+            identity.sequence,
+            random_candidate_token()?
+        ));
+        let result = (|| {
+            let mut options = OpenOptions::new();
+            options
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+            let mut file = options
+                .open(&temporary)
+                .map_err(|error| format!("Could not stage Core commit evidence: {error}"))?;
+            file.write_all(&bytes)
+                .and_then(|()| file.sync_all())
+                .map_err(|error| format!("Could not sync Core commit evidence: {error}"))?;
+            file.set_permissions(fs::Permissions::from_mode(0o400))
+                .map_err(|error| format!("Could not seal Core commit evidence: {error}"))?;
+            file.sync_all()
+                .map_err(|error| format!("Could not sync sealed Core commit evidence: {error}"))?;
+            fs::rename(&temporary, &path)
+                .map_err(|error| format!("Could not publish Core commit evidence: {error}"))?;
+            sync_directory(&commits)?;
+            self.require_generation_committed(identity)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
+    }
+
+    fn invalidate_generation_commit_marker(
+        &self,
+        identity: &CoreGenerationIdentity,
+    ) -> Result<(), String> {
+        let path = self.generation_commit_marker_path(identity)?;
+        invalidate_commit_marker_path(&path, &self.root.join("commits"))
+    }
+
+    fn require_generation_committed(
+        &self,
+        identity: &CoreGenerationIdentity,
+    ) -> Result<(), String> {
+        let path = self.generation_commit_marker_path(identity)?;
+        let expected = generation_commit_marker_bytes(identity);
+        let before = fs::symlink_metadata(&path)
+            .map_err(|error| format!("Core generation is not durably committed: {error}"))?;
+        use std::os::unix::fs::MetadataExt as _;
+        if before.file_type().is_symlink()
+            || !before.is_file()
+            || before.nlink() != 1
+            || before.len() != expected.len() as u64
+            || before.permissions().mode() & 0o7777 != 0o400
+        {
+            return Err("Core generation commit evidence is unsafe or invalid.".into());
+        }
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+        let mut file = options
+            .open(&path)
+            .map_err(|error| format!("Could not open Core generation commit evidence: {error}"))?;
+        let opened = file.metadata().map_err(|error| {
+            format!("Could not inspect Core generation commit evidence: {error}")
+        })?;
+        let mut actual = Vec::with_capacity(expected.len());
+        Read::by_ref(&mut file)
+            .take(expected.len().saturating_add(1) as u64)
+            .read_to_end(&mut actual)
+            .map_err(|error| format!("Could not read Core generation commit evidence: {error}"))?;
+        let after = file.metadata().map_err(|error| {
+            format!("Could not recheck Core generation commit evidence: {error}")
+        })?;
+        let current = fs::symlink_metadata(&path).map_err(|error| {
+            format!("Could not recheck published Core generation commit evidence: {error}")
+        })?;
+        if before.dev() != opened.dev()
+            || before.ino() != opened.ino()
+            || !opened.is_file()
+            || opened.nlink() != 1
+            || opened.len() != expected.len() as u64
+            || opened.permissions().mode() & 0o7777 != 0o400
+            || opened.dev() != after.dev()
+            || opened.ino() != after.ino()
+            || opened.len() != after.len()
+            || opened.mtime() != after.mtime()
+            || opened.mtime_nsec() != after.mtime_nsec()
+            || after.nlink() != 1
+            || after.permissions().mode() & 0o7777 != 0o400
+            || current.file_type().is_symlink()
+            || !current.is_file()
+            || current.nlink() != 1
+            || current.len() != expected.len() as u64
+            || current.permissions().mode() & 0o7777 != 0o400
+            || current.dev() != opened.dev()
+            || current.ino() != opened.ino()
+            || actual != expected
+        {
+            return Err("Core generation commit evidence changed or does not match.".into());
+        }
+        Ok(())
+    }
+
     fn require_owned_candidate(&self, candidate: &Path) -> Result<(), String> {
         if !candidate.is_absolute() {
             return Err("Core generation candidate path is not absolute.".into());
@@ -751,6 +893,10 @@ fn random_candidate_token() -> Result<String, String> {
         .and_then(|mut random| random.read_exact(&mut bytes))
         .map_err(|error| format!("Could not create a Core candidate identity: {error}"))?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn generation_commit_marker_bytes(identity: &CoreGenerationIdentity) -> Vec<u8> {
+    format!("{}:{}\n", identity.sequence, identity.manifest_sha256).into_bytes()
 }
 
 fn require_expected_revision(
@@ -984,8 +1130,15 @@ fn cleanup_failed_publication(
     destination: &Path,
     generations_root: &Path,
     candidates_root: &Path,
+    commit_marker: &Path,
+    commits_root: &Path,
 ) -> Result<(), String> {
     let mut failures = Vec::new();
+    // Revoke trust first. A crash after this point can leave an unmarked
+    // generation residue, but never evidence that authorizes that residue.
+    if let Err(error) = invalidate_commit_marker_path(commit_marker, commits_root) {
+        failures.push(error);
+    }
     if let Err(error) = make_tree_removable(destination) {
         failures.push(error);
     }
@@ -1002,6 +1155,30 @@ fn cleanup_failed_publication(
     } else {
         Err(failures.join(" "))
     }
+}
+
+fn invalidate_commit_marker_path(commit_marker: &Path, commits_root: &Path) -> Result<(), String> {
+    let metadata = match fs::symlink_metadata(commit_marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return sync_directory(commits_root),
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect stale Core commit evidence: {error}"
+            ));
+        }
+    };
+    use std::os::unix::fs::MetadataExt as _;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.nlink() != 1 {
+        return Err("Stale Core commit evidence is unsafe to remove.".into());
+    }
+    let resolved = fs::canonicalize(commit_marker)
+        .map_err(|error| format!("Could not resolve stale Core commit evidence: {error}"))?;
+    if resolved != commit_marker || resolved.parent() != Some(commits_root) {
+        return Err("Refusing to remove Core commit evidence outside the cache.".into());
+    }
+    fs::remove_file(commit_marker)
+        .map_err(|error| format!("Could not remove stale Core commit evidence: {error}"))?;
+    sync_directory(commits_root)
 }
 
 fn remove_owned_candidate(candidate: &Path, candidates_root: &Path) -> Result<(), String> {
@@ -1132,6 +1309,69 @@ mod tests {
     }
 
     #[test]
+    fn activation_rejects_unmarked_publication_and_verified_retry_recovers_it() {
+        let root = temporary_cache("interrupted-publication");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, 'd');
+        let interrupted = cache.create_candidate("interrupted").unwrap();
+        populate(&interrupted, "verified");
+        let destination = cache.generation_path(&generation).unwrap();
+        fs::rename(&interrupted, &destination).unwrap();
+        assert!(cache
+            .begin_activation(&generation, "unsafe", 0, verify_value("verified"))
+            .is_err());
+
+        let retry = cache.create_candidate("retry").unwrap();
+        populate(&retry, "verified");
+        assert_eq!(
+            cache
+                .commit_candidate(&retry, &generation, verify_value("verified"))
+                .unwrap(),
+            GenerationCommit::AlreadyPresent
+        );
+        cache
+            .begin_activation(&generation, "recovered", 0, verify_value("verified"))
+            .unwrap();
+
+        let marker = cache.generation_commit_marker_path(&generation).unwrap();
+        fs::set_permissions(&marker, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(cache
+            .acknowledge_healthy(&generation, "recovered", 1, verify_value("verified"))
+            .is_err());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn stale_marker_is_revoked_before_a_fresh_publication_is_exposed() {
+        let root = temporary_cache("stale-marker");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(2, 'e');
+        let original = cache.create_candidate("original").unwrap();
+        populate(&original, "verified");
+        cache
+            .commit_candidate(&original, &generation, verify_value("verified"))
+            .unwrap();
+        let destination = cache.generation_path(&generation).unwrap();
+        let marker = cache.generation_commit_marker_path(&generation).unwrap();
+        assert!(marker.is_file());
+
+        make_tree_removable(&destination).unwrap();
+        remove_owned_candidate(&destination, &cache.root.join("generations")).unwrap();
+        assert!(marker.is_file());
+        let interrupted = cache.create_candidate("fresh").unwrap();
+        populate(&interrupted, "verified");
+        cache
+            .invalidate_generation_commit_marker(&generation)
+            .unwrap();
+        assert!(!marker.exists());
+        fs::rename(&interrupted, &destination).unwrap();
+        assert!(cache
+            .begin_activation(&generation, "unsafe", 0, verify_value("verified"))
+            .is_err());
+        cleanup(&root);
+    }
+
+    #[test]
     fn failed_candidate_staging_cleans_partial_data_without_changing_state() {
         let root = temporary_cache("staging-failure");
         let cache = CoreGenerationCache::open(&root).unwrap();
@@ -1181,6 +1421,7 @@ mod tests {
         assert!(error.contains("late verification failed"));
         assert_eq!(fs::read_dir(root.join("candidates")).unwrap().count(), 0);
         assert_eq!(fs::read_dir(root.join("generations")).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root.join("commits")).unwrap().count(), 0);
 
         assert_eq!(
             cache
