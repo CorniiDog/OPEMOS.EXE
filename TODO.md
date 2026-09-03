@@ -75,7 +75,7 @@ this repository.
 - [x] Provide bounded, color-aware logs, smart diagnostic copying, monotonic
   progress, keyboard navigation, and coupled companion windows.
 - [x] Add fixture-tested schema-compatible consumers for Core resolver schema 2
-  and installer progress schema 1.
+  and installer validation, result, and progress schema 1.
 
 Current outputs remain `nvidia-mutation-valid`. Do not call them
 `install-ready`, hardware-certified, or update-safe until the gates below pass.
@@ -109,9 +109,9 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 - [ ] After equivalence passes, make the authenticated Core resolver the only
   normal release decision. Retain Rust parsing, bounds, session binding, error
   presentation, artifact verification, and fail-closed behavior.
-- [x] Consume Core’s bounded installer-result fixture matrix plus structured
-  inputs, verification records, cleanup evidence, and payload receipt while
-  keeping OPEMOS.EXE’s independent final inspection.
+- [x] Consume Core’s bounded installer-validation and installer-result fixture
+  matrices, bind validation hashes to mutation proofs, and retain OPEMOS.EXE’s
+  independent final inspection.
 - [ ] Repin Core only after its complete Fedora suite and this repository’s full
   suite pass against the same immutable bundle.
 

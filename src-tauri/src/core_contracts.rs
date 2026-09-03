@@ -6,6 +6,7 @@ pub(crate) const CORE_PROGRESS_RECORD_LIMIT: usize = 4096;
 pub(crate) const CORE_BUNDLE_MANIFEST_LIMIT: usize = 2 * 1024 * 1024;
 pub(crate) const CORE_RESOLVER_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_INSTALLER_RESULT_FIXTURE_LIMIT: usize = 512 * 1024;
+pub(crate) const CORE_INSTALLER_VALIDATION_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_INSTALLER_PROGRESS_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_PROGRESS_STREAM_LIMIT: usize = 16 * 1024 * 1024;
 const CORE_PROGRESS_PREFIX: &str = "STEAMOS_NVIDIA_PROGRESS ";
@@ -402,6 +403,7 @@ pub(crate) fn parse_core_installer_result_compatibility_fixtures(
         "missing-initramfs-verification",
         "missing-payload-receipt",
         "target-proof-mismatch",
+        "module-payload-binding-mismatch",
         "unsafe-input-identity",
         "cleanup-incomplete",
         "malformed-json",
@@ -455,6 +457,137 @@ pub(crate) fn parse_core_installer_result_compatibility_fixtures(
     if names != required_names {
         return Err(
             "OPEMOS Core installer-result fixture matrix omits a required safety case.".into(),
+        );
+    }
+    Ok(fixtures)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerValidationCompatibilityFixtures {
+    pub(crate) schema_version: u32,
+    pub(crate) kind: String,
+    pub(crate) validation_schema_version: u32,
+    pub(crate) unfrozen_fields: Vec<String>,
+    pub(crate) cases: Vec<CoreInstallerValidationCompatibilityCase>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerValidationCompatibilityCase {
+    pub(crate) name: String,
+    pub(crate) expected: CoreInstallerValidationCompatibilityExpectation,
+    #[serde(default)]
+    pub(crate) document: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) raw_document: Option<String>,
+    #[serde(default)]
+    pub(crate) document_recipe: Option<CoreInstallerValidationDocumentRecipe>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerValidationCompatibilityExpectation {
+    pub(crate) accepted: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerValidationDocumentRecipe {
+    pub(crate) kind: String,
+    pub(crate) base_case: String,
+    pub(crate) additional_records: usize,
+}
+
+pub(crate) fn parse_core_installer_validation_compatibility_fixtures(
+    bytes: &[u8],
+) -> Result<CoreInstallerValidationCompatibilityFixtures, String> {
+    if bytes.is_empty() || bytes.len() > CORE_INSTALLER_VALIDATION_FIXTURE_LIMIT {
+        return Err(
+            "OPEMOS Core installer-validation fixtures are empty or exceed 512 KiB.".into(),
+        );
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core installer-validation fixtures")?;
+    let fixtures: CoreInstallerValidationCompatibilityFixtures = serde_json::from_slice(bytes)
+        .map_err(|error| {
+            format!("OPEMOS Core installer-validation fixtures are invalid JSON: {error}")
+        })?;
+    let accepted_names = HashSet::from([
+        "valid-direct-input",
+        "valid-authenticated-bundle-input",
+        "safe-additive-fields",
+    ]);
+    let required_names = accepted_names
+        .iter()
+        .copied()
+        .chain([
+            "missing-input-source",
+            "missing-archive-identity",
+            "missing-boot-policy",
+            "missing-storage",
+            "input-source-identity-mismatch",
+            "invalid-archive-hash",
+            "unsafe-lock-filename",
+            "boot-policy-mismatch",
+            "dependency-version-mismatch",
+            "duplicate-package-identity",
+            "compression-storage-mismatch",
+            "root-metadata-reserve-mismatch",
+            "var-reserve-mismatch",
+            "dependency-closure-limit",
+            "malformed-json",
+            "duplicate-json-key",
+            "non-finite-json",
+        ])
+        .collect::<HashSet<_>>();
+    if fixtures.schema_version != 1
+        || fixtures.kind != "opemos-installer-validation-compatibility-fixtures"
+        || fixtures.validation_schema_version != 1
+        || fixtures.unfrozen_fields != ["message"]
+        || !(1..=64).contains(&fixtures.cases.len())
+    {
+        return Err("OPEMOS Core installer-validation fixture envelope is invalid.".into());
+    }
+    let mut names = HashSet::new();
+    for case in &fixtures.cases {
+        let accepted = accepted_names.contains(case.name.as_str());
+        let variants = usize::from(case.document.is_some())
+            + usize::from(case.raw_document.is_some())
+            + usize::from(case.document_recipe.is_some());
+        let expected_variant = match case.name.as_str() {
+            "malformed-json" | "duplicate-json-key" | "non-finite-json" => "raw",
+            "dependency-closure-limit" => "recipe",
+            _ => "document",
+        };
+        if !safe_kebab_token(&case.name, 64)
+            || !names.insert(case.name.as_str())
+            || case.expected.accepted != accepted
+            || variants != 1
+            || (case.document.is_some()) != (expected_variant == "document")
+            || (case.raw_document.is_some()) != (expected_variant == "raw")
+            || (case.document_recipe.is_some()) != (expected_variant == "recipe")
+            || case.raw_document.as_ref().is_some_and(|raw| {
+                raw.is_empty() || raw.len() > CORE_INSTALLER_VALIDATION_FIXTURE_LIMIT
+            })
+            || (accepted && case.document.is_none())
+        {
+            return Err(
+                "OPEMOS Core installer-validation fixture case is unsafe or incomplete.".into(),
+            );
+        }
+        if let Some(recipe) = &case.document_recipe {
+            if case.name != "dependency-closure-limit"
+                || recipe.kind != "extend-dependency-closure"
+                || recipe.base_case != "valid-direct-input"
+                || recipe.additional_records != 4_091
+            {
+                return Err("OPEMOS Core installer-validation fixture recipe is invalid.".into());
+            }
+        }
+    }
+    if names != required_names {
+        return Err(
+            "OPEMOS Core installer-validation fixture matrix omits a required safety case.".into(),
         );
     }
     Ok(fixtures)
@@ -2014,6 +2147,102 @@ mod tests {
                 + 1
         ])
         .is_err());
+    }
+
+    #[test]
+    fn local_successor_installer_validation_fixtures_match_rust_semantics() {
+        let Some(repository) = core_repository() else {
+            eprintln!(
+                "skipping local successor installer-validation fixtures: sibling Core repository is absent"
+            );
+            return;
+        };
+        let generator = repository.join("lib/generate_installer_validation_fixtures.py");
+        let generate = || {
+            let output = Command::new("python3")
+                .arg(&generator)
+                .current_dir(&repository)
+                .output()
+                .expect("run Core installer-validation fixture generator");
+            assert!(output.status.success());
+            assert!(output.stderr.is_empty());
+            output.stdout
+        };
+        let first = generate();
+        assert_eq!(
+            first,
+            generate(),
+            "Core installer-validation fixtures were nondeterministic"
+        );
+        let fixtures = parse_core_installer_validation_compatibility_fixtures(&first)
+            .expect("consume bounded Core installer-validation fixtures");
+        let base_document = fixtures
+            .cases
+            .iter()
+            .find(|case| case.name == "valid-direct-input")
+            .and_then(|case| case.document.clone())
+            .expect("validation fixture base document");
+        for case in &fixtures.cases {
+            let document_bytes = if let Some(document) = &case.document {
+                serde_json::to_vec(document).expect("serialize Core validation fixture")
+            } else if let Some(raw) = &case.raw_document {
+                raw.as_bytes().to_vec()
+            } else {
+                let recipe = case
+                    .document_recipe
+                    .as_ref()
+                    .expect("validation fixture recipe");
+                let mut document = base_document.clone();
+                let closure = document["packageDependencyClosure"]
+                    .as_array_mut()
+                    .expect("base dependency closure");
+                for index in 0..recipe.additional_records {
+                    closure.push(serde_json::json!({
+                        "name": format!("fixture-dependency-{index}"),
+                        "version": "1-1",
+                        "source": "installed",
+                    }));
+                }
+                serde_json::to_vec(&document).expect("expand validation fixture recipe")
+            };
+            let result = reject_duplicate_contract_keys(
+                &document_bytes,
+                "OPEMOS Core installer-validation fixture document",
+            )
+            .and_then(|()| {
+                serde_json::from_slice::<SupportInstallValidation>(&document_bytes)
+                    .map_err(|error| format!("validation document is invalid: {error}"))
+            })
+            .and_then(|validation| validate_support_validation_contract(&validation));
+            assert_eq!(
+                result.is_ok(),
+                case.expected.accepted,
+                "Rust validation acceptance diverged for {}: {:?}",
+                case.name,
+                result.as_ref().err()
+            );
+        }
+
+        let mut relabelled: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        relabelled["cases"][0]["expected"] = serde_json::json!({"accepted": false});
+        assert!(parse_core_installer_validation_compatibility_fixtures(
+            &serde_json::to_vec(&relabelled).unwrap()
+        )
+        .is_err());
+        let mut missing_case: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        missing_case["cases"].as_array_mut().unwrap().pop();
+        assert!(parse_core_installer_validation_compatibility_fixtures(
+            &serde_json::to_vec(&missing_case).unwrap()
+        )
+        .is_err());
+        assert!(
+            parse_core_installer_validation_compatibility_fixtures(&vec![
+                b' ';
+                CORE_INSTALLER_VALIDATION_FIXTURE_LIMIT
+                    + 1
+            ])
+            .is_err()
+        );
     }
 
     #[test]

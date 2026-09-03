@@ -2855,6 +2855,8 @@ esac
                 filesystem: "btrfs".into(),
                 enabled: false,
                 options: Vec::new(),
+                invalid_options: Vec::new(),
+                write_incompatible_options: Vec::new(),
                 admission_basis: "logical-uncompressed-conservative".into(),
                 compression_savings_credited_bytes: 0,
                 declared_package_bytes: storage.package_installed_bytes,
@@ -2874,6 +2876,7 @@ esac
                 mutation_profile_implemented: None,
                 compression_ratio: None,
                 all_payload_destinations_on_root_filesystem: None,
+                filesystem_mount_exclusive: None,
                 replacement_credit_policy: None,
                 module_payload_noop: None,
             }
@@ -3092,6 +3095,22 @@ esac
                             'c',
                         ),
                     ],
+                    modules: [
+                        "nvidia.ko",
+                        "nvidia-drm.ko",
+                        "nvidia-modeset.ko",
+                        "nvidia-peermem.ko",
+                        "nvidia-uvm.ko",
+                    ]
+                    .iter()
+                    .enumerate()
+                    .map(|(index, name)| SupportInstallValidatedModule {
+                        name: (*name).into(),
+                        payload_sha256: ((b'a' + index as u8) as char)
+                            .to_string()
+                            .repeat(64),
+                    })
+                    .collect(),
                     package_dependency_closure: vec![
                         SupportInstallDependency {
                             name: "nvidia-utils".into(),
@@ -3267,6 +3286,8 @@ esac
             filesystem: "btrfs".into(),
             enabled: false,
             options: Vec::new(),
+            invalid_options: Vec::new(),
+            write_incompatible_options: Vec::new(),
             admission_basis:
                 "scratch-btrfs-allocated-physical-bytes-minus-noop-credit-plus-reserves".into(),
             compression_savings_credited_bytes: 1_500,
@@ -3309,6 +3330,7 @@ esac
             mutation_profile_implemented: Some(true),
             compression_ratio: Some("0.500000".into()),
             all_payload_destinations_on_root_filesystem: Some(true),
+            filesystem_mount_exclusive: Some(true),
             replacement_credit_policy: Some("exact-payload-noop-only".into()),
             module_payload_noop: Some(false),
         };
@@ -3338,6 +3360,21 @@ esac
         .err()
         .expect("an unrequested gaming payload must fail")
         .contains("gaming-payload"));
+        let mut invalid_mount_evidence = result.clone();
+        verified_validation(&mut invalid_mount_evidence)
+            .compression
+            .invalid_options
+            .push("../unsafe".into());
+        assert!(validate_nvidia_install_result(
+            invalid_mount_evidence,
+            &inputs,
+            "validated",
+            "validation_complete",
+            "validated",
+        )
+        .err()
+        .expect("unsafe mount-option evidence must fail")
+        .contains("mount-option"));
         let mut unrestored_compression = result.clone();
         unrestored_compression.cleanup.compression_policy_restored = false;
         assert!(validate_nvidia_install_result(
@@ -3459,6 +3496,19 @@ esac
             "complete",
         )
         .is_err());
+        let mut validation_module_mismatch = successful.clone();
+        verified_validation(&mut validation_module_mismatch).modules[0].payload_sha256 =
+            "0".repeat(64);
+        assert!(validate_nvidia_install_result(
+            validation_module_mismatch,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )
+        .err()
+        .expect("module verification must bind to validated payload hashes")
+        .contains("module verification"));
         let mut unchecked_userspace = successful.clone();
         unchecked_userspace
             .userspace_verification
@@ -3801,6 +3851,22 @@ esac
                             'c',
                         ),
                     ],
+                    modules: [
+                        "nvidia.ko",
+                        "nvidia-drm.ko",
+                        "nvidia-modeset.ko",
+                        "nvidia-peermem.ko",
+                        "nvidia-uvm.ko",
+                    ]
+                    .iter()
+                    .enumerate()
+                    .map(|(index, name)| SupportInstallValidatedModule {
+                        name: (*name).into(),
+                        payload_sha256: ((b'a' + index as u8) as char)
+                            .to_string()
+                            .repeat(64),
+                    })
+                    .collect(),
                     package_dependency_closure: vec![
                         SupportInstallDependency {
                             name: "nvidia-utils".into(),
@@ -4401,6 +4467,8 @@ esac
                 filesystem: "btrfs".into(),
                 enabled: false,
                 options: Vec::new(),
+                invalid_options: Vec::new(),
+                write_incompatible_options: Vec::new(),
                 admission_basis: "logical-uncompressed-conservative".into(),
                 compression_savings_credited_bytes: 0,
                 declared_package_bytes: 1_000,
@@ -4418,6 +4486,7 @@ esac
                 mutation_profile_implemented: None,
                 compression_ratio: None,
                 all_payload_destinations_on_root_filesystem: None,
+                filesystem_mount_exclusive: None,
                 replacement_credit_policy: None,
                 module_payload_noop: None,
             },

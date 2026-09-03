@@ -902,6 +902,25 @@ pub(crate) fn validate_support_storage(
     const MIN_INITRAMFS_RESERVE: u64 = 64 * 1024 * 1024;
     const VAR_RESERVE: u64 = 16 * 1024 * 1024;
     const MIN_EFI_RESERVE: u64 = 1024 * 1024;
+    let valid_mount_option = |option: &str| {
+        !option.is_empty()
+            && option.len() <= 64
+            && option.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"=:+_-".contains(&byte)
+            })
+    };
+    if compression.options.len() > 8
+        || compression.invalid_options.len() > 8
+        || compression.write_incompatible_options.len() > 8
+        || compression
+            .options
+            .iter()
+            .chain(&compression.invalid_options)
+            .chain(&compression.write_incompatible_options)
+            .any(|option| !valid_mount_option(option))
+    {
+        return Err("Offline installer returned invalid filesystem mount-option evidence.".into());
+    }
     if storage.package_compressed_bytes == 0
         || storage.package_installed_bytes == 0
         || storage.module_installed_bytes == 0
@@ -986,6 +1005,9 @@ pub(crate) fn validate_support_storage(
             0
         };
         if compression.filesystem != "btrfs"
+            || !compression.invalid_options.is_empty()
+            || !compression.write_incompatible_options.is_empty()
+            || compression.filesystem_mount_exclusive != Some(true)
             || compression.write_policy.as_deref() != Some(NVIDIA_COMPRESSION_WRITE_POLICY)
             || compression.admission_basis
                 != "scratch-btrfs-allocated-physical-bytes-minus-noop-credit-plus-reserves"
@@ -1073,6 +1095,150 @@ pub(crate) fn validate_support_storage(
         return Err("Offline installer storage status does not match its byte accounting.".into());
     }
     Ok(())
+}
+
+pub(crate) fn validate_support_validation_contract(
+    validation: &SupportInstallValidation,
+) -> Result<(), String> {
+    const EXPECTED_MODULES: [&str; 5] = [
+        "nvidia-drm.ko",
+        "nvidia-modeset.ko",
+        "nvidia-peermem.ko",
+        "nvidia-uvm.ko",
+        "nvidia.ko",
+    ];
+    let safe_plain_filename = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 255
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"@._+~:-".contains(&byte))
+    };
+    let safe_package_token = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 256
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"@._+:-".contains(&byte))
+    };
+    let source_valid = match validation.input_source.mode.as_str() {
+        "direct" => validation.input_source.bundle_cache_id.is_none(),
+        "authenticated-bundle" => validation
+            .input_source
+            .bundle_cache_id
+            .as_deref()
+            .is_some_and(exact_sha256),
+        _ => false,
+    };
+    if !source_valid
+        || !exact_sha256(&validation.archive_sha256)
+        || !exact_sha256(&validation.provenance_sha256)
+        || !safe_plain_filename(&validation.userspace_lock.name)
+        || !exact_sha256(&validation.userspace_lock.sha256)
+        || !safe_plain_filename(&validation.keyring.name)
+        || !exact_sha256(&validation.keyring.sha256)
+        || validation.pacman_database.path != "/usr/lib/holo/pacmandb"
+        || !(1..=250_000).contains(&validation.pacman_database.package_count)
+        || validation.boot.rootfs_boot_path != "/boot"
+        || validation.boot.efi_mount_path != "/efi"
+        || validation.boot.grub_configuration != "/efi/EFI/steamos/grub.cfg"
+        || validation.boot.required_kernel_arguments
+            != NVIDIA_REQUIRED_KERNEL_ARGUMENTS.map(str::to_owned)
+    {
+        return Err("Offline installer validation proof has an invalid identity or policy.".into());
+    }
+
+    if !(2..=64).contains(&validation.packages.len()) {
+        return Err("Offline installer validation proof has an invalid package count.".into());
+    }
+    let mut package_names = HashSet::new();
+    let mut package_files = HashSet::new();
+    let mut package_signatures = HashSet::new();
+    for package in &validation.packages {
+        let signer_valid = matches!(package.signer.len(), 40 | 64)
+            && package
+                .signer
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'A'..=b'F').contains(&byte));
+        if !safe_package_token(&package.name)
+            || !package_names.insert(package.name.as_str())
+            || !matches!(package.role.as_str(), "nvidia-userspace" | "dependency")
+            || !safe_plain_filename(&package.filename)
+            || !package_files.insert(package.filename.as_str())
+            || !safe_plain_filename(&package.signature_filename)
+            || !package_signatures.insert(package.signature_filename.as_str())
+            || !safe_package_token(&package.full_version)
+            || !safe_package_token(&package.pkgver)
+            || !safe_package_token(&package.pkgrel)
+            || !matches!(package.architecture.as_str(), "x86_64" | "any")
+            || !signer_valid
+            || !exact_sha256(&package.sha256)
+            || !exact_sha256(&package.signature_sha256)
+            || package.installed_size > 16 * 1024 * 1024 * 1024
+            || package.dependencies.len() > 64
+            || package.provides.len() > 64
+            || package
+                .dependencies
+                .iter()
+                .chain(&package.provides)
+                .any(|relation| {
+                    relation.is_empty() || relation.len() > 256 || relation.contains('\0')
+                })
+        {
+            return Err("Offline installer validation proof has unsafe package metadata.".into());
+        }
+    }
+
+    if !(2..=4_096).contains(&validation.package_dependency_closure.len()) {
+        return Err("Offline installer validation proof has an invalid dependency closure.".into());
+    }
+    let mut closure_names = HashSet::new();
+    for dependency in &validation.package_dependency_closure {
+        if !safe_package_token(&dependency.name)
+            || !safe_package_token(&dependency.version)
+            || !matches!(dependency.source.as_str(), "incoming" | "installed")
+            || !closure_names.insert(dependency.name.as_str())
+        {
+            return Err(
+                "Offline installer validation proof has an unsafe dependency closure.".into(),
+            );
+        }
+    }
+    for package in &validation.packages {
+        if !validation
+            .package_dependency_closure
+            .iter()
+            .any(|dependency| {
+                dependency.name == package.name
+                    && dependency.version == package.full_version
+                    && dependency.source == "incoming"
+            })
+        {
+            return Err(
+                "Offline installer validation proof does not bind its package closure.".into(),
+            );
+        }
+    }
+
+    if validation.modules.len() != EXPECTED_MODULES.len() {
+        return Err("Offline installer validation proof omitted a required module.".into());
+    }
+    let mut module_names = HashSet::new();
+    for module in &validation.modules {
+        if !EXPECTED_MODULES.contains(&module.name.as_str())
+            || !module_names.insert(module.name.as_str())
+            || !exact_sha256(&module.payload_sha256)
+        {
+            return Err("Offline installer validation proof has invalid module metadata.".into());
+        }
+    }
+    if validation.gaming_payload.schema_version != 1
+        || validation.gaming_payload.status != "not-requested"
+        || validation.gaming_payload.profile_id != "gaming-no-cuda-v1"
+    {
+        return Err("Offline installer returned unexpected gaming-payload metadata.".into());
+    }
+    validate_support_storage(&validation.storage, &validation.compression, true)
 }
 
 pub(crate) fn validate_nvidia_storage_failure(
@@ -1499,6 +1665,7 @@ pub(crate) fn validate_support_initramfs_workspace(
 
 fn validate_support_module_verification(
     verification: &SupportModuleVerification,
+    validated_modules: &[SupportInstallValidatedModule],
     expected_kernel: &str,
 ) -> Result<(), String> {
     const EXPECTED: [&str; 5] = [
@@ -1512,8 +1679,22 @@ fn validate_support_module_verification(
         || verification.status != "verified"
         || verification.reason != "installed_modules_verified"
         || verification.modules.len() != EXPECTED.len()
+        || validated_modules.len() != EXPECTED.len()
     {
         return Err("Offline installer returned incomplete module verification evidence.".into());
+    }
+    let mut validated_hashes = HashMap::new();
+    for module in validated_modules {
+        if !EXPECTED.contains(&module.name.as_str())
+            || validated_hashes
+                .insert(module.name.as_str(), module.payload_sha256.as_str())
+                .is_some()
+            || !exact_sha256(&module.payload_sha256)
+        {
+            return Err(
+                "Offline installer validation returned inconsistent module identities.".into(),
+            );
+        }
     }
     let mut names = HashSet::new();
     let prefix = format!("usr/lib/modules/{expected_kernel}/updates/");
@@ -1538,6 +1719,8 @@ fn validate_support_module_verification(
                 .unwrap_or_default()
                 != expected_basename
             || !exact_sha256(&module.expected_payload_sha256)
+            || validated_hashes.get(module.module_name.as_str()).copied()
+                != Some(module.expected_payload_sha256.as_str())
             || module.actual_payload_sha256 != module.expected_payload_sha256
             || module.expected_mode != "0644"
             || module.actual_mode != "0644"
@@ -1765,11 +1948,13 @@ pub(crate) fn validate_nvidia_install_result(
             );
         }
     };
+    validate_support_validation_contract(&validation)?;
     if expected_status == "success" {
         validate_support_module_verification(
             module_verification
                 .as_ref()
                 .ok_or("Offline installer success omitted module verification evidence.")?,
+            &validation.modules,
             &inputs.kernel_version,
         )?;
         validate_support_userspace_verification(
@@ -1798,13 +1983,6 @@ pub(crate) fn validate_nvidia_install_result(
         &validation.storage,
         expected_status,
     )?;
-    validate_support_storage(&validation.storage, &validation.compression, true)?;
-    if validation.gaming_payload.schema_version != 1
-        || validation.gaming_payload.status != "not-requested"
-        || validation.gaming_payload.profile_id != "gaming-no-cuda-v1"
-    {
-        return Err("Offline installer returned unexpected gaming-payload metadata.".into());
-    }
     let lock = &inputs.userspace_lock;
     let input_bundle_cache_id = match validation.input_source.mode.as_str() {
         "direct" if validation.input_source.bundle_cache_id.is_none() => None,

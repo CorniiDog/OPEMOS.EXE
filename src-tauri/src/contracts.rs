@@ -1112,7 +1112,6 @@ pub(crate) struct SupportInstallGamingPayload {
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SupportInstallValidation {
-    #[serde(default)]
     pub(crate) input_source: SupportInstallInputSource,
     pub(crate) archive_sha256: String,
     pub(crate) provenance_sha256: String,
@@ -1121,10 +1120,18 @@ pub(crate) struct SupportInstallValidation {
     pub(crate) boot: SupportInstallBoot,
     pub(crate) keyring: SupportInstallKeyring,
     pub(crate) packages: Vec<SupportInstallPackage>,
+    pub(crate) modules: Vec<SupportInstallValidatedModule>,
     pub(crate) package_dependency_closure: Vec<SupportInstallDependency>,
     pub(crate) gaming_payload: SupportInstallGamingPayload,
     pub(crate) compression: SupportInstallCompression,
     pub(crate) storage: SupportInstallStorage,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SupportInstallValidatedModule {
+    pub(crate) name: String,
+    pub(crate) payload_sha256: String,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -1239,13 +1246,14 @@ pub(crate) struct SupportInstallStorage {
 }
 
 #[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportInstallPinnedIdentity {
     pub(crate) name: String,
     pub(crate) sha256: String,
 }
 
 #[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SupportInstallDependency {
     pub(crate) name: String,
     pub(crate) version: String,
@@ -1253,7 +1261,7 @@ pub(crate) struct SupportInstallDependency {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportInstallCompressionMeasurement {
     pub(crate) schema_version: u32,
     pub(crate) status: String,
@@ -1272,7 +1280,7 @@ pub(crate) struct SupportInstallCompressionMeasurement {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportInstallPackageMeasurement {
     pub(crate) filename: String,
     pub(crate) allocated_bytes: u64,
@@ -1284,6 +1292,8 @@ pub(crate) struct SupportInstallCompression {
     pub(crate) filesystem: String,
     pub(crate) enabled: bool,
     pub(crate) options: Vec<String>,
+    pub(crate) invalid_options: Vec<String>,
+    pub(crate) write_incompatible_options: Vec<String>,
     pub(crate) admission_basis: String,
     pub(crate) compression_savings_credited_bytes: u64,
     pub(crate) declared_package_bytes: u64,
@@ -1310,6 +1320,8 @@ pub(crate) struct SupportInstallCompression {
     #[serde(default)]
     pub(crate) all_payload_destinations_on_root_filesystem: Option<bool>,
     #[serde(default)]
+    pub(crate) filesystem_mount_exclusive: Option<bool>,
+    #[serde(default)]
     pub(crate) replacement_credit_policy: Option<String>,
     #[serde(default)]
     pub(crate) module_payload_noop: Option<bool>,
@@ -1332,13 +1344,14 @@ pub(crate) struct SupportInstallBoot {
 }
 
 #[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SupportInstallKeyring {
     pub(crate) name: String,
     pub(crate) sha256: String,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportInstallPackage {
     pub(crate) name: String,
     pub(crate) role: String,
