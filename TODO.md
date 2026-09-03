@@ -114,8 +114,9 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   disconnected from production until a compatible generation is published
   through an authenticated trust root and bootstrap checkpoint.
 - [x] Consume Core's closed userspace-lock discovery and generation-manifest
-  schema-1 models plus all 74 inactive compatibility cases from exact local
-  commit `e9ad58a1c1d5908627186782ef32388d45c21187`. Bind durable cache identity
+  schema-1 models plus all 74 inactive compatibility cases and additive
+  consumer handoff metadata from exact local commit
+  `fda5de265c685b95c3e61daeb084ed7188998f96`. Bind durable cache identity
   to `{sequence, manifestSha256}`, retain a monotonic high-water sequence, and
   keep rollback on the previously healthy generation. Provide fixture-tested,
   root-confined snapshot readers for future staged documents. This is contract
@@ -138,7 +139,8 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   final-image verification.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
-- [ ] After Core pushes `e9ad58a`, repin CI to that exact commit so the new
+- [ ] After Core pushes `fda5de265c685b95c3e61daeb084ed7188998f96`, repin CI
+  to that exact commit so the new
   74-case generation matrix runs remotely. A commit pin does not activate its
   unpublished candidate bundle.
 - [ ] Repin or activate a generation only after Core’s complete Fedora suite and

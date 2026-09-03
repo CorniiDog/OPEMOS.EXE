@@ -12,13 +12,31 @@ use std::{
 
 pub(crate) const DISCOVERY_MAX_BYTES: usize = 256 * 1024;
 pub(crate) const MANIFEST_MAX_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const DISCOVERY_FILENAME: &str = "opemos-userspace-lock-discovery-v1.json";
+pub(crate) const DISCOVERY_SIGNATURE_FILENAME: &str = "opemos-userspace-lock-discovery-v1.json.sig";
 pub(crate) const MAX_TARGETS: usize = 256;
 pub(crate) const MAX_FILES: usize = 4096;
 pub(crate) const MAX_LOCK_BYTES: u64 = 1024 * 1024;
 pub(crate) const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+// This is the aggregate of manifest-owned payload bytes only. Signed control
+// documents and the bounded local trust record use the storage envelope below.
 pub(crate) const MAX_GENERATION_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 pub(crate) const MAX_SIGNATURE_BYTES: u64 = 1024 * 1024;
+pub(crate) const MAX_TRUST_RECORD_BYTES: u64 = 64 * 1024;
+pub(crate) const MAX_GENERATION_CONTROL_BYTES: u64 = DISCOVERY_MAX_BYTES as u64
+    + MANIFEST_MAX_BYTES as u64
+    + 2 * MAX_SIGNATURE_BYTES
+    + MAX_TRUST_RECORD_BYTES;
+pub(crate) const MAX_GENERATION_STORAGE_BYTES: u64 =
+    MAX_GENERATION_BYTES + MAX_GENERATION_CONTROL_BYTES;
+const _: () = assert!(MAX_GENERATION_STORAGE_BYTES > MAX_GENERATION_BYTES);
 pub(crate) const MAX_LINEAGE_GENERATIONS: usize = 64;
+pub(crate) const DISCOVERY_SIGNATURE_SCHEME: &str = "openpgp-detached-v1";
+pub(crate) const OPENPGP_SIGNATURE_VERSION: u32 = 4;
+pub(crate) const OPENPGP_REQUIRED_SIGNATURES: usize = 1;
+pub(crate) const OPENPGP_HASH_ALGORITHM_IDS: [u32; 3] = [8, 9, 10];
+pub(crate) const GENERATION_FILE_MODE: &str = "0400";
+pub(crate) const GENERATION_DIRECTORY_MODE: &str = "0500";
 
 const POLICY_ID: &str = "opemos-userspace-lock-generations";
 const DISCOVERY_KIND: &str = "opemos-userspace-lock-discovery";
@@ -701,7 +719,7 @@ mod tests {
     };
 
     const FIXTURE_LIMIT: usize = 512 * 1024;
-    const CONTRACT_COMMIT: &str = "e9ad58a1c1d5908627186782ef32388d45c21187";
+    const CONTRACT_COMMIT: &str = "fda5de265c685b95c3e61daeb084ed7188998f96";
 
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -746,9 +764,17 @@ mod tests {
     #[derive(Debug, Deserialize, Eq, PartialEq)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     struct ConsumerHandoff {
+        discovery_filename: String,
+        discovery_signature_filename: String,
+        discovery_signature_scheme: String,
+        allowed_open_pgp_hash_algorithm_ids: Vec<u32>,
+        authority_source: String,
         generation_id_source: String,
         manifest_sha256_source: String,
         sequence_source: String,
+        payload_file_mode: String,
+        cache_directory_mode: String,
+        executable_payload_allowed: bool,
         durable_identity_fields: Vec<String>,
         high_water_invariant: String,
         rollback_invariant: String,
@@ -763,6 +789,7 @@ mod tests {
         max_files: usize,
         max_file_bytes: u64,
         max_generation_bytes: u64,
+        max_generation_storage_bytes: u64,
         max_lineage_generations: usize,
     }
 
@@ -1202,15 +1229,24 @@ mod tests {
                 max_files: MAX_FILES,
                 max_file_bytes: MAX_FILE_BYTES,
                 max_generation_bytes: MAX_GENERATION_BYTES,
+                max_generation_storage_bytes: MAX_GENERATION_STORAGE_BYTES,
                 max_lineage_generations: MAX_LINEAGE_GENERATIONS,
             }
         );
         assert_eq!(
             fixtures.consumer_handoff,
             ConsumerHandoff {
+                discovery_filename: DISCOVERY_FILENAME.into(),
+                discovery_signature_filename: DISCOVERY_SIGNATURE_FILENAME.into(),
+                discovery_signature_scheme: DISCOVERY_SIGNATURE_SCHEME.into(),
+                allowed_open_pgp_hash_algorithm_ids: OPENPGP_HASH_ALGORITHM_IDS.to_vec(),
+                authority_source: "installed-policy-keyring-checkpoint".into(),
                 generation_id_source: "generation.manifestSha256".into(),
                 manifest_sha256_source: "generation.manifestSha256".into(),
                 sequence_source: "sequence".into(),
+                payload_file_mode: GENERATION_FILE_MODE.into(),
+                cache_directory_mode: GENERATION_DIRECTORY_MODE.into(),
+                executable_payload_allowed: false,
                 durable_identity_fields: vec!["sequence".into(), "manifestSha256".into()],
                 high_water_invariant: "maximum-activated-sequence-never-decreases".into(),
                 rollback_invariant: "active-may-return-to-lkg-high-water-unchanged".into(),
@@ -1358,5 +1394,30 @@ mod tests {
             rolled_back.before.high_water_sequence
         );
         fs::remove_dir_all(exported).unwrap();
+    }
+
+    #[test]
+    fn generation_handoff_names_and_storage_envelope_are_exact() {
+        assert_eq!(
+            DISCOVERY_SIGNATURE_FILENAME,
+            format!("{DISCOVERY_FILENAME}.sig")
+        );
+        assert_eq!(DISCOVERY_SIGNATURE_SCHEME, "openpgp-detached-v1");
+        assert_eq!(OPENPGP_SIGNATURE_VERSION, 4);
+        assert_eq!(OPENPGP_REQUIRED_SIGNATURES, 1);
+        assert_eq!(OPENPGP_HASH_ALGORITHM_IDS, [8, 9, 10]);
+        assert_eq!(GENERATION_FILE_MODE, "0400");
+        assert_eq!(GENERATION_DIRECTORY_MODE, "0500");
+        assert_eq!(
+            MAX_GENERATION_CONTROL_BYTES,
+            DISCOVERY_MAX_BYTES as u64
+                + MANIFEST_MAX_BYTES as u64
+                + 2 * MAX_SIGNATURE_BYTES
+                + MAX_TRUST_RECORD_BYTES
+        );
+        assert_eq!(
+            MAX_GENERATION_STORAGE_BYTES,
+            MAX_GENERATION_BYTES + MAX_GENERATION_CONTROL_BYTES
+        );
     }
 }
