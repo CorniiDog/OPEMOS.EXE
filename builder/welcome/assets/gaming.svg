@@ -1,13 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 360" role="img" aria-labelledby="title desc">
   <title id="title">Gaming-ready graphics</title>
-  <desc id="desc">A game controller sits below a display with blue and green graphics.</desc>
-  <defs><linearGradient id="g" x1="0" x2="1"><stop stop-color="#57c4fb"/><stop offset="1" stop-color="#78da70"/></linearGradient></defs>
-  <rect id="gaming-display" x="102" y="28" width="316" height="116" rx="22" fill="#0b202c" stroke="url(#g)" stroke-width="4"/>
-  <path id="gaming-scene" d="M126 124 190 72l48 36 80-56 76 56v16H126z" fill="url(#g)" opacity=".24"/>
-  <path id="controller" data-left="119" data-right="401" data-top="162" data-bottom="342" d="M196 162h128c22 0 40 15 47 37l19 67c11 40-13 76-51 76-24 0-43-13-57-36l-14-20h-16l-14 20c-14 23-33 36-57 36-38 0-62-36-51-76l19-67c7-22 25-37 47-37z" fill="#193747" stroke="url(#g)" stroke-width="4" stroke-linejoin="round"/>
-  <path id="direction-pad" d="M200 210v54m-27-27h54" stroke="#ecfaff" stroke-width="10" stroke-linecap="round"/>
-  <circle cx="320" cy="217" r="8" fill="#78da70"/>
-  <circle cx="341" cy="238" r="8" fill="#57c4fb"/>
-  <circle cx="299" cy="238" r="8" fill="#57c4fb"/>
-  <circle cx="320" cy="259" r="8" fill="#78da70"/>
+  <desc id="desc">A recognizable game controller floats over a sixteen-by-nine display with blue and green graphics.</desc>
+  <defs>
+    <linearGradient id="g" x1="0" x2="1"><stop stop-color="#57c4fb"/><stop offset="1" stop-color="#78da70"/></linearGradient>
+    <path id="controller-shape" d="M188 158h144c23 0 43 16 50 39l21 71c11 38-13 68-49 68-23 0-41-12-58-35l-17-23h-38l-17 23c-17 23-35 35-58 35-36 0-60-30-49-68l21-71c7-23 27-39 50-39z"/>
+    <mask id="controller-clearance" maskUnits="userSpaceOnUse" x="0" y="0" width="520" height="360">
+      <rect width="520" height="360" fill="white"/>
+      <use href="#controller-shape" fill="black" stroke="black" stroke-width="24" stroke-linejoin="round"/>
+    </mask>
+  </defs>
+  <g mask="url(#controller-clearance)">
+    <rect id="gaming-display" x="84" y="36" width="352" height="198" rx="24" fill="#0b202c" stroke="url(#g)" stroke-width="4"/>
+    <path id="gaming-scene" d="M108 208 182 132l56 46 86-88 88 70v48H108z" fill="url(#g)" opacity=".24"/>
+  </g>
+  <use id="controller" data-left="117" data-right="403" data-top="158" data-bottom="336" href="#controller-shape" fill="#193747" stroke="url(#g)" stroke-width="4" stroke-linejoin="round"/>
+  <path id="direction-pad" d="M196 198v52m-26-26h52" stroke="#ecfaff" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="324" cy="204" r="8" fill="#78da70"/>
+  <circle cx="345" cy="225" r="8" fill="#57c4fb"/>
+  <circle cx="303" cy="225" r="8" fill="#57c4fb"/>
+  <circle cx="324" cy="246" r="8" fill="#78da70"/>
+  <circle cx="232" cy="270" r="12" fill="#0d2633" stroke="#57c4fb" stroke-width="4"/>
+  <circle cx="288" cy="270" r="12" fill="#0d2633" stroke="#78da70" stroke-width="4"/>
 </svg>

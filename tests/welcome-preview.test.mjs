@@ -58,8 +58,11 @@ test("preview covers the welcome workflow and clearly labels synthetic state", (
     assert.match(illustration, /<title id="title">[^<]+<\/title>/);
     assert.match(illustration, /<desc id="desc">[^<]+<\/desc>/);
     assert.doesNotMatch(illustration, /<script|<foreignObject|(?:href|src)=["']https?:/);
-    assert.doesNotMatch(illustration, /stroke-dasharray|<filter|<mask/);
+    assert.doesNotMatch(illustration, /stroke-dasharray|<filter/);
   }
+  assert.doesNotMatch(`${illustrations[0]}\n${illustrations[1]}`, /<mask/);
+  assert.match(illustrations[2], /<mask id="controller-clearance"[^>]*>/);
+  assert.match(illustrations[2], /<use href="#controller-shape"[^>]*stroke-width="24"/);
 });
 
 function numericAttribute(element, name) {
@@ -106,7 +109,8 @@ test("welcome illustrations preserve balanced geometry and intentional layering"
   const controller = elementWithId(gaming, "controller");
   const displayBottom = numericAttribute(display, "y") + numericAttribute(display, "height") + numericAttribute(display, "stroke-width") / 2;
   const controllerTop = numericAttribute(controller, "data-top") - numericAttribute(controller, "stroke-width") / 2;
-  assert.ok(controllerTop > displayBottom, "controller and display must retain a visible gap");
+  assert.ok(controllerTop < displayBottom, "controller must intentionally overlay the display");
+  assert.equal(numericAttribute(display, "width") / numericAttribute(display, "height"), 16 / 9);
   const controllerWidth = numericAttribute(controller, "data-right") - numericAttribute(controller, "data-left");
   const controllerHeight = numericAttribute(controller, "data-bottom") - numericAttribute(controller, "data-top");
   assert.ok(controllerHeight >= 140, "controller must retain full-height grips");
