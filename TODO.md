@@ -319,6 +319,12 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   no-replace tests pass. Add explicit recovery UI and durable quarantine before
   any restart-time deletion; never infer deletion authority from a mutable
   reservation record.
+- [x] Exercise the inactive paired publication transaction in real subprocesses
+  killed at every stage receipt, image rename/directory-sync/published receipt,
+  and manifest rename/directory-sync/published receipt boundary. Restart tests
+  prove only exact receipted states resume, incomplete pairs remain untrusted,
+  source and foreign files remain unchanged, locks release, and residue stays
+  bounded. ENOSPC/EDQUOT/fsync injection and production activation remain gated.
 - [ ] Formalize lock ordering and prove status polling, cancellation, close,
   and worker completion cannot deadlock.
 - [ ] Route normal cancellation, window close, process failure, and next-launch

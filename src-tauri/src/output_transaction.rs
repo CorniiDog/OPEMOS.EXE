@@ -94,6 +94,14 @@ struct PublicationReceipt {
     sha256: String,
 }
 
+#[derive(Debug)]
+struct ReceiptSnapshot {
+    name: CString,
+    identity: FileIdentity,
+    value: PublicationReceipt,
+    sha256: String,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum PublicationPhase {
@@ -588,22 +596,7 @@ impl OutputReservation {
             &mut hook,
         )?;
         self.verify_guards(source)?;
-        self.verify_image_predecessor(&reservation_sha256)?;
-        let manifest_published_receipt = read_receipt(&self.lock.root, &manifest_published)?;
-        validate_receipt_chain(
-            &manifest_published_receipt,
-            PublicationFileKind::Manifest,
-            PublicationPhase::ManifestPublished,
-            &self.operation_id,
-            &reservation_sha256,
-            Some(&image_published_sha),
-            &self.parent.identity,
-            &names.manifest_stage,
-            &self.manifest,
-        )?;
-        self.verify_published_artifact(&manifest_published_receipt, &self.manifest)?;
-        self.verify_guards(source)?;
-        self.verify_complete_pair(image, &manifest)
+        self.verify_committed_pair(source, image, &manifest)
             .map(|()| PublicationRecovery::Complete)
     }
 
@@ -880,6 +873,61 @@ impl OutputReservation {
         Ok(())
     }
 
+    fn verify_committed_pair(
+        &self,
+        source: &SourceReservation,
+        image: &[u8],
+        manifest: &[u8],
+    ) -> Result<(), String> {
+        self.verify_committed_pair_with_hook(source, image, manifest, || {})
+    }
+
+    fn verify_committed_pair_with_hook(
+        &self,
+        source: &SourceReservation,
+        image: &[u8],
+        manifest: &[u8],
+        after_predecessor: impl FnOnce(),
+    ) -> Result<(), String> {
+        self.verify_guards(source)?;
+        let reservation_sha256 = self.reservation_sha256()?;
+        let mut receipt_chain = self.verify_image_predecessor(&reservation_sha256)?;
+        validate_staged_receipt_bytes(&receipt_chain[0].value, image)?;
+        validate_staged_receipt_bytes(&receipt_chain[1].value, manifest)?;
+        let image_published_sha = receipt_chain
+            .last()
+            .ok_or("OUTPUT_RECEIPT_MISSING")?
+            .sha256
+            .clone();
+        after_predecessor();
+        let manifest_published = self.published_receipt(4, "manifest-published")?;
+        let receipt = read_receipt_snapshot(&self.lock.root, &manifest_published)?;
+        validate_receipt_chain(
+            &receipt.value,
+            PublicationFileKind::Manifest,
+            PublicationPhase::ManifestPublished,
+            &self.operation_id,
+            &reservation_sha256,
+            Some(&image_published_sha),
+            &self.parent.identity,
+            &self.names()?.manifest_stage,
+            &self.manifest,
+        )?;
+        validate_staged_published_pair(&receipt_chain[1].value, &receipt.value)?;
+        self.verify_published_artifact(&receipt.value, &self.manifest)?;
+        receipt_chain.push(receipt);
+        // Revalidate the slow source/lock/record guards before the output pair.
+        // The pair check must remain the final acceptance operation so a
+        // concurrent output mutation cannot hide behind the source rehash.
+        self.verify_guards(source)?;
+        for receipt in &receipt_chain {
+            self.lock
+                .root
+                .rebind(&receipt.name, &receipt.identity, "OUTPUT_RECEIPT_CHANGED")?;
+        }
+        self.verify_complete_pair(image, manifest)
+    }
+
     fn verify_published_artifact(
         &self,
         receipt: &PublicationReceipt,
@@ -899,12 +947,27 @@ impl OutputReservation {
             .rebind(final_name, &identity, "OUTPUT_FINAL_CHANGED")
     }
 
-    fn verify_image_predecessor(&self, reservation_sha256: &str) -> Result<(), String> {
+    fn verify_image_predecessor(
+        &self,
+        reservation_sha256: &str,
+    ) -> Result<Vec<ReceiptSnapshot>, String> {
         let names = self.names()?;
-        let image_staged_sha = receipt_sha256(&self.lock.root, &names.image_receipt)?;
-        let manifest_staged = read_receipt(&self.lock.root, &names.manifest_receipt)?;
+        let image_staged = read_receipt_snapshot(&self.lock.root, &names.image_receipt)?;
         validate_receipt_chain(
-            &manifest_staged,
+            &image_staged.value,
+            PublicationFileKind::Image,
+            PublicationPhase::ImageStaged,
+            &self.operation_id,
+            reservation_sha256,
+            None,
+            &self.parent.identity,
+            &names.image_stage,
+            &self.output,
+        )?;
+        let image_staged_sha = image_staged.sha256.clone();
+        let manifest_staged = read_receipt_snapshot(&self.lock.root, &names.manifest_receipt)?;
+        validate_receipt_chain(
+            &manifest_staged.value,
             PublicationFileKind::Manifest,
             PublicationPhase::ManifestStaged,
             &self.operation_id,
@@ -914,11 +977,11 @@ impl OutputReservation {
             &names.manifest_stage,
             &self.manifest,
         )?;
-        let manifest_staged_sha = canonical_sha256(&manifest_staged)?;
+        let manifest_staged_sha = manifest_staged.sha256.clone();
         let image_published_name = self.published_receipt(3, "image-published")?;
-        let image_published = read_receipt(&self.lock.root, &image_published_name)?;
+        let image_published = read_receipt_snapshot(&self.lock.root, &image_published_name)?;
         validate_receipt_chain(
-            &image_published,
+            &image_published.value,
             PublicationFileKind::Image,
             PublicationPhase::ImagePublished,
             &self.operation_id,
@@ -928,7 +991,9 @@ impl OutputReservation {
             &names.image_stage,
             &self.output,
         )?;
-        self.verify_published_artifact(&image_published, &self.output)
+        validate_staged_published_pair(&image_staged.value, &image_published.value)?;
+        self.verify_published_artifact(&image_published.value, &self.output)?;
+        Ok(vec![image_staged, manifest_staged, image_published])
     }
 
     fn verify_complete_pair(&self, image: &[u8], manifest: &[u8]) -> Result<(), String> {
@@ -1075,6 +1140,10 @@ fn create_receipt(
 }
 
 fn read_receipt(root: &PinnedDirectory, name: &CStr) -> Result<PublicationReceipt, String> {
+    Ok(read_receipt_snapshot(root, name)?.value)
+}
+
+fn read_receipt_snapshot(root: &PinnedDirectory, name: &CStr) -> Result<ReceiptSnapshot, String> {
     let mut file = root
         .openat(name, libc::O_RDONLY | libc::O_NONBLOCK, 0)
         .map_err(|_| "OUTPUT_RECEIPT_MISSING".to_string())?;
@@ -1119,7 +1188,12 @@ fn read_receipt(root: &PinnedDirectory, name: &CStr) -> Result<PublicationReceip
     {
         return Err("OUTPUT_RECEIPT_MALFORMED".into());
     }
-    Ok(value)
+    Ok(ReceiptSnapshot {
+        name: name.to_owned(),
+        identity,
+        sha256: bytes_sha256(&bytes),
+        value,
+    })
 }
 
 fn receipt_if_present(
@@ -1159,6 +1233,34 @@ fn validate_receipt_chain(
         || receipt.final_basename.as_bytes() != final_name.to_bytes()
     {
         return Err(format!("{RECOVERY_REQUIRED}: receipt chain mismatch"));
+    }
+    Ok(())
+}
+
+fn validate_staged_receipt_bytes(
+    staged: &PublicationReceipt,
+    expected: &[u8],
+) -> Result<(), String> {
+    if staged.file_identity.size != expected.len() as u64 || staged.sha256 != bytes_sha256(expected)
+    {
+        return Err(format!(
+            "{RECOVERY_REQUIRED}: staged receipt payload mismatch"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_staged_published_pair(
+    staged: &PublicationReceipt,
+    published: &PublicationReceipt,
+) -> Result<(), String> {
+    if staged.kind != published.kind
+        || staged.sha256 != published.sha256
+        || !same_artifact_identity(&staged.file_identity, &published.file_identity)
+    {
+        return Err(format!(
+            "{RECOVERY_REQUIRED}: staged and published receipt mismatch"
+        ));
     }
     Ok(())
 }
@@ -1427,7 +1529,11 @@ fn hash_fd(file: &File, length: u64) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::BufRead;
+    use std::os::unix::process::ExitStatusExt;
     use std::process::{Command, Stdio};
+
+    const TEST_IMAGE: &[u8] = b"finished-image";
 
     struct Fixture(PathBuf);
     impl Fixture {
@@ -1462,6 +1568,128 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn expected_manifest(source_sha256: &str) -> Vec<u8> {
+        let image_sha256 = bytes_sha256(TEST_IMAGE);
+        canonical_json(&AdjacentOutputManifest {
+            schema_version: 1,
+            image_sha256: &image_sha256,
+            image_size: TEST_IMAGE.len() as u64,
+            source_sha256,
+        })
+        .unwrap()
+    }
+
+    fn overwrite_receipt(root: &Path, name: &CStr, receipt: &PublicationReceipt) {
+        fs::write(
+            root.join(name.to_string_lossy().as_ref()),
+            canonical_json(receipt).unwrap(),
+        )
+        .unwrap();
+    }
+
+    struct WorkerGuard(Option<std::process::Child>);
+
+    impl WorkerGuard {
+        fn new(child: std::process::Child) -> Self {
+            Self(Some(child))
+        }
+
+        fn child_mut(&mut self) -> &mut std::process::Child {
+            self.0.as_mut().expect("publication worker already reaped")
+        }
+    }
+
+    impl Drop for WorkerGuard {
+        fn drop(&mut self) {
+            if let Some(mut child) = self.0.take() {
+                let _ = unsafe { libc::kill(child.id() as i32, libc::SIGKILL) };
+                let _ = child.wait();
+            }
+        }
+    }
+
+    fn wait_for_worker(worker: &mut WorkerGuard, phase: &str) {
+        let stdout = worker
+            .child_mut()
+            .stdout
+            .take()
+            .expect("publication worker stdout was not captured");
+        let (sender, receiver) = mpsc::channel();
+        let reader = thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let line = line.expect("publication worker output was not UTF-8 text");
+                if line.starts_with("PUBLICATION_READY:") {
+                    let _ = sender.send(line);
+                    return;
+                }
+            }
+        });
+        let marker = receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("publication worker did not reach its crash boundary");
+        reader.join().expect("publication worker reader failed");
+        assert_eq!(marker, format!("PUBLICATION_READY:{phase}"));
+        assert!(worker.child_mut().try_wait().unwrap().is_none());
+    }
+
+    fn kill_worker(worker: &mut WorkerGuard) {
+        let child_id = worker.child_mut().id();
+        assert_eq!(unsafe { libc::kill(child_id as i32, libc::SIGKILL) }, 0);
+        let status = worker.child_mut().wait().unwrap();
+        assert_eq!(status.signal(), Some(libc::SIGKILL));
+        worker.0.take();
+    }
+
+    fn publication_worker_authority(fixture: &Fixture) -> (PathBuf, String) {
+        let mut entropy = [0_u8; 32];
+        File::open("/dev/urandom")
+            .unwrap()
+            .read_exact(&mut entropy)
+            .unwrap();
+        let nonce = bytes_sha256(&entropy);
+        let path = fixture.0.join(".publication-worker-authority");
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        file.write_all(nonce.as_bytes()).unwrap();
+        file.sync_all().unwrap();
+        (path, nonce)
+    }
+
+    fn assert_residue_is_bounded(fixture: &Fixture) {
+        let root_entries = fs::read_dir(fixture.root())
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .collect::<Vec<_>>();
+        assert!(root_entries.len() <= 8, "unbounded private residue");
+        for entry in root_entries {
+            let metadata = entry.metadata().unwrap();
+            assert!(metadata.is_file(), "unexpected private residue type");
+            assert!(
+                metadata.len() <= RECORD_LIMIT.max(RECEIPT_LIMIT),
+                "oversized private residue"
+            );
+        }
+
+        let transaction_entries = fs::read_dir(&fixture.0)
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .filter(|entry| {
+                let name = entry.file_name();
+                name.as_bytes().starts_with(b".opemos-")
+                    || name == OsStr::new("result.img")
+                    || name == OsStr::new("result.img.manifest.json")
+            })
+            .collect::<Vec<_>>();
+        assert!(transaction_entries.len() <= 2, "unbounded output residue");
+        assert!(transaction_entries
+            .iter()
+            .all(|entry| entry.metadata().unwrap().is_file()));
     }
 
     #[test]
@@ -1998,6 +2226,142 @@ mod tests {
     }
 
     #[test]
+    fn committed_pair_rejects_a_semantically_forged_receipt_chain() {
+        let fixture = Fixture::new("forged-receipt-chain");
+        let source =
+            SourceReservation::acquire(&fixture.root(), &fixture.source("source-a.img")).unwrap();
+        let reservation =
+            OutputReservation::acquire(&fixture.root(), &source, &fixture.output()).unwrap();
+        reservation
+            .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+            .unwrap();
+        let names = reservation.names().unwrap();
+        let image_published = reservation.published_receipt(3, "image-published").unwrap();
+        let manifest_published = reservation
+            .published_receipt(4, "manifest-published")
+            .unwrap();
+
+        let mut image_staged = read_receipt(&reservation.lock.root, &names.image_receipt).unwrap();
+        image_staged.phase = PublicationPhase::ManifestStaged;
+        overwrite_receipt(&fixture.root(), &names.image_receipt, &image_staged);
+
+        let mut manifest_staged =
+            read_receipt(&reservation.lock.root, &names.manifest_receipt).unwrap();
+        manifest_staged.previous_receipt_sha256 = Some(canonical_sha256(&image_staged).unwrap());
+        overwrite_receipt(&fixture.root(), &names.manifest_receipt, &manifest_staged);
+
+        let mut image_published_receipt =
+            read_receipt(&reservation.lock.root, &image_published).unwrap();
+        image_published_receipt.previous_receipt_sha256 =
+            Some(canonical_sha256(&manifest_staged).unwrap());
+        overwrite_receipt(&fixture.root(), &image_published, &image_published_receipt);
+
+        let mut manifest_published_receipt =
+            read_receipt(&reservation.lock.root, &manifest_published).unwrap();
+        manifest_published_receipt.previous_receipt_sha256 =
+            Some(canonical_sha256(&image_published_receipt).unwrap());
+        overwrite_receipt(
+            &fixture.root(),
+            &manifest_published,
+            &manifest_published_receipt,
+        );
+
+        let manifest = expected_manifest(&source.sha256);
+        assert!(reservation
+            .verify_committed_pair(&source, TEST_IMAGE, &manifest)
+            .unwrap_err()
+            .contains("receipt chain mismatch"));
+    }
+
+    #[test]
+    fn committed_pair_rejects_forged_staged_payload_claims() {
+        let fixture = Fixture::new("forged-staged-payload");
+        let source =
+            SourceReservation::acquire(&fixture.root(), &fixture.source("source-a.img")).unwrap();
+        let reservation =
+            OutputReservation::acquire(&fixture.root(), &source, &fixture.output()).unwrap();
+        reservation
+            .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+            .unwrap();
+        let names = reservation.names().unwrap();
+        let image_published = reservation.published_receipt(3, "image-published").unwrap();
+        let manifest_published = reservation
+            .published_receipt(4, "manifest-published")
+            .unwrap();
+
+        let mut image_staged = read_receipt(&reservation.lock.root, &names.image_receipt).unwrap();
+        image_staged.sha256 = "0".repeat(64);
+        image_staged.file_identity.size += 1;
+        overwrite_receipt(&fixture.root(), &names.image_receipt, &image_staged);
+
+        let mut manifest_staged =
+            read_receipt(&reservation.lock.root, &names.manifest_receipt).unwrap();
+        manifest_staged.previous_receipt_sha256 = Some(canonical_sha256(&image_staged).unwrap());
+        overwrite_receipt(&fixture.root(), &names.manifest_receipt, &manifest_staged);
+
+        let mut image_published_receipt =
+            read_receipt(&reservation.lock.root, &image_published).unwrap();
+        image_published_receipt.previous_receipt_sha256 =
+            Some(canonical_sha256(&manifest_staged).unwrap());
+        overwrite_receipt(&fixture.root(), &image_published, &image_published_receipt);
+
+        let mut manifest_published_receipt =
+            read_receipt(&reservation.lock.root, &manifest_published).unwrap();
+        manifest_published_receipt.previous_receipt_sha256 =
+            Some(canonical_sha256(&image_published_receipt).unwrap());
+        overwrite_receipt(
+            &fixture.root(),
+            &manifest_published,
+            &manifest_published_receipt,
+        );
+
+        let manifest = expected_manifest(&source.sha256);
+        let error = reservation
+            .verify_committed_pair(&source, TEST_IMAGE, &manifest)
+            .unwrap_err();
+        assert!(
+            error.contains("staged receipt payload mismatch")
+                || error.contains("staged and published receipt mismatch"),
+            "unexpected staged-claim result: {error}"
+        );
+    }
+
+    #[test]
+    fn committed_pair_rejects_receipt_replacement_after_predecessor_validation() {
+        let fixture = Fixture::new("receipt-replaced-after-validation");
+        let source =
+            SourceReservation::acquire(&fixture.root(), &fixture.source("source-a.img")).unwrap();
+        let reservation =
+            OutputReservation::acquire(&fixture.root(), &source, &fixture.output()).unwrap();
+        reservation
+            .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+            .unwrap();
+        let image_published = reservation.published_receipt(3, "image-published").unwrap();
+        let manifest_published = reservation
+            .published_receipt(4, "manifest-published")
+            .unwrap();
+        let manifest = expected_manifest(&source.sha256);
+
+        let error = reservation
+            .verify_committed_pair_with_hook(&source, TEST_IMAGE, &manifest, || {
+                let mut replaced = read_receipt(&reservation.lock.root, &image_published).unwrap();
+                replaced.sha256 = "0".repeat(64);
+                overwrite_receipt(&fixture.root(), &image_published, &replaced);
+
+                let mut successor =
+                    read_receipt(&reservation.lock.root, &manifest_published).unwrap();
+                successor.previous_receipt_sha256 = Some(canonical_sha256(&replaced).unwrap());
+                overwrite_receipt(&fixture.root(), &manifest_published, &successor);
+            })
+            .unwrap_err();
+
+        assert!(
+            error.contains("receipt chain mismatch") || error.contains("OUTPUT_RECEIPT_CHANGED"),
+            "unexpected receipt-race result: {error}"
+        );
+    }
+
+    #[test]
     fn image_replacement_after_receipt_never_exposes_manifest() {
         let fixture = Fixture::new("image-replaced-before-manifest");
         let source =
@@ -2100,6 +2464,155 @@ mod tests {
     }
 
     #[test]
+    fn subprocess_sigkill_boundaries_are_fail_closed_and_restartable() {
+        struct Boundary {
+            phase: &'static str,
+            resumable: bool,
+            committed_at_kill: bool,
+        }
+
+        for boundary in [
+            Boundary {
+                phase: "image-stage-synced",
+                resumable: false,
+                committed_at_kill: false,
+            },
+            Boundary {
+                phase: "image-receipt-synced",
+                resumable: true,
+                committed_at_kill: false,
+            },
+            Boundary {
+                phase: "manifest-stage-synced",
+                resumable: false,
+                committed_at_kill: false,
+            },
+            Boundary {
+                phase: "manifest-receipt-synced",
+                resumable: true,
+                committed_at_kill: false,
+            },
+            Boundary {
+                phase: "image-renamed",
+                resumable: true,
+                committed_at_kill: false,
+            },
+            Boundary {
+                phase: "image-parent-synced",
+                resumable: true,
+                committed_at_kill: false,
+            },
+            Boundary {
+                phase: "image-published-receipt-synced",
+                resumable: true,
+                committed_at_kill: false,
+            },
+            Boundary {
+                phase: "manifest-renamed",
+                resumable: true,
+                committed_at_kill: false,
+            },
+            Boundary {
+                phase: "manifest-parent-synced",
+                resumable: true,
+                committed_at_kill: false,
+            },
+            Boundary {
+                phase: "manifest-published-receipt-synced",
+                resumable: true,
+                committed_at_kill: true,
+            },
+        ] {
+            let fixture = Fixture::new(&format!("sigkill-{}", boundary.phase));
+            let source_path = fixture.source("source-a.img");
+            let source_before = fs::read(&source_path).unwrap();
+            let foreign_output = fixture.0.join("foreign.keep");
+            let foreign_private = fixture.root().join("foreign.keep");
+            fs::write(&foreign_output, b"outside-transaction").unwrap();
+            fs::write(&foreign_private, b"private-foreign").unwrap();
+            fs::set_permissions(&foreign_private, fs::Permissions::from_mode(0o600)).unwrap();
+            let (authority, nonce) = publication_worker_authority(&fixture);
+            let mut child = WorkerGuard::new(
+                Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "output_transaction::tests::publication_sigkill_worker",
+                        "--ignored",
+                        "--nocapture",
+                    ])
+                    .env_clear()
+                    .env("PUBLICATION_TEST_ROOT", fixture.root())
+                    .env("PUBLICATION_TEST_SOURCE", &source_path)
+                    .env("PUBLICATION_TEST_OUTPUT", fixture.output())
+                    .env("PUBLICATION_TEST_PHASE", boundary.phase)
+                    .env("PUBLICATION_TEST_AUTHORITY", &authority)
+                    .env("PUBLICATION_TEST_NONCE", &nonce)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .unwrap(),
+            );
+            wait_for_worker(&mut child, boundary.phase);
+            kill_worker(&mut child);
+
+            assert_eq!(fs::read(&source_path).unwrap(), source_before);
+            assert_eq!(fs::read(&foreign_output).unwrap(), b"outside-transaction");
+            assert_eq!(fs::read(&foreign_private).unwrap(), b"private-foreign");
+            assert_residue_is_bounded(&fixture);
+
+            // Reacquisition proves both process-owned flock capabilities were
+            // released by SIGKILL. Reopen additionally binds the durable
+            // reservation to the exact source, parent, and lock inode.
+            let source = SourceReservation::acquire(&fixture.root(), &source_path).unwrap();
+            let recovered =
+                OutputReservation::reopen(&fixture.root(), &source, &fixture.output()).unwrap();
+            let manifest = expected_manifest(&source.sha256);
+            assert_eq!(
+                recovered
+                    .verify_committed_pair(&source, TEST_IMAGE, &manifest)
+                    .is_ok(),
+                boundary.committed_at_kill,
+                "wrong trust state after SIGKILL at {}",
+                boundary.phase
+            );
+
+            let result = recovered.publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()));
+            if boundary.resumable {
+                assert_eq!(
+                    result.unwrap(),
+                    PublicationRecovery::Complete,
+                    "failed to resume {}",
+                    boundary.phase
+                );
+                recovered
+                    .verify_committed_pair(&source, TEST_IMAGE, &manifest)
+                    .unwrap();
+                assert_eq!(fs::read(fixture.output()).unwrap(), TEST_IMAGE);
+                assert_eq!(
+                    fs::read(fixture.output().with_extension("img.manifest.json")).unwrap(),
+                    manifest
+                );
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    error.contains("STAGE_EXISTS"),
+                    "unexpected fail-closed result at {}: {error}",
+                    boundary.phase
+                );
+                assert!(recovered
+                    .verify_committed_pair(&source, TEST_IMAGE, &manifest)
+                    .is_err());
+            }
+
+            assert_eq!(fs::read(&source_path).unwrap(), source_before);
+            assert_eq!(fs::read(&foreign_output).unwrap(), b"outside-transaction");
+            assert_eq!(fs::read(&foreign_private).unwrap(), b"private-foreign");
+            assert_residue_is_bounded(&fixture);
+        }
+    }
+
+    #[test]
     fn cross_process_source_and_output_contention() {
         let fixture = Fixture::new("process");
         let executable = std::env::current_exe().unwrap();
@@ -2191,5 +2704,60 @@ mod tests {
         }
         let mut byte = [0_u8; 1];
         let _ = io::stdin().read(&mut byte);
+    }
+
+    #[test]
+    #[ignore = "subprocess helper for SIGKILL publication boundaries"]
+    fn publication_sigkill_worker() {
+        let root = fs::canonicalize(PathBuf::from(
+            std::env::var_os("PUBLICATION_TEST_ROOT").unwrap(),
+        ))
+        .unwrap();
+        let source_path = fs::canonicalize(PathBuf::from(
+            std::env::var_os("PUBLICATION_TEST_SOURCE").unwrap(),
+        ))
+        .unwrap();
+        let output = PathBuf::from(std::env::var_os("PUBLICATION_TEST_OUTPUT").unwrap());
+        let authority = fs::canonicalize(PathBuf::from(
+            std::env::var_os("PUBLICATION_TEST_AUTHORITY").unwrap(),
+        ))
+        .unwrap();
+        let nonce = std::env::var("PUBLICATION_TEST_NONCE").unwrap();
+        let target_phase = std::env::var("PUBLICATION_TEST_PHASE").unwrap();
+        let fixture = root.parent().unwrap().to_path_buf();
+        let fixture_name = fixture.file_name().unwrap().as_bytes();
+        assert!(fixture_name.starts_with(b"steamos-reservation-foundation-sigkill-"));
+        assert_eq!(root, fixture.join("private"));
+        assert_eq!(source_path, fixture.join("source-a.img"));
+        assert_eq!(output.parent().unwrap().canonicalize().unwrap(), fixture);
+        assert_eq!(output.file_name().unwrap(), OsStr::new("result.img"));
+        assert_eq!(authority, fixture.join(".publication-worker-authority"));
+        let authority_metadata = fs::metadata(&authority).unwrap();
+        assert!(authority_metadata.file_type().is_file());
+        assert_eq!(authority_metadata.nlink(), 1);
+        assert_eq!(authority_metadata.uid(), unsafe { libc::geteuid() });
+        assert_eq!(authority_metadata.mode() & 0o7777, 0o600);
+        assert!(is_sha256(&nonce));
+        assert_eq!(fs::read_to_string(&authority).unwrap(), nonce);
+        thread::spawn(|| {
+            let mut byte = [0_u8; 1];
+            let _ = io::stdin().read(&mut byte);
+            std::process::exit(99);
+        });
+        let source = SourceReservation::acquire(&root, &source_path).unwrap();
+        let reservation = OutputReservation::acquire(&root, &source, &output).unwrap();
+        reservation
+            .publish_bytes_with_hook(&source, TEST_IMAGE, |phase| {
+                if phase == target_phase {
+                    println!("PUBLICATION_READY:{phase}");
+                    io::stdout().flush().unwrap();
+                    loop {
+                        thread::park_timeout(Duration::from_secs(60));
+                    }
+                }
+                Ok(())
+            })
+            .unwrap();
+        panic!("publication worker passed requested boundary without stopping");
     }
 }
