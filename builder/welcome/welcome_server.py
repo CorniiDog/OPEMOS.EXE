@@ -178,26 +178,41 @@ class Controller:
             args=(mode, device, identity, confirmation),
             daemon=True,
         )
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            self.operation_marker.unlink(missing_ok=True)
+            self.update_operation(
+                status="failed", phase="failed", progress=100,
+                message="The installation worker could not start.", terminal=True,
+            )
+            raise
         return self.operation_status()
 
     def _mock_install(self, _mode, _device, _identity, _confirmation):
-        stages = [
-            (18, "preparing", "Preparing the target layout."),
-            (55, "installing", "Running the protected Valve installation."),
-            (76, "slot-a", "Installing recovery into rootfs-A."),
-            (89, "slot-b", "Installing recovery into rootfs-B."),
-            (96, "verifying", "Independently verifying both A/B guardians."),
-        ]
-        for progress, phase, message in stages:
+        try:
+            stages = [
+                (18, "preparing", "Preparing the target layout."),
+                (55, "installing", "Running the protected Valve installation."),
+                (76, "slot-a", "Installing recovery into rootfs-A."),
+                (89, "slot-b", "Installing recovery into rootfs-B."),
+                (96, "verifying", "Independently verifying both A/B guardians."),
+            ]
+            for progress, phase, message in stages:
+                time.sleep(0.35)
+                self.update_operation(progress=progress, phase=phase, message=message)
             time.sleep(0.35)
-            self.update_operation(progress=progress, phase=phase, message=message)
-        time.sleep(0.35)
-        self.update_operation(
-            status="complete", phase="complete", progress=100,
-            message="Synthetic installation and A/B verification completed.", terminal=True,
-        )
-        self.operation_marker.unlink(missing_ok=True)
+            self.update_operation(
+                status="complete", phase="complete", progress=100,
+                message="Synthetic installation and A/B verification completed.", terminal=True,
+            )
+        except Exception as error:
+            self.update_operation(
+                status="failed", phase="failed", progress=100,
+                message=str(error)[:700], terminal=True,
+            )
+        finally:
+            self.operation_marker.unlink(missing_ok=True)
 
     def _live_install(self, mode, device, identity, confirmation):
         command = [
@@ -205,6 +220,7 @@ class Controller:
             "--confirm", confirmation,
         ]
         log_directory = self.state_root
+        process = None
         try:
             if log_directory.is_symlink():
                 raise RuntimeError("The installer log directory is unsafe.")
@@ -221,7 +237,6 @@ class Controller:
                 for line in process.stdout:
                     total += len(line.encode("utf-8", "replace"))
                     if total > MAX_COMMAND_OUTPUT:
-                        os.killpg(process.pid, signal.SIGTERM)
                         raise RuntimeError("The installer returned excessive output.")
                     output.write(line)
                     output.flush()
@@ -256,10 +271,23 @@ class Controller:
             )
             self.operation_marker.unlink(missing_ok=True)
         except Exception as error:
+            if process is not None and process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    process.wait(timeout=5)
+                except ProcessLookupError:
+                    pass
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait()
             self.update_operation(
                 status="failed", phase="failed", progress=100,
                 message=str(error)[:700], terminal=True,
             )
+        finally:
             self.operation_marker.unlink(missing_ok=True)
 
     def diagnostics(self):

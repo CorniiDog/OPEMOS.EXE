@@ -360,7 +360,9 @@ function renderLogs(applianceLog, source = "native") {
     nvidiaBuildSubphase = inferNvidiaBuildSubphase(normalizedLog);
     installerProgress = inferInstallerValidationProgress(normalizedLog);
     if (running && activeNvidiaPhase === installerProgress?.kind) {
-      nvidiaMilestoneProgress = Math.max(nvidiaMilestoneProgress, installerProgress.overallProgress);
+      if (installerProgress.overallProgress !== null) {
+        nvidiaMilestoneProgress = Math.max(nvidiaMilestoneProgress, installerProgress.overallProgress);
+      }
       const operation = installerProgress.kind === "validation" ? "Validation" : "Installation";
       const amount = installerProgress.total === null
         ? `${operation} pass ${installerProgress.attempt} is active.`
@@ -705,7 +707,11 @@ async function runBuild(request) {
             addStageLog("NVIDIA release: skipped because experimental upstream artifacts are local-only.");
           }
         } else {
-          addStageLog("warning: Exact-kernel NVIDIA build was declined; continuing with a marker-only output.");
+          addStageLog("Exact-kernel NVIDIA build was declined; no output image will be created.");
+          await stopAllWorkers();
+          setStatus("cancelled", "Build stopped", "The required NVIDIA build was declined. The original image remains unchanged and no output was created.", 100);
+          await finish("cancelled", "The required exact-kernel NVIDIA build was declined; no output image was created.");
+          return;
         }
       }
       if (nvidiaResolution.status === "compatible") {
@@ -779,14 +785,15 @@ async function runBuild(request) {
         addStageLog(`NVIDIA ${installation.nvidiaVersion} installed for ${installation.kernelVersion}; trust=${installation.trust}; mounts released=${installation.mountsReleased}.`);
         addStageLog("NVIDIA initramfs contents were checked in x86_64 Fedora; the exported image will now receive an independent read-only structural inspection.");
       } else if (nvidiaResolution.status !== "build_required") {
-        addStageLog(`warning: ${nvidiaResolution.message}`);
-        addStageLog(`NVIDIA publication status: ${nvidiaResolution.reason}; continuing with a marker-only output.`);
+        throw new Error(`No compatible NVIDIA artifact is available (${nvidiaResolution.reason}): ${nvidiaResolution.message}`);
       }
     } else {
-      addStageLog(`warning: ${nvidiaTarget.message}`);
-      addStageLog(`NVIDIA target status: ${nvidiaTarget.status}; no driver artifact will be selected or built.`);
+      throw new Error(`The selected image is not an installable NVIDIA target (${nvidiaTarget.status}): ${nvidiaTarget.message}`);
     }
     if (cancelling) return;
+    if (!nvidiaInstalled) {
+      throw new Error("The NVIDIA installation did not produce a verified completion record; no output image will be exported.");
+    }
 
     setStatus("running", "Exporting raw image", "Stopping the mutation VM, flattening its working layer, and validating the result in a fresh appliance.", 85, "Exporting");
     const output = await invoke("export_marker_image", { revealInFinder: false });
@@ -799,12 +806,12 @@ async function runBuild(request) {
       ? "Validated staging image ready. Opening the USB identity and destructive-write review now."
       : "Validated raw image ready. Return to the main window to reveal it in Finder.";
     const completionTitle = usbRequested
-      ? `${nvidiaInstalled ? "NVIDIA image" : "Marker image"} ready for USB review`
-      : (nvidiaInstalled ? "NVIDIA mutation complete" : "Marker image complete");
+      ? "NVIDIA image ready for USB review"
+      : "NVIDIA mutation complete";
     setStatus("complete", completionTitle, completionMessage, 100);
     await finish("complete", usbRequested
-      ? `${nvidiaInstalled ? "NVIDIA-mutated image" : "Marker image"} is ready for USB export: ${output.path}`
-      : `${nvidiaInstalled ? "NVIDIA-mutated image" : "Marker image"} created: ${output.path}`, output);
+      ? `NVIDIA-mutated image is ready for USB export: ${output.path}`
+      : `NVIDIA-mutated image created: ${output.path}`, output);
     if (usbRequested) {
       await hideProgressWindow().catch((error) => {
         addStageLog(`The image is ready, but the USB review could not open automatically: ${error}`);
@@ -813,8 +820,17 @@ async function runBuild(request) {
   } catch (error) {
     if (cancelling) return;
     addStageLog(`ERROR: ${error}`);
-    await stopAllWorkers();
-    const failure = summarizeBuildFailure(error, diagnosticLog);
+    let cleanupError = null;
+    try {
+      await stopAllWorkers();
+    } catch (workerError) {
+      cleanupError = workerError;
+      addStageLog(`ERROR: Worker cleanup also failed: ${workerError}`);
+    }
+    const primaryFailure = summarizeBuildFailure(error, diagnosticLog);
+    const failure = cleanupError
+      ? `${primaryFailure} Worker cleanup could not be confirmed: ${cleanupError}`
+      : primaryFailure;
     setStatus("failed", "Build failed", failure, 100);
     await finish("failed", `Image build failed: ${failure}`);
   } finally {

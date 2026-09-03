@@ -17,6 +17,10 @@ Only one welcome instance can run in a recovery session. Its diagnostics view
 shows the pinned NVIDIA/support identity and currently eligible disks. Complete
 installation output is retained under the recovery user's private state
 directory and remains viewable after closing and reopening the window.
+The visible Desktop launcher is installed as a deck-owned executable desktop
+entry so KDE treats it as trusted before the recovery session appears. The
+matching autostart entry remains non-executable because it is configuration,
+not a second application.
 
 `opemos-install-helper` is installed root-owned at
 `/usr/lib/opemos-install-media/`. It exposes only:

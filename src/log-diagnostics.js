@@ -62,6 +62,8 @@ export function inferInstallerValidationProgress(value) {
   if (new TextEncoder().encode(normalized).length > 16 * 1024 * 1024) return null;
   const records = [];
   const previous = new Map();
+  let lastKnownKind = null;
+  let lastKnownOverall = null;
   for (const rawLine of normalized.split("\n")) {
     const line = rawLine.trim();
     if (!line.startsWith(INSTALLER_PROGRESS_PREFIX)) continue;
@@ -75,16 +77,23 @@ export function inferInstallerValidationProgress(value) {
     } catch {
       return null;
     }
+    if (!document || typeof document !== "object" || Array.isArray(document)) return null;
     const stage = INSTALLER_PROGRESS_STAGES[document.phase];
     const attempt = Number(document.attempt);
     const indeterminate = document.indeterminate === true;
+    const hasCompleted = Object.hasOwn(document, "completed");
+    const hasTotal = Object.hasOwn(document, "total");
+    const hasUnit = Object.hasOwn(document, "unit");
     const completed = indeterminate ? null : Number(document.completed);
     const total = indeterminate ? null : Number(document.total);
     const unit = document.unit;
     if (document.schemaVersion !== 1
-        || !stage
         || typeof document.indeterminate !== "boolean"
+        || typeof document.phase !== "string"
+        || !/^[a-z][a-z0-9_]{0,63}$/.test(document.phase)
         || !Number.isSafeInteger(attempt) || attempt < 0 || attempt > 1_000_000
+        || (indeterminate && (hasCompleted || hasTotal || hasUnit))
+        || (!indeterminate && (!hasCompleted || !hasTotal || !hasUnit))
         || (!indeterminate && !["bytes", "items"].includes(unit))
         || (completed !== null && (!Number.isSafeInteger(completed) || completed < 0))
         || (total !== null && (!Number.isSafeInteger(total) || total <= 0))
@@ -98,12 +107,16 @@ export function inferInstallerValidationProgress(value) {
       if (prior && (completed < prior.completed || total !== prior.total || unit !== prior.unit)) return null;
       previous.set(key, { completed, total, unit });
     }
+    if (stage) {
+      lastKnownKind = stage[2];
+      lastKnownOverall = stage[0];
+    }
     records.push({
       attempt,
       completed,
-      kind: stage[2],
-      label: stage[1],
-      overallProgress: stage[0],
+      kind: stage?.[2] ?? lastKnownKind ?? "validation",
+      label: stage?.[1] ?? `OPEMOS Core: ${document.phase.replaceAll("_", " ")}`,
+      overallProgress: stage?.[0] ?? lastKnownOverall,
       stage: document.phase,
       stepProgress: total === null ? null : completed / total,
       total,

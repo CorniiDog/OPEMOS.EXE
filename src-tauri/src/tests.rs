@@ -367,6 +367,44 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn github_command_runner_bounds_runtime_and_output() {
+        let (status, stdout, stderr) = bounded_command_output_with_limits(
+            Path::new("/bin/sh"),
+            &["-c", "printf success"],
+            "run bounded fixture",
+            Duration::from_secs(1),
+            64,
+        )
+        .expect("bounded command should complete");
+        assert!(status.success());
+        assert_eq!(stdout, b"success");
+        assert!(stderr.is_empty());
+
+        let started = Instant::now();
+        let timeout = bounded_command_output_with_limits(
+            Path::new("/bin/sh"),
+            &["-c", "sleep 5"],
+            "run timeout fixture",
+            Duration::from_millis(50),
+            64,
+        )
+        .expect_err("bounded command must time out");
+        assert!(timeout.contains("safety time limit"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+
+        let excessive = bounded_command_output_with_limits(
+            Path::new("/bin/sh"),
+            &["-c", "printf 0123456789"],
+            "run output fixture",
+            Duration::from_secs(1),
+            4,
+        )
+        .expect_err("bounded command must cap output");
+        assert!(excessive.contains("excessive output"));
+    }
+
     #[test]
     fn recent_maintainer_settings_are_bounded_absolute_and_unique() {
         assert!(validate_recent_maintainer_worktrees(&[
@@ -2663,6 +2701,9 @@ esac
         assert!(desktop.contains("Name=Install SteamOS with NVIDIA drivers"));
         assert!(desktop.contains("Exec=/home/deck/tools/open-opemos-welcome"));
         assert!(desktop.contains("X-KDE-AutostartScript=true"));
+        assert!(include_str!("installer.rs").contains(
+            "sudo install -m 0755 /tmp/Open-OPEMOS.desktop"
+        ));
         assert!(welcome.contains("SteamOS with NVIDIA drivers"));
         assert!(welcome.contains("Maintained by OPEMOS"));
         assert!(welcome.contains("Install SteamOS with NVIDIA drivers"));

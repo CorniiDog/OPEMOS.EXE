@@ -28,3 +28,18 @@ test("closing during release confirmation resolves the pending modal before clea
   assert.match(script, /async function cancelBuild\(\)[\s\S]*cancelling = true;\s*cancelPendingReleaseConfirmation\(\);/);
   assert.match(script, /if \(settled\) return;[\s\S]*if \(elements\.releaseDialog\.open\) elements\.releaseDialog\.close\(\)/);
 });
+
+test("a build failure is still reported when worker cleanup also fails", () => {
+  assert.match(script, /let cleanupError = null;[\s\S]*cleanupError = workerError;/);
+  assert.match(script, /Worker cleanup also failed:/);
+  assert.match(script, /const failure = cleanupError[\s\S]*Worker cleanup could not be confirmed:/);
+  assert.match(script, /setStatus\("failed", "Build failed", failure, 100\);[\s\S]*await finish\("failed"/);
+});
+
+test("normal builds never export a marker-only image", () => {
+  assert.match(script, /Exact-kernel NVIDIA build was declined; no output image will be created/);
+  assert.match(script, /No compatible NVIDIA artifact is available/);
+  assert.match(script, /not an installable NVIDIA target/);
+  assert.match(script, /if \(!nvidiaInstalled\) \{[\s\S]*no output image will be exported/);
+  assert.doesNotMatch(script, /continuing with a marker-only output|Marker image complete|Marker image.*ready for USB/);
+});

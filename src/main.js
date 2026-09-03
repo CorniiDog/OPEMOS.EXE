@@ -771,10 +771,6 @@ async function refreshUsbTargets(preferredTarget = null) {
   usbContextGeneration += 1;
   const generation = usbContextGeneration;
   const imagePath = completedOutput?.path || currentImage;
-  if (usbPreflightSession) {
-    await invoke("cancel_usb_write_preflight", { sessionToken: usbPreflightSession.sessionToken }).catch(() => {});
-    usbPreflightSession = null;
-  }
   elements.cancelUsbPreflight.classList.add("hidden");
   elements.refreshUsbTargets.disabled = true;
   elements.refreshUsbTargets.setAttribute("aria-busy", "true");
@@ -784,6 +780,13 @@ async function refreshUsbTargets(preferredTarget = null) {
   elements.usbMessage.textContent = "Inspecting whole external physical disks without opening them for writing…";
   elements.usbPickerMessage.textContent = elements.usbMessage.textContent;
   elements.usbMessage.className = "result-message";
+  const previousSession = usbPreflightSession;
+  usbPreflightSession = null;
+  renderUsbConfirmationPhase(false);
+  if (previousSession?.sessionToken) {
+    await invoke("cancel_usb_write_preflight", { sessionToken: previousSession.sessionToken }).catch(() => {});
+    if (generation !== usbContextGeneration) return;
+  }
   try {
     const preflight = completedOutput?.path
       ? await invoke("inspect_usb_targets", { imagePath })
@@ -825,9 +828,21 @@ async function refreshUsbTargets(preferredTarget = null) {
     return false;
   } catch (error) {
     if (generation !== usbContextGeneration) return;
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Refresh to inspect removable drives…";
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    elements.usbTarget.replaceChildren(placeholder);
+    elements.usbTarget.disabled = true;
+    elements.usbPicker.classList.add("is-empty");
+    elements.clearUsbTarget.classList.add("hidden");
+    elements.usbTargetDetail.textContent = "No current removable-drive inventory.";
     elements.usbMessage.textContent = String(error);
     elements.usbMessage.className = "result-message error";
     elements.usbPickerMessage.textContent = `Drive inspection failed: ${error}`;
+    renderUsbConfirmationPhase(false);
+    renderExportMode();
   } finally {
     if (generation === usbContextGeneration) {
       elements.refreshUsbTargets.disabled = false;
@@ -871,11 +886,11 @@ elements.usbTarget.addEventListener("change", async () => {
   const generation = ++usbContextGeneration;
   const previousSession = usbPreflightSession;
   usbPreflightSession = null;
+  renderUsbTargetSelection();
   if (previousSession?.sessionToken) {
     await invoke("cancel_usb_write_preflight", { sessionToken: previousSession.sessionToken }).catch(() => {});
   }
   if (generation !== usbContextGeneration) return;
-  renderUsbTargetSelection();
 });
 
 elements.clearUsbTarget.addEventListener("click", () => {

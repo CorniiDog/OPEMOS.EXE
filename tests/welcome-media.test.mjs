@@ -49,6 +49,10 @@ test("install helper binds and revalidates a physical device identity", () => {
   assert.match(helper, /selected disk identity changed immediately before installation/);
   assert.match(helper, /flock -n 9/);
   assert.match(helper, /case "\$mode" in all\|system/);
+  assert.match(helper, /layout=fresh/);
+  assert.match(helper, /"\$mode" != system.*has_exact_steamos_layout/);
+  assert.match(helper, /count=\$\(lsblk -nrpo PARTN,PARTLABEL,TYPE "\$device"[\s\S]*\[\[ "\$count" == "\$\{#labels\[@\]\}" \]\] \|\| return 1/);
+  assert.doesNotMatch(helper.match(/disk_status\(\) \{[\s\S]*?\n\}/)?.[0] || "", /FSTYPE|has_exact_steamos_layout/);
   assert.match(helper, /PARTN,PARTLABEL,TYPE/);
   assert.match(helper, /install_recovery_guardian_to_root\.sh/);
   assert.match(helper, /for slot in A B/);

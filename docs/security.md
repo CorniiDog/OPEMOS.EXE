@@ -60,6 +60,9 @@ reinstall operation. It excludes the physical disk backing the running recovery
 home/root, rejects mounted/read-only/undersized targets, uses a per-device
 exclusive lock, and requires a matching identity digest plus a device-specific
 typed phrase immediately before mutation.
+Fresh installation intentionally includes eligible unformatted whole disks;
+neither a partition table nor a filesystem is required. Reinstall remains
+fail-closed and lists only an exact recognized SteamOS A/B layout.
 
 The compatible Valve installer is patched once while the image is built, using
 guarded exact structural anchors, and installed root-owned in the immutable

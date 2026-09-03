@@ -114,10 +114,14 @@ write_files:
       inventory_device="$(printf '%s\n' "$inventory" | awk -F '\t' 'NF == 7 { print $1 }')"
       inventory_bytes="$(printf '%s\n' "$inventory" | awk -F '\t' 'NF == 7 { print $2 }')"
       inventory_token="$(printf '%s\n' "$inventory" | awk -F '\t' 'NF == 7 { print $3 }')"
+      inventory_layout="$(printf '%s\n' "$inventory" | awk -F '\t' 'NF == 7 { print $7 }')"
       [[ "$(printf '%s\n' "$inventory_device" | sed '/^$/d' | wc -l)" = 1 ]] || { reason="welcome helper returned an ambiguous disk inventory: $(/mnt/opemos-seed/opemos-install-helper inventory-report | tr '\n' ';' | head -c 300)"; exit 1; }
       [[ "$(readlink -f "$inventory_device")" = "$(readlink -f "$welcome_disk")" ]] || { reason='welcome helper selected the wrong physical disk'; exit 1; }
       [[ "$inventory_bytes" = 17179869184 ]] || { reason='welcome helper reported the wrong disk capacity'; exit 1; }
       [[ "$inventory_token" =~ ^[0-9a-f]{64}$ ]] || { reason='welcome helper returned a malformed identity token'; exit 1; }
+      [[ "$inventory_layout" = fresh ]] || { reason='unformatted welcome target was not offered for fresh installation'; exit 1; }
+      [[ -z "$(lsblk -nrpo PATH,TYPE "$welcome_disk" | awk '$2 == "part" { print $1 }')" ]] || { reason='welcome target fixture unexpectedly has partitions'; exit 1; }
+      [[ -z "$(lsblk -dnro FSTYPE "$welcome_disk" | tr -d '[:space:]')" ]] || { reason='welcome target fixture unexpectedly has a filesystem'; exit 1; }
       [[ "$(/mnt/opemos-seed/opemos-install-helper identity "$inventory_device")" = "$inventory_token" ]] || { reason='welcome helper identity was not stable'; exit 1; }
       umount /mnt/opemos-seed
       result='passed'

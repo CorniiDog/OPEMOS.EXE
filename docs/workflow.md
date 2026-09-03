@@ -49,6 +49,10 @@ artifact exists, maintainers may approve a long local x86_64 build against the
 exact Valve header package and pinned project source.
 
 No closest-kernel headers, modules, userspace packages, or signers are used.
+If target recognition, exact artifact resolution, or installation verification
+fails—or the user declines a required local build—the normal workflow creates
+no output image. Marker mutation remains an internal isolation test and is
+never offered as a build result.
 
 ## Output identity and reuse
 
@@ -81,6 +85,9 @@ booted installation medium is excluded. The selected disk is bound to its
 device path, capacity, kernel major/minor and sequence values, and available
 hardware identifiers. The protected helper rechecks all of them after the
 typed confirmation and immediately before Valve's installer starts.
+Reinstall mode additionally requires exactly the eight recognized Valve A/B
+partitions at their expected indices; extra partitions are not treated as an
+exact layout.
 The diagnostics view reports why each whole disk is eligible or excluded,
 shows the pinned NVIDIA/support identity, and can reopen the complete private
 installation log after the welcome window is restarted. A session lock prevents

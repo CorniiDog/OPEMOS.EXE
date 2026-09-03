@@ -3038,7 +3038,6 @@ pub(crate) async fn resolve_published_nvidia(
             };
 
             if let Some(selected) = explicit_source {
-                preflight_nvidia_userspace(&client, &selected.version)?;
                 if selected.experimental {
                     explicit_nvidia_build_resolution(
                         target,
@@ -3130,7 +3129,7 @@ pub(crate) async fn prepare_nvidia_userspace(
 ) -> Result<NvidiaUserspaceResolution, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let manager_state = app.state::<Mutex<ApplianceManager>>();
-        let (runtime_dir, nvidia_version, cancel) = {
+        let (runtime_dir, steamos_version, nvidia_version, cancel, existing_bundle) = {
             let manager = manager_state
                 .lock()
                 .map_err(|_| "Appliance state lock is unavailable.")?;
@@ -3156,8 +3155,14 @@ pub(crate) async fn prepare_nvidia_userspace(
             }
             (
                 session.runtime_dir.clone(),
+                session
+                    .target_system
+                    .as_ref()
+                    .and_then(|target| target.version_id.clone())
+                    .ok_or("Target SteamOS version is unavailable.")?,
                 publication.nvidia_version.clone(),
                 manager.cancel_preparation.clone(),
+                session.nvidia_installer_bundle.clone(),
             )
         };
         let report_progress = |stage: &str, processed_bytes: u64, total_bytes: u64| {
@@ -3171,10 +3176,37 @@ pub(crate) async fn prepare_nvidia_userspace(
                 },
             );
         };
+        let client = nvidia_http_client()?;
+        let bundle = if let Some(bundle) = existing_bundle {
+            validate_staged_nvidia_installer_bundle(&bundle)?;
+            bundle
+        } else {
+            prepare_pinned_nvidia_installer_bundle(
+                &runtime_dir,
+                &client,
+                &cancel,
+                &report_progress,
+            )?
+        };
+        {
+            let mut manager = manager_state
+                .lock()
+                .map_err(|_| "Appliance state lock is unavailable.")?;
+            let active = manager
+                .session
+                .as_mut()
+                .filter(|session| session.runtime_dir == runtime_dir)
+                .ok_or("Builder session ended before the NVIDIA installer could be recorded.")?;
+            // Retain the fully verified bundle across a package-download error
+            // so retry never collides with an untracked staging directory.
+            active.nvidia_installer_bundle = Some(bundle.clone());
+        }
         let userspace = resolve_nvidia_userspace_for_version(
             &runtime_dir,
+            &bundle.root,
+            &steamos_version,
             &nvidia_version,
-            &nvidia_http_client()?,
+            &client,
             &cancel,
             &report_progress,
         )?;
@@ -3187,7 +3219,7 @@ pub(crate) async fn prepare_nvidia_userspace(
             .filter(|session| session.runtime_dir == runtime_dir)
             .ok_or("Builder session ended before NVIDIA userspace inputs could be recorded.")?;
         active.nvidia_userspace = Some(userspace.clone());
-        active.nvidia_installer_bundle = None;
+        active.nvidia_installer_bundle = Some(bundle);
         active.nvidia_install_validation = None;
         active.nvidia_installation = None;
         Ok(userspace)

@@ -129,6 +129,59 @@ boundary is useful; do not split files merely to chase a line-count target.
   `src-tauri/src/{main.js,style.css}` prototype files; the active frontend
   remains under top-level `src/`.
 
+## OPEMOS Core contract migration
+
+This is an incremental replacement. The dependency direction is always Core
+contracts to the CLI, SteamOS desktop companion, DRM/KMS interstitial, and
+OPEMOS.EXE independently. OPEMOS.EXE remains responsible for macOS UI, VM and
+image lifecycle, authenticated transfer, export, and independent final-image
+validation; it must not invoke another frontend except when installing that
+frontend as an explicitly authenticated target payload.
+
+* [x] Add bounded additive Rust consumers and fixtures for Core
+  `resolver-result-v2` and `installer-progress-v1`, including duplicate-key,
+  future-major, excessive-size, determinate/indeterminate, and cross-record
+  monotonicity rejection.
+* [x] Invoke `lib/resolve_target.py` from the exact Core compatibility commit
+  `da8cad425c0aba2ff8670a8285ba2c0668212925` and compare its exact-release
+  decision with the existing Rust selector. Reproduce the supplied canonical
+  55-file manifest test digest
+  `5b8c8af970d0c1ef8598ac3a966a6192fc51a2cafa84e9694a81348f7492046f`.
+  This digest is a compatibility-test value for that commit, not a global or
+  production trust root.
+* [x] Implement a bounded canonical bundle-manifest consumer which verifies an
+  independently supplied manifest SHA-256, exact support commit, bundle ID,
+  canonical JSON, unique/safe/sorted paths, roles, sizes, hashes, executable
+  modes, and a closed staged tree with no missing or unexpected entries.
+* [x] Accept unknown additive Core progress phases without inventing step
+  percentages. Retain the last known OPEMOS.EXE-owned overall weight and show
+  the unknown operation as indeterminate while enforcing schema-1 counters and
+  monotonicity.
+* [ ] Publish the canonical manifest through an authenticated immutable release
+  asset or a separately pinned manifest commit, and independently review/pin
+  that distribution identity. The Core repository has no such release asset at
+  the `da8cad4` compatibility point, so production must not trust a manifest
+  downloaded beside its payload.
+* [ ] After that immutable manifest identity exists, replace
+  `PINNED_INSTALLER_FILES` and the active 50-file downloader with the verified
+  manifest's complete 55-file closed set. Do not generate the production
+  manifest in OPEMOS.EXE.
+* [ ] Run Core and Rust resolution across exact, bounded same-series fallback,
+  incomplete/duplicate assets, malformed metadata, invalid targets, and no
+  compatible artifact. Remove Rust release-selection policy only after every
+  decision is equivalent. Core authenticated incompatibility must remain
+  authoritative; the current Rust on-demand-baseline path is an explicitly
+  retained non-equivalent fallback and blocks removal.
+* [ ] Once equivalence and manifest activation pass, make the authenticated
+  Core resolver the sole normal-build release decision. Retain Rust schema
+  parsing, target/session binding, error presentation, download validation,
+  provenance checks, and fail-closed final-image verification.
+* [x] Keep the reviewed userspace lock as the only normal-build package set.
+  The normal staging path reads exact package/signature filenames and hashes
+  from that authenticated lock and never queries an archive index to select a
+  newer package. Dependency discovery and trust expansion remain
+  maintainer-only Core work.
+
 ## State, concurrency, and error-model audit
 
 * [ ] Replace stringly typed appliance/build states and ad-hoc status tokens
@@ -736,6 +789,7 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [ ] Confirm the generated recovery image does not reproduce the earlier wrong-disk/Optane selection problem without clear user control.
 * [x] Confirm from the real SteamOS 3.8.14 media that Valve's installer hard-codes `/dev/nvme0n1` plus the `p` partition suffix, then replace those assumptions only in the protected OPEMOS delegate.
 * [x] Require a target-disk picker, exclude the booted recovery medium, validate the selected block device, and show a final destructive confirmation before a fresh install.
+* [x] Include eligible unformatted whole disks in fresh-install discovery without weakening the exact SteamOS A/B layout requirement for reinstall, and prove the blank-disk case in the isolated headless VM fixture.
 * [x] Keep fresh-install and system-upgrade modes distinct; require upgrade mode to recognize an existing SteamOS layout and invoke Valve's `system` path, which preserves the target `home` partition.
 * [x] Pass the selected target disk explicitly to a protected installer delegate without hard-coding NVMe naming, including correct partition suffix handling for NVMe and non-NVMe devices.
 * [x] Bundle an **Open OPEMOS** welcome application in newly generated installation media and start it automatically in the recovery desktop. Offer fresh install, reinstall-with-home-preserved, and rollback as distinct actions.

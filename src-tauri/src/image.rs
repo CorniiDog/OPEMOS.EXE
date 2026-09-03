@@ -1154,12 +1154,12 @@ pub(crate) fn verify_nvidia_from_validation_overlay(
         ("assets/recovery.svg", INSTALL_MEDIA_WELCOME_RECOVERY_ART),
         ("assets/gaming.svg", INSTALL_MEDIA_WELCOME_GAMING_ART),
     ] {
+        let sha256 = format!("{:x}", Sha256::digest(bytes));
         welcome_asset_assertions.push_str(&format!(
             "test -f \"$ROOT/usr/share/opemos-install-media/ui/welcome/{path}\"\n\
              test ! -L \"$ROOT/usr/share/opemos-install-media/ui/welcome/{path}\"\n\
              test \"$(sha256sum \"$ROOT/usr/share/opemos-install-media/ui/welcome/{path}\" | awk '{{print $1}}')\" = \"{sha256}\"\n\
              test \"$(stat -c '%a:%u:%g' \"$ROOT/usr/share/opemos-install-media/ui/welcome/{path}\")\" = 644:0:0\n",
-            sha256 = format!("{:x}", Sha256::digest(bytes)),
         ));
     }
     let mut install_media_support_assertions = String::new();
@@ -1303,9 +1303,10 @@ for DESKTOP in "$ROOT/home/deck/Desktop/Open-OPEMOS.desktop" "$ROOT/home/deck/.c
   test -f "$DESKTOP"
   test ! -L "$DESKTOP"
   test "$(sha256sum "$DESKTOP" | awk '{{print $1}}')" = "{}"
-  test "$(stat -c '%a' "$DESKTOP")" = 644
   test "$(stat -c '%u:%g' "$DESKTOP")" = "$DECK_ID"
 done
+test "$(stat -c '%a' "$ROOT/home/deck/Desktop/Open-OPEMOS.desktop")" = 755
+test "$(stat -c '%a' "$ROOT/home/deck/.config/autostart/Open-OPEMOS.desktop")" = 644
 test -f "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg"
 test ! -L "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg"
 test "$(sha256sum "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg" | awk '{{print $1}}')" = "{}"

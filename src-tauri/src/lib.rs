@@ -27,6 +27,10 @@ use tauri::{Emitter, Manager};
 mod app;
 mod appliance;
 mod contracts;
+// The migration adapter is exercised before activation. Its production entry
+// points remain deliberately unused until Core publishes an immutable manifest.
+#[allow(dead_code)]
+mod core_contracts;
 mod image;
 mod installer;
 mod nvidia;
@@ -73,6 +77,7 @@ const HOST_RUNTIME_FREE_SPACE_RESERVE: u64 = 4 * 1024 * 1024 * 1024;
 const HOST_OUTPUT_FREE_SPACE_RESERVE: u64 = 64 * 1024 * 1024;
 const _: () = assert!(NVIDIA_ARCHIVE_LIMIT >= 700 * 1024 * 1024);
 const _: () = assert!(NVIDIA_ARCHIVE_LIMIT <= 2 * 1024 * 1024 * 1024);
+#[cfg(test)]
 const ARCH_ARCHIVE_INDEX_LIMIT: u64 = 8 * 1024 * 1024;
 const NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 512 * 1024 * 1024;
 const LIB32_NVIDIA_UTILS_ARCHIVE_LIMIT: u64 = 128 * 1024 * 1024;
@@ -84,6 +89,13 @@ const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/OPEMOS";
 const NVIDIA_SUPPORT_COMMIT: &str = "cbc44270440652875739c9386235ee8ae22861c9";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
+// Compatibility target only. This does not become the production installer pin
+// until its canonical manifest is published through an immutable channel.
+#[cfg(test)]
+const OPEMOS_CORE_COMPATIBILITY_COMMIT: &str = "da8cad425c0aba2ff8670a8285ba2c0668212925";
+#[cfg(test)]
+const OPEMOS_CORE_COMPATIBILITY_MANIFEST_SHA256: &str =
+    "5b8c8af970d0c1ef8598ac3a966a6192fc51a2cafa84e9694a81348f7492046f";
 #[cfg(test)]
 const NVIDIA_UTILS_SIGNER: &str = "05C7775A9E8B977407FE08E69D4C5AA15426DA0A";
 #[cfg(test)]

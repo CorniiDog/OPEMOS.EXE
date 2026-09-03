@@ -50,6 +50,7 @@ fn sha256_bytes(bytes: &[u8]) -> String {
 
 pub(crate) fn install_media_welcome_revision() -> String {
     let mut digest = Sha256::new();
+    digest.update(b"opemos-welcome-contract-v2;desktop-mode=0755;autostart-mode=0644");
     for bytes in [
         INSTALL_MEDIA_WELCOME,
         INSTALL_MEDIA_WELCOME_SERVER,
@@ -2709,7 +2710,7 @@ sudo install -m 0644 -o root -g root /tmp/welcome-gaming.svg "$ROOT/usr/share/op
 sudo install -m 0755 /tmp/opemos-rollback-last-update "$ROOT/home/deck/tools/opemos-rollback-last-update"
 sudo rm -f "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
 sudo install -m 0755 /tmp/open-opemos-welcome "$ROOT/home/deck/tools/open-opemos-welcome"
-sudo install -m 0644 /tmp/Open-OPEMOS.desktop "$ROOT/home/deck/Desktop/Open-OPEMOS.desktop"
+sudo install -m 0755 /tmp/Open-OPEMOS.desktop "$ROOT/home/deck/Desktop/Open-OPEMOS.desktop"
 sudo install -m 0644 /tmp/Open-OPEMOS.desktop "$ROOT/home/deck/.config/autostart/Open-OPEMOS.desktop"
 sudo install -m 0644 /tmp/opemos.svg "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg"
 sudo chown "$DECK_ID" \
@@ -2724,6 +2725,8 @@ test "$(sha256sum "$ROOT/home/deck/tools/open-opemos-welcome" | awk '{{print $1}
 test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/opemos-install-helper" | awk '{{print $1}}')" = "{welcome_helper_sha256}"
 test "$(sha256sum "$ROOT/home/deck/Desktop/Open-OPEMOS.desktop" | awk '{{print $1}}')" = "{welcome_desktop_sha256}"
 test "$(sha256sum "$ROOT/home/deck/.config/autostart/Open-OPEMOS.desktop" | awk '{{print $1}}')" = "{welcome_desktop_sha256}"
+test "$(stat -c '%a' "$ROOT/home/deck/Desktop/Open-OPEMOS.desktop")" = 755
+test "$(stat -c '%a' "$ROOT/home/deck/.config/autostart/Open-OPEMOS.desktop")" = 644
 test "$(sha256sum "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg" | awk '{{print $1}}')" = "{welcome_icon_sha256}"
 test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/opemos-install-helper")" = root:root:755
 test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/welcome_server.py" | awk '{{print $1}}')" = "{welcome_server_sha256}"

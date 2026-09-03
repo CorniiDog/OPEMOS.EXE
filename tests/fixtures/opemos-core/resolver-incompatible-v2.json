@@ -1,0 +1,1 @@
+{"message":"No published release matches the exact target kernel within the permitted SteamOS compatibility range.","reason":"no_compatible_release","schemaVersion":2,"status":"no_compatible_artifact","target":{"architecture":"x86_64","kernelVersion":"fixture","steamosVersion":"3.8.14"}}

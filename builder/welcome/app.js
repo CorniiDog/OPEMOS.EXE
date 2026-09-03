@@ -74,7 +74,7 @@ function chooseDisk(mode) {
       <h2>Select a whole physical disk</h2>
       <p class="lead">${disks.length ? "Only eligible targets are listed." : "No eligible target is currently available."}</p>
       <div class="disks">${disks.map((disk, index) => `
-        <button class="disk" data-disk="${index}"><span><strong>${escapeHtml(disk.model)}</strong><small>${escapeHtml(disk.device)} · ${formatBytes(disk.bytes)} · ${escapeHtml(disk.transport)}</small></span><span class="status">Eligible</span></button>`).join("")}</div>
+        <button class="disk" data-disk="${index}"><span><strong>${escapeHtml(disk.model)}</strong><small>${escapeHtml(disk.device)} · ${formatBytes(disk.bytes)} · ${escapeHtml(disk.transport)} · ${disk.layout === "steamos" ? "recognized SteamOS" : "blank or replaceable"}</small></span><span class="status">Eligible</span></button>`).join("")}</div>
       <div class="actions">${button("Back", "home", "secondary")}${button("Refresh disks", "refresh", "secondary")}${button("Continue", "confirm", "primary")}</div>
     </div>`;
 }

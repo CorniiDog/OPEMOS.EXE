@@ -1,6 +1,8 @@
 node_modules
 src-tauri/target/
 .venv
+__pycache__/
+*.py[cod]
 builder/appliance/*.qcow2
 builder/appliance/*.raw
 builder/appliance/*.img

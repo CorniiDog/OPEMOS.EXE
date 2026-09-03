@@ -2323,6 +2323,7 @@ pub(crate) fn resolve_published_nvidia_for_target(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn arch_package_release_key(value: &str) -> Option<Vec<u64>> {
     let parts = value.split('.').collect::<Vec<_>>();
     if parts.is_empty()
@@ -2340,6 +2341,7 @@ pub(crate) fn arch_package_release_key(value: &str) -> Option<Vec<u64>> {
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn arch_index_hrefs(index: &str) -> HashSet<String> {
     index
         .split("href=\"")
@@ -2354,6 +2356,7 @@ pub(crate) fn arch_index_hrefs(index: &str) -> HashSet<String> {
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn select_arch_userspace_package(
     index: &str,
     package: &str,
@@ -2411,6 +2414,7 @@ pub(crate) fn arch_package_directory(package: &str) -> Result<&'static str, Stri
     }
 }
 
+#[cfg(test)]
 pub(crate) fn query_arch_userspace_package(
     client: &reqwest::blocking::Client,
     package: &str,
@@ -2633,6 +2637,7 @@ pub(crate) fn stage_arch_dependency_package(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn preflight_nvidia_userspace(
     client: &reqwest::blocking::Client,
     nvidia_version: &str,
@@ -2741,6 +2746,8 @@ pub(crate) fn download_arch_userspace_asset(
 
 pub(crate) fn resolve_nvidia_userspace_for_version(
     runtime_dir: &Path,
+    installer_root: &Path,
+    steamos_version: &str,
     nvidia_version: &str,
     client: &reqwest::blocking::Client,
     cancel: &AtomicBool,
@@ -2749,6 +2756,7 @@ pub(crate) fn resolve_nvidia_userspace_for_version(
     if !valid_numeric_version(nvidia_version, 2..=3) {
         return Err("Published NVIDIA artifact has an invalid userspace version.".into());
     }
+    let lock = load_reviewed_userspace_lock(installer_root, steamos_version, nvidia_version)?;
     let output_dir = runtime_dir.join(format!(
         "nvidia-userspace-{}",
         SystemTime::now()
@@ -2762,66 +2770,79 @@ pub(crate) fn resolve_nvidia_userspace_for_version(
         path: output_dir.clone(),
         armed: true,
     };
-    let mut packages = Vec::new();
-    for (package, package_limit, package_stage, signature_stage) in [
-        (
-            "nvidia-utils",
-            NVIDIA_UTILS_ARCHIVE_LIMIT,
-            "downloading-nvidia-utils",
-            "downloading-nvidia-utils-signature",
-        ),
-        (
-            "lib32-nvidia-utils",
-            LIB32_NVIDIA_UTILS_ARCHIVE_LIMIT,
-            "downloading-lib32-nvidia-utils",
-            "downloading-lib32-nvidia-utils-signature",
-        ),
-    ] {
+    let mut packages = Vec::with_capacity(lock.packages.len());
+    for locked in &lock.packages {
         if cancel.load(Ordering::Relaxed) {
             return Err("NVIDIA userspace resolution cancelled.".into());
         }
-        progress("querying-arch-package-index", packages.len() as u64, 2);
-        let directory = arch_package_directory(package)?;
-        let (filename, full_version) =
-            query_arch_userspace_package(client, package, nvidia_version)?;
-        let signature_filename = format!("{filename}.sig");
-        let package_path = output_dir.join(&filename);
-        let signature_path = output_dir.join(&signature_filename);
+        progress(
+            "staging-reviewed-userspace-closure",
+            packages.len() as u64,
+            lock.packages.len() as u64,
+        );
+        let directory = if matches!(locked.name.as_str(), "nvidia-utils" | "lib32-nvidia-utils") {
+            arch_package_directory(&locked.name)?.into()
+        } else {
+            arch_dependency_directory(&locked.name)?
+        };
+        let package_limit = match locked.name.as_str() {
+            "nvidia-utils" => NVIDIA_UTILS_ARCHIVE_LIMIT,
+            "lib32-nvidia-utils" => LIB32_NVIDIA_UTILS_ARCHIVE_LIMIT,
+            _ => NVIDIA_DEPENDENCY_ARCHIVE_LIMIT,
+        };
+        let package_path = output_dir.join(&locked.filename);
+        let signature_path = output_dir.join(&locked.signature_filename);
         let package_sha256 = download_arch_userspace_asset(
             client,
-            &format!("{directory}/{filename}"),
+            &format!("{directory}/{}", locked.filename),
             &package_path,
             package_limit,
             cancel,
-            package_stage,
+            "downloading-locked-userspace-package",
             progress,
         )?;
-        download_arch_userspace_asset(
+        let signature_sha256 = download_arch_userspace_asset(
             client,
-            &format!("{directory}/{signature_filename}"),
+            &format!("{directory}/{}", locked.signature_filename),
             &signature_path,
             ARCH_PACKAGE_SIGNATURE_LIMIT,
             cancel,
-            signature_stage,
+            "downloading-locked-userspace-signature",
             progress,
         )?;
-        packages.push(NvidiaUserspacePackage {
-            name: package.into(),
-            role: "nvidia-userspace".into(),
-            filename,
-            full_version,
+        if package_sha256 != locked.package_sha256 || signature_sha256 != locked.signature_sha256 {
+            return Err(format!(
+                "Downloaded {} does not match the reviewed userspace lock.",
+                locked.name
+            ));
+        }
+        let package = NvidiaUserspacePackage {
+            name: locked.name.clone(),
+            role: if matches!(locked.name.as_str(), "nvidia-utils" | "lib32-nvidia-utils") {
+                "nvidia-userspace".into()
+            } else {
+                "dependency".into()
+            },
+            filename: locked.filename.clone(),
+            full_version: locked.version.clone(),
             package_path: package_path.to_string_lossy().into_owned(),
             signature_path: signature_path.to_string_lossy().into_owned(),
             package_sha256,
-        });
+        };
+        validate_locked_userspace_package(&package, locked)?;
+        packages.push(package);
     }
-    progress("querying-arch-package-index", 2, 2);
+    progress(
+        "staging-reviewed-userspace-closure",
+        lock.packages.len() as u64,
+        lock.packages.len() as u64,
+    );
     let resolution = NvidiaUserspaceResolution {
         schema_version: 1,
         status: "prepared".into(),
-        reason: "signed_packages_staged".into(),
+        reason: "reviewed_userspace_closure_staged".into(),
         message: format!(
-            "Staged exact NVIDIA {nvidia_version} userspace packages and detached signatures; trust remains pending x86 appliance verification."
+            "Staged the complete reviewed NVIDIA {nvidia_version} userspace closure for SteamOS {steamos_version}; signatures remain pending x86 appliance verification."
         ),
         nvidia_version: nvidia_version.into(),
         signature_status: "pending-x86-validation".into(),

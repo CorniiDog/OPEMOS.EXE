@@ -29,6 +29,8 @@ test("macOS graphical test selects the same frontend through a safe mock control
   assert.match(launcher, /No disks, privileges, QEMU processes, or installers are used/);
   assert.match(server, /if self\.mock:/);
   assert.match(server, /Synthetic SteamOS target/);
+  assert.match(server, /except subprocess\.TimeoutExpired:[\s\S]*signal\.SIGKILL/);
+  assert.match(server, /finally:\s*self\.operation_marker\.unlink\(missing_ok=True\)/);
   assert.doesNotMatch(javascript, /\bsudo\b|qemu-system|diskutil|lsblk|blockdev/);
 });
 

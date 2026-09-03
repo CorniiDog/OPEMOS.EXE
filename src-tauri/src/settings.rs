@@ -5,6 +5,107 @@ static SETTINGS_TRANSACTION_LOCK: Mutex<()> = Mutex::new(());
 const SETTINGS_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const SETTINGS_LOCK_RETRY: Duration = Duration::from_millis(20);
 const MAX_SETTINGS_BYTES: u64 = 1024 * 1024;
+const GITHUB_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+const GITHUB_COMMAND_OUTPUT_LIMIT: usize = 1024 * 1024;
+
+fn read_bounded_command_stream(mut stream: impl Read, limit: usize) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    stream
+        .by_ref()
+        .take(limit.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not read command output: {error}"))?;
+    if bytes.len() > limit {
+        return Err("The command returned excessive output.".into());
+    }
+    Ok(bytes)
+}
+
+fn bounded_command_output(
+    binary: &Path,
+    arguments: &[&str],
+    description: &str,
+) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), String> {
+    bounded_command_output_with_limits(
+        binary,
+        arguments,
+        description,
+        GITHUB_COMMAND_TIMEOUT,
+        GITHUB_COMMAND_OUTPUT_LIMIT,
+    )
+}
+
+pub(crate) fn bounded_command_output_with_limits(
+    binary: &Path,
+    arguments: &[&str],
+    description: &str,
+    timeout: Duration,
+    output_limit: usize,
+) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), String> {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or("The GitHub command deadline overflowed.")?;
+    let mut command = Command::new(binary);
+    command
+        .args(arguments)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    isolate_process_group(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Could not {description}: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("Could not read {description} output."))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("Could not read {description} errors."))?;
+    let stdout_reader = thread::spawn(move || read_bounded_command_stream(stdout, output_limit));
+    let stderr_reader = thread::spawn(move || read_bounded_command_stream(stderr, output_limit));
+    let terminate = |child: &mut Child| {
+        #[cfg(unix)]
+        {
+            let _ = Command::new("kill")
+                .args(["-KILL", &format!("-{}", child.id())])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    };
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
+            Ok(None) => {
+                terminate(&mut child);
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(format!(
+                    "Could not {description}; the command exceeded its safety time limit."
+                ));
+            }
+            Err(error) => {
+                terminate(&mut child);
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(format!("Could not inspect {description}: {error}"));
+            }
+        }
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| format!("Could not collect {description} output."))??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| format!("Could not collect {description} errors."))??;
+    Ok((status, stdout, stderr))
+}
 
 pub(crate) fn settings_transaction_lock() -> Result<std::sync::MutexGuard<'static, ()>, String> {
     Ok(SETTINGS_TRANSACTION_LOCK
@@ -350,13 +451,12 @@ pub(crate) fn github_maintainer_status() -> Result<GithubMaintainerStatus, Strin
             message: "GitHub CLI is not available. The packaged application must bundle it before maintainer publishing can be enabled.".into(),
         });
     };
-    let auth = Command::new(&gh)
-        .args(["auth", "status", "--hostname", "github.com"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|error| format!("Could not check GitHub authentication: {error}"))?;
-    if !auth.success() {
+    let (auth_status, _, _) = bounded_command_output(
+        &gh,
+        &["auth", "status", "--hostname", "github.com"],
+        "check GitHub authentication",
+    )?;
+    if !auth_status.success() {
         return Ok(GithubMaintainerStatus {
             gh_available: true,
             authenticated: false,
@@ -368,17 +468,18 @@ pub(crate) fn github_maintainer_status() -> Result<GithubMaintainerStatus, Strin
                     .into(),
         });
     }
-    let user_output = Command::new(&gh)
-        .args(["api", "user", "--jq", ".login"])
-        .output()
-        .map_err(|error| format!("Could not query the authenticated GitHub account: {error}"))?;
-    if !user_output.status.success() {
+    let (user_status, user_output, _) = bounded_command_output(
+        &gh,
+        &["api", "user", "--jq", ".login"],
+        "query the authenticated GitHub account",
+    )?;
+    if !user_status.success() {
         return Err(
             "GitHub authentication succeeded, but the account identity could not be verified."
                 .into(),
         );
     }
-    let username = String::from_utf8(user_output.stdout)
+    let username = String::from_utf8(user_output)
         .map_err(|_| "GitHub returned a non-UTF-8 account name.".to_string())?
         .trim()
         .to_string();
@@ -440,14 +541,15 @@ pub(crate) fn github_repository_permission(
         return Err("Refusing to query permission for an unapproved repository identity.".into());
     }
     let endpoint = format!("repos/{repository}/collaborators/{username}/permission");
-    let output = Command::new(gh)
-        .args(["api", &endpoint])
-        .output()
-        .map_err(|error| format!("Could not verify {repository} permission: {error}"))?;
-    if !output.status.success() {
+    let (status, output, _) = bounded_command_output(
+        gh,
+        &["api", &endpoint],
+        &format!("verify {repository} permission"),
+    )?;
+    if !status.success() {
         return Ok(None);
     }
-    parse_github_repository_permission(&output.stdout).map(Some)
+    parse_github_repository_permission(&output).map(Some)
 }
 
 pub(crate) fn github_permission_can_publish(permission: &str) -> bool {

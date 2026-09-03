@@ -686,7 +686,7 @@ pub(crate) struct NvidiaTargetReadiness {
     pub(crate) architecture: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct GithubRelease {
     pub(crate) tag_name: String,
     pub(crate) draft: bool,
@@ -695,7 +695,7 @@ pub(crate) struct GithubRelease {
     pub(crate) assets: Vec<GithubReleaseAsset>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct GithubReleaseAsset {
     pub(crate) name: String,
     pub(crate) browser_download_url: String,

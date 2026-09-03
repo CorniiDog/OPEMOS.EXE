@@ -115,6 +115,9 @@ disk_status() {
 has_exact_steamos_layout() {
   local device=$1 index label count
   local -a labels=(esp efi-A efi-B rootfs-A rootfs-B var-A var-B home)
+  count=$(lsblk -nrpo PARTN,PARTLABEL,TYPE "$device" |
+    awk '$3 == "part" { count++ } END { print count+0 }')
+  [[ "$count" == "${#labels[@]}" ]] || return 1
   for offset in "${!labels[@]}"; do
     index=$((offset + 1))
     label=${labels[$offset]}
