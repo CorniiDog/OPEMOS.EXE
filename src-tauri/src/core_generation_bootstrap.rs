@@ -5,11 +5,17 @@
 use crate::{
     core_contracts::reject_duplicate_contract_keys,
     core_generation_contracts::{
-        validate_activation, validate_pair, DurableGenerationIdentity, GenerationActivationState,
-        GenerationAuthority, GenerationDiscovery, GenerationManifest, GenerationTarget,
-        DISCOVERY_FILENAME, DISCOVERY_SIGNATURE_FILENAME, DISCOVERY_SIGNATURE_SCHEME,
-        MAX_LINEAGE_GENERATIONS, OPENPGP_HASH_ALGORITHM_IDS,
+        GenerationAuthority, DISCOVERY_FILENAME, DISCOVERY_SIGNATURE_FILENAME,
+        DISCOVERY_SIGNATURE_SCHEME, MAX_LINEAGE_GENERATIONS, OPENPGP_HASH_ALGORITHM_IDS,
     },
+};
+#[cfg(test)]
+use crate::{
+    core_generation_contracts::{
+        validate_activation, validate_pair, DurableGenerationIdentity, GenerationActivationState,
+        GenerationDiscovery, GenerationManifest, GenerationTarget,
+    },
+    core_generation_verifier::AuthenticatedGeneration,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -208,6 +214,7 @@ pub(crate) fn expected_generation_authority(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 // This raw fixture adapter is module-private and must not be exposed as
 // production authority. Future reachability must enter through the sealed,
 // verifier-owned activation capability.
@@ -261,6 +268,129 @@ fn validate_bootstrap_activation(
         lineage,
         Some(&bootstrap),
     )
+}
+
+/// Test-only stand-in for a bootstrap checkpoint whose exact canonical bytes
+/// were matched against a separately installed digest. The seal prevents a
+/// parsed or caller-constructed checkpoint object from becoming authority.
+#[cfg(test)]
+pub(crate) struct AuthenticatedBootstrapCheckpoint {
+    checkpoint: BootstrapCheckpoint,
+    policy_sha256: String,
+    _seal: BootstrapCheckpointSeal,
+}
+
+#[cfg(test)]
+struct BootstrapCheckpointSeal;
+
+#[cfg(test)]
+pub(crate) fn authenticate_installed_bootstrap_checkpoint(
+    checkpoint_payload: &[u8],
+    installed_checkpoint_sha256: &str,
+    generation: &AuthenticatedGeneration,
+) -> Result<AuthenticatedBootstrapCheckpoint, String> {
+    let (policy_payload, _) = generation.bootstrap_snapshots();
+    if !lower_hex_hash(installed_checkpoint_sha256)
+        || sha256(checkpoint_payload) != installed_checkpoint_sha256
+    {
+        return Err("Core bootstrap checkpoint differs from installed trust.".into());
+    }
+    let checkpoint = parse_bootstrap_checkpoint(checkpoint_payload, policy_payload)?;
+    Ok(AuthenticatedBootstrapCheckpoint {
+        checkpoint,
+        policy_sha256: sha256(policy_payload),
+        _seal: BootstrapCheckpointSeal,
+    })
+}
+
+/// Inactive compatibility adapter proving that bootstrap activation can be
+/// authorized exclusively by verifier-created capabilities and a sealed
+/// installed-checkpoint snapshot. Raw discovery, manifest, policy, keyring,
+/// checkpoint, and lineage documents are never accepted here. Durable state is
+/// still caller-selected fixture input; production must derive it under the
+/// cache lock/CAS, reject pending transitions, and recheck it before mutation.
+#[cfg(test)]
+pub(crate) fn validate_authenticated_bootstrap_activation(
+    generation: &AuthenticatedGeneration,
+    installed_checkpoint: &AuthenticatedBootstrapCheckpoint,
+    expected_target: &GenerationTarget,
+    state: &GenerationActivationState,
+    lineage: &[&AuthenticatedGeneration],
+) -> Result<DurableGenerationIdentity, String> {
+    let (policy_payload, keyring_payload) = generation.bootstrap_snapshots();
+    let policy = generation.policy();
+    let checkpoint = &installed_checkpoint.checkpoint;
+    let expected_authority = expected_generation_authority(policy, policy_payload)?;
+    if installed_checkpoint.policy_sha256 != expected_authority.policy_sha256 {
+        return Err("Installed checkpoint belongs to another bootstrap policy.".into());
+    }
+    if keyring_payload.is_empty()
+        || keyring_payload.len() > MAX_KEYRING_BYTES
+        || sha256(keyring_payload) != policy.authority.keyring_sha256
+        || generation.authority() != &expected_authority
+    {
+        return Err("Authenticated generation differs from bootstrap authority.".into());
+    }
+    validate_generation_compatibility(policy, generation.discovery())?;
+    if lineage.len() > MAX_LINEAGE_GENERATIONS {
+        return Err("Authenticated lineage exceeds its generation limit.".into());
+    }
+
+    for predecessor in lineage {
+        let (predecessor_policy_payload, predecessor_keyring_payload) =
+            predecessor.bootstrap_snapshots();
+        if predecessor.policy() != policy
+            || predecessor_policy_payload != policy_payload
+            || predecessor_keyring_payload != keyring_payload
+            || predecessor.authority() != &expected_authority
+        {
+            return Err("Authenticated lineage mixes bootstrap authorities.".into());
+        }
+        validate_generation_compatibility(policy, predecessor.discovery())?;
+    }
+
+    let lineage_documents = lineage
+        .iter()
+        .map(|predecessor| (predecessor.discovery(), predecessor.manifest()))
+        .collect::<Vec<_>>();
+    let bootstrap = DurableGenerationIdentity {
+        sequence: checkpoint.minimum_sequence,
+        manifest_sha256: checkpoint.minimum_manifest_sha256.clone(),
+    };
+    validate_activation(
+        generation.discovery(),
+        generation.manifest(),
+        &expected_authority,
+        expected_target,
+        state,
+        &lineage_documents,
+        Some(&bootstrap),
+    )
+}
+
+#[cfg(test)]
+fn validate_generation_compatibility(
+    policy: &BootstrapPolicy,
+    discovery: &GenerationDiscovery,
+) -> Result<(), String> {
+    let required = &discovery.compatibility;
+    let supported = &policy.compatibility;
+    if !supported
+        .discovery_schema_versions
+        .contains(&required.discovery_schema_version)
+        || !supported
+            .generation_manifest_schema_versions
+            .contains(&required.generation_manifest_schema_version)
+        || !supported
+            .userspace_lock_schema_versions
+            .contains(&required.userspace_lock_schema_version)
+        || !supported
+            .installer_result_schema_versions
+            .contains(&required.minimum_installer_result_schema_version)
+    {
+        return Err("Core generation requires an unsupported schema version.".into());
+    }
+    Ok(())
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -374,6 +504,10 @@ fn windows_reserved_segment(segment: &str) -> bool {
 mod tests {
     use super::*;
     use crate::core_generation_contracts::{validate_discovery_bytes, validate_manifest_bytes};
+    use crate::core_generation_verifier::{
+        parse_verifier_evidence_record, verify_generation_snapshots, DetachedVerifierOutput,
+        RequestPlanInputs,
+    };
     use serde::Deserialize;
     use std::{
         collections::{HashMap, HashSet},
@@ -478,6 +612,74 @@ mod tests {
         let mut bytes = serde_json::to_vec(value).unwrap();
         bytes.push(b'\n');
         bytes
+    }
+
+    fn authenticated_fixture_generation(
+        policy_value: &serde_json::Value,
+        discovery_value: &serde_json::Value,
+        manifest_value: &serde_json::Value,
+        keyring_payload: &[u8],
+    ) -> AuthenticatedGeneration {
+        let policy_payload = canonical(policy_value);
+        let policy = parse_bootstrap_policy(&policy_payload).unwrap();
+        let authority =
+            serde_json::to_value(expected_generation_authority(&policy, &policy_payload).unwrap())
+                .unwrap();
+        let mut manifest = manifest_value.clone();
+        manifest["authority"] = authority.clone();
+        let manifest_payload = canonical(&manifest);
+        let manifest_signature = b"inactive-manifest-signature".to_vec();
+        let mut discovery = discovery_value.clone();
+        discovery["authority"] = authority;
+        discovery["generation"]["manifestSha256"] =
+            serde_json::Value::String(sha256(&manifest_payload));
+        discovery["generation"]["manifestSize"] =
+            serde_json::Value::Number((manifest_payload.len() as u64).into());
+        discovery["generation"]["signatureSha256"] =
+            serde_json::Value::String(sha256(&manifest_signature));
+        discovery["generation"]["signatureSize"] =
+            serde_json::Value::Number((manifest_signature.len() as u64).into());
+        let discovery_payload = canonical(&discovery);
+        let discovery_signature = b"inactive-discovery-signature".to_vec();
+        let inputs = RequestPlanInputs {
+            policy_payload: &policy_payload,
+            discovery_payload: &discovery_payload,
+            discovery_signature: &discovery_signature,
+            manifest_payload: &manifest_payload,
+            manifest_signature: &manifest_signature,
+        };
+        let status = format!(
+            "[GNUPG:] NEWSIG\n[GNUPG:] VALIDSIG {0} 2026-09-03 1788436800 0 4 0 1 8 00 {0}\n",
+            policy.authority.primary_signing_fingerprint
+        );
+        verify_generation_snapshots(
+            &inputs,
+            keyring_payload,
+            &|| false,
+            |_payload, _signature, _keyring, _role, _cancelled| {
+                Ok(DetachedVerifierOutput {
+                    exit_status: 0,
+                    status: status.as_bytes().to_vec(),
+                })
+            },
+        )
+        .unwrap()
+    }
+
+    fn fixture_activation_state(case: &FixtureCase) -> GenerationActivationState {
+        let state = case.state.as_ref().unwrap();
+        let active = match (&state.active_sequence, &state.active_manifest_sha256) {
+            (Some(sequence), Some(manifest_sha256)) => Some(DurableGenerationIdentity {
+                sequence: *sequence,
+                manifest_sha256: manifest_sha256.clone(),
+            }),
+            (None, None) => None,
+            _ => panic!("fixture has partial active identity"),
+        };
+        GenerationActivationState {
+            high_water_sequence: state.high_water_sequence,
+            active,
+        }
     }
 
     fn local_core_repository() -> Option<PathBuf> {
@@ -929,6 +1131,213 @@ mod tests {
                 case.name
             );
         }
+        fs::remove_dir_all(exported).unwrap();
+    }
+
+    #[test]
+    fn verifier_capabilities_authorize_bootstrap_and_reject_raw_or_mixed_authority() {
+        let Some(repository) = local_core_repository() else {
+            return;
+        };
+        let exported = export_fixture_sources(&repository);
+        let bytes = run_fixture_generator(
+            &exported.join("lib/generate_userspace_lock_bootstrap_fixtures.py"),
+        );
+        let fixtures: FixtureEnvelope = serde_json::from_slice(&bytes).unwrap();
+        let fresh = fixtures
+            .cases
+            .iter()
+            .find(|case| case.name == "valid-fresh-exact-checkpoint")
+            .unwrap();
+        let policy_value = fresh.policy.as_ref().unwrap();
+        let checkpoint_payload = canonical(fresh.checkpoint.as_ref().unwrap());
+        let keyring = fresh.keyring_payload.as_ref().unwrap().as_bytes();
+        let generation = authenticated_fixture_generation(
+            policy_value,
+            fresh.discovery.as_ref().unwrap(),
+            fresh.manifest.as_ref().unwrap(),
+            keyring,
+        );
+        let installed_checkpoint = authenticate_installed_bootstrap_checkpoint(
+            &checkpoint_payload,
+            &sha256(&checkpoint_payload),
+            &generation,
+        )
+        .unwrap();
+        let empty_state = fixture_activation_state(fresh);
+        let identity = validate_authenticated_bootstrap_activation(
+            &generation,
+            &installed_checkpoint,
+            fresh.target.as_ref().unwrap(),
+            &empty_state,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(identity.sequence, generation.discovery().sequence);
+        assert_eq!(
+            identity.manifest_sha256,
+            generation.discovery().generation.manifest_sha256
+        );
+
+        // Parsing serialized audit evidence only yields an audit record. The
+        // activation API's distinct capability type has no Deserialize path.
+        let audit_bytes = generation.canonical_evidence_bytes().unwrap();
+        let audit_record = parse_verifier_evidence_record(&audit_bytes).unwrap();
+        assert_eq!(&audit_record, generation.record());
+
+        let mut lowered_checkpoint = fresh.checkpoint.as_ref().unwrap().clone();
+        lowered_checkpoint["minimumSequence"] = serde_json::Value::Number(1_u64.into());
+        lowered_checkpoint["minimumManifestSha256"] = serde_json::Value::String("1".repeat(64));
+        let unchanged_state = empty_state.clone();
+        assert!(authenticate_installed_bootstrap_checkpoint(
+            &canonical(&lowered_checkpoint),
+            &sha256(&checkpoint_payload),
+            &generation,
+        )
+        .is_err());
+        assert_eq!(empty_state, unchanged_state);
+
+        let mut wrong_target = fresh.target.as_ref().unwrap().clone();
+        wrong_target.kernel_version.push_str("-different");
+        assert!(validate_authenticated_bootstrap_activation(
+            &generation,
+            &installed_checkpoint,
+            &wrong_target,
+            &empty_state,
+            &[],
+        )
+        .is_err());
+
+        let forward = fixtures
+            .cases
+            .iter()
+            .find(|case| case.name == "valid-existing-forward")
+            .unwrap();
+        let forward_generation = authenticated_fixture_generation(
+            forward.policy.as_ref().unwrap(),
+            forward.discovery.as_ref().unwrap(),
+            forward.manifest.as_ref().unwrap(),
+            forward.keyring_payload.as_ref().unwrap().as_bytes(),
+        );
+        assert!(validate_authenticated_bootstrap_activation(
+            &forward_generation,
+            &installed_checkpoint,
+            forward.target.as_ref().unwrap(),
+            &fixture_activation_state(forward),
+            &[],
+        )
+        .is_ok());
+
+        let catchup = fixtures
+            .cases
+            .iter()
+            .find(|case| case.name == "valid-authenticated-lineage-catchup")
+            .unwrap();
+        let catchup_generation = authenticated_fixture_generation(
+            catchup.policy.as_ref().unwrap(),
+            catchup.discovery.as_ref().unwrap(),
+            catchup.manifest.as_ref().unwrap(),
+            catchup.keyring_payload.as_ref().unwrap().as_bytes(),
+        );
+        let lineage = catchup
+            .lineage
+            .iter()
+            .map(|pair| {
+                authenticated_fixture_generation(
+                    catchup.policy.as_ref().unwrap(),
+                    &pair[0],
+                    &pair[1],
+                    catchup.keyring_payload.as_ref().unwrap().as_bytes(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let lineage_refs = lineage.iter().collect::<Vec<_>>();
+        assert!(validate_authenticated_bootstrap_activation(
+            &catchup_generation,
+            &installed_checkpoint,
+            catchup.target.as_ref().unwrap(),
+            &fixture_activation_state(catchup),
+            &lineage_refs,
+        )
+        .is_ok());
+
+        let excessive_lineage = vec![&generation; MAX_LINEAGE_GENERATIONS + 1];
+        assert!(validate_authenticated_bootstrap_activation(
+            &generation,
+            &installed_checkpoint,
+            fresh.target.as_ref().unwrap(),
+            &empty_state,
+            &excessive_lineage,
+        )
+        .is_err());
+
+        let rolled_back_state = GenerationActivationState {
+            high_water_sequence: generation.discovery().sequence + 1,
+            active: Some(DurableGenerationIdentity {
+                sequence: generation.discovery().sequence - 1,
+                manifest_sha256: generation
+                    .discovery()
+                    .generation
+                    .previous_manifest_sha256
+                    .clone()
+                    .unwrap(),
+            }),
+        };
+        let unchanged_rolled_back_state = rolled_back_state.clone();
+        assert!(validate_authenticated_bootstrap_activation(
+            &generation,
+            &installed_checkpoint,
+            fresh.target.as_ref().unwrap(),
+            &rolled_back_state,
+            &[],
+        )
+        .is_err());
+        assert_eq!(rolled_back_state, unchanged_rolled_back_state);
+
+        // A same-signer policy rotation remains a distinct authority and may
+        // not be spliced into lineage authenticated under the original policy.
+        let mut rotated_policy = policy_value.clone();
+        rotated_policy["channel"]["origin"] =
+            serde_json::Value::String("https://rotated.example.invalid".into());
+        let rotated_policy_payload = canonical(&rotated_policy);
+        let rotated = authenticated_fixture_generation(
+            &rotated_policy,
+            fresh.discovery.as_ref().unwrap(),
+            fresh.manifest.as_ref().unwrap(),
+            keyring,
+        );
+        let rotated_checkpoint_value = BootstrapCheckpoint {
+            schema_version: 1,
+            kind: CHECKPOINT_KIND.into(),
+            policy_sha256: sha256(&rotated_policy_payload),
+            minimum_sequence: rotated.discovery().sequence,
+            minimum_manifest_sha256: rotated.discovery().generation.manifest_sha256.clone(),
+        };
+        let rotated_checkpoint_payload =
+            canonical(&serde_json::to_value(rotated_checkpoint_value).unwrap());
+        let rotated_checkpoint = authenticate_installed_bootstrap_checkpoint(
+            &rotated_checkpoint_payload,
+            &sha256(&rotated_checkpoint_payload),
+            &rotated,
+        )
+        .unwrap();
+        assert!(validate_authenticated_bootstrap_activation(
+            &rotated,
+            &rotated_checkpoint,
+            fresh.target.as_ref().unwrap(),
+            &empty_state,
+            &[],
+        )
+        .is_ok());
+        let error = validate_authenticated_bootstrap_activation(
+            &catchup_generation,
+            &installed_checkpoint,
+            catchup.target.as_ref().unwrap(),
+            &fixture_activation_state(catchup),
+            &[&rotated],
+        )
+        .unwrap_err();
+        assert_eq!(error, "Authenticated lineage mixes bootstrap authorities.");
         fs::remove_dir_all(exported).unwrap();
     }
 

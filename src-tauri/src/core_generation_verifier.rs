@@ -114,6 +114,15 @@ impl AuthenticatedGeneration {
         &self.manifest
     }
 
+    /// Exact bootstrap inputs retained inside the verifier-owned capability.
+    /// This accessor exists only for inactive compatibility tests; production
+    /// activation must be wired through a concrete verifier-owned API instead
+    /// of exposing raw trust bytes to callers.
+    #[cfg(test)]
+    pub(crate) fn bootstrap_snapshots(&self) -> (&[u8], &[u8]) {
+        (&self.policy_payload, &self._keyring_payload)
+    }
+
     #[cfg(test)]
     pub(crate) fn canonical_evidence_bytes(&self) -> Result<Vec<u8>, String> {
         canonical_bytes(&self.record)

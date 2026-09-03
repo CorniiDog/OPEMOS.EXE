@@ -120,6 +120,12 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   identity-pinned candidate. Freshly verify the exact disk inventory inside
   atomic cache commit without changing active state. This has no production
   transport, trust root, command, or UI entry point.
+- [x] Prove inactive bootstrap activation using only sealed verifier-created
+  generation capabilities and an exact-digest-bound checkpoint capability.
+  Bound lineage before use and preserve fresh, forward, catch-up,
+  rotated-policy, target-mismatch, and rolled-back high-water behavior.
+  Production must still load the installed checkpoint and durable state under
+  the host cache lock; fixture-supplied trust and state are never authority.
 - [x] Consume Core's closed userspace-lock discovery and generation-manifest
   schema-1 models plus all 74 inactive compatibility cases and additive
   consumer handoff metadata preserved at exact local successor commit
@@ -217,6 +223,8 @@ adds the closed inactive request-plan and verifier-capability contracts without
 shipping a production verifier, transport, or endpoint. Published successor
 `dfa83a01ad7d8cb915466de86229741f725c83b8` preserves those shared contracts
 while hardening Core-owned device acquisition staging.
+Newer unpublished Core health/receipt hardening changes no shared EXE schema;
+keep it inactive until Core publishes it and cross-repository tests pass.
 
 Compatibility fixture only—never use this as a permanent global trust root:
 
