@@ -105,6 +105,12 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   bounded state, revision/operation compare-and-swap, pending health approval,
   and independently reverified last-known-good rollback. Keep it disconnected
   until Core's authenticated discovery schemas and fixtures pass.
+- [x] Consume Core's closed userspace-lock discovery and generation-manifest
+  schema-1 models plus all 74 inactive compatibility cases from exact local
+  commit `e9ad58a1c1d5908627186782ef32388d45c21187`. Bind durable cache identity
+  to `{sequence, manifestSha256}`, retain a monotonic high-water sequence, and
+  keep rollback on the previously healthy generation. This is contract testing,
+  not a production trust or release pin.
 - [ ] Show the available, selected, active, and last-known-good Core generations
   plus exact-target support in normal and maintainer UI. Preserve explicit source
   intent; never substitute a nearby target, lock, or generation.
@@ -121,8 +127,11 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   then remove only duplicated Core-owned release-selection policy. Retain Rust
   parsing, bounds, session binding, diagnostics, orchestration, and independent
   final-image verification.
-- [x] Run every Core compatibility matrix in CI from immutable commit `8224169`;
-  never test against mutable Core `main`.
+- [x] Run the published Core compatibility baseline in CI from immutable commit
+  `8224169`; never test against mutable Core `main`.
+- [ ] After Core pushes `e9ad58a`, repin CI to that exact commit so the new
+  74-case generation matrix runs remotely. A commit pin does not activate its
+  unpublished candidate bundle.
 - [ ] Repin or activate a generation only after Core’s complete Fedora suite and
   this repository’s unit, integration, cancellation, cleanup, malformed-input,
   lifecycle, ENOSPC, replay/downgrade, and final-image tests pass against the

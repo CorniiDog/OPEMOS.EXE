@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
     fs::{self, File, OpenOptions},
     io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
@@ -16,8 +15,9 @@ use std::{
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 const CACHE_STATE_LIMIT: usize = 16 * 1024;
-const CACHE_STATE_SCHEMA: u32 = 1;
+const CACHE_STATE_SCHEMA: u32 = 2;
 const CACHE_STATE_KIND: &str = "opemos-core-host-generation-state";
+const CACHE_STATE_REQUIRED_MARKER: &str = "state-required";
 static STATE_WRITE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static CACHE_TRANSACTION_LOCK: Mutex<()> = Mutex::new(());
 const CACHE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
@@ -26,6 +26,7 @@ const CACHE_LOCK_RETRY: Duration = Duration::from_millis(20);
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CoreGenerationIdentity {
+    pub(crate) sequence: u64,
     pub(crate) generation_id: String,
     pub(crate) manifest_sha256: String,
 }
@@ -36,6 +37,7 @@ pub(crate) struct CoreGenerationCacheState {
     schema_version: u32,
     kind: String,
     pub(crate) revision: u64,
+    pub(crate) high_water_sequence: u64,
     pub(crate) active: Option<CoreGenerationIdentity>,
     pub(crate) pending: Option<CoreGenerationIdentity>,
     pub(crate) pending_operation_id: Option<String>,
@@ -48,6 +50,7 @@ impl Default for CoreGenerationCacheState {
             schema_version: CACHE_STATE_SCHEMA,
             kind: CACHE_STATE_KIND.into(),
             revision: 0,
+            high_water_sequence: 0,
             active: None,
             pending: None,
             pending_operation_id: None,
@@ -79,7 +82,10 @@ impl Drop for CoreGenerationCacheLock {
 
 impl CoreGenerationIdentity {
     pub(crate) fn validate(&self) -> Result<(), String> {
-        if !lowercase_hex(&self.generation_id, 64) || !lowercase_hex(&self.manifest_sha256, 64) {
+        if self.sequence == 0
+            || !lowercase_hex(&self.manifest_sha256, 64)
+            || self.generation_id != self.manifest_sha256
+        {
             return Err("Core generation cache identity is invalid.".into());
         }
         Ok(())
@@ -95,6 +101,29 @@ impl CoreGenerationCacheState {
             return Err(
                 "Core generation cache state has no active generation for its fallback.".into(),
             );
+        }
+        if (self.high_water_sequence == 0) != self.active.is_none() {
+            return Err("Core generation cache activation state is invalid.".into());
+        }
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|identity| identity.sequence > self.high_water_sequence)
+            || self
+                .last_known_good
+                .as_ref()
+                .is_some_and(|identity| identity.sequence > self.high_water_sequence)
+        {
+            return Err("Core generation cache high-water state is invalid.".into());
+        }
+        if let (Some(active), Some(last_known_good)) =
+            (self.active.as_ref(), self.last_known_good.as_ref())
+        {
+            if last_known_good.sequence > active.sequence
+                || (last_known_good.sequence == active.sequence && last_known_good != active)
+            {
+                return Err("Core generation cache fallback relationship is invalid.".into());
+            }
         }
         match (&self.pending, &self.pending_operation_id) {
             (Some(_), Some(operation)) if safe_operation_id(operation) => {}
@@ -113,18 +142,17 @@ impl CoreGenerationCacheState {
         {
             identity.validate()?;
         }
-        let mut identities = HashSet::new();
-        for identity in [
-            self.active.as_ref(),
-            self.pending.as_ref(),
-            self.last_known_good.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
+        if self.pending.is_some()
+            && (self.pending == self.active || self.pending == self.last_known_good)
         {
-            if !identities.insert(identity.generation_id.as_str()) {
-                return Err("Core generation cache state repeats a generation role.".into());
-            }
+            return Err("Core generation cache pending identity is already active.".into());
+        }
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|identity| identity.sequence <= self.high_water_sequence)
+        {
+            return Err("Core generation cache pending identity is replayed.".into());
         }
         Ok(())
     }
@@ -286,6 +314,7 @@ impl CoreGenerationCache {
         match fs::symlink_metadata(&destination) {
             Ok(_) => {
                 require_directory(&destination, "cached Core generation")?;
+                seal_closed_tree(&destination)?;
                 verify(&destination)?;
                 remove_owned_candidate(candidate, &self.root.join("candidates"))?;
                 return Ok(GenerationCommit::AlreadyPresent);
@@ -298,10 +327,21 @@ impl CoreGenerationCache {
             }
         }
 
+        seal_closed_tree(candidate)?;
+        verify(candidate)?;
+        // macOS requires the moved directory itself to remain owner-writable
+        // during rename. Its contents stay sealed, and the destination root is
+        // resealed and reverified before this method returns.
+        fs::set_permissions(candidate, fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("Could not prepare sealed Core generation commit: {error}"))?;
         fs::rename(candidate, &destination)
             .map_err(|error| format!("Could not commit the Core generation atomically: {error}"))?;
+        fs::set_permissions(&destination, fs::Permissions::from_mode(0o500))
+            .map_err(|error| format!("Could not reseal committed Core generation: {error}"))?;
         sync_directory(&self.root.join("generations"))?;
         sync_directory(&self.root.join("candidates"))?;
+        sync_closed_tree(&destination)?;
+        verify(&destination)?;
         Ok(GenerationCommit::Installed)
     }
 
@@ -333,6 +373,9 @@ impl CoreGenerationCache {
         if state.active.as_ref() == Some(identity) {
             return Ok(state);
         }
+        if identity.sequence <= state.high_water_sequence {
+            return Err("Core generation is a replay or downgrade.".into());
+        }
         state.pending = Some(identity.clone());
         state.pending_operation_id = Some(operation_id.into());
         self.save_next_state(state)
@@ -363,6 +406,7 @@ impl CoreGenerationCache {
         }
         let previous = state.active.take();
         state.active = Some(identity.clone());
+        state.high_water_sequence = state.high_water_sequence.max(identity.sequence);
         state.pending = None;
         state.pending_operation_id = None;
         state.last_known_good = previous.filter(|prior| prior != identity);
@@ -417,8 +461,11 @@ impl CoreGenerationCache {
         let generation = self.generation_path(&target)?;
         require_directory(&generation, "last-known-good Core generation")?;
         verify(&generation)?;
-        let previous = state.active.replace(target);
-        state.last_known_good = previous;
+        if state.active.as_ref() == Some(&target) {
+            return Ok(state);
+        }
+        state.active = Some(target.clone());
+        state.last_known_good = Some(target);
         self.save_next_state(state)
     }
 
@@ -435,6 +482,11 @@ impl CoreGenerationCache {
         let before = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == ErrorKind::NotFound => {
+                if safe_regular_file(&self.root.join(CACHE_STATE_REQUIRED_MARKER))? {
+                    return Err(
+                        "Core generation cache state is missing after prior activation.".into(),
+                    );
+                }
                 return Ok(CoreGenerationCacheState::default());
             }
             Err(error) => {
@@ -443,8 +495,10 @@ impl CoreGenerationCache {
                 ));
             }
         };
+        use std::os::unix::fs::MetadataExt as _;
         if before.file_type().is_symlink()
             || !before.is_file()
+            || before.nlink() != 1
             || before.len() == 0
             || before.len() > CACHE_STATE_LIMIT as u64
         {
@@ -460,10 +514,10 @@ impl CoreGenerationCache {
         let opened = file
             .metadata()
             .map_err(|error| format!("Could not inspect opened Core cache state: {error}"))?;
-        use std::os::unix::fs::MetadataExt as _;
         if before.dev() != opened.dev()
             || before.ino() != opened.ino()
             || before.len() != opened.len()
+            || opened.nlink() != 1
         {
             return Err("Core generation cache state changed while opening it.".into());
         }
@@ -472,6 +526,19 @@ impl CoreGenerationCache {
             .take(CACHE_STATE_LIMIT.saturating_add(1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|error| format!("Could not read Core generation cache state: {error}"))?;
+        let after = file
+            .metadata()
+            .map_err(|error| format!("Could not recheck opened Core cache state: {error}"))?;
+        if opened.dev() != after.dev()
+            || opened.ino() != after.ino()
+            || opened.len() != after.len()
+            || opened.mtime() != after.mtime()
+            || opened.mtime_nsec() != after.mtime_nsec()
+            || after.nlink() != 1
+            || bytes.len() as u64 != opened.len()
+        {
+            return Err("Core generation cache state changed while it was read.".into());
+        }
         if bytes.is_empty() || bytes.len() > CACHE_STATE_LIMIT {
             return Err("Core generation cache state is empty or excessive.".into());
         }
@@ -512,6 +579,7 @@ impl CoreGenerationCache {
             file.write_all(&bytes)
                 .and_then(|_| file.sync_all())
                 .map_err(|error| format!("Could not sync Core generation state: {error}"))?;
+            ensure_state_required_marker(&self.root)?;
             fs::rename(&temporary, &path)
                 .map_err(|error| format!("Could not activate Core generation state: {error}"))?;
             sync_directory(&self.root)
@@ -590,6 +658,38 @@ fn require_directory(path: &Path, description: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn safe_regular_file(path: &Path) -> Result<bool, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("Could not inspect Core cache marker: {error}")),
+    };
+    use std::os::unix::fs::MetadataExt as _;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.nlink() != 1 {
+        return Err("Core generation cache marker is unsafe.".into());
+    }
+    Ok(true)
+}
+
+fn ensure_state_required_marker(root: &Path) -> Result<(), String> {
+    let path = root.join(CACHE_STATE_REQUIRED_MARKER);
+    if safe_regular_file(&path)? {
+        return Ok(());
+    }
+    let mut options = OpenOptions::new();
+    options
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let file = options
+        .open(&path)
+        .map_err(|error| format!("Could not create Core cache state marker: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("Could not sync Core cache state marker: {error}"))?;
+    sync_directory(root)
+}
+
 fn set_private_directory_permissions(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| {
@@ -656,6 +756,46 @@ fn sync_closed_tree(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn seal_closed_tree(root: &Path) -> Result<(), String> {
+    sync_closed_tree(root)?;
+    let mut directories = vec![root.to_path_buf()];
+    let mut index = 0;
+    while index < directories.len() {
+        let directory = directories[index].clone();
+        index += 1;
+        for entry in fs::read_dir(&directory)
+            .map_err(|error| format!("Could not seal Core generation directory: {error}"))?
+        {
+            let entry =
+                entry.map_err(|error| format!("Could not seal Core generation entry: {error}"))?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)
+                .map_err(|error| format!("Could not inspect Core generation entry: {error}"))?;
+            if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+                directories.push(path);
+            } else if metadata.is_file() && !metadata.file_type().is_symlink() {
+                use std::os::unix::fs::MetadataExt as _;
+                if metadata.nlink() != 1 {
+                    return Err("Core generation contains a multiply linked file.".into());
+                }
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o400))
+                    .map_err(|error| format!("Could not seal Core generation file: {error}"))?;
+                File::open(&path)
+                    .and_then(|file| file.sync_all())
+                    .map_err(|error| format!("Could not sync sealed Core generation: {error}"))?;
+            } else {
+                return Err("Core generation contains a linked or special entry.".into());
+            }
+        }
+    }
+    for directory in directories.iter().rev() {
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o500))
+            .map_err(|error| format!("Could not seal Core generation directory: {error}"))?;
+        sync_directory(directory)?;
+    }
+    Ok(())
+}
+
 fn remove_owned_candidate(candidate: &Path, candidates_root: &Path) -> Result<(), String> {
     let metadata = fs::symlink_metadata(candidate)
         .map_err(|error| format!("Could not inspect redundant Core candidate: {error}"))?;
@@ -698,13 +838,12 @@ mod tests {
         ))
     }
 
-    fn identity(byte: char) -> CoreGenerationIdentity {
+    fn identity(sequence: u64, byte: char) -> CoreGenerationIdentity {
+        let manifest_sha256 = byte.to_string().repeat(64);
         CoreGenerationIdentity {
-            generation_id: byte.to_string().repeat(64),
-            manifest_sha256: char::from_u32(byte as u32 + 1)
-                .unwrap()
-                .to_string()
-                .repeat(64),
+            sequence,
+            generation_id: manifest_sha256.clone(),
+            manifest_sha256,
         }
     }
 
@@ -724,13 +863,31 @@ mod tests {
         }
     }
 
+    fn cleanup(root: &Path) {
+        fn make_writable(path: &Path) {
+            let Ok(metadata) = fs::symlink_metadata(path) else {
+                return;
+            };
+            if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+                for entry in fs::read_dir(path).unwrap().flatten() {
+                    make_writable(&entry.path());
+                }
+            } else if metadata.is_file() {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+            }
+        }
+        make_writable(root);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn generation_cache_commits_create_only_and_reuses_only_verified_content() {
         let root = temporary_cache("commit");
         let cache = CoreGenerationCache::open(&root).unwrap();
         let first = cache.create_candidate("operation-1").unwrap();
         populate(&first, "verified");
-        let generation = identity('1');
+        let generation = identity(1, '1');
         assert_eq!(
             cache
                 .commit_candidate(&first, &generation, verify_value("verified"))
@@ -763,7 +920,7 @@ mod tests {
             .unwrap(),
             "verified"
         );
-        fs::remove_dir_all(root).unwrap();
+        cleanup(&root);
     }
 
     #[test]
@@ -776,7 +933,7 @@ mod tests {
         let second = cache.create_candidate("concurrent-2").unwrap();
         populate(&first, "shared");
         populate(&second, "shared");
-        let generation = identity('5');
+        let generation = identity(5, '5');
         let barrier = Arc::new(Barrier::new(3));
         let mut workers = Vec::new();
         for candidate in [first, second] {
@@ -807,15 +964,15 @@ mod tests {
                 .count(),
             1
         );
-        fs::remove_dir_all(root).unwrap();
+        cleanup(&root);
     }
 
     #[test]
     fn health_acknowledgement_is_atomic_and_preserves_last_known_good() {
         let root = temporary_cache("activation");
         let cache = CoreGenerationCache::open(&root).unwrap();
-        let first = identity('2');
-        let second = identity('4');
+        let first = identity(1, '2');
+        let second = identity(2, '4');
         for (operation, generation, value) in
             [("first", &first, "first"), ("second", &second, "second")]
         {
@@ -833,6 +990,7 @@ mod tests {
             .acknowledge_healthy(&first, "activate-first", 1, verify_value("first"))
             .unwrap();
         assert_eq!(state.active.as_ref(), Some(&first));
+        assert_eq!(state.high_water_sequence, 1);
         assert!(state.last_known_good.is_none());
 
         let pending = cache
@@ -851,13 +1009,49 @@ mod tests {
             .acknowledge_healthy(&second, "retry-second", 5, verify_value("second"))
             .unwrap();
         assert_eq!(active.active.as_ref(), Some(&second));
+        assert_eq!(active.high_water_sequence, 2);
         assert_eq!(active.last_known_good.as_ref(), Some(&first));
         let rolled_back = cache
             .rollback_to_last_known_good(&second, 6, verify_value("first"))
             .unwrap();
         assert_eq!(rolled_back.active.as_ref(), Some(&first));
-        assert_eq!(rolled_back.last_known_good.as_ref(), Some(&second));
-        fs::remove_dir_all(root).unwrap();
+        assert_eq!(rolled_back.last_known_good.as_ref(), Some(&first));
+        assert_eq!(rolled_back.high_water_sequence, 2);
+        assert!(cache
+            .begin_activation(
+                &second,
+                "replay-second",
+                rolled_back.revision,
+                verify_value("second")
+            )
+            .is_err());
+
+        let third = identity(3, '6');
+        let candidate = cache.create_candidate("third").unwrap();
+        populate(&candidate, "third");
+        cache
+            .commit_candidate(&candidate, &third, verify_value("third"))
+            .unwrap();
+        cache
+            .begin_activation(
+                &third,
+                "activate-third",
+                rolled_back.revision,
+                verify_value("third"),
+            )
+            .unwrap();
+        let later = cache
+            .acknowledge_healthy(
+                &third,
+                "activate-third",
+                rolled_back.revision + 1,
+                verify_value("third"),
+            )
+            .unwrap();
+        assert_eq!(later.active.as_ref(), Some(&third));
+        assert_eq!(later.last_known_good.as_ref(), Some(&first));
+        assert_eq!(later.high_water_sequence, 3);
+        cleanup(&root);
     }
 
     #[test]
@@ -866,7 +1060,7 @@ mod tests {
         let cache = CoreGenerationCache::open(&root).unwrap();
         assert!(cache.create_candidate("../escape").is_err());
         assert!(cache
-            .commit_candidate(Path::new("/tmp"), &identity('6'), |_| Ok(()))
+            .commit_candidate(Path::new("/tmp"), &identity(6, '6'), |_| Ok(()))
             .is_err());
 
         fs::write(root.join("state.json"), b"{\"schemaVersion\":1}\n").unwrap();
@@ -874,15 +1068,15 @@ mod tests {
         fs::remove_file(root.join("state.json")).unwrap();
         let state = cache.load_state().unwrap();
         assert!(state.active.is_none());
-        fs::remove_dir_all(root).unwrap();
+        cleanup(&root);
     }
 
     #[test]
     fn stale_activation_operations_cannot_replace_pending_user_intent() {
         let root = temporary_cache("stale-operation");
         let cache = CoreGenerationCache::open(&root).unwrap();
-        let first = identity('1');
-        let second = identity('3');
+        let first = identity(1, '1');
+        let second = identity(2, '3');
         for (operation, generation, value) in
             [("first", &first, "first"), ("second", &second, "second")]
         {
@@ -924,7 +1118,7 @@ mod tests {
             .rollback_to_last_known_good(&first, 1, verify_value("first"))
             .is_err());
         assert_eq!(cache.load_state().unwrap().active.as_ref(), Some(&second));
-        fs::remove_dir_all(root).unwrap();
+        cleanup(&root);
     }
 
     #[test]
@@ -935,10 +1129,11 @@ mod tests {
             schema_version: CACHE_STATE_SCHEMA,
             kind: CACHE_STATE_KIND.into(),
             revision: 1,
+            high_water_sequence: 0,
             active: None,
             pending: None,
             pending_operation_id: None,
-            last_known_good: Some(identity('2')),
+            last_known_good: Some(identity(1, '2')),
         };
         fs::write(
             root.join("state.json"),
@@ -946,7 +1141,82 @@ mod tests {
         )
         .unwrap();
         assert!(cache.load_state().is_err());
-        fs::remove_dir_all(root).unwrap();
+        cleanup(&root);
+    }
+
+    #[test]
+    fn durable_identity_and_high_water_invariants_fail_closed() {
+        let root = temporary_cache("durable-invariants");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let mut mismatched = identity(1, '2');
+        mismatched.generation_id = "3".repeat(64);
+        assert!(mismatched.validate().is_err());
+
+        let active = identity(2, '4');
+        let replay = identity(2, '5');
+        let state = CoreGenerationCacheState {
+            schema_version: CACHE_STATE_SCHEMA,
+            kind: CACHE_STATE_KIND.into(),
+            revision: 1,
+            high_water_sequence: 2,
+            active: Some(active),
+            pending: Some(replay),
+            pending_operation_id: Some("replay".into()),
+            last_known_good: None,
+        };
+        fs::write(
+            root.join("state.json"),
+            canonical_state_bytes(&state).unwrap(),
+        )
+        .unwrap();
+        assert!(cache.load_state().is_err());
+
+        let impossible_fallback = CoreGenerationCacheState {
+            schema_version: CACHE_STATE_SCHEMA,
+            kind: CACHE_STATE_KIND.into(),
+            revision: 2,
+            high_water_sequence: 3,
+            active: Some(identity(2, '4')),
+            pending: None,
+            pending_operation_id: None,
+            last_known_good: Some(identity(3, '6')),
+        };
+        fs::write(
+            root.join("state.json"),
+            canonical_state_bytes(&impossible_fallback).unwrap(),
+        )
+        .unwrap();
+        assert!(cache.load_state().is_err());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn activated_cache_rejects_deleted_state_and_committed_files_are_sealed() {
+        let root = temporary_cache("state-loss");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let identity = identity(1, 'a');
+        let candidate = cache.create_candidate("activate").unwrap();
+        populate(&candidate, "sealed");
+        cache
+            .commit_candidate(&candidate, &identity, verify_value("sealed"))
+            .unwrap();
+        let committed = root
+            .join("generations")
+            .join(&identity.generation_id)
+            .join("contracts/manifest.json");
+        assert_eq!(
+            fs::metadata(&committed).unwrap().permissions().mode() & 0o777,
+            0o400
+        );
+        cache
+            .begin_activation(&identity, "activate", 0, verify_value("sealed"))
+            .unwrap();
+        cache
+            .acknowledge_healthy(&identity, "activate", 1, verify_value("sealed"))
+            .unwrap();
+        fs::remove_file(root.join("state.json")).unwrap();
+        assert!(cache.load_state().is_err());
+        cleanup(&root);
     }
 
     #[cfg(unix)]
@@ -971,7 +1241,21 @@ mod tests {
         assert!(cache.load_state().is_err());
         fs::remove_file(actual.join("state.json")).unwrap();
         fs::remove_file(external).unwrap();
-        fs::remove_dir_all(actual).unwrap();
+
+        let state_path = actual.join("state.json");
+        fs::write(
+            &state_path,
+            canonical_state_bytes(&CoreGenerationCacheState::default()).unwrap(),
+        )
+        .unwrap();
+        let alias = actual.parent().unwrap().join(format!(
+            "opemos-core-state-hard-link-{}",
+            std::process::id()
+        ));
+        fs::hard_link(&state_path, &alias).unwrap();
+        assert!(cache.load_state().is_err());
+        fs::remove_file(alias).unwrap();
+        cleanup(&actual);
     }
 
     #[cfg(unix)]
@@ -984,10 +1268,10 @@ mod tests {
         let candidate = cache.create_candidate("linked").unwrap();
         symlink("/tmp", candidate.join("escape")).unwrap();
         assert!(cache
-            .commit_candidate(&candidate, &identity('8'), |_| Ok(()))
+            .commit_candidate(&candidate, &identity(8, '8'), |_| Ok(()))
             .is_err());
         assert!(candidate.exists());
-        fs::remove_dir_all(root).unwrap();
+        cleanup(&root);
     }
 
     #[test]
@@ -1002,13 +1286,13 @@ mod tests {
         fs::write(&external, "mutable-outside-cache").unwrap();
         fs::hard_link(&external, candidate.join("linked-file")).unwrap();
         assert!(cache
-            .commit_candidate(&candidate, &identity('7'), |_| Ok(()))
+            .commit_candidate(&candidate, &identity(7, '7'), |_| Ok(()))
             .is_err());
         assert_eq!(
             fs::read_to_string(&external).unwrap(),
             "mutable-outside-cache"
         );
         fs::remove_file(external).unwrap();
-        fs::remove_dir_all(root).unwrap();
+        cleanup(&root);
     }
 }

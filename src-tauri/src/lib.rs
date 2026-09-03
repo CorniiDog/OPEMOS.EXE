@@ -38,6 +38,11 @@ mod core_generation_cache;
 // points remain deliberately unused until Core publishes an immutable manifest.
 #[allow(dead_code)]
 mod core_contracts;
+// Closed schema-1 parsing for Core's inactive reviewed-lock generation
+// contract. This is intentionally disconnected from network discovery and
+// activation until a production trust root and bootstrap checkpoint exist.
+#[allow(dead_code)]
+mod core_generation_contracts;
 mod image;
 mod installer;
 mod nvidia;
