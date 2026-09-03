@@ -1699,6 +1699,7 @@ pub(crate) fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json:
     } else {
         "marker-only"
     };
+    let welcome_revision = nvidia_installed.then(install_media_welcome_revision);
     let modified_paths = if nvidia_installed {
         serde_json::json!([
             "/etc/steamos-nvidia-image-builder-test",
@@ -1707,17 +1708,18 @@ pub(crate) fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json:
             "/usr/lib/modules/<target-kernel>/updates/open-gpu-kernel-modules-steamos",
             "/var/lib/open-gpu-kernel-modules-steamos-support/offline-install",
             "/home/deck/tools/opemos-rollback-last-update",
-            "/home/deck/Desktop/OPEMOS-Rollback.desktop",
             "/home/deck/tools/open-opemos-welcome",
             "/home/deck/Desktop/Open-OPEMOS.desktop",
             "/home/deck/.config/autostart/Open-OPEMOS.desktop",
             "/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg",
             "/usr/lib/opemos-install-media/opemos-install-helper",
+            "/usr/lib/opemos-install-media/welcome_server.py",
             "/usr/lib/opemos-install-media/repair_device.sh",
             "/usr/lib/opemos-install-media/support",
             "/usr/lib/opemos-install-media/support-revision",
             "/usr/lib/opemos-install-media/nvidia-version",
             "/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css",
+            "/usr/share/opemos-install-media/ui/welcome",
             "/boot"
         ])
     } else {
@@ -1809,6 +1811,7 @@ pub(crate) fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json:
             "nvidiaPayloadVerified": nvidia_installed,
             "recoveryRollbackVerified": nvidia_installed,
             "installationMediaWelcomeVerified": nvidia_installed,
+            "installationMediaWelcomeRevision": welcome_revision,
             "installedRecoveryGuardianPayloadVerified": nvidia_installed,
             "sourceUnchanged": true,
             "passed": true

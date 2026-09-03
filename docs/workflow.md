@@ -66,10 +66,12 @@ in place; select the original Valve recovery image to build that version.
 ## Bootable-media welcome flow
 
 Newly generated images stage **Open OPEMOS** in the recovery desktop and launch
-it automatically. The first implementation intentionally uses the recovery
-image's known Zenity runtime while the frosted-glass native surface is built.
-The fallback loads a bundled OPEMOS glass GTK theme with an opaque compositor
-fallback. The safety contract does not depend on that presentation layer.
+it automatically as a full-screen frosted-glass application. A private,
+loopback-only controller exposes only the same bounded helper operations; a
+single-use session token and exact-Origin check isolate it from unrelated local
+pages. Zenity remains an opaque, terminal-safe fallback when the recovery image
+has no compatible browser/runtime. The safety contract does not depend on the
+presentation layer.
 
 The welcome flow offers separate actions for a fresh installation, a SteamOS
 system reinstall that preserves the recognized home partition, and A/B

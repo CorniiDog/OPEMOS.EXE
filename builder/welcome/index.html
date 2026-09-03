@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install SteamOS with NVIDIA drivers</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <main class="window" aria-labelledby="title">
+    <div class="edge-glow" aria-hidden="true"></div>
+    <header>
+      <img src="opemos.svg" alt="" width="54" height="54">
+      <div>
+        <p class="eyebrow">INSTALLATION MEDIA · MAINTAINED BY OPEMOS</p>
+        <h1 id="title">SteamOS with NVIDIA drivers</h1>
+      </div>
+      <span id="environment-badge" class="simulation">Starting…</span>
+      <button id="close-app" class="close-app" type="button" aria-label="Close installer">×</button>
+    </header>
+
+    <section class="identity" aria-label="Installation media identity">
+      <div><span>NVIDIA</span><strong id="nvidia-version">Checking…</strong></div>
+      <div><span>Recovery</span><strong id="support-revision">Checking…</strong></div>
+      <div><span>Environment</span><strong id="environment">Checking…</strong></div>
+    </section>
+
+    <section id="view" class="content" aria-live="polite"></section>
+
+    <footer>
+      <span class="safe-dot"></span>
+      <span id="safety-message">Validating the installation-media controller…</span>
+    </footer>
+  </main>
+  <script nonce="__OPEMOS_CSP_NONCE__">window.__OPEMOS_SESSION_TOKEN__="__OPEMOS_SESSION_TOKEN__";</script>
+  <script src="app.js"></script>
+</body>
+</html>

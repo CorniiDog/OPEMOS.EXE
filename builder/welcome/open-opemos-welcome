@@ -6,8 +6,87 @@ readonly HELPER=/usr/lib/opemos-install-media/opemos-install-helper
 readonly ROLLBACK=/home/deck/tools/opemos-rollback-last-update
 readonly ICON=/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg
 readonly UI_CONFIG=/usr/share/opemos-install-media/ui
+readonly WELCOME_UI=/usr/share/opemos-install-media/ui/welcome
+readonly WELCOME_SERVER=/usr/lib/opemos-install-media/welcome_server.py
 readonly STATE_DIRECTORY=/home/deck/.local/state/open-opemos
 readonly LAST_LOG_FILE="$STATE_DIRECTORY/last-install-log"
+
+for tool in awk flock sudo tee; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    printf 'The SteamOS NVIDIA installer requires %s in the recovery environment.\n' "$tool" >&2
+    exit 1
+  }
+done
+[[ -x "$HELPER" && ! -L "$HELPER" ]] || {
+  printf 'The protected installation helper is missing from this media.\n' >&2
+  exit 1
+}
+
+exec 8>/tmp/open-opemos-welcome.lock
+if ! flock -n 8; then
+  exit 0
+fi
+
+launch_fullscreen_welcome() {
+  local browser runtime server_pid browser_pid port url
+  [[ -x "$WELCOME_SERVER" && ! -L "$WELCOME_SERVER" && -d "$WELCOME_UI" && ! -L "$WELCOME_UI" ]] || return 1
+  command -v python3 >/dev/null 2>&1 || return 1
+  for browser in chromium chromium-browser google-chrome-stable firefox; do
+    command -v "$browser" >/dev/null 2>&1 && break
+    browser=""
+  done
+  [[ -n "$browser" ]] || return 1
+  runtime=$(mktemp -d /tmp/open-opemos-welcome.XXXXXX) || return 1
+  chmod 0700 "$runtime"
+  cleanup_graphical() {
+    [[ -z "${browser_pid:-}" ]] || kill -TERM "$browser_pid" >/dev/null 2>&1 || true
+    [[ -z "${server_pid:-}" ]] || kill -TERM "$server_pid" >/dev/null 2>&1 || true
+    [[ -z "${server_pid:-}" ]] || wait "$server_pid" >/dev/null 2>&1 || true
+    rm -rf "$runtime"
+  }
+  trap cleanup_graphical EXIT
+  trap 'cleanup_graphical; exit 130' INT
+  trap 'cleanup_graphical; exit 143' TERM
+  python3 "$WELCOME_SERVER" --ui-root "$WELCOME_UI" --runtime "$runtime" &
+  server_pid=$!
+  for _ in {1..100}; do
+    [[ -s "$runtime/port" ]] && break
+    kill -0 "$server_pid" 2>/dev/null || { cleanup_graphical; trap - EXIT INT TERM; return 1; }
+    sleep 0.1
+  done
+  [[ -s "$runtime/port" ]] || { cleanup_graphical; trap - EXIT INT TERM; return 1; }
+  port=$(tr -d '[:space:]' <"$runtime/port")
+  [[ "$port" =~ ^[0-9]+$ ]] || { cleanup_graphical; trap - EXIT INT TERM; return 1; }
+  url="http://127.0.0.1:$port/"
+  while kill -0 "$server_pid" 2>/dev/null; do
+    if [[ "$browser" == firefox ]]; then
+      [[ -d "$runtime/firefox-profile" ]] || mkdir -m 0700 "$runtime/firefox-profile"
+      "$browser" --no-remote --profile "$runtime/firefox-profile" --kiosk "$url" &
+    else
+      [[ -d "$runtime/chromium-profile" ]] || mkdir -m 0700 "$runtime/chromium-profile"
+      "$browser" --user-data-dir="$runtime/chromium-profile" --app="$url" \
+        --start-fullscreen --start-maximized --no-first-run --no-default-browser-check \
+        --disable-session-crashed-bubble --disable-translate &
+    fi
+    browser_pid=$!
+    printf '%s\n' "$browser_pid" >"$runtime/browser.pid"
+    chmod 0600 "$runtime/browser.pid"
+    wait "$browser_pid" || true
+    browser_pid=""
+    [[ -e "$runtime/operation-running" ]] || break
+    sleep 0.2
+  done
+  cleanup_graphical
+  trap - EXIT INT TERM
+  return 0
+}
+
+# The root-owned full-screen bundle is the normal interface. Zenity below is a
+# guaranteed recovery fallback only when no supported browser/runtime exists.
+if launch_fullscreen_welcome; then
+  exit 0
+fi
+
 export GTK_THEME="${GTK_THEME:-Breeze-Dark}"
 [[ -d "$UI_CONFIG" ]] && export XDG_CONFIG_HOME="$UI_CONFIG"
 
@@ -192,21 +271,9 @@ run_install() {
   fi
 }
 
-for tool in awk flock sudo tee zenity; do
-  command -v "$tool" >/dev/null 2>&1 || {
-    printf 'The SteamOS NVIDIA installer requires %s in the recovery environment.\n' "$tool" >&2
-    exit 1
-  }
-done
-if [[ ! -x "$HELPER" ]]; then
-  failure "The protected installation helper is missing from this media."
+if ! command -v zenity >/dev/null 2>&1; then
+  printf 'The full-screen installer could not start and its Zenity fallback is unavailable.\n' >&2
   exit 1
-fi
-
-exec 8>/tmp/open-opemos-welcome.lock
-if ! flock -n 8; then
-  message "The SteamOS NVIDIA installer is already running in this recovery session."
-  exit 0
 fi
 prepare_state_directory || exit 1
 

@@ -5,12 +5,13 @@ newly generated SteamOS image with NVIDIA drivers. The experience is maintained
 by OPEMOS and is separate from the persistent installed-system Desktop
 application owned by the support repository.
 
-The current frontend uses Zenity because Valve's inspected SteamOS 3.8.14
-recovery image already requires and ships it. `open-opemos-welcome` is an
-unprivileged presentation layer. It may be replaced by the native frosted-glass
-frontend without changing the helper protocol. A bundled GTK stylesheet gives
-this guaranteed-runtime fallback the OPEMOS-maintained blue/green glass language with an
-opaque fallback when compositor transparency is unavailable.
+The normal frontend is the same full-screen frosted-glass HTML/CSS/JavaScript
+bundle used by the macOS simulation. `open-opemos-welcome` starts a random-port,
+loopback-only Python controller and opens an installed browser in application or
+kiosk mode. A per-session secret plus exact-Origin checks protect every API
+call. Zenity remains a guaranteed-runtime fallback only when neither a supported
+browser nor Python is available; its bundled GTK stylesheet retains the same
+blue/green language with an opaque compositor fallback.
 
 Only one welcome instance can run in a recovery session. Its diagnostics view
 shows the pinned NVIDIA/support identity and currently eligible disks. Complete
@@ -55,11 +56,11 @@ or use the firmware boot menu so the machine does not loop back into recovery.
 ## Safe macOS graphical preview
 
 Run `./test_welcome_macos.sh` from the repository root to open the interactive
-browser-based welcome simulation. It uses only fixed synthetic disks and mock
-progress. The launcher cannot inspect or write a disk, elevate privileges,
-start QEMU, access the network, or invoke either installation helper. This is a
-visual/interaction test; the generated SteamOS media continues to use the
-audited Zenity frontend above.
+browser-based welcome simulation. It serves the exact shipped frontend and API
+schema through the controller's explicit `--mock` mode, using only one fixed
+synthetic disk and mock progress. The mock controller cannot inspect or write a
+disk, elevate privileges, start QEMU, access the network, or invoke either
+installation helper.
 
 The preview follows the centered-choice and installation-slideshow principles
 used by modern graphical installers. Its original illustrations explain target

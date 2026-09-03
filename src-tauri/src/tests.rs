@@ -1300,6 +1300,7 @@ esac
                 "markerVerified": true,
                 "nvidiaPayloadVerified": true,
                 "installationMediaWelcomeVerified": true,
+                "installationMediaWelcomeRevision": install_media_welcome_revision(),
                 "installedRecoveryGuardianPayloadVerified": true
             },
             "integration": {
@@ -2632,7 +2633,6 @@ esac
     #[test]
     fn recovery_rollback_action_is_bundled_and_fail_closed() {
         let script = std::str::from_utf8(RECOVERY_ROLLBACK_SCRIPT).unwrap();
-        let desktop = std::str::from_utf8(RECOVERY_ROLLBACK_DESKTOP).unwrap();
         for label in [
             "esp", "efi-A", "efi-B", "rootfs-A", "rootfs-B", "var-A", "var-B", "home",
         ] {
@@ -2646,8 +2646,7 @@ esac
         assert!(script.contains("steamos-chroot --no-overlay --disk \"$disk\""));
         assert!(script.contains("steamos-bootconf --image \"$slot\" set-mode reboot"));
         assert!(!script.contains("repair_device.sh"));
-        assert!(desktop.contains("Terminal=true"));
-        assert!(desktop.contains("Exec=sudo /home/deck/tools/opemos-rollback-last-update"));
+        assert!(script.contains("Eligible rollback slots"));
     }
 
     #[test]
@@ -2657,6 +2656,9 @@ esac
         let patcher = std::str::from_utf8(INSTALL_MEDIA_PATCHER).unwrap();
         let desktop = std::str::from_utf8(INSTALL_MEDIA_DESKTOP).unwrap();
         let gtk_css = std::str::from_utf8(INSTALL_MEDIA_GTK_CSS).unwrap();
+        let server = std::str::from_utf8(INSTALL_MEDIA_WELCOME_SERVER).unwrap();
+        let html = std::str::from_utf8(INSTALL_MEDIA_WELCOME_HTML).unwrap();
+        let javascript = std::str::from_utf8(INSTALL_MEDIA_WELCOME_JS).unwrap();
 
         assert!(desktop.contains("Name=Install SteamOS with NVIDIA drivers"));
         assert!(desktop.contains("Exec=/home/deck/tools/open-opemos-welcome"));
@@ -2674,7 +2676,14 @@ esac
         assert!(welcome.contains("FALSE restart"));
         assert!(welcome.contains("restart) systemctl reboot"));
         assert!(welcome.contains("remove the USB as the screen turns off"));
+        assert!(welcome.contains("--start-fullscreen"));
+        assert!(welcome.contains("WELCOME_SERVER"));
         assert!(!welcome.contains("eval "));
+        assert!(server.contains("ThreadingHTTPServer((\"127.0.0.1\", 0)"));
+        assert!(server.contains("X-OPEMOS-Token"));
+        assert!(!server.contains("shell=True"));
+        assert!(html.contains("close-app"));
+        assert!(javascript.contains("/api/install"));
         assert!(gtk_css.contains("@define-color opemos_blue"));
         assert!(gtk_css.contains("linear-gradient(to right, @opemos_blue, @opemos_green)"));
 
@@ -4296,6 +4305,10 @@ esac
         assert_eq!(
             nvidia_manifest["validation"]["installationMediaWelcomeVerified"],
             true
+        );
+        assert_eq!(
+            nvidia_manifest["validation"]["installationMediaWelcomeRevision"],
+            install_media_welcome_revision()
         );
         assert_eq!(
             nvidia_manifest["validation"]["installedRecoveryGuardianPayloadVerified"],

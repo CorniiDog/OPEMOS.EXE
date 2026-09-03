@@ -1138,12 +1138,30 @@ pub(crate) fn verify_nvidia_from_validation_overlay(
     installation: &NvidiaInstallHandoffResult,
 ) -> Result<(), String> {
     let recovery_script_sha256 = format!("{:x}", Sha256::digest(RECOVERY_ROLLBACK_SCRIPT));
-    let recovery_desktop_sha256 = format!("{:x}", Sha256::digest(RECOVERY_ROLLBACK_DESKTOP));
     let welcome_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_WELCOME));
+    let welcome_server_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_WELCOME_SERVER));
     let welcome_helper_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_HELPER));
     let welcome_desktop_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_DESKTOP));
     let welcome_icon_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_ICON));
     let welcome_gtk_css_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_GTK_CSS));
+    let mut welcome_asset_assertions = String::new();
+    for (path, bytes) in [
+        ("index.html", INSTALL_MEDIA_WELCOME_HTML),
+        ("app.css", INSTALL_MEDIA_WELCOME_CSS),
+        ("app.js", INSTALL_MEDIA_WELCOME_JS),
+        ("opemos.svg", INSTALL_MEDIA_ICON),
+        ("assets/install.svg", INSTALL_MEDIA_WELCOME_INSTALL_ART),
+        ("assets/recovery.svg", INSTALL_MEDIA_WELCOME_RECOVERY_ART),
+        ("assets/gaming.svg", INSTALL_MEDIA_WELCOME_GAMING_ART),
+    ] {
+        welcome_asset_assertions.push_str(&format!(
+            "test -f \"$ROOT/usr/share/opemos-install-media/ui/welcome/{path}\"\n\
+             test ! -L \"$ROOT/usr/share/opemos-install-media/ui/welcome/{path}\"\n\
+             test \"$(sha256sum \"$ROOT/usr/share/opemos-install-media/ui/welcome/{path}\" | awk '{{print $1}}')\" = \"{sha256}\"\n\
+             test \"$(stat -c '%a:%u:%g' \"$ROOT/usr/share/opemos-install-media/ui/welcome/{path}\")\" = 644:0:0\n",
+            sha256 = format!("{:x}", Sha256::digest(bytes)),
+        ));
+    }
     let mut install_media_support_assertions = String::new();
     for file in &PINNED_INSTALLER_FILES {
         let mode = if file.executable { "755" } else { "644" };
@@ -1275,11 +1293,7 @@ test ! -L "$ROOT/home/deck/tools/opemos-rollback-last-update"
 test "$(sha256sum "$ROOT/home/deck/tools/opemos-rollback-last-update" | awk '{{print $1}}')" = "{}"
 test "$(stat -c '%a' "$ROOT/home/deck/tools/opemos-rollback-last-update")" = 755
 test "$(stat -c '%u:%g' "$ROOT/home/deck/tools/opemos-rollback-last-update")" = "$DECK_ID"
-test -f "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
-test ! -L "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
-test "$(sha256sum "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop" | awk '{{print $1}}')" = "{}"
-test "$(stat -c '%a' "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop")" = 755
-test "$(stat -c '%u:%g' "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop")" = "$DECK_ID"
+test ! -e "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
 test -f "$ROOT/home/deck/tools/open-opemos-welcome"
 test ! -L "$ROOT/home/deck/tools/open-opemos-welcome"
 test "$(sha256sum "$ROOT/home/deck/tools/open-opemos-welcome" | awk '{{print $1}}')" = "{}"
@@ -1301,6 +1315,10 @@ test -f "$ROOT/usr/lib/opemos-install-media/opemos-install-helper"
 test ! -L "$ROOT/usr/lib/opemos-install-media/opemos-install-helper"
 test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/opemos-install-helper" | awk '{{print $1}}')" = "{}"
 test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/opemos-install-helper")" = 755:0:0
+test -f "$ROOT/usr/lib/opemos-install-media/welcome_server.py"
+test ! -L "$ROOT/usr/lib/opemos-install-media/welcome_server.py"
+test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/welcome_server.py" | awk '{{print $1}}')" = "{}"
+test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/welcome_server.py")" = 755:0:0
 test -f "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 test ! -L "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/repair_device.sh")" = 755:0:0
@@ -1312,7 +1330,7 @@ test "$(cat "$ROOT/usr/lib/opemos-install-media/support-revision")" = "{}"
 test "$(cat "$ROOT/usr/lib/opemos-install-media/nvidia-version")" = "{}"
 test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/support-revision")" = 644:0:0
 test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/nvidia-version")" = 644:0:0
-for DIRECTORY in "$ROOT/usr/share" "$ROOT/usr/share/opemos-install-media" "$ROOT/usr/share/opemos-install-media/ui" "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0"; do
+for DIRECTORY in "$ROOT/usr/share" "$ROOT/usr/share/opemos-install-media" "$ROOT/usr/share/opemos-install-media/ui" "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0" "$ROOT/usr/share/opemos-install-media/ui/welcome" "$ROOT/usr/share/opemos-install-media/ui/welcome/assets"; do
   test -d "$DIRECTORY"
   test ! -L "$DIRECTORY"
 done
@@ -1320,6 +1338,7 @@ test -f "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css"
 test ! -L "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css"
 test "$(sha256sum "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css" | awk '{{print $1}}')" = "{}"
 test "$(stat -c '%a:%u:%g' "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css")" = 644:0:0
+{}
 {}
 sudo umount "$ROOT/efi"
 EFI_MOUNTED=0
@@ -1345,14 +1364,15 @@ trap - EXIT INT TERM"#,
         installation.pacman_database_path,
         package_assertions,
         recovery_script_sha256,
-        recovery_desktop_sha256,
         welcome_sha256,
         welcome_desktop_sha256,
         welcome_icon_sha256,
         welcome_helper_sha256,
+        welcome_server_sha256,
         NVIDIA_SUPPORT_COMMIT,
         installation.nvidia_version,
         welcome_gtk_css_sha256,
+        welcome_asset_assertions,
         install_media_support_assertions,
     );
     run_guest_command(session, &command).map(|_| ())
@@ -2549,6 +2569,13 @@ pub(crate) fn completed_nvidia_image_from_path(
                 "The adjacent build manifest does not confirm {field}."
             ));
         }
+    }
+    if validation
+        .get("installationMediaWelcomeRevision")
+        .and_then(serde_json::Value::as_str)
+        != Some(install_media_welcome_revision().as_str())
+    {
+        return Err("The completed image predates the current installation-media application. Rebuild it from the original Valve recovery image.".into());
     }
     let integration = manifest
         .get("integration")

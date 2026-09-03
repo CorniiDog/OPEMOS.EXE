@@ -4,10 +4,20 @@ use serde::de::DeserializeSeed as _;
 const MAX_SUPPORT_INSTALL_RESULT_BYTES: u64 = 32 * 1024 * 1024;
 pub(crate) const RECOVERY_ROLLBACK_SCRIPT: &[u8] =
     include_bytes!("../../builder/recovery/opemos-rollback-last-update");
-pub(crate) const RECOVERY_ROLLBACK_DESKTOP: &[u8] =
-    include_bytes!("../../builder/recovery/OPEMOS-Rollback.desktop");
 pub(crate) const INSTALL_MEDIA_WELCOME: &[u8] =
     include_bytes!("../../builder/welcome/open-opemos-welcome");
+pub(crate) const INSTALL_MEDIA_WELCOME_SERVER: &[u8] =
+    include_bytes!("../../builder/welcome/welcome_server.py");
+pub(crate) const INSTALL_MEDIA_WELCOME_HTML: &[u8] =
+    include_bytes!("../../builder/welcome/index.html");
+pub(crate) const INSTALL_MEDIA_WELCOME_CSS: &[u8] = include_bytes!("../../builder/welcome/app.css");
+pub(crate) const INSTALL_MEDIA_WELCOME_JS: &[u8] = include_bytes!("../../builder/welcome/app.js");
+pub(crate) const INSTALL_MEDIA_WELCOME_INSTALL_ART: &[u8] =
+    include_bytes!("../../builder/welcome/assets/install.svg");
+pub(crate) const INSTALL_MEDIA_WELCOME_RECOVERY_ART: &[u8] =
+    include_bytes!("../../builder/welcome/assets/recovery.svg");
+pub(crate) const INSTALL_MEDIA_WELCOME_GAMING_ART: &[u8] =
+    include_bytes!("../../builder/welcome/assets/gaming.svg");
 pub(crate) const INSTALL_MEDIA_HELPER: &[u8] =
     include_bytes!("../../builder/welcome/opemos-install-helper");
 pub(crate) const INSTALL_MEDIA_PATCHER: &[u8] =
@@ -25,27 +35,46 @@ struct InstallMediaWelcomeDigests {
     desktop: String,
     icon: String,
     gtk_css: String,
+    server: String,
+    html: String,
+    css: String,
+    javascript: String,
+    install_art: String,
+    recovery_art: String,
+    gaming_art: String,
 }
 
 fn sha256_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-fn stage_recovery_rollback_assets(
-    connection: &NvidiaBuildConnection,
-) -> Result<(String, String), String> {
+pub(crate) fn install_media_welcome_revision() -> String {
+    let mut digest = Sha256::new();
+    for bytes in [
+        INSTALL_MEDIA_WELCOME,
+        INSTALL_MEDIA_WELCOME_SERVER,
+        INSTALL_MEDIA_WELCOME_HTML,
+        INSTALL_MEDIA_WELCOME_CSS,
+        INSTALL_MEDIA_WELCOME_JS,
+        INSTALL_MEDIA_WELCOME_INSTALL_ART,
+        INSTALL_MEDIA_WELCOME_RECOVERY_ART,
+        INSTALL_MEDIA_WELCOME_GAMING_ART,
+        INSTALL_MEDIA_HELPER,
+        INSTALL_MEDIA_DESKTOP,
+        INSTALL_MEDIA_ICON,
+    ] {
+        digest.update((bytes.len() as u64).to_be_bytes());
+        digest.update(bytes);
+    }
+    format!("{:x}", digest.finalize())
+}
+
+fn stage_recovery_rollback_assets(connection: &NvidiaBuildConnection) -> Result<String, String> {
     let script = connection.runtime_dir.join("opemos-rollback-last-update");
-    let desktop = connection.runtime_dir.join("OPEMOS-Rollback.desktop");
     fs::write(&script, RECOVERY_ROLLBACK_SCRIPT)
         .map_err(|error| format!("Could not stage the OPEMOS recovery helper: {error}"))?;
-    fs::write(&desktop, RECOVERY_ROLLBACK_DESKTOP)
-        .map_err(|error| format!("Could not stage the OPEMOS recovery launcher: {error}"))?;
     copy_install_input_to_guest(connection, &script, "opemos-rollback-last-update")?;
-    copy_install_input_to_guest(connection, &desktop, "OPEMOS-Rollback.desktop")?;
-    Ok((
-        format!("{:x}", Sha256::digest(RECOVERY_ROLLBACK_SCRIPT)),
-        format!("{:x}", Sha256::digest(RECOVERY_ROLLBACK_DESKTOP)),
-    ))
+    Ok(format!("{:x}", Sha256::digest(RECOVERY_ROLLBACK_SCRIPT)))
 }
 
 fn stage_install_media_welcome_assets(
@@ -58,6 +87,13 @@ fn stage_install_media_welcome_assets(
         ("Open-OPEMOS.desktop", INSTALL_MEDIA_DESKTOP),
         ("opemos.svg", INSTALL_MEDIA_ICON),
         ("gtk.css", INSTALL_MEDIA_GTK_CSS),
+        ("welcome_server.py", INSTALL_MEDIA_WELCOME_SERVER),
+        ("welcome-index.html", INSTALL_MEDIA_WELCOME_HTML),
+        ("welcome-app.css", INSTALL_MEDIA_WELCOME_CSS),
+        ("welcome-app.js", INSTALL_MEDIA_WELCOME_JS),
+        ("welcome-install.svg", INSTALL_MEDIA_WELCOME_INSTALL_ART),
+        ("welcome-recovery.svg", INSTALL_MEDIA_WELCOME_RECOVERY_ART),
+        ("welcome-gaming.svg", INSTALL_MEDIA_WELCOME_GAMING_ART),
     ];
     for (name, bytes) in assets {
         let path = connection.runtime_dir.join(name);
@@ -73,6 +109,13 @@ fn stage_install_media_welcome_assets(
         desktop: sha256_bytes(INSTALL_MEDIA_DESKTOP),
         icon: sha256_bytes(INSTALL_MEDIA_ICON),
         gtk_css: sha256_bytes(INSTALL_MEDIA_GTK_CSS),
+        server: sha256_bytes(INSTALL_MEDIA_WELCOME_SERVER),
+        html: sha256_bytes(INSTALL_MEDIA_WELCOME_HTML),
+        css: sha256_bytes(INSTALL_MEDIA_WELCOME_CSS),
+        javascript: sha256_bytes(INSTALL_MEDIA_WELCOME_JS),
+        install_art: sha256_bytes(INSTALL_MEDIA_WELCOME_INSTALL_ART),
+        recovery_art: sha256_bytes(INSTALL_MEDIA_WELCOME_RECOVERY_ART),
+        gaming_art: sha256_bytes(INSTALL_MEDIA_WELCOME_GAMING_ART),
     })
 }
 
@@ -2454,8 +2497,7 @@ pub(crate) fn install_nvidia_to_working_image_blocking(
         (NvidiaBuildConnection::from(&*session), cancel)
     };
     let userspace_arguments = userspace_installer_arguments(&inputs.packages)?;
-    let (recovery_script_sha256, recovery_desktop_sha256) =
-        stage_recovery_rollback_assets(&connection)?;
+    let recovery_script_sha256 = stage_recovery_rollback_assets(&connection)?;
     let welcome_digests = stage_install_media_welcome_assets(&connection)?;
     let install_media_support_commands = installation_media_support_install_commands()?;
     let mutation_attempt = 2_usize;
@@ -2590,13 +2632,19 @@ while IFS= read -r INITRAMFS; do
 done < <(sudo find "$ROOT/boot" -maxdepth 1 -type f -name 'initramfs*.img' -print)
 test "$INITRAMFS_OK" = 1
 test "$(sha256sum /tmp/opemos-rollback-last-update | awk '{{print $1}}')" = "{recovery_script_sha256}"
-test "$(sha256sum /tmp/OPEMOS-Rollback.desktop | awk '{{print $1}}')" = "{recovery_desktop_sha256}"
 test "$(sha256sum /tmp/open-opemos-welcome | awk '{{print $1}}')" = "{welcome_sha256}"
 test "$(sha256sum /tmp/opemos-install-helper | awk '{{print $1}}')" = "{welcome_helper_sha256}"
 test "$(sha256sum /tmp/patch_repair_device.py | awk '{{print $1}}')" = "{welcome_patcher_sha256}"
 test "$(sha256sum /tmp/Open-OPEMOS.desktop | awk '{{print $1}}')" = "{welcome_desktop_sha256}"
 test "$(sha256sum /tmp/opemos.svg | awk '{{print $1}}')" = "{welcome_icon_sha256}"
 test "$(sha256sum /tmp/gtk.css | awk '{{print $1}}')" = "{welcome_gtk_css_sha256}"
+test "$(sha256sum /tmp/welcome_server.py | awk '{{print $1}}')" = "{welcome_server_sha256}"
+test "$(sha256sum /tmp/welcome-index.html | awk '{{print $1}}')" = "{welcome_html_sha256}"
+test "$(sha256sum /tmp/welcome-app.css | awk '{{print $1}}')" = "{welcome_css_sha256}"
+test "$(sha256sum /tmp/welcome-app.js | awk '{{print $1}}')" = "{welcome_javascript_sha256}"
+test "$(sha256sum /tmp/welcome-install.svg | awk '{{print $1}}')" = "{welcome_install_art_sha256}"
+test "$(sha256sum /tmp/welcome-recovery.svg | awk '{{print $1}}')" = "{welcome_recovery_art_sha256}"
+test "$(sha256sum /tmp/welcome-gaming.svg | awk '{{print $1}}')" = "{welcome_gaming_art_sha256}"
 DECK_ID=$(awk -F: '$1 == "deck" {{print $3 ":" $4}}' "$ROOT/etc/passwd")
 test -n "$DECK_ID"
 test "$(printf '%s\n' "$DECK_ID" | wc -l | tr -d ' ')" = 1
@@ -2632,7 +2680,7 @@ if test -e "$ROOT/usr/lib/opemos-install-media/support"; then
 else
   sudo install -d -m 0755 -o root -g root "$ROOT/usr/lib/opemos-install-media/support"
 fi
-for DIRECTORY in "$ROOT/usr/share" "$ROOT/usr/share/opemos-install-media" "$ROOT/usr/share/opemos-install-media/ui" "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0"; do
+for DIRECTORY in "$ROOT/usr/share" "$ROOT/usr/share/opemos-install-media" "$ROOT/usr/share/opemos-install-media/ui" "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0" "$ROOT/usr/share/opemos-install-media/ui/welcome" "$ROOT/usr/share/opemos-install-media/ui/welcome/assets"; do
   if test -e "$DIRECTORY"; then
     test -d "$DIRECTORY"
     test ! -L "$DIRECTORY"
@@ -2641,6 +2689,7 @@ for DIRECTORY in "$ROOT/usr/share" "$ROOT/usr/share/opemos-install-media" "$ROOT
   fi
 done
 sudo install -m 0755 -o root -g root /tmp/opemos-install-helper "$ROOT/usr/lib/opemos-install-media/opemos-install-helper"
+sudo install -m 0755 -o root -g root /tmp/welcome_server.py "$ROOT/usr/lib/opemos-install-media/welcome_server.py"
 sudo python3 /tmp/patch_repair_device.py "$ROOT/home/deck/tools/repair_device.sh" "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 sudo chown root:root "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 sudo chmod 0755 "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
@@ -2650,27 +2699,35 @@ printf '%s\n' '{nvidia_version}' | sudo tee "$ROOT/usr/lib/opemos-install-media/
 sudo chown root:root "$ROOT/usr/lib/opemos-install-media/support-revision" "$ROOT/usr/lib/opemos-install-media/nvidia-version"
 sudo chmod 0644 "$ROOT/usr/lib/opemos-install-media/support-revision" "$ROOT/usr/lib/opemos-install-media/nvidia-version"
 sudo install -m 0644 -o root -g root /tmp/gtk.css "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css"
+sudo install -m 0644 -o root -g root /tmp/welcome-index.html "$ROOT/usr/share/opemos-install-media/ui/welcome/index.html"
+sudo install -m 0644 -o root -g root /tmp/welcome-app.css "$ROOT/usr/share/opemos-install-media/ui/welcome/app.css"
+sudo install -m 0644 -o root -g root /tmp/welcome-app.js "$ROOT/usr/share/opemos-install-media/ui/welcome/app.js"
+sudo install -m 0644 -o root -g root /tmp/opemos.svg "$ROOT/usr/share/opemos-install-media/ui/welcome/opemos.svg"
+sudo install -m 0644 -o root -g root /tmp/welcome-install.svg "$ROOT/usr/share/opemos-install-media/ui/welcome/assets/install.svg"
+sudo install -m 0644 -o root -g root /tmp/welcome-recovery.svg "$ROOT/usr/share/opemos-install-media/ui/welcome/assets/recovery.svg"
+sudo install -m 0644 -o root -g root /tmp/welcome-gaming.svg "$ROOT/usr/share/opemos-install-media/ui/welcome/assets/gaming.svg"
 sudo install -m 0755 /tmp/opemos-rollback-last-update "$ROOT/home/deck/tools/opemos-rollback-last-update"
-sudo install -m 0755 /tmp/OPEMOS-Rollback.desktop "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
+sudo rm -f "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
 sudo install -m 0755 /tmp/open-opemos-welcome "$ROOT/home/deck/tools/open-opemos-welcome"
 sudo install -m 0644 /tmp/Open-OPEMOS.desktop "$ROOT/home/deck/Desktop/Open-OPEMOS.desktop"
 sudo install -m 0644 /tmp/Open-OPEMOS.desktop "$ROOT/home/deck/.config/autostart/Open-OPEMOS.desktop"
 sudo install -m 0644 /tmp/opemos.svg "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg"
 sudo chown "$DECK_ID" \
   "$ROOT/home/deck/tools/opemos-rollback-last-update" \
-  "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop" \
   "$ROOT/home/deck/tools/open-opemos-welcome" \
   "$ROOT/home/deck/Desktop/Open-OPEMOS.desktop" \
   "$ROOT/home/deck/.config/autostart/Open-OPEMOS.desktop" \
   "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg"
 test "$(sha256sum "$ROOT/home/deck/tools/opemos-rollback-last-update" | awk '{{print $1}}')" = "{recovery_script_sha256}"
-test "$(sha256sum "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop" | awk '{{print $1}}')" = "{recovery_desktop_sha256}"
+test ! -e "$ROOT/home/deck/Desktop/OPEMOS-Rollback.desktop"
 test "$(sha256sum "$ROOT/home/deck/tools/open-opemos-welcome" | awk '{{print $1}}')" = "{welcome_sha256}"
 test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/opemos-install-helper" | awk '{{print $1}}')" = "{welcome_helper_sha256}"
 test "$(sha256sum "$ROOT/home/deck/Desktop/Open-OPEMOS.desktop" | awk '{{print $1}}')" = "{welcome_desktop_sha256}"
 test "$(sha256sum "$ROOT/home/deck/.config/autostart/Open-OPEMOS.desktop" | awk '{{print $1}}')" = "{welcome_desktop_sha256}"
 test "$(sha256sum "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg" | awk '{{print $1}}')" = "{welcome_icon_sha256}"
 test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/opemos-install-helper")" = root:root:755
+test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/welcome_server.py" | awk '{{print $1}}')" = "{welcome_server_sha256}"
+test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/welcome_server.py")" = root:root:755
 test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/repair_device.sh")" = root:root:755
 grep -Fqx 'DISK="${{STEAMOS_TARGET_DISK:?Open OPEMOS requires an explicit target disk}}"' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 grep -Fq 'OPEMOS_SKIP_JUPITER_FIRMWARE' "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
@@ -2682,6 +2739,21 @@ test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/support-revision"
 test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/nvidia-version")" = root:root:644
 test "$(sha256sum "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css" | awk '{{print $1}}')" = "{welcome_gtk_css_sha256}"
 test "$(stat -c '%U:%G:%a' "$ROOT/usr/share/opemos-install-media/ui/gtk-3.0/gtk.css")" = root:root:644
+for WELCOME_ASSET in \
+  "index.html:{welcome_html_sha256}" \
+  "app.css:{welcome_css_sha256}" \
+  "app.js:{welcome_javascript_sha256}" \
+  "opemos.svg:{welcome_icon_sha256}" \
+  "assets/install.svg:{welcome_install_art_sha256}" \
+  "assets/recovery.svg:{welcome_recovery_art_sha256}" \
+  "assets/gaming.svg:{welcome_gaming_art_sha256}"; do
+  WELCOME_PATH=${{WELCOME_ASSET%%:*}}
+  WELCOME_HASH=${{WELCOME_ASSET#*:}}
+  test -f "$ROOT/usr/share/opemos-install-media/ui/welcome/$WELCOME_PATH"
+  test ! -L "$ROOT/usr/share/opemos-install-media/ui/welcome/$WELCOME_PATH"
+  test "$(sha256sum "$ROOT/usr/share/opemos-install-media/ui/welcome/$WELCOME_PATH" | awk '{{print $1}}')" = "$WELCOME_HASH"
+  test "$(stat -c '%U:%G:%a' "$ROOT/usr/share/opemos-install-media/ui/welcome/$WELCOME_PATH")" = root:root:644
+done
 test -x "$ROOT/usr/lib/opemos-install-media/support/bootstrap/install_recovery_guardian_to_root.sh"
 test -x "$ROOT/usr/lib/opemos-install-media/support/bootstrap/recoveryctl.sh"
 test -x "$ROOT/usr/lib/opemos-install-media/support/bootstrap/launch_desktop_companion.sh"
@@ -2724,13 +2796,19 @@ trap - EXIT INT TERM"#,
         compression_profile = NVIDIA_COMPRESSION_PROFILE,
         mutation_attempt = mutation_attempt,
         recovery_script_sha256 = recovery_script_sha256,
-        recovery_desktop_sha256 = recovery_desktop_sha256,
         welcome_sha256 = welcome_digests.welcome,
         welcome_helper_sha256 = welcome_digests.helper,
         welcome_patcher_sha256 = welcome_digests.patcher,
         welcome_desktop_sha256 = welcome_digests.desktop,
         welcome_icon_sha256 = welcome_digests.icon,
         welcome_gtk_css_sha256 = welcome_digests.gtk_css,
+        welcome_server_sha256 = welcome_digests.server,
+        welcome_html_sha256 = welcome_digests.html,
+        welcome_css_sha256 = welcome_digests.css,
+        welcome_javascript_sha256 = welcome_digests.javascript,
+        welcome_install_art_sha256 = welcome_digests.install_art,
+        welcome_recovery_art_sha256 = welcome_digests.recovery_art,
+        welcome_gaming_art_sha256 = welcome_digests.gaming_art,
         install_media_support_commands = install_media_support_commands,
         support_commit = NVIDIA_SUPPORT_COMMIT,
         nvidia_version = inputs.nvidia_version,

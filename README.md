@@ -18,7 +18,7 @@ inside managed Fedora appliances, independently validates the result, and
 exports a separate image, a removable USB target, or both.
 
 Newly generated media also includes **Open OPEMOS**, an automatically launched
-installation-media welcome application. It makes the destination disk an
+full-screen installation-media welcome application. It makes the destination disk an
 explicit choice, keeps fresh install and reinstall distinct, and revalidates
 the exact physical device before delegating to Valve's installer. After Valve
 finishes, it stages the pinned OPEMOS recovery guardian into both installed A/B

@@ -9,6 +9,8 @@ const helper = readFileSync("builder/welcome/opemos-install-helper", "utf8");
 const welcome = readFileSync("builder/welcome/open-opemos-welcome", "utf8");
 const desktop = readFileSync("builder/welcome/Open-OPEMOS.desktop", "utf8");
 const gtkCss = readFileSync("builder/welcome/gtk.css", "utf8");
+const controller = readFileSync("builder/welcome/welcome_server.py", "utf8");
+const application = readFileSync("builder/welcome/app.js", "utf8");
 
 test("installation-media UI delegates only bounded operations", () => {
   assert.match(desktop, /^Name=Install SteamOS with NVIDIA drivers$/m);
@@ -22,6 +24,8 @@ test("installation-media UI delegates only bounded operations", () => {
   assert.match(welcome, /Diagnostics — review media identity/);
   assert.match(welcome, /last-install-log/);
   assert.match(welcome, /flock -n 8/);
+  assert.match(welcome, /--start-fullscreen/);
+  assert.match(welcome, /welcome_server\.py/);
   assert.match(welcome, /TRUE shutdown/);
   assert.match(welcome, /FALSE restart/);
   assert.match(welcome, /restart\) systemctl reboot/);
@@ -29,6 +33,11 @@ test("installation-media UI delegates only bounded operations", () => {
   assert.match(gtkCss, /linear-gradient\(to right, @opemos_blue, @opemos_green\)/);
   assert.doesNotMatch(welcome, /\beval\b/);
   assert.doesNotMatch(helper, /\beval\b/);
+  assert.match(controller, /127\.0\.0\.1/);
+  assert.match(controller, /X-OPEMOS-Token/);
+  assert.match(controller, /self\.headers\.get\("Origin"\)/);
+  assert.doesNotMatch(controller, /shell\s*=\s*True/);
+  assert.match(application, /The installer cannot close while disk mutation is active/);
 });
 
 test("install helper binds and revalidates a physical device identity", () => {

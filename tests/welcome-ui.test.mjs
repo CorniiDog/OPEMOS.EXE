@@ -4,36 +4,36 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const launcher = readFileSync("test_welcome_macos.sh", "utf8");
-const html = readFileSync("builder/welcome/preview.html", "utf8");
-const css = readFileSync("builder/welcome/preview.css", "utf8");
-const javascript = readFileSync("builder/welcome/preview.js", "utf8");
+const html = readFileSync("builder/welcome/index.html", "utf8");
+const css = readFileSync("builder/welcome/app.css", "utf8");
+const javascript = readFileSync("builder/welcome/app.js", "utf8");
+const server = readFileSync("builder/welcome/welcome_server.py", "utf8");
 const illustrations = ["install", "recovery", "gaming"].map((name) =>
   readFileSync(`builder/welcome/assets/${name}.svg`, "utf8"));
 
-test("macOS welcome preview has a print-only non-GUI test path", () => {
+test("macOS welcome UI has a print-only non-GUI test path", () => {
   const result = spawnSync("bash", ["test_welcome_macos.sh"], {
     cwd: process.cwd(),
     encoding: "utf8",
     env: { ...process.env, OPEMOS_GRAPHICAL_TEST_PRINT_ONLY: "1" },
   });
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /builder\/welcome\/preview\.html\s*$/);
+  assert.match(result.stdout, /welcome_server\.py --mock --ui-root .*builder\/welcome/);
   assert.equal(result.stderr, "");
 });
 
-test("graphical preview cannot reach disks, privileges, installers, or QEMU", () => {
-  const completePreview = `${launcher}\n${html}\n${css}\n${javascript}`;
-  assert.doesNotMatch(completePreview, /\bsudo\b/);
-  assert.doesNotMatch(completePreview, /diskutil|lsblk|blockdev|\/dev\/rdisk/);
-  assert.doesNotMatch(completePreview, /qemu-system|repair_device|opemos-install-helper/);
-  assert.doesNotMatch(completePreview, /fetch\s*\(|XMLHttpRequest|WebSocket/);
-  assert.match(launcher, /^open "\$PREVIEW"$/m);
+test("macOS graphical test selects the same frontend through a safe mock controller", () => {
+  assert.match(launcher, /welcome_server\.py/);
+  assert.match(launcher, /--mock/);
+  assert.match(launcher, /--start-fullscreen/);
   assert.match(launcher, /No disks, privileges, QEMU processes, or installers are used/);
+  assert.match(server, /if self\.mock:/);
+  assert.match(server, /Synthetic SteamOS target/);
+  assert.doesNotMatch(javascript, /\bsudo\b|qemu-system|diskutil|lsblk|blockdev/);
 });
 
-test("preview covers the welcome workflow and clearly labels synthetic state", () => {
-  assert.match(html, /Safe simulation/);
-  assert.match(html, /physical disks and privileged helpers are unreachable/);
+test("shared welcome UI covers the workflow and clearly labels synthetic state", () => {
+  assert.match(html, /Starting…/);
   assert.match(html, /SteamOS with NVIDIA drivers/);
   assert.match(html, /MAINTAINED BY OPEMOS/);
   assert.match(javascript, /Install SteamOS with NVIDIA drivers/);
@@ -41,13 +41,15 @@ test("preview covers the welcome workflow and clearly labels synthetic state", (
   assert.doesNotMatch(`${html}\n${javascript}`, /Welcome to OPEMOS|OPEMOS is ready to boot/);
   assert.match(javascript, /Recovery simulation/);
   assert.match(javascript, /Installation-media diagnostics/);
-  assert.match(javascript, /Do not disconnect the target/);
+  assert.match(javascript, /Do not power off the computer or disconnect either drive/);
   assert.match(javascript, /ERASE/);
   assert.match(javascript, /REINSTALL/);
   assert.match(javascript, /event\.key === "Enter"/);
   assert.match(javascript, /Shut Down is recommended/);
-  assert.match(javascript, /simulate-restart/);
-  assert.match(javascript, /simulate-shutdown/);
+  assert.match(javascript, /power\("restart"\)/);
+  assert.match(javascript, /power\("shutdown"\)/);
+  assert.match(javascript, /\/api\/install/);
+  assert.match(javascript, /\/api\/close/);
   assert.match(javascript, /assets\/install\.svg/);
   assert.match(javascript, /assets\/recovery\.svg/);
   assert.match(javascript, /assets\/gaming\.svg/);

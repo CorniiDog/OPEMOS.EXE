@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Version=1.0
-Name=Roll Back Last SteamOS Update
-Comment=Select a previously working NVIDIA-ready SteamOS A/B slot
-Icon=system-reboot
-Terminal=true
-Exec=sudo /home/deck/tools/opemos-rollback-last-update
-Categories=System;
