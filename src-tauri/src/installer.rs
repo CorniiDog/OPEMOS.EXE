@@ -1478,6 +1478,86 @@ pub(crate) fn support_install_failure_message(document: &SupportInstallResult) -
             }
         }
     }
+    if let Some(verification) = document
+        .module_verification
+        .as_ref()
+        .filter(|value| value.get("status").and_then(serde_json::Value::as_str) == Some("failed"))
+    {
+        let bytes = serde_json::to_vec(verification).unwrap_or_default();
+        if crate::core_contracts::validate_core_installer_module_verification_document(&bytes)
+            == Ok(false)
+        {
+            if let Some(mismatches) = verification
+                .get("moduleMismatches")
+                .and_then(serde_json::Value::as_array)
+            {
+                for mismatch in mismatches {
+                    let name = mismatch
+                        .get("moduleName")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown module");
+                    let fields = mismatch
+                        .get("invalidFields")
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    details.push(format!("module {name} failed verification: {fields}"));
+                }
+            }
+        } else {
+            details.push("structured module-verification diagnostics were malformed".into());
+        }
+    }
+    if let Some(verification) = document
+        .userspace_verification
+        .as_ref()
+        .filter(|value| value.get("status").and_then(serde_json::Value::as_str) == Some("failed"))
+    {
+        let bytes = serde_json::to_vec(verification).unwrap_or_default();
+        if crate::core_contracts::validate_core_installer_userspace_verification_document(&bytes)
+            == Ok(false)
+        {
+            if let Some(mismatches) = verification
+                .get("packageMismatches")
+                .and_then(serde_json::Value::as_array)
+            {
+                for mismatch in mismatches {
+                    let name = mismatch
+                        .get("packageName")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown package");
+                    let fields = mismatch
+                        .get("invalidFields")
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let affected = mismatch
+                        .get("affectedEntries")
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>();
+                    let affected = if affected.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", affected.join(", "))
+                    };
+                    details.push(format!(
+                        "package {name} failed verification: {fields}{affected}"
+                    ));
+                }
+            }
+        } else {
+            details.push("structured userspace-verification diagnostics were malformed".into());
+        }
+    }
     let summary = format!(
         "Offline installer validation did not succeed: {} ({}): {}",
         document.status, document.reason, document.message
@@ -1496,7 +1576,7 @@ fn exact_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn safe_initramfs_path(value: &str) -> bool {
+pub(crate) fn safe_initramfs_path(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 1024
         && !value.starts_with('/')
@@ -1755,22 +1835,17 @@ pub(crate) fn validate_support_module_verification_record(
     Ok(())
 }
 
-fn validate_support_userspace_verification(
+pub(crate) fn validate_support_userspace_verification(
     verification: &SupportUserspaceVerification,
     validation: &SupportInstallValidation,
     expected_nvidia: &str,
 ) -> Result<(), String> {
-    if verification.schema_version != 1
-        || verification.status != "verified"
-        || verification.reason != "installed_userspace_verified"
-        || verification.packages.len() != validation.packages.len()
-        || verification.pacman_database.path != "/usr/lib/holo/pacmandb"
-        || verification.pacman_database.status != "verified"
-        || !verification.pacman_database.consistency_verified
-        || verification.pacman_database.verified_package_count != verification.packages.len() as u64
-        || verification.gsp_firmware.status != "verified"
+    validate_support_userspace_verification_record(verification)?;
+    if verification.packages.len() != validation.packages.len()
+        || verification.validation_binding.userspace_lock_sha256 != validation.userspace_lock.sha256
+        || verification.validation_binding.provenance_sha256 != validation.provenance_sha256
+        || verification.pacman_database.path != validation.pacman_database.path
         || verification.gsp_firmware.version != expected_nvidia
-        || !(1..=16).contains(&verification.gsp_firmware.target_relative_files.len())
     {
         return Err(
             "Offline installer returned incomplete userspace verification evidence.".into(),
@@ -1783,18 +1858,97 @@ fn validate_support_userspace_verification(
             .iter()
             .find(|candidate| candidate.name == package.package_name)
             .ok_or("Offline userspace verification returned an unexpected package.")?;
+        if !package_names.insert(package.package_name.as_str())
+            || package.package_filename != expected.filename
+            || package.version != expected.full_version
+            || package.package_sha256 != expected.sha256
+            || !package_relations_match(&package.dependencies, &expected.dependencies)
+            || !package_relations_match(&package.provides, &expected.provides)
+        {
+            return Err(
+                "Offline installer userspace verification evidence is inconsistent.".into(),
+            );
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_support_userspace_verification_record(
+    verification: &SupportUserspaceVerification,
+) -> Result<(), String> {
+    let safe_package_token = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 256
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"@._+:-".contains(&byte))
+    };
+    let safe_plain_filename = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 255
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"@._+~:-".contains(&byte))
+    };
+    let safe_relations = |relations: &[String]| {
+        let mut seen = HashSet::new();
+        relations.len() <= 64
+            && relations.iter().all(|relation| {
+                !relation.is_empty()
+                    && relation.len() <= 256
+                    && relation
+                        .bytes()
+                        .all(|byte| byte.is_ascii() && !byte.is_ascii_control())
+                    && seen.insert(relation.as_str())
+            })
+    };
+    if verification.schema_version != 1
+        || verification.status != "verified"
+        || verification.reason != "installed_userspace_verified"
+        || !exact_sha256(&verification.validation_binding.userspace_lock_sha256)
+        || !exact_sha256(&verification.validation_binding.provenance_sha256)
+        || !(2..=64).contains(&verification.packages.len())
+        || verification.pacman_database.path != "/usr/lib/holo/pacmandb"
+        || verification.pacman_database.status != "verified"
+        || !verification.pacman_database.consistency_verified
+        || verification.pacman_database.verified_package_count != verification.packages.len() as u64
+        || verification.gsp_firmware.status != "verified"
+        || verification.gsp_firmware.version.len() > 64
+        || !valid_numeric_version(&verification.gsp_firmware.version, 2..=3)
+        || !(1..=16).contains(&verification.gsp_firmware.target_relative_files.len())
+    {
+        return Err(
+            "Offline installer returned incomplete userspace verification evidence.".into(),
+        );
+    }
+    let mut package_names = HashSet::new();
+    for package in &verification.packages {
         let payload_entries = package
+            .directories
+            .checked_add(package.regular_files)
+            .and_then(|value| value.checked_add(package.symlinks))
+            .and_then(|value| value.checked_add(package.hardlinks))
+            .ok_or("Offline userspace verification counters overflowed.")?;
+        let library_entries = package
             .regular_files
             .checked_add(package.symlinks)
             .and_then(|value| value.checked_add(package.hardlinks))
             .ok_or("Offline userspace verification counters overflowed.")?;
-        if !package_names.insert(package.package_name.as_str())
-            || package.version != expected.full_version
-            || package.package_sha256 != expected.sha256
+        if !safe_package_token(&package.package_name)
+            || !package_names.insert(package.package_name.as_str())
+            || !safe_plain_filename(&package.package_filename)
+            || !safe_package_token(&package.version)
             || !exact_sha256(&package.package_sha256)
+            || !safe_relations(&package.dependencies)
+            || !safe_relations(&package.provides)
             || !package.package_query_verified
             || !package.pacman_integrity_verified
             || !package.payload_verified
+            || !package.payload_paths_confined
+            || !package.payload_hashes_verified
+            || !package.payload_modes_verified
+            || !package.payload_ownership_verified
+            || !package.payload_links_verified
             || [
                 package.directories,
                 package.regular_files,
@@ -1804,14 +1958,18 @@ fn validate_support_userspace_verification(
             ]
             .into_iter()
             .any(|count| count > 250_000)
-            || package.shared_libraries > payload_entries
+            || payload_entries == 0
+            || package.shared_libraries > library_entries
         {
             return Err(
                 "Offline installer userspace verification evidence is inconsistent.".into(),
             );
         }
     }
-    let firmware_prefix = format!("usr/lib/firmware/nvidia/{expected_nvidia}/");
+    let firmware_prefix = format!(
+        "usr/lib/firmware/nvidia/{}/",
+        verification.gsp_firmware.version
+    );
     let mut firmware_files = HashSet::new();
     for relative in &verification.gsp_firmware.target_relative_files {
         let basename = relative.rsplit('/').next().unwrap_or_default();
@@ -1823,6 +1981,14 @@ fn validate_support_userspace_verification(
         {
             return Err("Offline installer GSP firmware verification is inconsistent.".into());
         }
+    }
+    if !verification
+        .gsp_firmware
+        .target_relative_files
+        .windows(2)
+        .all(|pair| pair[0] < pair[1])
+    {
+        return Err("Offline installer GSP firmware verification is inconsistent.".into());
     }
     Ok(())
 }
@@ -1939,8 +2105,39 @@ pub(crate) fn validate_nvidia_install_result(
         .clone()
         .ok_or("Offline installer result omitted its initramfs workspace verification.")?;
     let initramfs_verification = document.initramfs_verification.clone();
-    let module_verification = document.module_verification.clone();
-    let userspace_verification = document.userspace_verification.clone();
+    let module_verification = document
+        .module_verification
+        .clone()
+        .map(|value| {
+            let bytes = serde_json::to_vec(&value)
+                .map_err(|error| format!("Could not read module verification: {error}"))?;
+            if crate::core_contracts::validate_core_installer_module_verification_document(&bytes)
+                != Ok(true)
+            {
+                return Err("Offline installer module verification is malformed.".into());
+            }
+            serde_json::from_value::<SupportModuleVerification>(value).map_err(|error| {
+                format!("Offline installer module verification is invalid: {error}")
+            })
+        })
+        .transpose()?;
+    let userspace_verification = document
+        .userspace_verification
+        .clone()
+        .map(|value| {
+            let bytes = serde_json::to_vec(&value)
+                .map_err(|error| format!("Could not read userspace verification: {error}"))?;
+            if crate::core_contracts::validate_core_installer_userspace_verification_document(
+                &bytes,
+            ) != Ok(true)
+            {
+                return Err("Offline installer userspace verification is malformed.".into());
+            }
+            serde_json::from_value::<SupportUserspaceVerification>(value).map_err(|error| {
+                format!("Offline installer userspace verification is invalid: {error}")
+            })
+        })
+        .transpose()?;
     let payload_receipt = document.payload_receipt.clone();
     if expected_status == "success" {
         let initramfs = document

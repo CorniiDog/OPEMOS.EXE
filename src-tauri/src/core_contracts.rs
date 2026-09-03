@@ -9,6 +9,8 @@ pub(crate) const CORE_INSTALLER_RESULT_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_INSTALLER_VALIDATION_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_INSTALLER_MODULE_VERIFICATION_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_INSTALLER_MODULE_VERIFICATION_DOCUMENT_LIMIT: usize = 1024 * 1024;
+pub(crate) const CORE_INSTALLER_USERSPACE_VERIFICATION_FIXTURE_LIMIT: usize = 512 * 1024;
+pub(crate) const CORE_INSTALLER_USERSPACE_VERIFICATION_DOCUMENT_LIMIT: usize = 256 * 1024;
 pub(crate) const CORE_INSTALLER_PROGRESS_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_PROGRESS_STREAM_LIMIT: usize = 16 * 1024 * 1024;
 const CORE_PROGRESS_PREFIX: &str = "STEAMOS_NVIDIA_PROGRESS ";
@@ -398,6 +400,8 @@ pub(crate) fn parse_core_installer_result_compatibility_fixtures(
     let required_names = HashSet::from([
         "validated-success",
         "mutation-success",
+        "failed-module-diagnostic",
+        "failed-userspace-diagnostic",
         "safe-additive-fields",
         "missing-module-verification",
         "missing-userspace-verification",
@@ -427,6 +431,9 @@ pub(crate) fn parse_core_installer_result_compatibility_fixtures(
         let expected_contract = match case.name.as_str() {
             "validated-success" => (true, Some("validated"), false),
             "mutation-success" | "safe-additive-fields" => (true, Some("success"), false),
+            "failed-module-diagnostic" | "failed-userspace-diagnostic" => {
+                (true, Some("failed"), false)
+            }
             "malformed-json" | "duplicate-json-key" => (false, None, true),
             _ => (false, None, false),
         };
@@ -446,7 +453,7 @@ pub(crate) fn parse_core_installer_result_compatibility_fixtures(
                 raw.is_empty() || raw.len() > CORE_INSTALLER_RESULT_FIXTURE_LIMIT
             })
             || (case.expected.accepted
-                && (!matches!(expected_status, Some("validated" | "success"))
+                && (!matches!(expected_status, Some("validated" | "success" | "failed"))
                     || document_status != expected_status
                     || !has_document))
             || (!case.expected.accepted && expected_status.is_some())
@@ -773,6 +780,11 @@ pub(crate) fn validate_core_installer_module_verification_document(
         .map_err(|error| format!("OPEMOS Core module-verification document is invalid: {error}"))?;
     match value.get("status").and_then(serde_json::Value::as_str) {
         Some("verified") => {
+            if value.get("message").is_some() || value.get("moduleMismatches").is_some() {
+                return Err(
+                    "OPEMOS Core verified-module record contains failure-only fields.".into(),
+                );
+            }
             let verification: SupportModuleVerification =
                 serde_json::from_value(value).map_err(|error| {
                     format!("OPEMOS Core verified-module record is invalid: {error}")
@@ -961,6 +973,335 @@ fn validate_core_module_verification_failure(value: &serde_json::Value) -> Resul
     Ok(())
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerUserspaceVerificationCompatibilityFixtures {
+    pub(crate) schema_version: u32,
+    pub(crate) kind: String,
+    pub(crate) userspace_verification_schema_version: u32,
+    pub(crate) target_nvidia_version: String,
+    pub(crate) validation: Box<SupportInstallValidation>,
+    pub(crate) unfrozen_fields: Vec<String>,
+    pub(crate) limits: CoreInstallerUserspaceVerificationFixtureLimits,
+    pub(crate) cases: Vec<CoreInstallerUserspaceVerificationCompatibilityCase>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerUserspaceVerificationFixtureLimits {
+    pub(crate) max_document_bytes: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerUserspaceVerificationCompatibilityCase {
+    pub(crate) name: String,
+    pub(crate) expected: CoreInstallerUserspaceVerificationExpectation,
+    #[serde(default)]
+    pub(crate) document: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) raw_document: Option<String>,
+    #[serde(default)]
+    pub(crate) document_recipe: Option<CoreInstallerUserspaceVerificationDocumentRecipe>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerUserspaceVerificationExpectation {
+    pub(crate) record_accepted: bool,
+    pub(crate) success_proof_accepted: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerUserspaceVerificationDocumentRecipe {
+    pub(crate) kind: String,
+    pub(crate) base_case: String,
+    pub(crate) padding_bytes: usize,
+}
+
+pub(crate) fn parse_core_installer_userspace_verification_fixtures(
+    bytes: &[u8],
+) -> Result<CoreInstallerUserspaceVerificationCompatibilityFixtures, String> {
+    if bytes.is_empty() || bytes.len() > CORE_INSTALLER_USERSPACE_VERIFICATION_FIXTURE_LIMIT {
+        return Err(
+            "OPEMOS Core userspace-verification fixtures are empty or exceed 512 KiB.".into(),
+        );
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core userspace-verification fixtures")?;
+    let fixtures: CoreInstallerUserspaceVerificationCompatibilityFixtures =
+        serde_json::from_slice(bytes).map_err(|error| {
+            format!("OPEMOS Core userspace-verification fixtures are invalid JSON: {error}")
+        })?;
+    let record_accepted = HashSet::from([
+        "valid-normalized-success",
+        "safe-additive-top-level",
+        "valid-failure-diagnostic",
+        "missing-package",
+        "extra-package",
+        "lock-binding-mismatch",
+        "provenance-binding-mismatch",
+        "filename-mismatch",
+        "version-mismatch",
+        "package-hash-mismatch",
+        "dependencies-mismatch",
+        "provides-mismatch",
+        "reordered-relations",
+        "firmware-version-mismatch",
+    ]);
+    let success_accepted = HashSet::from([
+        "valid-normalized-success",
+        "safe-additive-top-level",
+        "reordered-relations",
+    ]);
+    let required_names = record_accepted
+        .iter()
+        .copied()
+        .chain([
+            "duplicate-package",
+            "query-not-verified",
+            "pacman-integrity-not-verified",
+            "payload-not-verified",
+            "database-not-consistent",
+            "database-count-mismatch",
+            "database-path-mismatch",
+            "payload-path-unconfined",
+            "payload-hash-not-verified",
+            "payload-mode-not-verified",
+            "payload-ownership-not-verified",
+            "payload-link-not-verified",
+            "duplicate-dependency-relation",
+            "duplicate-provider-relation",
+            "unsafe-package-filename",
+            "oversized-relations",
+            "firmware-path-escape",
+            "missing-firmware",
+            "duplicate-firmware-path",
+            "non-gsp-firmware-name",
+            "zero-payload-entries",
+            "shared-library-count-inconsistent",
+            "unknown-package-field",
+            "malformed-json",
+            "duplicate-json-key",
+            "non-finite-json",
+            "oversized-document",
+        ])
+        .collect::<HashSet<_>>();
+    if fixtures.schema_version != 1
+        || fixtures.kind != "opemos-installer-userspace-verification-compatibility-fixtures"
+        || fixtures.userspace_verification_schema_version != 1
+        || !valid_nvidia_version(&fixtures.target_nvidia_version)
+        || fixtures.unfrozen_fields != ["message"]
+        || fixtures.limits.max_document_bytes
+            != CORE_INSTALLER_USERSPACE_VERIFICATION_DOCUMENT_LIMIT
+        || !(1..=64).contains(&fixtures.cases.len())
+        || validate_support_validation_contract(&fixtures.validation).is_err()
+    {
+        return Err("OPEMOS Core userspace-verification fixture envelope is invalid.".into());
+    }
+    let mut names = HashSet::new();
+    for case in &fixtures.cases {
+        let variants = usize::from(case.document.is_some())
+            + usize::from(case.raw_document.is_some())
+            + usize::from(case.document_recipe.is_some());
+        let expected_variant = match case.name.as_str() {
+            "malformed-json" | "duplicate-json-key" | "non-finite-json" => "raw",
+            "oversized-document" => "recipe",
+            _ => "document",
+        };
+        if !safe_kebab_token(&case.name, 64)
+            || !names.insert(case.name.as_str())
+            || case.expected.record_accepted != record_accepted.contains(case.name.as_str())
+            || case.expected.success_proof_accepted != success_accepted.contains(case.name.as_str())
+            || (case.expected.success_proof_accepted && !case.expected.record_accepted)
+            || variants != 1
+            || (case.document.is_some()) != (expected_variant == "document")
+            || (case.raw_document.is_some()) != (expected_variant == "raw")
+            || (case.document_recipe.is_some()) != (expected_variant == "recipe")
+            || case.raw_document.as_ref().is_some_and(|raw| {
+                raw.is_empty() || raw.len() > CORE_INSTALLER_USERSPACE_VERIFICATION_DOCUMENT_LIMIT
+            })
+        {
+            return Err(
+                "OPEMOS Core userspace-verification fixture case is unsafe or incomplete.".into(),
+            );
+        }
+        if let Some(recipe) = &case.document_recipe {
+            if case.name != "oversized-document"
+                || recipe.kind != "top-level-padding"
+                || recipe.base_case != "valid-normalized-success"
+                || recipe.padding_bytes != CORE_INSTALLER_USERSPACE_VERIFICATION_DOCUMENT_LIMIT
+            {
+                return Err("OPEMOS Core userspace-verification fixture recipe is invalid.".into());
+            }
+        }
+    }
+    if names != required_names {
+        return Err(
+            "OPEMOS Core userspace-verification fixture matrix omits a required safety case."
+                .into(),
+        );
+    }
+    Ok(fixtures)
+}
+
+pub(crate) fn validate_core_installer_userspace_verification_document(
+    bytes: &[u8],
+) -> Result<bool, String> {
+    if bytes.is_empty() || bytes.len() > CORE_INSTALLER_USERSPACE_VERIFICATION_DOCUMENT_LIMIT {
+        return Err("OPEMOS Core userspace-verification document is empty or excessive.".into());
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core userspace-verification document")?;
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|error| {
+        format!("OPEMOS Core userspace-verification document is invalid: {error}")
+    })?;
+    match value.get("status").and_then(serde_json::Value::as_str) {
+        Some("verified") => {
+            if value.get("message").is_some() || value.get("packageMismatches").is_some() {
+                return Err(
+                    "OPEMOS Core verified-userspace record contains failure-only fields.".into(),
+                );
+            }
+            let verification: SupportUserspaceVerification = serde_json::from_value(value)
+                .map_err(|error| {
+                    format!("OPEMOS Core verified-userspace record is invalid: {error}")
+                })?;
+            validate_support_userspace_verification_record(&verification)?;
+            Ok(true)
+        }
+        Some("failed") => {
+            validate_core_userspace_verification_failure(&value)?;
+            Ok(false)
+        }
+        _ => Err("OPEMOS Core userspace-verification status is invalid.".into()),
+    }
+}
+
+fn validate_core_userspace_verification_failure(value: &serde_json::Value) -> Result<(), String> {
+    const INVALID_FIELDS: [&str; 14] = [
+        "presence",
+        "filename",
+        "version",
+        "packageSha256",
+        "query",
+        "databaseIntegrity",
+        "payloadPath",
+        "payloadHash",
+        "payloadMode",
+        "payloadOwnership",
+        "payloadLink",
+        "dependencies",
+        "provides",
+        "firmware",
+    ];
+    let object = value
+        .as_object()
+        .ok_or("OPEMOS Core userspace-verification failure is not an object.")?;
+    let required_keys = HashSet::from([
+        "schemaVersion",
+        "status",
+        "reason",
+        "message",
+        "packageMismatches",
+    ]);
+    let keys = object.keys().map(String::as_str).collect::<HashSet<_>>();
+    if !required_keys.is_subset(&keys)
+        || [
+            "validationBinding",
+            "pacmanDatabase",
+            "packages",
+            "gspFirmware",
+        ]
+        .iter()
+        .any(|field| object.contains_key(*field))
+        || object
+            .get("schemaVersion")
+            .and_then(serde_json::Value::as_u64)
+            != Some(1)
+        || object.get("status").and_then(serde_json::Value::as_str) != Some("failed")
+        || object.get("reason").and_then(serde_json::Value::as_str)
+            != Some("installed_userspace_mismatch")
+        || object
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|message| message.is_empty() || message.len() > 2_048)
+    {
+        return Err("OPEMOS Core userspace-verification failure identity is invalid.".into());
+    }
+    let mismatches = object
+        .get("packageMismatches")
+        .and_then(serde_json::Value::as_array)
+        .filter(|mismatches| (1..=64).contains(&mismatches.len()))
+        .ok_or("OPEMOS Core userspace-verification mismatch list is invalid.")?;
+    let mut package_names = HashSet::new();
+    for mismatch in mismatches {
+        let mismatch = mismatch
+            .as_object()
+            .ok_or("OPEMOS Core userspace mismatch is not an object.")?;
+        if mismatch.keys().map(String::as_str).collect::<HashSet<_>>()
+            != HashSet::from(["packageName", "invalidFields", "affectedEntries"])
+        {
+            return Err("OPEMOS Core userspace mismatch has unknown fields.".into());
+        }
+        let package_name = mismatch
+            .get("packageName")
+            .and_then(serde_json::Value::as_str)
+            .filter(|name| {
+                !name.is_empty()
+                    && name.len() <= 256
+                    && name
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"@._+:-".contains(&byte))
+            })
+            .ok_or("OPEMOS Core userspace mismatch package name is invalid.")?;
+        if !package_names.insert(package_name) {
+            return Err("OPEMOS Core userspace mismatch package identity is duplicated.".into());
+        }
+        let invalid_fields = mismatch
+            .get("invalidFields")
+            .and_then(serde_json::Value::as_array)
+            .filter(|fields| (1..=INVALID_FIELDS.len()).contains(&fields.len()))
+            .ok_or("OPEMOS Core userspace mismatch invalid-field list is invalid.")?;
+        let mut prior_index = None;
+        for field in invalid_fields {
+            let field = field
+                .as_str()
+                .ok_or("OPEMOS Core userspace mismatch field is invalid.")?;
+            let index = INVALID_FIELDS
+                .iter()
+                .position(|candidate| *candidate == field)
+                .ok_or("OPEMOS Core userspace mismatch field is unknown.")?;
+            if prior_index.is_some_and(|prior| index <= prior) {
+                return Err("OPEMOS Core userspace mismatch fields are not canonical.".into());
+            }
+            prior_index = Some(index);
+        }
+        let entries = mismatch
+            .get("affectedEntries")
+            .and_then(serde_json::Value::as_array)
+            .filter(|entries| entries.len() <= 16)
+            .ok_or("OPEMOS Core userspace mismatch affected entries are invalid.")?;
+        let mut prior_entry: Option<&str> = None;
+        for entry in entries {
+            let entry = entry
+                .as_str()
+                .filter(|entry| {
+                    safe_initramfs_path(entry)
+                        && entry.len() <= 512
+                        && entry
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || b"._+~/-".contains(&byte))
+                })
+                .ok_or("OPEMOS Core userspace mismatch affected entry is unsafe.")?;
+            if prior_entry.is_some_and(|prior| entry <= prior) {
+                return Err("OPEMOS Core userspace mismatch entries are not canonical.".into());
+            }
+            prior_entry = Some(entry);
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CoreInstallerProgressCompatibilityFixtures {
@@ -1141,7 +1482,8 @@ fn valid_three_part_version(value: &str) -> bool {
 
 fn valid_nvidia_version(value: &str) -> bool {
     let parts = value.split('.').collect::<Vec<_>>();
-    (2..=3).contains(&parts.len())
+    value.len() <= 64
+        && (2..=3).contains(&parts.len())
         && parts
             .iter()
             .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
@@ -2469,21 +2811,56 @@ mod tests {
                 Some(result.status.as_str()),
                 case.expected.status.as_deref()
             );
-            assert!(matches!(
-                result.validation,
-                Some(SupportInstallValidationDocument::Verified(_))
-            ));
-            assert!(result.initramfs_workspace.is_some());
             if result.status == "success" {
+                assert!(matches!(
+                    result.validation,
+                    Some(SupportInstallValidationDocument::Verified(_))
+                ));
+                assert!(result.initramfs_workspace.is_some());
                 assert!(result.module_verification.is_some());
                 assert!(result.userspace_verification.is_some());
                 assert!(result.initramfs_verification.is_some());
                 assert!(result.payload_receipt.is_some());
-            } else {
+            } else if result.status == "validated" {
+                assert!(matches!(
+                    result.validation,
+                    Some(SupportInstallValidationDocument::Verified(_))
+                ));
+                assert!(result.initramfs_workspace.is_some());
                 assert!(result.module_verification.is_none());
                 assert!(result.userspace_verification.is_none());
                 assert!(result.initramfs_verification.is_none());
                 assert!(result.payload_receipt.is_none());
+            } else if case.name == "failed-module-diagnostic" {
+                assert!(result.validation.is_none());
+                assert!(result.initramfs_workspace.is_none());
+                assert!(support_install_failure_message(&result)
+                    .contains("module nvidia-drm.ko failed verification"));
+                let document = result
+                    .module_verification
+                    .as_ref()
+                    .expect("failed module diagnostic");
+                assert!(!validate_core_installer_module_verification_document(
+                    &serde_json::to_vec(document).unwrap()
+                )
+                .unwrap());
+                assert!(result.userspace_verification.is_none());
+            } else if case.name == "failed-userspace-diagnostic" {
+                assert!(result.validation.is_none());
+                assert!(result.initramfs_workspace.is_none());
+                assert!(support_install_failure_message(&result)
+                    .contains("package nvidia-utils failed verification"));
+                let document = result
+                    .userspace_verification
+                    .as_ref()
+                    .expect("failed userspace diagnostic");
+                assert!(!validate_core_installer_userspace_verification_document(
+                    &serde_json::to_vec(document).unwrap()
+                )
+                .unwrap());
+                assert!(result.module_verification.is_none());
+            } else {
+                panic!("unexpected accepted installer-result fixture {}", case.name);
             }
         }
 
@@ -2712,9 +3089,121 @@ mod tests {
             &serde_json::to_vec(&unsafe_target_kernel).unwrap()
         )
         .is_err());
+        let mut cross_variant = base_document;
+        cross_variant["message"] = serde_json::json!("failure-only");
+        assert!(validate_core_installer_module_verification_document(
+            &serde_json::to_vec(&cross_variant).unwrap()
+        )
+        .is_err());
         assert!(parse_core_installer_module_verification_fixtures(&vec![
             b' ';
             CORE_INSTALLER_MODULE_VERIFICATION_FIXTURE_LIMIT
+                + 1
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn local_successor_userspace_verification_fixtures_match_rust_semantics() {
+        let Some(repository) = core_repository() else {
+            eprintln!(
+                "skipping local successor userspace-verification fixtures: sibling Core repository is absent"
+            );
+            return;
+        };
+        let generator =
+            repository.join("lib/generate_installer_userspace_verification_fixtures.py");
+        let generate = || {
+            let output = Command::new("python3")
+                .arg(&generator)
+                .current_dir(&repository)
+                .output()
+                .expect("run Core userspace-verification fixture generator");
+            assert!(output.status.success());
+            assert!(output.stderr.is_empty());
+            output.stdout
+        };
+        let first = generate();
+        assert_eq!(
+            first,
+            generate(),
+            "Core userspace-verification fixtures were nondeterministic"
+        );
+        let fixtures = parse_core_installer_userspace_verification_fixtures(&first)
+            .expect("consume bounded Core userspace-verification fixtures");
+        let base_document = fixtures
+            .cases
+            .iter()
+            .find(|case| case.name == "valid-normalized-success")
+            .and_then(|case| case.document.clone())
+            .expect("userspace-verification fixture base document");
+        for case in &fixtures.cases {
+            let document_bytes = if let Some(document) = &case.document {
+                serde_json::to_vec(document).expect("serialize userspace-verification fixture")
+            } else if let Some(raw) = &case.raw_document {
+                raw.as_bytes().to_vec()
+            } else {
+                let recipe = case
+                    .document_recipe
+                    .as_ref()
+                    .expect("userspace-verification fixture recipe");
+                let mut document = base_document.clone();
+                document["padding"] = serde_json::Value::String("x".repeat(recipe.padding_bytes));
+                serde_json::to_vec(&document).expect("expand userspace-verification fixture recipe")
+            };
+            let result = validate_core_installer_userspace_verification_document(&document_bytes);
+            assert_eq!(
+                result.is_ok(),
+                case.expected.record_accepted,
+                "Rust userspace-record acceptance diverged for {}: {:?}",
+                case.name,
+                result.as_ref().err()
+            );
+            let success_proof_accepted = result.as_ref().is_ok_and(|verified| *verified)
+                && serde_json::from_slice::<SupportUserspaceVerification>(&document_bytes)
+                    .ok()
+                    .is_some_and(|verification| {
+                        validate_support_userspace_verification(
+                            &verification,
+                            &fixtures.validation,
+                            &fixtures.target_nvidia_version,
+                        )
+                        .is_ok()
+                    });
+            assert_eq!(
+                success_proof_accepted, case.expected.success_proof_accepted,
+                "Rust userspace success-proof acceptance diverged for {}",
+                case.name
+            );
+        }
+
+        let mut relabelled: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        relabelled["cases"][0]["expected"]["successProofAccepted"] = serde_json::json!(false);
+        assert!(parse_core_installer_userspace_verification_fixtures(
+            &serde_json::to_vec(&relabelled).unwrap()
+        )
+        .is_err());
+        let mut missing_case: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        missing_case["cases"].as_array_mut().unwrap().pop();
+        assert!(parse_core_installer_userspace_verification_fixtures(
+            &serde_json::to_vec(&missing_case).unwrap()
+        )
+        .is_err());
+        let mut unsafe_target: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        unsafe_target["targetNvidiaVersion"] = serde_json::json!("../unsafe");
+        assert!(parse_core_installer_userspace_verification_fixtures(
+            &serde_json::to_vec(&unsafe_target).unwrap()
+        )
+        .is_err());
+        let mut cross_variant = base_document;
+        cross_variant["packageMismatches"] = serde_json::json!([]);
+        assert!(validate_core_installer_userspace_verification_document(
+            &serde_json::to_vec(&cross_variant).unwrap()
+        )
+        .is_err());
+        assert!(parse_core_installer_userspace_verification_fixtures(&vec![
+            b' ';
+            CORE_INSTALLER_USERSPACE_VERIFICATION_FIXTURE_LIMIT
                 + 1
         ])
         .is_err());

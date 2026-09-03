@@ -911,8 +911,8 @@ pub(crate) struct SupportInstallResult {
     pub(crate) inputs: SupportInstallInputNames,
     pub(crate) cleanup: SupportInstallCleanup,
     pub(crate) validation: Option<SupportInstallValidationDocument>,
-    pub(crate) module_verification: Option<SupportModuleVerification>,
-    pub(crate) userspace_verification: Option<SupportUserspaceVerification>,
+    pub(crate) module_verification: Option<serde_json::Value>,
+    pub(crate) userspace_verification: Option<serde_json::Value>,
     pub(crate) initramfs_workspace: Option<SupportInitramfsWorkspace>,
     pub(crate) initramfs_verification: Option<SupportInitramfsVerification>,
     pub(crate) payload_receipt: Option<SupportPayloadReceipt>,
@@ -952,20 +952,36 @@ pub(crate) struct SupportUserspaceVerification {
     pub(crate) schema_version: u32,
     pub(crate) status: String,
     pub(crate) reason: String,
+    pub(crate) validation_binding: SupportUserspaceValidationBinding,
     pub(crate) packages: Vec<SupportVerifiedUserspacePackage>,
     pub(crate) pacman_database: SupportVerifiedPacmanDatabase,
     pub(crate) gsp_firmware: SupportVerifiedGspFirmware,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SupportUserspaceValidationBinding {
+    pub(crate) userspace_lock_sha256: String,
+    pub(crate) provenance_sha256: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportVerifiedUserspacePackage {
     pub(crate) package_name: String,
+    pub(crate) package_filename: String,
     pub(crate) version: String,
     pub(crate) package_sha256: String,
+    pub(crate) dependencies: Vec<String>,
+    pub(crate) provides: Vec<String>,
     pub(crate) package_query_verified: bool,
     pub(crate) pacman_integrity_verified: bool,
     pub(crate) payload_verified: bool,
+    pub(crate) payload_paths_confined: bool,
+    pub(crate) payload_hashes_verified: bool,
+    pub(crate) payload_modes_verified: bool,
+    pub(crate) payload_ownership_verified: bool,
+    pub(crate) payload_links_verified: bool,
     pub(crate) directories: u64,
     pub(crate) regular_files: u64,
     pub(crate) symlinks: u64,
@@ -974,7 +990,7 @@ pub(crate) struct SupportVerifiedUserspacePackage {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportVerifiedPacmanDatabase {
     pub(crate) path: String,
     pub(crate) status: String,
@@ -983,7 +999,7 @@ pub(crate) struct SupportVerifiedPacmanDatabase {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportVerifiedGspFirmware {
     pub(crate) status: String,
     pub(crate) version: String,

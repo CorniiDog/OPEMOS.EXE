@@ -94,7 +94,7 @@ mod tests {
     fn successful_install_proofs(
         kernel: &str,
         nvidia: &str,
-        packages: &[SupportInstallPackage],
+        validation: &SupportInstallValidation,
     ) -> (
         SupportModuleVerification,
         SupportUserspaceVerification,
@@ -133,15 +133,24 @@ mod tests {
                 invalid_fields: Vec::new(),
             })
             .collect();
-        let verified_packages = packages
+        let verified_packages = validation
+            .packages
             .iter()
             .map(|package| SupportVerifiedUserspacePackage {
                 package_name: package.name.clone(),
+                package_filename: package.filename.clone(),
                 version: package.full_version.clone(),
                 package_sha256: package.sha256.clone(),
+                dependencies: package.dependencies.clone(),
+                provides: package.provides.clone(),
                 package_query_verified: true,
                 pacman_integrity_verified: true,
                 payload_verified: true,
+                payload_paths_confined: true,
+                payload_hashes_verified: true,
+                payload_modes_verified: true,
+                payload_ownership_verified: true,
+                payload_links_verified: true,
                 directories: 1,
                 regular_files: 1,
                 symlinks: 0,
@@ -168,6 +177,10 @@ mod tests {
                 schema_version: 1,
                 status: "verified".into(),
                 reason: "installed_userspace_verified".into(),
+                validation_binding: SupportUserspaceValidationBinding {
+                    userspace_lock_sha256: validation.userspace_lock.sha256.clone(),
+                    provenance_sha256: validation.provenance_sha256.clone(),
+                },
                 pacman_database: SupportVerifiedPacmanDatabase {
                     path: "/usr/lib/holo/pacmandb".into(),
                     status: "verified".into(),
@@ -3445,17 +3458,17 @@ esac
                 .replace("6.16.12-valve-fixture", &inputs.kernel_version));
         }
         successful.initramfs_verification = Some(parse_initramfs_fixture(initramfs));
-        let successful_packages = match successful.validation.as_ref().unwrap() {
-            SupportInstallValidationDocument::Verified(validation) => validation.packages.clone(),
+        let successful_validation = match successful.validation.as_ref().unwrap() {
+            SupportInstallValidationDocument::Verified(validation) => validation,
             SupportInstallValidationDocument::Failed(_) => unreachable!(),
         };
         let (modules, userspace, receipt) = successful_install_proofs(
             &inputs.kernel_version,
             &inputs.nvidia_version,
-            &successful_packages,
+            successful_validation,
         );
-        successful.module_verification = Some(modules);
-        successful.userspace_verification = Some(userspace);
+        successful.module_verification = Some(serde_json::to_value(modules).unwrap());
+        successful.userspace_verification = Some(serde_json::to_value(userspace).unwrap());
         successful.payload_receipt = Some(receipt);
         let installed = validate_nvidia_install_result(
             successful.clone(),
@@ -3512,12 +3525,8 @@ esac
         )
         .is_err());
         let mut changed_module = successful.clone();
-        changed_module
-            .module_verification
-            .as_mut()
-            .unwrap()
-            .modules[0]
-            .actual_payload_sha256 = "0".repeat(64);
+        changed_module.module_verification.as_mut().unwrap()["modules"][0]
+            ["actualPayloadSha256"] = serde_json::json!("0".repeat(64));
         assert!(validate_nvidia_install_result(
             changed_module,
             &inputs,
@@ -3540,12 +3549,8 @@ esac
         .expect("module verification must bind to validated payload hashes")
         .contains("module verification"));
         let mut unchecked_userspace = successful.clone();
-        unchecked_userspace
-            .userspace_verification
-            .as_mut()
-            .unwrap()
-            .packages[0]
-            .pacman_integrity_verified = false;
+        unchecked_userspace.userspace_verification.as_mut().unwrap()["packages"][0]
+            ["pacmanIntegrityVerified"] = serde_json::json!(false);
         assert!(validate_nvidia_install_result(
             unchecked_userspace,
             &inputs,

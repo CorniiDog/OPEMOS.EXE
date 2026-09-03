@@ -75,7 +75,8 @@ this repository.
 - [x] Provide bounded, color-aware logs, smart diagnostic copying, monotonic
   progress, keyboard navigation, and coupled companion windows.
 - [x] Add fixture-tested schema-compatible consumers for Core resolver schema 2
-  and installer validation, result, progress, and module-verification schema 1.
+  and installer validation, result, progress, module-verification, and
+  userspace-verification schema 1.
 
 Current outputs remain `nvidia-mutation-valid`. Do not call them
 `install-ready`, hardware-certified, or update-safe until the gates below pass.
@@ -115,6 +116,9 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 - [x] Consume Core’s bounded module-verification matrix, distinguish structural
   record validity from exact-image proof, and require exact kernel and payload
   hash binding before accepting installer success.
+- [x] Consume Core’s bounded userspace-verification matrix, require exact lock,
+  provenance, package, relation, database, firmware, and NVIDIA-version binding,
+  and preserve bounded failed-proof details in user diagnostics.
 - [ ] Repin Core only after its complete Fedora suite and this repository’s full
   suite pass against the same immutable bundle.
 
