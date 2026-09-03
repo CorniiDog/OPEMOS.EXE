@@ -107,9 +107,12 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   cancelled, ENOSPC, or late-verification candidates. Hold an identity-bound,
   size-reserved cross-process lease throughout candidate population and commit.
   Require durable host-owned completion evidence before activation so an
-  interrupted publication cannot be trusted. Keep this disconnected from
-  production until a compatible generation is published through an
-  authenticated trust root and bootstrap checkpoint.
+  interrupted publication cannot be trusted. Reconcile abandoned candidates,
+  orphaned evidence, and exact stale temporaries under the cache lock; preserve
+  active, pending, and last-known-good identities while pruning the oldest
+  unprotected generations to bounded count and byte budgets. Keep this
+  disconnected from production until a compatible generation is published
+  through an authenticated trust root and bootstrap checkpoint.
 - [x] Consume Core's closed userspace-lock discovery and generation-manifest
   schema-1 models plus all 74 inactive compatibility cases from exact local
   commit `e9ad58a1c1d5908627186782ef32388d45c21187`. Bind durable cache identity
@@ -158,9 +161,16 @@ Core commits `510e843c9ef7fea3e1f9b0c9a3f0c8480ddc596d`,
 `e3cbcd1ffaea68f2cb0a5fc737a93a831f397f4d`, and
 `eff994cfa52224bfb5dd1ce1c84ad295a05831f5` add, fixture-test, and harden
 restart reconciliation for the separate inactive installed-device lifecycle.
-They do not change the shared generation identity or 74-case discovery
-contract. Device health, persistence, and activation remain Core-owned;
-OPEMOS.EXE must not copy that frontend or updater.
+Core commit `78cf5e8ee5b4a48782afffa43b5812f7e3cf801b` additionally confines abandoned
+device-cache cleanup and applies bounded retention and storage admission. Core
+commit `c07de7cf5b40e1a52b1db83126436fda2fe611d4` adds a durable activation-intent
+journal and restart recovery around device-side state publication. Core commit
+`34ee1d22a519fadaccfd12657d56c478316c74d5` adds a development-only injected
+acquisition path into a separate authenticated device download cache without
+changing active state; production networking remains inactive. None changes the
+shared generation identity or 74-case discovery contract. Device acquisition,
+health, persistence, activation, and physical cache implementation remain
+Core-owned; OPEMOS.EXE must not copy that frontend or updater.
 
 Compatibility fixture only—never use this as a permanent global trust root:
 

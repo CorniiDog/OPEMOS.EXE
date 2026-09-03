@@ -1,8 +1,14 @@
-use crate::core_generation_contracts::MAX_GENERATION_BYTES;
+use crate::core_generation_contracts::{MAX_FILES, MAX_GENERATION_BYTES, MAX_LINEAGE_GENERATIONS};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::{BTreeMap, BTreeSet},
+    ffi::{CStr, CString},
     fs::{self, File, OpenOptions},
     io::{ErrorKind, Read, Write},
+    os::unix::{
+        ffi::OsStrExt,
+        io::{AsRawFd, FromRawFd},
+    },
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -19,11 +25,17 @@ const CACHE_STATE_LIMIT: usize = 16 * 1024;
 const CACHE_STATE_SCHEMA: u32 = 2;
 const CACHE_STATE_KIND: &str = "opemos-core-host-generation-state";
 const CACHE_STATE_REQUIRED_MARKER: &str = "state-required";
-static STATE_WRITE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static STATE_WRITE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static CACHE_TRANSACTION_LOCK: Mutex<()> = Mutex::new(());
 const CACHE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const CACHE_LOCK_RETRY: Duration = Duration::from_millis(20);
 const CANDIDATE_LEASE_LIMIT: u64 = 1024;
+const CACHE_DIRECTORY_ENTRY_LIMIT: usize = MAX_FILES + MAX_LINEAGE_GENERATIONS + 256;
+const MAX_TREE_DEPTH: usize = 64;
+const MAX_TREE_NODES: usize = MAX_FILES * 2 + 1;
+const MAX_RETAINED_GENERATIONS: usize = 4;
+const MAX_TOTAL_GENERATION_BYTES: u64 = MAX_GENERATION_BYTES * MAX_RETAINED_GENERATIONS as u64;
+const TOMBSTONE_BATCH_OPERATIONS: usize = 256;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -76,6 +88,7 @@ struct FilesystemIdentity {
 #[derive(Clone, Debug)]
 pub(crate) struct CoreGenerationCache {
     root: PathBuf,
+    trash_identity: FilesystemIdentity,
 }
 
 struct CoreGenerationCacheLock {
@@ -90,6 +103,7 @@ pub(crate) struct CandidateLease {
     lease_identity: FilesystemIdentity,
     lease_file: File,
     expected_bytes: Vec<u8>,
+    reservation_bytes: u64,
 }
 
 #[derive(Serialize)]
@@ -99,6 +113,54 @@ struct CandidateLeaseDocument<'a> {
     device: u64,
     inode: u64,
     reservation_bytes: u64,
+}
+
+#[derive(Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OwnedCandidateLeaseDocument {
+    candidate_basename: String,
+    device: u64,
+    inode: u64,
+    reservation_bytes: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct CacheReconciliationReport {
+    pub(crate) removed_candidates: usize,
+    pub(crate) removed_leases: usize,
+    pub(crate) removed_state_temporaries: usize,
+    pub(crate) removed_commit_temporaries: usize,
+    pub(crate) removed_generations: usize,
+    pub(crate) removed_commit_markers: usize,
+    pub(crate) live_candidates: usize,
+    pub(crate) retained_generations: usize,
+    pub(crate) protected_over_budget: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TreeUsage {
+    nodes: usize,
+    files: usize,
+    logical_bytes: u64,
+}
+
+struct CommitInventory {
+    markers: BTreeMap<String, PathBuf>,
+    temporaries: Vec<(PathBuf, FilesystemIdentity)>,
+}
+
+struct ReconciliationLease {
+    path: PathBuf,
+    identity: FilesystemIdentity,
+    file: File,
+    document: OwnedCandidateLeaseDocument,
+}
+
+enum ReconciliationLeaseState {
+    Live {
+        document: OwnedCandidateLeaseDocument,
+    },
+    Acquired(ReconciliationLease),
 }
 
 impl Drop for CoreGenerationCacheLock {
@@ -261,7 +323,7 @@ impl CoreGenerationCache {
         }
         require_directory(&root, "Core generation cache")?;
         set_private_directory_permissions(&root)?;
-        for child in ["candidates", "generations", "commits", "leases"] {
+        for child in ["candidates", "generations", "commits", "leases", "trash"] {
             let path = root.join(child);
             fs::create_dir(&path)
                 .or_else(|error| {
@@ -276,7 +338,12 @@ impl CoreGenerationCache {
             set_private_directory_permissions(&path)?;
         }
         sync_directory(&root)?;
-        Ok(Self { root })
+        let trash_identity = candidate_directory_identity(&root.join("trash"))?
+            .ok_or("Core generation trash directory disappeared during creation.")?;
+        Ok(Self {
+            root,
+            trash_identity,
+        })
     }
 
     fn acquire_lock(&self) -> Result<CoreGenerationCacheLock, String> {
@@ -451,6 +518,7 @@ impl CoreGenerationCache {
                 lease_identity,
                 lease_file,
                 expected_bytes,
+                reservation_bytes,
             };
             self.require_valid_candidate_lease(&lease)?;
             Ok(lease)
@@ -507,7 +575,17 @@ impl CoreGenerationCache {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _file_guard = self.acquire_lock()?;
         self.require_valid_candidate_lease(lease)?;
-        cleanup_candidate_tree(&lease.candidate, &self.root.join("candidates"))?;
+        let candidates_root = self.root.join("candidates");
+        match scan_bounded_tree(&lease.candidate, "aborted Core generation candidate") {
+            Err(error) if bounded_scan_limit(&error) => quarantine_directory(
+                &lease.candidate,
+                &candidates_root,
+                &self.root.join("trash"),
+                lease.candidate_identity,
+                self.trash_identity,
+            )?,
+            _ => cleanup_candidate_tree(&lease.candidate, &candidates_root)?,
+        }
         self.remove_candidate_lease(lease)
     }
 
@@ -523,9 +601,9 @@ impl CoreGenerationCache {
         let _file_guard = self.acquire_lock()?;
         self.require_valid_candidate_lease(lease)?;
         let candidate = lease.path();
-        let result = identity
-            .validate()
-            .and_then(|()| self.commit_candidate_locked(candidate, identity, verify));
+        let result = identity.validate().and_then(|()| {
+            self.commit_candidate_locked(candidate, lease.reservation_bytes, identity, verify)
+        });
         match result {
             Ok(outcome) => {
                 self.remove_candidate_lease(lease)?;
@@ -534,7 +612,17 @@ impl CoreGenerationCache {
             Err(error) => {
                 let candidate_cleanup = match candidate_directory_identity(candidate) {
                     Ok(Some(_)) => self.require_valid_candidate_lease(lease).and_then(|()| {
-                        cleanup_candidate_tree(candidate, &self.root.join("candidates"))
+                        if bounded_scan_limit(&error) {
+                            quarantine_directory(
+                                candidate,
+                                &self.root.join("candidates"),
+                                &self.root.join("trash"),
+                                lease.candidate_identity,
+                                self.trash_identity,
+                            )
+                        } else {
+                            cleanup_candidate_tree(candidate, &self.root.join("candidates"))
+                        }
                     }),
                     Ok(None) => self.require_valid_lease_sidecar(lease),
                     Err(cleanup) => Err(cleanup),
@@ -555,9 +643,14 @@ impl CoreGenerationCache {
     fn commit_candidate_locked(
         &self,
         candidate: &Path,
+        reservation_bytes: u64,
         identity: &CoreGenerationIdentity,
         verify: impl Fn(&Path) -> Result<(), String>,
     ) -> Result<GenerationCommit, String> {
+        let usage = scan_bounded_tree(candidate, "Core generation candidate")?;
+        if usage.logical_bytes > reservation_bytes {
+            return Err("Core generation candidate exceeds its reserved size.".into());
+        }
         verify(candidate)?;
         sync_closed_tree(candidate)?;
 
@@ -827,6 +920,364 @@ impl CoreGenerationCache {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _file_guard = self.acquire_lock()?;
         self.load_state_unlocked()
+    }
+
+    pub(crate) fn reconcile(&self) -> Result<CacheReconciliationReport, String> {
+        let _process_guard = CACHE_TRANSACTION_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _file_guard = self.acquire_lock()?;
+
+        // State is the authority for retention. It must be loaded before any
+        // residue is inspected or removed.
+        let state = self.load_state_unlocked()?;
+        let mut protected = BTreeMap::<String, CoreGenerationIdentity>::new();
+        for identity in [
+            state.active.as_ref(),
+            state.pending.as_ref(),
+            state.last_known_good.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(existing) =
+                protected.insert(identity.generation_id.clone(), identity.clone())
+            {
+                if existing != *identity {
+                    return Err(
+                        "Core generation cache state reuses an identity inconsistently.".into(),
+                    );
+                }
+            }
+        }
+
+        let root_temporaries = validate_cache_root_inventory(&self.root)?;
+        let candidates_root = self.root.join("candidates");
+        let leases_root = self.root.join("leases");
+        let generations_root = self.root.join("generations");
+        let commits_root = self.root.join("commits");
+        let trash_root = self.root.join("trash");
+        let candidates = inventory_candidate_directories(&candidates_root)?;
+        let leases = inventory_lease_files(&leases_root)?;
+        let generations = inventory_generation_directories(&generations_root)?;
+        let CommitInventory {
+            markers,
+            temporaries: commit_temporaries,
+        } = inventory_commit_files(&commits_root)?;
+        let tombstones = inventory_tombstones(&trash_root)?;
+
+        for (name, identity) in &protected {
+            if !generations.contains_key(name) {
+                return Err(format!(
+                    "Protected Core generation {} is missing from the cache.",
+                    identity.generation_id
+                ));
+            }
+            if !markers.contains_key(name) {
+                return Err(format!(
+                    "Protected Core generation {} has no durable commit evidence.",
+                    identity.generation_id
+                ));
+            }
+            self.require_generation_committed(identity)
+                .map_err(|error| {
+                    format!("Protected Core generation commit evidence is invalid: {error}")
+                })?;
+        }
+        clean_tombstones_bounded(&tombstones, &trash_root, self.trash_identity)?;
+
+        let mut generation_usage = BTreeMap::new();
+        let mut generation_tombstones = BTreeSet::new();
+        let mut protected_bytes = 0_u64;
+        for (name, (path, _identity)) in &generations {
+            let usage = match scan_bounded_tree(path, "cached Core generation") {
+                Ok(usage) => usage,
+                Err(error) if !protected.contains_key(name) && bounded_scan_limit(&error) => {
+                    generation_tombstones.insert(name.clone());
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            if protected.contains_key(name) {
+                if usage.logical_bytes > MAX_GENERATION_BYTES {
+                    return Err("Protected Core generation exceeds its size bound.".into());
+                }
+                protected_bytes = protected_bytes
+                    .checked_add(usage.logical_bytes)
+                    .ok_or("Protected Core generation byte count overflowed.")?;
+            }
+            generation_usage.insert(name.clone(), usage);
+        }
+
+        // Acquire abandoned leases without ever waiting. A contended lease is
+        // live and its candidate is deliberately not traversed.
+        let mut live = BTreeSet::new();
+        let mut acquired = BTreeMap::new();
+        let mut live_reservation_bytes = 0_u64;
+        let mut removable_candidate_bytes = 0_u64;
+        for (name, path) in &leases {
+            match inspect_reconciliation_lease(path, name)? {
+                ReconciliationLeaseState::Live { document } => {
+                    let Some((_candidate, identity)) = candidates.get(name) else {
+                        return Err("A live Core generation lease has no candidate.".into());
+                    };
+                    if document.device != identity.device || document.inode != identity.inode {
+                        return Err(
+                            "A live Core generation lease does not bind its candidate.".into()
+                        );
+                    }
+                    live_reservation_bytes = live_reservation_bytes
+                        .checked_add(document.reservation_bytes)
+                        .ok_or("Core generation candidate reservation count overflowed.")?;
+                    live.insert(name.clone());
+                }
+                ReconciliationLeaseState::Acquired(lease) => {
+                    acquired.insert(name.clone(), lease);
+                }
+            }
+        }
+
+        let mut abandoned_candidates = Vec::new();
+        let mut candidate_tombstones = BTreeSet::new();
+        for (name, (path, identity)) in &candidates {
+            if live.contains(name) {
+                continue;
+            }
+            if let Some(lease) = acquired.get(name) {
+                if lease.document.candidate_basename != *name
+                    || lease.document.device != identity.device
+                    || lease.document.inode != identity.inode
+                {
+                    return Err(
+                        "Core generation candidate lease does not match its candidate.".into(),
+                    );
+                }
+            }
+            match scan_bounded_tree(path, "abandoned Core generation candidate") {
+                Ok(usage) => {
+                    removable_candidate_bytes = removable_candidate_bytes
+                        .checked_add(usage.logical_bytes)
+                        .ok_or("Core generation candidate byte count overflowed.")?;
+                }
+                Err(error) if bounded_scan_limit(&error) => {
+                    candidate_tombstones.insert(name.clone());
+                }
+                Err(error) => return Err(error),
+            }
+            abandoned_candidates.push(name.clone());
+        }
+        let _observed_candidate_bytes = live_reservation_bytes
+            .checked_add(removable_candidate_bytes)
+            .ok_or("Core generation candidate total accounting overflowed.")?;
+
+        let mut report = CacheReconciliationReport {
+            live_candidates: live.len(),
+            protected_over_budget: protected.len() > MAX_RETAINED_GENERATIONS
+                || protected_bytes > MAX_TOTAL_GENERATION_BYTES,
+            ..CacheReconciliationReport::default()
+        };
+
+        for name in abandoned_candidates {
+            let (candidate, expected_identity) = &candidates[&name];
+            require_current_directory_identity(
+                candidate,
+                *expected_identity,
+                "abandoned Core generation candidate",
+            )?;
+            if candidate_tombstones.contains(&name) {
+                quarantine_directory(
+                    candidate,
+                    &candidates_root,
+                    &trash_root,
+                    *expected_identity,
+                    self.trash_identity,
+                )?;
+            } else {
+                cleanup_candidate_tree(candidate, &candidates_root)?;
+            }
+            report.removed_candidates += 1;
+            if let Some(lease) = acquired.remove(&name) {
+                remove_acquired_lease(lease, &leases_root)?;
+                report.removed_leases += 1;
+            }
+        }
+        for (_, lease) in acquired {
+            // Exact canonical sidecars with no candidate are unlocked orphans.
+            remove_acquired_lease(lease, &leases_root)?;
+            report.removed_leases += 1;
+        }
+
+        for (temporary, identity) in root_temporaries {
+            remove_safe_regular_file(
+                &temporary,
+                &self.root,
+                identity,
+                "stale Core state temporary",
+            )?;
+            report.removed_state_temporaries += 1;
+        }
+        if report.removed_state_temporaries != 0 {
+            sync_directory(&self.root)?;
+        }
+        for (temporary, identity) in commit_temporaries {
+            remove_safe_regular_file(
+                &temporary,
+                &commits_root,
+                identity,
+                "stale Core commit temporary",
+            )?;
+            report.removed_commit_temporaries += 1;
+        }
+        if report.removed_commit_temporaries != 0 {
+            sync_directory(&commits_root)?;
+        }
+
+        for (name, marker) in &markers {
+            if !generations.contains_key(name) {
+                invalidate_commit_marker_path(marker, &commits_root)?;
+                report.removed_commit_markers += 1;
+            }
+        }
+        let mut valid_pairs = BTreeMap::<String, CoreGenerationIdentity>::new();
+        for (name, (generation, expected_identity)) in &generations {
+            if generation_tombstones.contains(name) {
+                if let Some(marker) = markers.get(name) {
+                    invalidate_commit_marker_path(marker, &commits_root)?;
+                    report.removed_commit_markers += 1;
+                }
+                quarantine_directory(
+                    generation,
+                    &generations_root,
+                    &trash_root,
+                    *expected_identity,
+                    self.trash_identity,
+                )?;
+                report.removed_generations += 1;
+                continue;
+            }
+            if generation_usage[name].logical_bytes > MAX_GENERATION_BYTES {
+                if protected.contains_key(name) {
+                    return Err("A protected Core generation exceeds its size bound.".into());
+                }
+                if let Some(marker) = markers.get(name) {
+                    invalidate_commit_marker_path(marker, &commits_root)?;
+                    report.removed_commit_markers += 1;
+                }
+                require_current_directory_identity(
+                    generation,
+                    *expected_identity,
+                    "oversized Core generation residue",
+                )?;
+                cleanup_candidate_tree(generation, &generations_root)?;
+                report.removed_generations += 1;
+                continue;
+            }
+            let Some(marker) = markers.get(name) else {
+                if protected.contains_key(name) {
+                    return Err("A protected Core generation lost its commit evidence.".into());
+                }
+                require_current_directory_identity(
+                    generation,
+                    *expected_identity,
+                    "unmarked Core generation",
+                )?;
+                cleanup_candidate_tree(generation, &generations_root)?;
+                report.removed_generations += 1;
+                continue;
+            };
+            let valid = read_commit_marker_identity(marker, name).and_then(|identity| {
+                self.require_generation_committed(&identity)?;
+                Ok(identity)
+            });
+            if let Ok(identity) = valid {
+                valid_pairs.insert(name.clone(), identity);
+            } else {
+                if protected.contains_key(name) {
+                    return Err("A protected Core generation has invalid commit evidence.".into());
+                }
+                invalidate_commit_marker_path(marker, &commits_root)?;
+                report.removed_commit_markers += 1;
+                require_current_directory_identity(
+                    generation,
+                    *expected_identity,
+                    "invalid Core generation",
+                )?;
+                cleanup_candidate_tree(generation, &generations_root)?;
+                report.removed_generations += 1;
+            }
+        }
+
+        let mut sequences = BTreeMap::<u64, String>::new();
+        for (name, identity) in &valid_pairs {
+            if let Some(existing) = sequences.insert(identity.sequence, name.clone()) {
+                if existing != *name {
+                    return Err(
+                        "Distinct committed Core generations reuse the same sequence.".into(),
+                    );
+                }
+            }
+        }
+
+        let protected_and_live_bytes = protected_bytes
+            .checked_add(live_reservation_bytes)
+            .ok_or("Protected Core generation footprint overflowed.")?;
+        if protected_and_live_bytes > MAX_TOTAL_GENERATION_BYTES {
+            return Err("Protected and live Core cache footprint exceeds its bound.".into());
+        }
+
+        let mut retained_bytes = valid_pairs.keys().try_fold(0_u64, |total, name| {
+            total
+                .checked_add(generation_usage[name].logical_bytes)
+                .ok_or("Retained Core generation byte count overflowed.")
+        })?;
+        let available_unprotected_slots = MAX_RETAINED_GENERATIONS.saturating_sub(protected.len());
+        let mut unprotected = valid_pairs
+            .iter()
+            .filter(|(name, _identity)| !protected.contains_key(*name))
+            .map(|(name, identity)| (identity.sequence, name.clone()))
+            .collect::<Vec<_>>();
+        unprotected.sort();
+        let mut remaining_unprotected = unprotected.len();
+        for (_sequence, name) in unprotected {
+            let footprint = retained_bytes
+                .checked_add(live_reservation_bytes)
+                .ok_or("Core generation cache unavoidable byte count overflowed.")?;
+            let must_prune_for_count = remaining_unprotected > available_unprotected_slots;
+            let must_prune_for_bytes = footprint > MAX_TOTAL_GENERATION_BYTES;
+            if !must_prune_for_count && !must_prune_for_bytes {
+                break;
+            }
+            let marker = &markers[&name];
+            let (generation, expected_identity) = &generations[&name];
+            require_current_directory_identity(
+                generation,
+                *expected_identity,
+                "expired Core generation",
+            )?;
+            invalidate_commit_marker_path(marker, &commits_root)?;
+            report.removed_commit_markers += 1;
+            require_current_directory_identity(
+                generation,
+                *expected_identity,
+                "expired Core generation",
+            )?;
+            cleanup_candidate_tree(generation, &generations_root)?;
+            report.removed_generations += 1;
+            valid_pairs.remove(&name);
+            retained_bytes = retained_bytes
+                .checked_sub(generation_usage[&name].logical_bytes)
+                .ok_or("Retained Core generation byte count underflowed.")?;
+            remaining_unprotected -= 1;
+        }
+
+        report.retained_generations = valid_pairs.len();
+        let unavoidable_bytes = retained_bytes
+            .checked_add(live_reservation_bytes)
+            .ok_or("Core generation cache unavoidable byte count overflowed.")?;
+        if unavoidable_bytes > MAX_TOTAL_GENERATION_BYTES {
+            return Err("Core generation cache unavoidable footprint exceeds its bound.".into());
+        }
+        Ok(report)
     }
 
     fn load_state_unlocked(&self) -> Result<CoreGenerationCacheState, String> {
@@ -1105,6 +1556,860 @@ impl CoreGenerationCache {
         }
         require_directory(&resolved, "Core generation candidate")
     }
+}
+
+fn bounded_directory_entries(path: &Path, description: &str) -> Result<Vec<fs::DirEntry>, String> {
+    let mut entries = Vec::new();
+    for entry in
+        fs::read_dir(path).map_err(|error| format!("Could not inspect {description}: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("Could not inspect {description}: {error}"))?;
+        if entries.len() >= CACHE_DIRECTORY_ENTRY_LIMIT {
+            return Err(format!("{description} contains too many entries."));
+        }
+        entries.push(entry);
+    }
+    Ok(entries)
+}
+
+fn entry_name(entry: &fs::DirEntry, description: &str) -> Result<String, String> {
+    entry
+        .file_name()
+        .into_string()
+        .map_err(|_| format!("{description} contains a non-UTF-8 name."))
+}
+
+fn valid_candidate_basename(name: &str) -> bool {
+    name.strip_prefix("candidate-")
+        .and_then(|suffix| suffix.rsplit_once('-'))
+        .is_some_and(|(operation, token)| safe_operation_id(operation) && lowercase_hex(token, 64))
+}
+
+fn valid_state_temporary_name(name: &str) -> bool {
+    let Some(body) = name
+        .strip_prefix(".state.json.")
+        .and_then(|name| name.strip_suffix(".tmp"))
+    else {
+        return false;
+    };
+    let Some((process, sequence)) = body.split_once('.') else {
+        return false;
+    };
+    let Ok(process) = process.parse::<u32>() else {
+        return false;
+    };
+    let Ok(sequence) = sequence.parse::<u64>() else {
+        return false;
+    };
+    process > 0 && sequence > 0 && format!(".state.json.{process}.{sequence}.tmp") == name
+}
+
+fn valid_commit_temporary_name(name: &str) -> bool {
+    let Some(body) = name
+        .strip_prefix(".commit-")
+        .and_then(|name| name.strip_suffix(".tmp"))
+    else {
+        return false;
+    };
+    let Some((sequence, token)) = body.split_once('-') else {
+        return false;
+    };
+    let Ok(sequence) = sequence.parse::<u64>() else {
+        return false;
+    };
+    sequence > 0 && lowercase_hex(token, 64) && format!(".commit-{sequence}-{token}.tmp") == name
+}
+
+fn validate_cache_root_inventory(
+    root: &Path,
+) -> Result<Vec<(PathBuf, FilesystemIdentity)>, String> {
+    let mut temporaries = Vec::new();
+    for entry in bounded_directory_entries(root, "Core generation cache root")? {
+        let name = entry_name(&entry, "Core generation cache root")?;
+        let metadata = fs::symlink_metadata(entry.path()).map_err(|error| {
+            format!("Could not inspect Core generation cache root entry: {error}")
+        })?;
+        let known_directory = matches!(
+            name.as_str(),
+            "candidates" | "generations" | "commits" | "leases" | "trash"
+        );
+        let known_file = matches!(
+            name.as_str(),
+            "cache.lock" | "state.json" | CACHE_STATE_REQUIRED_MARKER
+        );
+        use std::os::unix::fs::MetadataExt as _;
+        if known_directory {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(
+                    "Core generation cache root contains an unsafe directory entry.".into(),
+                );
+            }
+        } else if known_file {
+            if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.nlink() != 1 {
+                return Err("Core generation cache root contains an unsafe file entry.".into());
+            }
+        } else if valid_state_temporary_name(&name) {
+            if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.nlink() != 1 {
+                return Err("Core generation cache contains an unsafe state temporary.".into());
+            }
+            temporaries.push((
+                entry.path(),
+                FilesystemIdentity {
+                    device: metadata.dev(),
+                    inode: metadata.ino(),
+                },
+            ));
+        } else {
+            return Err(format!(
+                "Core generation cache contains unknown root entry {name}."
+            ));
+        }
+    }
+    Ok(temporaries)
+}
+
+fn bounded_scan_limit(error: &str) -> bool {
+    error.ends_with("contains too many entries.")
+        || error.ends_with("contains too many nodes.")
+        || error.ends_with("contains too many files.")
+        || error.ends_with("is too deeply nested.")
+}
+
+fn inventory_tombstones(root: &Path) -> Result<Vec<(PathBuf, FilesystemIdentity)>, String> {
+    let mut tombstones = Vec::new();
+    for entry in bounded_directory_entries(root, "Core generation tombstone directory")? {
+        let name = entry_name(&entry, "Core generation tombstone directory")?;
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|error| format!("Could not inspect Core generation tombstone: {error}"))?;
+        if !name
+            .strip_prefix("tombstone-")
+            .is_some_and(|token| lowercase_hex(token, 64))
+            || metadata.file_type().is_symlink()
+            || !metadata.is_dir()
+        {
+            return Err("Core generation tombstone directory contains an unsafe entry.".into());
+        }
+        use std::os::unix::fs::MetadataExt as _;
+        tombstones.push((
+            entry.path(),
+            FilesystemIdentity {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            },
+        ));
+    }
+    Ok(tombstones)
+}
+
+fn quarantine_directory(
+    path: &Path,
+    source_root: &Path,
+    trash_root: &Path,
+    expected: FilesystemIdentity,
+    expected_trash: FilesystemIdentity,
+) -> Result<(), String> {
+    if path.parent() != Some(source_root) {
+        return Err("Refusing to quarantine Core generation residue outside its store.".into());
+    }
+    let source = open_bound_directory(source_root, None, "Core generation source directory")?;
+    let trash = open_bound_directory(
+        trash_root,
+        Some(expected_trash),
+        "Core generation trash directory",
+    )?;
+    let source_name = path_component_cstring(path, "Core generation cleanup residue")?;
+    let source_stat = statat_nofollow(source.as_raw_fd(), &source_name)?;
+    if !stat_is_directory(&source_stat)
+        || source_stat.st_dev as u64 != expected.device
+        || source_stat.st_ino != expected.inode
+    {
+        return Err("Core generation cleanup residue changed before quarantine.".into());
+    }
+    for _ in 0..8 {
+        let destination = CString::new(format!("tombstone-{}", random_candidate_token()?))
+            .map_err(|_| "Core generation tombstone name is invalid.".to_string())?;
+        if unsafe {
+            libc::renameat(
+                source.as_raw_fd(),
+                source_name.as_ptr(),
+                trash.as_raw_fd(),
+                destination.as_ptr(),
+            )
+        } == 0
+        {
+            source.sync_all().map_err(|error| {
+                format!("Could not sync Core generation source directory: {error}")
+            })?;
+            return trash.sync_all().map_err(|error| {
+                format!("Could not sync Core generation trash directory: {error}")
+            });
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != ErrorKind::AlreadyExists {
+            return Err(format!(
+                "Could not quarantine bounded Core generation residue: {error}"
+            ));
+        }
+    }
+    Err("Could not allocate a unique Core generation tombstone.".into())
+}
+
+fn clean_tombstones_bounded(
+    tombstones: &[(PathBuf, FilesystemIdentity)],
+    trash_root: &Path,
+    expected_trash: FilesystemIdentity,
+) -> Result<(), String> {
+    let trash = open_bound_directory(
+        trash_root,
+        Some(expected_trash),
+        "Core generation trash directory",
+    )?;
+    use std::os::unix::fs::MetadataExt as _;
+    let trash_device = trash
+        .metadata()
+        .map_err(|error| format!("Could not identify Core generation trash directory: {error}"))?
+        .dev();
+    let mut budget = TOMBSTONE_BATCH_OPERATIONS;
+    for (path, identity) in tombstones {
+        if budget == 0 {
+            break;
+        }
+        let name = path_component_cstring(path, "Core generation tombstone")?;
+        let tombstone = openat_bound_directory(trash.as_raw_fd(), &name, *identity)?;
+        clean_tombstone_directory(&tombstone, trash_device, &mut budget)?;
+        if budget != 0 && directory_names_bounded(&tombstone, 1)?.is_empty() {
+            budget -= 1;
+            unlinkat_checked(trash.as_raw_fd(), &name, libc::AT_REMOVEDIR, true)?;
+        }
+    }
+    trash
+        .sync_all()
+        .map_err(|error| format!("Could not sync Core generation trash directory: {error}"))
+}
+
+fn clean_tombstone_directory(
+    directory: &File,
+    trash_device: u64,
+    budget: &mut usize,
+) -> Result<(), String> {
+    if *budget == 0 {
+        return Ok(());
+    }
+    require_opened_directory_device(directory, trash_device)?;
+    if unsafe { libc::fchmod(directory.as_raw_fd(), 0o700) } != 0 {
+        return Err(format!(
+            "Could not unlock Core generation tombstone directory: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    while *budget != 0 {
+        let Some(name) = directory_names_bounded(directory, 1)?.into_iter().next() else {
+            break;
+        };
+        *budget -= 1;
+        let stat = statat_nofollow(directory.as_raw_fd(), &name)?;
+        if stat_is_directory(&stat) {
+            let identity = FilesystemIdentity {
+                device: stat.st_dev as u64,
+                inode: stat.st_ino,
+            };
+            let child = openat_bound_directory(directory.as_raw_fd(), &name, identity)?;
+            clean_tombstone_directory(&child, trash_device, budget)?;
+            if *budget != 0 && directory_names_bounded(&child, 1)?.is_empty() {
+                *budget -= 1;
+                unlinkat_checked(directory.as_raw_fd(), &name, libc::AT_REMOVEDIR, true)?;
+            }
+        } else {
+            unlinkat_checked(directory.as_raw_fd(), &name, 0, false)?;
+        }
+    }
+    Ok(())
+}
+
+fn require_opened_directory_device(directory: &File, expected_device: u64) -> Result<(), String> {
+    let metadata = directory
+        .metadata()
+        .map_err(|error| format!("Could not identify opened Core tombstone directory: {error}"))?;
+    use std::os::unix::fs::MetadataExt as _;
+    if !metadata.is_dir() || metadata.dev() != expected_device {
+        return Err("Core generation tombstone crosses a filesystem boundary.".into());
+    }
+    Ok(())
+}
+
+fn open_bound_directory(
+    path: &Path,
+    expected: Option<FilesystemIdentity>,
+    description: &str,
+) -> Result<File, String> {
+    let before = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not inspect {description}: {error}"))?;
+    use std::os::unix::fs::MetadataExt as _;
+    if before.file_type().is_symlink() || !before.is_dir() {
+        return Err(format!("{description} is unsafe."));
+    }
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let file = options
+        .open(path)
+        .map_err(|error| format!("Could not safely open {description}: {error}"))?;
+    let opened = file
+        .metadata()
+        .map_err(|error| format!("Could not identify {description}: {error}"))?;
+    let identity = FilesystemIdentity {
+        device: opened.dev(),
+        inode: opened.ino(),
+    };
+    if !opened.is_dir()
+        || before.dev() != opened.dev()
+        || before.ino() != opened.ino()
+        || expected.is_some_and(|expected| expected != identity)
+    {
+        return Err(format!("{description} identity changed."));
+    }
+    Ok(file)
+}
+
+fn openat_bound_directory(
+    parent_fd: libc::c_int,
+    name: &CStr,
+    expected: FilesystemIdentity,
+) -> Result<File, String> {
+    let fd = unsafe {
+        libc::openat(
+            parent_fd,
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(format!(
+            "Could not safely open Core generation tombstone: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let file = unsafe { File::from_raw_fd(fd) };
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Could not identify Core generation tombstone: {error}"))?;
+    use std::os::unix::fs::MetadataExt as _;
+    if !metadata.is_dir() || metadata.dev() != expected.device || metadata.ino() != expected.inode {
+        return Err("Core generation tombstone identity changed while opening it.".into());
+    }
+    Ok(file)
+}
+
+fn path_component_cstring(path: &Path, description: &str) -> Result<CString, String> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("{description} has no basename."))?;
+    CString::new(name.as_bytes()).map_err(|_| format!("{description} basename is invalid."))
+}
+
+fn statat_nofollow(parent_fd: libc::c_int, name: &CStr) -> Result<libc::stat, String> {
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    if unsafe {
+        libc::fstatat(
+            parent_fd,
+            name.as_ptr(),
+            stat.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } != 0
+    {
+        return Err(format!(
+            "Could not inspect descriptor-relative Core cache entry: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(unsafe { stat.assume_init() })
+}
+
+fn stat_is_directory(stat: &libc::stat) -> bool {
+    stat.st_mode & libc::S_IFMT == libc::S_IFDIR
+}
+
+struct DirectoryStream(*mut libc::DIR);
+
+impl Drop for DirectoryStream {
+    fn drop(&mut self) {
+        unsafe { libc::closedir(self.0) };
+    }
+}
+
+fn directory_names_bounded(directory: &File, limit: usize) -> Result<Vec<CString>, String> {
+    let independent = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            c".".as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if independent < 0 {
+        return Err(format!(
+            "Could not open an independent Core tombstone directory descriptor: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let stream = unsafe { libc::fdopendir(independent) };
+    if stream.is_null() {
+        unsafe { libc::close(independent) };
+        return Err(format!(
+            "Could not enumerate Core tombstone directory descriptor: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let stream = DirectoryStream(stream);
+    let mut names = Vec::new();
+    while names.len() < limit {
+        set_errno(0);
+        let entry = unsafe { libc::readdir(stream.0) };
+        if entry.is_null() {
+            let errno = get_errno();
+            if errno != 0 {
+                return Err(format!(
+                    "Could not read Core tombstone directory descriptor: {}",
+                    std::io::Error::from_raw_os_error(errno)
+                ));
+            }
+            break;
+        }
+        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
+        if name.to_bytes() == b"." || name.to_bytes() == b".." {
+            continue;
+        }
+        names.push(
+            CString::new(name.to_bytes()).map_err(|_| {
+                "Core generation tombstone contains an invalid basename.".to_string()
+            })?,
+        );
+    }
+    Ok(names)
+}
+
+#[cfg(target_os = "macos")]
+fn set_errno(value: libc::c_int) {
+    unsafe { *libc::__error() = value };
+}
+
+#[cfg(target_os = "macos")]
+fn get_errno() -> libc::c_int {
+    unsafe { *libc::__error() }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn set_errno(value: libc::c_int) {
+    unsafe { *libc::__errno_location() = value };
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn get_errno() -> libc::c_int {
+    unsafe { *libc::__errno_location() }
+}
+
+fn unlinkat_checked(
+    parent_fd: libc::c_int,
+    name: &CStr,
+    flags: libc::c_int,
+    allow_not_empty: bool,
+) -> Result<(), String> {
+    if unsafe { libc::unlinkat(parent_fd, name.as_ptr(), flags) } == 0 {
+        return Ok(());
+    }
+    let error = std::io::Error::last_os_error();
+    if allow_not_empty && error.raw_os_error() == Some(libc::ENOTEMPTY) {
+        return Ok(());
+    }
+    Err(format!(
+        "Could not remove descriptor-relative Core tombstone entry: {error}"
+    ))
+}
+
+fn inventory_candidate_directories(
+    root: &Path,
+) -> Result<BTreeMap<String, (PathBuf, FilesystemIdentity)>, String> {
+    let mut result = BTreeMap::new();
+    for entry in bounded_directory_entries(root, "Core generation candidates directory")? {
+        let name = entry_name(&entry, "Core generation candidates directory")?;
+        if !valid_candidate_basename(&name) {
+            return Err("Core generation candidates directory contains an unknown name.".into());
+        }
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|error| format!("Could not inspect Core generation candidate: {error}"))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err("Core generation candidates directory contains an unsafe entry.".into());
+        }
+        use std::os::unix::fs::MetadataExt as _;
+        result.insert(
+            name,
+            (
+                entry.path(),
+                FilesystemIdentity {
+                    device: metadata.dev(),
+                    inode: metadata.ino(),
+                },
+            ),
+        );
+    }
+    Ok(result)
+}
+
+fn inventory_lease_files(root: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
+    let mut result = BTreeMap::new();
+    for entry in bounded_directory_entries(root, "Core generation leases directory")? {
+        let name = entry_name(&entry, "Core generation leases directory")?;
+        if !valid_candidate_basename(&name) {
+            return Err("Core generation leases directory contains an unknown name.".into());
+        }
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|error| format!("Could not inspect Core generation lease: {error}"))?;
+        use std::os::unix::fs::MetadataExt as _;
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || metadata.nlink() != 1
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.permissions().mode() & 0o7777 != 0o600
+            || metadata.len() == 0
+            || metadata.len() > CANDIDATE_LEASE_LIMIT
+        {
+            return Err("Core generation leases directory contains an unsafe entry.".into());
+        }
+        result.insert(name, entry.path());
+    }
+    Ok(result)
+}
+
+fn inventory_generation_directories(
+    root: &Path,
+) -> Result<BTreeMap<String, (PathBuf, FilesystemIdentity)>, String> {
+    let mut result = BTreeMap::new();
+    for entry in bounded_directory_entries(root, "Core generations directory")? {
+        let name = entry_name(&entry, "Core generations directory")?;
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|error| format!("Could not inspect cached Core generation: {error}"))?;
+        if !lowercase_hex(&name, 64) || metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err("Core generations directory contains an unsafe or unknown entry.".into());
+        }
+        use std::os::unix::fs::MetadataExt as _;
+        result.insert(
+            name,
+            (
+                entry.path(),
+                FilesystemIdentity {
+                    device: metadata.dev(),
+                    inode: metadata.ino(),
+                },
+            ),
+        );
+    }
+    Ok(result)
+}
+
+fn inventory_commit_files(root: &Path) -> Result<CommitInventory, String> {
+    let mut markers = BTreeMap::new();
+    let mut temporaries = Vec::new();
+    for entry in bounded_directory_entries(root, "Core generation commits directory")? {
+        let name = entry_name(&entry, "Core generation commits directory")?;
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|error| format!("Could not inspect Core generation commit entry: {error}"))?;
+        use std::os::unix::fs::MetadataExt as _;
+        if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.nlink() != 1 {
+            return Err("Core generation commits directory contains an unsafe entry.".into());
+        }
+        if lowercase_hex(&name, 64) {
+            markers.insert(name, entry.path());
+        } else if valid_commit_temporary_name(&name) {
+            temporaries.push((
+                entry.path(),
+                FilesystemIdentity {
+                    device: metadata.dev(),
+                    inode: metadata.ino(),
+                },
+            ));
+        } else {
+            return Err("Core generation commits directory contains an unknown entry.".into());
+        }
+    }
+    Ok(CommitInventory {
+        markers,
+        temporaries,
+    })
+}
+
+fn inspect_reconciliation_lease(
+    path: &Path,
+    name: &str,
+) -> Result<ReconciliationLeaseState, String> {
+    let before = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not inspect Core generation lease: {error}"))?;
+    use std::os::unix::fs::MetadataExt as _;
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let mut file = options
+        .open(path)
+        .map_err(|error| format!("Could not safely open Core generation lease: {error}"))?;
+    let opened = file
+        .metadata()
+        .map_err(|error| format!("Could not identify opened Core generation lease: {error}"))?;
+    if before.dev() != opened.dev()
+        || before.ino() != opened.ino()
+        || !opened.is_file()
+        || opened.nlink() != 1
+        || opened.uid() != unsafe { libc::geteuid() }
+        || opened.permissions().mode() & 0o7777 != 0o600
+        || opened.len() == 0
+        || opened.len() > CANDIDATE_LEASE_LIMIT
+    {
+        return Err("Core generation lease changed while opening it.".into());
+    }
+    let mut bytes = Vec::with_capacity(opened.len() as usize);
+    Read::by_ref(&mut file)
+        .take(CANDIDATE_LEASE_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not read Core generation lease: {error}"))?;
+    let after = file
+        .metadata()
+        .map_err(|error| format!("Could not recheck Core generation lease: {error}"))?;
+    if opened.dev() != after.dev()
+        || opened.ino() != after.ino()
+        || opened.len() != after.len()
+        || opened.mtime() != after.mtime()
+        || opened.mtime_nsec() != after.mtime_nsec()
+        || after.nlink() != 1
+        || after.uid() != unsafe { libc::geteuid() }
+        || bytes.len() as u64 != opened.len()
+    {
+        return Err("Core generation lease changed while it was read.".into());
+    }
+    let document: OwnedCandidateLeaseDocument = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Core generation lease is invalid: {error}"))?;
+    let identity = FilesystemIdentity {
+        device: document.device,
+        inode: document.inode,
+    };
+    if document.candidate_basename != name
+        || !(1..=MAX_GENERATION_BYTES).contains(&document.reservation_bytes)
+        || candidate_lease_bytes(name, identity, document.reservation_bytes)? != bytes
+    {
+        return Err("Core generation lease is not canonical.".into());
+    }
+    match file.try_lock() {
+        Ok(()) => Ok(ReconciliationLeaseState::Acquired(ReconciliationLease {
+            path: path.to_path_buf(),
+            identity: FilesystemIdentity {
+                device: opened.dev(),
+                inode: opened.ino(),
+            },
+            file,
+            document,
+        })),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(ReconciliationLeaseState::Live { document }),
+        Err(std::fs::TryLockError::Error(error)) => Err(format!(
+            "Could not test Core generation lease ownership: {error}"
+        )),
+    }
+}
+
+fn remove_acquired_lease(lease: ReconciliationLease, leases_root: &Path) -> Result<(), String> {
+    let current = fs::symlink_metadata(&lease.path)
+        .map_err(|error| format!("Could not recheck abandoned Core generation lease: {error}"))?;
+    use std::os::unix::fs::MetadataExt as _;
+    if lease.path.parent() != Some(leases_root)
+        || current.file_type().is_symlink()
+        || !current.is_file()
+        || current.nlink() != 1
+        || current.dev() != lease.identity.device
+        || current.ino() != lease.identity.inode
+    {
+        return Err("Refusing to remove a replacement Core generation lease.".into());
+    }
+    fs::remove_file(&lease.path)
+        .map_err(|error| format!("Could not remove abandoned Core generation lease: {error}"))?;
+    sync_directory(leases_root)?;
+    lease
+        .file
+        .unlock()
+        .map_err(|error| format!("Could not unlock removed Core generation lease: {error}"))
+}
+
+fn remove_safe_regular_file(
+    path: &Path,
+    parent: &Path,
+    expected: FilesystemIdentity,
+    description: &str,
+) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not inspect {description}: {error}"))?;
+    use std::os::unix::fs::MetadataExt as _;
+    if path.parent() != Some(parent)
+        || metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.nlink() != 1
+        || metadata.dev() != expected.device
+        || metadata.ino() != expected.inode
+    {
+        return Err(format!("Refusing to remove unsafe {description}."));
+    }
+    fs::remove_file(path).map_err(|error| format!("Could not remove {description}: {error}"))
+}
+
+fn require_current_directory_identity(
+    path: &Path,
+    expected: FilesystemIdentity,
+    description: &str,
+) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not recheck {description}: {error}"))?;
+    use std::os::unix::fs::MetadataExt as _;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || metadata.dev() != expected.device
+        || metadata.ino() != expected.inode
+    {
+        return Err(format!("{description} changed before cleanup."));
+    }
+    Ok(())
+}
+
+fn read_commit_marker_identity(
+    path: &Path,
+    generation_id: &str,
+) -> Result<CoreGenerationIdentity, String> {
+    let before = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not inspect Core commit evidence: {error}"))?;
+    use std::os::unix::fs::MetadataExt as _;
+    if before.file_type().is_symlink()
+        || !before.is_file()
+        || before.nlink() != 1
+        || before.len() == 0
+        || before.len() > 128
+    {
+        return Err("Core generation commit evidence is malformed.".into());
+    }
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    let mut file = options
+        .open(path)
+        .map_err(|error| format!("Could not safely open Core commit evidence: {error}"))?;
+    let opened = file
+        .metadata()
+        .map_err(|error| format!("Could not identify Core commit evidence: {error}"))?;
+    if before.dev() != opened.dev()
+        || before.ino() != opened.ino()
+        || opened.nlink() != 1
+        || opened.len() != before.len()
+    {
+        return Err("Core generation commit evidence changed while opening it.".into());
+    }
+    let mut bytes = Vec::with_capacity(opened.len() as usize);
+    Read::by_ref(&mut file)
+        .take(129)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not read Core commit evidence: {error}"))?;
+    let after = file
+        .metadata()
+        .map_err(|error| format!("Could not recheck Core commit evidence: {error}"))?;
+    if opened.dev() != after.dev()
+        || opened.ino() != after.ino()
+        || opened.len() != after.len()
+        || opened.mtime() != after.mtime()
+        || opened.mtime_nsec() != after.mtime_nsec()
+        || after.nlink() != 1
+        || bytes.len() as u64 != opened.len()
+        || !bytes.ends_with(b"\n")
+    {
+        return Err("Core generation commit evidence changed or is malformed.".into());
+    }
+    let text = std::str::from_utf8(&bytes[..bytes.len() - 1])
+        .map_err(|_| "Core generation commit evidence is not UTF-8.".to_string())?;
+    let (sequence, hash) = text
+        .split_once(':')
+        .ok_or("Core generation commit evidence is malformed.")?;
+    if hash != generation_id
+        || sequence.is_empty()
+        || !sequence.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err("Core generation commit evidence identity is invalid.".into());
+    }
+    let sequence = sequence
+        .parse::<u64>()
+        .map_err(|_| "Core generation commit sequence is invalid.".to_string())?;
+    let identity = CoreGenerationIdentity {
+        sequence,
+        generation_id: generation_id.into(),
+        manifest_sha256: generation_id.into(),
+    };
+    identity.validate()?;
+    if generation_commit_marker_bytes(&identity) != bytes {
+        return Err("Core generation commit evidence is not canonical.".into());
+    }
+    Ok(identity)
+}
+
+fn scan_bounded_tree(root: &Path, description: &str) -> Result<TreeUsage, String> {
+    let metadata = fs::symlink_metadata(root)
+        .map_err(|error| format!("Could not inspect {description}: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!("{description} is not a safe directory."));
+    }
+    let mut usage = TreeUsage {
+        nodes: 1,
+        ..TreeUsage::default()
+    };
+    let mut directories = vec![(root.to_path_buf(), 0_usize)];
+    let mut index = 0;
+    while index < directories.len() {
+        let (directory, depth) = directories[index].clone();
+        index += 1;
+        for entry in bounded_directory_entries(&directory, description)? {
+            usage.nodes = usage
+                .nodes
+                .checked_add(1)
+                .ok_or_else(|| format!("{description} node count overflowed."))?;
+            if usage.nodes > MAX_TREE_NODES {
+                return Err(format!("{description} contains too many nodes."));
+            }
+            let metadata = fs::symlink_metadata(entry.path())
+                .map_err(|error| format!("Could not inspect {description} entry: {error}"))?;
+            use std::os::unix::fs::MetadataExt as _;
+            if metadata.file_type().is_symlink() {
+                return Err(format!("{description} contains a link."));
+            } else if metadata.is_dir() {
+                let child_depth = depth
+                    .checked_add(1)
+                    .ok_or_else(|| format!("{description} depth overflowed."))?;
+                if child_depth > MAX_TREE_DEPTH {
+                    return Err(format!("{description} is too deeply nested."));
+                }
+                directories.push((entry.path(), child_depth));
+            } else if metadata.is_file() {
+                if metadata.nlink() != 1 {
+                    return Err(format!("{description} contains a multiply linked file."));
+                }
+                usage.files = usage
+                    .files
+                    .checked_add(1)
+                    .ok_or_else(|| format!("{description} file count overflowed."))?;
+                if usage.files > MAX_FILES {
+                    return Err(format!("{description} contains too many files."));
+                }
+                usage.logical_bytes = usage
+                    .logical_bytes
+                    .checked_add(metadata.len())
+                    .ok_or_else(|| format!("{description} byte count overflowed."))?;
+            } else {
+                return Err(format!("{description} contains a special entry."));
+            }
+        }
+    }
+    Ok(usage)
 }
 
 fn lowercase_hex(value: &str, length: usize) -> bool {
@@ -1499,6 +2804,8 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    const TEST_RESERVATION: u64 = 1024;
+
     fn temporary_cache(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1557,7 +2864,9 @@ mod tests {
     fn generation_cache_commits_create_only_and_reuses_only_verified_content() {
         let root = temporary_cache("commit");
         let cache = CoreGenerationCache::open(&root).unwrap();
-        let first = cache.create_candidate("operation-1", 1).unwrap();
+        let first = cache
+            .create_candidate("operation-1", TEST_RESERVATION)
+            .unwrap();
         populate(&first, "verified");
         let generation = identity(1, '1');
         assert_eq!(
@@ -1567,7 +2876,9 @@ mod tests {
             GenerationCommit::Installed
         );
 
-        let duplicate = cache.create_candidate("operation-2", 1).unwrap();
+        let duplicate = cache
+            .create_candidate("operation-2", TEST_RESERVATION)
+            .unwrap();
         populate(&duplicate, "verified");
         assert_eq!(
             cache
@@ -1577,7 +2888,9 @@ mod tests {
         );
         assert!(!duplicate.exists());
 
-        let conflicting = cache.create_candidate("operation-3", 1).unwrap();
+        let conflicting = cache
+            .create_candidate("operation-3", TEST_RESERVATION)
+            .unwrap();
         populate(&conflicting, "different");
         assert!(cache
             .commit_candidate(&conflicting, &generation, verify_value("different"))
@@ -1600,7 +2913,9 @@ mod tests {
         let root = temporary_cache("interrupted-publication");
         let cache = CoreGenerationCache::open(&root).unwrap();
         let generation = identity(1, 'd');
-        let interrupted = cache.create_candidate("interrupted", 1).unwrap();
+        let interrupted = cache
+            .create_candidate("interrupted", TEST_RESERVATION)
+            .unwrap();
         populate(&interrupted, "verified");
         let destination = cache.generation_path(&generation).unwrap();
         fs::rename(&interrupted, &destination).unwrap();
@@ -1608,7 +2923,7 @@ mod tests {
             .begin_activation(&generation, "unsafe", 0, verify_value("verified"))
             .is_err());
 
-        let retry = cache.create_candidate("retry", 1).unwrap();
+        let retry = cache.create_candidate("retry", TEST_RESERVATION).unwrap();
         populate(&retry, "verified");
         assert_eq!(
             cache
@@ -1633,7 +2948,9 @@ mod tests {
         let root = temporary_cache("stale-marker");
         let cache = CoreGenerationCache::open(&root).unwrap();
         let generation = identity(2, 'e');
-        let original = cache.create_candidate("original", 1).unwrap();
+        let original = cache
+            .create_candidate("original", TEST_RESERVATION)
+            .unwrap();
         populate(&original, "verified");
         cache
             .commit_candidate(&original, &generation, verify_value("verified"))
@@ -1645,7 +2962,7 @@ mod tests {
         make_tree_removable(&destination).unwrap();
         remove_owned_candidate(&destination, &cache.root.join("generations")).unwrap();
         assert!(marker.is_file());
-        let interrupted = cache.create_candidate("fresh", 1).unwrap();
+        let interrupted = cache.create_candidate("fresh", TEST_RESERVATION).unwrap();
         populate(&interrupted, "verified");
         cache
             .invalidate_generation_commit_marker(&generation)
@@ -1670,7 +2987,7 @@ mod tests {
             let error = cache
                 .stage_candidate(
                     operation,
-                    1,
+                    TEST_RESERVATION,
                     &generation,
                     |candidate| {
                         populate(candidate, "partial");
@@ -1691,7 +3008,7 @@ mod tests {
         let error = cache
             .stage_candidate(
                 "late-verification",
-                1,
+                TEST_RESERVATION,
                 &generation,
                 |candidate| {
                     populate(candidate, "complete");
@@ -1716,7 +3033,7 @@ mod tests {
             cache
                 .stage_candidate(
                     "complete",
-                    1,
+                    TEST_RESERVATION,
                     &generation,
                     |candidate| {
                         populate(candidate, "complete");
@@ -1869,6 +3186,503 @@ mod tests {
     }
 
     #[test]
+    fn reconciliation_preserves_live_lease_then_removes_dropped_candidate() {
+        let root = temporary_cache("reconcile-live-lease");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let lease = cache.create_candidate("live", 64).unwrap();
+        populate(&lease, "partially-staged");
+        let candidate = lease.path().to_path_buf();
+        let sidecar = lease.lease_path.clone();
+
+        let live = cache.reconcile().unwrap();
+        assert_eq!(live.live_candidates, 1);
+        assert_eq!(live.removed_candidates, 0);
+        assert_eq!(live.removed_leases, 0);
+        assert!(candidate.is_dir());
+        assert!(sidecar.is_file());
+
+        drop(lease);
+        let abandoned = cache.reconcile().unwrap();
+        assert_eq!(abandoned.live_candidates, 0);
+        assert_eq!(abandoned.removed_candidates, 1);
+        assert_eq!(abandoned.removed_leases, 1);
+        assert!(!candidate.exists());
+        assert!(!sidecar.exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn reconciliation_rejects_live_lease_bound_to_another_candidate_identity() {
+        let root = temporary_cache("reconcile-live-binding");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let lease = cache.create_candidate("live-binding", 64).unwrap();
+        let basename = lease.path().file_name().unwrap().to_str().unwrap();
+        let wrong = FilesystemIdentity {
+            device: lease.candidate_identity.device,
+            inode: lease.candidate_identity.inode.wrapping_add(1),
+        };
+        fs::write(
+            &lease.lease_path,
+            candidate_lease_bytes(basename, wrong, 64).unwrap(),
+        )
+        .unwrap();
+
+        assert!(cache.reconcile().is_err());
+        assert!(lease.path().exists());
+        assert!(lease.lease_path.exists());
+        fs::write(&lease.lease_path, &lease.expected_bytes).unwrap();
+        cache.abort_candidate(&lease).unwrap();
+        cleanup(&root);
+    }
+
+    #[test]
+    fn reconciliation_removes_unleased_candidate_and_unlocked_orphan_sidecar() {
+        let root = temporary_cache("reconcile-orphans");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let unleased = root
+            .join("candidates")
+            .join(format!("candidate-unleased-{}", "a".repeat(64)));
+        fs::create_dir(&unleased).unwrap();
+        fs::set_permissions(&unleased, fs::Permissions::from_mode(0o700)).unwrap();
+        populate(&unleased, "residue");
+
+        let orphan = cache.create_candidate("orphan", 41).unwrap();
+        let orphan_candidate = orphan.path().to_path_buf();
+        let orphan_sidecar = orphan.lease_path.clone();
+        drop(orphan);
+        fs::remove_dir(&orphan_candidate).unwrap();
+
+        let report = cache.reconcile().unwrap();
+        assert_eq!(report.removed_candidates, 1);
+        assert_eq!(report.removed_leases, 1);
+        assert!(!unleased.exists());
+        assert!(!orphan_sidecar.exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn reconciliation_removes_abandoned_candidate_larger_than_its_reservation() {
+        let root = temporary_cache("reconcile-reservation-overrun");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let lease = cache.create_candidate("oversized", 1).unwrap();
+        populate(&lease, "larger-than-one-byte");
+        let candidate = lease.path().to_path_buf();
+        let sidecar = lease.lease_path.clone();
+        drop(lease);
+
+        let report = cache.reconcile().unwrap();
+        assert_eq!(report.removed_candidates, 1);
+        assert_eq!(report.removed_leases, 1);
+        assert!(!candidate.exists());
+        assert!(!sidecar.exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn commit_rejects_candidate_larger_than_its_reservation_before_publication() {
+        let root = temporary_cache("commit-reservation-overrun");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, 'e');
+        let candidate = cache.create_candidate("oversized-commit", 1).unwrap();
+        populate(&candidate, "larger-than-one-byte");
+
+        assert!(cache
+            .commit_candidate(&candidate, &generation, |_| Ok(()))
+            .is_err());
+        assert!(!candidate.exists());
+        assert!(!cache.generation_path(&generation).unwrap().exists());
+        assert!(!cache
+            .generation_commit_marker_path(&generation)
+            .unwrap()
+            .exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn reconciliation_removes_structurally_safe_oversized_unmarked_generation() {
+        let root = temporary_cache("reconcile-oversized-unmarked");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, 'f');
+        let path = cache.generation_path(&generation).unwrap();
+        fs::create_dir(&path).unwrap();
+        let file = File::create(path.join("sparse-residue")).unwrap();
+        file.set_len(MAX_GENERATION_BYTES + 1).unwrap();
+
+        let report = cache.reconcile().unwrap();
+        assert_eq!(report.removed_generations, 1);
+        assert!(!path.exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn reconciliation_quarantines_depth_explosion_and_cleans_it_in_bounded_batch() {
+        let root = temporary_cache("reconcile-deep-unmarked");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(2, 'f');
+        let generation_path = cache.generation_path(&generation).unwrap();
+        fs::create_dir(&generation_path).unwrap();
+        let mut deepest = generation_path.clone();
+        for _ in 0..=MAX_TREE_DEPTH {
+            deepest = deepest.join("nested");
+            fs::create_dir(&deepest).unwrap();
+        }
+
+        let report = cache.reconcile().unwrap();
+        assert_eq!(report.removed_generations, 1);
+        assert!(!generation_path.exists());
+        assert_eq!(fs::read_dir(root.join("trash")).unwrap().count(), 1);
+
+        cache.reconcile().unwrap();
+        assert_eq!(fs::read_dir(root.join("trash")).unwrap().count(), 0);
+        cleanup(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn descriptor_cleanup_rejects_replacement_symlink_without_touching_external_tree() {
+        use std::os::unix::fs::symlink;
+
+        let root = temporary_cache("tombstone-replacement-symlink");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let tombstone = root
+            .join("trash")
+            .join(format!("tombstone-{}", "a".repeat(64)));
+        fs::create_dir(&tombstone).unwrap();
+        fs::write(tombstone.join("residue"), "cache").unwrap();
+        let inventory = inventory_tombstones(&root.join("trash")).unwrap();
+
+        let held = root.parent().unwrap().join(format!(
+            "opemos-held-tombstone-{}",
+            random_candidate_token().unwrap()
+        ));
+        let external = root.parent().unwrap().join(format!(
+            "opemos-external-tombstone-{}",
+            random_candidate_token().unwrap()
+        ));
+        fs::rename(&tombstone, &held).unwrap();
+        fs::create_dir(&external).unwrap();
+        fs::write(external.join("sentinel"), "untouched").unwrap();
+        symlink(&external, &tombstone).unwrap();
+
+        assert!(
+            clean_tombstones_bounded(&inventory, &root.join("trash"), cache.trash_identity)
+                .is_err()
+        );
+        assert_eq!(
+            fs::read_to_string(external.join("sentinel")).unwrap(),
+            "untouched"
+        );
+
+        fs::remove_file(tombstone).unwrap();
+        cleanup(&root);
+        cleanup(&held);
+        cleanup(&external);
+    }
+
+    #[test]
+    fn reconciliation_rejects_replaced_trash_root_identity() {
+        let root = temporary_cache("trash-root-replacement");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let original = root.parent().unwrap().join(format!(
+            "opemos-original-trash-{}",
+            random_candidate_token().unwrap()
+        ));
+        fs::rename(root.join("trash"), &original).unwrap();
+        fs::create_dir(root.join("trash")).unwrap();
+        fs::set_permissions(root.join("trash"), fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert!(cache.reconcile().is_err());
+        cleanup(&root);
+        cleanup(&original);
+    }
+
+    #[test]
+    fn descriptor_cleanup_removes_sealed_directories_and_files() {
+        let root = temporary_cache("sealed-tombstone");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let tombstone = root
+            .join("trash")
+            .join(format!("tombstone-{}", "b".repeat(64)));
+        let nested = tombstone.join("sealed");
+        fs::create_dir(&tombstone).unwrap();
+        fs::create_dir(&nested).unwrap();
+        let file = nested.join("content");
+        fs::write(&file, "sealed").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o400)).unwrap();
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o500)).unwrap();
+        fs::set_permissions(&tombstone, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let inventory = inventory_tombstones(&root.join("trash")).unwrap();
+        clean_tombstones_bounded(&inventory, &root.join("trash"), cache.trash_identity).unwrap();
+        assert!(!tombstone.exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn descriptor_cleanup_removes_a_full_many_sibling_batch() {
+        let root = temporary_cache("many-sibling-tombstone");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let tombstone = root
+            .join("trash")
+            .join(format!("tombstone-{}", "c".repeat(64)));
+        fs::create_dir(&tombstone).unwrap();
+        for index in 0..300 {
+            fs::write(tombstone.join(format!("entry-{index:03}")), "x").unwrap();
+        }
+
+        cache.reconcile().unwrap();
+        assert_eq!(fs::read_dir(&tombstone).unwrap().count(), 44);
+        cache.reconcile().unwrap();
+        assert!(!tombstone.exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn tombstone_device_check_precedes_permission_changes() {
+        let root = temporary_cache("wrong-device-tombstone");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let tombstone = root
+            .join("trash")
+            .join(format!("tombstone-{}", "d".repeat(64)));
+        fs::create_dir(&tombstone).unwrap();
+        fs::set_permissions(&tombstone, fs::Permissions::from_mode(0o500)).unwrap();
+        let opened = open_bound_directory(&tombstone, None, "test tombstone").unwrap();
+
+        assert!(require_opened_directory_device(
+            &opened,
+            cache.trash_identity.device.wrapping_add(1)
+        )
+        .is_err());
+        assert_eq!(
+            fs::symlink_metadata(&tombstone)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o500
+        );
+        cleanup(&root);
+    }
+
+    #[test]
+    fn reconciliation_removes_only_exact_stale_temporary_patterns() {
+        let root = temporary_cache("reconcile-temporaries");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let state_temp = root.join(".state.json.123.456.tmp");
+        let commit_temp = root
+            .join("commits")
+            .join(format!(".commit-7-{}.tmp", "b".repeat(64)));
+        fs::write(&state_temp, "state-residue").unwrap();
+        fs::write(&commit_temp, "commit-residue").unwrap();
+
+        let report = cache.reconcile().unwrap();
+        assert_eq!(report.removed_state_temporaries, 1);
+        assert_eq!(report.removed_commit_temporaries, 1);
+        assert!(!state_temp.exists());
+        assert!(!commit_temp.exists());
+
+        fs::write(root.join(".state.json.not-a-pid.1.tmp"), "unknown").unwrap();
+        assert!(cache.reconcile().is_err());
+        fs::remove_file(root.join(".state.json.not-a-pid.1.tmp")).unwrap();
+        fs::write(root.join(".state.json.0123.1.tmp"), "noncanonical").unwrap();
+        assert!(cache.reconcile().is_err());
+        fs::remove_file(root.join(".state.json.0123.1.tmp")).unwrap();
+        let noncanonical_commit = root
+            .join("commits")
+            .join(format!(".commit-07-{}.tmp", "c".repeat(64)));
+        fs::write(&noncanonical_commit, "noncanonical").unwrap();
+        assert!(cache.reconcile().is_err());
+        fs::remove_file(noncanonical_commit).unwrap();
+
+        let replaceable = root.join(".state.json.123.789.tmp");
+        fs::write(&replaceable, "original").unwrap();
+        let (_, original_identity) = validate_cache_root_inventory(&root)
+            .unwrap()
+            .into_iter()
+            .find(|(path, _identity)| path == &replaceable)
+            .unwrap();
+        let held = root.join("held-original-temp");
+        fs::rename(&replaceable, &held).unwrap();
+        fs::write(&replaceable, "replacement").unwrap();
+        assert!(remove_safe_regular_file(
+            &replaceable,
+            &root,
+            original_identity,
+            "test state temporary"
+        )
+        .is_err());
+        assert_eq!(fs::read_to_string(&replaceable).unwrap(), "replacement");
+        fs::remove_file(held).unwrap();
+        cleanup(&root);
+    }
+
+    #[test]
+    fn reconciliation_prunes_oldest_unprotected_pairs_and_preserves_active() {
+        let root = temporary_cache("reconcile-retention");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generations = (1_u64..=5)
+            .map(|sequence| {
+                let generation = identity(sequence, char::from_digit(sequence as u32, 16).unwrap());
+                let candidate = cache
+                    .create_candidate(&format!("retention-{sequence}"), 1)
+                    .unwrap();
+                cache
+                    .commit_candidate(&candidate, &generation, |_| Ok(()))
+                    .unwrap();
+                generation
+            })
+            .collect::<Vec<_>>();
+        cache
+            .begin_activation(&generations[0], "retain-active", 0, |_| Ok(()))
+            .unwrap();
+        cache
+            .acknowledge_healthy(&generations[0], "retain-active", 1, |_| Ok(()))
+            .unwrap();
+
+        let report = cache.reconcile().unwrap();
+        assert_eq!(report.retained_generations, MAX_RETAINED_GENERATIONS);
+        assert_eq!(report.removed_generations, 1);
+        assert_eq!(report.removed_commit_markers, 1);
+        assert!(cache.generation_path(&generations[0]).unwrap().exists());
+        assert!(!cache.generation_path(&generations[1]).unwrap().exists());
+        for generation in &generations[2..] {
+            assert!(cache.generation_path(generation).unwrap().exists());
+        }
+        assert_eq!(
+            cache.load_state().unwrap().active.as_ref(),
+            Some(&generations[0])
+        );
+        cleanup(&root);
+    }
+
+    #[test]
+    fn reconciliation_prunes_unprotected_pairs_to_fit_live_reservations() {
+        let root = temporary_cache("reconcile-byte-retention");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, 'd');
+        let candidate = cache.create_candidate("retained-byte", 1).unwrap();
+        populate(&candidate, "x");
+        cache
+            .commit_candidate(&candidate, &generation, verify_value("x"))
+            .unwrap();
+
+        let leases = (0..MAX_RETAINED_GENERATIONS)
+            .map(|index| {
+                cache
+                    .create_candidate(&format!("live-budget-{index}"), MAX_GENERATION_BYTES)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let report = cache.reconcile().unwrap();
+        assert_eq!(report.live_candidates, MAX_RETAINED_GENERATIONS);
+        assert_eq!(report.retained_generations, 0);
+        assert_eq!(report.removed_generations, 1);
+        assert_eq!(report.removed_commit_markers, 1);
+        assert!(!cache.generation_path(&generation).unwrap().exists());
+
+        drop(leases);
+        let abandoned = cache.reconcile().unwrap();
+        assert_eq!(abandoned.removed_candidates, MAX_RETAINED_GENERATIONS);
+        assert_eq!(abandoned.removed_leases, MAX_RETAINED_GENERATIONS);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn reconciliation_rejects_distinct_valid_generations_with_duplicate_sequences() {
+        let root = temporary_cache("reconcile-duplicate-sequence");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let first = identity(7, 'a');
+        let second = identity(7, 'b');
+        for (operation, generation) in [("duplicate-a", &first), ("duplicate-b", &second)] {
+            let candidate = cache.create_candidate(operation, 1).unwrap();
+            cache
+                .commit_candidate(&candidate, generation, |_| Ok(()))
+                .unwrap();
+        }
+
+        assert!(cache.reconcile().is_err());
+        for generation in [&first, &second] {
+            assert!(cache.generation_path(generation).unwrap().exists());
+            assert!(cache
+                .generation_commit_marker_path(generation)
+                .unwrap()
+                .exists());
+        }
+        cleanup(&root);
+    }
+
+    #[test]
+    fn reconciliation_revokes_orphan_markers_and_removes_unmarked_generations() {
+        let root = temporary_cache("reconcile-generation-residue");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let orphan = identity(7, '7');
+        let orphan_marker = cache.generation_commit_marker_path(&orphan).unwrap();
+        fs::write(&orphan_marker, generation_commit_marker_bytes(&orphan)).unwrap();
+        fs::set_permissions(&orphan_marker, fs::Permissions::from_mode(0o400)).unwrap();
+
+        let unmarked = identity(8, '8');
+        let unmarked_path = cache.generation_path(&unmarked).unwrap();
+        fs::create_dir(&unmarked_path).unwrap();
+        fs::set_permissions(&unmarked_path, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let report = cache.reconcile().unwrap();
+        assert_eq!(report.removed_commit_markers, 1);
+        assert_eq!(report.removed_generations, 1);
+        assert!(!orphan_marker.exists());
+        assert!(!unmarked_path.exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn reconciliation_retains_valid_pairs_and_fails_closed_for_protected_damage() {
+        let root = temporary_cache("reconcile-protected");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let generation = identity(1, '9');
+        let candidate = cache
+            .create_candidate("protected", TEST_RESERVATION)
+            .unwrap();
+        populate(&candidate, "protected");
+        cache
+            .commit_candidate(&candidate, &generation, verify_value("protected"))
+            .unwrap();
+        cache
+            .begin_activation(&generation, "activate", 0, verify_value("protected"))
+            .unwrap();
+        cache
+            .acknowledge_healthy(&generation, "activate", 1, verify_value("protected"))
+            .unwrap();
+
+        let retained = cache.reconcile().unwrap();
+        assert_eq!(retained.retained_generations, 1);
+        assert_eq!(retained.removed_generations, 0);
+        let marker = cache.generation_commit_marker_path(&generation).unwrap();
+        fs::set_permissions(&marker, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(cache.reconcile().is_err());
+        assert!(cache.generation_path(&generation).unwrap().exists());
+        assert!(marker.exists());
+        cleanup(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reconciliation_rejects_linked_and_special_residue_without_removal() {
+        use std::os::unix::fs::symlink;
+
+        let root = temporary_cache("reconcile-unsafe");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let candidate = root
+            .join("candidates")
+            .join(format!("candidate-unsafe-{}", "c".repeat(64)));
+        fs::create_dir(&candidate).unwrap();
+        fs::set_permissions(&candidate, fs::Permissions::from_mode(0o700)).unwrap();
+        symlink("/tmp", candidate.join("escape")).unwrap();
+
+        assert!(cache.reconcile().is_err());
+        assert!(candidate.exists());
+        cleanup(&root);
+    }
+
+    #[test]
     fn same_operation_retries_use_distinct_lease_targets() {
         let root = temporary_cache("stale-cleanup");
         let cache = CoreGenerationCache::open(&root).unwrap();
@@ -1895,8 +3709,12 @@ mod tests {
 
         let root = temporary_cache("concurrent-commit");
         let cache = CoreGenerationCache::open(&root).unwrap();
-        let first = cache.create_candidate("concurrent-1", 1).unwrap();
-        let second = cache.create_candidate("concurrent-2", 1).unwrap();
+        let first = cache
+            .create_candidate("concurrent-1", TEST_RESERVATION)
+            .unwrap();
+        let second = cache
+            .create_candidate("concurrent-2", TEST_RESERVATION)
+            .unwrap();
         populate(&first, "shared");
         populate(&second, "shared");
         let generation = identity(5, '5');
@@ -1942,7 +3760,7 @@ mod tests {
         for (operation, generation, value) in
             [("first", &first, "first"), ("second", &second, "second")]
         {
-            let candidate = cache.create_candidate(operation, 1).unwrap();
+            let candidate = cache.create_candidate(operation, TEST_RESERVATION).unwrap();
             populate(&candidate, value);
             cache
                 .commit_candidate(&candidate, generation, verify_value(value))
@@ -1993,7 +3811,7 @@ mod tests {
             .is_err());
 
         let third = identity(3, '6');
-        let candidate = cache.create_candidate("third", 1).unwrap();
+        let candidate = cache.create_candidate("third", TEST_RESERVATION).unwrap();
         populate(&candidate, "third");
         cache
             .commit_candidate(&candidate, &third, verify_value("third"))
@@ -2047,7 +3865,7 @@ mod tests {
         for (operation, generation, value) in
             [("first", &first, "first"), ("second", &second, "second")]
         {
-            let candidate = cache.create_candidate(operation, 1).unwrap();
+            let candidate = cache.create_candidate(operation, TEST_RESERVATION).unwrap();
             populate(&candidate, value);
             cache
                 .commit_candidate(&candidate, generation, verify_value(value))
@@ -2162,7 +3980,9 @@ mod tests {
         let root = temporary_cache("state-loss");
         let cache = CoreGenerationCache::open(&root).unwrap();
         let identity = identity(1, 'a');
-        let candidate = cache.create_candidate("activate", 1).unwrap();
+        let candidate = cache
+            .create_candidate("activate", TEST_RESERVATION)
+            .unwrap();
         populate(&candidate, "sealed");
         cache
             .commit_candidate(&candidate, &identity, verify_value("sealed"))
