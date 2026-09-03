@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -88,6 +88,9 @@ struct FilesystemIdentity {
 #[derive(Clone, Debug)]
 pub(crate) struct CoreGenerationCache {
     root: PathBuf,
+    root_file: Arc<File>,
+    root_identity: FilesystemIdentity,
+    lock_identity: FilesystemIdentity,
     trash_identity: FilesystemIdentity,
 }
 
@@ -337,68 +340,58 @@ impl CoreGenerationCache {
             require_directory(&path, "Core generation cache directory")?;
             set_private_directory_permissions(&path)?;
         }
-        sync_directory(&root)?;
+        root_handle
+            .sync_all()
+            .map_err(|error| format!("Could not sync the Core generation cache: {error}"))?;
         let trash_identity = candidate_directory_identity(&root.join("trash"))?
             .ok_or("Core generation trash directory disappeared during creation.")?;
+        let root_identity = FilesystemIdentity {
+            device: opened.dev(),
+            inode: opened.ino(),
+        };
+        require_bound_root(&root, &root_handle, root_identity)?;
+        let (initial_lock, lock_identity) = acquire_bound_cache_lock(
+            &root_handle,
+            &root.join("cache.lock"),
+            None,
+            |_| Ok(()),
+            |_| Ok(()),
+        )?;
+        root_handle
+            .sync_all()
+            .map_err(|error| format!("Could not sync the Core generation cache lock: {error}"))?;
+        drop(initial_lock);
         Ok(Self {
             root,
+            root_file: Arc::new(root_handle),
+            root_identity,
+            lock_identity,
             trash_identity,
         })
     }
 
     fn acquire_lock(&self) -> Result<CoreGenerationCacheLock, String> {
-        let path = self.root.join("cache.lock");
-        let before = fs::symlink_metadata(&path).ok();
-        if before
-            .as_ref()
-            .is_some_and(|metadata| metadata.file_type().is_symlink() || !metadata.is_file())
-        {
-            return Err("Core generation cache lock is not a safe regular file.".into());
-        }
-        let mut options = OpenOptions::new();
-        options
-            .read(true)
-            .write(true)
-            .create(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-        let file = options
-            .open(&path)
-            .map_err(|error| format!("Could not open the Core generation cache lock: {error}"))?;
-        let metadata = file.metadata().map_err(|error| {
-            format!("Could not inspect the Core generation cache lock: {error}")
-        })?;
-        use std::os::unix::fs::MetadataExt as _;
-        if !metadata.is_file()
-            || before.as_ref().is_some_and(|before| {
-                before.dev() != metadata.dev() || before.ino() != metadata.ino()
-            })
-        {
+        self.acquire_lock_with_hooks(|_| Ok(()), |_| Ok(()))
+    }
+
+    fn acquire_lock_with_hooks(
+        &self,
+        before_lock: impl FnOnce(&Path) -> Result<(), String>,
+        after_lock: impl FnOnce(&Path) -> Result<(), String>,
+    ) -> Result<CoreGenerationCacheLock, String> {
+        require_bound_root(&self.root, &self.root_file, self.root_identity)?;
+        let (guard, identity) = acquire_bound_cache_lock(
+            &self.root_file,
+            &self.root.join("cache.lock"),
+            Some(self.lock_identity),
+            before_lock,
+            after_lock,
+        )?;
+        if identity != self.lock_identity {
             return Err("Core generation cache lock identity changed.".into());
         }
-        if metadata.permissions().mode() & 0o7777 != 0o600 {
-            file.set_permissions(fs::Permissions::from_mode(0o600))
-                .map_err(|error| {
-                    format!("Could not secure the Core generation cache lock: {error}")
-                })?;
-        }
-        let deadline = Instant::now()
-            .checked_add(CACHE_LOCK_TIMEOUT)
-            .ok_or("Core generation cache lock deadline overflowed.")?;
-        loop {
-            match file.try_lock() {
-                Ok(()) => return Ok(CoreGenerationCacheLock { file }),
-                Err(std::fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
-                    thread::sleep(CACHE_LOCK_RETRY);
-                }
-                Err(std::fs::TryLockError::WouldBlock) => {
-                    return Err("Timed out waiting for the Core generation cache lock.".into());
-                }
-                Err(std::fs::TryLockError::Error(error)) => {
-                    return Err(format!("Could not lock the Core generation cache: {error}"));
-                }
-            }
-        }
+        require_bound_root(&self.root, &self.root_file, self.root_identity)?;
+        Ok(guard)
     }
 
     pub(crate) fn create_candidate(
@@ -1901,6 +1894,166 @@ fn openat_bound_directory(
     Ok(file)
 }
 
+fn require_bound_root(
+    path: &Path,
+    root_file: &File,
+    expected: FilesystemIdentity,
+) -> Result<(), String> {
+    let path_metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not revalidate the Core generation cache root: {error}"))?;
+    let opened = root_file
+        .metadata()
+        .map_err(|error| format!("Could not identify the pinned Core generation cache: {error}"))?;
+    use std::os::unix::fs::MetadataExt as _;
+    if path_metadata.file_type().is_symlink()
+        || !path_metadata.is_dir()
+        || !opened.is_dir()
+        || path_metadata.dev() != expected.device
+        || path_metadata.ino() != expected.inode
+        || opened.dev() != expected.device
+        || opened.ino() != expected.inode
+    {
+        return Err("Core generation cache root identity changed after opening.".into());
+    }
+    Ok(())
+}
+
+fn acquire_bound_cache_lock(
+    root_file: &File,
+    lock_path: &Path,
+    expected: Option<FilesystemIdentity>,
+    before_lock: impl FnOnce(&Path) -> Result<(), String>,
+    after_lock: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(CoreGenerationCacheLock, FilesystemIdentity), String> {
+    let name = CString::new("cache.lock")
+        .map_err(|_| "Core generation cache lock name is invalid.".to_string())?;
+    let (fd, created) = if expected.is_some() {
+        let fd = unsafe {
+            libc::openat(
+                root_file.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDWR | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        (fd, false)
+    } else {
+        let fd = unsafe {
+            libc::openat(
+                root_file.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if fd >= 0 {
+            (fd, true)
+        } else if std::io::Error::last_os_error().kind() == ErrorKind::AlreadyExists {
+            let existing = unsafe {
+                libc::openat(
+                    root_file.as_raw_fd(),
+                    name.as_ptr(),
+                    libc::O_RDWR | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                )
+            };
+            (existing, false)
+        } else {
+            (fd, false)
+        }
+    };
+    if fd < 0 {
+        return Err(format!(
+            "Could not open the bound Core generation cache lock: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let file = unsafe { File::from_raw_fd(fd) };
+    let initial = file.metadata().map_err(|error| {
+        format!("Could not inspect the bound Core generation cache lock: {error}")
+    })?;
+    use std::os::unix::fs::MetadataExt as _;
+    if !initial.is_file() || initial.uid() != unsafe { libc::geteuid() } || initial.nlink() != 1 {
+        return Err("Core generation cache lock is unsafe or foreign.".into());
+    }
+    if created {
+        if unsafe { libc::fchmod(file.as_raw_fd(), 0o600) } != 0 {
+            return Err(format!(
+                "Could not secure the new Core generation cache lock: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        file.sync_all().map_err(|error| {
+            format!("Could not sync the new Core generation cache lock: {error}")
+        })?;
+    }
+    let opened = file.metadata().map_err(|error| {
+        format!("Could not recheck the bound Core generation cache lock: {error}")
+    })?;
+    let identity = FilesystemIdentity {
+        device: opened.dev(),
+        inode: opened.ino(),
+    };
+    if !opened.is_file()
+        || opened.uid() != unsafe { libc::geteuid() }
+        || opened.nlink() != 1
+        || opened.permissions().mode() & 0o7777 != 0o600
+        || expected.is_some_and(|expected| expected != identity)
+    {
+        return Err("Core generation cache lock has invalid identity or permissions.".into());
+    }
+    require_lock_path_identity(root_file, &name, identity)?;
+    before_lock(lock_path)?;
+    let deadline = Instant::now()
+        .checked_add(CACHE_LOCK_TIMEOUT)
+        .ok_or("Core generation cache lock deadline overflowed.")?;
+    loop {
+        match file.try_lock() {
+            Ok(()) => break,
+            Err(std::fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                thread::sleep(CACHE_LOCK_RETRY);
+            }
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err("Timed out waiting for the Core generation cache lock.".into());
+            }
+            Err(std::fs::TryLockError::Error(error)) => {
+                return Err(format!("Could not lock the Core generation cache: {error}"));
+            }
+        }
+    }
+    after_lock(lock_path)?;
+    let locked = file.metadata().map_err(|error| {
+        format!("Could not identify the locked Core generation cache lock: {error}")
+    })?;
+    if !locked.is_file()
+        || locked.dev() != identity.device
+        || locked.ino() != identity.inode
+        || locked.uid() != unsafe { libc::geteuid() }
+        || locked.nlink() != 1
+        || locked.permissions().mode() & 0o7777 != 0o600
+    {
+        return Err("Core generation cache lock changed while acquiring it.".into());
+    }
+    require_lock_path_identity(root_file, &name, identity)?;
+    Ok((CoreGenerationCacheLock { file }, identity))
+}
+
+fn require_lock_path_identity(
+    root_file: &File,
+    name: &CStr,
+    expected: FilesystemIdentity,
+) -> Result<(), String> {
+    let stat = statat_nofollow(root_file.as_raw_fd(), name)?;
+    if !stat_is_regular(&stat)
+        || stat.st_dev as u64 != expected.device
+        || stat.st_ino != expected.inode
+        || stat.st_uid != unsafe { libc::geteuid() }
+        || stat.st_nlink != 1
+        || stat.st_mode & 0o7777 != 0o600
+    {
+        return Err("Core generation cache lock pathname changed or is unsafe.".into());
+    }
+    Ok(())
+}
+
 fn path_component_cstring(path: &Path, description: &str) -> Result<CString, String> {
     let name = path
         .file_name()
@@ -1929,6 +2082,10 @@ fn statat_nofollow(parent_fd: libc::c_int, name: &CStr) -> Result<libc::stat, St
 
 fn stat_is_directory(stat: &libc::stat) -> bool {
     stat.st_mode & libc::S_IFMT == libc::S_IFDIR
+}
+
+fn stat_is_regular(stat: &libc::stat) -> bool {
+    stat.st_mode & libc::S_IFMT == libc::S_IFREG
 }
 
 struct DirectoryStream(*mut libc::DIR);
@@ -2858,6 +3015,13 @@ mod tests {
         }
         make_writable(root);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn create_private_file(path: &Path) {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true).mode(0o600);
+        options.open(path).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
     #[test]
@@ -4043,6 +4207,123 @@ mod tests {
         assert!(cache.load_state().is_err());
         fs::remove_file(alias).unwrap();
         cleanup(&actual);
+    }
+
+    #[test]
+    fn preexisting_hard_linked_or_misconfigured_lock_is_rejected_without_repair() {
+        let hard_link_root = temporary_cache("hard-linked-lock-open");
+        fs::create_dir(&hard_link_root).unwrap();
+        fs::set_permissions(&hard_link_root, fs::Permissions::from_mode(0o700)).unwrap();
+        let external = hard_link_root
+            .parent()
+            .unwrap()
+            .join(format!("opemos-core-external-lock-{}", std::process::id()));
+        create_private_file(&external);
+        fs::hard_link(&external, hard_link_root.join("cache.lock")).unwrap();
+        assert!(CoreGenerationCache::open(&hard_link_root).is_err());
+        assert_eq!(
+            fs::metadata(&external).unwrap().permissions().mode() & 0o7777,
+            0o600
+        );
+        cleanup(&hard_link_root);
+        fs::remove_file(&external).unwrap();
+
+        let mode_root = temporary_cache("unsafe-lock-mode-open");
+        fs::create_dir(&mode_root).unwrap();
+        fs::set_permissions(&mode_root, fs::Permissions::from_mode(0o700)).unwrap();
+        create_private_file(&mode_root.join("cache.lock"));
+        fs::set_permissions(
+            mode_root.join("cache.lock"),
+            fs::Permissions::from_mode(0o640),
+        )
+        .unwrap();
+        assert!(CoreGenerationCache::open(&mode_root).is_err());
+        assert_eq!(
+            fs::metadata(mode_root.join("cache.lock"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o640
+        );
+        cleanup(&mode_root);
+    }
+
+    #[test]
+    fn lock_path_replacement_before_and_after_locking_is_rejected() {
+        for replace_after_lock in [false, true] {
+            let root = temporary_cache(if replace_after_lock {
+                "lock-replaced-after"
+            } else {
+                "lock-replaced-before"
+            });
+            let cache = CoreGenerationCache::open(&root).unwrap();
+            let displaced = root.join("displaced.lock");
+            let replace = |path: &Path| {
+                fs::rename(path, &displaced).map_err(|error| error.to_string())?;
+                create_private_file(path);
+                Ok(())
+            };
+            let result = if replace_after_lock {
+                cache.acquire_lock_with_hooks(|_| Ok(()), replace)
+            } else {
+                cache.acquire_lock_with_hooks(replace, |_| Ok(()))
+            };
+            assert!(result.is_err());
+            assert!(root.join("cache.lock").is_file());
+            assert!(displaced.is_file());
+            cleanup(&root);
+        }
+    }
+
+    #[test]
+    fn pinned_root_rejects_rename_and_path_replacement() {
+        let root = temporary_cache("pinned-root");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let displaced = root.with_extension("displaced");
+        fs::rename(&root, &displaced).unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(cache.load_state().is_err());
+        cleanup(&root);
+        cleanup(&displaced);
+    }
+
+    #[test]
+    fn pinned_lock_refuses_a_second_lock_namespace() {
+        let root = temporary_cache("split-lock");
+        let cache = CoreGenerationCache::open(&root).unwrap();
+        let first = cache.acquire_lock().unwrap();
+        let displaced = root.join("original.lock");
+        fs::rename(root.join("cache.lock"), &displaced).unwrap();
+        create_private_file(&root.join("cache.lock"));
+        let replacement = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.join("cache.lock"))
+            .unwrap();
+        replacement.try_lock().unwrap();
+        assert!(cache.acquire_lock().is_err());
+        replacement.unlock().unwrap();
+        drop(first);
+        cleanup(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn foreign_owned_lock_is_rejected_when_test_can_change_ownership() {
+        if unsafe { libc::geteuid() } != 0 {
+            return;
+        }
+        let root = temporary_cache("foreign-lock-owner");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let lock = root.join("cache.lock");
+        create_private_file(&lock);
+        let path = CString::new(lock.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::chown(path.as_ptr(), 1, u32::MAX) }, 0);
+        assert!(CoreGenerationCache::open(&root).is_err());
+        cleanup(&root);
     }
 
     #[cfg(unix)]
