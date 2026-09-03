@@ -152,12 +152,23 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   It requires the exact pending identity, operation, target, lineage, installed
   trust, and committed inventory; publishes a canonical non-executable handoff
   create-only under a destination lock; and supports exact reuse and explicit
-  retirement without exposing a raw path or descriptor.
+  retirement without exposing a raw path or descriptor. It retains a canonical,
+  descriptor-bound lease through handoff lifetime and synthetically reconciles
+  crashes at intent, copy, seal, publication, completion, and retirement
+  boundaries. Exact durable file receipts preserve ambiguous or replaced
+  entries detected before the final descriptor-relative cleanup boundary.
 - [ ] Wire staged generations into managed appliances only after Core publishes
-  the guest-consumption contract and EXE adds a durable handoff lease/journal
-  for crash/SIGKILL reconciliation. A routine compatible lock addition must
-  require neither a new EXE binary nor a reimage; unknown schema or trust-policy
-  versions must stop safely.
+  the guest-consumption contract and EXE passes a real subprocess/SIGKILL,
+  restart, cancellation, cleanup, and ENOSPC handoff matrix. A routine compatible
+  lock addition must require neither a new EXE binary nor a reimage; unknown
+  schema or trust-policy versions must stop safely.
+- [ ] Add an explicit authenticated maintenance action for a preserved
+  `appliance-handoff-recovery-required` pre-receipt stage. Never auto-delete
+  ambiguous same-UID residue after the create-to-receipt crash gap.
+- [ ] Before production wiring, replace final name-based cleanup with a durable
+  quarantine/retirement protocol: fsync intent, same-parent create-only rename,
+  fsync parent, recheck the receipt, then delete. Preserve mismatches and test
+  non-locking same-UID swaps at final file and directory retirement boundaries.
 - [ ] Keep EXE binary updates and Core data-generation updates as distinct
   channels. A data-only lock update must not replace application code, broaden
   trust, or bypass the generation compatibility contract.

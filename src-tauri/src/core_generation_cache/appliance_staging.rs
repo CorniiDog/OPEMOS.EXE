@@ -25,10 +25,11 @@ use crate::{
         MAX_GENERATION_STORAGE_BYTES, MAX_LINEAGE_GENERATIONS,
     },
 };
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
     ffi::{CStr, CString, OsStr},
     fs::{self, File, OpenOptions},
@@ -49,10 +50,31 @@ const DESTINATION_DIRECTORY_MODE: u32 = 0o700;
 const HANDOFF_DIRECTORY_MODE: u32 = 0o500;
 const HANDOFF_FILE_MODE: u32 = 0o400;
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
-const HANDOFF_RECORD_MAX_BYTES: usize = 256 * 1024;
+const HANDOFF_RECORD_MAX_BYTES: usize = 2 * 1024 * 1024;
 const DESTINATION_LOCK_FILENAME: &str = "handoff.lock";
+const LEASE_DIRECTORY_PREFIX: &str = ".handoff-lease-";
+const LEASE_INTENT_FILENAME: &str = "intent.json";
+const LEASE_STAGE_FILENAME: &str = "stage.json";
+const LEASE_PUBLISHED_FILENAME: &str = "published.json";
+const LEASE_RETIRING_FILENAME: &str = "retiring.json";
+const LEASE_FILES_FILENAME: &str = "files.json";
+const LEASE_SCHEMA: u32 = 1;
+const LEASE_KIND: &str = "opemos-core-appliance-handoff-lease";
+const LEASE_STAGE_KIND: &str = "opemos-core-appliance-handoff-stage";
+const LEASE_PUBLISHED_KIND: &str = "opemos-core-appliance-handoff-published";
+const LEASE_RETIRING_KIND: &str = "opemos-core-appliance-handoff-retiring";
+const LEASE_FILES_KIND: &str = "opemos-core-appliance-handoff-files";
+const LEASE_RECORD_MAX_BYTES: usize = 2 * 1024 * 1024;
+const MAX_LEASE_DIRECTORIES: usize = 32;
+const MAX_HANDOFF_DIRECTORY_ENTRIES: usize = crate::core_generation_contracts::MAX_FILES + 6;
+const LEASE_INTENT_TEMP_FILENAME: &str = ".intent.tmp";
+const LEASE_STAGE_TEMP_FILENAME: &str = ".stage.tmp";
+const LEASE_PUBLISHED_TEMP_FILENAME: &str = ".published.tmp";
+const LEASE_RETIRING_TEMP_FILENAME: &str = ".retiring.tmp";
+const LEASE_FILES_TEMP_FILENAME: &str = ".files.tmp";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DirectoryIdentity {
     device: u64,
     inode: u64,
@@ -64,12 +86,1411 @@ struct DirectoryIdentity {
     changed_nanoseconds: i64,
 }
 
+fn canonical_lease_record<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
+    let mut bytes = serde_json::to_vec(value)
+        .map_err(|error| format!("Could not encode appliance handoff lease: {error}"))?;
+    bytes.push(b'\n');
+    if bytes.len() > LEASE_RECORD_MAX_BYTES {
+        return Err("Appliance handoff lease exceeds its size limit.".into());
+    }
+    Ok(bytes)
+}
+
+fn read_canonical_lease_record<T>(directory: &File, name: &str) -> Result<T, String>
+where
+    T: DeserializeOwned + Serialize,
+{
+    let bytes = read_exact_file(directory, name, LEASE_RECORD_MAX_BYTES)?;
+    let parsed: T = serde_json::from_slice(&bytes)
+        .map_err(|_| "Appliance handoff lease is malformed.".to_string())?;
+    if canonical_lease_record(&parsed)? != bytes {
+        return Err("Appliance handoff lease is not canonical.".into());
+    }
+    Ok(parsed)
+}
+
+fn validate_lease_intent(intent: &HandoffLeaseIntent, directory_name: &CStr) -> Result<(), String> {
+    if intent.schema_version != LEASE_SCHEMA
+        || intent.kind != LEASE_KIND
+        || !safe_operation_id(&intent.operation_id)
+        || intent.lease_token.len() != 32
+        || !intent
+            .lease_token
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        || intent.identity.sequence == 0
+        || intent.identity.generation_id != intent.identity.manifest_sha256
+        || intent.identity.manifest_sha256.len() != 64
+        || !intent
+            .identity
+            .manifest_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        || intent.stage_name != format!(".handoff-stage-{}", intent.lease_token)
+        || intent.maximum_entries == 0
+        || intent.maximum_entries > MAX_HANDOFF_DIRECTORY_ENTRIES as u64
+        || intent.expected_files.len() as u64 != intent.maximum_entries
+        || intent.handoff_record_sha256.len() != 64
+        || !intent
+            .handoff_record_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err("Appliance handoff lease identity is invalid.".into());
+    }
+    let mut total = 0_u64;
+    for (name, file) in &intent.expected_files {
+        if name.is_empty()
+            || name.len() > 255
+            || name == "."
+            || name == ".."
+            || name.ends_with('.')
+            || !name.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || matches!(byte, b'@' | b'.' | b'_' | b'+' | b'~' | b'-')
+            })
+            || file.size == 0
+            || file.size > MAX_GENERATION_STORAGE_BYTES
+            || file.sha256.len() != 64
+            || !file
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err("Appliance handoff lease file inventory is invalid.".into());
+        }
+        total = total
+            .checked_add(file.size)
+            .ok_or("Appliance handoff lease file inventory overflowed.")?;
+    }
+    if total > MAX_GENERATION_STORAGE_BYTES + HANDOFF_RECORD_MAX_BYTES as u64 {
+        return Err("Appliance handoff lease file inventory is too large.".into());
+    }
+    let canonical_handoff = canonical_record(&intent.handoff_record)?;
+    if sha256(&canonical_handoff) != intent.handoff_record_sha256
+        || intent.handoff_record.schema_version != HANDOFF_SCHEMA
+        || intent.handoff_record.kind != HANDOFF_KIND
+        || intent.handoff_record.operation_id != intent.operation_id
+        || intent.handoff_record.identity != intent.identity
+    {
+        return Err("Appliance handoff lease record binding is invalid.".into());
+    }
+    let expected_record_file = intent
+        .expected_files
+        .get(HANDOFF_FILENAME)
+        .ok_or("Appliance handoff lease omits its handoff record.")?;
+    if expected_record_file.size != canonical_handoff.len() as u64
+        || expected_record_file.sha256 != intent.handoff_record_sha256
+    {
+        return Err("Appliance handoff lease record inventory is invalid.".into());
+    }
+    let record_files = intent
+        .handoff_record
+        .files
+        .iter()
+        .map(|file| {
+            (
+                file.filename.clone(),
+                HandoffExpectedFile {
+                    size: file.size,
+                    sha256: file.sha256.clone(),
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut expected_payload = intent.expected_files.clone();
+    expected_payload.remove(HANDOFF_FILENAME);
+    if record_files.len() != intent.handoff_record.files.len() || record_files != expected_payload {
+        return Err("Appliance handoff lease payload inventory is invalid.".into());
+    }
+    let expected_lease_name = format!("{LEASE_DIRECTORY_PREFIX}{}", intent.lease_token);
+    let expected_published_name = format!(
+        "handoff-{}-{}",
+        intent.operation_id, intent.identity.manifest_sha256
+    );
+    if directory_name.to_bytes() != expected_lease_name.as_bytes()
+        || intent.published_name != expected_published_name
+    {
+        return Err("Appliance handoff lease path identity is invalid.".into());
+    }
+    Ok(())
+}
+
+fn validate_lease_phase(
+    phase: &HandoffLeasePhase,
+    kind: &str,
+    intent: &HandoffLeaseIntent,
+) -> Result<(), String> {
+    if phase.schema_version != LEASE_SCHEMA
+        || phase.kind != kind
+        || phase.lease_token != intent.lease_token
+        || phase.directory.device != intent.destination.device
+        || phase.directory.uid != intent.destination.uid
+    {
+        return Err("Appliance handoff lease phase identity is invalid.".into());
+    }
+    Ok(())
+}
+
+fn lease_directory_name(token: &str) -> Result<CString, String> {
+    CString::new(format!("{LEASE_DIRECTORY_PREFIX}{token}"))
+        .map_err(|_| "Appliance handoff lease name is unsafe.".to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_handoff_lease<H>(
+    destination: &File,
+    operation_id: &str,
+    identity: &CoreGenerationIdentity,
+    source_identity: DirectoryIdentity,
+    destination_identity: DirectoryIdentity,
+    published_name: &CStr,
+    handoff_record: &ApplianceHandoffRecord,
+    expected_files: &BTreeMap<String, HandoffExpectedFile>,
+    hook: &mut H,
+) -> Result<(File, CString, HandoffLeaseIntent), String>
+where
+    H: FnMut(&'static str) -> Result<(), String>,
+{
+    let lease_token = random_token()?;
+    let directory_name = lease_directory_name(&lease_token)?;
+    let (directory, _) = create_staging_directory_at(destination, &directory_name)?;
+    let result = (|| {
+        hook("after-lease-mkdir")?;
+        let intent = HandoffLeaseIntent {
+            schema_version: LEASE_SCHEMA,
+            kind: LEASE_KIND.into(),
+            lease_token: lease_token.clone(),
+            operation_id: operation_id.into(),
+            identity: identity.clone(),
+            source_cache: source_identity,
+            destination: destination_identity.into(),
+            stage_name: format!(".handoff-stage-{lease_token}"),
+            published_name: published_name
+                .to_str()
+                .map_err(|_| "Appliance handoff destination name is not UTF-8.")?
+                .into(),
+            handoff_record_sha256: sha256(&canonical_record(handoff_record)?),
+            handoff_record: handoff_record.clone(),
+            maximum_entries: u64::try_from(expected_files.len())
+                .map_err(|_| "Appliance handoff entry count overflowed.")?,
+            expected_files: expected_files.clone(),
+        };
+        validate_lease_intent(&intent, &directory_name)?;
+        create_lease_intent_file(&directory, &canonical_lease_record(&intent)?, hook)?;
+        hook("after-intent-publish")?;
+        directory
+            .sync_all()
+            .map_err(|error| storage_error("Could not sync appliance handoff lease", error))?;
+        hook("after-intent-directory-sync")?;
+        destination.sync_all().map_err(|error| {
+            storage_error("Could not sync appliance handoff lease publication", error)
+        })?;
+        hook("after-lease-parent-sync")?;
+        Ok(intent)
+    })();
+    match result {
+        Ok(intent) => Ok((directory, directory_name, intent)),
+        Err(primary) => {
+            let cleanup = cleanup_lease_directory(destination, &directory, &directory_name);
+            match cleanup {
+                Ok(()) => Err(primary),
+                Err(cleanup) => Err(format!("{primary} Cleanup failed: {cleanup}")),
+            }
+        }
+    }
+}
+
+fn create_lease_intent_file<H>(directory: &File, bytes: &[u8], hook: &mut H) -> Result<(), String>
+where
+    H: FnMut(&'static str) -> Result<(), String>,
+{
+    let temporary = CString::new(LEASE_INTENT_TEMP_FILENAME).unwrap();
+    let published = CString::new(LEASE_INTENT_FILENAME).unwrap();
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            temporary.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o600,
+        )
+    };
+    if fd < 0 {
+        return Err(format!(
+            "Could not create appliance handoff lease intent: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let mut file = unsafe { File::from_raw_fd(fd) };
+    hook("after-intent-create")?;
+    file.write_all(bytes)
+        .map_err(|error| storage_error("Could not write appliance handoff lease intent", error))?;
+    hook("after-intent-write")?;
+    file.sync_all()
+        .map_err(|error| storage_error("Could not sync appliance handoff lease intent", error))?;
+    file.set_permissions(fs::Permissions::from_mode(HANDOFF_FILE_MODE))
+        .map_err(|error| format!("Could not seal appliance handoff lease intent: {error}"))?;
+    file.sync_all().map_err(|error| {
+        storage_error(
+            "Could not sync sealed appliance handoff lease intent",
+            error,
+        )
+    })?;
+    hook("after-intent-sync")?;
+    rename_directory_at(directory, &temporary, &published)?;
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct PhaseHooks {
+    created: &'static str,
+    written: &'static str,
+    synced: &'static str,
+    published: &'static str,
+    directory_synced: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct LeasePhaseDefinition {
+    filename: &'static str,
+    temporary_filename: &'static str,
+    kind: &'static str,
+    hooks: PhaseHooks,
+}
+
+const STAGE_PHASE_HOOKS: PhaseHooks = PhaseHooks {
+    created: "after-stage-marker-create",
+    written: "after-stage-marker-write",
+    synced: "after-stage-marker-sync",
+    published: "after-stage-marker-publish",
+    directory_synced: "after-stage-marker-directory-sync",
+};
+const PUBLISHED_PHASE_HOOKS: PhaseHooks = PhaseHooks {
+    created: "after-published-marker-create",
+    written: "after-published-marker-write",
+    synced: "after-published-marker-sync",
+    published: "after-published-marker-publish",
+    directory_synced: "after-published-marker-directory-sync",
+};
+const RETIRING_PHASE_HOOKS: PhaseHooks = PhaseHooks {
+    created: "after-retiring-marker-create",
+    written: "after-retiring-marker-write",
+    synced: "after-retiring-marker-sync",
+    published: "after-retiring-marker-publish",
+    directory_synced: "after-retiring-marker-directory-sync",
+};
+const FILES_PHASE_HOOKS: PhaseHooks = PhaseHooks {
+    created: "after-files-receipt-create",
+    written: "after-files-receipt-write",
+    synced: "after-files-receipt-sync",
+    published: "after-files-receipt-publish",
+    directory_synced: "after-files-receipt-directory-sync",
+};
+const STAGE_PHASE: LeasePhaseDefinition = LeasePhaseDefinition {
+    filename: LEASE_STAGE_FILENAME,
+    temporary_filename: LEASE_STAGE_TEMP_FILENAME,
+    kind: LEASE_STAGE_KIND,
+    hooks: STAGE_PHASE_HOOKS,
+};
+const PUBLISHED_PHASE: LeasePhaseDefinition = LeasePhaseDefinition {
+    filename: LEASE_PUBLISHED_FILENAME,
+    temporary_filename: LEASE_PUBLISHED_TEMP_FILENAME,
+    kind: LEASE_PUBLISHED_KIND,
+    hooks: PUBLISHED_PHASE_HOOKS,
+};
+const RETIRING_PHASE: LeasePhaseDefinition = LeasePhaseDefinition {
+    filename: LEASE_RETIRING_FILENAME,
+    temporary_filename: LEASE_RETIRING_TEMP_FILENAME,
+    kind: LEASE_RETIRING_KIND,
+    hooks: RETIRING_PHASE_HOOKS,
+};
+
+fn create_lease_phase<H>(
+    lease_directory: &File,
+    definition: LeasePhaseDefinition,
+    intent: &HandoffLeaseIntent,
+    directory: DirectoryIdentity,
+    hook: &mut H,
+) -> Result<HandoffLeasePhase, String>
+where
+    H: FnMut(&'static str) -> Result<(), String>,
+{
+    let phase = HandoffLeasePhase {
+        schema_version: LEASE_SCHEMA,
+        kind: definition.kind.into(),
+        lease_token: intent.lease_token.clone(),
+        directory: directory.into(),
+    };
+    validate_lease_phase(&phase, definition.kind, intent)?;
+    create_atomic_lease_record(
+        lease_directory,
+        definition.filename,
+        definition.temporary_filename,
+        &canonical_lease_record(&phase)?,
+        hook,
+        definition.hooks,
+    )?;
+    Ok(phase)
+}
+
+fn create_atomic_lease_record<H>(
+    directory: &File,
+    filename: &str,
+    temporary_filename: &str,
+    bytes: &[u8],
+    hook: &mut H,
+    hooks: PhaseHooks,
+) -> Result<(), String>
+where
+    H: FnMut(&'static str) -> Result<(), String>,
+{
+    let temporary = CString::new(temporary_filename)
+        .map_err(|_| "Appliance handoff lease temporary name is unsafe.".to_string())?;
+    let published = CString::new(filename)
+        .map_err(|_| "Appliance handoff lease record name is unsafe.".to_string())?;
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            temporary.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o600,
+        )
+    };
+    if fd < 0 {
+        return Err(format!(
+            "Could not create appliance handoff lease phase: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let mut file = unsafe { File::from_raw_fd(fd) };
+    hook(hooks.created)?;
+    file.write_all(bytes)
+        .map_err(|error| storage_error("Could not write appliance handoff lease phase", error))?;
+    hook(hooks.written)?;
+    file.sync_all()
+        .map_err(|error| storage_error("Could not sync appliance handoff lease phase", error))?;
+    file.set_permissions(fs::Permissions::from_mode(HANDOFF_FILE_MODE))
+        .map_err(|error| format!("Could not seal appliance handoff lease phase: {error}"))?;
+    file.sync_all().map_err(|error| {
+        storage_error("Could not sync sealed appliance handoff lease phase", error)
+    })?;
+    hook(hooks.synced)?;
+    rename_directory_at(directory, &temporary, &published)?;
+    hook(hooks.published)?;
+    directory
+        .sync_all()
+        .map_err(|error| storage_error("Could not sync appliance handoff lease phase", error))?;
+    hook(hooks.directory_synced)
+}
+
+fn capture_handoff_file_receipt(
+    directory: &File,
+    intent: &HandoffLeaseIntent,
+) -> Result<HandoffLeaseFiles, String> {
+    let mut files = BTreeMap::new();
+    let names = directory_names(directory, intent.expected_files.len().saturating_add(1))?;
+    if names.len() != intent.expected_files.len() {
+        return Err("Appliance handoff receipt inventory is not exact.".into());
+    }
+    for (name, expected) in &intent.expected_files {
+        if !names.iter().any(|observed| observed == OsStr::new(name)) {
+            return Err("Appliance handoff receipt inventory is incomplete.".into());
+        }
+        let pinned =
+            verify_exact_file(directory, name, expected.size, &expected.sha256, &|| false)?;
+        files.insert(
+            name.clone(),
+            HandoffFileReceipt {
+                identity: pinned.identity,
+            },
+        );
+    }
+    Ok(HandoffLeaseFiles {
+        schema_version: LEASE_SCHEMA,
+        kind: LEASE_FILES_KIND.into(),
+        lease_token: intent.lease_token.clone(),
+        directory: LeaseDirectoryIdentity::from(handoff_directory_snapshot(directory)?),
+        files,
+    })
+}
+
+fn validate_handoff_file_receipt(
+    receipt: &HandoffLeaseFiles,
+    intent: &HandoffLeaseIntent,
+) -> Result<(), String> {
+    if receipt.schema_version != LEASE_SCHEMA
+        || receipt.kind != LEASE_FILES_KIND
+        || receipt.lease_token != intent.lease_token
+        || receipt.directory.device != intent.destination.device
+        || receipt.directory.uid != intent.destination.uid
+        || receipt.files.len() != intent.expected_files.len()
+    {
+        return Err("Appliance handoff file receipt identity is invalid.".into());
+    }
+    for (name, expected) in &intent.expected_files {
+        let observed = receipt
+            .files
+            .get(name)
+            .ok_or("Appliance handoff file receipt inventory is incomplete.")?
+            .identity;
+        if observed.uid != intent.destination.uid
+            || observed.nlink != 1
+            || observed.mode != HANDOFF_FILE_MODE
+            || observed.len != expected.size
+        {
+            return Err("Appliance handoff file receipt metadata is invalid.".into());
+        }
+    }
+    Ok(())
+}
+
+fn revalidate_published_lease(destination: &File, lease: &HandoffLease) -> Result<(), String> {
+    let reopened = open_directory_at(destination, &lease.directory_name)?;
+    require_directory_metadata(
+        &reopened,
+        lease.directory_identity,
+        DESTINATION_DIRECTORY_MODE,
+        "appliance handoff lease",
+    )?;
+    require_directory_metadata(
+        &lease.directory,
+        lease.directory_identity,
+        DESTINATION_DIRECTORY_MODE,
+        "appliance handoff lease",
+    )?;
+    let names = directory_names(&reopened, 5)?;
+    let expected = BTreeSet::from([
+        OsStr::new(LEASE_INTENT_FILENAME).to_os_string(),
+        OsStr::new(LEASE_STAGE_FILENAME).to_os_string(),
+        OsStr::new(LEASE_FILES_FILENAME).to_os_string(),
+        OsStr::new(LEASE_PUBLISHED_FILENAME).to_os_string(),
+    ]);
+    if names.into_iter().collect::<BTreeSet<_>>() != expected {
+        return Err("Published appliance handoff lease inventory is not exact.".into());
+    }
+    let intent: HandoffLeaseIntent = read_canonical_lease_record(&reopened, LEASE_INTENT_FILENAME)?;
+    let published: HandoffLeasePhase =
+        read_canonical_lease_record(&reopened, LEASE_PUBLISHED_FILENAME)?;
+    let files: HandoffLeaseFiles = read_canonical_lease_record(&reopened, LEASE_FILES_FILENAME)?;
+    validate_lease_intent(&intent, &lease.directory_name)?;
+    validate_lease_phase(&published, LEASE_PUBLISHED_KIND, &intent)?;
+    validate_handoff_file_receipt(&files, &intent)?;
+    if intent != lease.intent || published != lease.published {
+        return Err("Published appliance handoff lease changed.".into());
+    }
+    Ok(())
+}
+
+fn revalidate_staging_lease(
+    destination: &File,
+    lease_directory: &File,
+    lease_name: &CStr,
+    lease_identity: StableDirectoryIdentity,
+    intent: &HandoffLeaseIntent,
+    stage: &HandoffLeasePhase,
+) -> Result<(), String> {
+    let reopened = open_directory_at(destination, lease_name)?;
+    for directory in [&reopened, lease_directory] {
+        let observed = private_directory_identity(
+            directory,
+            DESTINATION_DIRECTORY_MODE,
+            "staging appliance handoff lease",
+        )?;
+        if StableDirectoryIdentity::from(observed) != lease_identity {
+            return Err("Staging appliance handoff lease identity changed.".into());
+        }
+    }
+    let names = directory_names(&reopened, 4)?;
+    let expected = BTreeSet::from([
+        OsStr::new(LEASE_INTENT_FILENAME).to_os_string(),
+        OsStr::new(LEASE_STAGE_FILENAME).to_os_string(),
+        OsStr::new(LEASE_FILES_FILENAME).to_os_string(),
+    ]);
+    if names.into_iter().collect::<BTreeSet<_>>() != expected {
+        return Err("Staging appliance handoff lease inventory is not exact.".into());
+    }
+    let observed_intent: HandoffLeaseIntent =
+        read_canonical_lease_record(&reopened, LEASE_INTENT_FILENAME)?;
+    let observed_stage: HandoffLeasePhase =
+        read_canonical_lease_record(&reopened, LEASE_STAGE_FILENAME)?;
+    validate_lease_intent(&observed_intent, lease_name)?;
+    validate_lease_phase(&observed_stage, LEASE_STAGE_KIND, &observed_intent)?;
+    if &observed_intent != intent || &observed_stage != stage {
+        return Err("Staging appliance handoff lease changed.".into());
+    }
+    Ok(())
+}
+
+fn remove_retiring_lease(destination: &File, lease: &HandoffLease) -> Result<(), String> {
+    revalidate_retiring_lease(destination, lease)?;
+    let current = private_directory_identity(
+        &lease.directory,
+        DESTINATION_DIRECTORY_MODE,
+        "retiring appliance handoff lease",
+    )?;
+    remove_confined_directory_at(
+        destination,
+        &lease.directory_name,
+        current,
+        &lease_cleanup_spec(),
+    )
+}
+
+fn revalidate_retiring_lease(destination: &File, lease: &HandoffLease) -> Result<(), String> {
+    let reopened = open_directory_at(destination, &lease.directory_name)?;
+    let observed = private_directory_identity(
+        &reopened,
+        DESTINATION_DIRECTORY_MODE,
+        "retiring appliance handoff lease",
+    )?;
+    if StableDirectoryIdentity::from(observed)
+        != StableDirectoryIdentity::from(lease.directory_identity)
+    {
+        return Err("Retiring appliance handoff lease identity changed.".into());
+    }
+    let intent: HandoffLeaseIntent = read_canonical_lease_record(&reopened, LEASE_INTENT_FILENAME)?;
+    let published: HandoffLeasePhase =
+        read_canonical_lease_record(&reopened, LEASE_PUBLISHED_FILENAME)?;
+    let retiring: HandoffLeasePhase =
+        read_canonical_lease_record(&reopened, LEASE_RETIRING_FILENAME)?;
+    let files: HandoffLeaseFiles = read_canonical_lease_record(&reopened, LEASE_FILES_FILENAME)?;
+    validate_lease_intent(&intent, &lease.directory_name)?;
+    validate_lease_phase(&published, LEASE_PUBLISHED_KIND, &intent)?;
+    validate_lease_phase(&retiring, LEASE_RETIRING_KIND, &intent)?;
+    validate_handoff_file_receipt(&files, &intent)?;
+    if intent != lease.intent
+        || published != lease.published
+        || retiring.directory != lease.published.directory
+    {
+        return Err("Appliance handoff retirement identity changed.".into());
+    }
+    let names = directory_names(&reopened, 6)?
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let expected = BTreeSet::from([
+        OsStr::new(LEASE_INTENT_FILENAME).to_os_string(),
+        OsStr::new(LEASE_STAGE_FILENAME).to_os_string(),
+        OsStr::new(LEASE_FILES_FILENAME).to_os_string(),
+        OsStr::new(LEASE_PUBLISHED_FILENAME).to_os_string(),
+        OsStr::new(LEASE_RETIRING_FILENAME).to_os_string(),
+    ]);
+    if names != expected {
+        return Err("Retiring appliance handoff lease inventory is not exact.".into());
+    }
+    Ok(())
+}
+
+fn open_optional_directory_at(parent: &File, name: &CStr) -> Result<Option<File>, String> {
+    match open_directory_at(parent, name) {
+        Ok(directory) => Ok(Some(directory)),
+        Err(_error) if directory_missing_at(parent, name)? => Ok(None),
+        Err(_) => Err("Appliance handoff lease entry is not a confined directory.".into()),
+    }
+}
+
+fn file_exists_at(parent: &File, name: &str) -> Result<bool, String> {
+    let name = CString::new(name).map_err(|_| "Appliance handoff lease filename is unsafe.")?;
+    Ok(!directory_missing_at(parent, &name)?)
+}
+
+fn remove_partial_lease_record(directory: &File, name: &str) -> Result<(), String> {
+    let name = CString::new(name)
+        .map_err(|_| "Partial appliance handoff lease filename is unsafe.".to_string())?;
+    let file = open_handoff_file(directory, &name)?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Could not inspect partial appliance handoff lease: {error}"))?;
+    let identity = HandoffFileIdentity::from(&metadata);
+    if !metadata.is_file()
+        || identity.uid != unsafe { libc::geteuid() }
+        || identity.nlink != 1
+        || (identity.mode != 0o600 && identity.mode != HANDOFF_FILE_MODE)
+        || identity.len > LEASE_RECORD_MAX_BYTES as u64
+    {
+        return Err("Partial appliance handoff lease is unsafe.".into());
+    }
+    let reopened = open_handoff_file(directory, &name)?;
+    let reopened_metadata = reopened
+        .metadata()
+        .map_err(|error| format!("Could not recheck partial appliance handoff lease: {error}"))?;
+    if HandoffFileIdentity::from(&reopened_metadata) != identity {
+        return Err("Partial appliance handoff lease changed before cleanup.".into());
+    }
+    if unsafe { libc::unlinkat(directory.as_raw_fd(), name.as_ptr(), 0) } != 0 {
+        return Err(format!(
+            "Could not remove partial appliance handoff lease: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let after = file
+        .metadata()
+        .map_err(|error| format!("Could not confirm partial lease removal: {error}"))?;
+    if after.nlink() != 0 {
+        return Err("Partial appliance handoff lease path changed during cleanup.".into());
+    }
+    directory
+        .sync_all()
+        .map_err(|error| format!("Could not sync partial appliance handoff cleanup: {error}"))
+}
+
+fn reconcile_partial_lease_records(directory: &File) -> Result<(), String> {
+    for (temporary, final_name) in [
+        (LEASE_STAGE_TEMP_FILENAME, LEASE_STAGE_FILENAME),
+        (LEASE_FILES_TEMP_FILENAME, LEASE_FILES_FILENAME),
+        (LEASE_PUBLISHED_TEMP_FILENAME, LEASE_PUBLISHED_FILENAME),
+        (LEASE_RETIRING_TEMP_FILENAME, LEASE_RETIRING_FILENAME),
+    ] {
+        if file_exists_at(directory, temporary)? {
+            if file_exists_at(directory, final_name)? {
+                return Err("Appliance handoff lease contains ambiguous phase records.".into());
+            }
+            remove_partial_lease_record(directory, temporary)?;
+        }
+    }
+    Ok(())
+}
+
+fn lease_cleanup_spec() -> BTreeMap<String, u64> {
+    [
+        LEASE_INTENT_FILENAME,
+        LEASE_INTENT_TEMP_FILENAME,
+        LEASE_STAGE_FILENAME,
+        LEASE_STAGE_TEMP_FILENAME,
+        LEASE_FILES_FILENAME,
+        LEASE_FILES_TEMP_FILENAME,
+        LEASE_PUBLISHED_FILENAME,
+        LEASE_PUBLISHED_TEMP_FILENAME,
+        LEASE_RETIRING_FILENAME,
+        LEASE_RETIRING_TEMP_FILENAME,
+    ]
+    .into_iter()
+    .map(|name| (name.to_owned(), LEASE_RECORD_MAX_BYTES as u64))
+    .collect()
+}
+
+fn cleanup_lease_directory(
+    destination: &File,
+    lease_directory: &File,
+    lease_name: &CStr,
+) -> Result<(), String> {
+    let identity = DirectoryIdentity::from(
+        &lease_directory
+            .metadata()
+            .map_err(|error| format!("Could not identify failed lease: {error}"))?,
+    );
+    remove_confined_directory_at(destination, lease_name, identity, &lease_cleanup_spec())
+}
+
+fn remove_confined_directory_at(
+    parent: &File,
+    name: &CStr,
+    expected: DirectoryIdentity,
+    allowed: &BTreeMap<String, u64>,
+) -> Result<(), String> {
+    remove_confined_directory_at_with_receipts(parent, name, expected, allowed, None)
+}
+
+fn remove_receipted_handoff_at(
+    parent: &File,
+    name: &CStr,
+    expected: DirectoryIdentity,
+    intent: &HandoffLeaseIntent,
+    receipt: &HandoffLeaseFiles,
+) -> Result<(), String> {
+    validate_handoff_file_receipt(receipt, intent)?;
+    let directory = open_directory_at(parent, name)?;
+    for (filename, expected_file) in &intent.expected_files {
+        verify_exact_file(
+            &directory,
+            filename,
+            expected_file.size,
+            &expected_file.sha256,
+            &|| false,
+        )?;
+    }
+    let allowed = intent
+        .expected_files
+        .iter()
+        .map(|(name, file)| (name.clone(), file.size))
+        .collect::<BTreeMap<_, _>>();
+    remove_confined_directory_at_with_receipts(
+        parent,
+        name,
+        expected,
+        &allowed,
+        Some(&receipt.files),
+    )
+}
+
+fn remove_confined_directory_at_with_receipts(
+    parent: &File,
+    name: &CStr,
+    expected: DirectoryIdentity,
+    allowed: &BTreeMap<String, u64>,
+    receipts: Option<&BTreeMap<String, HandoffFileReceipt>>,
+) -> Result<(), String> {
+    let directory = open_directory_at(parent, name)?;
+    let metadata = directory
+        .metadata()
+        .map_err(|error| format!("Could not identify failed appliance handoff: {error}"))?;
+    let observed = DirectoryIdentity::from(&metadata);
+    if !metadata.is_dir()
+        || observed.uid != unsafe { libc::geteuid() }
+        || observed.device != expected.device
+        || observed.inode != expected.inode
+        || (observed.mode != DESTINATION_DIRECTORY_MODE && observed.mode != HANDOFF_DIRECTORY_MODE)
+    {
+        return Err("Failed appliance handoff identity is unsafe.".into());
+    }
+    let names = directory_names(&directory, allowed.len().saturating_add(1))?;
+    let mut pinned = Vec::with_capacity(names.len());
+    for raw_name in names {
+        let child_name = raw_name
+            .to_str()
+            .ok_or("Failed appliance handoff filename is not UTF-8.")?;
+        let maximum_size = allowed
+            .get(child_name)
+            .ok_or("Failed appliance handoff contains an unexpected entry.")?;
+        let child = CString::new(raw_name.as_bytes())
+            .map_err(|_| "Failed appliance handoff filename is unsafe.".to_string())?;
+        let file = open_handoff_file(&directory, &child)?;
+        let child_metadata = file
+            .metadata()
+            .map_err(|error| format!("Could not inspect failed handoff child: {error}"))?;
+        let child_identity = HandoffFileIdentity::from(&child_metadata);
+        if !child_metadata.is_file()
+            || child_identity.uid != unsafe { libc::geteuid() }
+            || child_identity.nlink != 1
+            || (child_identity.mode != 0o600 && child_identity.mode != HANDOFF_FILE_MODE)
+            || child_identity.len > *maximum_size
+        {
+            return Err("Failed appliance handoff child metadata is unsafe.".into());
+        }
+        if receipts.is_some_and(|receipts| {
+            receipts
+                .get(child_name)
+                .is_none_or(|receipt| receipt.identity != child_identity)
+        }) {
+            return Err(
+                "Failed appliance handoff child does not match its durable receipt.".into(),
+            );
+        }
+        let reopened = open_handoff_file(&directory, &child)?;
+        if HandoffFileIdentity::from(
+            &reopened
+                .metadata()
+                .map_err(|error| format!("Could not recheck failed handoff child: {error}"))?,
+        ) != child_identity
+        {
+            return Err("Failed appliance handoff child changed before cleanup.".into());
+        }
+        pinned.push((child, file, child_identity));
+    }
+    if receipts.is_some_and(|receipts| receipts.len() != pinned.len()) {
+        return Err("Failed appliance handoff receipt inventory is not exact.".into());
+    }
+    if observed.mode != DESTINATION_DIRECTORY_MODE {
+        directory
+            .set_permissions(fs::Permissions::from_mode(DESTINATION_DIRECTORY_MODE))
+            .map_err(|error| format!("Could not reopen failed appliance handoff: {error}"))?;
+    }
+    for (child, file, identity) in pinned {
+        let reopened = open_handoff_file(&directory, &child)?;
+        if HandoffFileIdentity::from(
+            &reopened
+                .metadata()
+                .map_err(|error| format!("Could not bind failed handoff child: {error}"))?,
+        ) != identity
+        {
+            return Err("Failed appliance handoff child changed before unlink.".into());
+        }
+        if unsafe { libc::unlinkat(directory.as_raw_fd(), child.as_ptr(), 0) } != 0 {
+            return Err(format!(
+                "Could not remove failed appliance handoff file: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        if file
+            .metadata()
+            .map_err(|error| format!("Could not confirm handoff child removal: {error}"))?
+            .nlink()
+            != 0
+        {
+            return Err("Failed appliance handoff child path changed during unlink.".into());
+        }
+    }
+    directory
+        .sync_all()
+        .map_err(|error| format!("Could not sync failed appliance handoff cleanup: {error}"))?;
+    if unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
+        return Err(format!(
+            "Could not remove failed appliance handoff directory: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    parent
+        .sync_all()
+        .map_err(|error| format!("Could not sync appliance handoff cleanup: {error}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reconcile_handoff_leases(
+    destination: &File,
+    destination_identity: DirectoryIdentity,
+    operation_id: &str,
+    identity: &CoreGenerationIdentity,
+    source_identity: DirectoryIdentity,
+    expected_record: &ApplianceHandoffRecord,
+    inventory: &BTreeMap<String, (u64, String)>,
+    cancelled: &impl Fn() -> bool,
+) -> Result<Option<RecoveredHandoff>, String> {
+    let record_hash = sha256(&canonical_record(expected_record)?);
+    let authenticated_payload = inventory
+        .iter()
+        .map(|(name, (size, sha256))| {
+            (
+                name.clone(),
+                HandoffExpectedFile {
+                    size: *size,
+                    sha256: sha256.clone(),
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut expected_files = authenticated_payload.clone();
+    expected_files.insert(
+        HANDOFF_FILENAME.into(),
+        HandoffExpectedFile {
+            size: canonical_record(expected_record)?.len() as u64,
+            sha256: record_hash.clone(),
+        },
+    );
+    let names = directory_names(
+        destination,
+        MAX_LEASE_DIRECTORIES
+            .saturating_add(inventory.len())
+            .saturating_add(64),
+    )?;
+    let mut recovered = None;
+    let mut lease_count = 0_usize;
+    for raw_name in names {
+        let Some(name) = raw_name.to_str() else {
+            continue;
+        };
+        if !name.starts_with(LEASE_DIRECTORY_PREFIX) {
+            continue;
+        }
+        lease_count = lease_count.saturating_add(1);
+        if lease_count > MAX_LEASE_DIRECTORIES {
+            return Err("Appliance handoff lease count exceeds its limit.".into());
+        }
+        poll_cancelled(cancelled)?;
+        let name_c = CString::new(name)
+            .map_err(|_| "Appliance handoff lease directory name is unsafe.".to_string())?;
+        let lease_directory = open_directory_at(destination, &name_c)
+            .map_err(|_| "Appliance handoff lease path is not a confined directory.".to_string())?;
+        let lease_identity = private_directory_identity(
+            &lease_directory,
+            DESTINATION_DIRECTORY_MODE,
+            "appliance handoff lease",
+        )?;
+        if !file_exists_at(&lease_directory, LEASE_INTENT_FILENAME)? {
+            let abandoned = directory_names(&lease_directory, 2)?;
+            if abandoned.is_empty() {
+                remove_confined_directory_at(
+                    destination,
+                    &name_c,
+                    lease_identity,
+                    &lease_cleanup_spec(),
+                )?;
+                continue;
+            }
+            if abandoned.len() == 1 && abandoned[0] == OsStr::new(LEASE_INTENT_TEMP_FILENAME) {
+                remove_partial_lease_record(&lease_directory, LEASE_INTENT_TEMP_FILENAME)?;
+                let refreshed =
+                    DirectoryIdentity::from(&lease_directory.metadata().map_err(|error| {
+                        format!("Could not identify partial lease cleanup: {error}")
+                    })?);
+                remove_confined_directory_at(
+                    destination,
+                    &name_c,
+                    refreshed,
+                    &lease_cleanup_spec(),
+                )?;
+                continue;
+            }
+            return Err("Uninitialized appliance handoff lease inventory is ambiguous.".into());
+        }
+        let intent: HandoffLeaseIntent =
+            read_canonical_lease_record(&lease_directory, LEASE_INTENT_FILENAME)?;
+        validate_lease_intent(&intent, &name_c)?;
+        if intent.destination != StableDirectoryIdentity::from(destination_identity) {
+            return Err("Appliance handoff lease belongs to another destination.".into());
+        }
+        let stage_name = CString::new(intent.stage_name.as_str()).unwrap();
+        let published_name = CString::new(intent.published_name.as_str())
+            .map_err(|_| "Appliance handoff published name is unsafe.".to_string())?;
+        reconcile_partial_lease_records(&lease_directory)?;
+        let stage = open_optional_directory_at(destination, &stage_name)?;
+        let published = open_optional_directory_at(destination, &published_name)?;
+        let stage_marker_exists = file_exists_at(&lease_directory, LEASE_STAGE_FILENAME)?;
+        let files_receipt_exists = file_exists_at(&lease_directory, LEASE_FILES_FILENAME)?;
+        let published_marker_exists = file_exists_at(&lease_directory, LEASE_PUBLISHED_FILENAME)?;
+        let retiring_marker_exists = file_exists_at(&lease_directory, LEASE_RETIRING_FILENAME)?;
+        let stage_marker = if stage_marker_exists {
+            let marker: HandoffLeasePhase =
+                read_canonical_lease_record(&lease_directory, LEASE_STAGE_FILENAME)?;
+            validate_lease_phase(&marker, LEASE_STAGE_KIND, &intent)?;
+            Some(marker)
+        } else {
+            None
+        };
+        let files_receipt = if files_receipt_exists {
+            let receipt: HandoffLeaseFiles =
+                read_canonical_lease_record(&lease_directory, LEASE_FILES_FILENAME)?;
+            validate_handoff_file_receipt(&receipt, &intent)?;
+            Some(receipt)
+        } else {
+            None
+        };
+        let published_marker = if published_marker_exists {
+            let marker: HandoffLeasePhase =
+                read_canonical_lease_record(&lease_directory, LEASE_PUBLISHED_FILENAME)?;
+            validate_lease_phase(&marker, LEASE_PUBLISHED_KIND, &intent)?;
+            Some(marker)
+        } else {
+            None
+        };
+        let retiring_marker = if retiring_marker_exists {
+            let marker: HandoffLeasePhase =
+                read_canonical_lease_record(&lease_directory, LEASE_RETIRING_FILENAME)?;
+            validate_lease_phase(&marker, LEASE_RETIRING_KIND, &intent)?;
+            Some(marker)
+        } else {
+            None
+        };
+        if retiring_marker.is_some() && published_marker.is_none() {
+            return Err("Appliance handoff retirement lacks publication identity.".into());
+        }
+        if files_receipt.is_some() && stage_marker.is_none() {
+            return Err("Appliance handoff file receipt lacks its staged identity.".into());
+        }
+        let intent_payload = intent
+            .expected_files
+            .iter()
+            .filter(|(name, _)| name.as_str() != HANDOFF_FILENAME)
+            .map(|(name, file)| (name.clone(), file.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let is_authenticated_generation = intent.identity == *identity
+            && intent.source_cache == source_identity
+            && intent_payload == authenticated_payload
+            && intent.handoff_record.identity == expected_record.identity
+            && intent.handoff_record.target == expected_record.target
+            && intent.handoff_record.lineage_manifest_sha256
+                == expected_record.lineage_manifest_sha256
+            && intent.handoff_record.files == expected_record.files
+            && intent.maximum_entries == expected_files.len() as u64;
+        let is_expected = intent.operation_id == operation_id
+            && is_authenticated_generation
+            && intent.handoff_record_sha256 == record_hash
+            && intent.handoff_record == *expected_record
+            && intent.expected_files == expected_files;
+
+        match (stage, published) {
+            (Some(stage), None) => {
+                if published_marker.is_some() {
+                    return Err("Appliance handoff lease phase is inconsistent.".into());
+                }
+                if retiring_marker.is_some() {
+                    return Err("Appliance handoff lease phase is inconsistent.".into());
+                }
+                if !is_authenticated_generation {
+                    return Err(
+                        "appliance-handoff-recovery-required: a stale handoff cannot be reauthenticated from the current generation; preserving it."
+                            .into(),
+                    );
+                }
+                if files_receipt.is_none()
+                    && !directory_names(
+                        &stage,
+                        usize::try_from(intent.maximum_entries)
+                            .unwrap_or(MAX_HANDOFF_DIRECTORY_ENTRIES)
+                            .saturating_add(1),
+                    )?
+                    .is_empty()
+                {
+                    return Err(
+                        "appliance-handoff-recovery-required: an interrupted stage has no durable file receipt; preserving it."
+                            .into(),
+                    );
+                }
+                let observed_stage = if let Some(marker) = stage_marker {
+                    require_recoverable_stage_identity(&stage, marker.directory)?
+                } else {
+                    let observed = private_directory_identity(
+                        &stage,
+                        DESTINATION_DIRECTORY_MODE,
+                        "unmarked appliance handoff stage",
+                    )?;
+                    if !directory_names(&stage, 1)?.is_empty() {
+                        return Err(
+                            "Unmarked appliance handoff stage is not empty; preserving it.".into(),
+                        );
+                    }
+                    observed
+                };
+                if let Some(receipt) = files_receipt.as_ref() {
+                    remove_receipted_handoff_at(
+                        destination,
+                        &stage_name,
+                        observed_stage,
+                        &intent,
+                        receipt,
+                    )?;
+                } else {
+                    remove_confined_directory_at(
+                        destination,
+                        &stage_name,
+                        observed_stage,
+                        &BTreeMap::new(),
+                    )?;
+                }
+                let refreshed_identity =
+                    DirectoryIdentity::from(&lease_directory.metadata().map_err(|error| {
+                        format!("Could not inspect recovered appliance handoff lease: {error}")
+                    })?);
+                remove_confined_directory_at(
+                    destination,
+                    &name_c,
+                    refreshed_identity,
+                    &lease_cleanup_spec(),
+                )?;
+            }
+            (None, Some(published)) => {
+                if !is_authenticated_generation {
+                    return Err(
+                        "appliance-handoff-recovery-required: a published stale handoff cannot be reauthenticated from the current generation; preserving it."
+                            .into(),
+                    );
+                }
+                let Some(stage_marker) = stage_marker else {
+                    return Err("Published appliance handoff lacks its staged identity.".into());
+                };
+                let Some(files_receipt) = files_receipt.as_ref() else {
+                    return Err("Published appliance handoff lacks its file receipt.".into());
+                };
+                let published_identity = require_lease_directory_identity(
+                    &published,
+                    stage_marker.directory,
+                    HANDOFF_DIRECTORY_MODE,
+                    "recovered appliance handoff",
+                )?;
+                let marker = if let Some(marker) = published_marker {
+                    if marker.directory != stage_marker.directory {
+                        return Err(
+                            "Published appliance handoff lease identity is inconsistent.".into(),
+                        );
+                    }
+                    marker
+                } else {
+                    let mut no_hook = |_| Ok(());
+                    create_lease_phase(
+                        &lease_directory,
+                        PUBLISHED_PHASE,
+                        &intent,
+                        published_identity,
+                        &mut no_hook,
+                    )?
+                };
+                if let Some(retiring) = retiring_marker {
+                    if retiring.directory != marker.directory {
+                        return Err("Appliance handoff retirement identity is inconsistent.".into());
+                    }
+                    remove_receipted_handoff_at(
+                        destination,
+                        &published_name,
+                        published_identity,
+                        &intent,
+                        files_receipt,
+                    )?;
+                    let refreshed =
+                        DirectoryIdentity::from(&lease_directory.metadata().map_err(|error| {
+                            format!("Could not inspect retiring handoff lease: {error}")
+                        })?);
+                    remove_confined_directory_at(
+                        destination,
+                        &name_c,
+                        refreshed,
+                        &lease_cleanup_spec(),
+                    )?;
+                    continue;
+                }
+                destination.sync_all().map_err(|error| {
+                    storage_error("Could not sync recovered appliance handoff", error)
+                })?;
+                let final_lease_identity = private_directory_identity(
+                    &lease_directory,
+                    DESTINATION_DIRECTORY_MODE,
+                    "published appliance handoff lease",
+                )?;
+                let lease = HandoffLease {
+                    directory: lease_directory,
+                    directory_name: name_c,
+                    directory_identity: final_lease_identity,
+                    intent: intent.clone(),
+                    published: marker,
+                };
+                revalidate_published_lease(destination, &lease)?;
+                if is_expected {
+                    if recovered.is_some() {
+                        return Err(
+                            "Multiple appliance handoff leases match this operation.".into()
+                        );
+                    }
+                    verify_published_handoff(&published, expected_record, inventory, cancelled)?;
+                    recovered = Some(RecoveredHandoff {
+                        directory: published,
+                        directory_name: published_name,
+                        directory_identity: published_identity,
+                        lease,
+                    });
+                } else {
+                    remove_receipted_handoff_at(
+                        destination,
+                        &published_name,
+                        published_identity,
+                        &intent,
+                        files_receipt,
+                    )?;
+                    let refreshed =
+                        DirectoryIdentity::from(&lease.directory.metadata().map_err(|error| {
+                            format!("Could not inspect superseded handoff lease: {error}")
+                        })?);
+                    remove_confined_directory_at(
+                        destination,
+                        &lease.directory_name,
+                        refreshed,
+                        &lease_cleanup_spec(),
+                    )?;
+                }
+            }
+            (None, None) => {
+                if !is_authenticated_generation {
+                    return Err(
+                        "appliance-handoff-recovery-required: a stale handoff lease cannot be reauthenticated from the current generation; preserving it."
+                            .into(),
+                    );
+                }
+                if let (Some(published), Some(retiring)) =
+                    (published_marker.as_ref(), retiring_marker.as_ref())
+                {
+                    if published.directory != retiring.directory {
+                        return Err("Appliance handoff retirement identity is inconsistent.".into());
+                    }
+                    let refreshed =
+                        DirectoryIdentity::from(&lease_directory.metadata().map_err(|error| {
+                            format!("Could not inspect retired handoff lease: {error}")
+                        })?);
+                    remove_confined_directory_at(
+                        destination,
+                        &name_c,
+                        refreshed,
+                        &lease_cleanup_spec(),
+                    )?;
+                    continue;
+                }
+                if published_marker.is_some() || retiring_marker.is_some() {
+                    return Err(
+                        "Completed appliance handoff disappeared before reconciliation.".into(),
+                    );
+                }
+                let expected_names = if stage_marker.is_some() {
+                    let mut names = BTreeSet::from([
+                        OsStr::new(LEASE_INTENT_FILENAME).to_os_string(),
+                        OsStr::new(LEASE_STAGE_FILENAME).to_os_string(),
+                    ]);
+                    if files_receipt.is_some() {
+                        names.insert(OsStr::new(LEASE_FILES_FILENAME).to_os_string());
+                    }
+                    names
+                } else {
+                    BTreeSet::from([OsStr::new(LEASE_INTENT_FILENAME).to_os_string()])
+                };
+                let actual = directory_names(&lease_directory, 3)?
+                    .into_iter()
+                    .collect::<BTreeSet<_>>();
+                if actual != expected_names {
+                    return Err("Abandoned appliance handoff lease inventory is not exact.".into());
+                }
+                remove_confined_directory_at(
+                    destination,
+                    &name_c,
+                    lease_identity,
+                    &lease_cleanup_spec(),
+                )?;
+            }
+            (Some(_), Some(_)) => {
+                return Err(
+                    "Appliance handoff lease has both staged and published directories.".into(),
+                );
+            }
+        }
+    }
+    Ok(recovered)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cleanup_inflight_lease(
+    destination: &File,
+    lease_directory: &File,
+    lease_name: &CStr,
+    stage_name: &CStr,
+    published_name: &CStr,
+    stage_identity: DirectoryIdentity,
+    published: bool,
+    intent: &HandoffLeaseIntent,
+    receipt: Option<&HandoffLeaseFiles>,
+) -> Result<(), String> {
+    let child_parent = destination;
+    let child_name = if published {
+        published_name
+    } else {
+        stage_name
+    };
+    if !directory_missing_at(child_parent, child_name)? {
+        let child = open_directory_at(child_parent, child_name)?;
+        let observed = require_recoverable_stage_identity(
+            &child,
+            LeaseDirectoryIdentity::from(stage_identity),
+        )?;
+        if let Some(receipt) = receipt {
+            remove_receipted_handoff_at(child_parent, child_name, observed, intent, receipt)?;
+        } else {
+            remove_confined_directory_at(child_parent, child_name, observed, &BTreeMap::new())?;
+        }
+    }
+    let lease_identity =
+        DirectoryIdentity::from(&lease_directory.metadata().map_err(|error| {
+            format!("Could not inspect failed appliance handoff lease: {error}")
+        })?);
+    remove_confined_directory_at(
+        destination,
+        lease_name,
+        lease_identity,
+        &lease_cleanup_spec(),
+    )
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StableDirectoryIdentity {
+    device: u64,
+    inode: u64,
+    uid: u32,
+    mode: u32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LeaseDirectoryIdentity {
+    device: u64,
+    inode: u64,
+    uid: u32,
+}
+
+impl From<DirectoryIdentity> for LeaseDirectoryIdentity {
+    fn from(value: DirectoryIdentity) -> Self {
+        Self {
+            device: value.device,
+            inode: value.inode,
+            uid: value.uid,
+        }
+    }
+}
+
+impl From<DirectoryIdentity> for StableDirectoryIdentity {
+    fn from(value: DirectoryIdentity) -> Self {
+        Self {
+            device: value.device,
+            inode: value.inode,
+            uid: value.uid,
+            mode: value.mode,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HandoffLeaseIntent {
+    schema_version: u32,
+    kind: String,
+    lease_token: String,
+    operation_id: String,
+    identity: CoreGenerationIdentity,
+    source_cache: DirectoryIdentity,
+    destination: StableDirectoryIdentity,
+    stage_name: String,
+    published_name: String,
+    handoff_record_sha256: String,
+    handoff_record: ApplianceHandoffRecord,
+    maximum_entries: u64,
+    expected_files: BTreeMap<String, HandoffExpectedFile>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HandoffExpectedFile {
+    size: u64,
+    sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HandoffLeaseFiles {
+    schema_version: u32,
+    kind: String,
+    lease_token: String,
+    directory: LeaseDirectoryIdentity,
+    files: BTreeMap<String, HandoffFileReceipt>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HandoffFileReceipt {
+    identity: HandoffFileIdentity,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HandoffLeasePhase {
+    schema_version: u32,
+    kind: String,
+    lease_token: String,
+    directory: LeaseDirectoryIdentity,
+}
+
+struct HandoffLease {
+    directory: File,
+    directory_name: CString,
+    directory_identity: DirectoryIdentity,
+    intent: HandoffLeaseIntent,
+    published: HandoffLeasePhase,
+}
+
+struct RecoveredHandoff {
+    directory: File,
+    directory_name: CString,
+    directory_identity: DirectoryIdentity,
+    lease: HandoffLease,
+}
+
 struct DestinationLock {
     file: File,
     identity: (u64, u64, u32, u32, u64, u64),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct HandoffFileIdentity {
     device: u64,
     inode: u64,
@@ -185,6 +1606,7 @@ pub(crate) struct StagedApplianceGeneration<'a> {
     directory: File,
     directory_name: CString,
     directory_identity: DirectoryIdentity,
+    lease: HandoffLease,
     record: ApplianceHandoffRecord,
     inventory: BTreeMap<String, (u64, String)>,
     retired: bool,
@@ -217,6 +1639,7 @@ impl StagedApplianceGeneration<'_> {
         require_destination_root(&self.root_path, &self.root, self.root_identity)?;
         let destination_guard = acquire_destination_lock(&self.root, &|| false)?;
         destination_guard.revalidate(&self.root)?;
+        revalidate_published_lease(&self.root, &self.lease)?;
         let reopened = open_directory_at(&self.root, &self.directory_name)?;
         require_directory_metadata(
             &reopened,
@@ -244,39 +1667,67 @@ impl StagedApplianceGeneration<'_> {
             &|| false,
         )?;
         require_destination_root(&self.root_path, &self.root, self.root_identity)?;
+        revalidate_published_lease(&self.root, &self.lease)?;
         destination_guard.revalidate(&self.root)
     }
 
     /// Explicitly retires the descriptor-bound handoff after the owning guest
-    /// lifecycle has completed. Production guest wiring must call this on
-    /// success, failure, and cancellation; crash reconciliation remains a
-    /// separate prerequisite.
+    /// lifecycle has completed. The durable retiring marker lets a later
+    /// staging call finish synthetic restart reconciliation. Production guest
+    /// wiring and a real subprocess/SIGKILL matrix remain separate gates.
     pub(crate) fn retire(&mut self) -> Result<(), String> {
+        self.retire_with_hook(|_| Ok(()))
+    }
+
+    fn retire_with_hook<H>(&mut self, mut hook: H) -> Result<(), String>
+    where
+        H: FnMut(&'static str) -> Result<(), String>,
+    {
         if self.retired {
             return Ok(());
         }
         require_destination_root(&self.root_path, &self.root, self.root_identity)?;
         let destination_guard = acquire_destination_lock(&self.root, &|| false)?;
         destination_guard.revalidate(&self.root)?;
-        if directory_missing_at(&self.root, &self.directory_name)? {
-            let metadata = self.directory.metadata().map_err(|error| {
-                format!("Could not inspect unlinked appliance handoff: {error}")
+        reconcile_partial_lease_records(&self.lease.directory)?;
+        if file_exists_at(&self.lease.directory, LEASE_RETIRING_FILENAME)? {
+            revalidate_retiring_lease(&self.root, &self.lease)?;
+        } else {
+            revalidate_published_lease(&self.root, &self.lease)?;
+            create_lease_phase(
+                &self.lease.directory,
+                RETIRING_PHASE,
+                &self.lease.intent,
+                self.directory_identity,
+                &mut hook,
+            )?;
+            self.root.sync_all().map_err(|error| {
+                storage_error("Could not sync appliance handoff retirement intent", error)
             })?;
+        }
+        hook("after-retiring-marker")?;
+        if directory_missing_at(&self.root, &self.directory_name)? {
+            let metadata = self
+                .directory
+                .metadata()
+                .map_err(|error| format!("Could not inspect retired appliance handoff: {error}"))?;
             if metadata.nlink() != 0 {
                 return Err("Appliance handoff path changed before retirement.".into());
             }
-            self.root
-                .sync_all()
-                .map_err(|error| format!("Could not sync retired appliance handoff: {error}"))?;
-            self.retired = true;
-            return Ok(());
+        } else {
+            let receipt: HandoffLeaseFiles =
+                read_canonical_lease_record(&self.lease.directory, LEASE_FILES_FILENAME)?;
+            remove_receipted_handoff_at(
+                &self.root,
+                &self.directory_name,
+                self.directory_identity,
+                &self.lease.intent,
+                &receipt,
+            )?;
         }
-        remove_owned_directory_at(
-            &self.root,
-            &self.directory_name,
-            self.directory_identity,
-            self.inventory.len().saturating_add(2),
-        )?;
+        hook("after-retired-handoff")?;
+        remove_retiring_lease(&self.root, &self.lease)?;
+        hook("after-retired-lease")?;
         self.retired = true;
         Ok(())
     }
@@ -306,7 +1757,7 @@ where
         operation_id,
         destination_root,
         cancelled,
-        |_| {},
+        |_| Ok(()),
     )
 }
 
@@ -324,7 +1775,7 @@ fn stage_pending_generation_for_appliance_with_hook<'a, C, H>(
 ) -> Result<StagedApplianceGeneration<'a>, String>
 where
     C: Fn() -> bool,
-    H: FnMut(&'static str),
+    H: FnMut(&'static str) -> Result<(), String>,
 {
     poll_cancelled(&cancelled)?;
     if !safe_operation_id(operation_id) {
@@ -351,7 +1802,7 @@ where
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _cache_guard = cache.acquire_lock()?;
-    hook("after-cache-lock");
+    hook("after-cache-lock")?;
     poll_cancelled(&cancelled)?;
     revalidate_installed_capabilities(generation, checkpoint, lineage, &cancelled)?;
 
@@ -389,7 +1840,13 @@ where
         &source,
         "appliance handoff source generation",
     )?;
-    hook("after-source-verification");
+    let source_identity = DirectoryIdentity::from(
+        &source
+            .file
+            .metadata()
+            .map_err(|error| format!("Could not identify appliance handoff source: {error}"))?,
+    );
+    hook("after-source-verification")?;
 
     let (destination, destination_identity) = open_destination_root(destination_root)?;
     let destination_guard = acquire_destination_lock(&destination, &cancelled)?;
@@ -406,14 +1863,36 @@ where
         &inventory,
     );
     let record_bytes = canonical_record(&record)?;
+    let mut expected_files = inventory
+        .iter()
+        .map(|(name, (size, sha256))| {
+            (
+                name.clone(),
+                HandoffExpectedFile {
+                    size: *size,
+                    sha256: sha256.clone(),
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    expected_files.insert(
+        HANDOFF_FILENAME.into(),
+        HandoffExpectedFile {
+            size: record_bytes.len() as u64,
+            sha256: sha256(&record_bytes),
+        },
+    );
 
-    if let Ok(existing) = open_directory_at(&destination, &directory_name) {
-        let existing_identity = private_directory_identity(
-            &existing,
-            HANDOFF_DIRECTORY_MODE,
-            "existing appliance handoff",
-        )?;
-        verify_published_handoff(&existing, &record, &inventory, &cancelled)?;
+    if let Some(recovered) = reconcile_handoff_leases(
+        &destination,
+        destination_identity,
+        operation_id,
+        &identity,
+        source_identity,
+        &record,
+        &inventory,
+        &cancelled,
+    )? {
         require_destination_root(destination_root, &destination, destination_identity)?;
         destination_guard.revalidate(&destination)?;
         require_exact_pending_state(cache, &state, &identity, operation_id)?;
@@ -431,22 +1910,27 @@ where
             root: destination,
             root_path: destination_root.to_path_buf(),
             root_identity: destination_identity,
-            directory: existing,
-            directory_name,
-            directory_identity: existing_identity,
+            directory: recovered.directory,
+            directory_name: recovered.directory_name,
+            directory_identity: recovered.directory_identity,
+            lease: recovered.lease,
             record,
             inventory,
             retired: false,
             _seal: StagedApplianceGenerationSeal,
         });
     }
+    if !directory_missing_at(&destination, &directory_name)? {
+        return Err("Existing appliance handoff has no valid durable lease.".into());
+    }
 
     let logical_bytes = total_bytes
         .checked_add(record_bytes.len() as u64)
+        .and_then(|bytes| bytes.checked_add((LEASE_RECORD_MAX_BYTES as u64) * 5))
         .ok_or("Core appliance handoff size overflowed.")?;
     let file_nodes = u64::try_from(inventory.len())
         .ok()
-        .and_then(|count| count.checked_add(2))
+        .and_then(|count| count.checked_add(8))
         .ok_or("Core appliance handoff file count overflowed.")?;
     let capacity = probe_statvfs_capacity(&destination)
         .map_err(|error| storage_error("Could not inspect appliance handoff capacity", error))?;
@@ -455,21 +1939,109 @@ where
     require_storage_admission(capacity, physical_bytes, file_nodes, 0, 0)
         .map_err(|error| error.replace("Core generation cache", "Core appliance handoff"))?;
 
-    let stage_name = CString::new(format!(".handoff-{}-{}.tmp", operation_id, random_token()?))
-        .map_err(|_| "Core appliance staging name is unsafe.".to_string())?;
-    let (stage, stage_identity) = create_staging_directory_at(&destination, &stage_name)?;
+    let (lease_directory, lease_name, lease_intent) = create_handoff_lease(
+        &destination,
+        operation_id,
+        &identity,
+        source_identity,
+        destination_identity,
+        &directory_name,
+        &record,
+        &expected_files,
+        &mut hook,
+    )?;
+    if let Err(primary) = hook("after-lease-created") {
+        let cleanup = cleanup_lease_directory(&destination, &lease_directory, &lease_name);
+        return match cleanup {
+            Ok(()) => Err(primary),
+            Err(cleanup) => Err(format!("{primary} Cleanup failed: {cleanup}")),
+        };
+    }
+    let stage_name = CString::new(lease_intent.stage_name.as_str()).unwrap();
+    let (stage, stage_identity) = match create_staging_directory_at(&destination, &stage_name) {
+        Ok(created) => created,
+        Err(primary) => {
+            let cleanup = cleanup_lease_directory(&destination, &lease_directory, &lease_name);
+            return match cleanup {
+                Ok(()) => Err(primary),
+                Err(cleanup) => Err(format!("{primary} Cleanup failed: {cleanup}")),
+            };
+        }
+    };
+    if let Err(primary) = hook("after-stage-mkdir") {
+        let cleanup = cleanup_inflight_lease(
+            &destination,
+            &lease_directory,
+            &lease_name,
+            &stage_name,
+            &directory_name,
+            stage_identity,
+            false,
+            &lease_intent,
+            None,
+        );
+        return match cleanup {
+            Ok(()) => Err(primary),
+            Err(cleanup) => Err(format!("{primary} Cleanup failed: {cleanup}")),
+        };
+    }
+    let stage_phase = match create_lease_phase(
+        &lease_directory,
+        STAGE_PHASE,
+        &lease_intent,
+        stage_identity,
+        &mut hook,
+    ) {
+        Ok(phase) => phase,
+        Err(primary) => {
+            let cleanup = cleanup_inflight_lease(
+                &destination,
+                &lease_directory,
+                &lease_name,
+                &stage_name,
+                &directory_name,
+                stage_identity,
+                false,
+                &lease_intent,
+                None,
+            );
+            return match cleanup {
+                Ok(()) => Err(primary),
+                Err(cleanup) => Err(format!("{primary} Cleanup failed: {cleanup}")),
+            };
+        }
+    };
+    let staging_lease_identity = StableDirectoryIdentity::from(private_directory_identity(
+        &lease_directory,
+        DESTINATION_DIRECTORY_MODE,
+        "staging appliance handoff lease",
+    )?);
     let published = Cell::new(false);
+    let completed_receipt = RefCell::new(None);
     let result = (|| {
+        hook("after-stage-created")?;
         for (name, (size, hash)) in &inventory {
             poll_cancelled(&cancelled)?;
             copy_inventory_file(&source.file, &stage, name, *size, hash, &cancelled)?;
         }
-        hook("after-copy");
         poll_cancelled(&cancelled)?;
         create_exact_file(&stage, HANDOFF_FILENAME, &record_bytes)?;
         stage
             .sync_all()
             .map_err(|error| format!("Could not sync staged appliance handoff: {error}"))?;
+        let files_receipt = capture_handoff_file_receipt(&stage, &lease_intent)?;
+        validate_handoff_file_receipt(&files_receipt, &lease_intent)?;
+        create_atomic_lease_record(
+            &lease_directory,
+            LEASE_FILES_FILENAME,
+            LEASE_FILES_TEMP_FILENAME,
+            &canonical_lease_record(&files_receipt)?,
+            &mut hook,
+            FILES_PHASE_HOOKS,
+        )?;
+        *completed_receipt.borrow_mut() = Some(files_receipt);
+        hook("after-record-sync")?;
+        hook("after-copy")?;
         require_destination_root(destination_root, &destination, destination_identity)?;
         destination_guard.revalidate(&destination)?;
         require_staging_directory(&destination, &stage_name, &stage, stage_identity)?;
@@ -485,8 +2057,16 @@ where
         cache.require_unique_committed_sequence(&identity)?;
         require_exact_pending_state(cache, &state, &identity, operation_id)?;
         revalidate_installed_capabilities(generation, checkpoint, lineage, &cancelled)?;
-        hook("before-publish");
-        hook("final-cancellation-boundary");
+        hook("before-publish")?;
+        revalidate_staging_lease(
+            &destination,
+            &lease_directory,
+            &lease_name,
+            staging_lease_identity,
+            &lease_intent,
+            &stage_phase,
+        )?;
+        hook("final-cancellation-boundary")?;
         poll_cancelled(&cancelled)?;
 
         // No caller-controlled work occurs after this point. Recheck every
@@ -506,12 +2086,23 @@ where
         set_directory_mode(&stage, HANDOFF_DIRECTORY_MODE)?;
         let sealed_identity =
             private_directory_identity(&stage, HANDOFF_DIRECTORY_MODE, "sealed appliance handoff")?;
+        hook("after-seal")?;
         destination_guard.revalidate(&destination)?;
+        revalidate_staging_lease(
+            &destination,
+            &lease_directory,
+            &lease_name,
+            staging_lease_identity,
+            &lease_intent,
+            &stage_phase,
+        )?;
         rename_directory_at(&destination, &stage_name, &directory_name)?;
         published.set(true);
+        hook("after-rename")?;
         destination
             .sync_all()
             .map_err(|error| format!("Could not sync appliance handoff destination: {error}"))?;
+        hook("after-destination-sync")?;
         destination_guard.revalidate(&destination)?;
         require_destination_root(destination_root, &destination, destination_identity)?;
         let published = open_directory_at(&destination, &directory_name)?;
@@ -538,11 +2129,37 @@ where
         revalidate_installed_capabilities(generation, checkpoint, lineage, &|| false)?;
         require_destination_root(destination_root, &destination, destination_identity)?;
         destination_guard.revalidate(&destination)?;
-        Ok((published, published_identity))
+        let published_phase = create_lease_phase(
+            &lease_directory,
+            PUBLISHED_PHASE,
+            &lease_intent,
+            published_identity,
+            &mut hook,
+        )?;
+        destination.sync_all().map_err(|error| {
+            storage_error("Could not sync completed appliance handoff lease", error)
+        })?;
+        hook("after-lease-complete")?;
+        let lease_identity = private_directory_identity(
+            &lease_directory,
+            DESTINATION_DIRECTORY_MODE,
+            "published appliance handoff lease",
+        )?;
+        let lease = HandoffLease {
+            directory: lease_directory
+                .try_clone()
+                .map_err(|error| format!("Could not retain appliance handoff lease: {error}"))?,
+            directory_name: lease_name.clone(),
+            directory_identity: lease_identity,
+            intent: lease_intent.clone(),
+            published: published_phase,
+        };
+        revalidate_published_lease(&destination, &lease)?;
+        Ok((published, published_identity, lease))
     })();
 
     match result {
-        Ok((directory, directory_identity)) => Ok(StagedApplianceGeneration {
+        Ok((directory, directory_identity, lease)) => Ok(StagedApplianceGeneration {
             cache,
             generation,
             checkpoint,
@@ -556,22 +2173,23 @@ where
             directory,
             directory_name,
             directory_identity,
+            lease,
             record,
             inventory,
             retired: false,
             _seal: StagedApplianceGenerationSeal,
         }),
         Err(primary) => {
-            let cleanup_name = if published.get() {
-                &directory_name
-            } else {
-                &stage_name
-            };
-            let cleanup = remove_owned_directory_at(
+            let cleanup = cleanup_inflight_lease(
                 &destination,
-                cleanup_name,
+                &lease_directory,
+                &lease_name,
+                &stage_name,
+                &directory_name,
                 stage_identity,
-                inventory.len().saturating_add(2),
+                published.get(),
+                &lease_intent,
+                completed_receipt.borrow().as_ref(),
             );
             match cleanup {
                 Ok(()) => Err(primary),
@@ -738,6 +2356,37 @@ fn require_directory_metadata(
     Ok(())
 }
 
+fn require_lease_directory_identity(
+    directory: &File,
+    expected: LeaseDirectoryIdentity,
+    mode: u32,
+    description: &str,
+) -> Result<DirectoryIdentity, String> {
+    let observed = private_directory_identity(directory, mode, description)?;
+    if LeaseDirectoryIdentity::from(observed) != expected {
+        return Err(format!("{description} identity changed."));
+    }
+    Ok(observed)
+}
+
+fn require_recoverable_stage_identity(
+    directory: &File,
+    expected: LeaseDirectoryIdentity,
+) -> Result<DirectoryIdentity, String> {
+    let metadata = directory.metadata().map_err(|error| {
+        format!("Could not inspect recoverable appliance handoff stage: {error}")
+    })?;
+    let observed = DirectoryIdentity::from(&metadata);
+    if !metadata.is_dir()
+        || observed.uid != unsafe { libc::geteuid() }
+        || LeaseDirectoryIdentity::from(observed) != expected
+        || (observed.mode != DESTINATION_DIRECTORY_MODE && observed.mode != HANDOFF_DIRECTORY_MODE)
+    {
+        return Err("Recoverable appliance handoff stage identity is unsafe.".into());
+    }
+    Ok(observed)
+}
+
 fn require_staging_directory(
     parent: &File,
     name: &CStr,
@@ -846,7 +2495,7 @@ fn create_staging_directory_at(
         Ok(created) => Ok(created),
         Err(primary) => {
             let cleanup = if let Some(identity) = opened_identity {
-                remove_owned_directory_at(parent, name, identity, 1)
+                remove_confined_directory_at(parent, name, identity, &BTreeMap::new())
             } else if unsafe {
                 libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR)
             } == 0
@@ -1445,53 +3094,6 @@ fn set_errno(value: libc::c_int) {
     unsafe { *libc::__errno_location() = value };
 }
 
-fn remove_owned_directory_at(
-    parent: &File,
-    name: &CStr,
-    expected: DirectoryIdentity,
-    maximum_entries: usize,
-) -> Result<(), String> {
-    let directory = open_directory_at(parent, name)?;
-    let metadata = directory
-        .metadata()
-        .map_err(|error| format!("Could not identify failed appliance handoff: {error}"))?;
-    let observed = DirectoryIdentity::from(&metadata);
-    if observed.device != expected.device || observed.inode != expected.inode {
-        return Err("Failed appliance handoff identity changed before cleanup.".into());
-    }
-    let mode = metadata.permissions().mode() & 0o7777;
-    if !metadata.is_dir() || metadata.uid() != unsafe { libc::geteuid() } {
-        return Err("Failed appliance handoff ownership or mode is unsafe.".into());
-    }
-    if mode != DESTINATION_DIRECTORY_MODE {
-        directory
-            .set_permissions(fs::Permissions::from_mode(DESTINATION_DIRECTORY_MODE))
-            .map_err(|error| format!("Could not reopen failed appliance handoff: {error}"))?;
-    }
-    for child in directory_names(&directory, maximum_entries)? {
-        let child = CString::new(child.as_bytes())
-            .map_err(|_| "Failed appliance handoff filename is unsafe.".to_string())?;
-        if unsafe { libc::unlinkat(directory.as_raw_fd(), child.as_ptr(), 0) } != 0 {
-            return Err(format!(
-                "Could not remove failed appliance handoff file: {}",
-                std::io::Error::last_os_error()
-            ));
-        }
-    }
-    directory
-        .sync_all()
-        .map_err(|error| format!("Could not sync failed appliance handoff cleanup: {error}"))?;
-    if unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
-        return Err(format!(
-            "Could not remove failed appliance handoff directory: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    parent
-        .sync_all()
-        .map_err(|error| format!("Could not sync appliance handoff cleanup: {error}"))
-}
-
 fn poll_cancelled(cancelled: &impl Fn() -> bool) -> Result<(), String> {
     if cancelled() {
         Err("Core appliance handoff was cancelled.".into())
@@ -1544,6 +3146,7 @@ mod tests {
     };
     use std::{
         os::unix::fs::symlink,
+        panic::{catch_unwind, AssertUnwindSafe},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc,
@@ -1801,6 +3404,39 @@ mod tests {
                 || false,
             )
         }
+
+        fn supersede_pending(&self, operation: &str) {
+            let state = self.cache.load_state().unwrap();
+            self.cache
+                .reject_pending(&self.identity, &self.operation, state.revision)
+                .unwrap();
+            begin_installed_authenticated_activation(
+                &self.cache,
+                &self.generation,
+                &self.checkpoint,
+                &self.target,
+                &[],
+                operation,
+                || false,
+            )
+            .unwrap();
+        }
+
+        fn stage_operation(
+            &self,
+            operation: &str,
+        ) -> Result<StagedApplianceGeneration<'_>, String> {
+            stage_pending_generation_for_appliance(
+                &self.cache,
+                &self.generation,
+                &self.checkpoint,
+                &self.target,
+                &[],
+                operation,
+                &self.destination,
+                || false,
+            )
+        }
     }
 
     impl Drop for PreparedFixture {
@@ -1865,7 +3501,17 @@ mod tests {
         fs::read_dir(path)
             .unwrap()
             .map(|entry| entry.unwrap().path())
-            .filter(|entry| entry.file_name() != Some(OsStr::new(DESTINATION_LOCK_FILENAME)))
+            .filter(|entry| {
+                let name = entry.file_name().and_then(OsStr::to_str).unwrap_or("");
+                name != DESTINATION_LOCK_FILENAME && !name.starts_with(LEASE_DIRECTORY_PREFIX)
+            })
+            .collect()
+    }
+
+    fn all_destination_entries(path: &Path) -> Vec<PathBuf> {
+        fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
             .collect()
     }
 
@@ -1963,10 +3609,44 @@ mod tests {
                 if phase == "after-copy" {
                     cancelled.store(true, Ordering::SeqCst);
                 }
+                Ok(())
             },
         );
         assert!(result.is_err());
         assert!(destination_entries(&fixture.destination).is_empty());
+    }
+
+    #[test]
+    fn injected_enospc_after_copy_removes_stage_and_lease() {
+        let fixture = PreparedFixture::create("enospc-after-copy");
+        let result = stage_pending_generation_for_appliance_with_hook(
+            &fixture.cache,
+            &fixture.generation,
+            &fixture.checkpoint,
+            &fixture.target,
+            &[],
+            &fixture.operation,
+            &fixture.destination,
+            || false,
+            |phase| {
+                if phase == "after-copy" {
+                    Err("storage-admission-no-space: injected staging failure".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        let error = match result {
+            Ok(_) => panic!("injected ENOSPC unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert!(error.contains("storage-admission-no-space: injected staging failure"));
+        let entries = all_destination_entries(&fixture.destination);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].file_name(),
+            Some(OsStr::new(DESTINATION_LOCK_FILENAME))
+        );
     }
 
     #[test]
@@ -1990,6 +3670,7 @@ mod tests {
                     fs::rename(&fixture.destination, &original).unwrap();
                     fs::rename(&replacement, &fixture.destination).unwrap();
                 }
+                Ok(())
             },
         );
         assert!(result.is_err());
@@ -2020,6 +3701,7 @@ mod tests {
                     fs::set_permissions(&source, fs::Permissions::from_mode(0o500)).unwrap();
                     fs::set_permissions(&generations, fs::Permissions::from_mode(0o500)).unwrap();
                 }
+                Ok(())
             },
         );
         assert!(result.is_err());
@@ -2076,6 +3758,7 @@ mod tests {
                     fs::set_permissions(&final_path, fs::Permissions::from_mode(0o700)).unwrap();
                     fs::write(final_path.join("foreign"), b"do-not-replace").unwrap();
                 }
+                Ok(())
             },
         );
         assert!(result.is_err());
@@ -2105,10 +3788,149 @@ mod tests {
                     fs::write(&lock, b"").unwrap();
                     fs::set_permissions(&lock, fs::Permissions::from_mode(0o600)).unwrap();
                 }
+                Ok(())
             },
         );
         assert!(result.is_err());
         assert!(destination_entries(&fixture.destination).is_empty());
+    }
+
+    #[test]
+    fn staging_lease_replacement_before_publication_is_preserved_fail_closed() {
+        let fixture = PreparedFixture::create("staging-lease-replacement");
+        let moved = fixture.destination.join("replaced-staging-lease");
+        let result = stage_pending_generation_for_appliance_with_hook(
+            &fixture.cache,
+            &fixture.generation,
+            &fixture.checkpoint,
+            &fixture.target,
+            &[],
+            &fixture.operation,
+            &fixture.destination,
+            || false,
+            |phase| {
+                if phase == "before-publish" {
+                    let lease = fs::read_dir(&fixture.destination)
+                        .unwrap()
+                        .map(|entry| entry.unwrap().path())
+                        .find(|path| {
+                            path.file_name()
+                                .and_then(OsStr::to_str)
+                                .is_some_and(|name| name.starts_with(LEASE_DIRECTORY_PREFIX))
+                        })
+                        .unwrap();
+                    fs::rename(&lease, &moved).unwrap();
+                    fs::create_dir(&lease).unwrap();
+                    fs::set_permissions(&lease, fs::Permissions::from_mode(0o700)).unwrap();
+                }
+                Ok(())
+            },
+        );
+        let error = match result {
+            Ok(_) => panic!("replaced staging lease unexpectedly published"),
+            Err(error) => error,
+        };
+        assert!(error.contains("Staging appliance handoff lease identity changed"));
+        assert!(error.contains("Cleanup failed"));
+        assert!(moved.exists());
+        assert_eq!(destination_entries(&fixture.destination), vec![moved]);
+    }
+
+    #[test]
+    fn staging_marker_replacement_before_publication_is_preserved_fail_closed() {
+        let fixture = PreparedFixture::create("staging-marker-replacement");
+        let mut lease_path = None;
+        let result = stage_pending_generation_for_appliance_with_hook(
+            &fixture.cache,
+            &fixture.generation,
+            &fixture.checkpoint,
+            &fixture.target,
+            &[],
+            &fixture.operation,
+            &fixture.destination,
+            || false,
+            |phase| {
+                if phase == "before-publish" {
+                    let lease = fs::read_dir(&fixture.destination)
+                        .unwrap()
+                        .map(|entry| entry.unwrap().path())
+                        .find(|path| {
+                            path.file_name()
+                                .and_then(OsStr::to_str)
+                                .is_some_and(|name| name.starts_with(LEASE_DIRECTORY_PREFIX))
+                        })
+                        .unwrap();
+                    let marker = lease.join(LEASE_STAGE_FILENAME);
+                    let saved = lease.join("saved-stage-marker");
+                    fs::rename(&marker, &saved).unwrap();
+                    symlink(&saved, &marker).unwrap();
+                    lease_path = Some(lease);
+                }
+                Ok(())
+            },
+        );
+        let error = match result {
+            Ok(_) => panic!("replaced staging marker unexpectedly published"),
+            Err(error) => error,
+        };
+        assert!(error.contains("Staging appliance handoff lease"));
+        assert!(error.contains("Cleanup failed"));
+        assert!(lease_path.unwrap().exists());
+        assert!(destination_entries(&fixture.destination).is_empty());
+    }
+
+    #[test]
+    fn receipted_regular_file_replacement_is_never_removed_by_cleanup() {
+        let fixture = PreparedFixture::create("receipted-file-replacement");
+        let mut replaced = None;
+        let result = stage_pending_generation_for_appliance_with_hook(
+            &fixture.cache,
+            &fixture.generation,
+            &fixture.checkpoint,
+            &fixture.target,
+            &[],
+            &fixture.operation,
+            &fixture.destination,
+            || false,
+            |phase| {
+                if phase == "after-copy" {
+                    let lease = fs::read_dir(&fixture.destination)
+                        .unwrap()
+                        .map(|entry| entry.unwrap().path())
+                        .find(|path| {
+                            path.file_name()
+                                .and_then(OsStr::to_str)
+                                .is_some_and(|name| name.starts_with(LEASE_DIRECTORY_PREFIX))
+                        })
+                        .unwrap();
+                    let intent: HandoffLeaseIntent = serde_json::from_slice(
+                        &fs::read(lease.join(LEASE_INTENT_FILENAME)).unwrap(),
+                    )
+                    .unwrap();
+                    let stage = fixture.destination.join(intent.stage_name);
+                    let payload = stage.join("userspace-lock.json");
+                    let saved = stage.join("saved-userspace-lock.json");
+                    fs::rename(&payload, &saved).unwrap();
+                    fs::write(&payload, b"replacement-not-owned-by-receipt").unwrap();
+                    fs::set_permissions(&payload, fs::Permissions::from_mode(0o400)).unwrap();
+                    replaced = Some((payload, saved));
+                    return Err("injected failure after regular-file replacement".into());
+                }
+                Ok(())
+            },
+        );
+        let error = match result {
+            Ok(_) => panic!("regular-file replacement unexpectedly published"),
+            Err(error) => error,
+        };
+        assert!(error.contains("injected failure after regular-file replacement"));
+        assert!(error.contains("Cleanup failed"));
+        let (payload, saved) = replaced.unwrap();
+        assert_eq!(
+            fs::read(payload).unwrap(),
+            b"replacement-not-owned-by-receipt"
+        );
+        assert!(saved.exists());
     }
 
     #[test]
@@ -2130,5 +3952,473 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(identities.windows(2).all(|pair| pair[0] == pair[1]));
         assert_eq!(destination_entries(&fixture.destination).len(), 1);
+    }
+
+    #[test]
+    fn synthetic_crashes_reconcile_every_staging_publication_boundary() {
+        let phases = [
+            "after-lease-mkdir",
+            "after-intent-create",
+            "after-intent-write",
+            "after-intent-sync",
+            "after-intent-publish",
+            "after-intent-directory-sync",
+            "after-lease-parent-sync",
+            "after-stage-mkdir",
+            "after-stage-marker-create",
+            "after-stage-marker-write",
+            "after-stage-marker-sync",
+            "after-stage-marker-publish",
+            "after-stage-marker-directory-sync",
+            "after-stage-created",
+            "after-record-sync",
+            "after-files-receipt-publish",
+            "after-files-receipt-directory-sync",
+            "after-copy",
+            "after-seal",
+            "after-rename",
+            "after-destination-sync",
+            "after-published-marker-create",
+            "after-published-marker-write",
+            "after-published-marker-sync",
+            "after-published-marker-publish",
+            "after-published-marker-directory-sync",
+            "after-lease-complete",
+        ];
+        for phase in phases {
+            let fixture = PreparedFixture::create(&format!("crash-{}", phase.replace('-', "")));
+            let before = fixture.cache.load_state().unwrap();
+            let crashed = catch_unwind(AssertUnwindSafe(|| {
+                let _ = stage_pending_generation_for_appliance_with_hook(
+                    &fixture.cache,
+                    &fixture.generation,
+                    &fixture.checkpoint,
+                    &fixture.target,
+                    &[],
+                    &fixture.operation,
+                    &fixture.destination,
+                    || false,
+                    |observed| {
+                        if observed == phase {
+                            panic!("synthetic process death at {phase}");
+                        }
+                        Ok(())
+                    },
+                );
+            }));
+            assert!(crashed.is_err(), "phase {phase} did not crash");
+            let mut recovered = fixture
+                .stage()
+                .unwrap_or_else(|error| panic!("phase {phase} did not reconcile: {error}"));
+            recovered.revalidate().unwrap();
+            assert_eq!(fixture.cache.load_state().unwrap(), before);
+            assert_eq!(destination_entries(&fixture.destination).len(), 1);
+            recovered.retire().unwrap();
+            assert!(destination_entries(&fixture.destination).is_empty());
+        }
+    }
+
+    #[test]
+    fn partial_file_receipt_crashes_preserve_stage_and_require_maintenance() {
+        for phase in [
+            "after-files-receipt-create",
+            "after-files-receipt-write",
+            "after-files-receipt-sync",
+        ] {
+            let fixture = PreparedFixture::create(&format!("partial-{}", phase.replace('-', "")));
+            let crashed = catch_unwind(AssertUnwindSafe(|| {
+                let _ = stage_pending_generation_for_appliance_with_hook(
+                    &fixture.cache,
+                    &fixture.generation,
+                    &fixture.checkpoint,
+                    &fixture.target,
+                    &[],
+                    &fixture.operation,
+                    &fixture.destination,
+                    || false,
+                    |observed| {
+                        if observed == phase {
+                            panic!("synthetic partial receipt crash at {phase}");
+                        }
+                        Ok(())
+                    },
+                );
+            }));
+            assert!(crashed.is_err());
+            let preserved = all_destination_entries(&fixture.destination)
+                .into_iter()
+                .filter(|path| path.is_dir())
+                .collect::<Vec<_>>();
+            let error = match fixture.stage() {
+                Ok(_) => panic!("partial receipt stage was discarded at {phase}"),
+                Err(error) => error,
+            };
+            assert!(error.starts_with("appliance-handoff-recovery-required:"));
+            assert!(preserved.iter().all(|path| path.exists()));
+        }
+    }
+
+    #[test]
+    fn synthetic_retirement_crashes_finish_before_a_new_handoff_is_created() {
+        for phase in [
+            "after-retiring-marker",
+            "after-retiring-marker-create",
+            "after-retiring-marker-write",
+            "after-retiring-marker-sync",
+            "after-retiring-marker-publish",
+            "after-retiring-marker-directory-sync",
+            "after-retired-handoff",
+            "after-retired-lease",
+        ] {
+            let fixture = PreparedFixture::create(&format!("retire-{}", phase.replace('-', "")));
+            let mut staged = fixture.stage().unwrap();
+            let crashed = catch_unwind(AssertUnwindSafe(|| {
+                let _ = staged.retire_with_hook(|observed| {
+                    if observed == phase {
+                        panic!("synthetic process death at {phase}");
+                    }
+                    Ok(())
+                });
+            }));
+            assert!(crashed.is_err());
+            let mut replacement = fixture.stage().unwrap_or_else(|error| {
+                panic!("retirement phase {phase} did not reconcile: {error}")
+            });
+            replacement.revalidate().unwrap();
+            replacement.retire().unwrap();
+            assert!(destination_entries(&fixture.destination).is_empty());
+        }
+    }
+
+    #[test]
+    fn superseded_operations_reconcile_receipted_stage_publication_and_retirement() {
+        for phase in ["after-stage-created", "after-copy", "after-rename"] {
+            let fixture = PreparedFixture::create(&format!("supersede-{}", phase.replace('-', "")));
+            let crashed = catch_unwind(AssertUnwindSafe(|| {
+                let _ = stage_pending_generation_for_appliance_with_hook(
+                    &fixture.cache,
+                    &fixture.generation,
+                    &fixture.checkpoint,
+                    &fixture.target,
+                    &[],
+                    &fixture.operation,
+                    &fixture.destination,
+                    || false,
+                    |observed| {
+                        if observed == phase {
+                            panic!("synthetic superseded operation crash at {phase}");
+                        }
+                        Ok(())
+                    },
+                );
+            }));
+            assert!(crashed.is_err());
+            let replacement_operation = format!("replacement-{phase}");
+            fixture.supersede_pending(&replacement_operation);
+            let mut replacement = fixture
+                .stage_operation(&replacement_operation)
+                .unwrap_or_else(|error| panic!("could not supersede {phase}: {error}"));
+            replacement.revalidate().unwrap();
+            assert_eq!(destination_entries(&fixture.destination).len(), 1);
+            replacement.retire().unwrap();
+            assert!(destination_entries(&fixture.destination).is_empty());
+        }
+
+        let fixture = PreparedFixture::create("supersede-retiring");
+        let mut staged = fixture.stage().unwrap();
+        let crashed = catch_unwind(AssertUnwindSafe(|| {
+            let _ = staged.retire_with_hook(|phase| {
+                if phase == "after-retiring-marker" {
+                    panic!("synthetic superseded retirement crash");
+                }
+                Ok(())
+            });
+        }));
+        assert!(crashed.is_err());
+        let replacement_operation = "replacement-retiring";
+        fixture.supersede_pending(replacement_operation);
+        let mut replacement = fixture.stage_operation(replacement_operation).unwrap();
+        replacement.revalidate().unwrap();
+        assert_eq!(destination_entries(&fixture.destination).len(), 1);
+        replacement.retire().unwrap();
+        assert!(destination_entries(&fixture.destination).is_empty());
+    }
+
+    #[test]
+    fn superseded_pre_receipt_stage_is_preserved_with_stable_recovery_reason() {
+        let fixture = PreparedFixture::create("supersede-pre-receipt");
+        let crashed = catch_unwind(AssertUnwindSafe(|| {
+            let _ = stage_pending_generation_for_appliance_with_hook(
+                &fixture.cache,
+                &fixture.generation,
+                &fixture.checkpoint,
+                &fixture.target,
+                &[],
+                &fixture.operation,
+                &fixture.destination,
+                || false,
+                |phase| {
+                    if phase == "after-files-receipt-write" {
+                        panic!("synthetic pre-receipt process death");
+                    }
+                    Ok(())
+                },
+            );
+        }));
+        assert!(crashed.is_err());
+        let preserved = all_destination_entries(&fixture.destination)
+            .into_iter()
+            .filter(|path| path.is_dir())
+            .collect::<Vec<_>>();
+        fixture.supersede_pending("replacement-pre-receipt");
+        let error = match fixture.stage_operation("replacement-pre-receipt") {
+            Ok(_) => panic!("ambiguous pre-receipt stage was discarded"),
+            Err(error) => error,
+        };
+        assert!(
+            error.starts_with("appliance-handoff-recovery-required:"),
+            "unexpected recovery error: {error}"
+        );
+        assert!(preserved.iter().all(|path| path.exists()));
+    }
+
+    #[test]
+    fn self_consistent_receipt_and_stage_rewrite_cannot_authorize_restart_cleanup() {
+        let fixture = PreparedFixture::create("self-consistent-receipt-rewrite");
+        let crashed = catch_unwind(AssertUnwindSafe(|| {
+            let _ = stage_pending_generation_for_appliance_with_hook(
+                &fixture.cache,
+                &fixture.generation,
+                &fixture.checkpoint,
+                &fixture.target,
+                &[],
+                &fixture.operation,
+                &fixture.destination,
+                || false,
+                |phase| {
+                    if phase == "after-copy" {
+                        panic!("synthetic death before publication");
+                    }
+                    Ok(())
+                },
+            );
+        }));
+        assert!(crashed.is_err());
+        let lease = fs::read_dir(&fixture.destination)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(OsStr::to_str)
+                    .is_some_and(|name| name.starts_with(LEASE_DIRECTORY_PREFIX))
+            })
+            .unwrap();
+        let intent_path = lease.join(LEASE_INTENT_FILENAME);
+        let receipt_path = lease.join(LEASE_FILES_FILENAME);
+        let mut intent: HandoffLeaseIntent =
+            serde_json::from_slice(&fs::read(&intent_path).unwrap()).unwrap();
+        let mut receipt: HandoffLeaseFiles =
+            serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+        let stage = fixture.destination.join(&intent.stage_name);
+        fs::set_permissions(&stage, fs::Permissions::from_mode(0o700)).unwrap();
+        let payload_name = "userspace-lock.json";
+        let payload = b"attacker-selected-stage-content\n";
+        let payload_path = stage.join(payload_name);
+        fs::set_permissions(&payload_path, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&payload_path, payload).unwrap();
+        fs::set_permissions(&payload_path, fs::Permissions::from_mode(0o400)).unwrap();
+        let payload_expected = HandoffExpectedFile {
+            size: payload.len() as u64,
+            sha256: sha256(payload),
+        };
+        intent
+            .expected_files
+            .insert(payload_name.into(), payload_expected.clone());
+        let record_file = intent
+            .handoff_record
+            .files
+            .iter_mut()
+            .find(|file| file.filename == payload_name)
+            .unwrap();
+        record_file.size = payload_expected.size;
+        record_file.sha256 = payload_expected.sha256.clone();
+        let handoff_bytes = canonical_record(&intent.handoff_record).unwrap();
+        intent.handoff_record_sha256 = sha256(&handoff_bytes);
+        intent.expected_files.insert(
+            HANDOFF_FILENAME.into(),
+            HandoffExpectedFile {
+                size: handoff_bytes.len() as u64,
+                sha256: intent.handoff_record_sha256.clone(),
+            },
+        );
+        let handoff_path = stage.join(HANDOFF_FILENAME);
+        fs::set_permissions(&handoff_path, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&handoff_path, &handoff_bytes).unwrap();
+        fs::set_permissions(&handoff_path, fs::Permissions::from_mode(0o400)).unwrap();
+        receipt.files.get_mut(payload_name).unwrap().identity =
+            HandoffFileIdentity::from(&fs::metadata(&payload_path).unwrap());
+        receipt.files.get_mut(HANDOFF_FILENAME).unwrap().identity =
+            HandoffFileIdentity::from(&fs::metadata(&handoff_path).unwrap());
+        fs::set_permissions(&intent_path, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&intent_path, canonical_lease_record(&intent).unwrap()).unwrap();
+        fs::set_permissions(&intent_path, fs::Permissions::from_mode(0o400)).unwrap();
+        fs::set_permissions(&receipt_path, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&receipt_path, canonical_lease_record(&receipt).unwrap()).unwrap();
+        fs::set_permissions(&receipt_path, fs::Permissions::from_mode(0o400)).unwrap();
+
+        let error = match fixture.stage() {
+            Ok(_) => panic!("self-consistent unauthenticated rewrite was accepted"),
+            Err(error) => error,
+        };
+        assert!(error.starts_with("appliance-handoff-recovery-required:"));
+        assert_eq!(fs::read(payload_path).unwrap(), payload);
+        assert!(lease.exists());
+    }
+
+    #[test]
+    fn malformed_noncanonical_duplicate_and_oversized_leases_fail_closed() {
+        let variants = [
+            b"not-json\n".to_vec(),
+            b"{\"schemaVersion\":1,\"schemaVersion\":1}\n".to_vec(),
+            b"{}".to_vec(),
+            vec![b'x'; LEASE_RECORD_MAX_BYTES + 1],
+        ];
+        for (index, bytes) in variants.into_iter().enumerate() {
+            let fixture = PreparedFixture::create(&format!("bad-lease-{index}"));
+            let staged = fixture.stage().unwrap();
+            let intent = fixture
+                .destination
+                .join(staged.lease.directory_name.to_str().unwrap())
+                .join(LEASE_INTENT_FILENAME);
+            fs::set_permissions(&intent, fs::Permissions::from_mode(0o600)).unwrap();
+            fs::write(&intent, bytes).unwrap();
+            fs::set_permissions(&intent, fs::Permissions::from_mode(0o400)).unwrap();
+            assert!(fixture.stage().is_err());
+            assert_eq!(destination_entries(&fixture.destination).len(), 1);
+        }
+    }
+
+    #[test]
+    fn lease_links_special_files_and_replacement_are_preserved_fail_closed() {
+        for kind in ["symlink", "hardlink", "fifo"] {
+            let fixture = PreparedFixture::create(&format!("lease-{kind}"));
+            let staged = fixture.stage().unwrap();
+            let lease = fixture
+                .destination
+                .join(staged.lease.directory_name.to_str().unwrap());
+            let intent = lease.join(LEASE_INTENT_FILENAME);
+            let saved = lease.join("saved-intent");
+            fs::rename(&intent, &saved).unwrap();
+            match kind {
+                "symlink" => symlink(&saved, &intent).unwrap(),
+                "hardlink" => fs::hard_link(&saved, &intent).unwrap(),
+                "fifo" => {
+                    let path = CString::new(intent.as_os_str().as_bytes()).unwrap();
+                    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o400) }, 0);
+                }
+                _ => unreachable!(),
+            }
+            assert!(fixture.stage().is_err());
+            assert_eq!(destination_entries(&fixture.destination).len(), 1);
+        }
+
+        let fixture = PreparedFixture::create("lease-replacement");
+        let mut staged = fixture.stage().unwrap();
+        let lease = fixture
+            .destination
+            .join(staged.lease.directory_name.to_str().unwrap());
+        let moved = fixture.destination.join("moved-lease");
+        fs::rename(&lease, &moved).unwrap();
+        fs::create_dir(&lease).unwrap();
+        fs::set_permissions(&lease, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(staged.revalidate().is_err());
+        assert!(staged.retire().is_err());
+        assert!(moved.exists());
+        assert!(lease.exists());
+        assert_eq!(destination_entries(&fixture.destination).len(), 2);
+    }
+
+    #[test]
+    fn replaced_recovery_stage_is_never_removed() {
+        let fixture = PreparedFixture::create("replaced-recovery-stage");
+        let crashed = catch_unwind(AssertUnwindSafe(|| {
+            let _ = stage_pending_generation_for_appliance_with_hook(
+                &fixture.cache,
+                &fixture.generation,
+                &fixture.checkpoint,
+                &fixture.target,
+                &[],
+                &fixture.operation,
+                &fixture.destination,
+                || false,
+                |phase| {
+                    if phase == "after-stage-created" {
+                        panic!("synthetic process death");
+                    }
+                    Ok(())
+                },
+            );
+        }));
+        assert!(crashed.is_err());
+        let lease_path = fs::read_dir(&fixture.destination)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(OsStr::to_str)
+                    .is_some_and(|name| name.starts_with(LEASE_DIRECTORY_PREFIX))
+            })
+            .unwrap();
+        let intent: HandoffLeaseIntent =
+            serde_json::from_slice(&fs::read(lease_path.join(LEASE_INTENT_FILENAME)).unwrap())
+                .unwrap();
+        let stage = fixture.destination.join(&intent.stage_name);
+        let moved = fixture.destination.join("original-stage");
+        fs::rename(&stage, &moved).unwrap();
+        fs::create_dir(&stage).unwrap();
+        fs::set_permissions(&stage, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(fixture.stage().is_err());
+        assert!(stage.exists());
+        assert!(moved.exists());
+    }
+
+    #[test]
+    fn lease_entry_bound_accepts_full_domain_and_rejects_one_more() {
+        let fixture = PreparedFixture::create("lease-entry-bound");
+        let staged = fixture.stage().unwrap();
+        let mut intent = staged.lease.intent.clone();
+        for index in intent.expected_files.len()..MAX_HANDOFF_DIRECTORY_ENTRIES {
+            let filename = format!("bounded-{index}");
+            intent.expected_files.insert(
+                filename.clone(),
+                HandoffExpectedFile {
+                    size: 1,
+                    sha256: "0".repeat(64),
+                },
+            );
+            intent.handoff_record.files.push(ApplianceHandoffFile {
+                filename,
+                size: 1,
+                sha256: "0".repeat(64),
+            });
+        }
+        intent
+            .handoff_record
+            .files
+            .sort_by(|left, right| left.filename.cmp(&right.filename));
+        let handoff = canonical_record(&intent.handoff_record).unwrap();
+        intent.handoff_record_sha256 = sha256(&handoff);
+        intent.expected_files.insert(
+            HANDOFF_FILENAME.into(),
+            HandoffExpectedFile {
+                size: handoff.len() as u64,
+                sha256: intent.handoff_record_sha256.clone(),
+            },
+        );
+        intent.maximum_entries = MAX_HANDOFF_DIRECTORY_ENTRIES as u64;
+        validate_lease_intent(&intent, &staged.lease.directory_name)
+            .unwrap_or_else(|error| panic!("maximum valid lease rejected: {error}"));
+        intent.maximum_entries += 1;
+        assert!(validate_lease_intent(&intent, &staged.lease.directory_name).is_err());
     }
 }
