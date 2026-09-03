@@ -663,6 +663,8 @@ Support-repository readiness (tracked here because it gates image-builder integr
 * [x] Repin support commit `0b09b55998eaca30f705ef8fe5ea56314607dfc8`, pin all fourteen recovery-guardian additions by exact size/hash/mode, and include the exact snapshot in generated installation media for offline target staging.
 * [x] Repin support commit `2f6f133485f68ed09abf58b8a49ad67b985dd2e6`, including its crash-safe Desktop companion generation manager, fail-closed launcher, and intentionally unconfigured release-signer policy. Preserve the trust gate instead of inventing a caller override.
 * [x] Repin support commit `305f1199f5745136902de1c88655a9192fb91de3` after its desktop generation manager bound launch to a revalidated, write-sealed Linux `memfd`, authenticated stored trust metadata on every lifecycle operation, and returned stable bounded failure reasons. Keep the release-signer policy fail-closed.
+* [x] Repin support commit `cbc44270440652875739c9386235ee8ae22861c9`, expand the immutable installation-media snapshot with its no-input interstitial launchers, bounded progress writer, exact-ELF validator, and systemd service, and require the welcome installer to verify those runtime files and the enabled service link in both installed A/B slots.
+* [ ] Consume an OPEMOS interstitial executable only after the support repository publishes an exact x86_64 Linux binary, manifest, checksum, and signature under its reviewed production desktop-update signer policy. Until then, retain the new service as conditionally inactive; never promote the unsigned GitHub Actions development artifact into generated end-user media.
 * [ ] After a real Valve `repair_device.sh` installation, verify the installed rootfs receipt with the pinned support helper and require the exact image-build `receiptId` before independently checking the installed payload. A matching receipt proves propagation only—not graphical boot, rollback, or hardware certification.
 * [x] Repin offline-installer commit `bf4863910fb58c80ed920fdea1768b5dcf466023`, including authenticated offline bundles/cache hardening, deterministic reviewed gaming-payload support, and confined SteamOS execution-symlink handling; pin the newly mandatory repacker import and verify every file from the public commit.
 * [x] Repin offline-installer commit `93285dc176f65964daa6d0c0c01f01e53ab7506e`, consume its bounded dynamic-inode probe evidence, distinguish the four-module early-boot initramfs contract from rootfs-only `nvidia-peermem`, and stop treating Btrfs's all-zero inode counters as exhaustion while still requiring allocation-and-cleanup proof before mutation.
@@ -1486,6 +1488,12 @@ the open window.
   desktop-generation manager, atomic activation marker, startup-health deadline,
   last-known-good rollback, lifecycle lock, and fail-closed signer policy as the
   initial update foundation.
+* [x] Bind the installed runtime snapshot to a support revision that also
+  contains the canonical desktop-update manifest builder and create-only
+  publisher as upstream implementation groundwork. Do not install those
+  maintainer-only publisher files onto end-user media. The production signer
+  policy remains intentionally unconfigured, so OPEMOS.EXE must not expose live
+  automatic update publication or acquisition yet.
 * [ ] Split the persistent Open OPEMOS Desktop into an unprivileged graphical
   shell and a separately launched backend process. Do not load downloaded code
   into the GUI process or grant the backend unrestricted shell execution.

@@ -180,11 +180,17 @@ verify_guardian_slot() {
       test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/recoveryctl.sh
       test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/online_install.sh
       test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/launch_desktop_companion.sh
+      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/launch_interstitial.sh
+      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/run_guardian_with_interstitial.sh
       test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/lib/desktop_update_generations.py
+      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/lib/interstitial_progress.py
+      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/lib/validate_interstitial_binary.py
       test -f /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/trust/desktop-update-signers.json
       test -f /etc/systemd/system/opemos-nvidia-guardian.service
+      test -f /etc/systemd/system/opemos-interstitial.service
       test -f /etc/systemd/system/opemos-nvidia-repair.service
       test -L /etc/systemd/system/multi-user.target.wants/opemos-nvidia-guardian.service
+      test -L /etc/systemd/system/multi-user.target.wants/opemos-interstitial.service
       test -L /etc/systemd/system/timers.target.wants/opemos-nvidia-repair.timer
       test "$(cat /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/support-revision)" = "$1"
       test "$(cat /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/nvidia-version)" = "$2"

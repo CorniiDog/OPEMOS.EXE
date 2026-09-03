@@ -2322,8 +2322,8 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 562_031);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 45);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 583_001);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 50);
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
@@ -2338,7 +2338,19 @@ esac
         }));
         assert!(PINNED_INSTALLER_FILES
             .iter()
+            .any(|file| file.path == "bootstrap/launch_interstitial.sh" && file.executable));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "bootstrap/run_guardian_with_interstitial.sh" && file.executable
+        }));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
             .any(|file| file.path == "lib/desktop_update_generations.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "lib/interstitial_progress.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "lib/validate_interstitial_binary.py" && file.executable
+        }));
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "trust/desktop-update-signers.json" && !file.executable
         }));
@@ -2348,6 +2360,9 @@ esac
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "support/recovery/opemos-nvidia-guardian.service.in"
                 && !file.executable
+        }));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "support/recovery/opemos-interstitial.service.in" && !file.executable
         }));
         assert!(PINNED_INSTALLER_FILES
             .iter()
@@ -2675,6 +2690,13 @@ esac
         assert!(helper.contains("for slot in A B"));
         assert!(helper.contains("media-info)"));
         assert!(helper.contains("verify_guardian_slot"));
+        assert!(helper.contains("launch_interstitial.sh"));
+        assert!(helper.contains("run_guardian_with_interstitial.sh"));
+        assert!(helper.contains("interstitial_progress.py"));
+        assert!(helper.contains("validate_interstitial_binary.py"));
+        assert!(helper.contains("opemos-interstitial.service"));
+        assert!(!helper.contains("--interstitial-binary"));
+        assert!(!helper.contains("bin/opemos-interstitial"));
         assert!(helper.contains("installed recovery guardian verification failed"));
         assert!(helper.contains("ui_stage \"Installing the recovery guardian into rootfs-$slot"));
         assert!(!helper.contains("eval "));

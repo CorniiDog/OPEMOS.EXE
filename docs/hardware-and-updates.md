@@ -141,6 +141,22 @@ selection, device writing, or another destructive operation. Once healthy, new
 requests move to the candidate and the previous backend is retained for bounded
 rollback; the graphical window does not reload or disappear.
 
+### Boot interstitial status
+
+The pinned support snapshot now includes a no-input DRM/KMS interstitial for
+showing bounded guardian progress before SteamOS starts Gaming or Desktop Mode.
+Generated media carries its launcher, progress writer, executable validator,
+and systemd service contract, and the welcome installer verifies those files in
+both installed A/B slots. The service is conditionally inactive unless an exact
+authenticated `x86_64` interstitial executable and its hash binding are present.
+
+That executable is intentionally not taken from an unsigned CI artifact. The
+visual boot status becomes an end-user feature only after OPEMOS publishes it
+under the reviewed production desktop-update signer policy and physical
+SteamOS testing proves DRM release, watchdog behavior, display handoff, and
+continued boot after renderer failure. The guardian remains authoritative with
+or without the cosmetic display.
+
 OPEMOS should additionally install an explicit recovery entry that can reach a
 text/rescue environment without starting Gaming Mode. The exact SteamOS boot
 entry and rollback edits remain hardware-test gates; they must not be inferred

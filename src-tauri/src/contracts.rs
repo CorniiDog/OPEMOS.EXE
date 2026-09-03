@@ -198,7 +198,7 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 45] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 50] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
         sha256: "4bcb351d99608ff1cc6be3cf891d219e5fe78f0584f716d5a352891dbcf3f222",
@@ -207,14 +207,26 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 45] = [
     },
     PinnedInstallerFile {
         path: "bootstrap/install_recovery_guardian_to_root.sh",
-        sha256: "322b0b5a8e1495c47b32b29812ce066fa864fdccd927ccff77c2e11a8fbff126",
-        bytes: 4_846,
+        sha256: "654d48ad8e96195ca32519eba67471248961e5f57cdc4ebae880e551fc7a3f91",
+        bytes: 7_927,
         executable: true,
     },
     PinnedInstallerFile {
         path: "bootstrap/launch_desktop_companion.sh",
         sha256: "3f233e0e48c2c6debe0d09d0ee22bde641bdd7dba6bc1bdb96de31e2eae76cd9",
         bytes: 1_140,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "bootstrap/launch_interstitial.sh",
+        sha256: "f65bd4a16c87fa554b68ee41b362abb3e00f294de60dcf9bef7d63fc5e5aab6d",
+        bytes: 1_087,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "bootstrap/run_guardian_with_interstitial.sh",
+        sha256: "59e9d97850cf7b49182dd7e96492fee223512feca5b05358044f1b6669b08857",
+        bytes: 1_674,
         executable: true,
     },
     PinnedInstallerFile {
@@ -245,6 +257,18 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 45] = [
         path: "lib/desktop_update_generations.py",
         sha256: "2d19fa64824a384ce61c655f39e89276b365447cbcbe670c1e72e3e1a8112588",
         bytes: 38_358,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/interstitial_progress.py",
+        sha256: "a84877ea601f104718a1ba266d15cf2deb9ed5b36c8339c0aba81f3889eefe3e",
+        bytes: 9_766,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/validate_interstitial_binary.py",
+        sha256: "fea7e5e24a9273bc4704a9e5ecde6a11fc218ed13826ec69614aaa59a507d103",
+        bytes: 3_558,
         executable: true,
     },
     PinnedInstallerFile {
@@ -435,8 +459,14 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 45] = [
     },
     PinnedInstallerFile {
         path: "support/recovery/opemos-nvidia-guardian.service.in",
-        sha256: "33abea6d0c32577310763844cd9c4a8c562a4fd1aa4910eff0b3eb0c6bfca696",
-        bytes: 267,
+        sha256: "537a34afe65550ef7dca2d5b9725dbd42e1961c3a8a25a0cce7ffe4217d5c018",
+        bytes: 341,
+        executable: false,
+    },
+    PinnedInstallerFile {
+        path: "support/recovery/opemos-interstitial.service.in",
+        sha256: "3225436d6d97cad3b51069b6f657bc8346b52234e4f169fa205e2555242dc57f",
+        bytes: 1_730,
         executable: false,
     },
     PinnedInstallerFile {
