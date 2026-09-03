@@ -4122,6 +4122,32 @@ esac
     }
 
     #[test]
+    fn final_output_publication_never_replaces_an_existing_path() {
+        let root = std::env::temp_dir().join(format!(
+            "steamos-builder-output-publish-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("test clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("create output publication test directory");
+        let source = root.join("partial.img");
+        let occupied = root.join("completed.img");
+        fs::write(&source, b"new output").expect("write partial output");
+        fs::write(&occupied, b"existing output").expect("write occupied output");
+        assert!(rename_without_replacement(&source, &occupied).is_err());
+        assert_eq!(fs::read(&occupied).unwrap(), b"existing output");
+        assert_eq!(fs::read(&source).unwrap(), b"new output");
+
+        let published = root.join("published.img");
+        rename_without_replacement(&source, &published).expect("publish unused output path");
+        assert_eq!(fs::read(&published).unwrap(), b"new output");
+        assert!(!source.exists());
+        fs::remove_dir_all(root).expect("remove output publication test directory");
+    }
+
+    #[test]
     fn rejects_unsafe_or_unavailable_output_destinations() {
         let root = std::env::temp_dir().join(format!(
             "steamos-builder-output-safety-{}-{}",

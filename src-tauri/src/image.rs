@@ -965,6 +965,58 @@ pub(crate) fn write_json_file(path: &Path, value: &serde_json::Value) -> Result<
         .map_err(|e| format!("Could not finish build manifest: {e}"))
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn rename_without_replacement(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let source = CString::new(source.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "source path contains NUL"))?;
+    let destination = CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "destination path contains NUL")
+    })?;
+    #[cfg(target_os = "macos")]
+    let result = unsafe {
+        libc::renameatx_np(
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            destination.as_ptr(),
+            libc::RENAME_EXCL,
+        )
+    };
+    #[cfg(target_os = "linux")]
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            destination.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub(crate) fn rename_without_replacement(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::hard_link(source, destination)?;
+    if let Err(error) = fs::remove_file(source) {
+        let rollback = fs::remove_file(destination);
+        return Err(match rollback {
+            Ok(()) => error,
+            Err(rollback_error) => io::Error::other(format!(
+                "could not remove source after no-replace publication ({error}); rollback also failed ({rollback_error})"
+            )),
+        });
+    }
+    Ok(())
+}
+
 pub(crate) fn parse_qemu_img_progress(line: &str) -> Option<f64> {
     let end = line.rfind("/100%)")?;
     let start = line[..end].rfind('(')? + 1;
@@ -1611,10 +1663,11 @@ pub(crate) fn export_marker_image_blocking(
             armed: true,
         };
         write_json_file(&partial_manifest_path, &manifest)?;
-        fs::rename(&partial_path, &final_path)
+        rename_without_replacement(&partial_path, &final_path)
             .map_err(|e| format!("Could not finalize the exported image: {e}"))?;
-        if let Err(error) = fs::rename(&partial_manifest_path, &final_manifest_path) {
-            let rollback = fs::rename(&final_path, &partial_path);
+        if let Err(error) = rename_without_replacement(&partial_manifest_path, &final_manifest_path)
+        {
+            let rollback = rename_without_replacement(&final_path, &partial_path);
             return Err(if let Err(rollback_error) = rollback {
                 format!(
                     "Could not finalize the build manifest ({error}); the image also could not be returned to its temporary name ({rollback_error})."
