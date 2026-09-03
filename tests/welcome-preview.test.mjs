@@ -62,7 +62,7 @@ test("preview covers the welcome workflow and clearly labels synthetic state", (
   }
   assert.doesNotMatch(`${illustrations[0]}\n${illustrations[1]}`, /<mask/);
   assert.match(illustrations[2], /<mask id="controller-clearance"[^>]*>/);
-  assert.match(illustrations[2], /<use href="#controller-shape"[^>]*stroke-width="24"/);
+  assert.match(illustrations[2], /<use id="controller-knockout" href="#controller-shape"/);
 });
 
 function numericAttribute(element, name) {
@@ -107,14 +107,40 @@ test("welcome illustrations preserve balanced geometry and intentional layering"
 
   const display = elementWithId(gaming, "gaming-display");
   const controller = elementWithId(gaming, "controller");
+  const controllerKnockout = elementWithId(gaming, "controller-knockout");
   const displayBottom = numericAttribute(display, "y") + numericAttribute(display, "height") + numericAttribute(display, "stroke-width") / 2;
   const controllerTop = numericAttribute(controller, "data-top") - numericAttribute(controller, "stroke-width") / 2;
   assert.ok(controllerTop < displayBottom, "controller must intentionally overlay the display");
   assert.equal(numericAttribute(display, "width") / numericAttribute(display, "height"), 16 / 9);
+  assert.ok(
+    numericAttribute(controllerKnockout, "stroke-width")
+      >= numericAttribute(controller, "stroke-width") + 12,
+    "controller must retain a visible transparent border over the display",
+  );
   const controllerWidth = numericAttribute(controller, "data-right") - numericAttribute(controller, "data-left");
   const controllerHeight = numericAttribute(controller, "data-bottom") - numericAttribute(controller, "data-top");
+  assert.equal(
+    numericAttribute(controller, "data-left") + numericAttribute(controller, "data-right"),
+    520,
+    "controller silhouette must remain centered",
+  );
   assert.ok(controllerHeight >= 140, "controller must retain full-height grips");
-  assert.ok(controllerWidth / controllerHeight < 2, "controller must not become visually squashed");
+  assert.ok(controllerWidth / controllerHeight < 1.75, "controller must retain reference-like proportions");
+
+  const directionPad = elementWithId(gaming, "direction-pad");
+  const buttonTop = elementWithId(gaming, "button-top");
+  const buttonRight = elementWithId(gaming, "button-right");
+  const buttonLeft = elementWithId(gaming, "button-left");
+  const buttonBottom = elementWithId(gaming, "button-bottom");
+  assert.equal(
+    numericAttribute(directionPad, "data-center-x") + numericAttribute(buttonTop, "cx"),
+    520,
+    "primary control clusters must mirror around the artwork center",
+  );
+  assert.equal(numericAttribute(buttonTop, "cx"), numericAttribute(buttonBottom, "cx"));
+  assert.equal(numericAttribute(buttonLeft, "cx") + numericAttribute(buttonRight, "cx"), 700);
+  assert.equal(numericAttribute(buttonLeft, "cy"), numericAttribute(buttonRight, "cy"));
+  assert.equal(numericAttribute(buttonTop, "cy") + numericAttribute(buttonBottom, "cy"), 398);
 
   const leftStick = elementWithId(gaming, "left-stick");
   const rightStick = elementWithId(gaming, "right-stick");
