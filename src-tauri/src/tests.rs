@@ -4407,7 +4407,10 @@ esac
         let output = root.join("output.img");
         fs::write(&input, b"input").expect("create output-safety input");
         assert!(validate_output_destination(&input, &output, 1).is_ok());
-        assert!(host_available_bytes(&root).expect("measure temporary volume") > 0);
+        assert!(host_volume_space(&root)
+            .expect("measure temporary volume")
+            .available_bytes
+            > 0);
         assert!(validate_output_destination(&input, &input, 0)
             .expect_err("input/output alias must fail")
             .contains("selected input"));
@@ -4439,10 +4442,19 @@ esac
         ])
         .expect("calculate shared-volume requirement");
         assert_eq!(required, 20 * 1024 * 1024 * 1024 + 64 * 1024 * 1024);
-        assert!(require_host_space(required, required, "test volume").is_ok());
-        let error = require_host_space(required - 1, required, "test volume")
-            .expect_err("one-byte shortfall must fail");
-        assert!(error.contains("before guest startup"));
+        let error = admit_measured_storage(&[MeasuredStorageRequest {
+            volume: HostVolumeSpace {
+                volume_id: "1".into(),
+                available_bytes: required - 1,
+                available_inodes: Some(10),
+            },
+            bytes: required,
+            inodes: 1,
+            purpose: "test volume",
+        }])
+        .expect_err("one-byte shortfall must fail");
+        assert!(error.contains(STORAGE_NO_SPACE_CODE));
+        assert!(error.contains("Free space on the named volume and retry"));
         assert!(error.contains(&format!("{required} bytes")));
         assert!(error.contains(&format!("{} bytes", required - 1)));
         assert!(checked_space_sum([u64::MAX, 1]).is_err());
@@ -4472,6 +4484,63 @@ esac
         };
         assert!(oversized.write_all(b"test").is_err());
         assert_eq!(oversized.inner, b"tes");
+    }
+
+    #[test]
+    fn measures_supported_compressed_inputs_exactly_and_honors_cancellation() {
+        let root = std::env::temp_dir().join(format!(
+            "steamos-builder-normalized-measurement-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("test clock")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("create measurement fixture");
+        let payload = (0..131_113_u32)
+            .flat_map(u32::to_le_bytes)
+            .collect::<Vec<_>>();
+
+        let bzip = root.join("fixture.img.bz2");
+        let mut encoder = bzip2::write::BzEncoder::new(
+            File::create(&bzip).expect("create bzip fixture"),
+            bzip2::Compression::best(),
+        );
+        encoder.write_all(&payload).expect("write bzip fixture");
+        encoder.finish().expect("finish bzip fixture");
+
+        let gzip = root.join("fixture.img.gz");
+        let mut encoder = flate2::write::GzEncoder::new(
+            File::create(&gzip).expect("create gzip fixture"),
+            flate2::Compression::best(),
+        );
+        encoder.write_all(&payload).expect("write gzip fixture");
+        encoder.finish().expect("finish gzip fixture");
+
+        let xz = root.join("fixture.img.xz");
+        let mut encoder = xz2::write::XzEncoder::new(
+            File::create(&xz).expect("create xz fixture"),
+            9,
+        );
+        encoder.write_all(&payload).expect("write xz fixture");
+        encoder.finish().expect("finish xz fixture");
+
+        for (path, format) in [
+            (&bzip, InputFormat::Bzip2),
+            (&gzip, InputFormat::Gzip),
+            (&xz, InputFormat::Xz),
+        ] {
+            assert_eq!(
+                measure_normalized_input(path, format, None, None)
+                    .expect("measure compressed fixture"),
+                payload.len() as u64
+            );
+        }
+        let cancelled = AtomicBool::new(true);
+        assert!(measure_normalized_input(&gzip, InputFormat::Gzip, None, Some(&cancelled))
+            .expect_err("cancelled measurement must stop")
+            .contains("cancelled"));
+        fs::remove_dir_all(root).expect("remove measurement fixture");
     }
 
     #[test]
@@ -4966,7 +5035,7 @@ esac
         io::copy(&mut raw_file, &mut encoder).expect("compress live fixture");
         encoder.finish().expect("finish live compressed fixture");
         fs::remove_file(raw_fixture).expect("remove intermediate live raw fixture");
-        let mut session = prepare_session(Some(&compressed_fixture), None, None)
+        let mut session = prepare_session(Some(&compressed_fixture), None, None, false)
             .expect("the appliance should start");
         assert!(session.input_preparation.normalized);
         assert_eq!(session.input_preparation.source_format, "bzip2");
@@ -5251,7 +5320,7 @@ esac
         let input = std::env::var_os("STEAMOS_RECOVERY_IMAGE")
             .map(PathBuf::from)
             .expect("set STEAMOS_RECOVERY_IMAGE to a Valve recovery image");
-        let mut session = prepare_session(Some(&input), None, None)
+        let mut session = prepare_session(Some(&input), None, None, false)
             .expect("the recovery-image appliance session should start");
         for _ in 0..160 {
             assert_eq!(
@@ -5350,7 +5419,7 @@ trap - EXIT"#,
         let input = std::env::var_os("STEAMOS_RECOVERY_IMAGE")
             .map(PathBuf::from)
             .expect("set STEAMOS_RECOVERY_IMAGE to a Valve recovery image");
-        let mut session = prepare_session(Some(&input), None, None)
+        let mut session = prepare_session(Some(&input), None, None, false)
             .expect("the recovery-image appliance session should start");
         for _ in 0..160 {
             assert_eq!(

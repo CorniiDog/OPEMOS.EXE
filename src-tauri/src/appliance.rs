@@ -951,10 +951,29 @@ pub(crate) fn detect_input_format(path: &Path) -> Result<InputFormat, String> {
     })
 }
 
+#[cfg(test)]
 pub(crate) fn normalize_input(
     source: &Path,
     runtime_dir: &Path,
     format: InputFormat,
+    progress: Option<&ProgressCallback<'_>>,
+    cancel: Option<&AtomicBool>,
+) -> Result<PathBuf, String> {
+    normalize_input_with_limit(
+        source,
+        runtime_dir,
+        format,
+        MAX_NORMALIZED_IMAGE_BYTES,
+        progress,
+        cancel,
+    )
+}
+
+pub(crate) fn normalize_input_with_limit(
+    source: &Path,
+    runtime_dir: &Path,
+    format: InputFormat,
+    write_limit: u64,
     progress: Option<&ProgressCallback<'_>>,
     cancel: Option<&AtomicBool>,
 ) -> Result<PathBuf, String> {
@@ -969,7 +988,7 @@ pub(crate) fn normalize_input(
                 ParallelBzip2Tool::SevenZip,
                 source,
                 &destination,
-                runtime_dir,
+                write_limit,
                 progress,
                 cancel,
             )?;
@@ -981,7 +1000,7 @@ pub(crate) fn normalize_input(
                 ParallelBzip2Tool::Pbzip2,
                 source,
                 &destination,
-                runtime_dir,
+                write_limit,
                 progress,
                 cancel,
             )?;
@@ -1007,15 +1026,15 @@ pub(crate) fn normalize_input(
         .create_new(true)
         .write(true)
         .open(&destination)
-        .map_err(|e| format!("Could not create the normalized image: {e}"))?;
+        .map_err(|e| storage_io_error("Could not create the normalized image", e))?;
     let mut writer = BoundedWriter {
         inner: BufWriter::new(output_file),
         written: 0,
-        limit: MAX_NORMALIZED_IMAGE_BYTES,
+        limit: write_limit,
     };
     let copied = match format {
         InputFormat::Bzip2 => io::copy(
-            &mut bzip2::read::BzDecoder::new(BufReader::new(source_reader)),
+            &mut bzip2::read::MultiBzDecoder::new(BufReader::new(source_reader)),
             &mut writer,
         ),
         InputFormat::Gzip => io::copy(
@@ -1028,15 +1047,81 @@ pub(crate) fn normalize_input(
         ),
         InputFormat::Raw => unreachable!(),
     }
-    .map_err(|e| format!("Could not decompress the {} input: {e}", format.name()))?;
+    .map_err(|e| {
+        storage_io_error(
+            &format!("Could not decompress the {} input", format.name()),
+            e,
+        )
+    })?;
     writer
         .flush()
         .and_then(|_| writer.inner.get_ref().sync_all())
-        .map_err(|e| format!("Could not finish the normalized image: {e}"))?;
+        .map_err(|e| storage_io_error("Could not finish the normalized image", e))?;
     if copied == 0 {
         return Err("The compressed input produced an empty image.".into());
     }
     Ok(destination)
+}
+
+pub(crate) fn measure_normalized_input(
+    source: &Path,
+    format: InputFormat,
+    progress: Option<&ProgressCallback<'_>>,
+    cancel: Option<&AtomicBool>,
+) -> Result<u64, String> {
+    let source_file = File::open(source)
+        .map_err(|error| format!("Could not open the compressed input for measurement: {error}"))?;
+    let source_bytes = source_file
+        .metadata()
+        .map_err(|error| format!("Could not inspect the compressed input: {error}"))?
+        .len();
+    if format == InputFormat::Raw {
+        return Ok(source_bytes);
+    }
+    let source_reader = ReportingReader {
+        inner: source_file,
+        stage: "measuring-normalized-size",
+        processed: 0,
+        total: source_bytes,
+        next_report: 0,
+        progress,
+        cancel,
+    };
+    let mut writer = BoundedWriter {
+        inner: io::sink(),
+        written: 0,
+        limit: MAX_NORMALIZED_IMAGE_BYTES,
+    };
+    match format {
+        InputFormat::Bzip2 => io::copy(
+            &mut bzip2::read::MultiBzDecoder::new(BufReader::new(source_reader)),
+            &mut writer,
+        ),
+        InputFormat::Gzip => io::copy(
+            &mut flate2::read::GzDecoder::new(BufReader::new(source_reader)),
+            &mut writer,
+        ),
+        InputFormat::Xz => io::copy(
+            &mut xz2::read::XzDecoder::new(BufReader::new(source_reader)),
+            &mut writer,
+        ),
+        InputFormat::Raw => unreachable!(),
+    }
+    .map_err(|error| {
+        if cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed)) {
+            "Image preparation cancelled during normalized-size measurement.".to_string()
+        } else {
+            format!(
+                "Could not measure the normalized {} input within the {}-byte safety limit: {error}",
+                format.name(),
+                MAX_NORMALIZED_IMAGE_BYTES
+            )
+        }
+    })?;
+    if writer.written == 0 {
+        return Err("The compressed input produced an empty image.".into());
+    }
+    Ok(writer.written)
 }
 
 #[derive(Clone, Copy)]
@@ -1050,7 +1135,7 @@ pub(crate) fn normalize_bzip2_parallel(
     tool: ParallelBzip2Tool,
     source: &Path,
     destination: &Path,
-    runtime_dir: &Path,
+    write_limit: u64,
     progress: Option<&ProgressCallback<'_>>,
     cancel: Option<&AtomicBool>,
 ) -> Result<(), String> {
@@ -1061,12 +1146,15 @@ pub(crate) fn normalize_bzip2_parallel(
         .create_new(true)
         .write(true)
         .open(destination)
-        .map_err(|e| format!("Could not create the normalized image: {e}"))?;
+        .map_err(|e| storage_io_error("Could not create the normalized image", e))?;
     let (name, error_filename) = match tool {
         ParallelBzip2Tool::SevenZip => ("7-Zip", "sevenzip.log"),
         ParallelBzip2Tool::Pbzip2 => ("pbzip2", "pbzip2.log"),
     };
-    let error_path = runtime_dir.join(error_filename);
+    let error_path = destination
+        .parent()
+        .ok_or("Normalized-image destination has no parent.")?
+        .join(error_filename);
     let error_log = File::create(&error_path)
         .map_err(|e| format!("Could not create the parallel decompressor log: {e}"))?;
     let workers = thread::available_parallelism()
@@ -1091,48 +1179,84 @@ pub(crate) fn normalize_bzip2_parallel(
     }
     let mut child = command
         .stdin(Stdio::null())
-        .stdout(Stdio::from(output))
+        .stdout(Stdio::piped())
         .stderr(Stdio::from(error_log))
         .spawn()
         .map_err(|e| format!("Could not start {name} bzip2 decompression: {e}"))?;
-    let status = loop {
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("Could not monitor {name} bzip2 decompression."))?;
+    let (sender, receiver) = mpsc::sync_channel(2);
+    let reader = thread::spawn(move || loop {
+        let mut buffer = vec![0_u8; 256 * 1024];
+        match stdout.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => {
+                buffer.truncate(count);
+                if sender.send(Ok(buffer)).is_err() {
+                    break;
+                }
+            }
+            Err(error) => {
+                let _ = sender.send(Err(error));
+                break;
+            }
+        }
+    });
+    let mut writer = BoundedWriter {
+        inner: BufWriter::new(output),
+        written: 0,
+        limit: write_limit,
+    };
+    loop {
         if cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed)) {
             let _ = child.kill();
             let _ = child.wait();
+            let _ = reader.join();
             return Err("Image preparation cancelled.".into());
         }
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|e| format!("Could not inspect {name} decompression: {e}"))?
-        {
-            break status;
-        }
-        if let Some(progress) = progress {
-            let output_bytes = fs::metadata(destination)
-                .map(|value| value.len())
-                .unwrap_or(0);
-            if output_bytes > MAX_NORMALIZED_IMAGE_BYTES {
+        match receiver.recv_timeout(Duration::from_millis(100)) {
+            Ok(Ok(buffer)) => {
+                if let Err(error) = writer.write_all(&buffer) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = reader.join();
+                    return Err(storage_io_error(
+                        &format!(
+                            "{name} output exceeded its admitted {write_limit}-byte normalized size"
+                        ),
+                        error,
+                    ));
+                }
+                if let Some(progress) = progress {
+                    progress("decompressing-output", writer.written, write_limit);
+                }
+            }
+            Ok(Err(error)) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!(
-                    "{name} output exceeded the {}-byte normalized-image safety limit.",
-                    MAX_NORMALIZED_IMAGE_BYTES
-                ));
+                let _ = reader.join();
+                return Err(format!("Could not read {name} bzip2 output: {error}"));
             }
-            progress("decompressing-output", output_bytes, 0);
-        } else if fs::metadata(destination)
-            .map(|value| value.len() > MAX_NORMALIZED_IMAGE_BYTES)
-            .unwrap_or(false)
-        {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!(
-                "{name} output exceeded the {}-byte normalized-image safety limit.",
-                MAX_NORMALIZED_IMAGE_BYTES
-            ));
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
-        thread::sleep(Duration::from_millis(500));
-    };
+    }
+    let sync_result = writer
+        .flush()
+        .and_then(|_| writer.inner.get_ref().sync_all())
+        .map_err(|error| storage_io_error("Could not finish the normalized image", error));
+    let output_bytes = writer.written;
+    let reader_result = reader
+        .join()
+        .map_err(|_| format!("{name} bzip2 output reader failed."));
+    let status_result = child
+        .wait()
+        .map_err(|e| format!("Could not finish {name} decompression: {e}"));
+    sync_result?;
+    reader_result?;
+    let status = status_result?;
     if !status.success() {
         let detail = fs::read_to_string(&error_path).unwrap_or_default();
         return Err(if detail.trim().is_empty() {
@@ -1141,24 +1265,20 @@ pub(crate) fn normalize_bzip2_parallel(
             format!("{name} bzip2 decompression failed: {}", detail.trim())
         });
     }
-    let output_bytes = fs::metadata(destination)
-        .map_err(|e| format!("Could not inspect the parallel decompression output: {e}"))?
-        .len();
-    if output_bytes == 0 || output_bytes > MAX_NORMALIZED_IMAGE_BYTES {
+    if output_bytes == 0 || output_bytes > write_limit {
         return Err("The compressed input produced an empty or implausibly large image.".into());
     }
     if let Some(progress) = progress {
         progress("decompressing-output", output_bytes, 0);
     }
-    File::open(destination)
-        .and_then(|file| file.sync_all())
-        .map_err(|e| format!("Could not finish the normalized image: {e}"))
+    Ok(())
 }
 
 pub(crate) fn prepare_session(
     input_image: Option<&Path>,
     progress: Option<&ProgressCallback<'_>>,
     cancel: Option<&AtomicBool>,
+    plan_export: bool,
 ) -> Result<ApplianceSession, String> {
     cleanup_abandoned_runtimes()?;
     let appliance = appliance_path();
@@ -1173,6 +1293,12 @@ pub(crate) fn prepare_session(
     let qemu_img = find_binary("qemu-img").ok_or("qemu-img is required.")?;
     let ssh_keygen = find_binary("ssh-keygen").ok_or("ssh-keygen is required.")?;
     let resources = detect_guest_resources(false)?;
+    admit_host_storage(&[StorageRequest {
+        path: &appliance_dir(),
+        bytes: HOST_RUNTIME_FREE_SPACE_RESERVE,
+        inodes: 18,
+        purpose: "native appliance runtime staging",
+    }])?;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| format!("System clock error: {e}"))?
@@ -1275,6 +1401,18 @@ pub(crate) fn prepare_session(
         .map_err(|e| format!("Could not inspect the input size: {e}"))?
         .len();
     let input_format = detect_input_format(&input_image)?;
+    let measured_image_bytes =
+        measure_normalized_input(&input_image, input_format, progress, cancel)?;
+    let output_parent = input_image
+        .parent()
+        .ok_or("Could not determine the future output folder.")?;
+    preflight_normalization_and_build(
+        &runtime_dir,
+        output_parent,
+        measured_image_bytes,
+        input_format != InputFormat::Raw,
+        plan_export,
+    )?;
     let normalizer = match input_format {
         InputFormat::Raw => "direct",
         InputFormat::Bzip2 if find_binary("7zz").is_some() => "sevenzip",
@@ -1283,8 +1421,14 @@ pub(crate) fn prepare_session(
         InputFormat::Gzip => "embedded-gzip",
         InputFormat::Xz => "embedded-xz",
     };
-    let attached_image =
-        normalize_input(&input_image, &runtime_dir, input_format, progress, cancel)?;
+    let attached_image = normalize_input_with_limit(
+        &input_image,
+        &runtime_dir,
+        input_format,
+        measured_image_bytes,
+        progress,
+        cancel,
+    )?;
     let image_bytes = fs::metadata(&attached_image)
         .map_err(|e| format!("Could not inspect the normalized image size: {e}"))?
         .len();
@@ -1294,7 +1438,21 @@ pub(crate) fn prepare_session(
             MAX_NORMALIZED_IMAGE_BYTES
         ));
     }
-    preflight_host_build_space(&runtime_dir, &input_image, image_bytes)?;
+    if image_bytes != measured_image_bytes {
+        return Err(format!(
+            "Normalized image size changed between measurement ({measured_image_bytes} bytes) and staging ({image_bytes} bytes)."
+        ));
+    }
+    if plan_export {
+        preflight_host_build_space(&runtime_dir, &input_image, image_bytes)?;
+    } else {
+        admit_host_storage(&[StorageRequest {
+            path: &runtime_dir,
+            bytes: checked_space_sum([image_bytes, HOST_RUNTIME_FREE_SPACE_RESERVE])?,
+            inodes: 12,
+            purpose: "the validation working overlay and runtime reserve",
+        }])?;
+    }
     let attached_sha256_before = if attached_image == input_image {
         input_sha256_before.clone()
     } else {
@@ -1527,6 +1685,12 @@ pub(crate) fn prepare_nvidia_build_session(
     let ssh_keygen = find_binary("ssh-keygen").ok_or("ssh-keygen is required.")?;
     let (acceleration, machine, cpu_model) = nvidia_build_qemu_spec(std::env::consts::ARCH)?;
     let resources = detect_guest_resources(true)?;
+    admit_host_storage(&[StorageRequest {
+        path: &appliance_dir(),
+        bytes: HOST_RUNTIME_FREE_SPACE_RESERVE,
+        inodes: 12,
+        purpose: "x86 build-appliance runtime and handoff staging",
+    }])?;
     let attached_working_image = target_working_image
         .map(|path| -> Result<PathBuf, String> {
             let metadata = fs::symlink_metadata(path)
@@ -2646,7 +2810,7 @@ pub(crate) fn start_appliance_blocking(
             },
         );
     };
-    let prepared = prepare_session(Some(&input), Some(&report_progress), Some(&cancel));
+    let prepared = prepare_session(Some(&input), Some(&report_progress), Some(&cancel), true);
     let mut manager = manager_state
         .lock()
         .map_err(|_| "Appliance state lock is unavailable.")?;

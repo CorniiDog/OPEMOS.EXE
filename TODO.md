@@ -361,8 +361,11 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
 
 ### Host and appliance
 
-- [ ] Verify host free space before normalization, overlays, package staging,
-  export, and retained-image-plus-USB workflows.
+- [x] Verify host bytes and finite inode capacity before normalization,
+  overlays, package and handoff staging, export, and retained-image-plus-USB
+  workflows. Measure compressed output through a cancellable bounded pass,
+  aggregate shared APFS allocation pools conservatively, recheck before later
+  phases, and preserve a stable no-space/quota reason on write failures.
 - [ ] Detect corrupt cached appliances and recover only through an authenticated
   replacement.
 - [ ] Move large generated guest scripts into versioned templates when doing so

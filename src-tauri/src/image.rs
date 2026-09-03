@@ -797,64 +797,6 @@ fn output_path_for_input_label(input: &Path, output_label: &str) -> Result<PathB
     Err("Could not choose an unused output filename.".into())
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct HostVolumeSpace {
-    filesystem: String,
-    available_bytes: u64,
-}
-
-pub(crate) fn host_volume_space(path: &Path) -> Result<HostVolumeSpace, String> {
-    let output = Command::new("df")
-        .args(["-P", "-k"])
-        .arg(path)
-        .output()
-        .map_err(|error| format!("Could not measure host filesystem space: {error}"))?;
-    if !output.status.success() {
-        return Err("Could not measure host filesystem space with df.".into());
-    }
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|_| "Host filesystem-space report was not valid UTF-8.")?;
-    let fields: Vec<_> = stdout
-        .lines()
-        .rfind(|line| !line.trim().is_empty())
-        .ok_or("Host filesystem-space report was empty.")?
-        .split_whitespace()
-        .collect();
-    if fields.len() < 6 {
-        return Err("Host filesystem-space report had an unexpected format.".into());
-    }
-    let available_bytes = fields[fields.len() - 3]
-        .parse::<u64>()
-        .ok()
-        .and_then(|blocks| blocks.checked_mul(1024))
-        .ok_or_else(|| {
-            "Host filesystem-space report contained an invalid byte count.".to_string()
-        })?;
-    Ok(HostVolumeSpace {
-        filesystem: fields[0].to_string(),
-        available_bytes,
-    })
-}
-
-pub(crate) fn host_available_bytes(path: &Path) -> Result<u64, String> {
-    Ok(host_volume_space(path)?.available_bytes)
-}
-
-pub(crate) fn require_host_space(
-    available: u64,
-    required: u64,
-    purpose: &str,
-) -> Result<(), String> {
-    if available >= required {
-        return Ok(());
-    }
-    Err(format!(
-        "Host disk-space preflight failed before guest startup: {purpose} needs at least {} ({required} bytes) free, but only {} ({available} bytes) is available.",
-        human_bytes(required),
-        human_bytes(available),
-    ))
-}
-
 pub(crate) fn preflight_host_build_space(
     runtime_dir: &Path,
     input_image: &Path,
@@ -865,30 +807,22 @@ pub(crate) fn preflight_host_build_space(
         .ok_or("Could not determine the future output folder.")?;
     let output_parent = fs::canonicalize(output_parent)
         .map_err(|error| format!("Could not resolve the future output folder: {error}"))?;
-    let runtime = host_volume_space(runtime_dir)?;
-    let output = host_volume_space(&output_parent)?;
     let runtime_required = checked_space_sum([image_bytes, HOST_RUNTIME_FREE_SPACE_RESERVE])?;
     let output_required = checked_space_sum([image_bytes, HOST_OUTPUT_FREE_SPACE_RESERVE])?;
-
-    if runtime.filesystem == output.filesystem {
-        let required = checked_space_sum([runtime_required, output_required])?;
-        require_host_space(
-            runtime.available_bytes,
-            required,
-            "the shared runtime/output volume",
-        )
-    } else {
-        require_host_space(
-            runtime.available_bytes,
-            runtime_required,
-            "the runtime volume (working overlay and temporary build data)",
-        )?;
-        require_host_space(
-            output.available_bytes,
-            output_required,
-            "the output volume (final raw image and export reserve)",
-        )
-    }
+    admit_host_storage(&[
+        StorageRequest {
+            path: runtime_dir,
+            bytes: runtime_required,
+            inodes: 12,
+            purpose: "the runtime volume (working overlay and temporary build data)",
+        },
+        StorageRequest {
+            path: &output_parent,
+            bytes: output_required,
+            inodes: 2,
+            purpose: "the retained output image and manifest",
+        },
+    ])
 }
 
 pub(crate) fn validate_output_destination(
@@ -933,12 +867,12 @@ pub(crate) fn validate_output_destination(
         ));
     }
     if required_bytes > 0 {
-        let available = host_available_bytes(&resolved_parent)?;
-        if available < required_bytes {
-            return Err(format!(
-                "The output folder needs at least {required_bytes} free bytes; only {available} are available."
-            ));
-        }
+        admit_host_storage(&[StorageRequest {
+            path: &resolved_parent,
+            bytes: required_bytes,
+            inodes: 2,
+            purpose: "the output image export and manifest",
+        }])?;
     }
     Ok(())
 }
@@ -1104,20 +1038,19 @@ pub(crate) fn convert_working_image(
         .join()
         .map_err(|_| "Raw-image export progress worker failed.".to_string())?;
     if !status.success() {
-        return Err(if detail.trim().is_empty() {
-            format!("Raw-image export failed with {status}.")
-        } else {
-            format!("Raw-image export failed: {}", detail.trim())
-        });
+        return Err(storage_process_error(
+            &format!("Raw-image export failed with {status}"),
+            &detail,
+        ));
     }
     if let Some(progress) = progress {
         progress("exporting-image", virtual_bytes, virtual_bytes);
     }
-    let output =
-        File::open(destination).map_err(|e| format!("Could not open the exported image: {e}"))?;
+    let output = File::open(destination)
+        .map_err(|e| storage_io_error("Could not open the exported image", e))?;
     output
         .sync_all()
-        .map_err(|e| format!("Could not flush the exported image: {e}"))
+        .map_err(|e| storage_io_error("Could not flush the exported image", e))
 }
 
 pub(crate) fn verify_marker_from_validation_overlay(
@@ -1651,6 +1584,7 @@ pub(crate) fn export_marker_image_blocking(
             Some(&partial_path),
             Some(&validation_progress),
             Some(&cancel),
+            false,
         )?;
         wait_for_ready(&mut validation, &cancel)?;
         let validation_snapshot = ImageInspectionSession::from(&validation);

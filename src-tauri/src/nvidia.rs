@@ -2028,11 +2028,19 @@ pub(crate) fn download_release_asset(
             asset.name
         ));
     }
+    admit_host_storage(&[StorageRequest {
+        path: destination
+            .parent()
+            .ok_or("Published NVIDIA asset path has no parent.")?,
+        bytes: checked_space_sum([asset.size, HOST_STORAGE_METADATA_RESERVE])?,
+        inodes: 1,
+        purpose: "published NVIDIA artifact staging",
+    }])?;
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&partial)
-        .map_err(|e| format!("Could not stage {}: {e}", asset.name))?;
+        .map_err(|e| storage_io_error(&format!("Could not stage {}", asset.name), e))?;
     let mut hasher = Sha256::new();
     let mut downloaded = 0_u64;
     let mut next_report = 0_u64;
@@ -2053,7 +2061,7 @@ pub(crate) fn download_release_asset(
             .ok_or_else(|| format!("Published asset {} exceeds the safety limit.", asset.name))?;
         output
             .write_all(&buffer[..count])
-            .map_err(|e| format!("Could not write {}: {e}", asset.name))?;
+            .map_err(|e| storage_io_error(&format!("Could not write {}", asset.name), e))?;
         hasher.update(&buffer[..count]);
         if downloaded >= next_report {
             (context.progress)(stage, downloaded, asset.size);
@@ -2061,8 +2069,8 @@ pub(crate) fn download_release_asset(
         }
     }
     output
-        .flush()
-        .map_err(|e| format!("Could not finish staging {}: {e}", asset.name))?;
+        .sync_all()
+        .map_err(|e| storage_io_error(&format!("Could not finish staging {}", asset.name), e))?;
     if downloaded != asset.size {
         return Err(format!(
             "Published asset {} downloaded {downloaded} bytes; expected {}.",
@@ -2282,8 +2290,19 @@ pub(crate) fn resolve_published_nvidia_for_target(
             .unwrap_or_default()
             .as_millis()
     ));
+    admit_host_storage(&[StorageRequest {
+        path: runtime_dir,
+        bytes: checked_space_sum([
+            archive_asset.size,
+            checksum_asset.size,
+            provenance_asset.size,
+            HOST_STORAGE_METADATA_RESERVE,
+        ])?,
+        inodes: 4,
+        purpose: "the complete published NVIDIA artifact staging batch",
+    }])?;
     fs::create_dir(&output_dir)
-        .map_err(|e| format!("Could not create the published NVIDIA staging directory: {e}"))?;
+        .map_err(|e| storage_io_error("Could not create published NVIDIA staging", e))?;
     let archive_path = output_dir.join(&archive_name);
     let checksum_path = output_dir.join(&checksum_name);
     let provenance_path = output_dir.join(&provenance_name);
@@ -2744,11 +2763,22 @@ pub(crate) fn download_arch_userspace_asset(
         return Err("NVIDIA userspace input has an invalid download size.".into());
     }
     let total = response.content_length().unwrap_or(0);
+    admit_host_storage(&[StorageRequest {
+        path: destination
+            .parent()
+            .ok_or("NVIDIA userspace asset path has no parent.")?,
+        bytes: checked_space_sum([
+            if total == 0 { limit } else { total },
+            HOST_STORAGE_METADATA_RESERVE,
+        ])?,
+        inodes: 1,
+        purpose: "reviewed NVIDIA userspace package staging",
+    }])?;
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&partial)
-        .map_err(|e| format!("Could not stage NVIDIA userspace input: {e}"))?;
+        .map_err(|e| storage_io_error("Could not stage NVIDIA userspace input", e))?;
     let mut hasher = Sha256::new();
     let mut downloaded = 0_u64;
     let mut next_report = 0_u64;
@@ -2769,7 +2799,7 @@ pub(crate) fn download_arch_userspace_asset(
             .ok_or("NVIDIA userspace input exceeds the safety limit.")?;
         output
             .write_all(&buffer[..count])
-            .map_err(|e| format!("Could not write NVIDIA userspace input: {e}"))?;
+            .map_err(|e| storage_io_error("Could not write NVIDIA userspace input", e))?;
         hasher.update(&buffer[..count]);
         if downloaded >= next_report {
             progress(stage, downloaded, total);
@@ -2780,8 +2810,8 @@ pub(crate) fn download_arch_userspace_asset(
         return Err("NVIDIA userspace input download was incomplete.".into());
     }
     output
-        .flush()
-        .map_err(|e| format!("Could not finish NVIDIA userspace input: {e}"))?;
+        .sync_all()
+        .map_err(|e| storage_io_error("Could not finish NVIDIA userspace input", e))?;
     progress(stage, downloaded, total);
     fs::rename(&partial, destination)
         .map_err(|e| format!("Could not finalize NVIDIA userspace input: {e}"))?;
@@ -2802,6 +2832,12 @@ pub(crate) fn resolve_nvidia_userspace_for_version(
         return Err("Published NVIDIA artifact has an invalid userspace version.".into());
     }
     let lock = load_reviewed_userspace_lock(installer_root, steamos_version, nvidia_version)?;
+    admit_host_storage(&[StorageRequest {
+        path: runtime_dir,
+        bytes: 0,
+        inodes: 1,
+        purpose: "reviewed NVIDIA userspace staging directory",
+    }])?;
     let output_dir = runtime_dir.join(format!(
         "nvidia-userspace-{}",
         SystemTime::now()
@@ -2810,7 +2846,7 @@ pub(crate) fn resolve_nvidia_userspace_for_version(
             .as_millis()
     ));
     fs::create_dir(&output_dir)
-        .map_err(|e| format!("Could not create NVIDIA userspace staging: {e}"))?;
+        .map_err(|e| storage_io_error("Could not create NVIDIA userspace staging", e))?;
     let mut output_guard = StagingDirectoryGuard {
         path: output_dir.clone(),
         armed: true,
@@ -3300,11 +3336,22 @@ pub(crate) fn download_pinned_installer_file(
             file.path
         ));
     }
+    admit_host_storage(&[StorageRequest {
+        path: parent,
+        bytes: checked_space_sum([file.bytes, HOST_STORAGE_METADATA_RESERVE])?,
+        inodes: 1,
+        purpose: "pinned NVIDIA installer staging",
+    }])?;
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&partial)
-        .map_err(|e| format!("Could not stage pinned support file {}: {e}", file.path))?;
+        .map_err(|e| {
+            storage_io_error(
+                &format!("Could not stage pinned support file {}", file.path),
+                e,
+            )
+        })?;
     let mut hasher = Sha256::new();
     let mut downloaded = 0_u64;
     let mut buffer = [0_u8; 32 * 1024];
@@ -3322,9 +3369,12 @@ pub(crate) fn download_pinned_installer_file(
             .checked_add(count as u64)
             .filter(|value| *value <= file.bytes)
             .ok_or_else(|| format!("Pinned support file {} is too large.", file.path))?;
-        output
-            .write_all(&buffer[..count])
-            .map_err(|e| format!("Could not write pinned support file {}: {e}", file.path))?;
+        output.write_all(&buffer[..count]).map_err(|e| {
+            storage_io_error(
+                &format!("Could not write pinned support file {}", file.path),
+                e,
+            )
+        })?;
         hasher.update(&buffer[..count]);
         progress(
             "downloading-nvidia-installer",
@@ -3345,15 +3395,37 @@ pub(crate) fn download_pinned_installer_file(
             file.path
         ));
     }
-    output
-        .flush()
-        .map_err(|e| format!("Could not finish pinned support file {}: {e}", file.path))?;
+    output.sync_all().map_err(|e| {
+        storage_io_error(
+            &format!("Could not finish pinned support file {}", file.path),
+            e,
+        )
+    })?;
     drop(output);
     apply_pinned_file_permissions(&partial, file.executable)?;
     fs::rename(&partial, destination)
         .map_err(|e| format!("Could not finalize pinned support file {}: {e}", file.path))?;
     partial_guard.armed = false;
     Ok(())
+}
+
+fn pinned_bundle_inodes(
+    files: &[PinnedInstallerFile],
+    additional_files: u64,
+) -> Result<u64, String> {
+    let mut directories = HashSet::new();
+    for file in files {
+        let mut parent = Path::new(file.path).parent();
+        while let Some(path) = parent.filter(|path| !path.as_os_str().is_empty()) {
+            directories.insert(path.to_path_buf());
+            parent = path.parent();
+        }
+    }
+    (files.len() as u64)
+        .checked_add(directories.len() as u64)
+        .and_then(|value| value.checked_add(1))
+        .and_then(|value| value.checked_add(additional_files))
+        .ok_or_else(|| "Pinned support bundle inode requirement overflowed.".into())
 }
 
 pub(crate) fn prepare_pinned_nvidia_installer_bundle(
@@ -3364,8 +3436,19 @@ pub(crate) fn prepare_pinned_nvidia_installer_bundle(
 ) -> Result<NvidiaInstallerBundleState, String> {
     let total_bytes = validate_pinned_installer_contract()?;
     let root = runtime_dir.join(format!("nvidia-installer-{NVIDIA_INSTALLER_COMMIT}"));
+    let staging_inodes = pinned_bundle_inodes(&PINNED_INSTALLER_FILES, 1)?;
+    admit_host_storage(&[StorageRequest {
+        path: runtime_dir,
+        bytes: checked_space_sum([
+            total_bytes,
+            PROVENANCE_RESPONSE_LIMIT,
+            HOST_STORAGE_METADATA_RESERVE,
+        ])?,
+        inodes: staging_inodes,
+        purpose: "the complete pinned NVIDIA installer bundle and manifest",
+    }])?;
     fs::create_dir(&root)
-        .map_err(|e| format!("Could not create pinned NVIDIA installer staging: {e}"))?;
+        .map_err(|e| storage_io_error("Could not create pinned NVIDIA installer staging", e))?;
     let mut root_guard = StagingDirectoryGuard {
         path: root.clone(),
         armed: true,
@@ -3407,7 +3490,7 @@ pub(crate) fn prepare_pinned_nvidia_installer_bundle(
     let manifest_path = root.join("installer-bundle.json");
     let staged_manifest = root.join(".installer-bundle.json.partial");
     fs::write(&staged_manifest, manifest)
-        .map_err(|e| format!("Could not stage NVIDIA installer manifest: {e}"))?;
+        .map_err(|e| storage_io_error("Could not stage NVIDIA installer manifest", e))?;
     fs::rename(staged_manifest, manifest_path)
         .map_err(|e| format!("Could not finalize NVIDIA installer manifest: {e}"))?;
     progress("downloading-nvidia-installer", total_bytes, total_bytes);
@@ -3450,8 +3533,14 @@ pub(crate) fn prepare_pinned_nvidia_publisher(runtime_dir: &Path) -> Result<Path
         validate_staged_pinned_files(&root, &PINNED_PUBLISHER_FILES)?;
         return Ok(root);
     }
+    admit_host_storage(&[StorageRequest {
+        path: runtime_dir,
+        bytes: checked_space_sum([total_bytes, HOST_STORAGE_METADATA_RESERVE])?,
+        inodes: pinned_bundle_inodes(&PINNED_PUBLISHER_FILES, 0)?,
+        purpose: "the complete pinned NVIDIA publisher bundle",
+    }])?;
     fs::create_dir(&root)
-        .map_err(|e| format!("Could not create pinned NVIDIA publisher staging: {e}"))?;
+        .map_err(|e| storage_io_error("Could not create pinned NVIDIA publisher staging", e))?;
     let mut root_guard = StagingDirectoryGuard {
         path: root.clone(),
         armed: true,
@@ -4069,8 +4158,24 @@ pub(crate) fn build_nvidia_for_target_from_source(
     execution_result?;
 
     let download_dir = session.runtime_dir().join("artifact-download");
-    fs::create_dir_all(&download_dir)
-        .map_err(|e| format!("Could not create the artifact download staging directory: {e}"))?;
+    admit_host_storage(&[StorageRequest {
+        path: session.runtime_dir(),
+        bytes: checked_space_sum([
+            NVIDIA_ARCHIVE_LIMIT,
+            CHECKSUM_RESPONSE_LIMIT,
+            PROVENANCE_RESPONSE_LIMIT,
+            PROVENANCE_RESPONSE_LIMIT,
+            HOST_STORAGE_METADATA_RESERVE,
+        ])?,
+        inodes: 5,
+        purpose: "generated NVIDIA artifact handoff staging",
+    }])?;
+    fs::create_dir_all(&download_dir).map_err(|e| {
+        storage_io_error(
+            "Could not create the artifact download staging directory",
+            e,
+        )
+    })?;
     for name in [
         &asset_name,
         &checksum_name,
