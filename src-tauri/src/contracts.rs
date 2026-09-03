@@ -914,7 +914,7 @@ pub(crate) struct SupportInstallResult {
     pub(crate) module_verification: Option<serde_json::Value>,
     pub(crate) userspace_verification: Option<serde_json::Value>,
     pub(crate) initramfs_workspace: Option<SupportInitramfsWorkspace>,
-    pub(crate) initramfs_verification: Option<SupportInitramfsVerification>,
+    pub(crate) initramfs_verification: Option<serde_json::Value>,
     pub(crate) payload_receipt: Option<SupportPayloadReceipt>,
 }
 
@@ -1066,14 +1066,14 @@ pub(crate) struct SupportInitramfsVerification {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportInitramfsTools {
     pub(crate) mkinitcpio: SupportInitramfsFileIdentity,
     pub(crate) lsinitcpio: SupportInitramfsFileIdentity,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportInitramfsFileIdentity {
     pub(crate) path: String,
     pub(crate) size_bytes: u64,
@@ -1081,7 +1081,7 @@ pub(crate) struct SupportInitramfsFileIdentity {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SupportInitramfsImage {
     pub(crate) filename: String,
     pub(crate) size_bytes: u64,

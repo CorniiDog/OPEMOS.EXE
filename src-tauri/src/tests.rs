@@ -231,10 +231,8 @@ mod tests {
 
         let mut additive = initramfs_verification_fixture();
         additive["futureTopLevel"] = serde_json::json!({"schema": 1});
-        additive["tools"]["mkinitcpio"]["futureIdentity"] = serde_json::json!(true);
-        additive["images"][0]["futureImage"] = serde_json::json!("ignored");
         validate_support_initramfs_verification(&parse_initramfs_fixture(additive), kernel)
-            .expect("schema-1 additions must remain forward compatible");
+            .expect("top-level schema-1 additions must remain forward compatible");
 
         let mut cases = Vec::new();
         let mut wrong_tool = initramfs_verification_fixture();
@@ -3466,7 +3464,7 @@ esac
                 .expect("module path")
                 .replace("6.16.12-valve-fixture", &inputs.kernel_version));
         }
-        successful.initramfs_verification = Some(parse_initramfs_fixture(initramfs));
+        successful.initramfs_verification = Some(initramfs);
         let successful_validation = match successful.validation.as_ref().unwrap() {
             SupportInstallValidationDocument::Verified(validation) => validation,
             SupportInstallValidationDocument::Failed(_) => unreachable!(),
@@ -3527,6 +3525,32 @@ esac
         missing_modules.module_verification = None;
         assert!(validate_nvidia_install_result(
             missing_modules,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )
+        .is_err());
+        let mut oversized_initramfs = successful.clone();
+        oversized_initramfs.initramfs_verification.as_mut().unwrap()["padding"] =
+            serde_json::json!("x".repeat(
+                crate::core_contracts::CORE_INSTALLER_INITRAMFS_VERIFICATION_DOCUMENT_LIMIT
+            ));
+        assert!(validate_nvidia_install_result(
+            oversized_initramfs,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )
+        .err()
+        .expect("oversized initramfs proof must fail")
+        .contains("excessive"));
+        let mut cross_variant_module = successful.clone();
+        cross_variant_module.module_verification.as_mut().unwrap()["message"] =
+            serde_json::json!("failure-only");
+        assert!(validate_nvidia_install_result(
+            cross_variant_module,
             &inputs,
             "success",
             "install_complete",

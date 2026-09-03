@@ -11,6 +11,8 @@ pub(crate) const CORE_INSTALLER_MODULE_VERIFICATION_FIXTURE_LIMIT: usize = 512 *
 pub(crate) const CORE_INSTALLER_MODULE_VERIFICATION_DOCUMENT_LIMIT: usize = 1024 * 1024;
 pub(crate) const CORE_INSTALLER_USERSPACE_VERIFICATION_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_INSTALLER_USERSPACE_VERIFICATION_DOCUMENT_LIMIT: usize = 256 * 1024;
+pub(crate) const CORE_INSTALLER_INITRAMFS_VERIFICATION_FIXTURE_LIMIT: usize = 512 * 1024;
+pub(crate) const CORE_INSTALLER_INITRAMFS_VERIFICATION_DOCUMENT_LIMIT: usize = 256 * 1024;
 pub(crate) const CORE_INSTALLER_PROGRESS_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_PROGRESS_STREAM_LIMIT: usize = 16 * 1024 * 1024;
 const CORE_PROGRESS_PREFIX: &str = "STEAMOS_NVIDIA_PROGRESS ";
@@ -1300,6 +1302,199 @@ fn validate_core_userspace_verification_failure(value: &serde_json::Value) -> Re
         }
     }
     Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerInitramfsVerificationCompatibilityFixtures {
+    pub(crate) schema_version: u32,
+    pub(crate) kind: String,
+    pub(crate) initramfs_verification_schema_version: u32,
+    pub(crate) target_kernel: String,
+    pub(crate) unfrozen_fields: Vec<String>,
+    pub(crate) failure_contract: String,
+    pub(crate) limits: CoreInstallerInitramfsVerificationFixtureLimits,
+    pub(crate) cases: Vec<CoreInstallerInitramfsVerificationCompatibilityCase>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerInitramfsVerificationFixtureLimits {
+    pub(crate) max_document_bytes: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerInitramfsVerificationCompatibilityCase {
+    pub(crate) name: String,
+    pub(crate) expected: CoreInstallerInitramfsVerificationExpectation,
+    #[serde(default)]
+    pub(crate) document: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) raw_document: Option<String>,
+    #[serde(default)]
+    pub(crate) document_recipe: Option<CoreInstallerInitramfsVerificationDocumentRecipe>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerInitramfsVerificationExpectation {
+    pub(crate) record_accepted: bool,
+    pub(crate) success_proof_accepted: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerInitramfsVerificationDocumentRecipe {
+    pub(crate) kind: String,
+    pub(crate) base_case: String,
+    pub(crate) padding_bytes: usize,
+}
+
+pub(crate) fn parse_core_installer_initramfs_verification_fixtures(
+    bytes: &[u8],
+) -> Result<CoreInstallerInitramfsVerificationCompatibilityFixtures, String> {
+    if bytes.is_empty() || bytes.len() > CORE_INSTALLER_INITRAMFS_VERIFICATION_FIXTURE_LIMIT {
+        return Err(
+            "OPEMOS Core initramfs-verification fixtures are empty or exceed 512 KiB.".into(),
+        );
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core initramfs-verification fixtures")?;
+    let fixtures: CoreInstallerInitramfsVerificationCompatibilityFixtures =
+        serde_json::from_slice(bytes).map_err(|error| {
+            format!("OPEMOS Core initramfs-verification fixtures are invalid JSON: {error}")
+        })?;
+    let record_accepted = HashSet::from([
+        "valid-normalized-success",
+        "safe-additive-top-level",
+        "kernel-binding-mismatch",
+        "alternate-valid-image-hashes",
+    ]);
+    let success_accepted = HashSet::from([
+        "valid-normalized-success",
+        "safe-additive-top-level",
+        "alternate-valid-image-hashes",
+    ]);
+    let required_names = record_accepted
+        .iter()
+        .copied()
+        .chain([
+            "malformed-kernel",
+            "unknown-kernel",
+            "missing-required-module",
+            "required-module-order",
+            "extra-required-module",
+            "missing-rootfs-only-module",
+            "peermem-in-initramfs",
+            "missing-tool",
+            "extra-tool",
+            "wrong-tool-path",
+            "zero-tool-size",
+            "excessive-tool-size",
+            "malformed-tool-hash",
+            "wrong-config-path",
+            "zero-config-size",
+            "excessive-config-size",
+            "malformed-config-hash",
+            "missing-images",
+            "duplicate-image-identity",
+            "unsafe-image-filename",
+            "empty-image-filename",
+            "zero-image-size",
+            "excessive-image-size",
+            "zero-listing-entries",
+            "excessive-listing-entries",
+            "malformed-image-hash",
+            "malformed-listing-hash",
+            "missing-image-module",
+            "extra-image-module",
+            "duplicate-module-path",
+            "module-path-traversal",
+            "absolute-module-path",
+            "wrong-module-basename",
+            "wrong-kernel-module-path",
+            "unsupported-module-compression",
+            "wrong-listing-config-path",
+            "unknown-image-field",
+            "excessive-image-set",
+            "malformed-json",
+            "duplicate-json-key",
+            "non-finite-json",
+            "oversized-document",
+        ])
+        .collect::<HashSet<_>>();
+    if fixtures.schema_version != 1
+        || fixtures.kind != "opemos-installer-initramfs-verification-compatibility-fixtures"
+        || fixtures.initramfs_verification_schema_version != 1
+        || fixtures.target_kernel.len() > 255
+        || !valid_kernel_version(&fixtures.target_kernel)
+        || !fixtures.unfrozen_fields.is_empty()
+        || fixtures.failure_contract != "outer-installer-result-only"
+        || fixtures.limits.max_document_bytes
+            != CORE_INSTALLER_INITRAMFS_VERIFICATION_DOCUMENT_LIMIT
+        || !(1..=64).contains(&fixtures.cases.len())
+    {
+        return Err("OPEMOS Core initramfs-verification fixture envelope is invalid.".into());
+    }
+    let mut names = HashSet::new();
+    for case in &fixtures.cases {
+        let variants = usize::from(case.document.is_some())
+            + usize::from(case.raw_document.is_some())
+            + usize::from(case.document_recipe.is_some());
+        let expected_variant = match case.name.as_str() {
+            "malformed-json" | "duplicate-json-key" | "non-finite-json" => "raw",
+            "oversized-document" => "recipe",
+            _ => "document",
+        };
+        if !safe_kebab_token(&case.name, 64)
+            || !names.insert(case.name.as_str())
+            || case.expected.record_accepted != record_accepted.contains(case.name.as_str())
+            || case.expected.success_proof_accepted != success_accepted.contains(case.name.as_str())
+            || (case.expected.success_proof_accepted && !case.expected.record_accepted)
+            || variants != 1
+            || (case.document.is_some()) != (expected_variant == "document")
+            || (case.raw_document.is_some()) != (expected_variant == "raw")
+            || (case.document_recipe.is_some()) != (expected_variant == "recipe")
+            || case.raw_document.as_ref().is_some_and(|raw| {
+                raw.is_empty() || raw.len() > CORE_INSTALLER_INITRAMFS_VERIFICATION_DOCUMENT_LIMIT
+            })
+        {
+            return Err(
+                "OPEMOS Core initramfs-verification fixture case is unsafe or incomplete.".into(),
+            );
+        }
+        if let Some(recipe) = &case.document_recipe {
+            if case.name != "oversized-document"
+                || recipe.kind != "top-level-padding"
+                || recipe.base_case != "valid-normalized-success"
+                || recipe.padding_bytes != CORE_INSTALLER_INITRAMFS_VERIFICATION_DOCUMENT_LIMIT
+            {
+                return Err("OPEMOS Core initramfs-verification fixture recipe is invalid.".into());
+            }
+        }
+    }
+    if names != required_names {
+        return Err(
+            "OPEMOS Core initramfs-verification fixture matrix omits a required safety case."
+                .into(),
+        );
+    }
+    Ok(fixtures)
+}
+
+pub(crate) fn validate_core_installer_initramfs_verification_document(
+    bytes: &[u8],
+) -> Result<SupportInitramfsVerification, String> {
+    if bytes.is_empty() || bytes.len() > CORE_INSTALLER_INITRAMFS_VERIFICATION_DOCUMENT_LIMIT {
+        return Err("OPEMOS Core initramfs-verification document is empty or excessive.".into());
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core initramfs-verification document")?;
+    let verification: SupportInitramfsVerification =
+        serde_json::from_slice(bytes).map_err(|error| {
+            format!("OPEMOS Core initramfs-verification document is invalid: {error}")
+        })?;
+    validate_support_initramfs_verification_record(&verification)?;
+    Ok(verification)
 }
 
 #[derive(Debug, Deserialize)]
@@ -3204,6 +3399,99 @@ mod tests {
         assert!(parse_core_installer_userspace_verification_fixtures(&vec![
             b' ';
             CORE_INSTALLER_USERSPACE_VERIFICATION_FIXTURE_LIMIT
+                + 1
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn local_successor_initramfs_verification_fixtures_match_rust_semantics() {
+        let Some(repository) = core_repository() else {
+            eprintln!(
+                "skipping local successor initramfs-verification fixtures: sibling Core repository is absent"
+            );
+            return;
+        };
+        let generator =
+            repository.join("lib/generate_installer_initramfs_verification_fixtures.py");
+        let generate = || {
+            let output = Command::new("python3")
+                .arg(&generator)
+                .current_dir(&repository)
+                .output()
+                .expect("run Core initramfs-verification fixture generator");
+            assert!(output.status.success());
+            assert!(output.stderr.is_empty());
+            output.stdout
+        };
+        let first = generate();
+        assert_eq!(
+            first,
+            generate(),
+            "Core initramfs-verification fixtures were nondeterministic"
+        );
+        let fixtures = parse_core_installer_initramfs_verification_fixtures(&first)
+            .expect("consume bounded Core initramfs-verification fixtures");
+        let base_document = fixtures
+            .cases
+            .iter()
+            .find(|case| case.name == "valid-normalized-success")
+            .and_then(|case| case.document.clone())
+            .expect("initramfs-verification fixture base document");
+        for case in &fixtures.cases {
+            let document_bytes = if let Some(document) = &case.document {
+                serde_json::to_vec(document).expect("serialize initramfs-verification fixture")
+            } else if let Some(raw) = &case.raw_document {
+                raw.as_bytes().to_vec()
+            } else {
+                let recipe = case
+                    .document_recipe
+                    .as_ref()
+                    .expect("initramfs-verification fixture recipe");
+                let mut document = base_document.clone();
+                document["padding"] = serde_json::Value::String("x".repeat(recipe.padding_bytes));
+                serde_json::to_vec(&document).expect("expand initramfs-verification fixture recipe")
+            };
+            let result = validate_core_installer_initramfs_verification_document(&document_bytes);
+            assert_eq!(
+                result.is_ok(),
+                case.expected.record_accepted,
+                "Rust initramfs-record acceptance diverged for {}: {:?}",
+                case.name,
+                result.as_ref().err()
+            );
+            let success_proof_accepted = result.is_ok_and(|verification| {
+                validate_support_initramfs_verification(&verification, &fixtures.target_kernel)
+                    .is_ok()
+            });
+            assert_eq!(
+                success_proof_accepted, case.expected.success_proof_accepted,
+                "Rust initramfs success-proof acceptance diverged for {}",
+                case.name
+            );
+        }
+
+        let mut relabelled: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        relabelled["cases"][0]["expected"]["successProofAccepted"] = serde_json::json!(false);
+        assert!(parse_core_installer_initramfs_verification_fixtures(
+            &serde_json::to_vec(&relabelled).unwrap()
+        )
+        .is_err());
+        let mut missing_case: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        missing_case["cases"].as_array_mut().unwrap().pop();
+        assert!(parse_core_installer_initramfs_verification_fixtures(
+            &serde_json::to_vec(&missing_case).unwrap()
+        )
+        .is_err());
+        let mut unsafe_target: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        unsafe_target["targetKernel"] = serde_json::json!("../unsafe");
+        assert!(parse_core_installer_initramfs_verification_fixtures(
+            &serde_json::to_vec(&unsafe_target).unwrap()
+        )
+        .is_err());
+        assert!(parse_core_installer_initramfs_verification_fixtures(&vec![
+            b' ';
+            CORE_INSTALLER_INITRAMFS_VERIFICATION_FIXTURE_LIMIT
                 + 1
         ])
         .is_err());

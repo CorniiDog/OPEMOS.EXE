@@ -1592,6 +1592,16 @@ pub(crate) fn validate_support_initramfs_verification(
     verification: &SupportInitramfsVerification,
     expected_kernel: &str,
 ) -> Result<(), String> {
+    validate_support_initramfs_verification_record(verification)?;
+    if verification.kernel_version != expected_kernel {
+        return Err("Offline installer initramfs proof targets the wrong kernel.".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_support_initramfs_verification_record(
+    verification: &SupportInitramfsVerification,
+) -> Result<(), String> {
     const CONFIG_PATH: &str = "/etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf";
     const ARCHIVE_CONFIG_PATH: &str = "etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf";
     const REQUIRED_MODULES: [&str; 4] = [
@@ -1605,7 +1615,9 @@ pub(crate) fn validate_support_initramfs_verification(
 
     if verification.schema_version != 1
         || verification.status != "verified"
-        || verification.kernel_version != expected_kernel
+        || verification.kernel_version.len() > 255
+        || !valid_kernel_version(&verification.kernel_version)
+        || verification.kernel_version == "unknown"
         || verification.required_modules != REQUIRED_MODULES
         || verification.rootfs_only_modules != ROOTFS_ONLY_MODULES
         || !(1..=32).contains(&verification.images.len())
@@ -1665,7 +1677,7 @@ pub(crate) fn validate_support_initramfs_verification(
             let path = image.modules.get(module).ok_or_else(|| {
                 "Offline installer initramfs metadata omitted an NVIDIA module.".to_owned()
             })?;
-            let prefix = format!("usr/lib/modules/{expected_kernel}/");
+            let prefix = format!("usr/lib/modules/{}/", verification.kernel_version);
             let expected_names = COMPRESSION_SUFFIXES.map(|suffix| format!("{module}{suffix}"));
             let basename = path.rsplit('/').next().unwrap_or_default();
             if !safe_initramfs_path(path)
@@ -2108,7 +2120,15 @@ pub(crate) fn validate_nvidia_install_result(
         .initramfs_workspace
         .clone()
         .ok_or("Offline installer result omitted its initramfs workspace verification.")?;
-    let initramfs_verification = document.initramfs_verification.clone();
+    let initramfs_verification = document
+        .initramfs_verification
+        .clone()
+        .map(|value| {
+            let bytes = serde_json::to_vec(&value)
+                .map_err(|error| format!("Could not read initramfs verification: {error}"))?;
+            crate::core_contracts::validate_core_installer_initramfs_verification_document(&bytes)
+        })
+        .transpose()?;
     let module_verification = document
         .module_verification
         .clone()
@@ -2144,8 +2164,7 @@ pub(crate) fn validate_nvidia_install_result(
         .transpose()?;
     let payload_receipt = document.payload_receipt.clone();
     if expected_status == "success" {
-        let initramfs = document
-            .initramfs_verification
+        let initramfs = initramfs_verification
             .as_ref()
             .ok_or("Offline installer success omitted exact initramfs verification metadata.")?;
         validate_support_initramfs_verification(initramfs, &inputs.kernel_version)?;
