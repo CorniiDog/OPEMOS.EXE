@@ -158,8 +158,12 @@ assert.deepEqual(await pngRgbaCornerAlphas("src-tauri/icons/icon.png"), [0, 0, 0
 const checks = await read(".github/workflows/checks.yml");
 assert.match(checks, /^name: Checks$/m);
 assert.match(checks, /npm run test:frontend/);
+assert.match(checks, /cargo clippy --manifest-path src-tauri\/Cargo\.toml/);
 assert.match(checks, /cargo test --manifest-path src-tauri\/Cargo\.toml/);
 assert.match(checks, /^permissions:\n  contents: read$/m);
+assert.match(checks, /^concurrency:\n  group: checks-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\n  cancel-in-progress: true$/m);
+assert.match(checks, /timeout-minutes: 15/);
+assert.match(checks, /timeout-minutes: 30/);
 
 const pages = await read(".github/workflows/pages.yml");
 for (const action of [
