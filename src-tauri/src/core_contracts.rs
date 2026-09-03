@@ -15,6 +15,8 @@ pub(crate) const CORE_INSTALLER_INITRAMFS_VERIFICATION_FIXTURE_LIMIT: usize = 51
 pub(crate) const CORE_INSTALLER_INITRAMFS_VERIFICATION_DOCUMENT_LIMIT: usize = 256 * 1024;
 pub(crate) const CORE_INSTALLER_PAYLOAD_RECEIPT_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_INSTALLER_PAYLOAD_RECEIPT_DOCUMENT_LIMIT: usize = 64 * 1024;
+pub(crate) const CORE_INSTALLER_INITRAMFS_WORKSPACE_FIXTURE_LIMIT: usize = 512 * 1024;
+pub(crate) const CORE_INSTALLER_INITRAMFS_WORKSPACE_DOCUMENT_LIMIT: usize = 16 * 1024;
 pub(crate) const CORE_INSTALLER_PROGRESS_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_PROGRESS_STREAM_LIMIT: usize = 16 * 1024 * 1024;
 const CORE_PROGRESS_PREFIX: &str = "STEAMOS_NVIDIA_PROGRESS ";
@@ -1690,6 +1692,241 @@ pub(crate) fn validate_core_installer_payload_receipt_document(
         .map_err(|error| format!("OPEMOS Core payload-receipt document is invalid: {error}"))?;
     validate_support_payload_receipt_record(&receipt)?;
     Ok(receipt)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerInitramfsWorkspaceCompatibilityFixtures {
+    pub(crate) schema_version: u32,
+    pub(crate) kind: String,
+    pub(crate) initramfs_workspace_schema_version: u32,
+    pub(crate) validation_storage: CoreInstallerInitramfsWorkspaceValidationStorage,
+    pub(crate) unfrozen_fields: Vec<String>,
+    pub(crate) limits: CoreInstallerInitramfsWorkspaceFixtureLimits,
+    pub(crate) cases: Vec<CoreInstallerInitramfsWorkspaceCompatibilityCase>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerInitramfsWorkspaceValidationStorage {
+    pub(crate) initramfs_reserve_bytes: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerInitramfsWorkspaceFixtureLimits {
+    pub(crate) max_document_bytes: usize,
+    pub(crate) max_capacity: u64,
+    pub(crate) max_required_inodes: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerInitramfsWorkspaceCompatibilityCase {
+    pub(crate) name: String,
+    pub(crate) expected: CoreInstallerInitramfsWorkspaceExpectation,
+    #[serde(default)]
+    pub(crate) document: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) raw_document: Option<String>,
+    #[serde(default)]
+    pub(crate) document_recipe: Option<CoreInstallerInitramfsWorkspaceDocumentRecipe>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerInitramfsWorkspaceExpectation {
+    pub(crate) record_accepted: bool,
+    pub(crate) validated_result_accepted: bool,
+    pub(crate) mutation_success_accepted: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerInitramfsWorkspaceDocumentRecipe {
+    pub(crate) kind: String,
+    pub(crate) base_case: String,
+    pub(crate) padding_bytes: usize,
+}
+
+pub(crate) fn parse_core_installer_initramfs_workspace_fixtures(
+    bytes: &[u8],
+) -> Result<CoreInstallerInitramfsWorkspaceCompatibilityFixtures, String> {
+    if bytes.is_empty() || bytes.len() > CORE_INSTALLER_INITRAMFS_WORKSPACE_FIXTURE_LIMIT {
+        return Err("OPEMOS Core initramfs-workspace fixtures are empty or exceed 512 KiB.".into());
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core initramfs-workspace fixtures")?;
+    let fixtures: CoreInstallerInitramfsWorkspaceCompatibilityFixtures =
+        serde_json::from_slice(bytes).map_err(|error| {
+            format!("OPEMOS Core initramfs-workspace fixtures are invalid JSON: {error}")
+        })?;
+    let record_accepted = HashSet::from([
+        "valid-target-finite",
+        "valid-target-bind-inodes",
+        "valid-preparation-finite",
+        "valid-preparation-bind-inodes",
+        "valid-mounted-finite",
+        "valid-mounted-dynamic",
+        "valid-backing-finite",
+        "safe-additive-top-level",
+        "valid-failure-insufficient-bytes",
+        "valid-failure-insufficient-inodes",
+        "valid-failure-dynamic-probe",
+        "storage-reserve-binding-mismatch",
+        "mutation-inode-binding-mismatch",
+        "validation-byte-binding-mismatch",
+        "validation-inode-binding-mismatch",
+        "maximum-capacity-and-inodes",
+    ]);
+    let validated_accepted = HashSet::from([
+        "valid-target-finite",
+        "valid-target-bind-inodes",
+        "valid-preparation-finite",
+        "valid-preparation-bind-inodes",
+        "safe-additive-top-level",
+    ]);
+    let mutation_accepted = HashSet::from(["valid-mounted-finite", "valid-mounted-dynamic"]);
+    let required_names = record_accepted
+        .iter()
+        .copied()
+        .chain([
+            "negative-required-bytes",
+            "excessive-required-bytes",
+            "excessive-required-inodes",
+            "boolean-required-inodes",
+            "negative-available-bytes",
+            "nested-available-bytes",
+            "finite-missing-inodes",
+            "finite-null-inodes",
+            "finite-insufficient-inodes-verified",
+            "insufficient-bytes-verified",
+            "dynamic-with-reported-inodes",
+            "dynamic-target-state",
+            "bind-mode-mounted-state",
+            "probe-failure-verified",
+            "missing-mode",
+            "wrong-mode",
+            "verified-message",
+            "preparation-nonnull-mode",
+            "preparation-message",
+            "preparation-insufficient-bytes",
+            "failure-missing-message",
+            "failure-available-condition",
+            "failure-contradictory-bytes",
+            "failure-contradictory-inodes",
+            "target-reason-contradiction",
+            "mounted-phase-contradiction",
+            "unknown-phase",
+            "missing-required-field",
+            "malformed-json",
+            "duplicate-json-key",
+            "non-finite-json",
+            "oversized-document",
+        ])
+        .collect::<HashSet<_>>();
+    if fixtures.schema_version != 1
+        || fixtures.kind != "opemos-installer-initramfs-workspace-compatibility-fixtures"
+        || fixtures.initramfs_workspace_schema_version != 1
+        || fixtures.validation_storage.initramfs_reserve_bytes != 160_000_000
+        || fixtures.unfrozen_fields != ["message"]
+        || fixtures.limits.max_document_bytes != CORE_INSTALLER_INITRAMFS_WORKSPACE_DOCUMENT_LIMIT
+        || fixtures.limits.max_capacity != i64::MAX as u64
+        || fixtures.limits.max_required_inodes != 65_536
+        || !(1..=64).contains(&fixtures.cases.len())
+    {
+        return Err("OPEMOS Core initramfs-workspace fixture envelope is invalid.".into());
+    }
+    let mut names = HashSet::new();
+    for case in &fixtures.cases {
+        let variants = usize::from(case.document.is_some())
+            + usize::from(case.raw_document.is_some())
+            + usize::from(case.document_recipe.is_some());
+        let expected_variant = match case.name.as_str() {
+            "malformed-json" | "duplicate-json-key" | "non-finite-json" => "raw",
+            "oversized-document" => "recipe",
+            _ => "document",
+        };
+        if !safe_kebab_token(&case.name, 64)
+            || !names.insert(case.name.as_str())
+            || case.expected.record_accepted != record_accepted.contains(case.name.as_str())
+            || case.expected.validated_result_accepted
+                != validated_accepted.contains(case.name.as_str())
+            || case.expected.mutation_success_accepted
+                != mutation_accepted.contains(case.name.as_str())
+            || (case.expected.validated_result_accepted && !case.expected.record_accepted)
+            || (case.expected.mutation_success_accepted && !case.expected.record_accepted)
+            || variants != 1
+            || (case.document.is_some()) != (expected_variant == "document")
+            || (case.raw_document.is_some()) != (expected_variant == "raw")
+            || (case.document_recipe.is_some()) != (expected_variant == "recipe")
+            || case.raw_document.as_ref().is_some_and(|raw| {
+                raw.is_empty() || raw.len() > CORE_INSTALLER_INITRAMFS_WORKSPACE_DOCUMENT_LIMIT
+            })
+        {
+            return Err(
+                "OPEMOS Core initramfs-workspace fixture case is unsafe or incomplete.".into(),
+            );
+        }
+        if let Some(recipe) = &case.document_recipe {
+            if case.name != "oversized-document"
+                || recipe.kind != "top-level-padding"
+                || recipe.base_case != "valid-target-finite"
+                || recipe.padding_bytes != CORE_INSTALLER_INITRAMFS_WORKSPACE_DOCUMENT_LIMIT
+            {
+                return Err("OPEMOS Core initramfs-workspace fixture recipe is invalid.".into());
+            }
+        }
+    }
+    if names != required_names {
+        return Err(
+            "OPEMOS Core initramfs-workspace fixture matrix omits a required safety case.".into(),
+        );
+    }
+    Ok(fixtures)
+}
+
+pub(crate) fn validate_core_installer_initramfs_workspace_document(
+    bytes: &[u8],
+) -> Result<SupportInitramfsWorkspace, String> {
+    if bytes.is_empty() || bytes.len() > CORE_INSTALLER_INITRAMFS_WORKSPACE_DOCUMENT_LIMIT {
+        return Err("OPEMOS Core initramfs-workspace document is empty or excessive.".into());
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core initramfs-workspace document")?;
+    let value: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("OPEMOS Core initramfs-workspace document is invalid: {error}"))?;
+    let object = value
+        .as_object()
+        .ok_or("OPEMOS Core initramfs-workspace document is not an object.")?;
+    let status = object.get("status").and_then(serde_json::Value::as_str);
+    if matches!(status, Some("verified" | "preparation-required"))
+        && (![
+            "availableBytes",
+            "availableInodes",
+            "inodeCapacityMode",
+            "mode",
+        ]
+        .iter()
+        .all(|field| object.contains_key(*field))
+            || object.contains_key("message"))
+    {
+        return Err("OPEMOS Core initramfs-workspace document omits required state fields.".into());
+    }
+    if status == Some("failed") && !object.contains_key("message") {
+        return Err("OPEMOS Core failed workspace document omitted its message.".into());
+    }
+    if matches!(
+        object
+            .get("inodeCapacityMode")
+            .and_then(serde_json::Value::as_str),
+        Some("finite-statvfs" | "dynamic-probed" | "not-applicable-bind-target")
+    ) && !object.contains_key("availableInodes")
+    {
+        return Err("OPEMOS Core workspace document omitted its inode capacity.".into());
+    }
+    let workspace: SupportInitramfsWorkspace = serde_json::from_value(value)
+        .map_err(|error| format!("OPEMOS Core initramfs-workspace document is invalid: {error}"))?;
+    validate_support_initramfs_workspace_record(&workspace)?;
+    Ok(workspace)
 }
 
 #[derive(Debug, Deserialize)]
@@ -3781,6 +4018,115 @@ mod tests {
         assert!(parse_core_installer_payload_receipt_fixtures(&vec![
             b' ';
             CORE_INSTALLER_PAYLOAD_RECEIPT_FIXTURE_LIMIT
+                + 1
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn local_successor_initramfs_workspace_fixtures_match_rust_semantics() {
+        let Some(repository) = core_repository() else {
+            eprintln!(
+                "skipping local successor initramfs-workspace fixtures: sibling Core repository is absent"
+            );
+            return;
+        };
+        let generator = repository.join("lib/generate_installer_initramfs_workspace_fixtures.py");
+        let generate = || {
+            let output = Command::new("python3")
+                .arg(&generator)
+                .current_dir(&repository)
+                .output()
+                .expect("run Core initramfs-workspace fixture generator");
+            assert!(output.status.success());
+            assert!(output.stderr.is_empty());
+            output.stdout
+        };
+        let first = generate();
+        assert_eq!(
+            first,
+            generate(),
+            "Core initramfs-workspace fixtures were nondeterministic"
+        );
+        let fixtures = parse_core_installer_initramfs_workspace_fixtures(&first)
+            .expect("consume bounded Core initramfs-workspace fixtures");
+        let base_document = fixtures
+            .cases
+            .iter()
+            .find(|case| case.name == "valid-target-finite")
+            .and_then(|case| case.document.clone())
+            .expect("initramfs-workspace fixture base document");
+        for case in &fixtures.cases {
+            let document_bytes = if let Some(document) = &case.document {
+                serde_json::to_vec(document).expect("serialize initramfs-workspace fixture")
+            } else if let Some(raw) = &case.raw_document {
+                raw.as_bytes().to_vec()
+            } else {
+                let recipe = case
+                    .document_recipe
+                    .as_ref()
+                    .expect("initramfs-workspace fixture recipe");
+                let mut document = base_document.clone();
+                document["padding"] = serde_json::Value::String("x".repeat(recipe.padding_bytes));
+                serde_json::to_vec(&document).expect("expand initramfs-workspace fixture recipe")
+            };
+            let result = validate_core_installer_initramfs_workspace_document(&document_bytes);
+            assert_eq!(
+                result.is_ok(),
+                case.expected.record_accepted,
+                "Rust initramfs-workspace acceptance diverged for {}: {:?}",
+                case.name,
+                result.as_ref().err()
+            );
+            let validated_result_accepted = result.as_ref().is_ok_and(|workspace| {
+                validate_support_initramfs_workspace_binding(
+                    workspace,
+                    "validated",
+                    fixtures.validation_storage.initramfs_reserve_bytes,
+                )
+                .is_ok()
+            });
+            let mutation_success_accepted = result.as_ref().is_ok_and(|workspace| {
+                validate_support_initramfs_workspace_binding(
+                    workspace,
+                    "success",
+                    fixtures.validation_storage.initramfs_reserve_bytes,
+                )
+                .is_ok()
+            });
+            assert_eq!(
+                validated_result_accepted, case.expected.validated_result_accepted,
+                "Rust validated-result workspace acceptance diverged for {}",
+                case.name
+            );
+            assert_eq!(
+                mutation_success_accepted, case.expected.mutation_success_accepted,
+                "Rust mutation workspace acceptance diverged for {}",
+                case.name
+            );
+        }
+
+        let mut relabelled: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        relabelled["cases"][0]["expected"]["validatedResultAccepted"] = serde_json::json!(false);
+        assert!(parse_core_installer_initramfs_workspace_fixtures(
+            &serde_json::to_vec(&relabelled).unwrap()
+        )
+        .is_err());
+        let mut missing_case: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        missing_case["cases"].as_array_mut().unwrap().pop();
+        assert!(parse_core_installer_initramfs_workspace_fixtures(
+            &serde_json::to_vec(&missing_case).unwrap()
+        )
+        .is_err());
+        let mut changed_limit: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        changed_limit["limits"]["maxRequiredInodes"] = serde_json::json!(65_535);
+        assert!(parse_core_installer_initramfs_workspace_fixtures(
+            &serde_json::to_vec(&changed_limit).unwrap()
+        )
+        .is_err());
+        assert!(parse_core_installer_initramfs_workspace_fixtures(&vec![
+            b' ';
+            CORE_INSTALLER_INITRAMFS_WORKSPACE_FIXTURE_LIMIT
                 + 1
         ])
         .is_err());

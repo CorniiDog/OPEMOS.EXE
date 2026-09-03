@@ -3094,7 +3094,7 @@ esac
                 runtime_mounts_released: 4,
                 compression_policy_restored: true,
             },
-            initramfs_workspace: Some(SupportInitramfsWorkspace {
+            initramfs_workspace: Some(serde_json::to_value(SupportInitramfsWorkspace {
                 schema_version: 1,
                 status: "verified".into(),
                 reason: "initramfs_workspace_target_available".into(),
@@ -3106,7 +3106,10 @@ esac
                 available_inodes: Some(8_192),
                 inode_capacity_mode: Some("finite-statvfs".into()),
                 mode: Some("1777".into()),
-            }),
+                expected_mode: None,
+                actual_mode: None,
+                message: None,
+            }).unwrap()),
             initramfs_verification: None,
             module_verification: None,
             userspace_verification: None,
@@ -3443,7 +3446,7 @@ esac
         successful.status = "success".into();
         successful.reason = "install_complete".into();
         successful.phase = "complete".into();
-        successful.initramfs_workspace = Some(SupportInitramfsWorkspace {
+        successful.initramfs_workspace = Some(serde_json::to_value(SupportInitramfsWorkspace {
             schema_version: 1,
             status: "verified".into(),
             reason: "initramfs_workspace_available".into(),
@@ -3455,7 +3458,10 @@ esac
             available_inodes: None,
             inode_capacity_mode: Some("dynamic-probed".into()),
             mode: Some("1777".into()),
-        });
+            expected_mode: None,
+            actual_mode: None,
+            message: None,
+        }).unwrap());
         let mut initramfs = initramfs_verification_fixture();
         initramfs["kernelVersion"] = serde_json::json!(inputs.kernel_version.clone());
         for path in initramfs["images"][0]["modules"]
@@ -3669,12 +3675,27 @@ esac
         .expect("oversized payload-receipt proof must fail")
         .contains("excessive"));
 
-        let mut contradictory_workspace = successful.clone();
-        contradictory_workspace
+        let mut oversized_workspace_document = successful.clone();
+        oversized_workspace_document
             .initramfs_workspace
             .as_mut()
-            .expect("workspace fixture")
-            .available_inodes = Some(4_096);
+            .unwrap()["padding"] = serde_json::json!("x".repeat(
+            crate::core_contracts::CORE_INSTALLER_INITRAMFS_WORKSPACE_DOCUMENT_LIMIT
+        ));
+        assert!(validate_nvidia_install_result(
+            oversized_workspace_document,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )
+        .err()
+        .expect("oversized initramfs-workspace proof must fail")
+        .contains("excessive"));
+
+        let mut contradictory_workspace = successful.clone();
+        contradictory_workspace.initramfs_workspace.as_mut().unwrap()["availableInodes"] =
+            serde_json::json!(4_096);
         assert!(validate_nvidia_install_result(
             contradictory_workspace,
             &inputs,
@@ -3802,7 +3823,7 @@ esac
                 runtime_mounts_released: 4,
                 compression_policy_restored: true,
             },
-            initramfs_workspace: Some(SupportInitramfsWorkspace {
+            initramfs_workspace: Some(serde_json::to_value(SupportInitramfsWorkspace {
                 schema_version: 1,
                 status: "verified".into(),
                 reason: "initramfs_workspace_available".into(),
@@ -3814,7 +3835,10 @@ esac
                 available_inodes: None,
                 inode_capacity_mode: Some("dynamic-probed".into()),
                 mode: Some("1777".into()),
-            }),
+                expected_mode: None,
+                actual_mode: None,
+                message: None,
+            }).unwrap()),
             initramfs_verification: None,
             module_verification: None,
             userspace_verification: None,
@@ -3930,7 +3954,7 @@ esac
                 runtime_mounts_released: 4,
                 compression_policy_restored: true,
             },
-            initramfs_workspace: Some(SupportInitramfsWorkspace {
+            initramfs_workspace: Some(serde_json::to_value(SupportInitramfsWorkspace {
                 schema_version: 1,
                 status: "verified".into(),
                 reason: "initramfs_workspace_target_available".into(),
@@ -3942,7 +3966,10 @@ esac
                 available_inodes: Some(8_192),
                 inode_capacity_mode: Some("finite-statvfs".into()),
                 mode: Some("1777".into()),
-            }),
+                expected_mode: None,
+                actual_mode: None,
+                message: None,
+            }).unwrap()),
             initramfs_verification: None,
             module_verification: None,
             userspace_verification: None,
@@ -4563,6 +4590,9 @@ esac
                 available_inodes: None,
                 inode_capacity_mode: Some("dynamic-probed".into()),
                 mode: Some("1777".into()),
+                expected_mode: None,
+                actual_mode: None,
+                message: None,
             },
             initramfs_verification: None,
             module_verification: None,

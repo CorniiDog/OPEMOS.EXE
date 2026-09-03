@@ -1697,61 +1697,182 @@ pub(crate) fn validate_support_initramfs_workspace(
     storage: &SupportInstallStorage,
     expected_status: &str,
 ) -> Result<(), String> {
-    let available_bytes = workspace
-        .available_bytes
-        .filter(|available| *available >= workspace.required_bytes)
-        .ok_or("Initramfs workspace metadata reports insufficient or missing byte capacity.")?;
-    if workspace.schema_version != 1 || available_bytes > i64::MAX as u64 {
+    validate_support_initramfs_workspace_record(workspace)?;
+    validate_support_initramfs_workspace_binding(
+        workspace,
+        expected_status,
+        storage.initramfs_reserve_bytes,
+    )
+}
+
+pub(crate) fn validate_support_initramfs_workspace_record(
+    workspace: &SupportInitramfsWorkspace,
+) -> Result<(), String> {
+    let bounded_capacity = |value: Option<u64>| value.is_none_or(|value| value <= i64::MAX as u64);
+    let valid_mode =
+        |value: &str| value.len() == 4 && value.bytes().all(|byte| matches!(byte, b'0'..=b'7'));
+    let valid_message = |value: &str| {
+        let length = value.chars().count();
+        (1..=2048).contains(&length)
+            && value
+                .chars()
+                .all(|character| matches!(character, '\n' | '\t') || character >= ' ')
+    };
+    if workspace.schema_version != 1
+        || workspace.required_bytes > i64::MAX as u64
+        || workspace.required_inodes > 65_536
+        || !bounded_capacity(workspace.available_bytes)
+        || !bounded_capacity(workspace.available_inodes)
+        || [
+            &workspace.mode,
+            &workspace.expected_mode,
+            &workspace.actual_mode,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|mode| !valid_mode(mode))
+        || !matches!(
+            workspace.reason.as_str(),
+            "initramfs_workspace_available"
+                | "initramfs_workspace_unavailable"
+                | "initramfs_workspace_target_available"
+                | "initramfs_workspace_target_missing"
+        )
+        || !matches!(
+            workspace.phase.as_str(),
+            "target_directory"
+                | "backing_directory"
+                | "backing_capacity"
+                | "mounted_workspace"
+                | "target_capacity"
+        )
+        || !matches!(
+            workspace.condition.as_str(),
+            "available"
+                | "missing_directory"
+                | "invalid_type"
+                | "permissions"
+                | "insufficient_bytes"
+                | "insufficient_inodes"
+        )
+    {
         return Err("Offline installer returned invalid initramfs workspace metadata.".into());
     }
     let inode_capacity_valid = match workspace.inode_capacity_mode.as_deref() {
-        Some("finite-statvfs") => workspace
-            .available_inodes
-            .is_some_and(|available| available >= workspace.required_inodes),
-        Some("dynamic-probed") | Some("not-applicable-bind-target") => {
+        Some("finite-statvfs") => workspace.available_inodes.is_some(),
+        Some("dynamic-probed" | "dynamic-probe-failed" | "not-applicable-bind-target") => {
             workspace.available_inodes.is_none()
         }
+        None => true,
         _ => false,
     };
-    if !inode_capacity_valid {
+    if !inode_capacity_valid
+        || (workspace.inode_capacity_mode.as_deref() == Some("dynamic-probe-failed")
+            && workspace.status != "failed")
+    {
         return Err("Offline installer returned invalid initramfs inode-capacity evidence.".into());
     }
-    match expected_status {
-        "validated"
-            if workspace.phase == "target_directory"
-                && workspace.required_bytes == 4_096
-                && workspace.required_inodes == 1
+    match workspace.status.as_str() {
+        "verified" => {
+            let target_shape = workspace.reason == "initramfs_workspace_target_available"
+                && workspace.phase == "target_directory";
+            let backing_shape = workspace.reason == "initramfs_workspace_available"
                 && matches!(
-                    workspace.inode_capacity_mode.as_deref(),
-                    Some("finite-statvfs" | "not-applicable-bind-target")
-                ) =>
-        {
-            if (workspace.status == "verified"
-                && workspace.reason == "initramfs_workspace_target_available"
+                    workspace.phase.as_str(),
+                    "backing_capacity" | "mounted_workspace"
+                );
+            let capacity = match workspace.inode_capacity_mode.as_deref() {
+                Some("finite-statvfs") => workspace
+                    .available_inodes
+                    .is_some_and(|available| available >= workspace.required_inodes),
+                Some("dynamic-probed") => backing_shape,
+                Some("not-applicable-bind-target") => target_shape,
+                _ => false,
+            };
+            if (target_shape || backing_shape)
                 && workspace.condition == "available"
-                && workspace.mode.as_deref() == Some("1777"))
-                || (workspace.status == "preparation-required"
-                    && workspace.reason == "initramfs_workspace_target_missing"
-                    && workspace.condition == "missing_directory"
-                    && workspace.mode.is_none())
+                && workspace.mode.as_deref() == Some("1777")
+                && workspace.message.is_none()
+                && workspace
+                    .available_bytes
+                    .is_some_and(|available| available >= workspace.required_bytes)
+                && capacity
             {
                 Ok(())
             } else {
-                Err("Initramfs target workspace evidence is inconsistent.".into())
+                Err("Verified initramfs workspace metadata is inconsistent.".into())
             }
+        }
+        "preparation-required" => {
+            let capacity = match workspace.inode_capacity_mode.as_deref() {
+                Some("finite-statvfs") => workspace
+                    .available_inodes
+                    .is_some_and(|available| available >= workspace.required_inodes),
+                Some("not-applicable-bind-target") => true,
+                _ => false,
+            };
+            if workspace.reason == "initramfs_workspace_target_missing"
+                && workspace.phase == "target_directory"
+                && workspace.condition == "missing_directory"
+                && workspace.mode.is_none()
+                && workspace.message.is_none()
+                && workspace
+                    .available_bytes
+                    .is_some_and(|available| available >= workspace.required_bytes)
+                && capacity
+            {
+                Ok(())
+            } else {
+                Err("Target workspace preparation metadata is inconsistent.".into())
+            }
+        }
+        "failed" => {
+            let message_valid = workspace.message.as_deref().is_some_and(valid_message);
+            let capacity_consistent = match workspace.condition.as_str() {
+                "insufficient_bytes" => workspace
+                    .available_bytes
+                    .is_some_and(|available| available < workspace.required_bytes),
+                "insufficient_inodes" => workspace
+                    .available_inodes
+                    .is_none_or(|available| available < workspace.required_inodes),
+                _ => true,
+            };
+            if workspace.reason == "initramfs_workspace_unavailable"
+                && workspace.condition != "available"
+                && message_valid
+                && capacity_consistent
+            {
+                Ok(())
+            } else {
+                Err("Failed initramfs workspace metadata is inconsistent.".into())
+            }
+        }
+        _ => Err("Initramfs workspace status is unsupported.".into()),
+    }
+}
+
+pub(crate) fn validate_support_initramfs_workspace_binding(
+    workspace: &SupportInitramfsWorkspace,
+    expected_status: &str,
+    initramfs_reserve_bytes: u64,
+) -> Result<(), String> {
+    match expected_status {
+        "validated"
+            if matches!(
+                workspace.status.as_str(),
+                "verified" | "preparation-required"
+            ) && workspace.phase == "target_directory"
+                && workspace.required_bytes == 4_096
+                && workspace.required_inodes == 1 =>
+        {
+            Ok(())
         }
         "success"
             if workspace.status == "verified"
                 && workspace.reason == "initramfs_workspace_available"
                 && workspace.phase == "mounted_workspace"
-                && workspace.condition == "available"
-                && workspace.mode.as_deref() == Some("1777")
-                && workspace.required_bytes == storage.initramfs_reserve_bytes
-                && workspace.required_inodes == 4_096
-                && matches!(
-                    workspace.inode_capacity_mode.as_deref(),
-                    Some("finite-statvfs" | "dynamic-probed")
-                ) =>
+                && workspace.required_bytes == initramfs_reserve_bytes
+                && workspace.required_inodes == 4_096 =>
         {
             Ok(())
         }
@@ -2159,6 +2280,12 @@ pub(crate) fn validate_nvidia_install_result(
     let initramfs_workspace = document
         .initramfs_workspace
         .clone()
+        .map(|value| {
+            let bytes = serde_json::to_vec(&value)
+                .map_err(|error| format!("Could not read initramfs workspace: {error}"))?;
+            crate::core_contracts::validate_core_installer_initramfs_workspace_document(&bytes)
+        })
+        .transpose()?
         .ok_or("Offline installer result omitted its initramfs workspace verification.")?;
     let initramfs_verification = document
         .initramfs_verification

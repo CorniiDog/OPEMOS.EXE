@@ -913,7 +913,7 @@ pub(crate) struct SupportInstallResult {
     pub(crate) validation: Option<SupportInstallValidationDocument>,
     pub(crate) module_verification: Option<serde_json::Value>,
     pub(crate) userspace_verification: Option<serde_json::Value>,
-    pub(crate) initramfs_workspace: Option<SupportInitramfsWorkspace>,
+    pub(crate) initramfs_workspace: Option<serde_json::Value>,
     pub(crate) initramfs_verification: Option<serde_json::Value>,
     pub(crate) payload_receipt: Option<serde_json::Value>,
 }
@@ -1050,6 +1050,12 @@ pub(crate) struct SupportInitramfsWorkspace {
     pub(crate) available_inodes: Option<u64>,
     pub(crate) inode_capacity_mode: Option<String>,
     pub(crate) mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) expected_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) actual_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) message: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
