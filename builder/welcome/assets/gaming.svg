@@ -3,7 +3,7 @@
   <desc id="desc">A recognizable game controller floats over a sixteen-by-nine display with blue and green graphics.</desc>
   <defs>
     <linearGradient id="g" x1="0" x2="1"><stop stop-color="#57c4fb"/><stop offset="1" stop-color="#78da70"/></linearGradient>
-    <path id="controller-shape" d="M188 158h144c23 0 43 16 50 39l21 71c11 38-13 68-49 68-23 0-41-12-58-35l-17-23h-38l-17 23c-17 23-35 35-58 35-36 0-60-30-49-68l21-71c7-23 27-39 50-39z"/>
+    <path id="controller-shape" d="M198 152h124c17 0 30-4 47-13 25-13 50-3 63 21 8 15 14 33 20 54l16 62c10 40-9 68-42 71-25 2-43-14-59-40l-28-44c-16 8-33 10-48 5l-12-13h-38l-12 13c-15 5-32 3-48-5l-28 44c-16 26-34 42-59 40-33-3-52-31-42-71l16-62c6-21 12-39 20-54 13-24 38-34 63-21 17 9 30 13 47 13z"/>
     <mask id="controller-clearance" maskUnits="userSpaceOnUse" x="0" y="0" width="520" height="360">
       <rect width="520" height="360" fill="white"/>
       <use href="#controller-shape" fill="black" stroke="black" stroke-width="24" stroke-linejoin="round"/>
@@ -13,12 +13,12 @@
     <rect id="gaming-display" x="84" y="36" width="352" height="198" rx="24" fill="#0b202c" stroke="url(#g)" stroke-width="4"/>
     <path id="gaming-scene" d="M108 208 182 132l56 46 86-88 88 70v48H108z" fill="url(#g)" opacity=".24"/>
   </g>
-  <use id="controller" data-left="117" data-right="403" data-top="158" data-bottom="336" href="#controller-shape" fill="#193747" stroke="url(#g)" stroke-width="4" stroke-linejoin="round"/>
-  <path id="direction-pad" d="M196 198v52m-26-26h52" stroke="#ecfaff" stroke-width="10" stroke-linecap="round"/>
-  <circle cx="324" cy="204" r="8" fill="#78da70"/>
-  <circle cx="345" cy="225" r="8" fill="#57c4fb"/>
-  <circle cx="303" cy="225" r="8" fill="#57c4fb"/>
-  <circle cx="324" cy="246" r="8" fill="#78da70"/>
-  <circle id="left-stick" cx="218" cy="274" r="11" fill="#0d2633" stroke="#57c4fb" stroke-width="3"/>
-  <circle id="right-stick" cx="302" cy="274" r="11" fill="#0d2633" stroke="#78da70" stroke-width="3"/>
+  <use id="controller" data-left="52" data-right="468" data-top="126" data-bottom="349" href="#controller-shape" fill="#193747" stroke="url(#g)" stroke-width="4" stroke-linejoin="round"/>
+  <path id="direction-pad" d="M158 182v54m-27-27h54" stroke="#ecfaff" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="360" cy="176" r="9" fill="#78da70"/>
+  <circle cx="383" cy="199" r="9" fill="#57c4fb"/>
+  <circle cx="337" cy="199" r="9" fill="#57c4fb"/>
+  <circle cx="360" cy="222" r="9" fill="#78da70"/>
+  <circle id="left-stick" cx="218" cy="246" r="17" fill="#0d2633" stroke="#57c4fb" stroke-width="4"/>
+  <circle id="right-stick" cx="302" cy="246" r="17" fill="#0d2633" stroke="#78da70" stroke-width="4"/>
 </svg>
