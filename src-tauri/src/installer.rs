@@ -2450,54 +2450,55 @@ pub(crate) fn validate_nvidia_install_handoff_blocking(
         (NvidiaBuildConnection::from(&*session), cancel)
     };
 
-    let installer_archive = connection.runtime_dir.join("offline-installer.tar.gz");
-    run_checked(
-        Command::new("tar")
-            .env("COPYFILE_DISABLE", "1")
-            .args(["--no-xattrs", "-czf"])
-            .arg(&installer_archive)
-            .args(["-C"])
-            .arg(&inputs.installer_root)
-            .arg("."),
-        "Could not package the pinned NVIDIA installer",
-    )?;
-    let appliance_required = nvidia_handoff_space_requirement(&inputs, &installer_archive)?;
-    require_guest_free_space(
-        &connection,
-        "/tmp",
-        appliance_required,
-        "The x86 appliance NVIDIA handoff",
-    )?;
-    copy_install_input_to_guest(&connection, &installer_archive, "offline-installer.tar.gz")?;
-    copy_install_input_to_guest(&connection, &inputs.archive, "nvidia-modules.tar.gz")?;
-    let handoff_checksum =
-        stage_nvidia_handoff_checksum(&connection.runtime_dir, &inputs.archive_sha256)?;
-    copy_install_input_to_guest(
-        &connection,
-        &handoff_checksum,
-        "nvidia-modules.tar.gz.sha256",
-    )?;
-    copy_install_input_to_guest(
-        &connection,
-        &inputs.provenance,
-        "nvidia-modules.provenance.json",
-    )?;
-    for package in &inputs.packages {
-        let (filename, signature_filename) = guest_userspace_filenames(package)?;
-        copy_install_input_to_guest(&connection, Path::new(&package.package_path), &filename)?;
+    let validation_result = (|| -> Result<NvidiaInstallHandoffResult, String> {
+        let installer_archive = connection.runtime_dir.join("offline-installer.tar.gz");
+        run_checked(
+            Command::new("tar")
+                .env("COPYFILE_DISABLE", "1")
+                .args(["--no-xattrs", "-czf"])
+                .arg(&installer_archive)
+                .args(["-C"])
+                .arg(&inputs.installer_root)
+                .arg("."),
+            "Could not package the pinned NVIDIA installer",
+        )?;
+        let appliance_required = nvidia_handoff_space_requirement(&inputs, &installer_archive)?;
+        require_guest_free_space(
+            &connection,
+            "/tmp",
+            appliance_required,
+            "The x86 appliance NVIDIA handoff",
+        )?;
+        copy_install_input_to_guest(&connection, &installer_archive, "offline-installer.tar.gz")?;
+        copy_install_input_to_guest(&connection, &inputs.archive, "nvidia-modules.tar.gz")?;
+        let handoff_checksum =
+            stage_nvidia_handoff_checksum(&connection.runtime_dir, &inputs.archive_sha256)?;
         copy_install_input_to_guest(
             &connection,
-            Path::new(&package.signature_path),
-            &signature_filename,
+            &handoff_checksum,
+            "nvidia-modules.tar.gz.sha256",
         )?;
-    }
+        copy_install_input_to_guest(
+            &connection,
+            &inputs.provenance,
+            "nvidia-modules.provenance.json",
+        )?;
+        for package in &inputs.packages {
+            let (filename, signature_filename) = guest_userspace_filenames(package)?;
+            copy_install_input_to_guest(&connection, Path::new(&package.package_path), &filename)?;
+            copy_install_input_to_guest(
+                &connection,
+                Path::new(&package.signature_path),
+                &signature_filename,
+            )?;
+        }
 
-    let validation_attempt = 1_usize;
-    let validation = {
-        let userspace_arguments = userspace_installer_arguments(&inputs.packages)?;
-        let installer_permissions = pinned_installer_guest_permissions()?;
-        let command = format!(
-            r#"set -euo pipefail
+        let validation_attempt = 1_usize;
+        let validation = {
+            let userspace_arguments = userspace_installer_arguments(&inputs.packages)?;
+            let installer_permissions = pinned_installer_guest_permissions()?;
+            let command = format!(
+                r#"set -euo pipefail
 WORK=/tmp/steamos-nvidia-offline-install
 TARGET=/dev/disk/by-id/virtio-steamos-target
 ROOT=/mnt/steamos-nvidia-target
@@ -2568,77 +2569,118 @@ ROOT_MOUNTED=0
 ! findmnt -rn -M "$ROOT/var" >/dev/null 2>&1
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
-            keyring_path = NVIDIA_USERSPACE_KEYRING_PATH,
-            lock_path = NVIDIA_USERSPACE_LOCK_PATH,
-            kernel = inputs.kernel_version,
-            userspace_arguments = userspace_arguments,
-            compression_profile = NVIDIA_COMPRESSION_PROFILE,
-            installer_permissions = installer_permissions,
-        );
-        let execution_result = run_guest_command_logged(
-            &connection,
-            &command,
-            &connection.runtime_dir.join("nvidia-install.log"),
-            Some(&cancel),
-        );
-        let staged_result = connection.runtime_dir.join("nvidia-install-result.json");
-        let result_transfer = run_checked(
-            scp_command(&connection)?
-                .arg("builder@127.0.0.1:/tmp/steamos-nvidia-offline-install/install-result.json")
-                .arg(&staged_result),
-            "Could not copy the NVIDIA installer validation result from the x86 guest",
-        );
-        if let Err(transfer_error) = result_transfer {
-            return Err(execution_result.err().unwrap_or(transfer_error));
-        }
-        fs::copy(
-            &staged_result,
-            inputs.image_runtime_dir.join(format!(
-                "nvidia-install-validation-{validation_attempt}.json"
-            )),
-        )
-        .map_err(|e| format!("Could not preserve the NVIDIA installer result: {e}"))?;
-        fs::copy(
-            &staged_result,
-            inputs
-                .image_runtime_dir
-                .join("nvidia-install-validation.json"),
-        )
-        .map_err(|e| format!("Could not preserve the latest NVIDIA installer result: {e}"))?;
-        let document = read_support_install_result(&staged_result)?;
-        if document.status == "failed" && document.reason == "target_space_insufficient" {
-            let message = validate_nvidia_storage_failure(&document, &inputs)?;
-            if execution_result.is_ok() {
-                return Err(
+                keyring_path = NVIDIA_USERSPACE_KEYRING_PATH,
+                lock_path = NVIDIA_USERSPACE_LOCK_PATH,
+                kernel = inputs.kernel_version,
+                userspace_arguments = userspace_arguments,
+                compression_profile = NVIDIA_COMPRESSION_PROFILE,
+                installer_permissions = installer_permissions,
+            );
+            let execution_result = run_guest_command_logged(
+                &connection,
+                &command,
+                &connection.runtime_dir.join("nvidia-install.log"),
+                Some(&cancel),
+            );
+            let staged_result = connection.runtime_dir.join("nvidia-install-result.json");
+            let result_transfer = run_checked(
+                scp_command(&connection)?
+                    .arg(
+                        "builder@127.0.0.1:/tmp/steamos-nvidia-offline-install/install-result.json",
+                    )
+                    .arg(&staged_result),
+                "Could not copy the NVIDIA installer validation result from the x86 guest",
+            );
+            if let Err(transfer_error) = result_transfer {
+                return Err(execution_result.err().unwrap_or(transfer_error));
+            }
+            fs::copy(
+                &staged_result,
+                inputs.image_runtime_dir.join(format!(
+                    "nvidia-install-validation-{validation_attempt}.json"
+                )),
+            )
+            .map_err(|e| format!("Could not preserve the NVIDIA installer result: {e}"))?;
+            fs::copy(
+                &staged_result,
+                inputs
+                    .image_runtime_dir
+                    .join("nvidia-install-validation.json"),
+            )
+            .map_err(|e| format!("Could not preserve the latest NVIDIA installer result: {e}"))?;
+            let document = read_support_install_result(&staged_result)?;
+            if document.status == "failed" && document.reason == "target_space_insufficient" {
+                let message = validate_nvidia_storage_failure(&document, &inputs)?;
+                if execution_result.is_ok() {
+                    return Err(
                     "Offline installer reported insufficient storage with a successful process exit."
                         .into(),
                 );
+                }
+                return Err(message);
             }
-            return Err(message);
+            let validation = validate_nvidia_install_result(
+                document,
+                &inputs,
+                "validated",
+                "validation_complete",
+                "validated",
+            )?;
+            execution_result?;
+            validation
+        };
+        Ok(validation)
+    })();
+
+    let validation = match validation_result {
+        Ok(validation) => {
+            let mut manager = build_manager_state
+                .lock()
+                .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+            let session = manager
+                .session
+                .as_mut()
+                .filter(|session| {
+                    session.runtime_dir == connection.runtime_dir
+                        && session.ssh_port == connection.ssh_port
+                        && session.state == "validating"
+                })
+                .ok_or("The x86 installer appliance changed identity during validation.")?;
+            session.state = "ready".into();
+            session.message =
+                "Read-only NVIDIA validation passed; the appliance is ready for installation."
+                    .into();
+            validation
         }
-        let validation = validate_nvidia_install_result(
-            document,
-            &inputs,
-            "validated",
-            "validation_complete",
-            "validated",
-        )?;
-        execution_result?;
-        validation
+        Err(operation_error) => {
+            let mut failed_session = {
+                let mut manager = build_manager_state
+                    .lock()
+                    .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
+                if manager.session.as_ref().is_some_and(|session| {
+                    session.runtime_dir == connection.runtime_dir
+                        && session.ssh_port == connection.ssh_port
+                        && session.state == "validating"
+                }) {
+                    manager.session.take()
+                } else {
+                    None
+                }
+            };
+            let cleanup = if let Some(session) = failed_session.as_mut() {
+                stop_nvidia_build_session(session).map(|_| ())
+            } else {
+                Ok(())
+            };
+            return Err(match cleanup {
+                Ok(()) => operation_error,
+                Err(cleanup_error) => format!(
+                    "{operation_error} Additionally, the failed x86 validation appliance could not be stopped cleanly: {cleanup_error}"
+                ),
+            });
+        }
     };
 
-    {
-        let mut manager = build_manager_state
-            .lock()
-            .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
-        let session = manager
-            .session
-            .as_mut()
-            .ok_or("The x86 installer appliance ended after validation.")?;
-        session.state = "ready".into();
-        session.message =
-            "Read-only NVIDIA validation passed; the appliance is ready for installation.".into();
-    }
     let mut manager = image_manager_state
         .lock()
         .map_err(|_| "Appliance state lock is unavailable.")?;
@@ -2711,13 +2753,14 @@ pub(crate) fn install_nvidia_to_working_image_blocking(
         );
         (NvidiaBuildConnection::from(&*session), cancel)
     };
-    let userspace_arguments = userspace_installer_arguments(&inputs.packages)?;
-    let recovery_script_sha256 = stage_recovery_rollback_assets(&connection)?;
-    let welcome_digests = stage_install_media_welcome_assets(&connection)?;
-    let install_media_support_commands = installation_media_support_install_commands()?;
-    let mutation_attempt = 2_usize;
-    let command = format!(
-        r#"set -euo pipefail
+    let installation_result = (|| -> Result<NvidiaInstallHandoffResult, String> {
+        let userspace_arguments = userspace_installer_arguments(&inputs.packages)?;
+        let recovery_script_sha256 = stage_recovery_rollback_assets(&connection)?;
+        let welcome_digests = stage_install_media_welcome_assets(&connection)?;
+        let install_media_support_commands = installation_media_support_install_commands()?;
+        let mutation_attempt = 2_usize;
+        let command = format!(
+            r#"set -euo pipefail
 WORK=/tmp/steamos-nvidia-offline-install
 TARGET=/dev/disk/by-id/virtio-steamos-target
 TOP=/mnt/steamos-nvidia-top
@@ -3006,75 +3049,101 @@ fi
 ! findmnt -rn -M "$ROOT" >/dev/null 2>&1
 ! findmnt -rn -M "$TOP" >/dev/null 2>&1
 trap - EXIT INT TERM"#,
-        keyring_path = NVIDIA_USERSPACE_KEYRING_PATH,
-        lock_path = NVIDIA_USERSPACE_LOCK_PATH,
-        kernel = inputs.kernel_version,
-        userspace_arguments = userspace_arguments,
-        compression_profile = NVIDIA_COMPRESSION_PROFILE,
-        mutation_attempt = mutation_attempt,
-        recovery_script_sha256 = recovery_script_sha256,
-        welcome_sha256 = welcome_digests.welcome,
-        welcome_helper_sha256 = welcome_digests.helper,
-        welcome_patcher_sha256 = welcome_digests.patcher,
-        welcome_desktop_sha256 = welcome_digests.desktop,
-        welcome_icon_sha256 = welcome_digests.icon,
-        welcome_gtk_css_sha256 = welcome_digests.gtk_css,
-        welcome_server_sha256 = welcome_digests.server,
-        welcome_html_sha256 = welcome_digests.html,
-        welcome_css_sha256 = welcome_digests.css,
-        welcome_javascript_sha256 = welcome_digests.javascript,
-        welcome_install_art_sha256 = welcome_digests.install_art,
-        welcome_recovery_art_sha256 = welcome_digests.recovery_art,
-        welcome_gaming_art_sha256 = welcome_digests.gaming_art,
-        install_media_support_commands = install_media_support_commands,
-        support_commit = NVIDIA_SUPPORT_COMMIT,
-        nvidia_version = inputs.nvidia_version,
-    );
-    let execution_result = run_guest_command_logged(
-        &connection,
-        &command,
-        &connection.runtime_dir.join("nvidia-install-mutation.log"),
-        Some(&cancel),
-    );
-    let staged_result = connection
-        .runtime_dir
-        .join("nvidia-install-mutation-result.json");
-    let result_transfer = run_checked(
+            keyring_path = NVIDIA_USERSPACE_KEYRING_PATH,
+            lock_path = NVIDIA_USERSPACE_LOCK_PATH,
+            kernel = inputs.kernel_version,
+            userspace_arguments = userspace_arguments,
+            compression_profile = NVIDIA_COMPRESSION_PROFILE,
+            mutation_attempt = mutation_attempt,
+            recovery_script_sha256 = recovery_script_sha256,
+            welcome_sha256 = welcome_digests.welcome,
+            welcome_helper_sha256 = welcome_digests.helper,
+            welcome_patcher_sha256 = welcome_digests.patcher,
+            welcome_desktop_sha256 = welcome_digests.desktop,
+            welcome_icon_sha256 = welcome_digests.icon,
+            welcome_gtk_css_sha256 = welcome_digests.gtk_css,
+            welcome_server_sha256 = welcome_digests.server,
+            welcome_html_sha256 = welcome_digests.html,
+            welcome_css_sha256 = welcome_digests.css,
+            welcome_javascript_sha256 = welcome_digests.javascript,
+            welcome_install_art_sha256 = welcome_digests.install_art,
+            welcome_recovery_art_sha256 = welcome_digests.recovery_art,
+            welcome_gaming_art_sha256 = welcome_digests.gaming_art,
+            install_media_support_commands = install_media_support_commands,
+            support_commit = NVIDIA_SUPPORT_COMMIT,
+            nvidia_version = inputs.nvidia_version,
+        );
+        let execution_result = run_guest_command_logged(
+            &connection,
+            &command,
+            &connection.runtime_dir.join("nvidia-install-mutation.log"),
+            Some(&cancel),
+        );
+        let staged_result = connection
+            .runtime_dir
+            .join("nvidia-install-mutation-result.json");
+        let result_transfer = run_checked(
         scp_command(&connection)?
             .arg("builder@127.0.0.1:/tmp/steamos-nvidia-offline-install/install-mutation-result.json")
             .arg(&staged_result),
         "Could not copy the NVIDIA installation result from the x86 guest",
     );
-    if let Err(transfer_error) = result_transfer {
-        return Err(execution_result.err().unwrap_or(transfer_error));
-    }
-    fs::copy(
-        &staged_result,
-        inputs
-            .image_runtime_dir
-            .join("nvidia-install-mutation-result.json"),
-    )
-    .map_err(|e| format!("Could not preserve the NVIDIA installation result: {e}"))?;
-    let document = read_support_install_result(&staged_result)?;
-    let installation = validate_nvidia_install_result(
-        document,
-        &inputs,
-        "success",
-        "install_complete",
-        "complete",
-    )?;
-    execution_result?;
+        if let Err(transfer_error) = result_transfer {
+            return Err(execution_result.err().unwrap_or(transfer_error));
+        }
+        fs::copy(
+            &staged_result,
+            inputs
+                .image_runtime_dir
+                .join("nvidia-install-mutation-result.json"),
+        )
+        .map_err(|e| format!("Could not preserve the NVIDIA installation result: {e}"))?;
+        let document = read_support_install_result(&staged_result)?;
+        let installation = validate_nvidia_install_result(
+            document,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )?;
+        execution_result?;
+        Ok(installation)
+    })();
 
-    {
+    let cleanup_result = {
         let mut manager = build_manager_state
             .lock()
             .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
-        let mut session = manager
-            .session
-            .take()
-            .ok_or("The x86 installer appliance ended before cleanup.")?;
-        stop_nvidia_build_session(&mut session)?;
-    }
+        let matches_operation = manager.session.as_ref().is_some_and(|session| {
+            session.runtime_dir == connection.runtime_dir
+                && session.ssh_port == connection.ssh_port
+                && session.state == "installing"
+        });
+        if !matches_operation {
+            Err("The x86 installer appliance changed identity before cleanup.".into())
+        } else {
+            let mut session = manager
+                .session
+                .take()
+                .ok_or("The x86 installer appliance ended before cleanup.")?;
+            drop(manager);
+            stop_nvidia_build_session(&mut session).map(|_| ())
+        }
+    };
+    let installation = match (installation_result, cleanup_result) {
+        (Ok(installation), Ok(())) => installation,
+        (Err(operation_error), Ok(())) => return Err(operation_error),
+        (Ok(_), Err(cleanup_error)) => {
+            return Err(format!(
+                "NVIDIA mutation completed, but the x86 appliance could not be stopped cleanly: {cleanup_error}"
+            ));
+        }
+        (Err(operation_error), Err(cleanup_error)) => {
+            return Err(format!(
+                "{operation_error} Additionally, the x86 appliance could not be stopped cleanly: {cleanup_error}"
+            ));
+        }
+    };
     let mut manager = image_manager_state
         .lock()
         .map_err(|_| "Appliance state lock is unavailable.")?;

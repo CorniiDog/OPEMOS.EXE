@@ -2814,6 +2814,36 @@ esac
     }
 
     #[test]
+    fn failed_nvidia_operations_reap_only_their_exact_x86_appliance() {
+        let source = include_str!("installer.rs");
+        let validation_started = source
+            .find("let validation_result = (|| -> Result<NvidiaInstallHandoffResult, String>")
+            .expect("validation must capture its terminal result");
+        let validation_cleanup = source
+            .find("failed x86 validation appliance could not be stopped cleanly")
+            .expect("failed validation must report cleanup failure");
+        let installation_started = source
+            .find("let installation_result = (|| -> Result<NvidiaInstallHandoffResult, String>")
+            .expect("mutation must capture its terminal result");
+        let installation_cleanup = source
+            .find("let cleanup_result = {")
+            .expect("mutation must always enter appliance cleanup");
+        let installation_recorded = source
+            .find("session.state = \"nvidia-installed\".into();")
+            .expect("successful mutation must be recorded only after cleanup");
+        assert!(validation_started < validation_cleanup);
+        assert!(installation_started < installation_cleanup);
+        assert!(installation_cleanup < installation_recorded);
+        assert!(source.matches("session.runtime_dir == connection.runtime_dir").count() >= 3);
+        assert!(source.matches("session.ssh_port == connection.ssh_port").count() >= 3);
+        assert!(source.contains("session.state == \"validating\""));
+        assert!(source.contains("session.state == \"installing\""));
+        assert!(source.contains(
+            "NVIDIA mutation completed, but the x86 appliance could not be stopped cleanly"
+        ));
+    }
+
+    #[test]
     fn package_relations_ignore_order_but_reject_unsafe_or_ambiguous_sets() {
         let reviewed = vec![
             "libglvnd".to_string(),
