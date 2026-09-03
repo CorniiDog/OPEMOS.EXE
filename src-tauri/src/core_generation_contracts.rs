@@ -3,6 +3,13 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
+#[cfg(unix)]
+use std::{
+    fs::{self, OpenOptions},
+    io::Read,
+    path::Path,
+};
+
 pub(crate) const DISCOVERY_MAX_BYTES: usize = 256 * 1024;
 pub(crate) const MANIFEST_MAX_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const MAX_TARGETS: usize = 256;
@@ -158,6 +165,140 @@ pub(crate) fn validate_manifest_bytes(bytes: &[u8]) -> Result<GenerationManifest
         parse_canonical(bytes, MANIFEST_MAX_BYTES, "Core generation manifest")?;
     validate_manifest(&manifest)?;
     Ok(manifest)
+}
+
+#[cfg(unix)]
+pub(crate) fn load_discovery_file(
+    root: &Path,
+    filename: &str,
+) -> Result<GenerationDiscovery, String> {
+    let bytes = read_bounded_regular(
+        root,
+        filename,
+        DISCOVERY_MAX_BYTES,
+        "Core generation discovery",
+    )?;
+    validate_discovery_bytes(&bytes)
+}
+
+#[cfg(unix)]
+pub(crate) fn load_manifest_file(
+    root: &Path,
+    filename: &str,
+) -> Result<GenerationManifest, String> {
+    let bytes = read_bounded_regular(
+        root,
+        filename,
+        MANIFEST_MAX_BYTES,
+        "Core generation manifest",
+    )?;
+    validate_manifest_bytes(&bytes)
+}
+
+#[cfg(unix)]
+fn read_bounded_regular(
+    root: &Path,
+    filename: &str,
+    limit: usize,
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+
+    if !root.is_absolute() || !plain_filename(filename) {
+        return Err(format!("{label} location is unsafe."));
+    }
+    let root_before = fs::symlink_metadata(root)
+        .map_err(|_| format!("{label} staging directory is unavailable."))?;
+    if root_before.file_type().is_symlink()
+        || !root_before.is_dir()
+        || fs::canonicalize(root).ok().as_deref() != Some(root)
+    {
+        return Err(format!("{label} staging directory is unsafe."));
+    }
+    let mut root_options = OpenOptions::new();
+    root_options
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let root_handle = root_options
+        .open(root)
+        .map_err(|_| format!("{label} staging directory could not be opened safely."))?;
+    let root_opened = root_handle
+        .metadata()
+        .map_err(|_| format!("{label} staging directory could not be identified."))?;
+    if root_before.dev() != root_opened.dev() || root_before.ino() != root_opened.ino() {
+        return Err(format!("{label} staging directory changed while opening."));
+    }
+
+    let bytes = read_bounded_regular_at(&root_handle, filename, limit, label)?;
+    let root_after = fs::symlink_metadata(root)
+        .map_err(|_| format!("{label} staging directory could not be reidentified."))?;
+    if root_after.file_type().is_symlink()
+        || !root_after.is_dir()
+        || root_after.dev() != root_opened.dev()
+        || root_after.ino() != root_opened.ino()
+    {
+        return Err(format!("{label} staging directory changed while reading."));
+    }
+    Ok(bytes)
+}
+
+#[cfg(unix)]
+fn read_bounded_regular_at(
+    root: &std::fs::File,
+    filename: &str,
+    limit: usize,
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    use std::{
+        ffi::CString,
+        os::fd::{AsRawFd as _, FromRawFd as _},
+        os::unix::fs::MetadataExt as _,
+    };
+
+    let filename = CString::new(filename)
+        .map_err(|_| format!("{label} filename contains an invalid byte."))?;
+    // SAFETY: `root` remains open for the full call, `filename` is a
+    // NUL-terminated basename, and a successful descriptor is immediately
+    // transferred into `File` for exactly-once ownership and closure.
+    let descriptor = unsafe {
+        libc::openat(
+            root.as_raw_fd(),
+            filename.as_ptr(),
+            libc::O_RDONLY | libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if descriptor < 0 {
+        return Err(format!("{label} is missing, unreadable, or unsafe."));
+    }
+    // SAFETY: `descriptor` is a fresh successful `openat` result and is not
+    // owned by any other Rust value.
+    let mut file = unsafe { std::fs::File::from_raw_fd(descriptor) };
+    let before = file
+        .metadata()
+        .map_err(|_| format!("{label} could not be identified."))?;
+    if !before.is_file() || before.nlink() != 1 || before.len() == 0 || before.len() > limit as u64
+    {
+        return Err(format!("{label} is not a bounded single-link file."));
+    }
+    let mut bytes = Vec::with_capacity(before.len() as usize);
+    Read::by_ref(&mut file)
+        .take(limit.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| format!("{label} could not be read."))?;
+    let after = file
+        .metadata()
+        .map_err(|_| format!("{label} could not be reidentified."))?;
+    if before.dev() != after.dev()
+        || before.ino() != after.ino()
+        || before.len() != after.len()
+        || before.mtime() != after.mtime()
+        || before.mtime_nsec() != after.mtime_nsec()
+        || after.nlink() != 1
+        || bytes.len() as u64 != before.len()
+    {
+        return Err(format!("{label} changed while it was read."));
+    }
+    Ok(bytes)
 }
 
 fn validate_discovery(discovery: &GenerationDiscovery) -> Result<(), String> {
@@ -853,7 +994,7 @@ mod tests {
             fs::create_dir_all(destination.parent().unwrap()).unwrap();
             fs::write(destination, output.stdout).unwrap();
         }
-        root
+        fs::canonicalize(root).unwrap()
     }
 
     fn exact_case_names() -> HashSet<&'static str> {
@@ -945,6 +1086,76 @@ mod tests {
         assert!(!valid_timestamp("2027-02-29T23:59:59Z"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn contract_snapshot_reader_rejects_links_and_excessive_files() {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt as _, os::unix::fs::symlink};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "opemos-generation-reader-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let document = root.join("document.json");
+        fs::write(&document, b"safe").unwrap();
+        assert_eq!(
+            read_bounded_regular(&root, "document.json", 4, "test document").unwrap(),
+            b"safe"
+        );
+
+        let symbolic = root.join("symbolic.json");
+        symlink(&document, &symbolic).unwrap();
+        assert!(read_bounded_regular(&root, "symbolic.json", 4, "test document").is_err());
+        let hard = root.join("hard.json");
+        fs::hard_link(&document, &hard).unwrap();
+        assert!(read_bounded_regular(&root, "document.json", 4, "test document").is_err());
+        fs::remove_file(hard).unwrap();
+
+        let fifo = root.join("fifo.json");
+        let fifo_path = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: the path is NUL-free and points inside this test's private
+        // temporary directory.
+        assert_eq!(unsafe { libc::mkfifo(fifo_path.as_ptr(), 0o600) }, 0);
+        assert!(read_bounded_regular(&root, "fifo.json", 4, "test document").is_err());
+
+        fs::write(&document, b"large").unwrap();
+        assert!(read_bounded_regular(&root, "document.json", 4, "test document").is_err());
+        let alias = root
+            .parent()
+            .unwrap()
+            .join(format!("opemos-generation-reader-alias-{nonce}"));
+        symlink(&root, &alias).unwrap();
+        assert!(read_bounded_regular(&alias, "document.json", 8, "test document").is_err());
+        fs::remove_file(alias).unwrap();
+
+        use std::os::unix::fs::OpenOptionsExt as _;
+        fs::write(&document, b"safe").unwrap();
+        let mut root_options = OpenOptions::new();
+        root_options
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        let root_handle = root_options.open(&root).unwrap();
+        let moved = root
+            .parent()
+            .unwrap()
+            .join(format!("opemos-generation-reader-moved-{nonce}"));
+        fs::rename(&root, &moved).unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("document.json"), b"evil").unwrap();
+        assert_eq!(
+            read_bounded_regular_at(&root_handle, "document.json", 4, "test document").unwrap(),
+            b"safe"
+        );
+        fs::remove_dir_all(&root).unwrap();
+        fs::rename(&moved, &root).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn local_core_generation_matrix_matches_closed_rust_contract() {
         let Some(repository) = local_core_repository() else {
@@ -1026,6 +1237,28 @@ mod tests {
                 ))
             })
             .collect::<HashMap<_, _>>();
+
+        let valid_case = fixtures
+            .cases
+            .iter()
+            .find(|case| case.name == "valid-next-generation")
+            .unwrap();
+        let discovery_path = exported.join("discovery.json");
+        let manifest_path = exported.join("manifest.json");
+        fs::write(
+            &discovery_path,
+            fixture_payload(valid_case, true, &bases).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            &manifest_path,
+            fixture_payload(valid_case, false, &bases).unwrap(),
+        )
+        .unwrap();
+        let loaded_discovery = load_discovery_file(&exported, "discovery.json").unwrap();
+        let loaded_manifest = load_manifest_file(&exported, "manifest.json").unwrap();
+        validate_pair(&loaded_discovery, &loaded_manifest).unwrap();
+
         for case in &fixtures.cases {
             let discovery_bytes = fixture_payload(case, true, &bases).unwrap();
             let manifest_bytes = fixture_payload(case, false, &bases).unwrap();

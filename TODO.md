@@ -109,8 +109,9 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   schema-1 models plus all 74 inactive compatibility cases from exact local
   commit `e9ad58a1c1d5908627186782ef32388d45c21187`. Bind durable cache identity
   to `{sequence, manifestSha256}`, retain a monotonic high-water sequence, and
-  keep rollback on the previously healthy generation. This is contract testing,
-  not a production trust or release pin.
+  keep rollback on the previously healthy generation. Provide fixture-tested,
+  root-confined snapshot readers for future staged documents. This is contract
+  testing, not a production trust or release pin.
 - [ ] Show the available, selected, active, and last-known-good Core generations
   plus exact-target support in normal and maintainer UI. Preserve explicit source
   intent; never substitute a nearby target, lock, or generation.
