@@ -23,6 +23,9 @@ use crate::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+#[cfg(all(test, unix))]
+mod owned_child;
+
 pub(crate) const MAX_EVIDENCE_BYTES: usize = 64 * 1024;
 
 const EVIDENCE_KIND: &str = "opemos-userspace-lock-verifier-evidence";

@@ -172,9 +172,13 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   schemas and compatibility fixtures are byte-identical to the validated
   `dfa83a01ad7d8cb915466de86229741f725c83b8` baseline. This records the
   complete published Core lifecycle without activating production trust.
+- [x] Add an inactive Unix verifier-child lifecycle substrate with an exact
+  executable digest, bounded output, deterministic cancellation/timeout,
+  process-group descendant reaping, and descriptor-confined cleanup tests.
 - [ ] Before production wiring, bind the verifier to an identity-pinned snapshot
-  of the exact installed policy and keyring hashes, and run transport/verifier
-  children in an owned cancellable executor with timeout and descendant reaping.
+  of the exact installed policy, keyring, and checkpoint. Retain those guards
+  through activation and choose a reviewed signed/platform launch path for
+  macOS; the current pathname fallback is lifecycle-test-only.
 - [ ] Repin or activate a generation only after Core’s complete Fedora suite and
   this repository’s unit, integration, cancellation, cleanup, malformed-input,
   lifecycle, ENOSPC, replay/downgrade, and final-image tests pass against the
