@@ -376,8 +376,9 @@ mod tests {
         collections::{HashMap, HashSet},
         fs,
         io::Read,
+        os::unix::process::CommandExt as _,
         path::{Path, PathBuf},
-        process::{Command, Stdio},
+        process::{Child, Command, ExitStatus, Stdio},
         sync::atomic::{AtomicU64, Ordering},
         thread,
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -387,6 +388,14 @@ mod tests {
     const FIXTURE_LIMIT: usize = 512 * 1024;
     const STDERR_LIMIT: usize = 64 * 1024;
     static EXPORT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+    const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
+
+    #[derive(Debug)]
+    struct BoundedCommandOutput {
+        status: ExitStatus,
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+    }
 
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -488,11 +497,17 @@ mod tests {
             assert!(!required, "configured immutable Core repository is absent");
             return None;
         }
-        let output = match Command::new(git_program)
+        let mut command = Command::new(git_program);
+        command
             .args(["cat-file", "-e", &format!("{CONTRACT_COMMIT}^{{commit}}")])
-            .current_dir(&repository)
-            .output()
-        {
+            .current_dir(&repository);
+        let output = match run_bounded_command(
+            &mut command,
+            1024,
+            STDERR_LIMIT,
+            COMMAND_TIMEOUT,
+            "inspect immutable Core repository",
+        ) {
             Ok(output) => output,
             Err(error) => {
                 assert!(
@@ -527,11 +542,18 @@ mod tests {
             "lib/userspace_lock_bootstrap_contract.py",
             "lib/userspace_lock_generation_contract.py",
         ] {
-            let output = Command::new("git")
+            let mut command = Command::new("git");
+            command
                 .args(["show", &format!("{CONTRACT_COMMIT}:{relative}")])
-                .current_dir(repository)
-                .output()
-                .expect("export exact Core bootstrap fixture source");
+                .current_dir(repository);
+            let output = run_bounded_command(
+                &mut command,
+                1024 * 1024,
+                STDERR_LIMIT,
+                COMMAND_TIMEOUT,
+                "export exact Core bootstrap fixture source",
+            )
+            .expect("export exact Core bootstrap fixture source");
             assert!(
                 output.status.success(),
                 "missing pinned Core file {relative}"
@@ -565,44 +587,124 @@ mod tests {
     }
 
     fn run_fixture_generator(path: &Path) -> Vec<u8> {
-        run_fixture_generator_with_timeout(path, Duration::from_secs(15))
+        run_fixture_generator_with_timeout(path, COMMAND_TIMEOUT)
     }
 
-    fn run_fixture_generator_with_timeout(path: &Path, timeout: Duration) -> Vec<u8> {
-        let mut child = Command::new("python3")
-            .arg(path)
-            .current_dir("/")
-            .env("PYTHONDONTWRITEBYTECODE", "1")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+    fn kill_process_group_and_reap(child: &mut Child) {
+        let pid = child.id();
+        if let Ok(pid) = i32::try_from(pid) {
+            // The command was placed in a fresh process group whose ID is its
+            // PID, so descendants are terminated before the leader is reaped.
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
+        } else {
+            let _ = child.kill();
+        }
+        let _ = child.wait();
+    }
+
+    fn run_bounded_command(
+        command: &mut Command,
+        stdout_limit: usize,
+        stderr_limit: usize,
+        timeout: Duration,
+        label: &str,
+    ) -> Result<BoundedCommandOutput, String> {
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        command.process_group(0);
+        let child = command
             .spawn()
-            .expect("run exact Core bootstrap fixture generator");
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
-        let stdout_thread = thread::spawn(move || bounded_pipe(stdout, FIXTURE_LIMIT));
-        let stderr_thread = thread::spawn(move || bounded_pipe(stderr, STDERR_LIMIT));
+            .map_err(|error| format!("Could not {label}: {error}"))?;
+        collect_bounded_child(child, stdout_limit, stderr_limit, timeout, label)
+    }
+
+    fn collect_bounded_child(
+        mut child: Child,
+        stdout_limit: usize,
+        stderr_limit: usize,
+        timeout: Duration,
+        label: &str,
+    ) -> Result<BoundedCommandOutput, String> {
+        let stdout = match child.stdout.take() {
+            Some(stdout) => stdout,
+            None => {
+                kill_process_group_and_reap(&mut child);
+                return Err(format!("Could not capture {label} stdout."));
+            }
+        };
+        let stderr = match child.stderr.take() {
+            Some(stderr) => stderr,
+            None => {
+                kill_process_group_and_reap(&mut child);
+                drop(stdout);
+                return Err(format!("Could not capture {label} stderr."));
+            }
+        };
+        let stdout_thread = thread::spawn(move || bounded_pipe(stdout, stdout_limit));
+        let stderr_thread = thread::spawn(move || bounded_pipe(stderr, stderr_limit));
         let deadline = Instant::now() + timeout;
         let status = loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                break status;
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    // The leader can exit while descendants retain its pipes.
+                    // End the isolated group before joining either reader.
+                    kill_process_group_and_reap(&mut child);
+                    break status;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    kill_process_group_and_reap(&mut child);
+                    let _ = stdout_thread.join();
+                    let _ = stderr_thread.join();
+                    return Err(format!("Could not wait for {label}: {error}"));
+                }
             }
             if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
+                kill_process_group_and_reap(&mut child);
                 let _ = stdout_thread.join();
                 let _ = stderr_thread.join();
-                panic!("Core bootstrap fixture generator exceeded its deadline");
+                return Err(format!("{label} exceeded its deadline."));
             }
             thread::sleep(Duration::from_millis(10));
         };
-        let (stdout, stdout_excessive) = stdout_thread.join().unwrap();
-        let (stderr, stderr_excessive) = stderr_thread.join().unwrap();
-        assert!(!stderr_excessive, "Core fixture stderr exceeded its bound");
-        assert!(status.success(), "{}", String::from_utf8_lossy(&stderr));
-        assert!(stderr.is_empty());
-        assert!(!stdout_excessive && !stdout.is_empty());
-        assert!(stdout.ends_with(b"\n"));
-        stdout
+        let (stdout, stdout_excessive) = stdout_thread
+            .join()
+            .map_err(|_| format!("Could not read {label} stdout."))?;
+        let (stderr, stderr_excessive) = stderr_thread
+            .join()
+            .map_err(|_| format!("Could not read {label} stderr."))?;
+        if stdout_excessive || stderr_excessive {
+            return Err(format!("{label} output exceeded its bound."));
+        }
+        Ok(BoundedCommandOutput {
+            status,
+            stdout,
+            stderr,
+        })
+    }
+
+    fn run_fixture_generator_with_timeout(path: &Path, timeout: Duration) -> Vec<u8> {
+        let mut command = Command::new("python3");
+        command
+            .arg(path)
+            .current_dir("/")
+            .env("PYTHONDONTWRITEBYTECODE", "1");
+        let output = run_bounded_command(
+            &mut command,
+            FIXTURE_LIMIT,
+            STDERR_LIMIT,
+            timeout,
+            "run Core bootstrap fixture generator",
+        )
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty() && output.stdout.ends_with(b"\n"));
+        output.stdout
     }
 
     fn policy_payload<'a>(
@@ -927,7 +1029,90 @@ mod tests {
     }
 
     #[test]
-    fn fixture_generator_timeout_kills_and_reaps_child() {
+    fn bounded_pipe_stops_reading_at_the_limit() {
+        struct OneReadThenPanic(bool);
+
+        impl Read for OneReadThenPanic {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                assert!(!self.0, "bounded reader continued after detecting excess");
+                self.0 = true;
+                buffer[..4].copy_from_slice(b"xxxx");
+                Ok(4)
+            }
+        }
+
+        let (bytes, excessive) = bounded_pipe(OneReadThenPanic(false), 3);
+        assert_eq!(bytes, b"xxx");
+        assert!(excessive);
+    }
+
+    #[test]
+    fn fixture_generator_output_is_bounded() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-core-bootstrap-output-cap-{}-{}",
+            std::process::id(),
+            EXPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        let generator = root.join("excessive.py");
+        fs::write(
+            &generator,
+            format!(
+                "import sys\nsys.stdout.write('x' * {})\n",
+                FIXTURE_LIMIT + 1
+            ),
+        )
+        .unwrap();
+        let result = std::panic::catch_unwind(|| {
+            run_fixture_generator_with_timeout(&generator, Duration::from_secs(2))
+        });
+        assert!(result.is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_captured_pipe_kills_and_reaps_process_group() {
+        fn sleeping_child() -> Child {
+            let mut command = Command::new("python3");
+            command
+                .args(["-c", "import time; time.sleep(60)"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            command.process_group(0);
+            command.spawn().unwrap()
+        }
+
+        let started = Instant::now();
+        let mut missing_stdout = sleeping_child();
+        let held_stdout = missing_stdout.stdout.take().unwrap();
+        let error = collect_bounded_child(
+            missing_stdout,
+            FIXTURE_LIMIT,
+            STDERR_LIMIT,
+            Duration::from_secs(2),
+            "capture-test child",
+        )
+        .unwrap_err();
+        assert!(error.contains("stdout"));
+        drop(held_stdout);
+
+        let mut missing_stderr = sleeping_child();
+        let held_stderr = missing_stderr.stderr.take().unwrap();
+        let error = collect_bounded_child(
+            missing_stderr,
+            FIXTURE_LIMIT,
+            STDERR_LIMIT,
+            Duration::from_secs(2),
+            "capture-test child",
+        )
+        .unwrap_err();
+        assert!(error.contains("stderr"));
+        drop(held_stderr);
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn fixture_generator_timeout_kills_and_reaps_process_group() {
         let root = std::env::temp_dir().join(format!(
             "opemos-core-bootstrap-timeout-{}-{}",
             std::process::id(),
@@ -942,6 +1127,29 @@ mod tests {
         });
         assert!(result.is_err());
         assert!(started.elapsed() < Duration::from_secs(3));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn completed_fixture_leader_cannot_leave_descendant_pipes_open() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-core-bootstrap-descendant-pipe-{}-{}",
+            std::process::id(),
+            EXPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        let generator = root.join("descendant.py");
+        fs::write(
+            &generator,
+            b"import subprocess, sys\nprint('{}', flush=True)\nsubprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n",
+        )
+        .unwrap();
+        let started = Instant::now();
+        assert_eq!(
+            run_fixture_generator_with_timeout(&generator, Duration::from_secs(2)),
+            b"{}\n"
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
         fs::remove_dir_all(root).unwrap();
     }
 }
