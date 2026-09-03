@@ -2910,6 +2910,14 @@ esac
             ],
             userspace_lock,
         };
+        let result_inputs = SupportInstallInputNames {
+            archive: Some("modules.tar.gz".into()),
+            provenance: Some("modules.provenance.json".into()),
+            nvidia_utils: Some("nvidia-utils-575.64.05-2-x86_64.pkg.tar.zst".into()),
+            lib32_nvidia_utils: Some(
+                "lib32-nvidia-utils-575.64.05-1-x86_64.pkg.tar.zst".into(),
+            ),
+        };
         let validated_package = |name: &str, release: &str, signer: &str, signer_digest: char| {
             let mut package = SupportInstallPackage {
                 name: name.into(),
@@ -2980,6 +2988,7 @@ esac
                 architecture: "x86_64".into(),
             },
             trust: "certified-published".into(),
+            inputs: result_inputs.clone(),
             cleanup: SupportInstallCleanup {
                 mounts_released: true,
                 runtime_mounts_expected: 4,
@@ -3362,6 +3371,18 @@ esac
             installed.initramfs_workspace.inode_capacity_mode.as_deref(),
             Some("dynamic-probed")
         );
+        let mut mismatched_inputs = successful.clone();
+        mismatched_inputs.inputs.archive = Some("different.tar.gz".into());
+        assert!(validate_nvidia_install_result(
+            mismatched_inputs,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )
+        .err()
+        .expect("mismatched top-level inputs must fail")
+        .contains("input identities"));
         assert_eq!(
             installed
                 .payload_receipt
@@ -3548,6 +3569,7 @@ esac
                 architecture: "x86_64".into(),
             },
             trust: "certified-published".into(),
+            inputs: result_inputs.clone(),
             cleanup: SupportInstallCleanup {
                 mounts_released: true,
                 runtime_mounts_expected: 4,
@@ -3675,6 +3697,7 @@ esac
                 architecture: "x86_64".into(),
             },
             trust: "certified-published".into(),
+            inputs: result_inputs,
             cleanup: SupportInstallCleanup {
                 mounts_released: true,
                 runtime_mounts_expected: 4,

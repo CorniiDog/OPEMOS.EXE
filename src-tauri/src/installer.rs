@@ -1692,6 +1692,42 @@ pub(crate) fn validate_nvidia_install_result(
     {
         return Err(support_install_failure_message(&document));
     }
+    let input_name = |path: &Path, description: &str| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| format!("The staged {description} has no safe filename."))
+    };
+    let package_name = |name: &str| {
+        let matches = inputs
+            .packages
+            .iter()
+            .filter(|package| package.name == name && package.role == "nvidia-userspace")
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Err(format!(
+                "The reviewed userspace handoff requires exactly one {name} package."
+            ));
+        }
+        guest_userspace_filenames(matches[0]).map(|(filename, _)| filename)
+    };
+    let expected_inputs = SupportInstallInputNames {
+        archive: Some(input_name(&inputs.archive, "NVIDIA module archive")?),
+        provenance: Some(input_name(&inputs.provenance, "NVIDIA provenance")?),
+        nvidia_utils: Some(package_name("nvidia-utils")?),
+        lib32_nvidia_utils: Some(package_name("lib32-nvidia-utils")?),
+    };
+    if document.inputs.archive != expected_inputs.archive
+        || document.inputs.provenance != expected_inputs.provenance
+        || document.inputs.nvidia_utils != expected_inputs.nvidia_utils
+        || document.inputs.lib32_nvidia_utils != expected_inputs.lib32_nvidia_utils
+    {
+        return Err(
+            "Offline installer result input identities do not match the authenticated handoff."
+                .into(),
+        );
+    }
     if document.target.steamos_version != inputs.steamos_version
         || document.target.kernel_version != inputs.kernel_version
         || document.target.nvidia_version != inputs.nvidia_version

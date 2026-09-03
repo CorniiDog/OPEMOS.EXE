@@ -879,6 +879,15 @@ pub(crate) struct NvidiaInstallInputs {
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct SupportInstallInputNames {
+    pub(crate) archive: Option<String>,
+    pub(crate) provenance: Option<String>,
+    pub(crate) nvidia_utils: Option<String>,
+    pub(crate) lib32_nvidia_utils: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SupportInstallResult {
     pub(crate) schema_version: u32,
     pub(crate) status: String,
@@ -887,6 +896,7 @@ pub(crate) struct SupportInstallResult {
     pub(crate) phase: String,
     pub(crate) target: SupportInstallTarget,
     pub(crate) trust: String,
+    pub(crate) inputs: SupportInstallInputNames,
     pub(crate) cleanup: SupportInstallCleanup,
     pub(crate) validation: Option<SupportInstallValidationDocument>,
     pub(crate) module_verification: Option<SupportModuleVerification>,
