@@ -156,10 +156,15 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   final-image verification.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
-- [x] After Core pushes `1fde359025031a99055763dca76e0d709486ffac` or a
-  reviewed successor preserving these contracts, repin CI so the 74 generation,
-  16 OpenPGP, 49 bootstrap, 28 verifier-evidence, and 35 request-plan cases run
-  remotely. A commit pin does not activate its unpublished candidate bundle.
+- [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
+  repin CI so the 74 generation, 16 OpenPGP, 49 bootstrap, 28 verifier-evidence,
+  and 35 request-plan cases run remotely. A contract-fixture pin does not
+  activate a candidate bundle.
+- [x] Validate the same contract fixtures at published hardening successor
+  `dfa83a01ad7d8cb915466de86229741f725c83b8` and repin the immutable CI
+  checkout after byte-level compatibility passes. Keep newer local Core
+  lifecycle commits inactive until they are explicitly published and
+  cross-repository tests pass.
 - [ ] Before production wiring, bind the verifier to an identity-pinned snapshot
   of the exact installed policy and keyring hashes, and run transport/verifier
   children in an owned cancellable executor with timeout and descendant reaping.
@@ -208,7 +213,9 @@ inactive bootstrap policy and checkpoint compatibility contract, including
 portable immutable namespace identities. It ships no production trust material
 or service location. Core commit `1fde359025031a99055763dca76e0d709486ffac`
 adds the closed inactive request-plan and verifier-capability contracts without
-shipping a production verifier, transport, or endpoint.
+shipping a production verifier, transport, or endpoint. Published successor
+`dfa83a01ad7d8cb915466de86229741f725c83b8` preserves those shared contracts
+while hardening Core-owned device acquisition staging.
 
 Compatibility fixture only—never use this as a permanent global trust root:
 

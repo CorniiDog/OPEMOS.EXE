@@ -156,7 +156,7 @@ assert.deepEqual(await pngRgbaCornerAlphas("docs/assets/images/opemos-app-icon.p
 assert.deepEqual(await pngRgbaCornerAlphas("src-tauri/icons/icon.png"), [0, 0, 0, 0]);
 
 const checks = await read(".github/workflows/checks.yml");
-const coreContractCommit = "1fde359025031a99055763dca76e0d709486ffac";
+const coreContractCommit = "dfa83a01ad7d8cb915466de86229741f725c83b8";
 assert.match(checks, /^name: Checks$/m);
 assert.match(checks, /npm run test:frontend/);
 assert.match(checks, /cargo clippy --manifest-path src-tauri\/Cargo\.toml/);
