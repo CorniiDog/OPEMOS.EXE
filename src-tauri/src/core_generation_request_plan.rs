@@ -7,15 +7,15 @@ use crate::core_generation_verifier::{
     parse_verifier_evidence_record, verify_generation_snapshots, DetachedVerifierOutput,
     MAX_EVIDENCE_BYTES,
 };
-use crate::core_generation_verifier::{RequestPlanInputs, SnapshotBoundAuthenticationEvidence};
+use crate::core_generation_verifier::{
+    AuthenticatedGeneration, RequestPlanInputs, SnapshotBoundAuthenticationEvidence,
+};
 use crate::{
     core_contracts::reject_duplicate_contract_keys,
-    core_generation_bootstrap::{
-        expected_generation_authority, parse_bootstrap_policy, BootstrapPolicy,
-    },
+    core_generation_bootstrap::{expected_generation_authority, BootstrapPolicy},
     core_generation_contracts::{
-        validate_discovery_bytes, validate_manifest_bytes, validate_pair, GenerationDiscovery,
-        MAX_FILES, MAX_GENERATION_STORAGE_BYTES, MAX_SIGNATURE_BYTES,
+        validate_pair, GenerationDiscovery, MAX_FILES, MAX_GENERATION_STORAGE_BYTES,
+        MAX_SIGNATURE_BYTES,
     },
     core_generation_verifier::validate_evidence_capability,
 };
@@ -61,6 +61,63 @@ pub(crate) struct GenerationRequest {
     pub(crate) expected_sha256: String,
 }
 
+/// A payload request derived inside this module from one sealed authenticated
+/// generation. Its fields cannot be caller-constructed or mutated before the
+/// inactive acquisition transport consumes them.
+pub(crate) struct AuthenticatedPayloadRequest {
+    request: GenerationRequest,
+    _seal: RequestSeal,
+}
+
+struct RequestSeal;
+
+impl AuthenticatedPayloadRequest {
+    pub(crate) fn filename(&self) -> &str {
+        &self.request.filename
+    }
+
+    pub(crate) fn expected_size(&self) -> u64 {
+        self.request.expected_size
+    }
+
+    pub(crate) fn expected_sha256(&self) -> &str {
+        &self.request.expected_sha256
+    }
+
+    #[cfg(test)]
+    pub(crate) fn path(&self) -> &str {
+        &self.request.path
+    }
+
+    #[cfg(test)]
+    pub(crate) fn url(&self) -> &str {
+        &self.request.url
+    }
+}
+
+pub(crate) fn authenticated_payload_requests(
+    generation: &AuthenticatedGeneration,
+) -> Result<Vec<AuthenticatedPayloadRequest>, String> {
+    let inputs = generation.request_plan_inputs();
+    let plan = build_request_plan(&inputs, generation)?;
+    if plan.redirects || plan.requests.len() < 5 {
+        return Err("Authenticated request plan has no payload inventory.".into());
+    }
+    plan.requests
+        .into_iter()
+        .skip(4)
+        .map(|request| {
+            if request.request_kind != "payload" {
+                return Err("Authenticated request plan contains a non-payload request.".into());
+            }
+            Ok(AuthenticatedPayloadRequest {
+                request,
+                _seal: RequestSeal,
+            })
+        })
+        .collect()
+}
+
 fn parse_canonical<T: DeserializeOwned>(
     bytes: &[u8],
     limit: usize,
@@ -85,15 +142,16 @@ pub(crate) fn build_request_plan(
     inputs: &RequestPlanInputs<'_>,
     evidence: &SnapshotBoundAuthenticationEvidence,
 ) -> Result<GenerationRequestPlan, String> {
-    let policy = parse_bootstrap_policy(inputs.policy_payload)?;
-    let discovery = validate_discovery_bytes(inputs.discovery_payload)?;
-    let manifest = validate_manifest_bytes(inputs.manifest_payload)?;
-    validate_pair(&discovery, &manifest)?;
-    let expected_authority = expected_generation_authority(&policy, inputs.policy_payload)?;
-    if discovery.authority != expected_authority {
+    validate_evidence_capability(evidence, inputs)?;
+    let policy = evidence.policy();
+    let discovery = evidence.discovery();
+    let manifest = evidence.manifest();
+    validate_pair(discovery, manifest)?;
+    let expected_authority = expected_generation_authority(policy, inputs.policy_payload)?;
+    if evidence.authority() != &expected_authority || discovery.authority != expected_authority {
         return Err("Authenticated discovery authority differs from bootstrap policy.".into());
     }
-    require_supported_compatibility(&policy, &discovery)?;
+    require_supported_compatibility(policy, discovery)?;
     if !(1..=MAX_SIGNATURE_BYTES as usize).contains(&inputs.discovery_signature.len())
         || !(1..=MAX_SIGNATURE_BYTES as usize).contains(&inputs.manifest_signature.len())
     {
@@ -107,7 +165,6 @@ pub(crate) fn build_request_plan(
     {
         return Err("Generation identity differs from authenticated inputs.".into());
     }
-    validate_evidence_capability(evidence, inputs)?;
     if evidence.record().keyring_sha256 != policy.authority.keyring_sha256
         || evidence.record().primary_signing_fingerprint
             != policy.authority.primary_signing_fingerprint
@@ -708,7 +765,8 @@ mod tests {
         verify_generation_snapshots(
             inputs,
             fixture.keyring_payload.as_bytes(),
-            |_payload, _signature, _keyring, role| {
+            &|| false,
+            |_payload, _signature, _keyring, role, _cancelled| {
                 let (exit_status, status) = if role == "discovery" {
                     (
                         fixture.verifier.discovery_exit_status,
@@ -1063,7 +1121,8 @@ mod tests {
         let capability = verify_generation_snapshots(
             &inputs,
             valid.inputs.keyring_payload.as_bytes(),
-            |payload, signature, keyring, role| {
+            &|| false,
+            |payload, signature, keyring, role, _cancelled| {
                 calls.push((
                     payload.to_vec(),
                     signature.to_vec(),
@@ -1114,7 +1173,10 @@ mod tests {
         let error = verify_generation_snapshots(
             &inputs,
             valid.inputs.keyring_payload.as_bytes(),
-            |_payload, _signature, _keyring, _role| Err("sensitive verifier failure".into()),
+            &|| false,
+            |_payload, _signature, _keyring, _role, _cancelled| {
+                Err("sensitive verifier failure".into())
+            },
         )
         .err()
         .unwrap();

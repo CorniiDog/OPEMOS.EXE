@@ -113,12 +113,13 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   unprotected generations to bounded count and byte budgets. Keep this
   disconnected from production until a compatible generation is published
   through an authenticated trust root and bootstrap checkpoint.
-- [x] Add inactive dependency-injected host acquisition that authenticates raw
-  discovery and manifest bytes before parsing, binds the exact installed
-  authority and target, streams bounded payloads into an identity-pinned
-  candidate directory, rehashes the exact disk inventory, and commits without
-  changing active state. This has no production transport, keyring, command, or
-  UI entry point.
+- [x] Add inactive test-only host acquisition using one sealed two-phase
+  verifier capability. Authenticate discovery before deriving the exact
+  manifest request; bind policy, keyring, authority, target, documents, and
+  signatures; then stream only sealed request-plan payloads into an
+  identity-pinned candidate. Freshly verify the exact disk inventory inside
+  atomic cache commit without changing active state. This has no production
+  transport, trust root, command, or UI entry point.
 - [x] Consume Core's closed userspace-lock discovery and generation-manifest
   schema-1 models plus all 74 inactive compatibility cases and additive
   consumer handoff metadata preserved at exact local successor commit
