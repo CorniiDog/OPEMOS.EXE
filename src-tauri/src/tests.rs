@@ -2201,6 +2201,18 @@ esac
         assert!(unique_release_asset(exact_release, &provenance_name)
             .unwrap()
             .is_some());
+
+        let duplicated = vec![releases[1].clone(), releases[1].clone()];
+        assert!(select_published_nvidia_release(
+            &ready_published_target("3.8.16", kernel),
+            &duplicated,
+        )
+        .is_err());
+        assert!(select_nvidia_build_baseline(
+            &ready_published_target("3.8.17", "different-kernel"),
+            &duplicated,
+        )
+        .is_err());
     }
 
     #[test]

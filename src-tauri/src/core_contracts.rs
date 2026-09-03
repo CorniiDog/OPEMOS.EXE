@@ -932,31 +932,37 @@ pub(crate) fn compare_core_and_legacy_resolver(
     if core.status != legacy.status && !exact_build_equivalent {
         return Err("OPEMOS Core and legacy Rust resolver decisions are not equivalent.".into());
     }
+    let compatibility_equivalent = core.compatibility == legacy.compatibility
+        || core.compatibility.is_none()
+            && core.publication.as_ref().is_some_and(|publication| {
+                let derived = if publication.steamos_version == core.target.steamos_version {
+                    "exact"
+                } else {
+                    "same_series_fallback"
+                };
+                legacy.compatibility.as_deref() == Some(derived)
+            });
     if core.target.steamos_version != legacy.target.steamos_version.as_deref().unwrap_or_default()
         || core.target.kernel_version != legacy.target.kernel_version.as_deref().unwrap_or_default()
         || core.target.architecture != legacy.target.architecture
-        || (!exact_build_equivalent && core.compatibility != legacy.compatibility)
+        || (!exact_build_equivalent && !compatibility_equivalent)
     {
         return Err("OPEMOS Core and legacy Rust resolver decisions are not equivalent.".into());
     }
-    if core.status == "compatible" {
-        let core_publication = core
-            .publication
-            .as_ref()
-            .ok_or("Core publication missing.")?;
-        let legacy_publication = legacy
-            .publication
-            .as_ref()
-            .ok_or("Legacy publication missing.")?;
-        if core_publication.tag != legacy_publication.tag
-            || core_publication.steamos_version != legacy_publication.steamos_version
-            || core_publication.kernel_version != legacy_publication.kernel_version
-            || core_publication.nvidia_version != legacy_publication.nvidia_version
-            || core_publication.published_at != legacy_publication.published_at
-        {
-            return Err("OPEMOS Core and legacy Rust resolver publications differ.".into());
-        }
-    } else if !exact_build_equivalent && core.reason.as_deref() != Some(legacy.reason.as_str()) {
+    match (&core.publication, &legacy.publication) {
+        (Some(core_publication), Some(legacy_publication))
+            if core_publication.tag == legacy_publication.tag
+                && core_publication.steamos_version == legacy_publication.steamos_version
+                && core_publication.kernel_version == legacy_publication.kernel_version
+                && core_publication.nvidia_version == legacy_publication.nvidia_version
+                && core_publication.published_at == legacy_publication.published_at => {}
+        (None, None) => {}
+        _ => return Err("OPEMOS Core and legacy Rust resolver publications differ.".into()),
+    }
+    if core.status != "compatible"
+        && !exact_build_equivalent
+        && core.reason.as_deref() != Some(legacy.reason.as_str())
+    {
         return Err("OPEMOS Core and legacy Rust resolver failure reasons differ.".into());
     }
     Ok(())
@@ -1421,6 +1427,16 @@ mod tests {
             invoke_core_resolver(&root, &root, &legacy.target, &incomplete_releases).unwrap();
         assert_eq!(incomplete.reason.as_deref(), Some("release_assets_missing"));
         assert!(incomplete.next_action.is_none());
+        let legacy_incomplete = resolve_published_nvidia_for_target(
+            legacy.target.clone(),
+            &root,
+            &nvidia_http_client().unwrap(),
+            &incomplete_releases,
+            &AtomicBool::new(false),
+            &|_, _, _| {},
+        )
+        .unwrap();
+        compare_core_and_legacy_resolver(&incomplete, &legacy_incomplete).unwrap();
 
         let duplicated_release = invoke_core_resolver(
             &root,
@@ -1434,6 +1450,31 @@ mod tests {
             Some("release_metadata_ambiguous")
         );
         assert!(duplicated_release.next_action.is_none());
+        assert!(select_published_nvidia_release(
+            &legacy.target,
+            &[releases[0].clone(), releases[0].clone(),]
+        )
+        .is_err());
+
+        let mut duplicated_assets = releases.clone();
+        let duplicated_asset = duplicated_assets[0].assets[0].clone();
+        duplicated_assets[0].assets.push(duplicated_asset);
+        let core_duplicated_assets =
+            invoke_core_resolver(&root, &root, &legacy.target, &duplicated_assets).unwrap();
+        assert_eq!(
+            core_duplicated_assets.reason.as_deref(),
+            Some("release_assets_ambiguous")
+        );
+        assert!(core_duplicated_assets.next_action.is_none());
+        assert!(resolve_published_nvidia_for_target(
+            legacy.target.clone(),
+            &root,
+            &nvidia_http_client().unwrap(),
+            &duplicated_assets,
+            &AtomicBool::new(false),
+            &|_, _, _| {},
+        )
+        .is_err());
 
         let fallback_target = NvidiaTargetReadiness {
             steamos_version: Some("3.8.15".into()),

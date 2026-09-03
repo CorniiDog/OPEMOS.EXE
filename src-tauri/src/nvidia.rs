@@ -193,6 +193,15 @@ pub(crate) fn select_published_nvidia_release(
             release.clone(),
         ));
     }
+    let mut seen_tags = HashSet::new();
+    if candidates
+        .iter()
+        .any(|candidate| !seen_tags.insert(candidate.3.tag.as_str()))
+    {
+        return Err(
+            "Published NVIDIA release metadata contains a duplicate compatible tag.".into(),
+        );
+    }
     candidates
         .sort_by(|left, right| (&left.0, &left.1, &left.2).cmp(&(&right.0, &right.1, &right.2)));
     Ok(candidates.pop().map(|(_, _, _, identity, release)| {
@@ -245,6 +254,14 @@ pub(crate) fn select_nvidia_build_baseline(
         } else {
             newer.push(candidate);
         }
+    }
+    let mut seen_tags = HashSet::new();
+    if older_or_equal
+        .iter()
+        .chain(newer.iter())
+        .any(|candidate| !seen_tags.insert(candidate.3.tag.as_str()))
+    {
+        return Err("Published NVIDIA release metadata contains a duplicate baseline tag.".into());
     }
     older_or_equal
         .sort_by(|left, right| (&left.0, &left.1, &left.2).cmp(&(&right.0, &right.1, &right.2)));

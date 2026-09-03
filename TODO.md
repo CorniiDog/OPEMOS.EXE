@@ -96,9 +96,12 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 - [ ] Replace the active 50-entry `PINNED_INSTALLER_FILES` inventory only after
   the canonical 55-file manifest path passes equivalent download, staging,
   cancellation, and tamper tests.
-- [ ] Compare Core and Rust resolution for exact matches, same-series fallback,
-  missing and duplicate assets, malformed metadata, invalid targets, and no
-  compatible release.
+- [x] Compare Core and Rust resolution for exact matches, same-series fallback,
+  incomplete assets, and duplicate release/asset identities; both paths now
+  fail closed on ambiguous publication metadata.
+- [ ] Finish resolver equivalence for malformed metadata, invalid targets, and
+  no compatible release once Core supplies the authoritative NVIDIA source and
+  version needed by `build_exact_target`.
 - [x] Validate Core `nextAction=build_exact_target` only for a genuine
   `no_compatible_release`, and map it to the existing exact-kernel build plan
   during compatibility testing.
