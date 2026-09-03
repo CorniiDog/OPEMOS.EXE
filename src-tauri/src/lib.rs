@@ -44,6 +44,11 @@ mod core_generation_acquisition;
 #[cfg(unix)]
 #[allow(dead_code)]
 mod core_generation_bootstrap;
+// Closed request-plan compatibility derived from snapshot-bound evidence. No
+// production verifier, network, command, cache, or UI path is wired.
+#[cfg(unix)]
+#[allow(dead_code)]
+mod core_generation_request_plan;
 // The migration adapter is exercised before activation. Its production entry
 // points remain deliberately unused until Core publishes an immutable manifest.
 #[allow(dead_code)]
