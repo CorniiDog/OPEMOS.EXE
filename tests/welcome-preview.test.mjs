@@ -83,6 +83,10 @@ test("welcome illustrations preserve balanced geometry and intentional layering"
   const frame = elementWithId(install, "display-frame");
   const panel = elementWithId(install, "display-panel");
   const disc = elementWithId(install, "download-disc");
+  assert.ok(
+    install.indexOf('id="display-stand"') < install.indexOf('id="display-frame"'),
+    "display stand must remain behind the monitor frame",
+  );
   assert.equal(numericAttribute(frame, "x") + numericAttribute(frame, "width") / 2, 260);
   assert.equal(numericAttribute(panel, "x") + numericAttribute(panel, "width") / 2, 260);
   assert.equal(numericAttribute(disc, "cx"), 260);
@@ -125,7 +129,7 @@ test("welcome illustrations preserve balanced geometry and intentional layering"
     "controller silhouette must remain centered",
   );
   assert.ok(controllerHeight >= 140, "controller must retain full-height grips");
-  assert.ok(controllerWidth / controllerHeight < 1.75, "controller must retain reference-like proportions");
+  assert.ok(controllerWidth / controllerHeight < 1.55, "controller must retain Steam Controller proportions");
 
   const directionPad = elementWithId(gaming, "direction-pad");
   const buttonTop = elementWithId(gaming, "button-top");
@@ -140,7 +144,10 @@ test("welcome illustrations preserve balanced geometry and intentional layering"
   assert.equal(numericAttribute(buttonTop, "cx"), numericAttribute(buttonBottom, "cx"));
   assert.equal(numericAttribute(buttonLeft, "cx") + numericAttribute(buttonRight, "cx"), 700);
   assert.equal(numericAttribute(buttonLeft, "cy"), numericAttribute(buttonRight, "cy"));
-  assert.equal(numericAttribute(buttonTop, "cy") + numericAttribute(buttonBottom, "cy"), 398);
+  assert.equal(
+    numericAttribute(buttonTop, "cy") + numericAttribute(buttonBottom, "cy"),
+    2 * numericAttribute(buttonLeft, "cy"),
+  );
 
   const leftStick = elementWithId(gaming, "left-stick");
   const rightStick = elementWithId(gaming, "right-stick");
@@ -149,4 +156,15 @@ test("welcome illustrations preserve balanced geometry and intentional layering"
   assert.equal(numericAttribute(leftStick, "cy"), numericAttribute(rightStick, "cy"));
   assert.equal(numericAttribute(leftStick, "r"), numericAttribute(rightStick, "r"));
   assert.equal(numericAttribute(leftStick, "cx"), 520 - numericAttribute(rightStick, "cx"));
+
+  const leftTrackpad = elementWithId(gaming, "left-trackpad");
+  const rightTrackpad = elementWithId(gaming, "right-trackpad");
+  assert.equal(numericAttribute(leftTrackpad, "width"), numericAttribute(rightTrackpad, "width"));
+  assert.equal(numericAttribute(leftTrackpad, "height"), numericAttribute(rightTrackpad, "height"));
+  assert.equal(
+    numericAttribute(leftTrackpad, "x") + numericAttribute(rightTrackpad, "x")
+      + numericAttribute(leftTrackpad, "width"),
+    520,
+    "twin trackpads must remain mirrored",
+  );
 });

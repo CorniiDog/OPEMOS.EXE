@@ -1,24 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 360" role="img" aria-labelledby="title desc">
   <title id="title">Gaming-ready graphics</title>
-  <desc id="desc">A recognizable game controller floats over a sixteen-by-nine display with blue and green graphics.</desc>
+  <desc id="desc">A simplified Steam Controller with sticks and twin trackpads floats over a sixteen-by-nine display.</desc>
   <defs>
     <linearGradient id="g" x1="0" x2="1"><stop stop-color="#57c4fb"/><stop offset="1" stop-color="#78da70"/></linearGradient>
-    <path id="controller-shape" d="M198 152h124c17 0 30-4 47-13 25-13 50-3 63 21 8 15 14 33 20 54l16 62c10 40-9 68-42 71-25 2-43-14-59-40l-28-44c-16 8-33 10-48 5l-12-13h-38l-12 13c-15 5-32 3-48-5l-28 44c-16 26-34 42-59 40-33-3-52-31-42-71l16-62c6-21 12-39 20-54 13-24 38-34 63-21 17 9 30 13 47 13z"/>
+    <path id="controller-shape" d="M172 126h176c24 0 40 15 46 38l23 106c8 37-9 64-42 68-26 3-42-11-52-35l-9-21H206l-9 21c-10 24-26 38-52 35-33-4-50-31-42-68l23-106c6-23 22-38 46-38z"/>
     <mask id="controller-clearance" maskUnits="userSpaceOnUse" x="0" y="0" width="520" height="360">
       <rect width="520" height="360" fill="white"/>
-      <use id="controller-knockout" href="#controller-shape" transform="translate(31.2 0) scale(.88 1)" fill="black" stroke="black" stroke-width="18" stroke-linejoin="round"/>
+      <use id="controller-knockout" href="#controller-shape" fill="black" stroke="black" stroke-width="18" stroke-linejoin="round"/>
     </mask>
   </defs>
   <g mask="url(#controller-clearance)">
     <rect id="gaming-display" x="84" y="36" width="352" height="198" rx="24" fill="#0b202c" stroke="url(#g)" stroke-width="4"/>
     <path id="gaming-scene" d="M108 208 182 132l56 46 86-88 88 70v48H108z" fill="url(#g)" opacity=".24"/>
   </g>
-  <use id="controller" data-left="77" data-right="443" data-top="126" data-bottom="349" href="#controller-shape" transform="translate(31.2 0) scale(.88 1)" fill="#193747" stroke="url(#g)" stroke-width="4" stroke-linejoin="round"/>
-  <path id="direction-pad" data-center-x="170" d="M170 182v54m-27-27h54" stroke="#ecfaff" stroke-width="10" stroke-linecap="round"/>
-  <circle id="button-top" cx="350" cy="176" r="9" fill="#78da70"/>
-  <circle id="button-right" cx="373" cy="199" r="9" fill="#57c4fb"/>
-  <circle id="button-left" cx="327" cy="199" r="9" fill="#57c4fb"/>
-  <circle id="button-bottom" cx="350" cy="222" r="9" fill="#78da70"/>
-  <circle id="left-stick" cx="223" cy="246" r="17" fill="#dff5fb" fill-opacity=".92" stroke="#57c4fb" stroke-width="4"/>
-  <circle id="right-stick" cx="297" cy="246" r="17" fill="#e7f9e3" fill-opacity=".92" stroke="#78da70" stroke-width="4"/>
+  <use id="controller" data-left="103" data-right="417" data-top="126" data-bottom="341" href="#controller-shape" fill="#193747" stroke="url(#g)" stroke-width="4" stroke-linejoin="round"/>
+  <path id="direction-pad" data-center-x="170" d="M170 150v42m-21-21h42" stroke="#ecfaff" stroke-width="9" stroke-linecap="round"/>
+  <circle id="button-top" cx="350" cy="148" r="8" fill="#78da70"/>
+  <circle id="button-right" cx="371" cy="169" r="8" fill="#57c4fb"/>
+  <circle id="button-left" cx="329" cy="169" r="8" fill="#57c4fb"/>
+  <circle id="button-bottom" cx="350" cy="190" r="8" fill="#78da70"/>
+  <circle id="steam-button" cx="260" cy="153" r="10" fill="#0d2633" stroke="#dff5fb" stroke-opacity=".7" stroke-width="3"/>
+  <path d="M214 148h14m64 0h14" stroke="#9ec4d3" stroke-width="5" stroke-linecap="round"/>
+  <circle id="left-stick" cx="220" cy="204" r="15" fill="#dff5fb" fill-opacity=".92" stroke="#57c4fb" stroke-width="4"/>
+  <circle id="right-stick" cx="300" cy="204" r="15" fill="#e7f9e3" fill-opacity=".92" stroke="#78da70" stroke-width="4"/>
+  <rect id="left-trackpad" x="162" y="232" width="72" height="66" rx="14" transform="rotate(7 198 265)" fill="#0d2633" stroke="#57c4fb" stroke-opacity=".75" stroke-width="4"/>
+  <rect id="right-trackpad" x="286" y="232" width="72" height="66" rx="14" transform="rotate(-7 322 265)" fill="#0d2633" stroke="#78da70" stroke-opacity=".75" stroke-width="4"/>
 </svg>
