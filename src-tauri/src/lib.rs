@@ -27,6 +27,13 @@ use tauri::{Emitter, Manager};
 mod app;
 mod appliance;
 mod contracts;
+// The persistent cache lifecycle is contract-agnostic and remains inactive
+// until Core publishes the authenticated generation-discovery descriptor. Its
+// durable host adapter is Unix-only until a reviewed Windows ACL/replace layer
+// exists.
+#[cfg(unix)]
+#[allow(dead_code)]
+mod core_generation_cache;
 // The migration adapter is exercised before activation. Its production entry
 // points remain deliberately unused until Core publishes an immutable manifest.
 #[allow(dead_code)]

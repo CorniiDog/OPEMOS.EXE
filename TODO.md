@@ -100,6 +100,11 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   it before appliance transfer, retain the last-known-good generation, and make
   activation atomic and rollback-safe across cancellation, ENOSPC, crash, replay,
   and downgrade attempts.
+- [x] Add an inactive Unix host-cache substrate with private create-only
+  candidates, closed-tree durability, cross-process serialization, canonical
+  bounded state, revision/operation compare-and-swap, pending health approval,
+  and independently reverified last-known-good rollback. Keep it disconnected
+  until Core's authenticated discovery schemas and fixtures pass.
 - [ ] Show the available, selected, active, and last-known-good Core generations
   plus exact-target support in normal and maintainer UI. Preserve explicit source
   intent; never substitute a nearby target, lock, or generation.
