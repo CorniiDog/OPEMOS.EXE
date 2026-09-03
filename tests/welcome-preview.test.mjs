@@ -167,4 +167,14 @@ test("welcome illustrations preserve balanced geometry and intentional layering"
     520,
     "twin trackpads must remain mirrored",
   );
+  for (const trackpad of [leftTrackpad, rightTrackpad]) {
+    const conservativeRotatedBottom = numericAttribute(trackpad, "y")
+      + numericAttribute(trackpad, "height")
+      + numericAttribute(trackpad, "stroke-width") / 2
+      + 4;
+    assert.ok(
+      conservativeRotatedBottom <= numericAttribute(controller, "data-saddle-y"),
+      "trackpads must remain inside the controller's raised center contour",
+    );
+  }
 });
