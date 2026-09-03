@@ -257,7 +257,7 @@ Before release, also run the ignored network, QEMU, recovery-image, package,
 USB, cancellation, and real x86_64 Fedora tests explicitly. Skipped live tests
 must be reported; a default-suite pass does not imply hardware certification.
 
-- [ ] Add CI coverage for macOS formatting, warnings-as-errors, Rust tests,
+- [x] Add CI coverage for formatting, warnings-as-errors, Rust tests,
   frontend tests, documentation, and repository hygiene.
 - [ ] Add an x86_64 Linux integration job for Core bundle, resolver, installer,
   and headless image tests without publishing or touching physical disks.

@@ -45,10 +45,15 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: clippy, rustfmt
 
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Reject Rust warnings
+        run: >-
+          cargo clippy --manifest-path src-tauri/Cargo.toml
+          --all-targets --all-features -- -D warnings
 
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
