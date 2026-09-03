@@ -156,6 +156,7 @@ assert.deepEqual(await pngRgbaCornerAlphas("docs/assets/images/opemos-app-icon.p
 assert.deepEqual(await pngRgbaCornerAlphas("src-tauri/icons/icon.png"), [0, 0, 0, 0]);
 
 const checks = await read(".github/workflows/checks.yml");
+const coreContractCommit = "1fde359025031a99055763dca76e0d709486ffac";
 assert.match(checks, /^name: Checks$/m);
 assert.match(checks, /npm run test:frontend/);
 assert.match(checks, /cargo clippy --manifest-path src-tauri\/Cargo\.toml/);
@@ -164,6 +165,13 @@ assert.match(checks, /^permissions:\n  contents: read$/m);
 assert.match(checks, /^concurrency:\n  group: checks-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\n  cancel-in-progress: true$/m);
 assert.match(checks, /timeout-minutes: 15/);
 assert.match(checks, /timeout-minutes: 30/);
+assert.equal(
+  checks.split(coreContractCommit).length - 1,
+  2,
+  "Core checkout ref and fixture expectation must use the same immutable commit",
+);
+assert.doesNotMatch(checks, /82241699497fb605b3d8b3fbc0015ec952f81ef3/);
+assert.match(checks, /persist-credentials: false/);
 
 const pages = await read(".github/workflows/pages.yml");
 for (const action of [

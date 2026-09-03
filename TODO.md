@@ -156,7 +156,7 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   final-image verification.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
-- [ ] After Core pushes `1fde359025031a99055763dca76e0d709486ffac` or a
+- [x] After Core pushes `1fde359025031a99055763dca76e0d709486ffac` or a
   reviewed successor preserving these contracts, repin CI so the 74 generation,
   16 OpenPGP, 49 bootstrap, 28 verifier-evidence, and 35 request-plan cases run
   remotely. A commit pin does not activate its unpublished candidate bundle.
