@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 import {
   buildDiagnosticLog,
@@ -83,7 +86,34 @@ test("structured installer validation progress is strict and measurable", () => 
   assert.equal(inferInstallerValidationProgress(`${marker}\n${prefix}{"schemaVersion":1,`), null);
   assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"schemaVersion":1,"attempt":1,"phase":"hashing","indeterminate":true}`), null);
   assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"attempt":2,"phase":"hashing","indeterminate":false,"completed":4,"total":5,"unit":"items"}\n${prefix}{"schemaVersion":1,"attempt":2,"phase":"hashing","indeterminate":false,"completed":3,"total":5,"unit":"items"}`), null);
+  assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"attempt":2,"phase":"hashing","indeterminate":true}\n${prefix}{"schemaVersion":1,"attempt":1,"phase":"cleanup","indeterminate":true}`), null);
+  assert.notEqual(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"attempt":1,"phase":"hashing","indeterminate":false,"completed":5,"total":5,"unit":"items"}\n${prefix}{"schemaVersion":1,"attempt":2,"phase":"hashing","indeterminate":false,"completed":0,"total":2,"unit":"items"}`), null);
   assert.notEqual(inferInstallerValidationProgress(marker.replace(/}$/, ',"future":{"accepted":true}}')), null);
+});
+
+test("Core installer progress fixtures match the visible progress consumer", (t) => {
+  const generator = fileURLToPath(new URL(
+    "../../open-gpu-kernel-modules-steamos-support/lib/generate_installer_progress_fixtures.py",
+    import.meta.url,
+  ));
+  if (!existsSync(generator)) {
+    t.skip("sibling OPEMOS Core repository is absent");
+    return;
+  }
+  const generated = spawnSync("python3", [generator], {
+    cwd: "/",
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+  });
+  assert.equal(generated.status, 0, generated.stderr);
+  assert.equal(generated.stderr, "");
+  const fixtures = JSON.parse(generated.stdout);
+  assert.equal(fixtures.kind, "opemos-installer-progress-compatibility-fixtures");
+  for (const fixture of fixtures.cases) {
+    const stream = fixture.stream ?? fixture.streamRecipe.text.repeat(fixture.streamRecipe.count);
+    const accepted = inferInstallerValidationProgress(stream) !== null;
+    assert.equal(accepted, fixture.expected.accepted, fixture.name);
+  }
 });
 
 test("structured installer mutation progress reports real package and module work", () => {

@@ -74,8 +74,8 @@ this repository.
 - [x] Preserve an opaque fallback behind the cross-platform frosted-glass UI.
 - [x] Provide bounded, color-aware logs, smart diagnostic copying, monotonic
   progress, keyboard navigation, and coupled companion windows.
-- [x] Add schema-compatible consumers for Core resolver schema 2 and installer
-  progress schema 1.
+- [x] Add fixture-tested schema-compatible consumers for Core resolver schema 2
+  and installer progress schema 1.
 
 Current outputs remain `nvidia-mutation-valid`. Do not call them
 `install-ready`, hardware-certified, or update-safe until the gates below pass.

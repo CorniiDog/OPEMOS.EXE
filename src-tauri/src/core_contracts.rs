@@ -6,6 +6,9 @@ pub(crate) const CORE_PROGRESS_RECORD_LIMIT: usize = 4096;
 pub(crate) const CORE_BUNDLE_MANIFEST_LIMIT: usize = 2 * 1024 * 1024;
 pub(crate) const CORE_RESOLVER_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_INSTALLER_RESULT_FIXTURE_LIMIT: usize = 512 * 1024;
+pub(crate) const CORE_INSTALLER_PROGRESS_FIXTURE_LIMIT: usize = 512 * 1024;
+pub(crate) const CORE_PROGRESS_STREAM_LIMIT: usize = 16 * 1024 * 1024;
+const CORE_PROGRESS_PREFIX: &str = "STEAMOS_NVIDIA_PROGRESS ";
 const CORE_BUNDLE_FILE_LIMIT: u64 = 128 * 1024 * 1024;
 const CORE_BUNDLE_TOTAL_LIMIT: u64 = 256 * 1024 * 1024;
 const CORE_BUNDLE_FILE_COUNT_LIMIT: usize = 256;
@@ -457,6 +460,144 @@ pub(crate) fn parse_core_installer_result_compatibility_fixtures(
     Ok(fixtures)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerProgressCompatibilityFixtures {
+    pub(crate) schema_version: u32,
+    pub(crate) kind: String,
+    pub(crate) progress_schema_version: u32,
+    pub(crate) unfrozen_fields: Vec<String>,
+    pub(crate) limits: CoreInstallerProgressFixtureLimits,
+    pub(crate) cases: Vec<CoreInstallerProgressCompatibilityCase>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerProgressFixtureLimits {
+    pub(crate) max_line_bytes: usize,
+    pub(crate) max_stream_bytes: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerProgressCompatibilityCase {
+    pub(crate) name: String,
+    pub(crate) expected: CoreInstallerProgressCompatibilityExpectation,
+    #[serde(default)]
+    pub(crate) stream: Option<String>,
+    #[serde(default)]
+    pub(crate) stream_recipe: Option<CoreInstallerProgressStreamRecipe>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerProgressCompatibilityExpectation {
+    pub(crate) accepted: bool,
+    #[serde(default)]
+    pub(crate) progress_records: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerProgressStreamRecipe {
+    pub(crate) kind: String,
+    pub(crate) text: String,
+    pub(crate) count: usize,
+}
+
+pub(crate) fn parse_core_installer_progress_compatibility_fixtures(
+    bytes: &[u8],
+) -> Result<CoreInstallerProgressCompatibilityFixtures, String> {
+    if bytes.is_empty() || bytes.len() > CORE_INSTALLER_PROGRESS_FIXTURE_LIMIT {
+        return Err("OPEMOS Core installer-progress fixtures are empty or exceed 512 KiB.".into());
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core installer-progress fixtures")?;
+    let fixtures: CoreInstallerProgressCompatibilityFixtures = serde_json::from_slice(bytes)
+        .map_err(|error| {
+            format!("OPEMOS Core installer-progress fixtures are invalid JSON: {error}")
+        })?;
+    let accepted_names = HashSet::from([
+        "indeterminate-heartbeats",
+        "monotonic-bytes",
+        "monotonic-items",
+        "phase-transition-reset",
+        "attempt-advancement-reset",
+        "unknown-additive-fields",
+        "unknown-phase-token",
+        "non-protocol-noise-ignored",
+    ]);
+    let required_names = accepted_names
+        .iter()
+        .copied()
+        .chain([
+            "attempt-regression",
+            "completed-regression",
+            "total-change",
+            "unit-change",
+            "determinate-fields-on-indeterminate",
+            "missing-determinate-fields",
+            "completed-exceeds-total",
+            "zero-total",
+            "unsupported-schema-version",
+            "invalid-phase-token",
+            "malformed-json",
+            "duplicate-json-key",
+            "non-finite-json",
+            "oversized-line",
+            "oversized-stream",
+            "no-progress-records",
+        ])
+        .collect::<HashSet<_>>();
+    if fixtures.schema_version != 1
+        || fixtures.kind != "opemos-installer-progress-compatibility-fixtures"
+        || fixtures.progress_schema_version != 1
+        || fixtures.unfrozen_fields != ["message"]
+        || fixtures.limits.max_line_bytes != CORE_PROGRESS_RECORD_LIMIT
+        || fixtures.limits.max_stream_bytes != CORE_PROGRESS_STREAM_LIMIT
+        || !(1..=64).contains(&fixtures.cases.len())
+    {
+        return Err("OPEMOS Core installer-progress fixture envelope is invalid.".into());
+    }
+    let mut names = HashSet::new();
+    for case in &fixtures.cases {
+        let accepted = accepted_names.contains(case.name.as_str());
+        let has_stream = case.stream.is_some();
+        let has_recipe = case.stream_recipe.is_some();
+        if !safe_kebab_token(&case.name, 64)
+            || !names.insert(case.name.as_str())
+            || case.expected.accepted != accepted
+            || has_stream == has_recipe
+            || (accepted
+                && (!has_stream || !matches!(case.expected.progress_records, Some(1..=100_000))))
+            || (!accepted && case.expected.progress_records.is_some())
+            || case.stream.as_ref().is_some_and(|stream| {
+                stream.is_empty() || stream.len() > CORE_PROGRESS_STREAM_LIMIT
+            })
+        {
+            return Err(
+                "OPEMOS Core installer-progress fixture case is unsafe or incomplete.".into(),
+            );
+        }
+        if let Some(recipe) = &case.stream_recipe {
+            let expanded = recipe.text.len().checked_mul(recipe.count);
+            if case.name != "oversized-stream"
+                || recipe.kind != "repeat"
+                || recipe.text.is_empty()
+                || recipe.count == 0
+                || expanded.is_none_or(|bytes| bytes <= CORE_PROGRESS_STREAM_LIMIT)
+            {
+                return Err("OPEMOS Core installer-progress fixture recipe is invalid.".into());
+            }
+        }
+    }
+    if names != required_names {
+        return Err(
+            "OPEMOS Core installer-progress fixture matrix omits a required safety case.".into(),
+        );
+    }
+    Ok(fixtures)
+}
+
 fn safe_kebab_token(value: &str, maximum: usize) -> bool {
     !value.is_empty()
         && value.len() <= maximum
@@ -697,12 +838,26 @@ pub(crate) fn parse_core_installer_progress(bytes: &[u8]) -> Result<CoreInstalle
 
 #[derive(Default)]
 pub(crate) struct CoreProgressStream {
+    latest_attempt: Option<u64>,
     determinate: HashMap<(u64, String), (u64, u64, String)>,
 }
 
 impl CoreProgressStream {
     pub(crate) fn accept(&mut self, record: &CoreInstallerProgress) -> Result<(), String> {
         record.validate()?;
+        if self
+            .latest_attempt
+            .is_some_and(|latest| record.attempt < latest)
+        {
+            return Err("OPEMOS Core installer progress attempt regressed.".into());
+        }
+        if self
+            .latest_attempt
+            .is_none_or(|latest| record.attempt > latest)
+        {
+            self.latest_attempt = Some(record.attempt);
+            self.determinate.clear();
+        }
         if let (Some(completed), Some(total), Some(unit)) =
             (record.completed, record.total, record.unit.as_ref())
         {
@@ -717,6 +872,32 @@ impl CoreProgressStream {
         }
         Ok(())
     }
+}
+
+pub(crate) fn validate_core_installer_progress_stream(bytes: &[u8]) -> Result<usize, String> {
+    if bytes.len() > CORE_PROGRESS_STREAM_LIMIT {
+        return Err("OPEMOS Core installer progress stream exceeds 16 MiB.".into());
+    }
+    let mut state = CoreProgressStream::default();
+    let mut records = 0_usize;
+    for line in bytes.split(|byte| *byte == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if !line.starts_with(CORE_PROGRESS_PREFIX.as_bytes()) {
+            continue;
+        }
+        if line.len() > CORE_PROGRESS_RECORD_LIMIT {
+            return Err("OPEMOS Core installer progress line exceeds 4 KiB.".into());
+        }
+        let record = parse_core_installer_progress(&line[CORE_PROGRESS_PREFIX.len()..])?;
+        state.accept(&record)?;
+        records = records
+            .checked_add(1)
+            .ok_or("OPEMOS Core installer progress record count overflowed.")?;
+    }
+    if records == 0 {
+        return Err("OPEMOS Core installer progress stream contains no records.".into());
+    }
+    Ok(records)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -1538,6 +1719,13 @@ mod tests {
         let mut regressed = advanced;
         regressed.completed = Some(6);
         assert!(stream.accept(&regressed).is_err());
+        let mut next_attempt = determinate.clone();
+        next_attempt.attempt += 1;
+        next_attempt.completed = Some(0);
+        stream.accept(&next_attempt).unwrap();
+        let mut prior_attempt = next_attempt;
+        prior_attempt.attempt -= 1;
+        assert!(stream.accept(&prior_attempt).is_err());
         let mut fabricated = indeterminate;
         fabricated.completed = Some(1);
         fabricated.total = Some(2);
@@ -1823,6 +2011,77 @@ mod tests {
         assert!(parse_core_installer_result_compatibility_fixtures(&vec![
             b' ';
             CORE_INSTALLER_RESULT_FIXTURE_LIMIT
+                + 1
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn local_successor_installer_progress_fixtures_match_rust_stream_semantics() {
+        let Some(repository) = core_repository() else {
+            eprintln!(
+                "skipping local successor installer-progress fixtures: sibling Core repository is absent"
+            );
+            return;
+        };
+        let generator = repository.join("lib/generate_installer_progress_fixtures.py");
+        let generate = || {
+            let output = Command::new("python3")
+                .arg(&generator)
+                .current_dir(&repository)
+                .output()
+                .expect("run Core installer-progress fixture generator");
+            assert!(output.status.success());
+            assert!(output.stderr.is_empty());
+            output.stdout
+        };
+        let first = generate();
+        assert_eq!(
+            first,
+            generate(),
+            "Core progress fixtures were nondeterministic"
+        );
+        let fixtures = parse_core_installer_progress_compatibility_fixtures(&first)
+            .expect("consume bounded Core installer-progress fixtures");
+        for case in &fixtures.cases {
+            let result = if let Some(stream) = &case.stream {
+                validate_core_installer_progress_stream(stream.as_bytes())
+            } else {
+                let recipe = case.stream_recipe.as_ref().expect("fixture stream recipe");
+                assert!(recipe
+                    .text
+                    .len()
+                    .checked_mul(recipe.count)
+                    .is_some_and(|bytes| bytes > CORE_PROGRESS_STREAM_LIMIT));
+                validate_core_installer_progress_stream(&vec![b'x'; CORE_PROGRESS_STREAM_LIMIT + 1])
+            };
+            assert_eq!(
+                result.is_ok(),
+                case.expected.accepted,
+                "Rust progress acceptance diverged for {}: {:?}",
+                case.name,
+                result.as_ref().err()
+            );
+            if let Some(expected) = case.expected.progress_records {
+                assert_eq!(result.unwrap(), expected, "{} record count", case.name);
+            }
+        }
+
+        let mut relabelled: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        relabelled["cases"][0]["expected"] = serde_json::json!({"accepted": false});
+        assert!(parse_core_installer_progress_compatibility_fixtures(
+            &serde_json::to_vec(&relabelled).unwrap()
+        )
+        .is_err());
+        let mut missing_case: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        missing_case["cases"].as_array_mut().unwrap().pop();
+        assert!(parse_core_installer_progress_compatibility_fixtures(
+            &serde_json::to_vec(&missing_case).unwrap()
+        )
+        .is_err());
+        assert!(parse_core_installer_progress_compatibility_fixtures(&vec![
+            b' ';
+            CORE_INSTALLER_PROGRESS_FIXTURE_LIMIT
                 + 1
         ])
         .is_err());

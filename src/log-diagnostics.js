@@ -62,6 +62,7 @@ export function inferInstallerValidationProgress(value) {
   if (new TextEncoder().encode(normalized).length > 16 * 1024 * 1024) return null;
   const records = [];
   const previous = new Map();
+  let latestAttempt = -1;
   let lastKnownKind = null;
   let lastKnownOverall = null;
   for (const rawLine of normalized.split("\n")) {
@@ -100,6 +101,11 @@ export function inferInstallerValidationProgress(value) {
         || ((completed === null) !== (total === null))
         || (completed !== null && completed > total)) {
       return null;
+    }
+    if (attempt < latestAttempt) return null;
+    if (attempt > latestAttempt) {
+      latestAttempt = attempt;
+      previous.clear();
     }
     if (!indeterminate) {
       const key = `${attempt}\0${document.phase}`;
