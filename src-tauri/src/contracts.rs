@@ -747,6 +747,18 @@ pub(crate) struct NvidiaOnDemandBuildPlan {
     pub(crate) source_repository: String,
     pub(crate) source_branch: String,
     pub(crate) source_commit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) core_authorization: Option<NvidiaCoreBuildAuthorization>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NvidiaCoreBuildAuthorization {
+    pub(crate) policy_name: String,
+    pub(crate) policy_sha256: String,
+    pub(crate) baseline_archive_sha256: String,
+    pub(crate) baseline_provenance_sha256: String,
+    pub(crate) baseline_trust: String,
 }
 
 #[derive(Clone, Serialize)]

@@ -65,18 +65,162 @@ pub(crate) struct CoreResolverNextAction {
     pub(crate) entrypoint: String,
     pub(crate) execution_architecture: String,
     pub(crate) kernel_policy: String,
+    #[serde(default)]
+    pub(crate) build_plan: Option<CoreResolverBuildPlan>,
     #[serde(flatten)]
     pub(crate) extensions: HashMap<String, serde_json::Value>,
 }
 
 impl CoreResolverNextAction {
-    fn is_exact_target_build(&self) -> bool {
+    fn is_exact_target_build(&self, target: &CoreResolverTarget) -> bool {
         self.schema_version == 1
             && self.kind == "build_exact_target"
             && self.entrypoint == "bootstrap/build_for_target.sh"
             && self.execution_architecture == "x86_64"
             && self.kernel_policy == "exact"
+            && self
+                .build_plan
+                .as_ref()
+                .is_none_or(|plan| plan.is_valid_for(target))
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CoreResolverBuildPlan {
+    pub(crate) schema_version: u32,
+    pub(crate) policy: CoreResolverBuildPolicy,
+    pub(crate) target: CoreResolverBuildTarget,
+    pub(crate) source: CoreResolverBuildSource,
+    pub(crate) baseline: CoreResolverBuildBaseline,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct CoreResolverBuildPolicy {
+    pub(crate) name: String,
+    pub(crate) sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CoreResolverBuildTarget {
+    pub(crate) steamos_version: String,
+    pub(crate) kernel_version: String,
+    pub(crate) nvidia_version: String,
+    pub(crate) architecture: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct CoreResolverBuildSource {
+    pub(crate) repository: String,
+    #[serde(rename = "ref")]
+    pub(crate) reference: String,
+    pub(crate) commit: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CoreResolverBuildBaseline {
+    pub(crate) release_tag: String,
+    pub(crate) archive_sha256: String,
+    pub(crate) provenance_sha256: String,
+    pub(crate) trust: String,
+}
+
+impl CoreResolverBuildPlan {
+    fn is_valid_for(&self, outer: &CoreResolverTarget) -> bool {
+        let branch = format!("refs/heads/nvidia/{}", self.target.nvidia_version);
+        let exact_lower_hex = |value: &str, length: usize| {
+            value.len() == length
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        };
+        self.schema_version == 1
+            && self.policy.name == "exact-target-builds-v1.json"
+            && exact_lower_hex(&self.policy.sha256, 64)
+            && self.target.steamos_version == outer.steamos_version
+            && self.target.kernel_version == outer.kernel_version
+            && self.target.architecture == outer.architecture
+            && self.target.architecture == "x86_64"
+            && valid_three_part_version(&self.target.steamos_version)
+            && valid_nvidia_version(&self.target.nvidia_version)
+            && safe_token(&self.target.kernel_version, 255)
+            && self.source.repository == NVIDIA_SOURCE_REPOSITORY
+            && self.source.reference == branch
+            && exact_lower_hex(&self.source.commit, 40)
+            && exact_lower_hex(&self.baseline.archive_sha256, 64)
+            && exact_lower_hex(&self.baseline.provenance_sha256, 64)
+            && matches!(
+                self.baseline.trust.as_str(),
+                "locally-built-verified" | "certified-published"
+            )
+            && published_release_identity(&self.baseline.release_tag)
+                .is_some_and(|identity| identity.nvidia_version == self.target.nvidia_version)
+    }
+}
+
+pub(crate) fn core_exact_target_build_plan(
+    result: &CoreResolverResult,
+    manifest: &CoreBundleManifest,
+) -> Result<Option<NvidiaOnDemandBuildPlan>, String> {
+    validate_core_resolver_result(result)?;
+    let Some(action) = result.next_action.as_ref() else {
+        return Ok(None);
+    };
+    let plan = action
+        .build_plan
+        .as_ref()
+        .ok_or("OPEMOS Core exact-target action omitted its reviewed source authorization.")?;
+    if manifest.support_commit.len() != 40
+        || !manifest
+            .support_commit
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("Authenticated OPEMOS Core bundle has an invalid support commit.".into());
+    }
+    let policy_path = format!("policies/{}", plan.policy.name);
+    let policy_files = manifest
+        .files
+        .iter()
+        .filter(|file| file.path == policy_path)
+        .collect::<Vec<_>>();
+    if policy_files.len() != 1
+        || policy_files[0].role != "build-policy"
+        || policy_files[0].mode != "0644"
+        || policy_files[0].size == 0
+        || policy_files[0].sha256 != plan.policy.sha256
+    {
+        return Err(
+            "OPEMOS Core build authorization does not match its authenticated bundle manifest."
+                .into(),
+        );
+    }
+    Ok(Some(NvidiaOnDemandBuildPlan {
+        steamos_version: plan.target.steamos_version.clone(),
+        kernel_version: plan.target.kernel_version.clone(),
+        nvidia_version: plan.target.nvidia_version.clone(),
+        baseline_release: plan.baseline.release_tag.clone(),
+        support_commit: manifest.support_commit.clone(),
+        expected_trust: "locally-built-verified".into(),
+        source_origin: "project".into(),
+        source_repository: plan.source.repository.clone(),
+        source_branch: plan
+            .source
+            .reference
+            .strip_prefix("refs/heads/")
+            .ok_or("OPEMOS Core build source is not a branch reference.")?
+            .into(),
+        source_commit: plan.source.commit.clone(),
+        core_authorization: Some(NvidiaCoreBuildAuthorization {
+            policy_name: plan.policy.name.clone(),
+            policy_sha256: plan.policy.sha256.clone(),
+            baseline_archive_sha256: plan.baseline.archive_sha256.clone(),
+            baseline_provenance_sha256: plan.baseline.provenance_sha256.clone(),
+            baseline_trust: plan.baseline.trust.clone(),
+        }),
+    }))
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -238,7 +382,7 @@ pub(crate) fn validate_core_resolver_result(result: &CoreResolverResult) -> Resu
             != result
                 .next_action
                 .as_ref()
-                .is_some_and(CoreResolverNextAction::is_exact_target_build)
+                .is_some_and(|action| action.is_exact_target_build(&result.target))
         {
             return Err(
                 "OPEMOS Core exact-target build action is missing or attached to an unsafe result."
@@ -904,20 +1048,22 @@ pub(crate) fn compare_core_and_legacy_resolver(
         && core
             .next_action
             .as_ref()
-            .is_some_and(CoreResolverNextAction::is_exact_target_build)
+            .is_some_and(|action| action.is_exact_target_build(&core.target))
         && legacy.status == "build_required"
         && legacy.reason == "exact_kernel_artifact_missing"
         && legacy.compatibility.as_deref() == Some("on_demand_exact_kernel")
         && legacy.build_plan.as_ref().is_some_and(|plan| {
             let baseline = published_release_identity(&plan.baseline_release);
+            let core_plan = core
+                .next_action
+                .as_ref()
+                .and_then(|action| action.build_plan.as_ref());
             plan.steamos_version == core.target.steamos_version
                 && plan.kernel_version == core.target.kernel_version
-                && plan.support_commit == NVIDIA_SUPPORT_BUILD_COMMIT
                 && plan.expected_trust == "locally-built-verified"
                 && plan.source_origin == "project"
                 && plan.source_repository == NVIDIA_SOURCE_REPOSITORY
                 && plan.source_branch == format!("nvidia/{}", plan.nvidia_version)
-                && plan.source_commit.is_empty()
                 && valid_nvidia_version(&plan.nvidia_version)
                 && baseline.as_ref().is_some_and(|identity| {
                     identity.nvidia_version == plan.nvidia_version
@@ -925,9 +1071,42 @@ pub(crate) fn compare_core_and_legacy_resolver(
                             .zip(numeric_version(&plan.steamos_version, 3..=3))
                             .is_some_and(|(baseline_version, target_version)| {
                                 baseline_version[..2] == target_version[..2]
-                                    && baseline_version <= target_version
                             })
                 })
+                && match core_plan {
+                    None => {
+                        plan.support_commit == NVIDIA_SUPPORT_BUILD_COMMIT
+                            && plan.source_commit.is_empty()
+                            && plan.core_authorization.is_none()
+                            && baseline.as_ref().is_some_and(|identity| {
+                                numeric_version(&identity.steamos_version, 3..=3)
+                                    .zip(numeric_version(&plan.steamos_version, 3..=3))
+                                    .is_some_and(|(baseline_version, target_version)| {
+                                        baseline_version <= target_version
+                                    })
+                            })
+                    }
+                    Some(core_plan) => {
+                        plan.support_commit.len() == 40
+                            && plan
+                                .support_commit
+                                .bytes()
+                                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                            && plan.source_commit == core_plan.source.commit
+                            && plan
+                                .core_authorization
+                                .as_ref()
+                                .is_some_and(|authorization| {
+                                    authorization.policy_name == core_plan.policy.name
+                                        && authorization.policy_sha256 == core_plan.policy.sha256
+                                        && authorization.baseline_archive_sha256
+                                            == core_plan.baseline.archive_sha256
+                                        && authorization.baseline_provenance_sha256
+                                            == core_plan.baseline.provenance_sha256
+                                        && authorization.baseline_trust == core_plan.baseline.trust
+                                })
+                    }
+                }
         });
     if core.status != legacy.status && !exact_build_equivalent {
         return Err("OPEMOS Core and legacy Rust resolver decisions are not equivalent.".into());
@@ -1000,7 +1179,91 @@ mod tests {
         assert!(incompatible
             .next_action
             .as_ref()
-            .is_some_and(CoreResolverNextAction::is_exact_target_build));
+            .is_some_and(|action| action.is_exact_target_build(&incompatible.target)));
+
+        let mut authorized: serde_json::Value =
+            serde_json::from_slice(&fixture("resolver-incompatible-v2.json")).unwrap();
+        authorized["nextAction"]["buildPlan"] = serde_json::json!({
+            "schemaVersion": 1,
+            "policy": {
+                "name": "exact-target-builds-v1.json",
+                "sha256": "1".repeat(64),
+            },
+            "target": {
+                "steamosVersion": "3.8.14",
+                "kernelVersion": "fixture",
+                "nvidiaVersion": "575.64.05",
+                "architecture": "x86_64",
+            },
+            "source": {
+                "repository": NVIDIA_SOURCE_REPOSITORY,
+                "ref": "refs/heads/nvidia/575.64.05",
+                "commit": "2".repeat(40),
+            },
+            "baseline": {
+                "releaseTag": "steamos-3.8.16-nvidia-575.64.05-kbaseline-fixture",
+                "archiveSha256": "3".repeat(64),
+                "provenanceSha256": "4".repeat(64),
+                "trust": "locally-built-verified",
+            },
+        });
+        let authorized =
+            parse_core_resolver_result(&serde_json::to_vec(&authorized).unwrap()).unwrap();
+        let manifest = CoreBundleManifest {
+            schema_version: 1,
+            kind: "opemos-installer-bundle".into(),
+            repository: NVIDIA_SUPPORT_REPOSITORY.into(),
+            support_commit: "5".repeat(40),
+            files: vec![CoreBundleFile {
+                path: "policies/exact-target-builds-v1.json".into(),
+                role: "build-policy".into(),
+                mode: "0644".into(),
+                size: 827,
+                sha256: "1".repeat(64),
+            }],
+            bundle_id: "6".repeat(64),
+        };
+        let mapped = core_exact_target_build_plan(&authorized, &manifest)
+            .unwrap()
+            .expect("map reviewed Core build plan");
+        assert_eq!(mapped.nvidia_version, "575.64.05");
+        assert_eq!(mapped.source_branch, "nvidia/575.64.05");
+        assert_eq!(mapped.source_commit, "2".repeat(40));
+        assert_eq!(
+            mapped
+                .core_authorization
+                .as_ref()
+                .expect("retain Core authorization")
+                .baseline_archive_sha256,
+            "3".repeat(64)
+        );
+        let mut wrong_manifest = manifest.clone();
+        wrong_manifest.files[0].sha256 = "7".repeat(64);
+        assert!(core_exact_target_build_plan(&authorized, &wrong_manifest).is_err());
+        let legacy_from_core = NvidiaPublishedResolution {
+            schema_version: 2,
+            status: "build_required".into(),
+            reason: "exact_kernel_artifact_missing".into(),
+            message: "reviewed Core build plan".into(),
+            compatibility: Some("on_demand_exact_kernel".into()),
+            target: NvidiaTargetReadiness {
+                ready: true,
+                status: "exact-target".into(),
+                message: "fixture".into(),
+                steamos_version: Some("3.8.14".into()),
+                kernel_version: Some("fixture".into()),
+                architecture: "x86_64".into(),
+            },
+            publication: None,
+            artifact: None,
+            build_plan: Some(mapped),
+        };
+        compare_core_and_legacy_resolver(&authorized, &legacy_from_core).unwrap();
+
+        let mut wrong_source: serde_json::Value = serde_json::to_value(&authorized).unwrap();
+        wrong_source["nextAction"]["buildPlan"]["source"]["ref"] =
+            "refs/heads/nvidia/580.1.1".into();
+        assert!(parse_core_resolver_result(&serde_json::to_vec(&wrong_source).unwrap()).is_err());
 
         let mut missing_action: serde_json::Value =
             serde_json::from_slice(&fixture("resolver-incompatible-v2.json")).unwrap();
@@ -1404,6 +1667,7 @@ mod tests {
             source_repository: NVIDIA_SOURCE_REPOSITORY.into(),
             source_branch: format!("nvidia/{}", baseline.nvidia_version),
             source_commit: String::new(),
+            core_authorization: None,
         };
         let legacy_build = NvidiaPublishedResolution {
             schema_version: 2,

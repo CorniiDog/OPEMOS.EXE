@@ -325,6 +325,7 @@ pub(crate) fn explicit_nvidia_build_resolution(
             source_repository: source.repository.clone(),
             source_branch: source.name.clone(),
             source_commit: source.commit.clone(),
+            core_authorization: None,
         }),
     })
 }
@@ -2203,6 +2204,7 @@ pub(crate) fn resolve_published_nvidia_for_target(
                 source_repository: NVIDIA_SOURCE_REPOSITORY.into(),
                 source_branch: format!("nvidia/{nvidia_version}"),
                 source_commit: String::new(),
+                core_authorization: None,
             }),
         });
     };

@@ -99,17 +99,16 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 - [x] Compare Core and Rust resolution for exact matches, same-series fallback,
   incomplete assets, and duplicate release/asset identities; both paths now
   fail closed on ambiguous publication metadata.
+- [x] Validate Core `nextAction=build_exact_target` only for a genuine reviewed
+  target, retain its policy/baseline hashes and source commit, and map it to the
+  existing exact-kernel VM plan without activating the successor resolver.
 - [ ] Finish resolver equivalence for malformed metadata, invalid targets, and
-  no compatible release once Core supplies the authoritative NVIDIA source and
-  version needed by `build_exact_target`.
-- [x] Validate Core `nextAction=build_exact_target` only for a genuine
-  `no_compatible_release`, and map it to the existing exact-kernel build plan
-  during compatibility testing.
+  unreviewed targets against the published successor Core bundle.
 - [ ] After equivalence passes, make the authenticated Core resolver the only
   normal release decision. Retain Rust parsing, bounds, session binding, error
   presentation, artifact verification, and fail-closed behavior.
-- [ ] Consume Core’s complete structured verification and receipt fields while
-  keeping OPEMOS.EXE’s independent final-image inspection.
+- [x] Consume Core’s structured inputs, verification records, cleanup evidence,
+  and payload receipt while keeping OPEMOS.EXE’s independent final inspection.
 - [ ] Repin Core only after its complete Fedora suite and this repository’s full
   suite pass against the same immutable bundle.
 
