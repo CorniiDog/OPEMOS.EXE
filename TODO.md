@@ -1667,6 +1667,7 @@ Before calling the project **beta**, verify:
 * [x] Require an exact valid session token for public USB intent cancellation; keep tokenless cancellation backend-only so a stale UI cannot cancel an unrelated replacement session.
 * [x] Bind asynchronous USB arm/status/cancel and VS Code-open completions to their initiating UI context so stale responses cannot overwrite or resurrect replacement state.
 * [x] Add a pre-build Image / USB / Both destination selector and allow read-only removable-target selection before the long build; require final manifest identity and capacity revalidation afterward.
+* [x] Open the post-build USB review immediately while final image/device revalidation runs, keep it open when the earlier device identity cannot be restored, and surface the safe reselection path inside the dialog instead of silently returning to the main workflow.
 * [x] Reopen a manifest-bound, independently validated `nvidia-mutation-valid` output directly for USB export without rerunning NVIDIA installation; reject suffix-only, marker-only, incomplete, or byte-drifted inputs.
 * [x] Add a one-use USB writer state transition with 4 MiB bounded writes, live byte progress, safe-boundary cancellation, full written-range SHA-256 read-back, and best-effort eject on success or failure.
 * [x] Exercise the same writer against regular-file fixtures and an opt-in 16 MiB macOS virtual raw disk while continuing to reject virtual disks from real target discovery.

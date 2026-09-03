@@ -164,7 +164,6 @@ function renderExportMode() {
   elements.reviewUsbTarget.textContent = finalUsbReady
     ? "Review & Write Selected USB…"
     : "Select a USB Drive to Continue";
-  if (!finalUsbReady) setUsbMenuOpen(false);
   renderSourceWarning();
 }
 
@@ -732,12 +731,25 @@ async function applyBuildFinished(completion) {
       pendingUsbTarget = null;
       elements.resultMessage.textContent = "The image is complete. Revalidating the exported bytes and matching the previously selected USB drive…";
       elements.resultMessage.className = "result-message";
+      elements.usbMessage.textContent = "Revalidating the completed image and selected USB drive before destructive confirmation…";
+      elements.usbMessage.className = "result-message";
+      setUsbMenuOpen(true);
+      elements.usbDialogTarget.textContent = preferredTarget
+        ? `Revalidating ${preferredTarget.deviceIdentifier}…`
+        : "Refreshing removable drives…";
+      await mainWindow.setFocus().catch(() => {});
       const restored = await refreshUsbTargets(preferredTarget);
       if (restored) {
         setUsbMenuOpen(true);
       } else {
-        elements.resultMessage.textContent = "The image is complete, but the previously selected USB drive could not be matched exactly. Reconnect it, refresh drives, and select it again.";
+        elements.usbDialogTarget.textContent = "Select the removable drive again";
+        elements.resultMessage.textContent = "The image is complete, but the previously selected USB drive could not be matched exactly. The USB review remains open so you can refresh and select it again.";
         elements.resultMessage.className = "result-message error";
+        if (!elements.usbMessage.classList.contains("error")) {
+          elements.usbMessage.textContent = "The earlier USB identity is no longer an exact match. Nothing was written. Refresh and select the intended whole removable drive again.";
+          elements.usbMessage.className = "result-message error";
+        }
+        renderUsbConfirmationPhase(false);
       }
     }
   } else {
@@ -806,8 +818,7 @@ async function refreshUsbTargets(preferredTarget = null) {
       ));
       if (preferred) {
         preferred.selected = true;
-        elements.usbTarget.dispatchEvent(new Event("change"));
-        elements.refreshUsbTargets.disabled = false;
+        renderUsbTargetSelection();
         return true;
       }
     }
@@ -832,12 +843,7 @@ elements.refreshUsbTargets.addEventListener("click", async () => {
   await refreshUsbTargets();
 });
 
-elements.usbTarget.addEventListener("change", async () => {
-  usbContextGeneration += 1;
-  if (usbPreflightSession) {
-    await invoke("cancel_usb_write_preflight", { sessionToken: usbPreflightSession.sessionToken }).catch(() => {});
-  }
-  usbPreflightSession = null;
+function renderUsbTargetSelection() {
   elements.cancelUsbPreflight.classList.add("hidden");
   elements.writeUsbImage.classList.add("hidden");
   elements.usbConfirmation.value = "";
@@ -859,6 +865,17 @@ elements.usbTarget.addEventListener("change", async () => {
     elements.usbPickerMessage.textContent = "No USB drive will be written unless one is selected.";
   }
   renderExportMode();
+}
+
+elements.usbTarget.addEventListener("change", async () => {
+  const generation = ++usbContextGeneration;
+  const previousSession = usbPreflightSession;
+  usbPreflightSession = null;
+  if (previousSession?.sessionToken) {
+    await invoke("cancel_usb_write_preflight", { sessionToken: previousSession.sessionToken }).catch(() => {});
+  }
+  if (generation !== usbContextGeneration) return;
+  renderUsbTargetSelection();
 });
 
 elements.clearUsbTarget.addEventListener("click", () => {
