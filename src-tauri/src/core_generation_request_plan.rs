@@ -16,7 +16,6 @@ use crate::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
 
 pub(crate) const MAX_REQUESTS: usize = MAX_FILES + 4;
 pub(crate) const MAX_URL_BYTES: usize = 2048;
@@ -110,7 +109,6 @@ pub(crate) struct RequestPlanInputs<'a> {
     pub(crate) discovery_signature: &'a [u8],
     pub(crate) manifest_payload: &'a [u8],
     pub(crate) manifest_signature: &'a [u8],
-    pub(crate) payloads: &'a BTreeMap<String, Vec<u8>>,
 }
 
 fn parse_canonical<T: DeserializeOwned>(
@@ -166,15 +164,6 @@ pub(crate) fn build_request_plan(
     {
         return Err("Verifier evidence authority differs from bootstrap policy.".into());
     }
-    if inputs.payloads.len() != manifest.files.len()
-        || manifest
-            .files
-            .iter()
-            .any(|file| !inputs.payloads.contains_key(&file.filename))
-    {
-        return Err("Generation payload set differs from authenticated manifest.".into());
-    }
-
     let origin = &channel.origin;
     let discovery_parent = channel
         .discovery_path
@@ -192,7 +181,8 @@ pub(crate) fn build_request_plan(
             &channel.discovery_filename,
             &channel.discovery_path,
             &format!("{}{}", origin, channel.discovery_path),
-            inputs.discovery_payload,
+            inputs.discovery_payload.len() as u64,
+            &sha256(inputs.discovery_payload),
         )?,
         request_record(
             "metadata",
@@ -206,7 +196,8 @@ pub(crate) fn build_request_plan(
                 "{origin}{discovery_parent}/{}",
                 channel.discovery_signature_filename
             ),
-            inputs.discovery_signature,
+            inputs.discovery_signature.len() as u64,
+            &sha256(inputs.discovery_signature),
         )?,
         request_record(
             "metadata",
@@ -219,7 +210,8 @@ pub(crate) fn build_request_plan(
                 generation.manifest_filename
             ),
             &format!("{release_root}{}", generation.manifest_filename),
-            inputs.manifest_payload,
+            inputs.manifest_payload.len() as u64,
+            &sha256(inputs.manifest_payload),
         )?,
         request_record(
             "metadata",
@@ -232,14 +224,11 @@ pub(crate) fn build_request_plan(
                 generation.signature_filename
             ),
             &format!("{release_root}{}", generation.signature_filename),
-            inputs.manifest_signature,
+            inputs.manifest_signature.len() as u64,
+            &sha256(inputs.manifest_signature),
         )?,
     ];
     for file in &manifest.files {
-        let payload = &inputs.payloads[&file.filename];
-        if payload.len() as u64 != file.size || sha256(payload) != file.sha256 {
-            return Err("Generation payload differs from authenticated manifest.".into());
-        }
         requests.push(request_record(
             "payload",
             &file.role,
@@ -249,7 +238,8 @@ pub(crate) fn build_request_plan(
                 channel.immutable_release_path_prefix, generation.release_tag, file.filename
             ),
             &format!("{release_root}{}", file.filename),
-            payload,
+            file.size,
+            &file.sha256,
         )?);
     }
     if !(5..=MAX_REQUESTS).contains(&requests.len()) {
@@ -322,9 +312,10 @@ fn request_record(
     filename: &str,
     path: &str,
     url: &str,
-    payload: &[u8],
+    expected_size: u64,
+    expected_sha256: &str,
 ) -> Result<GenerationRequest, String> {
-    if payload.is_empty()
+    if expected_size == 0
         || url.len() > MAX_URL_BYTES
         || !url.is_ascii()
         || !path.is_ascii()
@@ -341,8 +332,8 @@ fn request_record(
         filename: filename.into(),
         path: path.into(),
         url: url.into(),
-        expected_size: payload.len() as u64,
-        expected_sha256: sha256(payload),
+        expected_size,
+        expected_sha256: expected_sha256.into(),
     })
 }
 
@@ -615,7 +606,7 @@ mod tests {
     use super::*;
     use serde::Deserialize;
     use std::{
-        collections::HashSet,
+        collections::{BTreeMap, HashSet},
         fs,
         io::Read,
         os::unix::process::CommandExt as _,
@@ -626,19 +617,12 @@ mod tests {
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
-    const CONTRACT_COMMIT: &str = "7af099596895a0dd5a6a3c5cd18dfdf03f2bad29";
+    const CONTRACT_COMMIT: &str = "1fde359025031a99055763dca76e0d709486ffac";
     const FIXTURE_LIMIT: usize = 1024 * 1024;
     const STDERR_LIMIT: usize = 64 * 1024;
     static EXPORT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
     const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
-    type FixtureArguments = (
-        Vec<u8>,
-        Vec<u8>,
-        Vec<u8>,
-        Vec<u8>,
-        Vec<u8>,
-        BTreeMap<String, Vec<u8>>,
-    );
+    type FixtureArguments = (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>);
 
     struct BoundedCommandOutput {
         status: ExitStatus,
@@ -696,7 +680,8 @@ mod tests {
         manifest_signature: String,
         verifier: FixtureVerifier,
         evidence_record: serde_json::Value,
-        payloads: BTreeMap<String, String>,
+        #[serde(rename = "payloads")]
+        _payloads: BTreeMap<String, String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -988,11 +973,6 @@ mod tests {
             inputs.discovery_signature.as_bytes().to_vec(),
             canonical(&inputs.manifest),
             inputs.manifest_signature.as_bytes().to_vec(),
-            inputs
-                .payloads
-                .iter()
-                .map(|(name, payload)| (name.clone(), payload.as_bytes().to_vec()))
-                .collect(),
         )
     }
 
@@ -1052,7 +1032,7 @@ mod tests {
                 max_plan_bytes: MAX_PLAN_BYTES,
             }
         );
-        assert_eq!(fixtures.cases.len(), 38);
+        assert_eq!(fixtures.cases.len(), 35);
         let expected = [
             "valid-canonical-plan",
             "unauthenticated-policy",
@@ -1061,9 +1041,6 @@ mod tests {
             "manifest-weak-signature-hash",
             "manifest-wrong-primary",
             "forged-json-evidence-ignored",
-            "missing-payload",
-            "unexpected-payload",
-            "payload-hash-mismatch",
             "release-tag-sequence-mismatch",
             "redirects-enabled",
             "cross-origin-substitution",
@@ -1105,7 +1082,7 @@ mod tests {
         );
 
         for case in &fixtures.cases {
-            let (policy, discovery, discovery_signature, manifest, manifest_signature, payloads) =
+            let (policy, discovery, discovery_signature, manifest, manifest_signature) =
                 fixture_arguments(&case.inputs);
             let inputs = RequestPlanInputs {
                 policy_payload: &policy,
@@ -1113,7 +1090,6 @@ mod tests {
                 discovery_signature: &discovery_signature,
                 manifest_payload: &manifest,
                 manifest_signature: &manifest_signature,
-                payloads: &payloads,
             };
             let input_result = fixture_evidence(&case.inputs, &inputs)
                 .and_then(|evidence| build_request_plan(&inputs, &evidence));
@@ -1148,7 +1124,7 @@ mod tests {
             .iter()
             .find(|case| case.name == "valid-canonical-plan")
             .unwrap();
-        let (policy, discovery, discovery_signature, manifest, manifest_signature, payloads) =
+        let (policy, discovery, discovery_signature, manifest, manifest_signature) =
             fixture_arguments(&valid.inputs);
         let inputs = RequestPlanInputs {
             policy_payload: &policy,
@@ -1156,7 +1132,6 @@ mod tests {
             discovery_signature: &discovery_signature,
             manifest_payload: &manifest,
             manifest_signature: &manifest_signature,
-            payloads: &payloads,
         };
         let evidence = fixture_evidence(&valid.inputs, &inputs).unwrap();
         let plan = build_request_plan(&inputs, &evidence).unwrap();
@@ -1173,6 +1148,14 @@ mod tests {
             plan.request_count,
             valid.inputs.manifest["files"].as_array().unwrap().len() + 4
         );
+        for (request, artifact) in plan.requests[4..]
+            .iter()
+            .zip(valid.inputs.manifest["files"].as_array().unwrap())
+        {
+            assert_eq!(request.filename, artifact["filename"]);
+            assert_eq!(request.expected_size, artifact["size"]);
+            assert_eq!(request.expected_sha256, artifact["sha256"]);
+        }
         assert_eq!(
             plan.requests
                 .iter()
@@ -1216,7 +1199,7 @@ mod tests {
             .find(|case| case.name == "forged-json-evidence-ignored")
             .unwrap();
         assert_ne!(forged.inputs.evidence_record, valid.inputs.evidence_record);
-        let (policy, discovery, discovery_signature, manifest, manifest_signature, payloads) =
+        let (policy, discovery, discovery_signature, manifest, manifest_signature) =
             fixture_arguments(&forged.inputs);
         let forged_inputs = RequestPlanInputs {
             policy_payload: &policy,
@@ -1224,7 +1207,6 @@ mod tests {
             discovery_signature: &discovery_signature,
             manifest_payload: &manifest,
             manifest_signature: &manifest_signature,
-            payloads: &payloads,
         };
         let capability = fixture_evidence(&forged.inputs, &forged_inputs).unwrap();
         assert!(build_request_plan(&forged_inputs, &capability).is_ok());
@@ -1310,7 +1292,7 @@ mod tests {
         );
 
         for case in &fixtures.cases {
-            let (policy, discovery, discovery_signature, manifest, manifest_signature, payloads) =
+            let (policy, discovery, discovery_signature, manifest, manifest_signature) =
                 fixture_arguments(&case.inputs);
             let inputs = RequestPlanInputs {
                 policy_payload: &policy,
@@ -1318,7 +1300,6 @@ mod tests {
                 discovery_signature: &discovery_signature,
                 manifest_payload: &manifest,
                 manifest_signature: &manifest_signature,
-                payloads: &payloads,
             };
             assert_eq!(
                 fixture_evidence(&case.inputs, &inputs).is_ok(),
@@ -1346,7 +1327,7 @@ mod tests {
             .iter()
             .find(|case| case.name == "valid-subkey-evidence")
             .unwrap();
-        let (policy, discovery, discovery_signature, manifest, manifest_signature, payloads) =
+        let (policy, discovery, discovery_signature, manifest, manifest_signature) =
             fixture_arguments(&valid.inputs);
         let inputs = RequestPlanInputs {
             policy_payload: &policy,
@@ -1354,7 +1335,6 @@ mod tests {
             discovery_signature: &discovery_signature,
             manifest_payload: &manifest,
             manifest_signature: &manifest_signature,
-            payloads: &payloads,
         };
         let mut calls = Vec::new();
         let capability = verify_generation_snapshots(
@@ -1406,7 +1386,6 @@ mod tests {
             discovery_signature: inputs.discovery_signature,
             manifest_payload: inputs.manifest_payload,
             manifest_signature: inputs.manifest_signature,
-            payloads: inputs.payloads,
         };
         assert!(validate_evidence_capability(&capability, &different_inputs).is_err());
         let error = verify_generation_snapshots(

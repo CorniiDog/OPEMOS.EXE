@@ -133,10 +133,11 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   `0c16ccd7ba68095ea8a6655b0d2bb8b6e97d32f3`. This adds no production key,
   keyring, endpoint, checkpoint, networking, activation, command, or UI path.
 - [x] Consume Core's unchanged generation request-plan wire contract, exact
-  38-case planner matrix, and sealed verifier-evidence capability with its exact
+  35-case planner matrix, and sealed verifier-evidence capability with its exact
   28-case audit-record matrix from local commit
-  `7af099596895a0dd5a6a3c5cd18dfdf03f2bad29`. Parsed evidence JSON remains
-  diagnostic only and cannot authorize planning; no production path is wired.
+  `1fde359025031a99055763dca76e0d709486ffac`. Planning derives payload request
+  identities from the authenticated manifest; downloaded-byte equality remains
+  an acquisition/cache responsibility. No production path is wired.
 - [ ] Show the available, selected, active, and last-known-good Core generations
   plus exact-target support in normal and maintainer UI. Preserve explicit source
   intent; never substitute a nearby target, lock, or generation.
@@ -155,9 +156,9 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   final-image verification.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
-- [ ] After Core pushes `7af099596895a0dd5a6a3c5cd18dfdf03f2bad29` or a
+- [ ] After Core pushes `1fde359025031a99055763dca76e0d709486ffac` or a
   reviewed successor preserving these contracts, repin CI so the 74 generation,
-  16 OpenPGP, 49 bootstrap, 28 verifier-evidence, and 38 request-plan cases run
+  16 OpenPGP, 49 bootstrap, 28 verifier-evidence, and 35 request-plan cases run
   remotely. A commit pin does not activate its unpublished candidate bundle.
 - [ ] Before production wiring, bind the verifier to an identity-pinned snapshot
   of the exact installed policy and keyring hashes, and run transport/verifier
@@ -205,7 +206,7 @@ contract. It is compatibility evidence, not a production key or endpoint.
 Core commit `0c16ccd7ba68095ea8a6655b0d2bb8b6e97d32f3` defines and hardens the closed
 inactive bootstrap policy and checkpoint compatibility contract, including
 portable immutable namespace identities. It ships no production trust material
-or service location. Core commit `7af099596895a0dd5a6a3c5cd18dfdf03f2bad29`
+or service location. Core commit `1fde359025031a99055763dca76e0d709486ffac`
 adds the closed inactive request-plan and verifier-capability contracts without
 shipping a production verifier, transport, or endpoint.
 
