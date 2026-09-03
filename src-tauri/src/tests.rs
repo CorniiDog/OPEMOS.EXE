@@ -256,9 +256,18 @@ mod tests {
         let mut oversized_image = initramfs_verification_fixture();
         oversized_image["images"][0]["sizeBytes"] = serde_json::json!(2_u64 * 1024 * 1024 * 1024 + 1);
         cases.push(oversized_image);
+        let mut unsafe_image_name = initramfs_verification_fixture();
+        unsafe_image_name["images"][0]["filename"] =
+            serde_json::json!("initramfs-hostile image.img");
+        cases.push(unsafe_image_name);
         let mut escaped_module = initramfs_verification_fixture();
         escaped_module["images"][0]["modules"]["nvidia.ko"] = serde_json::json!("../nvidia.ko");
         cases.push(escaped_module);
+        let mut punctuated_module = initramfs_verification_fixture();
+        punctuated_module["images"][0]["modules"]["nvidia.ko"] = serde_json::json!(format!(
+            "usr/lib/modules/{kernel}/kernel/nvidia/nvidia driver.ko.zst"
+        ));
+        cases.push(punctuated_module);
         let mut duplicate_module_path = initramfs_verification_fixture();
         duplicate_module_path["images"][0]["modules"]["nvidia-drm.ko"] =
             duplicate_module_path["images"][0]["modules"]["nvidia.ko"].clone();

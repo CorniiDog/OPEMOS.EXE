@@ -1582,7 +1582,7 @@ pub(crate) fn safe_initramfs_path(value: &str) -> bool {
         && !value.starts_with('/')
         && value
             .bytes()
-            .all(|byte| byte.is_ascii() && !byte.is_ascii_control())
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._+~/-".contains(&byte))
         && !value
             .split('/')
             .any(|part| part.is_empty() || part == "." || part == "..")
@@ -1640,6 +1640,10 @@ pub(crate) fn validate_support_initramfs_verification(
     let mut filenames = std::collections::HashSet::new();
     for image in &verification.images {
         if image.filename.len() > 255
+            || !image
+                .filename
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"@._+~:-".contains(&byte))
             || !image.filename.starts_with("initramfs-")
             || !image.filename.ends_with(".img")
             || image.filename.contains('/')
