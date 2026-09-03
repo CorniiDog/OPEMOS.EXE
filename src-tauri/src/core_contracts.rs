@@ -4,6 +4,7 @@ use serde::de::DeserializeSeed as _;
 pub(crate) const CORE_RESOLVER_RESULT_LIMIT: usize = 1024 * 1024;
 pub(crate) const CORE_PROGRESS_RECORD_LIMIT: usize = 4096;
 pub(crate) const CORE_BUNDLE_MANIFEST_LIMIT: usize = 2 * 1024 * 1024;
+pub(crate) const CORE_RESOLVER_FIXTURE_LIMIT: usize = 512 * 1024;
 const CORE_BUNDLE_FILE_LIMIT: u64 = 128 * 1024 * 1024;
 const CORE_BUNDLE_TOTAL_LIMIT: u64 = 256 * 1024 * 1024;
 const CORE_BUNDLE_FILE_COUNT_LIMIT: usize = 256;
@@ -245,6 +246,130 @@ pub(crate) struct CoreResolverResult {
     pub(crate) next_action: Option<CoreResolverNextAction>,
     #[serde(flatten)]
     pub(crate) extensions: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreResolverCompatibilityFixtures {
+    pub(crate) schema_version: u32,
+    pub(crate) kind: String,
+    pub(crate) repository: String,
+    pub(crate) resolver_schema_version: u32,
+    pub(crate) cases: Vec<CoreResolverCompatibilityCase>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreResolverCompatibilityCase {
+    pub(crate) name: String,
+    pub(crate) target: CoreResolverTarget,
+    pub(crate) releases: serde_json::Value,
+    pub(crate) expected: serde_json::Value,
+    pub(crate) absent_fields: Vec<String>,
+}
+
+pub(crate) fn parse_core_resolver_compatibility_fixtures(
+    bytes: &[u8],
+) -> Result<CoreResolverCompatibilityFixtures, String> {
+    if bytes.is_empty() || bytes.len() > CORE_RESOLVER_FIXTURE_LIMIT {
+        return Err("OPEMOS Core resolver fixtures are empty or exceed 512 KiB.".into());
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core resolver fixtures")?;
+    let fixtures: CoreResolverCompatibilityFixtures = serde_json::from_slice(bytes)
+        .map_err(|error| format!("OPEMOS Core resolver fixtures are invalid JSON: {error}"))?;
+    let required_names = HashSet::from([
+        "invalid-steamos",
+        "invalid-kernel",
+        "unsupported-architecture",
+        "malformed-release-metadata",
+        "duplicate-release-metadata",
+        "incomplete-canonical-assets",
+        "duplicate-canonical-asset",
+        "unreviewed-exact-target",
+        "reviewed-exact-target-build",
+    ]);
+    let mut names = HashSet::new();
+    if fixtures.schema_version != 1
+        || fixtures.kind != "opemos-resolver-compatibility-fixtures"
+        || fixtures.repository != NVIDIA_RELEASE_REPOSITORY
+        || fixtures.resolver_schema_version != 2
+        || !(1..=64).contains(&fixtures.cases.len())
+    {
+        return Err("OPEMOS Core resolver fixture envelope is invalid.".into());
+    }
+    for case in &fixtures.cases {
+        let releases = case
+            .releases
+            .as_array()
+            .ok_or("OPEMOS Core resolver fixture releases are not an array.")?;
+        let expected = case
+            .expected
+            .as_object()
+            .filter(|value| !value.is_empty())
+            .ok_or("OPEMOS Core resolver fixture expected result is empty or invalid.")?;
+        let status = expected
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let mut absent = HashSet::new();
+        if !safe_kebab_token(&case.name, 64)
+            || !names.insert(case.name.as_str())
+            || releases.len() > 2_000
+            || !matches!(
+                status,
+                "invalid_target"
+                    | "unsupported_target"
+                    | "resolver_error"
+                    | "no_compatible_artifact"
+                    | "compatible"
+            )
+            || case.target.steamos_version.len() > 64
+            || case.target.kernel_version.len() > 255
+            || case.target.architecture.len() > 64
+            || [
+                &case.target.steamos_version,
+                &case.target.kernel_version,
+                &case.target.architecture,
+            ]
+            .iter()
+            .any(|value| value.is_empty() || value.contains('\0'))
+            || case.absent_fields.len() > 16
+            || case
+                .absent_fields
+                .iter()
+                .any(|field| !safe_camel_token(field, 64) || !absent.insert(field.as_str()))
+        {
+            return Err("OPEMOS Core resolver fixture case is unsafe or incomplete.".into());
+        }
+    }
+    if names != required_names {
+        return Err("OPEMOS Core resolver fixture matrix omits a required safety case.".into());
+    }
+    Ok(fixtures)
+}
+
+fn safe_kebab_token(value: &str, maximum: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= maximum
+        && value.bytes().enumerate().all(|(index, byte)| {
+            if index == 0 {
+                byte.is_ascii_lowercase()
+            } else {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+            }
+        })
+}
+
+fn safe_camel_token(value: &str, maximum: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= maximum
+        && value.bytes().enumerate().all(|(index, byte)| {
+            if index == 0 {
+                byte.is_ascii_alphabetic()
+            } else {
+                byte.is_ascii_alphanumeric()
+            }
+        })
 }
 
 fn safe_token(value: &str, maximum: usize) -> bool {
@@ -1391,6 +1516,112 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let candidate = root.join("open-gpu-kernel-modules-steamos-support");
         candidate.join(".git").exists().then_some(candidate)
+    }
+
+    fn assert_json_subset(actual: &serde_json::Value, expected: &serde_json::Value) {
+        if let Some(expected) = expected.as_object() {
+            let actual = actual.as_object().expect("fixture result object");
+            for (key, value) in expected {
+                assert_json_subset(
+                    actual.get(key).unwrap_or_else(|| panic!("missing {key}")),
+                    value,
+                );
+            }
+        } else {
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn local_successor_resolver_fixtures_are_bounded_complete_and_reproducible() {
+        let Some(repository) = core_repository() else {
+            eprintln!("skipping local successor fixtures: sibling Core repository is absent");
+            return;
+        };
+        let path = repository.join("contracts/fixtures/resolver-compatibility-v2.json");
+        let bytes = fs::read(&path).expect("read Core resolver fixtures");
+        let fixtures = parse_core_resolver_compatibility_fixtures(&bytes)
+            .expect("consume bounded Core resolver fixtures");
+        let runtime = std::env::temp_dir().join(format!(
+            "opemos-core-fixtures-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&runtime).unwrap();
+        for case in &fixtures.cases {
+            if case.name == "malformed-release-metadata" {
+                assert!(
+                    serde_json::from_value::<Vec<GithubRelease>>(case.releases.clone()).is_err()
+                );
+                continue;
+            }
+            let releases = case
+                .releases
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|release| {
+                    let release = release.as_object().expect("release fixture object");
+                    GithubRelease {
+                        tag_name: release["tag_name"].as_str().unwrap().into(),
+                        draft: release["draft"].as_bool().unwrap(),
+                        prerelease: release["prerelease"].as_bool().unwrap(),
+                        published_at: release["published_at"].as_str().map(str::to_owned),
+                        assets: release["assets"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|asset| GithubReleaseAsset {
+                                name: asset["name"].as_str().unwrap().into(),
+                                browser_download_url: "https://example.invalid/fixture".into(),
+                                size: 1,
+                                digest: None,
+                            })
+                            .collect(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            let target = NvidiaTargetReadiness {
+                ready: true,
+                status: "exact-target".into(),
+                message: "fixture".into(),
+                steamos_version: Some(case.target.steamos_version.clone()),
+                kernel_version: Some(case.target.kernel_version.clone()),
+                architecture: case.target.architecture.clone(),
+            };
+            let first_result =
+                invoke_core_resolver(&repository, &runtime, &target, &releases).unwrap();
+            let second_result =
+                invoke_core_resolver(&repository, &runtime, &target, &releases).unwrap();
+            for absent in &case.absent_fields {
+                let absent = match absent.as_str() {
+                    "artifact" => first_result.artifact.is_none(),
+                    "nextAction" => first_result.next_action.is_none(),
+                    _ => false,
+                };
+                assert!(absent, "{} exposed an expected-absent field", case.name);
+            }
+            let first = serde_json::to_value(first_result).unwrap();
+            let second = serde_json::to_value(second_result).unwrap();
+            assert_eq!(first, second, "fixture {} was nondeterministic", case.name);
+            assert_json_subset(&first, &case.expected);
+        }
+        fs::remove_dir_all(runtime).unwrap();
+
+        let mut missing_case: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        missing_case["cases"].as_array_mut().unwrap().pop();
+        assert!(parse_core_resolver_compatibility_fixtures(
+            &serde_json::to_vec(&missing_case).unwrap()
+        )
+        .is_err());
+        assert!(parse_core_resolver_compatibility_fixtures(&vec![
+            b' ';
+            CORE_RESOLVER_FIXTURE_LIMIT + 1
+        ])
+        .is_err());
     }
 
     fn extract_core_file(repository: &Path, root: &Path, path: &str) {

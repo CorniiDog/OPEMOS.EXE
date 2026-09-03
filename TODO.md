@@ -99,6 +99,8 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 - [x] Compare Core and Rust resolution for exact matches, same-series fallback,
   incomplete assets, and duplicate release/asset identities; both paths now
   fail closed on ambiguous publication metadata.
+- [x] Consume Core’s bounded canonical resolver fixture matrix and reproduce
+  every available successor decision deterministically in local integration.
 - [x] Validate Core `nextAction=build_exact_target` only for a genuine reviewed
   target, retain its policy/baseline hashes and source commit, and map it to the
   existing exact-kernel VM plan without activating the successor resolver.
