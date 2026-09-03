@@ -2009,19 +2009,44 @@ pub(crate) fn validate_support_userspace_verification_record(
     Ok(())
 }
 
+pub(crate) fn support_payload_receipt_id(
+    receipt: &SupportPayloadReceipt,
+) -> Result<String, String> {
+    let identity = serde_json::json!({
+        "schemaVersion": 1,
+        "target": receipt.target,
+        "records": receipt.records,
+    });
+    let bytes = serde_json::to_vec(&identity)
+        .map_err(|error| format!("Could not canonicalize payload-receipt identity: {error}"))?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
 fn validate_support_payload_receipt(
     receipt: &SupportPayloadReceipt,
     inputs: &NvidiaInstallInputs,
 ) -> Result<(), String> {
     const RECEIPT_PATH: &str =
         "usr/lib/open-gpu-kernel-modules-steamos-support/offline-install/receipt.json";
-    const ROLES: [(&str, &str); 6] = [
-        ("buildInfo", "BUILD-INFO.txt"),
-        ("provenance", "PROVENANCE.json"),
-        ("validation", "validation.json"),
-        ("moduleVerification", "module-verification.json"),
-        ("userspaceVerification", "userspace-verification.json"),
-        ("initramfsVerification", "initramfs-verification.json"),
+    const ROLES: [(&str, &str, u64); 6] = [
+        ("buildInfo", "BUILD-INFO.txt", 1024 * 1024),
+        ("provenance", "PROVENANCE.json", 1024 * 1024),
+        ("validation", "validation.json", 16 * 1024 * 1024),
+        (
+            "moduleVerification",
+            "module-verification.json",
+            1024 * 1024,
+        ),
+        (
+            "userspaceVerification",
+            "userspace-verification.json",
+            256 * 1024,
+        ),
+        (
+            "initramfsVerification",
+            "initramfs-verification.json",
+            256 * 1024,
+        ),
     ];
     if receipt.schema_version != 1
         || receipt.status != "verified"
@@ -2031,19 +2056,20 @@ fn validate_support_payload_receipt(
         || receipt.target.nvidia_version != inputs.nvidia_version
         || receipt.target.architecture != "x86_64"
         || !exact_sha256(&receipt.receipt_id)
+        || support_payload_receipt_id(receipt)? != receipt.receipt_id
         || receipt.rootfs_relative_path != RECEIPT_PATH
         || receipt.records.len() != ROLES.len()
     {
         return Err("Offline installer returned invalid rootfs payload-receipt evidence.".into());
     }
     let mut filenames = HashSet::new();
-    for (record, (role, filename)) in receipt.records.iter().zip(ROLES) {
+    for (record, (role, filename, maximum)) in receipt.records.iter().zip(ROLES) {
         if record.role != role
             || record.filename != filename
             || !filenames.insert(record.filename.as_str())
             || record.filename.contains('/')
             || record.filename.contains('\\')
-            || !(1..=16 * 1024 * 1024).contains(&record.size_bytes)
+            || !(1..=maximum).contains(&record.size_bytes)
             || !exact_sha256(&record.sha256)
         {
             return Err("Offline installer payload-receipt records are inconsistent.".into());

@@ -196,7 +196,8 @@ mod tests {
                     )],
                 },
             },
-            SupportPayloadReceipt {
+            {
+                let mut receipt = SupportPayloadReceipt {
                 schema_version: 1,
                 status: "verified".into(),
                 reason: "payload_receipt_verified".into(),
@@ -206,7 +207,7 @@ mod tests {
                     nvidia_version: nvidia.into(),
                     architecture: "x86_64".into(),
                 },
-                receipt_id: "f".repeat(64),
+                receipt_id: String::new(),
                 rootfs_relative_path: "usr/lib/open-gpu-kernel-modules-steamos-support/offline-install/receipt.json".into(),
                 records: receipt_roles
                     .iter()
@@ -218,6 +219,9 @@ mod tests {
                         sha256: ((b'1' + index as u8) as char).to_string().repeat(64),
                     })
                     .collect(),
+                };
+                receipt.receipt_id = support_payload_receipt_id(&receipt).unwrap();
+                receipt
             },
         )
     }
@@ -3518,7 +3522,7 @@ esac
                 .as_ref()
                 .expect("retained payload receipt")
                 .receipt_id,
-            "f".repeat(64)
+            support_payload_receipt_id(installed.payload_receipt.as_ref().unwrap()).unwrap()
         );
 
         let mut missing_modules = successful.clone();
@@ -3593,7 +3597,7 @@ esac
         )
         .is_err());
         let mut changed_receipt = successful.clone();
-        changed_receipt.payload_receipt.as_mut().unwrap().receipt_id = "F".repeat(64);
+        changed_receipt.payload_receipt.as_mut().unwrap().receipt_id = "0".repeat(64);
         assert!(validate_nvidia_install_result(
             changed_receipt,
             &inputs,
@@ -3602,6 +3606,25 @@ esac
             "complete",
         )
         .is_err());
+        let mut oversized_receipt_record = successful.clone();
+        let receipt = oversized_receipt_record.payload_receipt.as_mut().unwrap();
+        receipt
+            .records
+            .iter_mut()
+            .find(|record| record.role == "userspaceVerification")
+            .unwrap()
+            .size_bytes = 256 * 1024 + 1;
+        receipt.receipt_id = support_payload_receipt_id(receipt).unwrap();
+        assert!(validate_nvidia_install_result(
+            oversized_receipt_record,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )
+        .err()
+        .expect("role-specific payload-receipt bounds must fail")
+        .contains("records"));
 
         let mut contradictory_workspace = successful.clone();
         contradictory_workspace
