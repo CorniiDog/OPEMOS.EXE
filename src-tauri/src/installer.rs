@@ -2220,7 +2220,15 @@ pub(crate) fn validate_nvidia_install_result(
             })
         })
         .transpose()?;
-    let payload_receipt = document.payload_receipt.clone();
+    let payload_receipt = document
+        .payload_receipt
+        .clone()
+        .map(|value| {
+            let bytes = serde_json::to_vec(&value)
+                .map_err(|error| format!("Could not read payload receipt: {error}"))?;
+            crate::core_contracts::validate_core_installer_payload_receipt_document(&bytes)
+        })
+        .transpose()?;
     if expected_status == "success" {
         let initramfs = initramfs_verification
             .as_ref()

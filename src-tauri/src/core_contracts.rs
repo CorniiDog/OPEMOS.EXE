@@ -13,6 +13,8 @@ pub(crate) const CORE_INSTALLER_USERSPACE_VERIFICATION_FIXTURE_LIMIT: usize = 51
 pub(crate) const CORE_INSTALLER_USERSPACE_VERIFICATION_DOCUMENT_LIMIT: usize = 256 * 1024;
 pub(crate) const CORE_INSTALLER_INITRAMFS_VERIFICATION_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_INSTALLER_INITRAMFS_VERIFICATION_DOCUMENT_LIMIT: usize = 256 * 1024;
+pub(crate) const CORE_INSTALLER_PAYLOAD_RECEIPT_FIXTURE_LIMIT: usize = 512 * 1024;
+pub(crate) const CORE_INSTALLER_PAYLOAD_RECEIPT_DOCUMENT_LIMIT: usize = 64 * 1024;
 pub(crate) const CORE_INSTALLER_PROGRESS_FIXTURE_LIMIT: usize = 512 * 1024;
 pub(crate) const CORE_PROGRESS_STREAM_LIMIT: usize = 16 * 1024 * 1024;
 const CORE_PROGRESS_PREFIX: &str = "STEAMOS_NVIDIA_PROGRESS ";
@@ -1495,6 +1497,199 @@ pub(crate) fn validate_core_installer_initramfs_verification_document(
         })?;
     validate_support_initramfs_verification_record(&verification)?;
     Ok(verification)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerPayloadReceiptCompatibilityFixtures {
+    pub(crate) schema_version: u32,
+    pub(crate) kind: String,
+    pub(crate) payload_receipt_schema_version: u32,
+    pub(crate) target: SupportPayloadReceiptTarget,
+    pub(crate) unfrozen_fields: Vec<String>,
+    pub(crate) failure_contract: String,
+    pub(crate) binding_scope: String,
+    pub(crate) limits: CoreInstallerPayloadReceiptFixtureLimits,
+    pub(crate) cases: Vec<CoreInstallerPayloadReceiptCompatibilityCase>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerPayloadReceiptFixtureLimits {
+    pub(crate) max_document_bytes: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerPayloadReceiptCompatibilityCase {
+    pub(crate) name: String,
+    pub(crate) expected: CoreInstallerPayloadReceiptExpectation,
+    #[serde(default)]
+    pub(crate) document: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) raw_document: Option<String>,
+    #[serde(default)]
+    pub(crate) document_recipe: Option<CoreInstallerPayloadReceiptDocumentRecipe>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerPayloadReceiptExpectation {
+    pub(crate) record_accepted: bool,
+    pub(crate) success_proof_accepted: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CoreInstallerPayloadReceiptDocumentRecipe {
+    pub(crate) kind: String,
+    pub(crate) base_case: String,
+    pub(crate) padding_bytes: usize,
+}
+
+pub(crate) fn parse_core_installer_payload_receipt_fixtures(
+    bytes: &[u8],
+) -> Result<CoreInstallerPayloadReceiptCompatibilityFixtures, String> {
+    if bytes.is_empty() || bytes.len() > CORE_INSTALLER_PAYLOAD_RECEIPT_FIXTURE_LIMIT {
+        return Err("OPEMOS Core payload-receipt fixtures are empty or exceed 512 KiB.".into());
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core payload-receipt fixtures")?;
+    let fixtures: CoreInstallerPayloadReceiptCompatibilityFixtures = serde_json::from_slice(bytes)
+        .map_err(|error| {
+            format!("OPEMOS Core payload-receipt fixtures are invalid JSON: {error}")
+        })?;
+    let record_accepted = HashSet::from([
+        "valid-normalized-success",
+        "safe-additive-top-level",
+        "target-binding-mismatch",
+        "alternate-record-hash",
+        "maximum-build-info-size",
+        "maximum-provenance-size",
+        "maximum-validation-size",
+        "maximum-module-verification-size",
+        "maximum-userspace-verification-size",
+        "maximum-initramfs-verification-size",
+    ]);
+    let success_accepted = HashSet::from([
+        "valid-normalized-success",
+        "safe-additive-top-level",
+        "alternate-record-hash",
+        "maximum-build-info-size",
+        "maximum-provenance-size",
+        "maximum-validation-size",
+        "maximum-module-verification-size",
+        "maximum-userspace-verification-size",
+        "maximum-initramfs-verification-size",
+    ]);
+    let required_names = record_accepted
+        .iter()
+        .copied()
+        .chain([
+            "receipt-id-mismatch",
+            "missing-record",
+            "extra-record",
+            "duplicate-record",
+            "records-out-of-order",
+            "unknown-role",
+            "unsafe-role",
+            "wrong-role-filename",
+            "unsafe-filename",
+            "empty-filename",
+            "zero-record-size",
+            "malformed-record-hash",
+            "missing-record-field",
+            "unknown-record-field",
+            "missing-target-field",
+            "unknown-target-field",
+            "unknown-target-kernel",
+            "wrong-target-architecture",
+            "malformed-target-version",
+            "wrong-rootfs-relative-path",
+            "path-traversal",
+            "wrong-status",
+            "wrong-reason",
+            "excessive-build-info-size",
+            "excessive-provenance-size",
+            "excessive-validation-size",
+            "excessive-module-verification-size",
+            "excessive-userspace-verification-size",
+            "excessive-initramfs-verification-size",
+            "malformed-json",
+            "duplicate-json-key",
+            "non-finite-json",
+            "oversized-document",
+        ])
+        .collect::<HashSet<_>>();
+    if fixtures.schema_version != 1
+        || fixtures.kind != "opemos-installer-payload-receipt-compatibility-fixtures"
+        || fixtures.payload_receipt_schema_version != 1
+        || !valid_numeric_version(&fixtures.target.steamos_version, 2..=3)
+        || !valid_kernel_version(&fixtures.target.kernel_version)
+        || fixtures.target.kernel_version == "unknown"
+        || !valid_numeric_version(&fixtures.target.nvidia_version, 2..=3)
+        || fixtures.target.architecture != "x86_64"
+        || !fixtures.unfrozen_fields.is_empty()
+        || fixtures.failure_contract != "outer-installer-result-only"
+        || fixtures.binding_scope != "target-and-self-identity"
+        || fixtures.limits.max_document_bytes != CORE_INSTALLER_PAYLOAD_RECEIPT_DOCUMENT_LIMIT
+        || !(1..=64).contains(&fixtures.cases.len())
+    {
+        return Err("OPEMOS Core payload-receipt fixture envelope is invalid.".into());
+    }
+    let mut names = HashSet::new();
+    for case in &fixtures.cases {
+        let variants = usize::from(case.document.is_some())
+            + usize::from(case.raw_document.is_some())
+            + usize::from(case.document_recipe.is_some());
+        let expected_variant = match case.name.as_str() {
+            "malformed-json" | "duplicate-json-key" | "non-finite-json" => "raw",
+            "oversized-document" => "recipe",
+            _ => "document",
+        };
+        if !safe_kebab_token(&case.name, 64)
+            || !names.insert(case.name.as_str())
+            || case.expected.record_accepted != record_accepted.contains(case.name.as_str())
+            || case.expected.success_proof_accepted != success_accepted.contains(case.name.as_str())
+            || (case.expected.success_proof_accepted && !case.expected.record_accepted)
+            || variants != 1
+            || (case.document.is_some()) != (expected_variant == "document")
+            || (case.raw_document.is_some()) != (expected_variant == "raw")
+            || (case.document_recipe.is_some()) != (expected_variant == "recipe")
+            || case.raw_document.as_ref().is_some_and(|raw| {
+                raw.is_empty() || raw.len() > CORE_INSTALLER_PAYLOAD_RECEIPT_DOCUMENT_LIMIT
+            })
+        {
+            return Err("OPEMOS Core payload-receipt fixture case is unsafe or incomplete.".into());
+        }
+        if let Some(recipe) = &case.document_recipe {
+            if case.name != "oversized-document"
+                || recipe.kind != "top-level-padding"
+                || recipe.base_case != "valid-normalized-success"
+                || recipe.padding_bytes != CORE_INSTALLER_PAYLOAD_RECEIPT_DOCUMENT_LIMIT
+            {
+                return Err("OPEMOS Core payload-receipt fixture recipe is invalid.".into());
+            }
+        }
+    }
+    if names != required_names {
+        return Err(
+            "OPEMOS Core payload-receipt fixture matrix omits a required safety case.".into(),
+        );
+    }
+    Ok(fixtures)
+}
+
+pub(crate) fn validate_core_installer_payload_receipt_document(
+    bytes: &[u8],
+) -> Result<SupportPayloadReceipt, String> {
+    if bytes.is_empty() || bytes.len() > CORE_INSTALLER_PAYLOAD_RECEIPT_DOCUMENT_LIMIT {
+        return Err("OPEMOS Core payload-receipt document is empty or excessive.".into());
+    }
+    reject_duplicate_contract_keys(bytes, "OPEMOS Core payload-receipt document")?;
+    let receipt: SupportPayloadReceipt = serde_json::from_slice(bytes)
+        .map_err(|error| format!("OPEMOS Core payload-receipt document is invalid: {error}"))?;
+    validate_support_payload_receipt_record(&receipt)?;
+    Ok(receipt)
 }
 
 #[derive(Debug, Deserialize)]
@@ -3492,6 +3687,100 @@ mod tests {
         assert!(parse_core_installer_initramfs_verification_fixtures(&vec![
             b' ';
             CORE_INSTALLER_INITRAMFS_VERIFICATION_FIXTURE_LIMIT
+                + 1
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn local_successor_payload_receipt_fixtures_match_rust_semantics() {
+        let Some(repository) = core_repository() else {
+            eprintln!(
+                "skipping local successor payload-receipt fixtures: sibling Core repository is absent"
+            );
+            return;
+        };
+        let generator = repository.join("lib/generate_installer_payload_receipt_fixtures.py");
+        let generate = || {
+            let output = Command::new("python3")
+                .arg(&generator)
+                .current_dir(&repository)
+                .output()
+                .expect("run Core payload-receipt fixture generator");
+            assert!(output.status.success());
+            assert!(output.stderr.is_empty());
+            output.stdout
+        };
+        let first = generate();
+        assert_eq!(
+            first,
+            generate(),
+            "Core payload-receipt fixtures were nondeterministic"
+        );
+        let fixtures = parse_core_installer_payload_receipt_fixtures(&first)
+            .expect("consume bounded Core payload-receipt fixtures");
+        let base_document = fixtures
+            .cases
+            .iter()
+            .find(|case| case.name == "valid-normalized-success")
+            .and_then(|case| case.document.clone())
+            .expect("payload-receipt fixture base document");
+        for case in &fixtures.cases {
+            let document_bytes = if let Some(document) = &case.document {
+                serde_json::to_vec(document).expect("serialize payload-receipt fixture")
+            } else if let Some(raw) = &case.raw_document {
+                raw.as_bytes().to_vec()
+            } else {
+                let recipe = case
+                    .document_recipe
+                    .as_ref()
+                    .expect("payload-receipt fixture recipe");
+                let mut document = base_document.clone();
+                document["padding"] = serde_json::Value::String("x".repeat(recipe.padding_bytes));
+                serde_json::to_vec(&document).expect("expand payload-receipt fixture recipe")
+            };
+            let result = validate_core_installer_payload_receipt_document(&document_bytes);
+            assert_eq!(
+                result.is_ok(),
+                case.expected.record_accepted,
+                "Rust payload-receipt acceptance diverged for {}: {:?}",
+                case.name,
+                result.as_ref().err()
+            );
+            let success_proof_accepted = result.is_ok_and(|receipt| {
+                receipt.target.steamos_version == fixtures.target.steamos_version
+                    && receipt.target.kernel_version == fixtures.target.kernel_version
+                    && receipt.target.nvidia_version == fixtures.target.nvidia_version
+                    && receipt.target.architecture == fixtures.target.architecture
+            });
+            assert_eq!(
+                success_proof_accepted, case.expected.success_proof_accepted,
+                "Rust payload-receipt success-proof acceptance diverged for {}",
+                case.name
+            );
+        }
+
+        let mut relabelled: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        relabelled["cases"][0]["expected"]["recordAccepted"] = serde_json::json!(false);
+        assert!(parse_core_installer_payload_receipt_fixtures(
+            &serde_json::to_vec(&relabelled).unwrap()
+        )
+        .is_err());
+        let mut missing_case: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        missing_case["cases"].as_array_mut().unwrap().pop();
+        assert!(parse_core_installer_payload_receipt_fixtures(
+            &serde_json::to_vec(&missing_case).unwrap()
+        )
+        .is_err());
+        let mut unsafe_target: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        unsafe_target["target"]["kernelVersion"] = serde_json::json!("../unsafe");
+        assert!(parse_core_installer_payload_receipt_fixtures(
+            &serde_json::to_vec(&unsafe_target).unwrap()
+        )
+        .is_err());
+        assert!(parse_core_installer_payload_receipt_fixtures(&vec![
+            b' ';
+            CORE_INSTALLER_PAYLOAD_RECEIPT_FIXTURE_LIMIT
                 + 1
         ])
         .is_err());

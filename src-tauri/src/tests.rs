@@ -3480,7 +3480,7 @@ esac
         );
         successful.module_verification = Some(serde_json::to_value(modules).unwrap());
         successful.userspace_verification = Some(serde_json::to_value(userspace).unwrap());
-        successful.payload_receipt = Some(receipt);
+        successful.payload_receipt = Some(serde_json::to_value(receipt).unwrap());
         let installed = validate_nvidia_install_result(
             successful.clone(),
             &inputs,
@@ -3631,7 +3631,8 @@ esac
         )
         .is_err());
         let mut changed_receipt = successful.clone();
-        changed_receipt.payload_receipt.as_mut().unwrap().receipt_id = "0".repeat(64);
+        changed_receipt.payload_receipt.as_mut().unwrap()["receiptId"] =
+            serde_json::json!("0".repeat(64));
         assert!(validate_nvidia_install_result(
             changed_receipt,
             &inputs,
@@ -3642,13 +3643,14 @@ esac
         .is_err());
         let mut oversized_receipt_record = successful.clone();
         let receipt = oversized_receipt_record.payload_receipt.as_mut().unwrap();
-        receipt
-            .records
-            .iter_mut()
-            .find(|record| record.role == "userspaceVerification")
+        receipt["records"]
+            .as_array_mut()
             .unwrap()
-            .size_bytes = 256 * 1024 + 1;
-        receipt.receipt_id = support_payload_receipt_id(receipt).unwrap();
+            .iter_mut()
+            .find(|record| record["role"] == "userspaceVerification")
+            .unwrap()["sizeBytes"] = serde_json::json!(256 * 1024 + 1);
+        let typed_receipt: SupportPayloadReceipt = serde_json::from_value(receipt.clone()).unwrap();
+        receipt["receiptId"] = serde_json::json!(support_payload_receipt_id(&typed_receipt).unwrap());
         assert!(validate_nvidia_install_result(
             oversized_receipt_record,
             &inputs,
@@ -3659,6 +3661,21 @@ esac
         .err()
         .expect("role-specific payload-receipt bounds must fail")
         .contains("records"));
+        let mut oversized_receipt_document = successful.clone();
+        oversized_receipt_document.payload_receipt.as_mut().unwrap()["padding"] =
+            serde_json::json!("x".repeat(
+                crate::core_contracts::CORE_INSTALLER_PAYLOAD_RECEIPT_DOCUMENT_LIMIT
+            ));
+        assert!(validate_nvidia_install_result(
+            oversized_receipt_document,
+            &inputs,
+            "success",
+            "install_complete",
+            "complete",
+        )
+        .err()
+        .expect("oversized payload-receipt proof must fail")
+        .contains("excessive"));
 
         let mut contradictory_workspace = successful.clone();
         contradictory_workspace

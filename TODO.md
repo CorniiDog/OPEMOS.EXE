@@ -76,7 +76,7 @@ this repository.
   progress, keyboard navigation, and coupled companion windows.
 - [x] Add fixture-tested schema-compatible consumers for Core resolver schema 2
   and installer validation, result, progress, module-verification, and
-  userspace-verification and initramfs-verification schema 1.
+  userspace-verification, initramfs-verification, and payload-receipt schema 1.
 
 Current outputs remain `nvidia-mutation-valid`. Do not call them
 `install-ready`, hardware-certified, or update-safe until the gates below pass.
@@ -122,6 +122,9 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 - [x] Consume Core’s bounded initramfs-verification matrix, separate structural
   acceptance from exact-kernel binding, reject hostile or oversized documents,
   and require the exact four-module early-boot proof before installer success.
+- [x] Consume Core’s bounded payload-receipt matrix, recompute its canonical
+  identity, enforce each evidence role’s byte ceiling, and independently hash
+  the closed receipt directory during final-image inspection.
 - [ ] Repin Core only after its complete Fedora suite and this repository’s full
   suite pass against the same immutable bundle.
 

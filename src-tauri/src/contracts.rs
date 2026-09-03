@@ -915,7 +915,7 @@ pub(crate) struct SupportInstallResult {
     pub(crate) userspace_verification: Option<serde_json::Value>,
     pub(crate) initramfs_workspace: Option<SupportInitramfsWorkspace>,
     pub(crate) initramfs_verification: Option<serde_json::Value>,
-    pub(crate) payload_receipt: Option<SupportPayloadReceipt>,
+    pub(crate) payload_receipt: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
