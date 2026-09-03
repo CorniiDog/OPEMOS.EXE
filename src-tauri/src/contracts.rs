@@ -213,8 +213,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 45] = [
     },
     PinnedInstallerFile {
         path: "bootstrap/launch_desktop_companion.sh",
-        sha256: "af95900fef141824b9d17dc7276f0b4d3796b0ed642a8f86c501d35a9bd07a15",
-        bytes: 2_179,
+        sha256: "3f233e0e48c2c6debe0d09d0ee22bde641bdd7dba6bc1bdb96de31e2eae76cd9",
+        bytes: 1_140,
         executable: true,
     },
     PinnedInstallerFile {
@@ -243,8 +243,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 45] = [
     },
     PinnedInstallerFile {
         path: "lib/desktop_update_generations.py",
-        sha256: "b565db9c20c50aefe61a4701560600aa9fc8499daace2ca34532a4198361e103",
-        bytes: 30_047,
+        sha256: "2d19fa64824a384ce61c655f39e89276b365447cbcbe670c1e72e3e1a8112588",
+        bytes: 38_358,
         executable: true,
     },
     PinnedInstallerFile {

@@ -110,7 +110,7 @@ function diagnostics() {
   view.innerHTML = `
     <div class="panel"><span class="label">Installation-media diagnostics</span><h2>Safe simulated inventory</h2>
       <pre>schema=1
-supportRevision=2f6f133485f68ed09abf58b8a49ad67b985dd2e6
+supportRevision=305f1199f5745136902de1c88655a9192fb91de3
 nvidiaVersion=575.64.05
 status=ready
 

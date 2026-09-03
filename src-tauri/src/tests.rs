@@ -2322,7 +2322,7 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 554_759);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 562_031);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 45);
         assert!(PINNED_INSTALLER_FILES
             .iter()
@@ -2419,6 +2419,17 @@ esac
         assert!(guest_permissions.contains("\"$WORK/support/lib/verify_initramfs.py\""));
         assert!(guest_permissions.contains("chmod 0644 "));
         assert!(guest_permissions.contains("\"$WORK/support/lib/atomic_output.py\""));
+
+        let uppercase_commit = "A".repeat(40);
+        assert!(validate_pinned_support_files(&uppercase_commit, &PINNED_INSTALLER_FILES)
+            .is_err());
+        let uppercase_digest = [PinnedInstallerFile {
+            path: "safe/file",
+            sha256: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            bytes: 1,
+            executable: false,
+        }];
+        assert!(validate_pinned_support_files(NVIDIA_SUPPORT_COMMIT, &uppercase_digest).is_err());
     }
 
     #[test]

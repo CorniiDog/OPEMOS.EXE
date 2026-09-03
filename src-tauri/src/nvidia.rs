@@ -3111,7 +3111,11 @@ pub(crate) fn validate_pinned_support_files(
     commit: &str,
     files: &[PinnedInstallerFile],
 ) -> Result<u64, String> {
-    if commit.len() != 40 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if commit.len() != 40
+        || !commit
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
         return Err("Pinned NVIDIA support commit is invalid.".into());
     }
     let mut paths = HashSet::new();
@@ -3127,7 +3131,10 @@ pub(crate) fn validate_pinned_support_files(
                 .any(|component| !matches!(component, std::path::Component::Normal(_)))
             || !paths.insert(file.path)
             || file.sha256.len() != 64
-            || !file.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !file
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
             || file.bytes == 0
         {
             return Err("Pinned NVIDIA support-file contract is invalid.".into());
