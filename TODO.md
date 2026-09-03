@@ -167,11 +167,11 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   repin CI so the 74 generation, 16 OpenPGP, 49 bootstrap, 28 verifier-evidence,
   and 35 request-plan cases run remotely. A contract-fixture pin does not
   activate a candidate bundle.
-- [x] Validate the same contract fixtures at published hardening successor
-  `dfa83a01ad7d8cb915466de86229741f725c83b8` and repin the immutable CI
-  checkout after byte-level compatibility passes. Keep newer local Core
-  lifecycle commits inactive until they are explicitly published and
-  cross-repository tests pass.
+- [x] Repin the immutable CI checkout to published lifecycle successor
+  `3e49323fce266af8686039fb6487918ef5a64fd9` after confirming its shared
+  schemas and compatibility fixtures are byte-identical to the validated
+  `dfa83a01ad7d8cb915466de86229741f725c83b8` baseline. This records the
+  complete published Core lifecycle without activating production trust.
 - [ ] Before production wiring, bind the verifier to an identity-pinned snapshot
   of the exact installed policy and keyring hashes, and run transport/verifier
   children in an owned cancellable executor with timeout and descendant reaping.

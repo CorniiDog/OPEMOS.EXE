@@ -46,7 +46,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: CorniiDog/open-gpu-kernel-modules-steamos-support
-          ref: dfa83a01ad7d8cb915466de86229741f725c83b8
+          ref: 3e49323fce266af8686039fb6487918ef5a64fd9
           path: opemos-core-contracts
           persist-credentials: false
 
@@ -73,4 +73,4 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
-          OPEMOS_CORE_EXPECTED_COMMIT: dfa83a01ad7d8cb915466de86229741f725c83b8
+          OPEMOS_CORE_EXPECTED_COMMIT: 3e49323fce266af8686039fb6487918ef5a64fd9
