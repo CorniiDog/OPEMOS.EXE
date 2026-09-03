@@ -1220,6 +1220,23 @@ esac
         arm(&mut manager, "cancel-all");
         manager.cancel_all();
         assert!(!manager.is_armed());
+
+        arm(&mut manager, "drop-active");
+        let cancellation = manager
+            .begin_write_for_test("drop-active", now)
+            .expect("begin synthetic USB write");
+        assert!(!cancellation.load(Ordering::Relaxed));
+        drop(manager);
+        assert!(cancellation.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn manager_teardown_cancels_nvidia_appliance_startup() {
+        let manager = NvidiaBuildManager::default();
+        let cancellation = manager.cancel_build.clone();
+        assert!(!cancellation.load(Ordering::Relaxed));
+        drop(manager);
+        assert!(cancellation.load(Ordering::Relaxed));
     }
 
     #[test]

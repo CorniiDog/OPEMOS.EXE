@@ -409,6 +409,7 @@ pub(crate) struct NvidiaBuildManager {
 
 impl Drop for NvidiaBuildManager {
     fn drop(&mut self) {
+        self.cancel_build.store(true, Ordering::Relaxed);
         if let Some(session) = self.session.as_mut() {
             let _ = session.child.kill();
             let _ = session.child.wait();

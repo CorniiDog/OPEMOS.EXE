@@ -2242,6 +2242,21 @@ impl UsbPreparationManager {
     pub(crate) fn is_armed(&self) -> bool {
         self.armed.is_some()
     }
+
+    #[cfg(test)]
+    pub(crate) fn begin_write_for_test(
+        &mut self,
+        session_token: &str,
+        now: Instant,
+    ) -> Option<Arc<AtomicBool>> {
+        self.begin_write(session_token, now)
+    }
+}
+
+impl Drop for UsbPreparationManager {
+    fn drop(&mut self) {
+        self.cancel_all();
+    }
 }
 
 pub(crate) fn copy_and_verify_usb_image(
