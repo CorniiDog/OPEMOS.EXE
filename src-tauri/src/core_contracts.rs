@@ -146,7 +146,7 @@ pub(crate) struct CoreResolverBuildBaseline {
 }
 
 impl CoreResolverBuildPlan {
-    fn is_valid_for(&self, outer: &CoreResolverTarget) -> bool {
+    pub(crate) fn is_valid_for(&self, outer: &CoreResolverTarget) -> bool {
         let branch = format!("refs/heads/nvidia/{}", self.target.nvidia_version);
         let exact_lower_hex = |value: &str, length: usize| {
             value.len() == length

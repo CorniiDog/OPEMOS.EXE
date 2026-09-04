@@ -56,6 +56,11 @@ mod core_generation_verifier;
 #[cfg(unix)]
 #[allow(dead_code)]
 mod core_generation_request_plan;
+// Closed parsing and compatibility coverage for Core-owned NVIDIA source
+// authorization. Production selection remains on the legacy path until an
+// authenticated Core generation carries this contract and equivalence passes.
+#[allow(dead_code)]
+mod core_source_intent;
 // The migration adapter is exercised before activation. Its production entry
 // points remain deliberately unused until Core publishes an immutable manifest.
 #[allow(dead_code)]

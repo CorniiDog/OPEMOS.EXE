@@ -200,10 +200,17 @@ already Core contracts and are not open-ended product choices.
 - [x] Consume Core resolver schema 2, `nextAction=build_exact_target`, installer
   validation/result/progress, module, userspace, initramfs, workspace, receipt,
   and gaming-payload fixtures with bounded fail-closed Rust adapters.
-- [ ] Finish old/new resolver equivalence for malformed and unreviewed inputs;
-  then remove only duplicated Core-owned release-selection policy. Retain Rust
-  parsing, bounds, session binding, diagnostics, orchestration, and independent
-  final-image verification.
+- [x] Consume Core source-intent and source-authorization schema 1 plus its exact
+  16-case matrix at local commit
+  `04561e16974748e8c2e7d60c6b48b01e9e51b311`. Bind every authorization to the
+  canonical intent hash, exact target, action kind, resolver result/build plan,
+  and reviewed project or acknowledged upstream source. Malformed, unsupported,
+  substituted, and unreviewed inputs remain rejected without a build fallback.
+- [ ] Route the normal source-selection path through an authenticated Core
+  authorization and finish old/new behavioral equivalence; then remove only
+  duplicated Core-owned release/source-selection policy. Retain Rust parsing,
+  bounds, session binding, diagnostics, orchestration, and independent final-
+  image verification.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
