@@ -175,7 +175,7 @@ already Core contracts and are not open-ended product choices.
   boundaries. Exact durable file receipts preserve ambiguous or replaced
   entries detected before the final descriptor-relative cleanup boundary.
 - [x] Exercise one immutable, explicitly non-production Core generation from
-  local Core commit `2ab12b29a5c7d7a2e18793e787e5c76c6febb1a5` through EXE
+  local Core commit `7f90e45c4c154fdfda81ff594611cf533e4fb894` through EXE
   acquisition, installed-trust authentication, pending activation, canonical
   appliance staging, Core guest consumption, handoff retirement, and healthy
   activation. The integration found and fixed the evidence filename and
@@ -208,8 +208,8 @@ already Core contracts and are not open-ended product choices.
   validation/result/progress, module, userspace, initramfs, workspace, receipt,
   and gaming-payload fixtures with bounded fail-closed Rust adapters.
 - [x] Consume Core source-intent and source-authorization schema 1 plus its exact
-  16-case matrix at local commit
-  `04561e16974748e8c2e7d60c6b48b01e9e51b311`. Bind every authorization to the
+  21-case matrix from the same non-production development generation at
+  `7f90e45c4c154fdfda81ff594611cf533e4fb894`. Bind every authorization to the
   canonical intent hash, exact target, action kind, resolver result/build plan,
   and reviewed project or acknowledged upstream source. Malformed, unsupported,
   substituted, and unreviewed inputs remain rejected without a build fallback.

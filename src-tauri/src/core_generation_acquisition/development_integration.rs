@@ -26,7 +26,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const DEVELOPMENT_HANDOFF_COMMIT: &str = "2ab12b29a5c7d7a2e18793e787e5c76c6febb1a5";
+// This is the same exact, explicitly non-production Core generation used by
+// the source-intent integration test. It must not be promoted to the production
+// bundle pin merely because it is available in a local Core worktree.
+const DEVELOPMENT_HANDOFF_COMMIT: &str = "7f90e45c4c154fdfda81ff594611cf533e4fb894";
 const HANDOFF_FILENAME: &str = "opemos-core-generation-handoff-v1.json";
 const DEVELOPMENT_OPERATION: &str = "development-generation-v1";
 const DEVELOPMENT_STEAMOS: &str = "3.8.14";

@@ -676,7 +676,13 @@ pub(crate) fn parse_core_source_compatibility_fixtures(
             || !names.insert(case.name.as_str())
             || releases.len() > 2_000
             || expected.get(case.name.as_str()).copied() != Some(actual)
-            || canonical_bytes(&case.intent)?.len() > SOURCE_INTENT_LIMIT
+            // The matrix intentionally carries non-canonical malformed JSON
+            // values. Bound their encoded size without applying the production
+            // canonicalizer that the case is specifically expected to fail.
+            || serde_json::to_vec(&case.intent)
+                .map_err(|error| format!("OPEMOS Core source fixture is not encodable: {error}"))?
+                .len()
+                > SOURCE_INTENT_LIMIT
         {
             return Err(
                 "OPEMOS Core source fixture case is unsafe or changed unexpectedly.".into(),
@@ -688,7 +694,13 @@ pub(crate) fn parse_core_source_compatibility_fixtures(
         if valid_intent
             == matches!(
                 case.name.as_str(),
-                "malformed-automatic-selection" | "unknown-mode" | "unsupported-architecture"
+                "malformed-project-source"
+                    | "malformed-automatic-selection"
+                    | "floating-schema-version"
+                    | "fractional-selection-version"
+                    | "non-scalar-mode"
+                    | "unknown-mode"
+                    | "unsupported-architecture"
             )
         {
             return Err("OPEMOS Core source fixture intent validity changed unexpectedly.".into());
@@ -768,6 +780,10 @@ fn expected_fixture_outcomes(
             ("rejected", "reviewed_project_source_mismatch", None),
         ),
         (
+            "malformed-project-source",
+            ("rejected", "source_intent_invalid", None),
+        ),
+        (
             "explicit-upstream-development",
             (
                 "authorized",
@@ -791,10 +807,26 @@ fn expected_fixture_outcomes(
             "malformed-automatic-selection",
             ("rejected", "source_intent_invalid", None),
         ),
+        (
+            "floating-schema-version",
+            ("rejected", "source_intent_invalid", None),
+        ),
+        (
+            "fractional-selection-version",
+            ("rejected", "source_intent_invalid", None),
+        ),
+        (
+            "non-scalar-mode",
+            ("rejected", "source_intent_invalid", None),
+        ),
         ("unknown-mode", ("rejected", "source_intent_invalid", None)),
         (
             "unsupported-architecture",
             ("rejected", "source_intent_invalid", None),
+        ),
+        (
+            "duplicate-publication-identity",
+            ("rejected", "resolver_failed", None),
         ),
     ])
 }
@@ -811,7 +843,10 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    const CORE_SOURCE_INTENT_COMMIT: &str = "04561e16974748e8c2e7d60c6b48b01e9e51b311";
+    // One exact, explicitly non-production Core generation backs every
+    // cross-repository migration test. Keep this aligned with
+    // development_integration.rs; it is not the production bundle pin.
+    const CORE_SOURCE_INTENT_COMMIT: &str = "7f90e45c4c154fdfda81ff594611cf533e4fb894";
 
     struct TemporaryRoot(PathBuf);
 
@@ -870,6 +905,16 @@ mod tests {
             .env("PYTHONDONTWRITEBYTECODE", "1")
             .output()
             .unwrap()
+    }
+
+    fn fixture_input_bytes(value: &serde_json::Value) -> Vec<u8> {
+        // Compatibility matrices deliberately contain malformed values that
+        // the production canonicalizer must reject (for example, 1.0 where an
+        // integer schema version is required). Preserve those JSON values so
+        // both implementations can exercise the rejection path.
+        let mut bytes = serde_json::to_vec(value).unwrap();
+        bytes.push(b'\n');
+        bytes
     }
 
     #[test]
@@ -1003,7 +1048,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires the exact unpublished Core source-intent commit"]
+    #[ignore = "requires the exact unpublished Core development generation"]
     fn exact_core_source_intent_matrix_matches_rust_contract() {
         let repository = core_repository();
         let present = Command::new("git")
@@ -1043,8 +1088,8 @@ mod tests {
         for (index, case) in fixtures.cases.iter().enumerate() {
             let intent_path = temporary.0.join(format!("intent-{index}.json"));
             let releases_path = temporary.0.join(format!("releases-{index}.json"));
-            fs::write(&intent_path, canonical_bytes(&case.intent).unwrap()).unwrap();
-            fs::write(&releases_path, canonical_bytes(&case.releases).unwrap()).unwrap();
+            fs::write(&intent_path, fixture_input_bytes(&case.intent)).unwrap();
+            fs::write(&releases_path, fixture_input_bytes(&case.releases)).unwrap();
             let output = run_python(
                 &contract,
                 &[
@@ -1063,6 +1108,19 @@ mod tests {
                 case.name,
                 String::from_utf8_lossy(&output.stderr)
             );
+            if canonical_bytes(&case.intent).is_err() {
+                assert!(
+                    parse_core_source_authorization(&output.stdout, &case.intent).is_err(),
+                    "{} must remain fail-closed in the Rust consumer",
+                    case.name
+                );
+                let rejected: CoreSourceAuthorization =
+                    serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(rejected.status, case.expected.status, "{}", case.name);
+                assert_eq!(rejected.reason, case.expected.reason, "{}", case.name);
+                assert!(rejected.action.is_none(), "{}", case.name);
+                continue;
+            }
             let authorization =
                 parse_core_source_authorization(&output.stdout, &case.intent).unwrap();
             assert_eq!(authorization.status, case.expected.status, "{}", case.name);
@@ -1105,9 +1163,7 @@ mod tests {
 
         let mut missing: serde_json::Value = serde_json::from_slice(&generated.stdout).unwrap();
         missing["cases"].as_array_mut().unwrap().pop();
-        assert!(
-            parse_core_source_compatibility_fixtures(&canonical_bytes(&missing).unwrap()).is_err()
-        );
+        assert!(parse_core_source_compatibility_fixtures(&fixture_input_bytes(&missing)).is_err());
         let duplicate = String::from_utf8(generated.stdout).unwrap().replacen(
             "\"schemaVersion\":1",
             "\"schemaVersion\":1,\"schemaVersion\":1",
