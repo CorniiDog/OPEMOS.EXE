@@ -306,6 +306,22 @@ already Core contracts and are not open-ended product choices.
 - [ ] Show the available, selected, active, and last-known-good Core generations
   plus exact-target support in normal and maintainer UI. Preserve explicit source
   intent; never substitute a nearby target, lock, or generation.
+- [x] Exercise that generation-status presentation in both shared inspector
+  surfaces using a closed debug-only host fixture. The fixture provides two
+  synthetic identities and distinct selected, active, and last-known-good state;
+  production and unverified-document responses cannot supply generation state.
+  The frontend requires the exact four-field shape, one to four unique available
+  identities, positive safe sequences, bounded IDs, lowercase SHA-256 values,
+  no extra fields, and membership of every selected/active/LKG identity in the
+  available set. It displays Core's exact-target support field verbatim and
+  labels every generation row “development fixture.” Tests cover absent state,
+  missing/extra fields, empty/oversized/duplicate inventories, malformed hashes,
+  invalid sequences, unavailable selections, and origin substitution. This adds
+  no cache reader, production discovery, source selection, or activation; the
+  parent production UI item stays open. On Ubuntu 24.04.4 through the shared
+  scheduler, formatting and Clippy pass, 330 Rust tests pass (27 ignored), and
+  all 110 frontend tests plus documentation, hygiene, and boundary integrity
+  pass against the unchanged Core fixture pin.
 - [x] Add an inactive descriptor-bound host-cache-to-appliance staging bridge.
   It requires the exact pending identity, operation, target, lineage, installed
   trust, and committed inventory; publishes a canonical non-executable handoff

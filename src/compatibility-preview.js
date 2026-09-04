@@ -7,6 +7,45 @@ function displayText(value, limit = 2048) {
   return value.length > limit ? `${value.slice(0, limit)}… (truncated for display)` : value;
 }
 
+function generationIdentity(value) {
+  if (!value || !Number.isSafeInteger(value.sequence) || value.sequence < 1
+      || typeof value.generationId !== "string" || !value.generationId
+      || value.generationId.length > 128
+      || typeof value.manifestSha256 !== "string" || !/^[0-9a-f]{64}$/.test(value.manifestSha256)
+      || Object.keys(value).some((key) => !["sequence", "generationId", "manifestSha256"].includes(key))) {
+    throw new Error("Malformed generation status preview.");
+  }
+  return `#${value.sequence} · ${value.generationId} · ${value.manifestSha256}`;
+}
+
+function generationRows(preview) {
+  const state = preview.generationState;
+  if (state == null) return [];
+  const fields = ["available", "selected", "active", "lastKnownGood"];
+  if (preview.origin !== "development-fixture" || !Array.isArray(state.available)
+      || state.available.length < 1 || state.available.length > 4
+      || Object.keys(state).length !== fields.length
+      || Object.keys(state).some((key) => !fields.includes(key))) {
+    throw new Error("Unsupported generation status preview.");
+  }
+  const identityKey = (value) => JSON.stringify([value.sequence, value.generationId, value.manifestSha256]);
+  const available = state.available.map((value) => [identityKey(value), generationIdentity(value)]);
+  const availableKeys = new Set(available.map(([key]) => key));
+  if (availableKeys.size !== available.length) throw new Error("Duplicate generation status preview.");
+  const optional = (value) => {
+    if (value == null) return "None";
+    const displayed = generationIdentity(value);
+    if (!availableKeys.has(identityKey(value))) throw new Error("Generation status is not available.");
+    return displayed;
+  };
+  return [
+    ["Available generations — development fixture", available.map(([, value]) => value).join("; ")],
+    ["Selected generation — development fixture", optional(state.selected)],
+    ["Active generation — development fixture", optional(state.active)],
+    ["Last-known-good generation — development fixture", optional(state.lastKnownGood)],
+  ];
+}
+
 // Presentation of the Rust-validated Core result only. No source selection,
 // compatibility inference, network action, or activation is derived here.
 export function presentCompatibilityPreview(preview) {
@@ -24,7 +63,7 @@ export function presentCompatibilityPreview(preview) {
     ["SteamOS target", displayText(result.target.steamosVersion, 64)],
     ["Kernel target", displayText(result.target.kernelVersion, 255)],
     ["Architecture", displayText(result.target.architecture, 64)],
-    ["Compatibility reported by Core", displayText(result.compatibility)],
+    ["Exact-target support reported by Core", displayText(result.compatibility)],
     ["Reason", displayText(result.reason, 128)],
     ["Message", displayText(result.message)],
   ];
@@ -44,6 +83,7 @@ export function presentCompatibilityPreview(preview) {
     ["Action architecture", displayText(result.nextAction.executionArchitecture, 64)],
     ["Kernel policy", displayText(result.nextAction.kernelPolicy, 64)],
   );
+  rows.push(...generationRows(preview));
   return { origin: origins[preview.origin], rows };
 }
 

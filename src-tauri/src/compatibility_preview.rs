@@ -10,11 +10,48 @@ pub(crate) enum CompatibilityPreviewRequest {
     Fixture { name: String },
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GenerationPreviewIdentity {
+    sequence: u64,
+    generation_id: &'static str,
+    manifest_sha256: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GenerationStatePreview {
+    available: Vec<GenerationPreviewIdentity>,
+    selected: Option<GenerationPreviewIdentity>,
+    active: Option<GenerationPreviewIdentity>,
+    last_known_good: Option<GenerationPreviewIdentity>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CompatibilityPreview {
     origin: &'static str,
     result: CoreResolverResult,
+    generation_state: Option<GenerationStatePreview>,
+}
+
+fn development_generation_state() -> GenerationStatePreview {
+    let active = GenerationPreviewIdentity {
+        sequence: 41,
+        generation_id: "development-fixture-active",
+        manifest_sha256: "1111111111111111111111111111111111111111111111111111111111111111",
+    };
+    let selected = GenerationPreviewIdentity {
+        sequence: 42,
+        generation_id: "development-fixture-selected",
+        manifest_sha256: "2222222222222222222222222222222222222222222222222222222222222222",
+    };
+    GenerationStatePreview {
+        available: vec![active.clone(), selected.clone()],
+        selected: Some(selected),
+        active: Some(active.clone()),
+        last_known_good: Some(active),
+    }
 }
 
 fn fixture_bytes(name: &str, enabled: bool) -> Result<&'static [u8], String> {
@@ -36,17 +73,23 @@ fn fixture_bytes(name: &str, enabled: bool) -> Result<&'static [u8], String> {
 pub(crate) fn preview_core_compatibility(
     request: CompatibilityPreviewRequest,
 ) -> Result<CompatibilityPreview, String> {
-    let (origin, result) = match request {
+    let (origin, result, generation_state) = match request {
         CompatibilityPreviewRequest::Document { document } => (
             "unverified-document",
             parse_core_resolver_result(document.as_bytes())?,
+            None,
         ),
         CompatibilityPreviewRequest::Fixture { name } => (
             "development-fixture",
             parse_core_resolver_result(fixture_bytes(&name, cfg!(debug_assertions))?)?,
+            Some(development_generation_state()),
         ),
     };
-    Ok(CompatibilityPreview { origin, result })
+    Ok(CompatibilityPreview {
+        origin,
+        result,
+        generation_state,
+    })
 }
 
 #[cfg(test)]
@@ -66,6 +109,7 @@ mod tests {
                 serde_json::to_value(parse_core_resolver_result(bytes).unwrap()).unwrap();
             let result = document(String::from_utf8(bytes.to_vec()).unwrap()).unwrap();
             assert_eq!(result.origin, "unverified-document");
+            assert!(result.generation_state.is_none());
             assert_eq!(serde_json::to_value(result.result).unwrap(), expected);
             if cfg!(debug_assertions) {
                 let fixture = preview_core_compatibility(CompatibilityPreviewRequest::Fixture {
@@ -73,6 +117,11 @@ mod tests {
                 })
                 .unwrap();
                 assert_eq!(fixture.origin, "development-fixture");
+                let generation = fixture.generation_state.as_ref().unwrap();
+                assert_eq!(generation.available.len(), 2);
+                assert_eq!(generation.selected.as_ref().unwrap().sequence, 42);
+                assert_eq!(generation.active.as_ref().unwrap().sequence, 41);
+                assert_eq!(generation.last_known_good.as_ref().unwrap().sequence, 41);
                 assert_eq!(serde_json::to_value(fixture.result).unwrap(), expected);
             }
         }

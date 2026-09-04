@@ -7,11 +7,21 @@ const compatible = JSON.parse(await readFile(new URL("./fixtures/opemos-core/res
 const absent = JSON.parse(await readFile(new URL("./fixtures/opemos-core/resolver-incompatible-v2.json", import.meta.url)));
 const preview = (result = compatible, origin = "development-fixture") => ({ result, origin });
 const defer = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+const fixtureGeneration = {
+  available: [
+    { sequence: 41, generationId: "development-fixture-active", manifestSha256: "1".repeat(64) },
+    { sequence: 42, generationId: "development-fixture-selected", manifestSha256: "2".repeat(64) },
+  ],
+  selected: { sequence: 42, generationId: "development-fixture-selected", manifestSha256: "2".repeat(64) },
+  active: { sequence: 41, generationId: "development-fixture-active", manifestSha256: "1".repeat(64) },
+  lastKnownGood: { sequence: 41, generationId: "development-fixture-active", manifestSha256: "1".repeat(64) },
+};
 
 test("Core statuses and next actions are presented verbatim with unverified origins", () => {
   const accepted = presentCompatibilityPreview(preview());
   assert.match(accepted.origin, /non-production/);
   assert.equal(new Map(accepted.rows).get("Core status"), compatible.status);
+  assert.equal(new Map(accepted.rows).get("Exact-target support reported by Core"), compatible.compatibility);
   assert.equal(new Map(accepted.rows).get("Artifact trust reported by Core"), "pending-provenance-verification");
   const noArtifact = presentCompatibilityPreview(preview(absent, "unverified-document"));
   assert.equal(noArtifact.origin, "Unverified document");
@@ -19,6 +29,34 @@ test("Core statuses and next actions are presented verbatim with unverified orig
   assert.equal(new Map(noArtifact.rows).get("Message"), absent.message);
   assert.equal(noArtifact.rows.some(([label]) => label === "Artifact name"), false);
   assert.deepEqual(Object.keys(noArtifact).sort(), ["origin", "rows"]);
+});
+
+test("Generation status appears only for closed development fixtures", () => {
+  const shown = presentCompatibilityPreview({ ...preview(), generationState: fixtureGeneration });
+  const rows = new Map(shown.rows);
+  assert.match(rows.get("Available generations — development fixture"), /#41.*#42/);
+  assert.match(rows.get("Selected generation — development fixture"), /^#42/);
+  assert.match(rows.get("Active generation — development fixture"), /^#41/);
+  assert.match(rows.get("Last-known-good generation — development fixture"), /^#41/);
+  assert.throws(() => presentCompatibilityPreview({
+    ...preview(compatible, "unverified-document"), generationState: fixtureGeneration,
+  }), /Unsupported generation/);
+  for (const generationState of [
+    { ...fixtureGeneration, available: [] },
+    { ...fixtureGeneration, available: Array(5).fill(fixtureGeneration.active) },
+    { ...fixtureGeneration, selected: { ...fixtureGeneration.selected, sequence: 0 } },
+    { ...fixtureGeneration, active: { ...fixtureGeneration.active, manifestSha256: "A".repeat(64) } },
+    { ...fixtureGeneration, lastKnownGood: { ...fixtureGeneration.active, extra: true } },
+    { ...fixtureGeneration, available: [null] },
+    { ...fixtureGeneration, available: [fixtureGeneration.active, fixtureGeneration.active] },
+    { ...fixtureGeneration, selected: { ...fixtureGeneration.selected, sequence: 43 } },
+    { available: fixtureGeneration.available, selected: null, lastKnownGood: null },
+    { ...fixtureGeneration, authority: "production" },
+  ]) assert.throws(() => presentCompatibilityPreview({ ...preview(), generationState }));
+  const absentState = presentCompatibilityPreview({
+    ...preview(), generationState: { ...fixtureGeneration, selected: null, active: null, lastKnownGood: null },
+  });
+  assert.equal(new Map(absentState.rows).get("Active generation — development fixture"), "None");
 });
 
 test("Unknown origin, schema, status and non-text fields never produce a preview", () => {
