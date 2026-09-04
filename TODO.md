@@ -492,6 +492,17 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   the shared scheduler, formatting and Clippy pass, 321 Rust tests pass
   (27 ignored), and all 105 frontend tests plus documentation, hygiene, and
   boundary integrity pass against the unchanged Core fixture pin.
+- [x] Bind inactive publication to the exact source guard recorded by its
+  reservation. A regression reached staging with a valid guard for a different
+  source. Guard verification now rejects identity or hash mismatch before any
+  publication step. Six reserved/staged/complete cases cover distinct sources
+  with different or identical bytes, repeated rejection without file/receipt
+  changes, and successful retry after reacquiring the original guard. A further
+  case rejects substitution after the original source changes, including a new
+  guard for that changed inode. Production wiring and cleanup gates stay open.
+  On Ubuntu 24.04.4 through the shared scheduler, formatting and Clippy pass,
+  325 Rust tests pass (27 ignored), and all 105 frontend tests plus documentation,
+  hygiene, and boundary integrity pass against the unchanged Core fixture pin.
 - [ ] Add a cross-process exclusive lock for each source image, working image,
   output reservation, and USB target. Before activation, use one fixed private
   app-owned root, retain the source guard through descriptor-bound consumption,

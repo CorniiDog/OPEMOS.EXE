@@ -557,6 +557,11 @@ impl OutputReservation {
     }
 
     fn verify_guards(&self, source: &SourceReservation) -> Result<(), String> {
+        // A valid guard for another file cannot stand in for the exact source
+        // recorded by this reservation, even when both files have equal bytes.
+        if source.identity != self.source_identity || source.sha256 != self.source_sha256 {
+            return Err("OUTPUT_SOURCE_RESERVATION_MISMATCH".into());
+        }
         source.verify()?;
         self.lock.verify()?;
         self.manifest_lock.verify()?;
@@ -2986,6 +2991,123 @@ mod tests {
         assert!(error.contains("STAGE_EXISTS"));
         assert!(fixture.0.join(stage.to_string_lossy().as_ref()).exists());
         assert!(!fixture.output().exists());
+    }
+
+    #[test]
+    fn publication_rejects_an_unrelated_source_guard_in_every_recovery_state() {
+        for phase in ["reserved", "image-staged", "complete"] {
+            for identical_bytes in [false, true] {
+                let fixture = Fixture::new("publication-source-binding");
+                let source_path = fixture.source("source-a.img");
+                let other_path = fixture.source("source-b.img");
+                if identical_bytes {
+                    fs::write(&other_path, b"source-a").unwrap();
+                }
+                let source = SourceReservation::acquire(&fixture.root(), &source_path).unwrap();
+                let other = SourceReservation::acquire(&fixture.root(), &other_path).unwrap();
+                let reservation =
+                    OutputReservation::acquire(&fixture.root(), &source, &fixture.output())
+                        .unwrap();
+                if phase == "image-staged" {
+                    assert_eq!(
+                        reservation
+                            .publish_bytes_with_hook(&source, TEST_IMAGE, |at| {
+                                if at == "image-receipt-synced" {
+                                    Err("test-stop".into())
+                                } else {
+                                    Ok(())
+                                }
+                            })
+                            .unwrap_err(),
+                        "test-stop"
+                    );
+                } else if phase == "complete" {
+                    assert_eq!(
+                        reservation
+                            .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+                            .unwrap(),
+                        PublicationRecovery::Complete
+                    );
+                }
+                let snapshot = || {
+                    let mut files = Vec::new();
+                    for parent in [&fixture.0, &fixture.root()] {
+                        for entry in fs::read_dir(parent).unwrap() {
+                            let path = entry.unwrap().path();
+                            if path.is_file() {
+                                files.push((
+                                    path.clone(),
+                                    fs::read(&path).unwrap(),
+                                    FileIdentity::of(&fs::metadata(&path).unwrap()),
+                                ));
+                            }
+                        }
+                    }
+                    files.sort_by(|a, b| a.0.cmp(&b.0));
+                    files
+                };
+                let before = snapshot();
+                for _ in 0..2 {
+                    assert_eq!(
+                        reservation
+                            .publish_bytes_with_hook(&other, TEST_IMAGE, |_| panic!(
+                                "mismatched guard reached publication"
+                            ))
+                            .unwrap_err(),
+                        "OUTPUT_SOURCE_RESERVATION_MISMATCH"
+                    );
+                    assert_eq!(snapshot(), before);
+                }
+                drop(source);
+                let source = SourceReservation::acquire(&fixture.root(), &source_path).unwrap();
+                assert_eq!(
+                    reservation
+                        .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+                        .unwrap(),
+                    PublicationRecovery::Complete
+                );
+                source.verify().unwrap();
+                other.verify().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn unrelated_guard_cannot_hide_mutation_of_the_reserved_source() {
+        let fixture = Fixture::new("changed-source-substitution");
+        let path = fixture.source("source-a.img");
+        let source = SourceReservation::acquire(&fixture.root(), &path).unwrap();
+        let reservation =
+            OutputReservation::acquire(&fixture.root(), &source, &fixture.output()).unwrap();
+        drop(source);
+        fs::write(&path, b"changed!").unwrap();
+        let other =
+            SourceReservation::acquire(&fixture.root(), &fixture.source("source-b.img")).unwrap();
+        assert_eq!(
+            reservation
+                .publish_bytes_with_hook(&other, TEST_IMAGE, |_| panic!("unexpected publication"))
+                .unwrap_err(),
+            "OUTPUT_SOURCE_RESERVATION_MISMATCH"
+        );
+        let changed = SourceReservation::acquire(&fixture.root(), &path).unwrap();
+        assert_eq!(
+            reservation
+                .publish_bytes_with_hook(&changed, TEST_IMAGE, |_| panic!("unexpected publication"))
+                .unwrap_err(),
+            "OUTPUT_SOURCE_RESERVATION_MISMATCH"
+        );
+        assert!(!fixture.output().exists());
+        assert!(!fixture
+            .output()
+            .with_extension("img.manifest.json")
+            .exists());
+        assert!(!fixture
+            .0
+            .join(reservation.names().unwrap().image_stage.to_str().unwrap())
+            .exists());
+        assert_eq!(fs::read(path).unwrap(), b"changed!");
+        other.verify().unwrap();
+        changed.verify().unwrap();
     }
 
     #[test]
