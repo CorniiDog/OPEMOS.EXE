@@ -172,6 +172,17 @@ other host writers or proof that later writes cannot fail.
 assumptions or bypass that refusal. Real removable-device support needs its own
 verified Linux implementation and safety tests.
 
+## Launcher cancellation
+
+The experimental launcher forwards SIGINT and SIGTERM to its isolated Tauri
+process group. It allows five seconds for shutdown, then sends SIGKILL if the
+leader remains alive. When the leader exits, it stops any remaining group
+members and preserves the command's exit status or reports termination.
+Disposable subprocess tests cover graceful and stubborn children and leftover
+children after leader exit. They do not establish native GUI launch/close or
+managed-appliance lifecycle validation. SIGKILL of the launcher itself and
+children that deliberately leave the group require separate supervision.
+
 ## Inspect Core compatibility without activation
 
 Open **Settings → Inspect Core compatibility…** in either the macOS application

@@ -146,6 +146,16 @@ installation targets, production activation, or hardware certification.
   Formatting, Clippy, 308 Rust tests (27 ignored), 90 frontend tests,
   documentation, hygiene, and boundary integrity pass against the unchanged
   immutable Core CI pin. No package installation or publication occurred.
+- [x] Replace the experimental Linux launcher's synchronous child wait with
+  an isolated process group, SIGINT/SIGTERM forwarding, a five-second forced
+  shutdown bound, and cleanup of children left behind by an exited leader.
+  Real disposable subprocess tests cover graceful and stubborn signal handlers,
+  leader exit status, surviving child cleanup, spawn failure, invalid grace
+  bounds, and signal-handler removal. SIGKILL of the launcher and descendants
+  leaving the group remain outside this guarantee; no GUI or VM was launched.
+  On Ubuntu 24.04.4 through the shared scheduler, formatting and Clippy pass,
+  319 Rust tests pass (27 ignored), and all 105 frontend tests plus documentation,
+  hygiene, and boundary integrity pass against the unchanged Core fixture pin.
 - [ ] Validate graphical development and packaged application launch/close on
   Ubuntu and Debian, including companion windows and orphan-process checks.
   This session has neither DISPLAY nor WAYLAND_DISPLAY; graphical launch has
