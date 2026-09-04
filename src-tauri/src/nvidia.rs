@@ -3260,12 +3260,51 @@ pub(crate) fn apply_pinned_file_permissions(path: &Path, executable: bool) -> Re
     Ok(())
 }
 
-pub(crate) fn pinned_installer_guest_permissions() -> Result<String, String> {
-    validate_pinned_installer_contract()?;
+pub(crate) fn validate_installer_file_records(
+    files: &[NvidiaInstallerBundleFile],
+) -> Result<(), String> {
+    if files.is_empty() || files.len() > 256 {
+        return Err("Installer bundle file inventory has an invalid size.".into());
+    }
+    let mut paths = HashSet::new();
+    let mut total_bytes = 0_u64;
+    for file in files {
+        let path = Path::new(&file.path);
+        if !paths.insert(file.path.as_str())
+            || file.path.len() > 1024
+            || !file.path.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'+' | b'-')
+            })
+            || path.is_absolute()
+            || path
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            || file.bytes == 0
+            || file.bytes > 128 * 1024 * 1024
+            || file.sha256.len() != 64
+            || !file
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err("Installer bundle file inventory contains an unsafe record.".into());
+        }
+        total_bytes = total_bytes
+            .checked_add(file.bytes)
+            .filter(|total| *total <= 256 * 1024 * 1024)
+            .ok_or("Installer bundle file inventory exceeds its aggregate size bound.")?;
+    }
+    Ok(())
+}
+
+pub(crate) fn installer_guest_permissions(
+    files: &[NvidiaInstallerBundleFile],
+) -> Result<String, String> {
+    validate_installer_file_records(files)?;
     let mut command = String::new();
     for executable in [false, true] {
         let mode = if executable { "0755" } else { "0644" };
-        let paths = PINNED_INSTALLER_FILES
+        let paths = files
             .iter()
             .filter(|file| file.executable == executable)
             .map(|file| format!("\"$WORK/support/{}\"", file.path))
@@ -3483,6 +3522,7 @@ pub(crate) fn authenticated_core_bundle_as_installer_state(
             })
             .collect(),
     };
+    validate_installer_file_records(&report.files)?;
     let state = NvidiaInstallerBundleState {
         root: bundle.root,
         report,
@@ -3707,6 +3747,7 @@ pub(crate) fn validate_staged_nvidia_installer_bundle(
         }
         return crate::core_contracts::validate_core_bundle_tree(&state.root, manifest);
     }
+    validate_installer_file_records(&state.report.files)?;
     if state.report.schema_version != 1
         || state.report.status != "verified"
         || state.report.reason != "legacy_pinned_installer_fallback"

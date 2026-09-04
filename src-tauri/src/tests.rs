@@ -2541,7 +2541,16 @@ esac
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == NVIDIA_USERSPACE_KEYRING_PATH && !file.executable));
-        let guest_permissions = pinned_installer_guest_permissions().unwrap();
+        let installer_files = PINNED_INSTALLER_FILES
+            .iter()
+            .map(|file| NvidiaInstallerBundleFile {
+                path: file.path.into(),
+                sha256: file.sha256.into(),
+                bytes: file.bytes,
+                executable: file.executable,
+            })
+            .collect::<Vec<_>>();
+        let guest_permissions = installer_guest_permissions(&installer_files).unwrap();
         assert!(guest_permissions.contains("chmod 0755 "));
         assert!(guest_permissions.contains("\"$WORK/support/lib/measure_btrfs_payload.py\""));
         assert!(guest_permissions.contains("\"$WORK/support/lib/prepare_pacman_config.py\""));
@@ -2562,6 +2571,52 @@ esac
             executable: false,
         }];
         assert!(validate_pinned_support_files(NVIDIA_SUPPORT_COMMIT, &uppercase_digest).is_err());
+    }
+
+    #[test]
+    fn installer_manifest_records_are_safe_for_guest_commands() {
+        let files = vec![
+            NvidiaInstallerBundleFile {
+                path: "bootstrap/install_to_root.sh".into(),
+                sha256: "a".repeat(64),
+                bytes: 42,
+                executable: true,
+            },
+            NvidiaInstallerBundleFile {
+                path: "trust/userspace-lock.json".into(),
+                sha256: "b".repeat(64),
+                bytes: 84,
+                executable: false,
+            },
+        ];
+        validate_installer_file_records(&files).unwrap();
+        let permissions = installer_guest_permissions(&files).unwrap();
+        assert!(permissions.contains("chmod 0755"));
+        assert!(permissions.contains("bootstrap/install_to_root.sh"));
+        assert!(permissions.contains("chmod 0644"));
+        assert!(permissions.contains("trust/userspace-lock.json"));
+
+        let mut duplicate = files.clone();
+        duplicate.push(files[0].clone());
+        assert!(validate_installer_file_records(&duplicate).is_err());
+
+        let mut unsafe_path = files.clone();
+        unsafe_path[0].path = "../install.sh".into();
+        assert!(validate_installer_file_records(&unsafe_path).is_err());
+
+        let mut uppercase_digest = files;
+        uppercase_digest[0].sha256 = "A".repeat(64);
+        assert!(validate_installer_file_records(&uppercase_digest).is_err());
+
+        let oversized = (0..3)
+            .map(|index| NvidiaInstallerBundleFile {
+                path: format!("payload/{index}"),
+                sha256: "c".repeat(64),
+                bytes: 128 * 1024 * 1024,
+                executable: false,
+            })
+            .collect::<Vec<_>>();
+        assert!(validate_installer_file_records(&oversized).is_err());
     }
 
     #[test]
@@ -3002,6 +3057,13 @@ esac
             image_runtime_dir: "/image-runtime".into(),
             working_image: "/working.qcow2".into(),
             installer_root: "/installer".into(),
+            installer_commit: OPEMOS_CORE_COMPATIBILITY_COMMIT.into(),
+            installer_files: vec![NvidiaInstallerBundleFile {
+                path: "bootstrap/install_to_root.sh".into(),
+                sha256: digest('9'),
+                bytes: 1,
+                executable: true,
+            }],
             archive: "/modules.tar.gz".into(),
             checksum: "/modules.tar.gz.sha256".into(),
             provenance: "/modules.provenance.json".into(),
@@ -4648,7 +4710,13 @@ esac
             appliance_architecture: "x86_64".into(),
             root_partition_label: "rootfs-A".into(),
             boot_partition_label: "efi-A".into(),
-            support_commit: NVIDIA_INSTALLER_COMMIT.into(),
+            support_commit: OPEMOS_CORE_COMPATIBILITY_COMMIT.into(),
+            support_files: vec![NvidiaInstallerBundleFile {
+                path: "bootstrap/install_to_root.sh".into(),
+                sha256: "d".repeat(64),
+                bytes: 1,
+                executable: true,
+            }],
             steamos_version: "3.8.14".into(),
             kernel_version: "6.11.11-valve1-neptune-611".into(),
             nvidia_version: "575.64.05".into(),

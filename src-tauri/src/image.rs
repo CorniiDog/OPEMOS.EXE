@@ -1148,7 +1148,8 @@ pub(crate) fn verify_nvidia_from_validation_overlay(
         ));
     }
     let mut install_media_support_assertions = String::new();
-    for file in &PINNED_INSTALLER_FILES {
+    validate_installer_file_records(&installation.support_files)?;
+    for file in &installation.support_files {
         let mode = if file.executable { "755" } else { "644" };
         install_media_support_assertions.push_str(&format!(
             "test -f \"$ROOT/usr/lib/opemos-install-media/support/{path}\"\n\
@@ -1362,7 +1363,7 @@ trap - EXIT INT TERM"#,
         welcome_icon_sha256,
         welcome_helper_sha256,
         welcome_server_sha256,
-        NVIDIA_SUPPORT_COMMIT,
+        installation.support_commit,
         installation.nvidia_version,
         welcome_gtk_css_sha256,
         welcome_asset_assertions,

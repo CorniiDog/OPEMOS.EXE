@@ -120,10 +120,12 @@ fn stage_install_media_welcome_assets(
     })
 }
 
-fn installation_media_support_install_commands() -> Result<String, String> {
-    validate_pinned_installer_contract()?;
+fn installation_media_support_install_commands(
+    files: &[NvidiaInstallerBundleFile],
+) -> Result<String, String> {
+    validate_installer_file_records(files)?;
     let mut commands = String::new();
-    for file in &PINNED_INSTALLER_FILES {
+    for file in files {
         let mode = if file.executable { "0755" } else { "0644" };
         commands.push_str(&format!(
             "sudo install -D -o root -g root -m {mode} \"$WORK/support/{path}\" \"$ROOT/usr/lib/opemos-install-media/support/{path}\"\n",
@@ -350,6 +352,8 @@ pub(crate) fn collect_nvidia_install_inputs(
         image_runtime_dir: session.runtime_dir.clone(),
         working_image: session.working_image.clone(),
         installer_root: installer.root.clone(),
+        installer_commit: installer.report.commit.clone(),
+        installer_files: installer.report.files.clone(),
         archive: PathBuf::from(&artifact.archive_path),
         checksum: PathBuf::from(&artifact.checksum_path),
         provenance: PathBuf::from(&artifact.provenance_path),
@@ -2827,7 +2831,8 @@ pub(crate) fn validate_nvidia_install_result(
         appliance_architecture: "x86_64".into(),
         root_partition_label: "rootfs-A".into(),
         boot_partition_label: "efi-A".into(),
-        support_commit: NVIDIA_INSTALLER_COMMIT.into(),
+        support_commit: inputs.installer_commit.clone(),
+        support_files: inputs.installer_files.clone(),
         steamos_version: inputs.steamos_version.clone(),
         kernel_version: inputs.kernel_version.clone(),
         nvidia_version: inputs.nvidia_version.clone(),
@@ -3127,7 +3132,7 @@ pub(crate) fn validate_nvidia_install_handoff_blocking(
         let validation_attempt = 1_usize;
         let validation = {
             let userspace_arguments = userspace_installer_arguments(&inputs.packages)?;
-            let installer_permissions = pinned_installer_guest_permissions()?;
+            let installer_permissions = installer_guest_permissions(&inputs.installer_files)?;
             let command = format!(
                 r#"set -euo pipefail
 WORK=/tmp/steamos-nvidia-offline-install
@@ -3388,7 +3393,8 @@ pub(crate) fn install_nvidia_to_working_image_blocking(
         let userspace_arguments = userspace_installer_arguments(&inputs.packages)?;
         let recovery_script_sha256 = stage_recovery_rollback_assets(&connection)?;
         let welcome_digests = stage_install_media_welcome_assets(&connection)?;
-        let install_media_support_commands = installation_media_support_install_commands()?;
+        let install_media_support_commands =
+            installation_media_support_install_commands(&inputs.installer_files)?;
         let mutation_attempt = 2_usize;
         let command = format!(
             r#"set -euo pipefail
@@ -3701,7 +3707,7 @@ trap - EXIT INT TERM"#,
             welcome_recovery_art_sha256 = welcome_digests.recovery_art,
             welcome_gaming_art_sha256 = welcome_digests.gaming_art,
             install_media_support_commands = install_media_support_commands,
-            support_commit = NVIDIA_SUPPORT_COMMIT,
+            support_commit = inputs.installer_commit,
             nvidia_version = inputs.nvidia_version,
         );
         let execution_result = run_guest_command_logged(
