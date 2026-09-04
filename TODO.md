@@ -115,6 +115,17 @@ installation targets, production activation, or hardware certification.
   shared scheduler, formatting and Clippy pass, 308 Rust tests pass (27 ignored
   live/helper entries), the explicit Linux smoke passes, and 86 frontend tests
   plus documentation/hygiene checks pass against the same immutable Core CI pin.
+- [x] Harden experimental Linux cgroup budget discovery: require an existing
+  directory root and distinguish genuinely absent root memory.max from lookup
+  errors or dangling links. Unreadable limits must stop readiness rather than
+  silently fall back to physical RAM. Disposable filesystem tests cover nested
+  child/ancestor/root minima, unlimited children, the physical-memory ceiling,
+  malformed/duplicate memberships, traversal, missing groups/root, malformed
+  ancestor limits, dangling links, directory-valued limits, and zero RAM.
+  On Ubuntu 24.04.4 through the shared scheduler, formatting and Clippy pass,
+  319 Rust tests pass (27 ignored), and all 98 frontend tests plus documentation,
+  hygiene, and boundary integrity pass against the unchanged Core fixture pin.
+  This does not change the scheduler cap or establish managed-appliance boot.
 - [ ] Validate managed Fedora appliance boot and image equivalence. The current
   2 GiB scheduler cap is below the existing 6 GiB host-budget minimum; runtime
   cgroup discovery now refuses readiness, and the live smoke verifies that

@@ -265,6 +265,13 @@ pub(crate) fn parse_memory_limit(value: &str) -> Result<Option<u64>, String> {
 pub(crate) fn linux_effective_memory_bytes() -> Result<u64, String> {
     let physical = linux_memory_bytes(&bounded_host_text(Path::new("/proc/meminfo"))?)?;
     let membership = bounded_host_text(Path::new("/proc/self/cgroup"))?;
+    linux_cgroup_memory_budget(physical, &membership, Path::new("/sys/fs/cgroup"))
+}
+
+fn linux_cgroup_memory_budget(physical: u64, membership: &str, root: &Path) -> Result<u64, String> {
+    if physical == 0 || !std::fs::metadata(root).is_ok_and(|metadata| metadata.is_dir()) {
+        return Err("Linux cgroup memory root is unavailable.".into());
+    }
     let mut entries = membership
         .lines()
         .filter_map(|line| line.strip_prefix("0::"));
@@ -277,17 +284,21 @@ pub(crate) fn linux_effective_memory_bytes() -> Result<u64, String> {
     {
         return Err("Linux cgroup membership is malformed.".into());
     }
-    let root = Path::new("/sys/fs/cgroup");
     let mut directory = root.join(path.trim_start_matches('/'));
     let mut budget = physical;
     loop {
         let limit = directory.join("memory.max");
-        if limit.exists() {
-            if let Some(bytes) = parse_memory_limit(&bounded_host_text(&limit)?)? {
-                budget = budget.min(bytes);
+        // Only a genuinely absent root limit is expected on the cgroup v2
+        // hierarchy root. exists() also hides permission and dangling-link
+        // errors, which must never turn a constrained host into physical RAM.
+        match std::fs::symlink_metadata(&limit) {
+            Ok(_) => {
+                if let Some(bytes) = parse_memory_limit(&bounded_host_text(&limit)?)? {
+                    budget = budget.min(bytes);
+                }
             }
-        } else if directory != root {
-            return Err("Linux cgroup memory budget could not be determined.".into());
+            Err(error) if directory == root && error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("Linux cgroup memory budget could not be determined.".into()),
         }
         if directory == root {
             break;
@@ -316,6 +327,53 @@ pub(crate) fn linux_host_prerequisites() -> Result<(), String> {
 mod tests {
     use super::*;
     use std::fs;
+    #[test]
+    fn nested_cgroup_limits_never_overstate_the_host_budget() {
+        let root =
+            std::env::temp_dir().join(format!("opemos-cgroup-budget-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let child = root.join("parent/child");
+        fs::create_dir_all(&child).unwrap();
+        fs::write(child.join("memory.max"), b"max\n").unwrap();
+        fs::write(root.join("parent/memory.max"), b"2048\n").unwrap();
+        let budget = |membership| linux_cgroup_memory_budget(8192, membership, &root);
+        assert_eq!(budget("0::/parent/child\n").unwrap(), 2048);
+        fs::write(child.join("memory.max"), b"1024\n").unwrap();
+        assert_eq!(budget("0::/parent/child\n").unwrap(), 1024);
+        fs::write(root.join("memory.max"), b"512\n").unwrap();
+        assert_eq!(budget("0::/parent/child\n").unwrap(), 512);
+        fs::write(root.join("memory.max"), b"16384\n").unwrap();
+        assert_eq!(budget("0::/\n").unwrap(), 8192);
+        for membership in [
+            "",
+            "1:memory:/parent",
+            "0::relative",
+            "0::/../parent",
+            "0::/parent/./child",
+            "0::/\n0::/parent",
+        ] {
+            assert!(budget(membership).is_err(), "{membership:?}");
+        }
+        assert!(budget("0::/missing").is_err());
+        fs::write(root.join("parent/memory.max"), b"invalid").unwrap();
+        assert!(budget("0::/parent/child").is_err());
+        fs::remove_file(root.join("memory.max")).unwrap();
+        assert_eq!(budget("0::/").unwrap(), 8192);
+        // A dangling limit is an unreadable limit, not an unlimited root.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("missing-limit"), root.join("memory.max"))
+                .unwrap();
+            assert!(budget("0::/").is_err());
+            fs::remove_file(root.join("memory.max")).unwrap();
+        }
+        fs::create_dir(root.join("memory.max")).unwrap();
+        assert!(budget("0::/").is_err());
+        assert!(linux_cgroup_memory_budget(8192, "0::/", &root.join("absent")).is_err());
+        assert!(linux_cgroup_memory_budget(0, "0::/", &root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn acceleration_is_explicit_and_never_silently_falls_back() {
         assert!(plan_host_qemu("linux", "x86_64", "x86_64", false, "tcg", false).is_err());
