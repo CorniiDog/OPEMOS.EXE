@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OPEMOS EXE Linux Test",
+  "identifier": "dev.cornidog.opemos-exe-linux-test",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "OPEMOS EXE \u2014 Experimental Linux Test",
+        "width": 760,
+        "height": 800,
+        "minWidth": 760,
+        "minHeight": 800,
+        "theme": "Dark",
+        "backgroundColor": [
+          11,
+          17,
+          24,
+          255
+        ],
+        "transparent": false,
+        "shadow": true,
+        "visible": false,
+        "resizable": false,
+        "maximizable": false,
+        "fullscreen": false
+      }
+    ]
+  },
+  "bundle": {
+    "targets": [
+      "deb"
+    ],
+    "shortDescription": "Experimental OPEMOS EXE Linux host testing; no hardware certification",
+    "linux": {
+      "deb": {
+        "depends": [
+          "libc6 (>= 2.39)",
+          "libssl3t64 | libssl3",
+          "liblzma5",
+          "libgcc-s1"
+        ]
+      }
+    }
+  }
+}

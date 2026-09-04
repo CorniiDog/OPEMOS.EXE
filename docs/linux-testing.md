@@ -80,7 +80,7 @@ packaging, compression, and QEMU work must use the shared scheduler wrapper**:
 ```bash
 OPEMOS_HEAVY="/home/connor/Documents/ChatGPT/Handoff troubleshooting/opemos-scheduler/heavy.sh"
 "$OPEMOS_HEAVY" npm ci
-"$OPEMOS_HEAVY" npm run dev
+"$OPEMOS_HEAVY" npm run dev:linux-test
 ```
 
 Launch from a graphical desktop session. Exit **75** means the shared resource
@@ -91,9 +91,43 @@ Fedora appliance; installing QEMU does not provision or authenticate it.
 Missing appliance state must remain unavailable rather than trigger an
 unreviewed image download.
 
-The existing `build:app` and default release bundle targets are macOS packaging
-paths. Linux packaging and packaged launch validation remain separate work;
-do not interpret a development-window launch as a validated Linux package.
+The Linux entry point requires both explicit environment choices above, an
+x86_64 Linux host, and a graphical session for development launch. Runtime
+Ubuntu/Debian discovery and all appliance/Core checks still apply. Unsupported
+extra CLI arguments are rejected. The separate test configuration uses an opaque
+main window and its own application identifier; macOS defaults remain unchanged.
+
+Create a local **debug Debian package** without installing it:
+
+```bash
+"$OPEMOS_HEAVY" npm run build:linux-test
+"$OPEMOS_HEAVY" npm run test:package-linux
+```
+
+The package check extracts only this locally generated archive into a temporary
+directory. It checks metadata, amd64 ELF identity, the exact Tauri bundle-marker
+patch, shared-library resolution, archive permissions, the desktop entry, and absence of maintainer
+scripts. It does not install the package or launch its GUI.
+
+The package is written under `src-tauri/target/debug/bundle/deb/`. This command
+needs no graphical session. It deliberately uses a debug build and the `deb`
+bundle target, with no signing, publication, or system installation. This test
+package requires glibc **2.39 or newer**, matching the Ubuntu 24.04 build
+baseline; the Ubuntu-built binary is not a Debian 12 package. OpenSSL 3 and
+liblzma runtime dependencies are declared alongside Tauri's GTK/WebKit
+dependencies. Debian packaging still requires its own build and validation.
+The test
+application identifier does not provide isolation for user-selected images or
+shared host tools: use disposable inputs. To test the compiled application from
+a graphical desktop, preserving the same explicit environment and resource cap:
+
+```bash
+"$OPEMOS_HEAVY" src-tauri/target/debug/steamos-nvidia-image-builder
+```
+
+The existing `build:app` and default release bundle targets remain macOS paths.
+A package build alone does not validate graphical launch, installed-package
+integration, Debian compatibility, managed guest boot, or hardware.
 
 ## Validation and limits
 

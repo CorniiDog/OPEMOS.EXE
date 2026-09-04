@@ -3,7 +3,30 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "scripts": {"tauri":"tauri","dev":"tauri dev","build":"tauri build","build:app":"tauri build --bundles app","test:package-headless":"npm run build:app && node scripts/check_macos_packaging.mjs","test:logs":"node --test tests/*.test.mjs","test:docs":"node scripts/check_documentation.mjs","test:vm-headless":"bash tests/headless-vm/run.sh","test:vm-lifecycle":"bash tests/headless-vm/lifecycle.sh","test:hygiene":"bash scripts/check_repository_hygiene.sh","test:frontend":"npm run test:logs && npm run test:docs && npm run test:hygiene","test:rust":"cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml","test:all":"npm run test:frontend && npm run test:rust"},
-  "dependencies": {"@tauri-apps/api":"^2","@tauri-apps/plugin-dialog":"^2","@tauri-apps/plugin-opener":"^2"},
-  "devDependencies": {"@tauri-apps/cli":"^2"}
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:app": "tauri build --bundles app",
+    "test:package-headless": "npm run build:app && node scripts/check_macos_packaging.mjs",
+    "test:logs": "node --test tests/*.test.mjs",
+    "test:docs": "node scripts/check_documentation.mjs",
+    "test:vm-headless": "bash tests/headless-vm/run.sh",
+    "test:vm-lifecycle": "bash tests/headless-vm/lifecycle.sh",
+    "test:hygiene": "bash scripts/check_repository_hygiene.sh",
+    "test:frontend": "npm run test:logs && npm run test:docs && npm run test:hygiene",
+    "test:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:all": "npm run test:frontend && npm run test:rust",
+    "dev:linux-test": "node scripts/linux-test.mjs dev",
+    "build:linux-test": "node scripts/linux-test.mjs build",
+    "test:package-linux": "python3 tests/linux_packaging.py && python3 scripts/check_linux_packaging.py"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-opener": "^2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
 }

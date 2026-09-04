@@ -120,8 +120,27 @@ installation targets, production activation, or hardware certification.
   cgroup discovery now refuses readiness, and the live smoke verifies that
   refusal. Do not raise the cap or equate the small tool smoke with guest boot.
   KVM hardware, Debian, macOS runtime, and SteamOS hardware remain unvalidated.
-- [ ] Provide exact Ubuntu/Debian setup and test launch/package commands,
-  disposable appliance lifecycle smoke evidence, and tested-version limits.
+- [x] Provide exact Ubuntu/Debian setup and experimental launch/package commands
+  with tested-version limits. Add `dev:linux-test`, debug-only `build:linux-test`,
+  and `test:package-linux`, a separate opaque Linux main-window configuration,
+  and an independent test app identifier while retaining macOS bundle defaults.
+  On Ubuntu 24.04.4, the local amd64 Debian package builds under the scheduler;
+  it declares the observed glibc 2.39, OpenSSL 3, and liblzma requirements.
+  Archive checks verify metadata, ELF architecture, staged binary hash, exactly
+  Tauri's UNK-to-DEB marker transformation, shared-library resolution, normal
+  archive permissions, desktop entry, and absence of maintainer scripts. Four
+  marker tests cover chunk boundaries, truncation, additional changes, missing
+  markers, and malformed transformations. Four launcher tests cover opt-in,
+  unsupported hosts, acceleration, argument overrides, and missing displays.
+  Formatting, Clippy, 308 Rust tests (27 ignored), 90 frontend tests,
+  documentation, hygiene, and boundary integrity pass against the unchanged
+  immutable Core CI pin. No package installation or publication occurred.
+- [ ] Validate graphical development and packaged application launch/close on
+  Ubuntu and Debian, including companion windows and orphan-process checks.
+  This session has neither DISPLAY nor WAYLAND_DISPLAY; graphical launch has
+  not been attempted. Managed-appliance lifecycle and image equivalence remain
+  separately blocked by the unchanged resource minimum above. The Ubuntu
+  glibc-2.39 package is not a validated Debian 12 artifact.
 - [ ] Make compatibility-management UI present the same bounded Core results
   and clearly non-production fixtures without inventing policy or activation.
 
