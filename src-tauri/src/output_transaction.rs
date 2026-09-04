@@ -836,8 +836,8 @@ impl OutputReservation {
         } else if !final_exists {
             return Err(format!("{RECOVERY_REQUIRED}: publication artifact missing"));
         }
-        artifact.file.sync_all().map_err(map_write_error)?;
-        self.parent.file.sync_all().map_err(map_write_error)?;
+        sync_published_file(&artifact.file, artifact.kind, false).map_err(map_write_error)?;
+        sync_published_file(&self.parent.file, artifact.kind, true).map_err(map_write_error)?;
         let _deferred_cancellation = hook(if label == "image" {
             "image-parent-synced"
         } else {
@@ -1389,6 +1389,22 @@ fn sync_receipt_file(file: &File, _receipt: &PublicationReceipt, _parent: bool) 
     file.sync_all()
 }
 
+fn sync_published_file(file: &File, _kind: PublicationFileKind, _parent: bool) -> io::Result<()> {
+    #[cfg(test)]
+    {
+        let operation = if _parent {
+            staging_io_faults::Operation::OutputParentSync
+        } else {
+            staging_io_faults::Operation::ArtifactSync
+        };
+        if let Some(fault) = staging_io_faults::take(_kind, operation) {
+            staging_io_faults::observe(file.metadata()?.len());
+            return Err(io::Error::from_raw_os_error(fault.errno));
+        }
+    }
+    file.sync_all()
+}
+
 #[cfg(test)]
 mod staging_io_faults {
     use super::{PublicationFileKind, PublicationPhase};
@@ -1402,6 +1418,8 @@ mod staging_io_faults {
         ReceiptWrite(PublicationPhase),
         ReceiptSync(PublicationPhase),
         ReceiptParentSync(PublicationPhase),
+        ArtifactSync,
+        OutputParentSync,
     }
 
     pub(super) struct Fault {
@@ -2171,6 +2189,223 @@ mod tests {
                     .unwrap(),
                 PublicationRecovery::Complete
             );
+        }
+    }
+
+    #[test]
+    fn published_sync_failures_retry_exact_renamed_files_after_reopen() {
+        use staging_io_faults::{Fault, Guard, Operation};
+        for kind in [PublicationFileKind::Image, PublicationFileKind::Manifest] {
+            for operation in [Operation::ArtifactSync, Operation::OutputParentSync] {
+                for errno in [libc::ENOSPC, libc::EDQUOT, libc::EIO] {
+                    let fixture = Fixture::new("published-sync-retry");
+                    let source_path = fixture.source("source-a.img");
+                    let source_before = FileIdentity::of(&fs::metadata(&source_path).unwrap());
+                    let source = SourceReservation::acquire(&fixture.root(), &source_path).unwrap();
+                    let reservation =
+                        OutputReservation::acquire(&fixture.root(), &source, &fixture.output())
+                            .unwrap();
+                    let names = reservation.names().unwrap();
+                    let (stage, final_path, receipt, rename_phase) = match kind {
+                        PublicationFileKind::Image => (
+                            names.image_stage,
+                            fixture.output(),
+                            reservation.published_receipt(3, "image-published").unwrap(),
+                            "before-image-rename",
+                        ),
+                        PublicationFileKind::Manifest => (
+                            names.manifest_stage,
+                            fixture.output().with_extension("img.manifest.json"),
+                            reservation
+                                .published_receipt(4, "manifest-published")
+                                .unwrap(),
+                            "before-manifest-rename",
+                        ),
+                    };
+                    let receipt_path = fixture.root().join(receipt.to_string_lossy().as_ref());
+                    let guard = Guard::arm(Fault {
+                        kind,
+                        operation,
+                        errno,
+                        prefix: 0,
+                        skip: 0,
+                    });
+                    let error = reservation
+                        .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+                        .unwrap_err();
+                    assert_eq!(error, map_write_error(io::Error::from_raw_os_error(errno)));
+                    assert!(
+                        guard.observed_size().is_some(),
+                        "fault must fire after rename"
+                    );
+                    drop(guard);
+                    assert!(!fixture.0.join(stage.to_string_lossy().as_ref()).exists());
+                    assert!(
+                        !receipt_path.exists(),
+                        "failed sync cannot produce a published receipt"
+                    );
+                    let bytes = fs::read(&final_path).unwrap();
+                    let identity = FileIdentity::of(&fs::metadata(&final_path).unwrap());
+                    let staged_receipts: Vec<_> = [names.image_receipt, names.manifest_receipt]
+                        .into_iter()
+                        .map(|name| {
+                            let path = fixture.root().join(name.to_string_lossy().as_ref());
+                            let bytes = fs::read(&path).unwrap();
+                            let identity = FileIdentity::of(&fs::metadata(&path).unwrap());
+                            (path, bytes, identity)
+                        })
+                        .collect();
+                    if kind == PublicationFileKind::Image {
+                        assert!(!fixture
+                            .output()
+                            .with_extension("img.manifest.json")
+                            .exists());
+                    }
+                    drop(reservation);
+                    drop(source);
+                    let source = SourceReservation::acquire(&fixture.root(), &source_path).unwrap();
+                    let reopened =
+                        OutputReservation::reopen(&fixture.root(), &source, &fixture.output())
+                            .unwrap();
+                    let guard = Guard::arm(Fault {
+                        kind,
+                        operation,
+                        errno,
+                        prefix: 0,
+                        skip: 0,
+                    });
+                    let error = reopened
+                        .publish_bytes_with_hook(&source, TEST_IMAGE, |phase| {
+                            assert_ne!(
+                                phase, rename_phase,
+                                "recovery must not rename the published inode again"
+                            );
+                            Ok(())
+                        })
+                        .unwrap_err();
+                    assert_eq!(error, map_write_error(io::Error::from_raw_os_error(errno)));
+                    assert!(
+                        guard.observed_size().is_some(),
+                        "recovery must retry the failed sync"
+                    );
+                    drop(guard);
+                    assert!(!receipt_path.exists());
+                    assert_eq!(fs::read(&final_path).unwrap(), bytes);
+                    assert_eq!(
+                        FileIdentity::of(&fs::metadata(&final_path).unwrap()),
+                        identity
+                    );
+                    assert_eq!(
+                        reopened
+                            .publish_bytes_with_hook(&source, TEST_IMAGE, |phase| {
+                                assert_ne!(phase, rename_phase);
+                                Ok(())
+                            })
+                            .unwrap(),
+                        PublicationRecovery::Complete
+                    );
+                    assert_eq!(fs::read(&final_path).unwrap(), bytes);
+                    assert_eq!(
+                        FileIdentity::of(&fs::metadata(&final_path).unwrap()),
+                        identity
+                    );
+                    for (path, bytes, identity) in staged_receipts {
+                        assert_eq!(fs::read(&path).unwrap(), bytes);
+                        assert_eq!(FileIdentity::of(&fs::metadata(&path).unwrap()), identity);
+                    }
+                    assert_eq!(fs::read(&source_path).unwrap(), b"source-a");
+                    assert_eq!(
+                        FileIdentity::of(&fs::metadata(&source_path).unwrap()),
+                        source_before
+                    );
+                    assert_eq!(
+                        fs::read(fixture.source("source-b.img")).unwrap(),
+                        b"source-b"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn published_sync_failure_never_accepts_changed_or_replaced_final_files() {
+        use staging_io_faults::{Fault, Guard, Operation};
+        for kind in [PublicationFileKind::Image, PublicationFileKind::Manifest] {
+            for operation in [Operation::ArtifactSync, Operation::OutputParentSync] {
+                for replace_inode in [false, true] {
+                    let fixture = Fixture::new("published-sync-replacement");
+                    let source_path = fixture.source("source-a.img");
+                    let source = SourceReservation::acquire(&fixture.root(), &source_path).unwrap();
+                    let reservation =
+                        OutputReservation::acquire(&fixture.root(), &source, &fixture.output())
+                            .unwrap();
+                    let path = if kind == PublicationFileKind::Image {
+                        fixture.output()
+                    } else {
+                        fixture.output().with_extension("img.manifest.json")
+                    };
+                    let receipt = reservation
+                        .published_receipt(
+                            if kind == PublicationFileKind::Image {
+                                3
+                            } else {
+                                4
+                            },
+                            if kind == PublicationFileKind::Image {
+                                "image-published"
+                            } else {
+                                "manifest-published"
+                            },
+                        )
+                        .unwrap();
+                    let guard = Guard::arm(Fault {
+                        kind,
+                        operation,
+                        errno: libc::EIO,
+                        prefix: 0,
+                        skip: 0,
+                    });
+                    assert!(reservation
+                        .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+                        .is_err());
+                    assert!(guard.observed_size().is_some());
+                    drop(guard);
+                    let mut bytes = fs::read(&path).unwrap();
+                    if replace_inode {
+                        fs::rename(&path, fixture.0.join("preserved-final-original")).unwrap();
+                    } else {
+                        bytes[0] ^= 1;
+                    }
+                    fs::write(&path, &bytes).unwrap();
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+                    let identity = FileIdentity::of(&fs::metadata(&path).unwrap());
+                    drop(reservation);
+                    drop(source);
+                    let source = SourceReservation::acquire(&fixture.root(), &source_path).unwrap();
+                    let reopened =
+                        OutputReservation::reopen(&fixture.root(), &source, &fixture.output())
+                            .unwrap();
+                    for _ in 0..2 {
+                        assert!(reopened
+                            .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+                            .is_err());
+                        assert_eq!(fs::read(&path).unwrap(), bytes);
+                        assert_eq!(FileIdentity::of(&fs::metadata(&path).unwrap()), identity);
+                        assert!(!fixture
+                            .root()
+                            .join(receipt.to_string_lossy().as_ref())
+                            .exists());
+                    }
+                    if replace_inode {
+                        assert_eq!(
+                            fs::read(fixture.0.join("preserved-final-original")).unwrap(),
+                            bytes
+                        );
+                    }
+                    source.verify().unwrap();
+                    assert_eq!(fs::read(&source_path).unwrap(), b"source-a");
+                }
+            }
         }
     }
 

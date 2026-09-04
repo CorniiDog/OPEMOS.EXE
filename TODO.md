@@ -448,8 +448,9 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   and manifest rename/directory-sync/published receipt boundary. Restart tests
   prove only exact receipted states resume, incomplete pairs remain untrusted,
   source and foreign files remain unchanged, locks release, and residue stays
-  bounded. Published-artifact/output-directory storage faults, real filesystem
-  exhaustion, and production activation remain gated.
+  bounded. Injected published-artifact/output-directory storage faults are
+  covered below; real filesystem exhaustion and production activation remain
+  gated.
 - [x] Add test-only, thread-local storage fault injection at the inactive EXE
   image/manifest staging write and file-sync calls. Eighteen cases cover
   ENOSPC, EDQUOT, and EIO before the first byte, after a real partial write
@@ -480,8 +481,21 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   24.04.4 under the shared scheduler, formatting and Clippy pass, 316 Rust tests
   pass (27 ignored), and all 98 frontend tests plus documentation, hygiene, and
   boundary integrity pass against the unchanged Core fixture pin.
-- [ ] Extend storage-failure coverage to published artifact/output-directory
-  sync and durable quarantine/retirement before activation.
+- [x] Exercise inactive publication artifact and output-directory sync failures
+  with test-only thread-local injection. Twelve image/manifest ENOSPC/EDQUOT/EIO
+  cases fail again after lock reacquisition, retry the sync without renaming the
+  exact existing final inode, and complete only after persistence succeeds.
+  Eight further cases reject same-inode content changes and identical-byte
+  replacement inodes after failed sync, preserving foreign files and original
+  evidence across repeated retries. No premature published receipt is created;
+  source bytes/metadata and staged receipts remain unchanged. These injected
+  failures do not certify real filesystem exhaustion, power loss, or macOS
+  runtime behavior; production publication remains inactive. On Ubuntu 24.04.4
+  under the shared scheduler, formatting and Clippy pass, 318 Rust tests pass
+  (27 ignored), and all 98 frontend tests plus documentation, hygiene, and
+  boundary integrity pass against the unchanged Core fixture pin.
+- [ ] Extend storage-failure coverage to durable quarantine/retirement and real
+  filesystem failures before activation; never auto-delete ambiguous residue.
 - [ ] Formalize lock ordering and prove status polling, cancellation, close,
   and worker completion cannot deadlock.
 - [ ] Route normal cancellation, window close, process failure, and next-launch
