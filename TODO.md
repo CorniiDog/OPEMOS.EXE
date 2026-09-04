@@ -184,8 +184,10 @@ installation targets, production activation, or hardware certification.
   deadlines, missing/duplicate controls, oversized trees, failed actions,
   malformed or symlinked process data, a stubborn process group, exact timeout,
   immediate failure when the packaged process exits before UI readiness, and
-  executable pathname replacement after a no-follow descriptor is pinned.
-  Package archive validation passes with SHA-256
+  executable pathname replacement after a no-follow descriptor is pinned, and
+  stale, missing, invalid, or duplicate AT-SPI application process identities.
+  The live tree reports the spawned package PID exactly. Package archive
+  validation passes with SHA-256
   `80a578962c18c9ee5076c05ff2c2fa40d92e0097fd7e21efe8e017f0a3d41f12`; no
   package was installed. Debian, companion windows, focus order, and pixel
   rendering remain open. Scheduler-limited formatting and Clippy pass, 330 Rust

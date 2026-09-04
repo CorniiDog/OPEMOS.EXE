@@ -100,6 +100,20 @@ def invoke(node):
     if actions is None or actions.get_n_actions() < 1 or not actions.do_action(0):
         raise RuntimeError(f"Accessible control {node.get_name()!r} did not accept its action.")
 
+def application_for_pid(desktop, expected_pid: int):
+    if not isinstance(expected_pid, int) or isinstance(expected_pid, bool) or expected_pid <= 1:
+        raise RuntimeError("Packaged application PID is invalid.")
+    candidates = []
+    for index in range(desktop.get_child_count()):
+        app = desktop.get_child_at_index(index)
+        if app is not None and app.get_process_id() == expected_pid and named(app, "Open settings"):
+            candidates.append(app)
+    if len(candidates) != 1:
+        raise RuntimeError(
+            f"Expected one OPEMOS accessibility app for PID {expected_pid}, found {len(candidates)}."
+        )
+    return candidates[0]
+
 def wait_for(find, deadline: float, description: str, process_poll=None):
     last_error = None
     while time.monotonic() < deadline:
@@ -116,19 +130,12 @@ def wait_for(find, deadline: float, description: str, process_poll=None):
         time.sleep(0.05)
     raise RuntimeError(f"Timed out waiting for {description}: {last_error}")
 
-def exercise_accessibility(desktop, deadline: float, process_poll=None):
-    def application():
-        candidates = [desktop.get_child_at_index(index)
-                      for index in range(desktop.get_child_count())
-                      if desktop.get_child_at_index(index) is not None
-                      and named(desktop.get_child_at_index(index), "Open settings")]
-        if len(candidates) != 1:
-            raise RuntimeError(f"Expected one OPEMOS app with Settings, found {len(candidates)}.")
-        return candidates[0]
+def exercise_accessibility(desktop, deadline: float, expected_pid: int, process_poll=None):
     wait = lambda find, description: wait_for(
         find, deadline, description, process_poll=process_poll
     )
-    app = wait(application, "the packaged OPEMOS accessibility tree")
+    app = wait(lambda: application_for_pid(desktop, expected_pid),
+               "the packaged OPEMOS accessibility tree")
     invoke(exactly_one_action(app, "Open settings"))
     inspector = wait(lambda: exactly_one_action(app, "Inspect Core compatibility…"),
                      "the Settings compatibility action")
@@ -239,7 +246,7 @@ def main(argv=None):
         os.close(descriptor)
     try:
         exercise_accessibility(Atspi.get_desktop(0), time.monotonic() + args.timeout,
-                               process_poll=process.poll)
+                               expected_pid=process.pid, process_poll=process.poll)
     finally:
         stop_process_group(process)
     new_qemu = qemu_processes() - qemu_before

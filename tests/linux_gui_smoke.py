@@ -13,13 +13,15 @@ smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(smoke)
 
 class FakeNode:
-    def __init__(self, name="", children=(), actionable=False, role="text"):
-        self.name, self.children, self.actionable, self.invoked, self.role = name, list(children), actionable, False, role
+    def __init__(self, name="", children=(), actionable=False, role="text", pid=10):
+        self.name, self.children, self.actionable = name, list(children), actionable
+        self.invoked, self.role, self.pid = False, role, pid
     def get_name(self): return self.name
     def get_child_count(self): return len(self.children)
     def get_child_at_index(self, index): return self.children[index]
     def get_action_iface(self): return self if self.actionable else None
     def get_role_name(self): return self.role
+    def get_process_id(self): return self.pid
     def get_n_actions(self): return 1
     def do_action(self, index): self.invoked = index == 0; return self.invoked
 
@@ -73,6 +75,21 @@ class GuiSmokeTests(unittest.TestCase):
         for _ in range(34): chain = FakeNode(children=[chain])
         self.assertEqual(len(list(smoke.descendants(chain, max_depth=3))), 4)
         with self.assertRaises(RuntimeError): list(smoke.descendants(FakeNode(children=[FakeNode(), FakeNode()]), max_nodes=2))
+
+    def test_application_selection_is_bound_to_spawned_pid(self):
+        settings = lambda: FakeNode(children=[FakeNode("Open settings")])
+        stale = settings()
+        stale.pid = 41
+        current = settings()
+        current.pid = 42
+        desktop = FakeNode(children=[stale, current])
+        self.assertIs(smoke.application_for_pid(desktop, 42), current)
+        with self.assertRaises(RuntimeError): smoke.application_for_pid(desktop, 43)
+        with self.assertRaises(RuntimeError): smoke.application_for_pid(desktop, 1)
+        duplicate = settings()
+        duplicate.pid = 42
+        desktop.children.append(duplicate)
+        with self.assertRaises(RuntimeError): smoke.application_for_pid(desktop, 42)
 
     def test_wait_fails_immediately_when_packaged_process_exits(self):
         started = time.monotonic()
