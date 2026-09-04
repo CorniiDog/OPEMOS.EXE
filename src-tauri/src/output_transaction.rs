@@ -381,6 +381,9 @@ impl OutputReservation {
         output_path: &Path,
     ) -> Result<Self, String> {
         source.verify()?;
+        // Reject split lock namespaces before creating any output lock/record.
+        let requested_root = PinnedDirectory::open(root, true)?;
+        require_source_lock_root(source, &requested_root)?;
         let (parent_path, output) = split_path(output_path)?;
         let parent = PinnedDirectory::open(&parent_path, false)?;
         let manifest = strict_basename(&format!(
@@ -394,6 +397,8 @@ impl OutputReservation {
         // image then manifest is a consistent lexical order for both paths.
         // Use one namespace: another image must not reserve this manifest.
         let manifest_lock = LockCapability::acquire(root, &output_lock_key(&parent, &manifest))?;
+        require_source_lock_root(source, &lock.root)?;
+        require_source_lock_root(source, &manifest_lock.root)?;
         let stem = lock
             .basename
             .to_str()
@@ -510,6 +515,9 @@ impl OutputReservation {
 
     fn reopen(root: &Path, source: &SourceReservation, output_path: &Path) -> Result<Self, String> {
         source.verify()?;
+        // Reject split lock namespaces before creating any output lock/record.
+        let requested_root = PinnedDirectory::open(root, true)?;
+        require_source_lock_root(source, &requested_root)?;
         let (parent_path, output) = split_path(output_path)?;
         let parent = PinnedDirectory::open(&parent_path, false)?;
         let manifest = strict_basename(&format!(
@@ -521,6 +529,8 @@ impl OutputReservation {
         // image then manifest is a consistent lexical order for both paths.
         // Use one namespace: another image must not reserve this manifest.
         let manifest_lock = LockCapability::acquire(root, &output_lock_key(&parent, &manifest))?;
+        require_source_lock_root(source, &lock.root)?;
+        require_source_lock_root(source, &manifest_lock.root)?;
         let stem = lock
             .basename
             .to_str()
@@ -557,6 +567,8 @@ impl OutputReservation {
     }
 
     fn verify_guards(&self, source: &SourceReservation) -> Result<(), String> {
+        require_source_lock_root(source, &self.lock.root)?;
+        require_source_lock_root(source, &self.manifest_lock.root)?;
         // A valid guard for another file cannot stand in for the exact source
         // recorded by this reservation, even when both files have equal bytes.
         if source.identity != self.source_identity || source.sha256 != self.source_sha256 {
@@ -1088,6 +1100,20 @@ impl OutputReservation {
         }
         Ok(())
     }
+}
+
+// Local lock-directory binding only; this does not select an installed trust
+// root or activate the still-inactive output transaction.
+fn require_source_lock_root(
+    source: &SourceReservation,
+    root: &PinnedDirectory,
+) -> Result<(), String> {
+    if !same_directory_identity(&source.lock.root.identity, &root.identity)
+        || !same_directory_identity(&source.inode_lock.root.identity, &root.identity)
+    {
+        return Err("OUTPUT_SOURCE_LOCK_ROOT_MISMATCH".into());
+    }
+    Ok(())
 }
 
 impl PublicationPhase {
@@ -2991,6 +3017,77 @@ mod tests {
         assert!(error.contains("STAGE_EXISTS"));
         assert!(fixture.0.join(stage.to_string_lossy().as_ref()).exists());
         assert!(!fixture.output().exists());
+    }
+
+    #[test]
+    fn source_and_output_must_share_the_same_lock_directory() {
+        let fixture = Fixture::new("split-lock-roots");
+        let other_root = fixture.0.join("other-private");
+        fs::create_dir(&other_root).unwrap();
+        fs::set_permissions(&other_root, fs::Permissions::from_mode(0o700)).unwrap();
+        let source =
+            SourceReservation::acquire(&fixture.root(), &fixture.source("source-a.img")).unwrap();
+        assert_eq!(
+            OutputReservation::acquire(&other_root, &source, &fixture.output()).unwrap_err(),
+            "OUTPUT_SOURCE_LOCK_ROOT_MISMATCH"
+        );
+        assert_eq!(
+            OutputReservation::reopen(&other_root, &source, &fixture.output()).unwrap_err(),
+            "OUTPUT_SOURCE_LOCK_ROOT_MISMATCH"
+        );
+        assert_eq!(fs::read_dir(&other_root).unwrap().count(), 0);
+        // Compare directory identities, not spelling of the supplied root path.
+        let reservation =
+            OutputReservation::acquire(&fixture.root().join("."), &source, &fixture.output())
+                .unwrap();
+        reservation.verify_guards(&source).unwrap();
+        assert!(!fixture.output().exists());
+    }
+
+    #[test]
+    fn equal_source_guards_from_different_lock_roots_cannot_publish() {
+        let fixture = Fixture::new("source-guard-lock-root");
+        let other_root = fixture.0.join("other-private");
+        fs::create_dir(&other_root).unwrap();
+        fs::set_permissions(&other_root, fs::Permissions::from_mode(0o700)).unwrap();
+        let path = fixture.source("source-a.img");
+        let source = SourceReservation::acquire(&fixture.root(), &path).unwrap();
+        let other = SourceReservation::acquire(&other_root, &path).unwrap();
+        assert_eq!(source.identity, other.identity);
+        assert_eq!(source.sha256, other.sha256);
+        let reservation =
+            OutputReservation::acquire(&fixture.root(), &source, &fixture.output()).unwrap();
+        for _ in 0..2 {
+            assert_eq!(
+                reservation
+                    .publish_bytes_with_hook(&other, TEST_IMAGE, |_| panic!(
+                        "split lock roots reached publication"
+                    ))
+                    .unwrap_err(),
+                "OUTPUT_SOURCE_LOCK_ROOT_MISMATCH"
+            );
+            assert!(!fixture.output().exists());
+            assert!(!fixture
+                .0
+                .join(reservation.names().unwrap().image_stage.to_str().unwrap())
+                .exists());
+        }
+        assert_eq!(
+            reservation
+                .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+                .unwrap(),
+            PublicationRecovery::Complete
+        );
+        assert_eq!(
+            reservation
+                .publish_bytes_with_hook(&other, TEST_IMAGE, |_| panic!(
+                    "split lock roots reached recovery"
+                ))
+                .unwrap_err(),
+            "OUTPUT_SOURCE_LOCK_ROOT_MISMATCH"
+        );
+        source.verify().unwrap();
+        other.verify().unwrap();
     }
 
     #[test]

@@ -503,6 +503,18 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   On Ubuntu 24.04.4 through the shared scheduler, formatting and Clippy pass,
   325 Rust tests pass (27 ignored), and all 105 frontend tests plus documentation,
   hygiene, and boundary integrity pass against the unchanged Core fixture pin.
+- [x] Require inactive source/output reservations to share the same pinned
+  private lock-directory identity. A regression accepted an output reservation
+  in a second root, creating an independent lock namespace for the same source.
+  Reject this before output lock/record creation, recheck acquired lock roots,
+  and reject equal-byte/equal-inode source guards from another root during
+  publication and completion recovery. Tests cover empty-root preservation,
+  repeated rejection, correct-root retry, and alternate spelling of the same
+  directory. Choosing the fixed installed application root remains gated;
+  this change does not configure production storage or trust. On Ubuntu
+  24.04.4 through the shared scheduler, formatting and Clippy pass, 327 Rust
+  tests pass (27 ignored), and all 105 frontend tests plus documentation, hygiene,
+  and boundary integrity pass against the unchanged Core fixture pin.
 - [ ] Add a cross-process exclusive lock for each source image, working image,
   output reservation, and USB target. Before activation, use one fixed private
   app-owned root, retain the source guard through descriptor-bound consumption,
