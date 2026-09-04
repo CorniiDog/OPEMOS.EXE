@@ -47,7 +47,9 @@ macOS authorization, or virtual-media work and must be selected deliberately.
 
 ## Experimental Ubuntu/Debian validation
 
-The Linux host-testing backend is under development. The current validation
+The Linux host-testing backend is under development. See the
+[experimental Linux guide](linux-testing.md) for explicit opt-in, dependency
+discovery, accelerator selection, and resource limits. The current validation
 baseline exercises shared contracts, caches, disposable handoffs, export
 transactions, and process cleanup on Ubuntu 24.04.4 x86_64. It does not establish
 Debian, macOS, real QEMU appliance, physical-media, or SteamOS/NVIDIA hardware

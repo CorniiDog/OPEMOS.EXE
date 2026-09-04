@@ -2000,14 +2000,14 @@ esac
     #[test]
     fn selects_isolated_x86_build_acceleration_by_host() {
         assert_eq!(
-            nvidia_build_qemu_spec("aarch64").unwrap(),
+            plan_host_qemu("macos", "aarch64", "x86_64", false, "", false).unwrap(),
             ("tcg", "q35,accel=tcg", "max")
         );
         assert_eq!(
-            nvidia_build_qemu_spec("x86_64").unwrap(),
+            plan_host_qemu("macos", "x86_64", "x86_64", false, "", false).unwrap(),
             ("hvf", "q35,accel=hvf", "host")
         );
-        assert!(nvidia_build_qemu_spec("unsupported").is_err());
+        assert!(plan_host_qemu("macos", "unsupported", "x86_64", false, "", false).is_err());
     }
 
     #[test]

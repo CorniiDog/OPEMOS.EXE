@@ -1,3 +1,4 @@
+import { presentHostEnvironment } from "./host-status.js";
 import { buildCompletionMatches, operationContextMatches } from "./operation-context.js";
 import { installWindowDrag } from "./window-drag.js";
 import {
@@ -376,14 +377,13 @@ function setSettingsOpen(opened) {
 async function checkEnvironment() {
   try {
     const environment = await invoke("check_builder_environment");
-    hostReady = environment.ready;
-    elements.environmentTitle.textContent = environment.ready ? "Ready to build" : "Builder unavailable";
-    elements.environmentMessage.textContent = environment.ready
-      ? "The isolated builder will start automatically when you begin."
-      : environment.message;
-    elements.environmentDetails.textContent = [environment.host_os, environment.host_arch, environment.qemu_version].filter(Boolean).join(" · ");
-    elements.environmentStatus.textContent = environment.ready ? "Available" : "Unavailable";
-    elements.environmentStatus.className = `status ${environment.ready ? "" : "failed"}`;
+    const presentation = presentHostEnvironment(environment);
+    hostReady = presentation.ready;
+    elements.environmentTitle.textContent = presentation.title;
+    elements.environmentMessage.textContent = presentation.message;
+    elements.environmentDetails.textContent = presentation.details;
+    elements.environmentStatus.textContent = presentation.status;
+    elements.environmentStatus.className = `status ${presentation.ready ? "" : "failed"}`;
   } catch (error) {
     hostReady = false;
     elements.environmentTitle.textContent = "Environment check failed";

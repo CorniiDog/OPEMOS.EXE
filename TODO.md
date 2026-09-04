@@ -99,11 +99,27 @@ installation targets, production activation, or hardware certification.
   and stop descendant-held pipes after leader exit. Real subprocess matrices
   now work with serial test-harness output. Debian, macOS, live QEMU, physical
   media, and hardware certification are not established by this host run.
-- [ ] Add explicit experimental host capability/dependency reporting. Replace
-  the actual macOS-only RAM, firmware, seed-ISO, and QEMU acceleration adapters;
+- [x] Add explicit experimental Ubuntu/Debian x86_64 host capability/dependency
+  reporting and UI labels. Wire bounded RAM/cgroup readers, matched OVMF pairs,
+  genisoimage seed creation, and host-aware QEMU plans into both appliance paths;
   reuse existing Unix storage, descriptor, overlay, cleanup, and export code.
-- [ ] Require usable KVM or explicit software-emulation selection for Linux
-  testing. Keep physical-device writing unavailable until separately validated.
+  The read-only prerequisite doctor rejects missing/non-executable tools,
+  mixed firmware pairs, malformed/oversized OS metadata, and unsupported hosts.
+- [x] Require explicit Linux opt-in plus an accessible KVM API and a successful
+  selected-accelerator QEMU smoke, or explicitly selected TCG testing. Never
+  silently fall back. Keep physical-device writing unavailable. macOS HVF/native
+  and Apple-Silicon-to-x86 TCG plans retain their existing behavior in tests.
+- [x] On Ubuntu 24.04.4 x86_64, run the real 64 MiB paused TCG smoke with no
+  networking/host disks, create a seed ISO and disposable qcow2 overlay using
+  paths with spaces, and verify the raw source hash is unchanged. Through the
+  shared scheduler, formatting and Clippy pass, 308 Rust tests pass (27 ignored
+  live/helper entries), the explicit Linux smoke passes, and 86 frontend tests
+  plus documentation/hygiene checks pass against the same immutable Core CI pin.
+- [ ] Validate managed Fedora appliance boot and image equivalence. The current
+  2 GiB scheduler cap is below the existing 6 GiB host-budget minimum; runtime
+  cgroup discovery now refuses readiness, and the live smoke verifies that
+  refusal. Do not raise the cap or equate the small tool smoke with guest boot.
+  KVM hardware, Debian, macOS runtime, and SteamOS hardware remain unvalidated.
 - [ ] Provide exact Ubuntu/Debian setup and test launch/package commands,
   disposable appliance lifecycle smoke evidence, and tested-version limits.
 - [ ] Make compatibility-management UI present the same bounded Core results

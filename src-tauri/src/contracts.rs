@@ -530,6 +530,8 @@ pub(crate) struct ImageOutputPreview {
 
 #[derive(Serialize)]
 pub(crate) struct BuilderEnvironment {
+    pub(crate) experimental: bool,
+    pub(crate) acceleration: Option<String>,
     pub(crate) ready: bool,
     pub(crate) host_os: String,
     pub(crate) host_arch: String,

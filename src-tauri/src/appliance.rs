@@ -157,18 +157,22 @@ pub(crate) fn plan_guest_resources(
 }
 
 pub(crate) fn detect_guest_resources(build_worker: bool) -> Result<GuestResourcePlan, String> {
-    let output = Command::new("sysctl")
-        .args(["-n", "hw.memsize"])
-        .output()
-        .map_err(|error| format!("Could not detect host RAM with sysctl: {error}"))?;
-    if !output.status.success() {
-        return Err("Could not detect host RAM with sysctl.".into());
-    }
-    let host_memory_bytes = String::from_utf8(output.stdout)
-        .map_err(|_| "Host RAM report was not valid UTF-8.")?
-        .trim()
-        .parse::<u64>()
-        .map_err(|_| "Host RAM report did not contain a byte count.")?;
+    let host_memory_bytes = if cfg!(target_os = "linux") {
+        linux_effective_memory_bytes()?
+    } else {
+        let output = Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+            .map_err(|error| format!("Could not detect host RAM with sysctl: {error}"))?;
+        if !output.status.success() {
+            return Err("Could not detect host RAM with sysctl.".into());
+        }
+        String::from_utf8(output.stdout)
+            .map_err(|_| "Host RAM report was not valid UTF-8.")?
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| "Host RAM report did not contain a byte count.")?
+    };
     let host_logical_cpus = thread::available_parallelism()
         .map(|count| count.get())
         .map_err(|error| format!("Could not detect host CPU count: {error}"))?;
@@ -490,11 +494,7 @@ pub(crate) fn nvidia_build_runtime_root() -> PathBuf {
 pub(crate) fn nvidia_build_qemu_spec(
     host_arch: &str,
 ) -> Result<(&'static str, &'static str, &'static str), String> {
-    match host_arch {
-        "aarch64" => Ok(("tcg", "q35,accel=tcg", "max")),
-        "x86_64" => Ok(("hvf", "q35,accel=hvf", "host")),
-        arch => Err(format!("Unsupported host architecture: {arch}")),
-    }
+    current_host_qemu(host_arch, "x86_64")
 }
 
 pub(crate) fn process_is_alive(pid: u32) -> bool {
@@ -798,11 +798,16 @@ pub(crate) fn collect_build_runtime_provenance(
 }
 
 pub(crate) fn smoke_test_qemu(path: &Path) -> Result<(), String> {
+    let spec = if cfg!(target_os = "linux") {
+        Some(current_host_qemu(std::env::consts::ARCH, "x86_64")?)
+    } else {
+        None
+    };
     let mut command = Command::new(path);
     command
         .args([
             "-machine",
-            "none",
+            spec.map(|value| value.1).unwrap_or("none"),
             "-display",
             "none",
             "-monitor",
@@ -815,6 +820,9 @@ pub(crate) fn smoke_test_qemu(path: &Path) -> Result<(), String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
+    if let Some((_, _, cpu)) = spec {
+        command.args(["-cpu", cpu, "-m", "64", "-smp", "1", "-nic", "none"]);
+    }
     isolate_process_group(&mut command);
     let mut child = command
         .spawn()
@@ -1304,6 +1312,10 @@ pub(crate) fn prepare_session(
     cancel: Option<&AtomicBool>,
     plan_export: bool,
 ) -> Result<ApplianceSession, String> {
+    current_host_qemu(std::env::consts::ARCH, std::env::consts::ARCH)?;
+    if cfg!(target_os = "linux") {
+        linux_host_prerequisites()?;
+    }
     cleanup_abandoned_runtimes()?;
     let appliance = appliance_path();
     if !appliance.is_file() {
@@ -1498,21 +1510,7 @@ pub(crate) fn prepare_session(
         "Could not create the disposable user-image working layer",
     )?;
     let seed_image = runtime_dir.join("seed.iso");
-    run_checked(
-        Command::new("hdiutil")
-            .args([
-                "makehybrid",
-                "-quiet",
-                "-iso",
-                "-joliet",
-                "-default-volume-name",
-                "cidata",
-                "-o",
-            ])
-            .arg(&seed_image)
-            .arg(&cloud_init_dir),
-        "Could not create the cloud-init seed image",
-    )?;
+    create_host_seed(&cloud_init_dir, &seed_image)?;
     let appended_seed = runtime_dir.join("seed.iso.iso");
     if !seed_image.is_file() && appended_seed.is_file() {
         fs::rename(appended_seed, &seed_image)
@@ -1522,20 +1520,9 @@ pub(crate) fn prepare_session(
         return Err("Cloud-init seed image was not created.".into());
     }
 
-    let share = homebrew_qemu_share()?;
-    let (machine, code_name, vars_name) = match std::env::consts::ARCH {
-        "aarch64" => ("virt,accel=hvf", "edk2-aarch64-code.fd", "edk2-arm-vars.fd"),
-        "x86_64" => ("q35,accel=hvf", "edk2-x86_64-code.fd", "edk2-i386-vars.fd"),
-        arch => return Err(format!("Unsupported host architecture: {arch}")),
-    };
-    let uefi_code = share.join(code_name);
-    let vars_template = share.join(vars_name);
-    if !uefi_code.is_file() || !vars_template.is_file() {
-        return Err(format!(
-            "Required QEMU firmware was not found under {}.",
-            share.display()
-        ));
-    }
+    let (_, machine, cpu_model) =
+        current_host_qemu(std::env::consts::ARCH, std::env::consts::ARCH)?;
+    let (uefi_code, vars_template) = host_firmware(std::env::consts::ARCH)?;
     let vars_image = runtime_dir.join("uefi-vars.fd");
     fs::copy(&vars_template, &vars_image)
         .map_err(|e| format!("Could not create the writable UEFI variable store: {e}"))?;
@@ -1568,7 +1555,7 @@ pub(crate) fn prepare_session(
             "-machine",
             machine,
             "-cpu",
-            "host",
+            cpu_model,
             "-smp",
             &guest_vcpus,
             "-m",
@@ -1695,6 +1682,10 @@ pub(crate) fn prepare_session(
 pub(crate) fn prepare_nvidia_build_session(
     target_working_image: Option<&Path>,
 ) -> Result<NvidiaBuildSession, String> {
+    current_host_qemu(std::env::consts::ARCH, "x86_64")?;
+    if cfg!(target_os = "linux") {
+        linux_host_prerequisites()?;
+    }
     cleanup_abandoned_nvidia_build_runtimes()?;
     let appliance = nvidia_build_appliance_path();
     if !appliance.is_file() {
@@ -1800,21 +1791,7 @@ pub(crate) fn prepare_nvidia_build_session(
         "Could not create the disposable x86 build-appliance overlay",
     )?;
     let seed_image = runtime_dir.join("seed.iso");
-    run_checked(
-        Command::new("hdiutil")
-            .args([
-                "makehybrid",
-                "-quiet",
-                "-iso",
-                "-joliet",
-                "-default-volume-name",
-                "cidata",
-                "-o",
-            ])
-            .arg(&seed_image)
-            .arg(&cloud_init_dir),
-        "Could not create the x86 build-appliance cloud-init seed",
-    )?;
+    create_host_seed(&cloud_init_dir, &seed_image)?;
     let appended_seed = runtime_dir.join("seed.iso.iso");
     if !seed_image.is_file() && appended_seed.is_file() {
         fs::rename(appended_seed, &seed_image)
@@ -1824,15 +1801,7 @@ pub(crate) fn prepare_nvidia_build_session(
         return Err("The x86 build-appliance cloud-init seed was not created.".into());
     }
 
-    let share = homebrew_qemu_share()?;
-    let uefi_code = share.join("edk2-x86_64-code.fd");
-    let vars_template = share.join("edk2-i386-vars.fd");
-    if !uefi_code.is_file() || !vars_template.is_file() {
-        return Err(format!(
-            "Required x86 QEMU firmware was not found under {}.",
-            share.display()
-        ));
-    }
+    let (uefi_code, vars_template) = host_firmware("x86_64")?;
     let vars_image = runtime_dir.join("uefi-vars.fd");
     fs::copy(&vars_template, &vars_image)
         .map_err(|e| format!("Could not create the x86 UEFI variable store: {e}"))?;
@@ -2311,19 +2280,29 @@ pub(crate) fn check_nvidia_build_environment_blocking() -> NvidiaBuildEnvironmen
     let appliance = nvidia_build_appliance_path();
     let appliance_present = appliance.is_file();
     let appliance_path = appliance.to_string_lossy().into_owned();
-    let Ok((acceleration, _, _)) = nvidia_build_qemu_spec(&host_arch) else {
-        return NvidiaBuildEnvironment {
-            ready: false,
-            host_arch,
-            guest_arch: "x86_64".into(),
-            acceleration: "unavailable".into(),
-            qemu_binary: None,
-            qemu_version: None,
-            qemu_launch_test: false,
-            appliance_present,
-            appliance_path,
-            message: "The host architecture cannot run the x86 build appliance.".into(),
-        };
+    let (acceleration, _, _) = match nvidia_build_qemu_spec(&host_arch).and_then(|spec| {
+        if cfg!(target_os = "linux") {
+            linux_host_prerequisites()?;
+            detect_guest_resources(true)
+                .map_err(|error| format!("Experimental Linux effective memory budget: {error}"))?;
+        }
+        Ok(spec)
+    }) {
+        Ok(spec) => spec,
+        Err(message) => {
+            return NvidiaBuildEnvironment {
+                ready: false,
+                host_arch,
+                guest_arch: "x86_64".into(),
+                acceleration: "unavailable".into(),
+                qemu_binary: None,
+                qemu_version: None,
+                qemu_launch_test: false,
+                appliance_present,
+                appliance_path,
+                message,
+            };
+        }
     };
     let Some(qemu) = find_binary("qemu-system-x86_64") else {
         return NvidiaBuildEnvironment {
@@ -2341,11 +2320,7 @@ pub(crate) fn check_nvidia_build_environment_blocking() -> NvidiaBuildEnvironmen
     };
     let version = qemu_version(&qemu);
     let launch_result = smoke_test_qemu(&qemu);
-    let firmware_present = homebrew_qemu_share()
-        .map(|share| {
-            share.join("edk2-x86_64-code.fd").is_file() && share.join("edk2-i386-vars.fd").is_file()
-        })
-        .unwrap_or(false);
+    let firmware_present = host_firmware("x86_64").is_ok();
     let ready = appliance_present && version.is_some() && launch_result.is_ok() && firmware_present;
     let message = if !appliance_present {
         "The separate x86_64 Fedora build appliance has not been prepared.".into()
@@ -2692,13 +2667,41 @@ pub(crate) async fn check_builder_environment() -> Result<BuilderEnvironment, St
 pub(crate) fn check_builder_environment_blocking() -> BuilderEnvironment {
     let host_os = std::env::consts::OS.to_string();
     let host_arch = std::env::consts::ARCH.to_string();
+    let experimental = host_os == "linux";
+    let host_plan = current_host_qemu(&host_arch, &host_arch);
+    let acceleration = host_plan.as_ref().ok().map(|spec| spec.0.to_owned());
+    let host_plan = host_plan.and_then(|spec| {
+        if experimental {
+            linux_host_prerequisites()?;
+            detect_guest_resources(false)
+                .map_err(|error| format!("Experimental Linux effective memory budget: {error}"))?;
+        }
+        Ok(spec)
+    });
     let appliance = appliance_path();
     let appliance_present = appliance.is_file();
     let appliance_path = appliance.to_string_lossy().into_owned();
+    if let Err(message) = host_plan {
+        return BuilderEnvironment {
+            ready: false,
+            experimental,
+            acceleration,
+            host_os,
+            host_arch,
+            qemu_binary: None,
+            qemu_version: None,
+            qemu_launch_test: false,
+            appliance_present,
+            appliance_path,
+            message,
+        };
+    }
     let binary_name = match qemu_binary_name() {
         Ok(value) => value,
         Err(message) => {
             return BuilderEnvironment {
+                experimental,
+                acceleration: acceleration.clone(),
                 ready: false,
                 host_os,
                 host_arch,
@@ -2713,6 +2716,8 @@ pub(crate) fn check_builder_environment_blocking() -> BuilderEnvironment {
     };
     let Some(qemu) = find_qemu() else {
         return BuilderEnvironment {
+            experimental,
+            acceleration: acceleration.clone(),
             ready: false,
             host_os,
             host_arch,
@@ -2727,6 +2732,8 @@ pub(crate) fn check_builder_environment_blocking() -> BuilderEnvironment {
     let version = qemu_version(&qemu);
     if version.is_none() {
         return BuilderEnvironment {
+            experimental,
+            acceleration: acceleration.clone(),
             ready: false,
             host_os,
             host_arch,
@@ -2740,6 +2747,8 @@ pub(crate) fn check_builder_environment_blocking() -> BuilderEnvironment {
     }
     if let Err(message) = smoke_test_qemu(&qemu) {
         return BuilderEnvironment {
+            experimental,
+            acceleration: acceleration.clone(),
             ready: false,
             host_os,
             host_arch,
@@ -2753,6 +2762,8 @@ pub(crate) fn check_builder_environment_blocking() -> BuilderEnvironment {
     }
     let ready = appliance_present;
     BuilderEnvironment {
+        experimental,
+        acceleration: acceleration.clone(),
         ready,
         host_os,
         host_arch,

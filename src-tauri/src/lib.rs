@@ -70,6 +70,7 @@ mod core_contracts;
 // activation until a production trust root and bootstrap checkpoint exist.
 #[allow(dead_code)]
 mod core_generation_contracts;
+mod host_platform;
 mod host_storage;
 mod image;
 mod installer;
@@ -83,6 +84,7 @@ mod windows;
 pub use app::run;
 use appliance::*;
 use contracts::*;
+use host_platform::*;
 use host_storage::*;
 use image::*;
 use installer::*;
