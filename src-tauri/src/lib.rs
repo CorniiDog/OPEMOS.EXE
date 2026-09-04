@@ -28,6 +28,7 @@ use tauri::{Emitter, Manager};
 
 mod app;
 mod appliance;
+mod compatibility_preview;
 mod contracts;
 // The persistent cache lifecycle is contract-agnostic and remains inactive
 // until Core publishes the authenticated generation-discovery descriptor. Its

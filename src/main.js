@@ -1,3 +1,4 @@
+import { installCompatibilityPreview } from "./compatibility-preview.js";
 import { presentHostEnvironment } from "./host-status.js";
 import { buildCompletionMatches, operationContextMatches } from "./operation-context.js";
 import { installWindowDrag } from "./window-drag.js";
@@ -8,6 +9,7 @@ import {
 } from "./keyboard.js";
 
 const { invoke } = window.__TAURI__.core;
+installCompatibilityPreview(document, invoke);
 const { getAllWebviewWindows, getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 const open = (options) => invoke("plugin:dialog|open", { options });
 const openUrl = (url) => invoke("plugin:opener|open_url", { url });
@@ -1131,6 +1133,7 @@ elements.writeUsbImage.addEventListener("click", async () => {
 });
 
 await mainWindow.onDragDropEvent(async (event) => {
+  if (document.getElementById("compatibility-dialog").open) return;
   if (event.payload.type === "over") { elements.dropZone.classList.add("dragging"); return; }
   elements.dropZone.classList.remove("dragging");
   if (event.payload.type === "drop") {

@@ -1,0 +1,38 @@
+.compatibility-dialog {
+  width: min(680px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  margin: auto;
+  padding: 24px;
+  overflow: auto;
+  color: #f5f7fb;
+  background: #142331;
+  border: 1px solid #526b7a;
+  border-radius: 14px;
+}
+.compatibility-dialog::backdrop { background: rgba(0, 0, 0, .7); }
+.compatibility-dialog h2 { margin: 0; }
+.compatibility-heading, .compatibility-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.compatibility-heading { justify-content: space-between; }
+.compatibility-dialog p { line-height: 1.5; }
+.compatibility-dialog label { display: block; margin: 16px 0 8px; }
+.compatibility-dialog textarea {
+  width: 100%;
+  min-height: 120px;
+  max-height: 240px;
+  resize: vertical;
+  padding: 10px;
+  background: #0b1118;
+  color: #f5f7fb;
+  border: 1px solid #668393;
+  border-radius: 6px;
+  font: 13px/1.5 monospace;
+}
+.compatibility-actions { margin-top: 12px; }
+.compatibility-dialog dl { margin-bottom: 0; }
+.compatibility-dialog dl > div { border-top: 1px solid #526b7a; padding: 10px 0; }
+.compatibility-dialog dt { color: #b8d5e5; font-size: 13px; }
+.compatibility-dialog dd { margin: 5px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.compatibility-dialog :focus-visible { outline: 2px solid #66c0f4; outline-offset: 3px; }
+@media (forced-colors: active) {
+  .compatibility-dialog, .compatibility-dialog textarea { border-color: CanvasText; }
+}

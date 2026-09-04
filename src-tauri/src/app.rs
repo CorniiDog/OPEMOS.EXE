@@ -39,6 +39,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            crate::compatibility_preview::preview_core_compatibility,
             check_builder_environment,
             check_nvidia_build_environment,
             get_builder_settings,

@@ -141,8 +141,24 @@ installation targets, production activation, or hardware certification.
   not been attempted. Managed-appliance lifecycle and image equivalence remain
   separately blocked by the unchanged resource minimum above. The Ubuntu
   glibc-2.39 package is not a validated Debian 12 artifact.
-- [ ] Make compatibility-management UI present the same bounded Core results
-  and clearly non-production fixtures without inventing policy or activation.
+- [x] Add Settings → Inspect Core compatibility: a read-only host dialog for
+  pasted resolver results and the existing compatible/no-artifact development
+  fixtures. Reuse the same Rust Core schema-2 parser and 1 MiB byte bound;
+  distinguish unverified pasted documents from non-production debug fixtures.
+  Display Core status, targets, publication, pending artifact trust, reasons,
+  and next actions as text without policy selection, network/guest/cache work,
+  or build/activation controls. Closing, clearing, editing, and newer requests
+  invalidate stale responses; native file drops cannot select images while
+  the dialog is open. Three Rust tests cover exact result preservation, origin
+  and fixture gating, strict request shapes, duplicate/malformed documents,
+  unknown schemas, trust-field tampering, Unicode overflow, and the size edge.
+  Eight frontend tests cover presentation, bounded errors/text, races, clearing,
+  hostile-looking text, keyboard-event isolation, and byte limits. On Ubuntu
+  24.04.4, scheduler-limited formatting, Clippy, 311 Rust tests (27 ignored),
+  98 frontend tests, documentation, hygiene, and boundary integrity pass against
+  unchanged Core CI commit `3e49323fce266af8686039fb6487918ef5a64fd9`.
+  Native dialog rendering/focus remains part of the graphical validation gate;
+  this session has no graphical display or enabled browser surface.
 
 ### 1. Complete the OPEMOS Core migration
 

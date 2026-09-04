@@ -172,10 +172,32 @@ other host writers or proof that later writes cannot fail.
 assumptions or bypass that refusal. Real removable-device support needs its own
 verified Linux implementation and safety tests.
 
-Compatibility-management testing must display the same Core results and mark
-development fixtures as non-production. This host opt-in does not install
-production keys, select publication policy, authorize source fallback, or
-activate a generation. Existing production trust and activation gates remain
+## Inspect Core compatibility without activation
+
+Open **Settings → Inspect Core compatibility…** in either the macOS application
+or the experimental Linux application. Paste a Core resolver schema-2 JSON
+result and choose **Inspect pasted result**. The existing Rust Core consumer
+checks the same document structure and 1 MiB byte limit used by its resolver
+adapter. Structural validity does not authenticate a pasted result: the dialog
+always identifies it as **Unverified pasted document**.
+
+Debug builds also offer **Compatible fixture** and **No-artifact fixture** from
+the existing repository conformance fixtures. Their results are always labeled
+**Development fixture — non-production**; release builds reject fixture requests.
+A reported exact-target action is shown as text and cannot be executed here.
+The inspector offers no build, download, trust, or generation-activation action.
+It needs no credentials, network requests, image files, guest, or cache changes.
+
+The dialog displays Core's status, target, reason, publication, artifact trust,
+and next action without inventing another decision. Editing, clearing, or
+closing invalidates pending preview responses; closing also clears pasted text.
+Long fields are explicitly truncated for display. Keyboard focus stays within
+the native dialog, and main-window file drops are ignored while it is open.
+Frontend behavior and Rust adapter tests are automated; visual rendering and
+native keyboard/focus behavior still require a graphical desktop validation.
+
+This host opt-in does not install production keys, select publication policy,
+authorize source fallback, or activate a generation. Existing production trust and activation gates remain
 intact. macOS regression validation, Debian validation, managed-appliance smoke
 tests, final-image equivalence, and real SteamOS/NVIDIA certification require
 their own recorded evidence.

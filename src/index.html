@@ -12,6 +12,7 @@
     </style>
     <script>if (navigator.platform.startsWith("Mac") || navigator.userAgent.includes("Macintosh")) document.documentElement.classList.add("platform-macos");</script>
 
+    <link rel="stylesheet" href="/compatibility-preview.css">
     <title>SteamOS NVIDIA Builder</title>
 
     <link
@@ -110,6 +111,8 @@
                 </span>
                 <input id="auto-release-nvidia" type="checkbox" disabled>
             </label>
+
+            <button id="compatibility-open" class="secondary" type="button" aria-haspopup="dialog">Inspect Core compatibility…</button>
 
             <p id="settings-message" class="settings-message"></p>
             <p class="settings-security">GitHub CLI handles authentication. The app never copies credentials into settings.json, manifests, or build logs.</p>
@@ -355,6 +358,30 @@
             </p>
         </footer>
     </main>
+
+    <dialog id="compatibility-dialog" class="compatibility-dialog" aria-labelledby="compatibility-title" aria-describedby="compatibility-notice">
+        <div class="compatibility-heading">
+            <h2 id="compatibility-title">Core compatibility inspector</h2>
+            <button id="compatibility-close" class="secondary" type="button" autofocus>Close</button>
+        </div>
+        <p id="compatibility-notice">Read-only preview. Document structure is checked, but authenticity is not. A compatible result here does not authorize a build, download, or activation.</p>
+        <label for="compatibility-document">Core resolver JSON (up to 1 MiB)</label>
+        <textarea id="compatibility-document" maxlength="1048576" spellcheck="false" autocomplete="off" placeholder="Paste a Core resolver result"></textarea>
+        <div class="compatibility-actions">
+            <button id="compatibility-inspect" class="secondary" type="button">Inspect pasted result</button>
+            <button id="compatibility-clear" class="secondary" type="button">Clear</button>
+        </div>
+        <p>Development fixtures are non-production and available only in debug builds.</p>
+        <div class="compatibility-actions">
+            <button id="compatibility-fixture-compatible" class="secondary" type="button">Compatible fixture</button>
+            <button id="compatibility-fixture-no-artifact" class="secondary" type="button">No-artifact fixture</button>
+        </div>
+        <p id="compatibility-status" role="status" aria-live="polite">No result loaded.</p>
+        <section id="compatibility-result" hidden aria-label="Unverified Core result">
+            <dl id="compatibility-fields"></dl>
+        </section>
+        <p>Pasted content is processed locally and cleared when this inspector closes. No credentials, downloads, cache changes, or guest operations are needed.</p>
+    </dialog>
 
     <script
         type="module"
