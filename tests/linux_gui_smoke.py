@@ -51,6 +51,17 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertEqual(len(list(smoke.descendants(chain, max_depth=3))), 4)
         with self.assertRaises(RuntimeError): list(smoke.descendants(FakeNode(children=[FakeNode(), FakeNode()]), max_nodes=2))
 
+    def test_wait_fails_immediately_when_packaged_process_exits(self):
+        started = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "exited with 23 while waiting for startup"):
+            smoke.wait_for(lambda: (_ for _ in ()).throw(RuntimeError("missing")),
+                           started + 10, "startup", process_poll=lambda: 23)
+        self.assertLess(time.monotonic() - started, 0.5)
+
+        with self.assertRaisesRegex(RuntimeError, "Timed out waiting for missing control"):
+            smoke.wait_for(lambda: (_ for _ in ()).throw(RuntimeError("missing")),
+                           time.monotonic() + 0.01, "missing control")
+
     def test_qemu_inventory_is_bounded_and_rejects_malformed_names(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

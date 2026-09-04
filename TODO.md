@@ -182,7 +182,8 @@ installation targets, production activation, or hardware certification.
   new `qemu-system-*` process remains. Unit tests
   reject missing opt-in/display, symlink and non-executable inputs, invalid
   deadlines, missing/duplicate controls, oversized trees, failed actions,
-  malformed or symlinked process data, and a stubborn process group.
+  malformed or symlinked process data, a stubborn process group, exact timeout,
+  and immediate failure when the packaged process exits before UI readiness.
   Package archive validation passes with SHA-256
   `80a578962c18c9ee5076c05ff2c2fa40d92e0097fd7e21efe8e017f0a3d41f12`; no
   package was installed. Debian, companion windows, focus order, and pixel

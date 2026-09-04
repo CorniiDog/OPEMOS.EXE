@@ -85,9 +85,15 @@ def invoke(node):
     if actions is None or actions.get_n_actions() < 1 or not actions.do_action(0):
         raise RuntimeError(f"Accessible control {node.get_name()!r} did not accept its action.")
 
-def wait_for(find, deadline: float, description: str):
+def wait_for(find, deadline: float, description: str, process_poll=None):
     last_error = None
     while time.monotonic() < deadline:
+        if process_poll is not None:
+            returncode = process_poll()
+            if returncode is not None:
+                raise RuntimeError(
+                    f"Packaged application exited with {returncode} while waiting for {description}."
+                )
         try:
             return find()
         except RuntimeError as error:
@@ -95,7 +101,7 @@ def wait_for(find, deadline: float, description: str):
         time.sleep(0.05)
     raise RuntimeError(f"Timed out waiting for {description}: {last_error}")
 
-def exercise_accessibility(desktop, deadline: float):
+def exercise_accessibility(desktop, deadline: float, process_poll=None):
     def application():
         candidates = [desktop.get_child_at_index(index)
                       for index in range(desktop.get_child_count())
@@ -104,23 +110,27 @@ def exercise_accessibility(desktop, deadline: float):
         if len(candidates) != 1:
             raise RuntimeError(f"Expected one OPEMOS app with Settings, found {len(candidates)}.")
         return candidates[0]
-    app = wait_for(application, deadline, "the packaged OPEMOS accessibility tree")
+    wait = lambda find, description: wait_for(
+        find, deadline, description, process_poll=process_poll
+    )
+    app = wait(application, "the packaged OPEMOS accessibility tree")
     invoke(exactly_one_action(app, "Open settings"))
-    inspector = wait_for(lambda: exactly_one_action(app, "Inspect Core compatibility…"), deadline,
-                         "the Settings compatibility action")
+    inspector = wait(lambda: exactly_one_action(app, "Inspect Core compatibility…"),
+                     "the Settings compatibility action")
     invoke(inspector)
-    dialog = wait_for(lambda: exactly_one_role(app, "Core compatibility inspector", "dialog"),
-                      deadline, "the compatibility inspector")
+    dialog = wait(lambda: exactly_one_role(app, "Core compatibility inspector", "dialog"),
+                  "the compatibility inspector")
     invoke(exactly_one_action(dialog, "Compatible fixture"))
     for label, prefix in EXPECTED_ROWS.items():
-        term = wait_for(lambda label=label: exactly_one(dialog, label), deadline, label)
+        term = wait(lambda label=label: exactly_one(dialog, label), label)
         values = [node.get_name() or "" for node in descendants(dialog)]
         if not any(value.startswith(prefix) for value in values):
             raise RuntimeError(f"{label!r} did not expose a value beginning with {prefix!r}.")
         if term.get_name() != label:
             raise RuntimeError(f"Accessibility label changed while reading {label!r}.")
     invoke(first_action(dialog, "Close", {"push button", "button"}))
-    wait_for(lambda: exactly_one_action(app, "Open settings"), deadline, "the main document after dialog close")
+    wait(lambda: exactly_one_action(app, "Open settings"),
+         "the main document after dialog close")
 
 def qemu_processes(proc_root: Path = Path("/proc")) -> set[tuple[int, str]]:
     metadata = proc_root.lstat()
@@ -205,7 +215,8 @@ def main(argv=None):
     qemu_before = qemu_processes()
     process = subprocess.Popen([str(executable)], start_new_session=True)
     try:
-        exercise_accessibility(Atspi.get_desktop(0), time.monotonic() + args.timeout)
+        exercise_accessibility(Atspi.get_desktop(0), time.monotonic() + args.timeout,
+                               process_poll=process.poll)
     finally:
         stop_process_group(process)
     new_qemu = qemu_processes() - qemu_before
