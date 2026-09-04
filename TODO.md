@@ -464,6 +464,21 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.
+- [x] Close renamed-source contention in the inactive output reservation.
+  A regression reproduced two reservations accepting the same inode after a
+  rename. Retain the existing pathname lock and add a device/inode lock before
+  hashing, acquired in pathname → inode → output order; verify both source
+  locks throughout consumption. Same-parent and cross-parent rename tests
+  preserve exclusivity, failed inode acquisition releases its pathname lock,
+  lock replacement revokes the guard, and a real subprocess holds exclusivity
+  across rename until exit. The source and foreign bytes remain unchanged.
+  This is an inactive host reservation change, not production export wiring;
+  working-image/USB locks and broader lifecycle lock-order proof remain open.
+  The bounded SIGKILL inventory now permits exactly one additional empty lock
+  (at most three locks and nine total private entries). On Ubuntu 24.04.4 under
+  the shared scheduler, formatting and Clippy pass, 321 Rust tests pass
+  (27 ignored), and all 105 frontend tests plus documentation, hygiene, and
+  boundary integrity pass against the unchanged Core fixture pin.
 - [ ] Add a cross-process exclusive lock for each source image, working image,
   output reservation, and USB target. Before activation, use one fixed private
   app-owned root, retain the source guard through descriptor-bound consumption,

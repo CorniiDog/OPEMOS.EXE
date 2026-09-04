@@ -290,6 +290,7 @@ impl LockCapability {
 #[derive(Debug)]
 pub(crate) struct SourceReservation {
     lock: LockCapability,
+    inode_lock: LockCapability,
     parent: PinnedDirectory,
     basename: CString,
     source: File,
@@ -307,13 +308,23 @@ impl SourceReservation {
         let metadata = source.metadata().map_err(|e| e.to_string())?;
         validate_source(&metadata)?;
         let identity = FileIdentity::of(&metadata);
-        let sha256 = hash_fd(&source, metadata.len())?;
         let mut key = b"source\0".to_vec();
         key.extend_from_slice(&parent.identity.device.to_le_bytes());
         key.extend_from_slice(&parent.identity.inode.to_le_bytes());
         key.extend_from_slice(basename.as_bytes());
+        // Fixed order: source pathname, source inode, then output (by caller).
+        // Both source locks remain held through consumption. A rename may
+        // invalidate the path guard but must not make the same inode available
+        // to another reservation. Failed acquisition drops earlier guards.
+        let lock = LockCapability::acquire(root, &key)?;
+        let mut inode_key = b"source-inode\0".to_vec();
+        inode_key.extend_from_slice(&identity.device.to_le_bytes());
+        inode_key.extend_from_slice(&identity.inode.to_le_bytes());
+        let inode_lock = LockCapability::acquire(root, &inode_key)?;
+        let sha256 = hash_fd(&source, metadata.len())?;
         let result = Self {
-            lock: LockCapability::acquire(root, &key)?,
+            lock,
+            inode_lock,
             parent,
             basename,
             source,
@@ -326,6 +337,7 @@ impl SourceReservation {
 
     pub(crate) fn verify(&self) -> Result<(), String> {
         self.lock.verify()?;
+        self.inode_lock.verify()?;
         self.parent.verify(false)?;
         let fd = self.source.metadata().map_err(|e| e.to_string())?;
         let path = self
@@ -1857,7 +1869,16 @@ mod tests {
             .unwrap()
             .map(|entry| entry.unwrap())
             .collect::<Vec<_>>();
-        assert!(root_entries.len() <= 8, "unbounded private residue");
+        // Three locks (source path/inode and output), one reservation, four
+        // publication receipts, and the intentionally preserved foreign file.
+        assert!(root_entries.len() <= 9, "unbounded private residue");
+        assert!(
+            root_entries
+                .iter()
+                .filter(|entry| entry.file_name().as_bytes().ends_with(b".lock"))
+                .count()
+                <= 3
+        );
         for entry in root_entries {
             let metadata = entry.metadata().unwrap();
             assert!(metadata.is_file(), "unexpected private residue type");
@@ -1907,6 +1928,59 @@ mod tests {
             reservation.verify().unwrap_err(),
             "SOURCE_RESERVATION_CHANGED"
         );
+    }
+
+    #[test]
+    fn renamed_source_keeps_inode_exclusive_and_failed_acquisition_releases_path_lock() {
+        for nested in [false, true] {
+            let fixture = Fixture::new("renamed-source-lock");
+            let original = fixture.source("source-a.img");
+            let held = SourceReservation::acquire(&fixture.root(), &original).unwrap();
+            let parent = if nested {
+                let path = fixture.0.join("another-parent");
+                fs::create_dir(&path).unwrap();
+                path
+            } else {
+                fixture.0.clone()
+            };
+            let alias = parent.join("renamed.img");
+            fs::rename(&original, &alias).unwrap();
+            assert!(held.verify().is_err());
+            assert_eq!(
+                SourceReservation::acquire(&fixture.root(), &alias).unwrap_err(),
+                "RESERVATION_ALREADY_HELD"
+            );
+            let moved_again = parent.join("moved-again.img");
+            fs::rename(&alias, &moved_again).unwrap();
+            fs::write(&alias, b"foreign source").unwrap();
+            // The failed inode acquisition must release its newly acquired path lock.
+            let foreign = SourceReservation::acquire(&fixture.root(), &alias).unwrap();
+            foreign.verify().unwrap();
+            assert_eq!(
+                SourceReservation::acquire(&fixture.root(), &moved_again).unwrap_err(),
+                "RESERVATION_ALREADY_HELD"
+            );
+            drop(held);
+            let resumed = SourceReservation::acquire(&fixture.root(), &moved_again).unwrap();
+            resumed.verify().unwrap();
+            assert_eq!(fs::read(&moved_again).unwrap(), b"source-a");
+            assert_eq!(fs::read(&alias).unwrap(), b"foreign source");
+        }
+    }
+
+    #[test]
+    fn source_inode_lock_replacement_revokes_the_reservation() {
+        let fixture = Fixture::new("source-inode-lock-replacement");
+        let source = fixture.source("source-a.img");
+        let held = SourceReservation::acquire(&fixture.root(), &source).unwrap();
+        let path = fixture
+            .root()
+            .join(held.inode_lock.basename.to_str().unwrap());
+        fs::rename(&path, fixture.root().join("preserved-inode-lock")).unwrap();
+        fs::write(&path, b"").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(held.verify().unwrap_err(), "RESERVATION_LOCK_CHANGED");
+        assert_eq!(fs::read(source).unwrap(), b"source-a");
     }
 
     #[test]
@@ -3469,8 +3543,19 @@ mod tests {
             OutputReservation::acquire(&fixture.root(), &other, &fixture.output()).unwrap_err(),
             "RESERVATION_ALREADY_HELD"
         );
+        let renamed = fixture.source("renamed-source.img");
+        fs::rename(fixture.source("source-a.img"), &renamed).unwrap();
+        assert_eq!(
+            SourceReservation::acquire(&fixture.root(), &renamed).unwrap_err(),
+            "RESERVATION_ALREADY_HELD"
+        );
         drop(child.stdin.take());
         assert!(child.wait().unwrap().success());
+        SourceReservation::acquire(&fixture.root(), &renamed)
+            .unwrap()
+            .verify()
+            .unwrap();
+        assert_eq!(fs::read(&renamed).unwrap(), b"source-a");
     }
 
     #[test]
@@ -3506,6 +3591,10 @@ mod tests {
         let source = SourceReservation::acquire(&root, &source_path).unwrap();
         let output_reservation = OutputReservation::acquire(&root, &source, &output).unwrap();
         assert_eq!(source.lock.file.metadata().unwrap().mode() & 0o7777, 0o600);
+        assert_eq!(
+            source.inode_lock.file.metadata().unwrap().mode() & 0o7777,
+            0o600
+        );
         assert_eq!(
             output_reservation.lock.file.metadata().unwrap().mode() & 0o7777,
             0o600
