@@ -12,16 +12,21 @@ spec = importlib.util.spec_from_file_location("linux_gui_smoke", Path(__file__).
 smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(smoke)
 
+class FakeStateSet:
+    def __init__(self, states): self.states = set(states)
+    def contains(self, state): return state in self.states
+
 class FakeNode:
-    def __init__(self, name="", children=(), actionable=False, role="text", pid=10):
+    def __init__(self, name="", children=(), actionable=False, role="text", pid=10, states=()):
         self.name, self.children, self.actionable = name, list(children), actionable
-        self.invoked, self.role, self.pid = False, role, pid
+        self.invoked, self.role, self.pid, self.states = False, role, pid, states
     def get_name(self): return self.name
     def get_child_count(self): return len(self.children)
     def get_child_at_index(self, index): return self.children[index]
     def get_action_iface(self): return self if self.actionable else None
     def get_role_name(self): return self.role
     def get_process_id(self): return self.pid
+    def get_state_set(self): return FakeStateSet(self.states)
     def get_n_actions(self): return 1
     def do_action(self, index): self.invoked = index == 0; return self.invoked
 
@@ -75,6 +80,21 @@ class GuiSmokeTests(unittest.TestCase):
         for _ in range(34): chain = FakeNode(children=[chain])
         self.assertEqual(len(list(smoke.descendants(chain, max_depth=3))), 4)
         with self.assertRaises(RuntimeError): list(smoke.descendants(FakeNode(children=[FakeNode(), FakeNode()]), max_nodes=2))
+
+    def test_dialog_focus_requires_exact_order_and_single_initial_close(self):
+        focusable, focused = "focusable", "focused"
+        controls = [FakeNode(name, role=role, states={focusable})
+                    for name, role in smoke.EXPECTED_FOCUS_ORDER]
+        controls[0].states = {focusable, focused}
+        dialog = FakeNode(children=controls)
+        smoke.validate_dialog_focus(dialog, focusable, focused)
+        dialog.children.reverse()
+        with self.assertRaises(RuntimeError):
+            smoke.validate_dialog_focus(dialog, focusable, focused)
+        dialog.children.reverse()
+        controls[1].states = {focusable, focused}
+        with self.assertRaises(RuntimeError):
+            smoke.validate_dialog_focus(dialog, focusable, focused)
 
     def test_application_selection_is_bound_to_spawned_pid(self):
         settings = lambda: FakeNode(children=[FakeNode("Open settings")])

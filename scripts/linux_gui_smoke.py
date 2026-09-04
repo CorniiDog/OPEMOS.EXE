@@ -11,6 +11,16 @@ EXPECTED_ROWS = {
     "Last-known-good generation — development fixture": "#41",
 }
 
+EXPECTED_FOCUS_ORDER = [
+    ("Close", "push button"),
+    ("Open a local resolver JSON file (up to 1 MiB)", "push button"),
+    ("Core resolver JSON (up to 1 MiB)", "entry"),
+    ("Inspect pasted result", "push button"),
+    ("Clear", "push button"),
+    ("Compatible fixture", "push button"),
+    ("No-artifact fixture", "push button"),
+]
+
 def validate_launch(executable: Path, timeout: float, env: dict[str, str]) -> Path:
     if sys.platform != "linux" or os.uname().machine not in {"x86_64", "amd64"}:
         raise ValueError("Packaged GUI smoke requires an x86_64 Linux host.")
@@ -100,6 +110,22 @@ def invoke(node):
     if actions is None or actions.get_n_actions() < 1 or not actions.do_action(0):
         raise RuntimeError(f"Accessible control {node.get_name()!r} did not accept its action.")
 
+def controls_with_state(root, state):
+    controls = []
+    for node in descendants(root):
+        if node is root or not node.get_state_set().contains(state):
+            continue
+        controls.append((node.get_name() or "", node.get_role_name()))
+    return controls
+
+def validate_dialog_focus(dialog, focusable_state, focused_state):
+    focusable = controls_with_state(dialog, focusable_state)
+    if focusable != EXPECTED_FOCUS_ORDER:
+        raise RuntimeError(f"Compatibility dialog focus order changed: {focusable!r}.")
+    focused = controls_with_state(dialog, focused_state)
+    if focused != [("Close", "push button")]:
+        raise RuntimeError(f"Compatibility dialog initial focus changed: {focused!r}.")
+
 def application_for_pid(desktop, expected_pid: int):
     if not isinstance(expected_pid, int) or isinstance(expected_pid, bool) or expected_pid <= 1:
         raise RuntimeError("Packaged application PID is invalid.")
@@ -130,7 +156,8 @@ def wait_for(find, deadline: float, description: str, process_poll=None):
         time.sleep(0.05)
     raise RuntimeError(f"Timed out waiting for {description}: {last_error}")
 
-def exercise_accessibility(desktop, deadline: float, expected_pid: int, process_poll=None):
+def exercise_accessibility(desktop, deadline: float, expected_pid: int,
+                           focusable_state, focused_state, process_poll=None):
     wait = lambda find, description: wait_for(
         find, deadline, description, process_poll=process_poll
     )
@@ -142,6 +169,7 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int, process_
     invoke(inspector)
     dialog = wait(lambda: exactly_one_role(app, "Core compatibility inspector", "dialog"),
                   "the compatibility inspector")
+    validate_dialog_focus(dialog, focusable_state, focused_state)
     invoke(exactly_one_action(dialog, "Compatible fixture"))
     for label, prefix in EXPECTED_ROWS.items():
         term = wait(lambda label=label: exactly_one(dialog, label), label)
@@ -273,7 +301,10 @@ def main(argv=None):
         os.close(descriptor)
     try:
         exercise_accessibility(Atspi.get_desktop(0), time.monotonic() + args.timeout,
-                               expected_pid=process.pid, process_poll=process.poll)
+                               expected_pid=process.pid,
+                               focusable_state=Atspi.StateType.FOCUSABLE,
+                               focused_state=Atspi.StateType.FOCUSED,
+                               process_poll=process.poll)
     finally:
         stop_process_group(process)
     new_qemu = qemu_processes() - qemu_before
