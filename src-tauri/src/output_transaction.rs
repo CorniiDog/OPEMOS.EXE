@@ -662,7 +662,7 @@ impl OutputReservation {
             return Err(error);
         }
         for chunk in bytes.chunks(COPY_CHUNK) {
-            if let Err(error) = file.write_all(chunk) {
+            if let Err(error) = write_staged_bytes(&mut file, chunk, kind) {
                 cleanup(&file)?;
                 return Err(map_write_error(error));
             }
@@ -674,7 +674,7 @@ impl OutputReservation {
                 return Err(error);
             }
         }
-        if let Err(error) = file.sync_all() {
+        if let Err(error) = sync_staged_file(&file, kind) {
             cleanup(&file)?;
             return Err(map_write_error(error));
         }
@@ -1295,6 +1295,94 @@ fn validate_artifact(value: &fs::Metadata) -> Result<(), String> {
         return Err("OUTPUT_ARTIFACT_METADATA_UNSAFE".into());
     }
     Ok(())
+}
+
+// These small adapters preserve the real write/sync error paths. Faults are
+// compiled only in tests, scoped to the current thread, and never configured
+// through runtime environment, host settings, or publication inputs.
+fn write_staged_bytes(file: &mut File, bytes: &[u8], _kind: PublicationFileKind) -> io::Result<()> {
+    #[cfg(test)]
+    if let Some(fault) = staging_io_faults::take(_kind, staging_io_faults::Operation::Write) {
+        file.write_all(&bytes[..fault.prefix.min(bytes.len())])?;
+        staging_io_faults::observe(file.metadata()?.len());
+        return Err(io::Error::from_raw_os_error(fault.errno));
+    }
+    file.write_all(bytes)
+}
+
+fn sync_staged_file(file: &File, _kind: PublicationFileKind) -> io::Result<()> {
+    #[cfg(test)]
+    if let Some(fault) = staging_io_faults::take(_kind, staging_io_faults::Operation::Sync) {
+        staging_io_faults::observe(file.metadata()?.len());
+        return Err(io::Error::from_raw_os_error(fault.errno));
+    }
+    file.sync_all()
+}
+
+#[cfg(test)]
+mod staging_io_faults {
+    use super::PublicationFileKind;
+    use std::cell::RefCell;
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(super) enum Operation {
+        Write,
+        Sync,
+    }
+
+    pub(super) struct Fault {
+        pub(super) kind: PublicationFileKind,
+        pub(super) operation: Operation,
+        pub(super) errno: i32,
+        pub(super) prefix: usize,
+        pub(super) skip: usize,
+    }
+
+    thread_local! {
+        static STATE: RefCell<(Option<Fault>, Option<u64>)> = const { RefCell::new((None, None)) };
+    }
+
+    pub(super) struct Guard;
+
+    impl Guard {
+        pub(super) fn arm(fault: Fault) -> Self {
+            STATE.with(|state| {
+                let mut state = state.borrow_mut();
+                assert!(state.0.is_none(), "nested staging fault injection");
+                *state = (Some(fault), None);
+            });
+            Self
+        }
+
+        pub(super) fn observed_size(&self) -> Option<u64> {
+            STATE.with(|state| state.borrow().1)
+        }
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            STATE.with(|state| *state.borrow_mut() = (None, None));
+        }
+    }
+
+    pub(super) fn take(kind: PublicationFileKind, operation: Operation) -> Option<Fault> {
+        STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            let fault = state.0.as_mut()?;
+            if fault.kind != kind || fault.operation != operation {
+                return None;
+            }
+            if fault.skip > 0 {
+                fault.skip -= 1;
+                return None;
+            }
+            state.0.take()
+        })
+    }
+
+    pub(super) fn observe(size: u64) {
+        STATE.with(|state| state.borrow_mut().1 = Some(size));
+    }
 }
 
 fn cleanup_unreceipted(parent: &PinnedDirectory, name: &CStr, file: &File) -> Result<(), String> {
@@ -2009,6 +2097,194 @@ mod tests {
                     .unwrap(),
                 PublicationRecovery::Complete
             );
+        }
+    }
+
+    #[test]
+    fn staging_storage_faults_clean_exact_partial_files_and_resume_after_reopen() {
+        use staging_io_faults::{Fault, Guard, Operation};
+        let image = vec![0x5a; COPY_CHUNK * 2 + 31];
+        for kind in [PublicationFileKind::Image, PublicationFileKind::Manifest] {
+            for (operation, prefix) in [
+                (Operation::Write, 0),
+                (Operation::Write, 17),
+                (Operation::Sync, 0),
+            ] {
+                for errno in [libc::ENOSPC, libc::EDQUOT, libc::EIO] {
+                    let fixture = Fixture::new("staging-storage-fault");
+                    let source_path = fixture.source("source-a.img");
+                    let source_before = FileIdentity::of(&fs::metadata(&source_path).unwrap());
+                    let source = SourceReservation::acquire(&fixture.root(), &source_path).unwrap();
+                    let reservation =
+                        OutputReservation::acquire(&fixture.root(), &source, &fixture.output())
+                            .unwrap();
+                    let names = reservation.names().unwrap();
+                    let stage_name = if kind == PublicationFileKind::Image {
+                        &names.image_stage
+                    } else {
+                        &names.manifest_stage
+                    };
+                    let receipt_name = if kind == PublicationFileKind::Image {
+                        &names.image_receipt
+                    } else {
+                        &names.manifest_receipt
+                    };
+                    let skip = usize::from(
+                        kind == PublicationFileKind::Image
+                            && operation == Operation::Write
+                            && prefix > 0,
+                    );
+                    let guard = Guard::arm(Fault {
+                        kind,
+                        operation,
+                        errno,
+                        prefix,
+                        skip,
+                    });
+                    let error = reservation
+                        .publish_bytes_with_hook(&source, &image, |_| Ok(()))
+                        .unwrap_err();
+                    match errno {
+                        libc::ENOSPC => assert_eq!(error, "OUTPUT_STORAGE_EXHAUSTED"),
+                        libc::EDQUOT => assert_eq!(error, "OUTPUT_STORAGE_QUOTA_EXHAUSTED"),
+                        _ => assert!(error.starts_with("OUTPUT_IO_FAILED:")),
+                    }
+                    let observed = guard.observed_size().expect("fault must actually fire");
+                    if operation == Operation::Write {
+                        assert_eq!(observed, (skip * COPY_CHUNK + prefix) as u64);
+                    } else if kind == PublicationFileKind::Image {
+                        assert_eq!(observed, image.len() as u64);
+                    } else {
+                        assert!(
+                            observed > 17,
+                            "sync failure must follow a complete manifest write"
+                        );
+                    }
+                    drop(guard);
+                    assert!(!fixture
+                        .0
+                        .join(stage_name.to_string_lossy().as_ref())
+                        .exists());
+                    assert!(!fixture
+                        .root()
+                        .join(receipt_name.to_string_lossy().as_ref())
+                        .exists());
+                    assert!(!fixture.output().exists());
+                    assert!(!fixture
+                        .output()
+                        .with_extension("img.manifest.json")
+                        .exists());
+                    let image_receipt = fixture
+                        .root()
+                        .join(names.image_receipt.to_string_lossy().as_ref());
+                    let preserved_receipt = if kind == PublicationFileKind::Manifest {
+                        assert_eq!(
+                            fs::read(fixture.0.join(names.image_stage.to_string_lossy().as_ref()))
+                                .unwrap(),
+                            image
+                        );
+                        Some((
+                            fs::read(&image_receipt).unwrap(),
+                            FileIdentity::of(&fs::metadata(&image_receipt).unwrap()),
+                        ))
+                    } else {
+                        None
+                    };
+                    drop(reservation);
+                    drop(source);
+                    let source = SourceReservation::acquire(&fixture.root(), &source_path).unwrap();
+                    let reopened =
+                        OutputReservation::reopen(&fixture.root(), &source, &fixture.output())
+                            .unwrap();
+                    assert_eq!(
+                        reopened
+                            .publish_bytes_with_hook(&source, &image, |_| Ok(()))
+                            .unwrap(),
+                        PublicationRecovery::Complete
+                    );
+                    assert_eq!(fs::read(fixture.output()).unwrap(), image);
+                    if let Some((bytes, identity)) = preserved_receipt {
+                        assert_eq!(fs::read(&image_receipt).unwrap(), bytes);
+                        assert_eq!(
+                            FileIdentity::of(&fs::metadata(&image_receipt).unwrap()),
+                            identity
+                        );
+                    }
+                    assert_eq!(fs::read(&source_path).unwrap(), b"source-a");
+                    assert_eq!(
+                        FileIdentity::of(&fs::metadata(&source_path).unwrap()),
+                        source_before
+                    );
+                    assert_eq!(
+                        fs::read(fixture.source("source-b.img")).unwrap(),
+                        b"source-b"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn partial_write_failure_preserves_swapped_stage_and_original_descriptor_bytes() {
+        use staging_io_faults::{Fault, Guard, Operation};
+        for kind in [PublicationFileKind::Image, PublicationFileKind::Manifest] {
+            let fixture = Fixture::new("staging-storage-swap");
+            let source =
+                SourceReservation::acquire(&fixture.root(), &fixture.source("source-a.img"))
+                    .unwrap();
+            let reservation =
+                OutputReservation::acquire(&fixture.root(), &source, &fixture.output()).unwrap();
+            let names = reservation.names().unwrap();
+            let stage_name = if kind == PublicationFileKind::Image {
+                &names.image_stage
+            } else {
+                &names.manifest_stage
+            };
+            let stage = fixture.0.join(stage_name.to_string_lossy().as_ref());
+            let moved = fixture.0.join("moved-owned-stage");
+            let guard = Guard::arm(Fault {
+                kind,
+                operation: Operation::Write,
+                errno: libc::ENOSPC,
+                prefix: 7,
+                skip: 0,
+            });
+            let error = reservation
+                .publish_bytes_with_hook(&source, TEST_IMAGE, |phase| {
+                    let target = if kind == PublicationFileKind::Image {
+                        "image-stage-created"
+                    } else {
+                        "manifest-stage-created"
+                    };
+                    if phase == target {
+                        fs::rename(&stage, &moved).unwrap();
+                        fs::write(&stage, b"foreign").unwrap();
+                        fs::set_permissions(&stage, fs::Permissions::from_mode(0o600)).unwrap();
+                    }
+                    Ok(())
+                })
+                .unwrap_err();
+            assert_eq!(error, "OUTPUT_STAGE_CHANGED");
+            assert_eq!(guard.observed_size(), Some(7));
+            drop(guard);
+            assert_eq!(fs::read(&stage).unwrap(), b"foreign");
+            let expected = if kind == PublicationFileKind::Image {
+                TEST_IMAGE.to_vec()
+            } else {
+                expected_manifest(&source.sha256)
+            };
+            assert_eq!(fs::read(&moved).unwrap(), &expected[..7]);
+            assert!(!fixture.output().exists());
+            assert!(!fixture
+                .output()
+                .with_extension("img.manifest.json")
+                .exists());
+            assert!(reservation
+                .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+                .is_err());
+            assert_eq!(fs::read(&stage).unwrap(), b"foreign");
+            assert_eq!(fs::read(&moved).unwrap(), &expected[..7]);
+            source.verify().unwrap();
         }
     }
 

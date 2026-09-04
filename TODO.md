@@ -448,7 +448,24 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   and manifest rename/directory-sync/published receipt boundary. Restart tests
   prove only exact receipted states resume, incomplete pairs remain untrusted,
   source and foreign files remain unchanged, locks release, and residue stays
-  bounded. ENOSPC/EDQUOT/fsync injection and production activation remain gated.
+  bounded. Receipt/directory storage faults, real filesystem exhaustion, and
+  production activation remain gated.
+- [x] Add test-only, thread-local storage fault injection at the inactive EXE
+  image/manifest staging write and file-sync calls. Eighteen cases cover
+  ENOSPC, EDQUOT, and EIO before the first byte, after a real partial write
+  (including a completed image chunk), and at file sync. Failed staging removes
+  only its exact unreceipted inode, never publishes the output pair, preserves
+  prior image receipts, and resumes to verified exact bytes after releasing and
+  reacquiring source/output locks. Two further cases swap in same-size,
+  same-mode foreign stages before partial-write failure: cleanup and retry
+  preserve both foreign bytes and the moved original descriptor's partial bytes.
+  Source bytes/metadata and unrelated files stay unchanged. This is deterministic
+  fault injection, not a real full-filesystem or power-loss test; production
+  publication remains inactive. On Ubuntu 24.04.4 through the shared scheduler,
+  formatting and Clippy pass, 313 Rust tests pass (27 ignored), and all 98
+  frontend tests plus documentation, hygiene, and boundary integrity pass.
+- [ ] Extend storage-failure coverage to receipt creation/write/sync, published
+  artifact/directory sync, and durable quarantine/retirement before activation.
 - [ ] Formalize lock ordering and prove status polling, cancellation, close,
   and worker completion cannot deadlock.
 - [ ] Route normal cancellation, window close, process failure, and next-launch
