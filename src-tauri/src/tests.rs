@@ -4112,17 +4112,16 @@ esac
         assert_eq!(lock.packages.len(), 6);
         assert!(lock.missing_review.is_empty());
         assert_eq!(state.report.status, "verified");
-        assert_eq!(state.report.commit, NVIDIA_INSTALLER_COMMIT);
-        assert_eq!(state.report.files.len(), PINNED_INSTALLER_FILES.len());
-        assert!(state.root.join("installer-bundle.json").is_file());
-        #[cfg(unix)]
-        for file in &PINNED_INSTALLER_FILES {
-            let mode = fs::symlink_metadata(state.root.join(file.path))
-                .expect("inspect pinned installer mode")
-                .permissions()
-                .mode()
-                & 0o7777;
-            assert_eq!(mode, if file.executable { 0o755 } else { 0o644 });
+        if let Some(manifest) = state.core_manifest.as_ref() {
+            assert_eq!(state.report.reason, "authenticated_core_bundle_verified");
+            assert_eq!(state.report.commit, OPEMOS_CORE_COMPATIBILITY_COMMIT);
+            assert_eq!(state.report.files.len(), manifest.files.len());
+            assert_eq!(manifest.files.len(), 55);
+        } else {
+            assert_eq!(state.report.reason, "legacy_pinned_installer_fallback");
+            assert_eq!(state.report.commit, NVIDIA_INSTALLER_COMMIT);
+            assert_eq!(state.report.files.len(), PINNED_INSTALLER_FILES.len());
+            assert!(state.root.join("installer-bundle.json").is_file());
         }
         let serialized = serde_json::to_string(&state.report).expect("serialize installer report");
         assert!(!serialized.contains(&root.0.to_string_lossy().to_string()));

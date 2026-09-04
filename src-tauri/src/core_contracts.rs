@@ -4765,6 +4765,27 @@ mod tests {
         )
         .is_err());
         assert_eq!(fs::read_dir(&corrupt_staging).unwrap().count(), 0);
+        let installer = crate::nvidia::authenticated_core_bundle_as_installer_state(staged)
+            .expect("adapt authenticated Core bundle for the existing installer");
+        crate::nvidia::validate_staged_nvidia_installer_bundle(&installer)
+            .expect("revalidate authenticated Core installer input");
+        assert_eq!(
+            installer.report.reason,
+            "authenticated_core_bundle_verified"
+        );
+        assert_eq!(installer.report.commit, OPEMOS_CORE_COMPATIBILITY_COMMIT);
+        assert_eq!(installer.report.files.len(), 55);
+        assert_eq!(
+            installer
+                .core_manifest
+                .as_ref()
+                .expect("retain authenticated manifest")
+                .bundle_id,
+            OPEMOS_CORE_COMPATIBILITY_BUNDLE_ID
+        );
+        let mut altered_report = installer.clone();
+        altered_report.report.files[0].sha256 = "0".repeat(64);
+        assert!(crate::nvidia::validate_staged_nvidia_installer_bundle(&altered_report).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 

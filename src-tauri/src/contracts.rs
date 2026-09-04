@@ -865,6 +865,7 @@ pub(crate) struct NvidiaInstallerBundle {
 pub(crate) struct NvidiaInstallerBundleState {
     pub(crate) root: PathBuf,
     pub(crate) report: NvidiaInstallerBundle,
+    pub(crate) core_manifest: Option<crate::core_contracts::CoreBundleManifest>,
 }
 
 #[derive(Clone)]

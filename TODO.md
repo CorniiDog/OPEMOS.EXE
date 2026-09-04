@@ -182,6 +182,12 @@ already Core contracts and are not open-ended product choices.
   canonical handoff-JSON mismatches. The cross-repository test is explicitly
   opt-in until that Core commit is published, and does not activate production
   trust or the normal path.
+- [x] Prefer the independently pinned 55-file canonical Core bundle for normal
+  installer staging. A verified manifest is rechecked against its independent
+  digest, bundle identity, commit, file set, hashes, sizes, roles, and modes;
+  any authenticated integrity failure stops. The 50-file snapshot remains only
+  as an explicit temporary fallback when the immutable release is unavailable,
+  pending equivalent install-media and final-image tests before deletion.
 - [ ] Wire staged generations into managed appliances only after Core publishes
   the guest-consumption contract and EXE passes a real subprocess/SIGKILL,
   restart, cancellation, cleanup, and ENOSPC handoff matrix. A routine compatible

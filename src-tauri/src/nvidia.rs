@@ -3434,6 +3434,71 @@ pub(crate) fn prepare_pinned_nvidia_installer_bundle(
     cancel: &AtomicBool,
     progress: &impl Fn(&str, u64, u64),
 ) -> Result<NvidiaInstallerBundleState, String> {
+    match crate::core_contracts::acquire_core_bundle_manifest(client)? {
+        crate::core_contracts::CoreBundleManifestAvailability::Verified(manifest) => {
+            let bundle = crate::core_contracts::download_and_stage_core_bundle(
+                runtime_dir,
+                client,
+                manifest,
+                cancel,
+                progress,
+            )?;
+            authenticated_core_bundle_as_installer_state(bundle)
+        }
+        crate::core_contracts::CoreBundleManifestAvailability::Unavailable(reason) => {
+            prepare_legacy_pinned_nvidia_installer_bundle(
+                runtime_dir,
+                client,
+                cancel,
+                progress,
+                &reason,
+            )
+        }
+    }
+}
+
+pub(crate) fn authenticated_core_bundle_as_installer_state(
+    bundle: crate::core_contracts::AuthenticatedCoreBundle,
+) -> Result<NvidiaInstallerBundleState, String> {
+    crate::core_contracts::validate_core_bundle_tree(&bundle.root, &bundle.manifest)?;
+    let report = NvidiaInstallerBundle {
+        schema_version: 1,
+        status: "verified".into(),
+        reason: "authenticated_core_bundle_verified".into(),
+        message: format!(
+            "Downloaded and verified immutable OPEMOS Core bundle {} from support commit {}.",
+            bundle.manifest.bundle_id, bundle.manifest.support_commit
+        ),
+        repository: bundle.manifest.repository.clone(),
+        commit: bundle.manifest.support_commit.clone(),
+        files: bundle
+            .manifest
+            .files
+            .iter()
+            .map(|file| NvidiaInstallerBundleFile {
+                path: file.path.clone(),
+                sha256: file.sha256.clone(),
+                bytes: file.size,
+                executable: file.mode == "0755",
+            })
+            .collect(),
+    };
+    let state = NvidiaInstallerBundleState {
+        root: bundle.root,
+        report,
+        core_manifest: Some(bundle.manifest),
+    };
+    validate_staged_nvidia_installer_bundle(&state)?;
+    Ok(state)
+}
+
+fn prepare_legacy_pinned_nvidia_installer_bundle(
+    runtime_dir: &Path,
+    client: &reqwest::blocking::Client,
+    cancel: &AtomicBool,
+    progress: &impl Fn(&str, u64, u64),
+    unavailable_reason: &str,
+) -> Result<NvidiaInstallerBundleState, String> {
     let total_bytes = validate_pinned_installer_contract()?;
     let root = runtime_dir.join(format!("nvidia-installer-{NVIDIA_INSTALLER_COMMIT}"));
     let staging_inodes = pinned_bundle_inodes(&PINNED_INSTALLER_FILES, 1)?;
@@ -3477,9 +3542,9 @@ pub(crate) fn prepare_pinned_nvidia_installer_bundle(
     let report = NvidiaInstallerBundle {
         schema_version: 1,
         status: "verified".into(),
-        reason: "pinned_installer_verified".into(),
+        reason: "legacy_pinned_installer_fallback".into(),
         message: format!(
-            "Downloaded and verified the pinned offline installer from support commit {NVIDIA_INSTALLER_COMMIT}."
+            "The authenticated OPEMOS Core bundle was unavailable ({unavailable_reason}); downloaded and verified the legacy pinned offline installer from support commit {NVIDIA_INSTALLER_COMMIT}."
         ),
         repository: NVIDIA_SUPPORT_REPOSITORY.into(),
         commit: NVIDIA_INSTALLER_COMMIT.into(),
@@ -3495,7 +3560,11 @@ pub(crate) fn prepare_pinned_nvidia_installer_bundle(
         .map_err(|e| format!("Could not finalize NVIDIA installer manifest: {e}"))?;
     progress("downloading-nvidia-installer", total_bytes, total_bytes);
     root_guard.armed = false;
-    Ok(NvidiaInstallerBundleState { root, report })
+    Ok(NvidiaInstallerBundleState {
+        root,
+        report,
+        core_manifest: None,
+    })
 }
 
 pub(crate) fn validate_staged_pinned_files(
@@ -3612,8 +3681,35 @@ pub(crate) fn support_publisher_command(
 pub(crate) fn validate_staged_nvidia_installer_bundle(
     state: &NvidiaInstallerBundleState,
 ) -> Result<(), String> {
+    if let Some(manifest) = state.core_manifest.as_ref() {
+        if state.report.schema_version != 1
+            || state.report.status != "verified"
+            || state.report.reason != "authenticated_core_bundle_verified"
+            || state.report.repository != manifest.repository
+            || state.report.commit != manifest.support_commit
+            || state.report.files.len() != manifest.files.len()
+            || state
+                .report
+                .files
+                .iter()
+                .zip(&manifest.files)
+                .any(|(reported, file)| {
+                    reported.path != file.path
+                        || reported.sha256 != file.sha256
+                        || reported.bytes != file.size
+                        || reported.executable != (file.mode == "0755")
+                })
+        {
+            return Err(
+                "Staged NVIDIA installer report no longer matches its authenticated Core manifest."
+                    .into(),
+            );
+        }
+        return crate::core_contracts::validate_core_bundle_tree(&state.root, manifest);
+    }
     if state.report.schema_version != 1
         || state.report.status != "verified"
+        || state.report.reason != "legacy_pinned_installer_fallback"
         || state.report.repository != NVIDIA_SUPPORT_REPOSITORY
         || state.report.commit != NVIDIA_INSTALLER_COMMIT
         || state.report.files.len() != PINNED_INSTALLER_FILES.len()
