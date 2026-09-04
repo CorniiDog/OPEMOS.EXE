@@ -175,6 +175,10 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     app = wait(lambda: application_for_pid(desktop, expected_pid),
                "the packaged OPEMOS accessibility tree")
     invoke(exactly_one_action(app, "Open settings"))
+    close_settings = wait(
+        lambda: exactly_one_focused_action(app, "Close settings", focused_state),
+        "initial Settings focus",
+    )
     inspector = wait(lambda: exactly_one_action(app, "Inspect Core compatibility…"),
                      "the Settings compatibility action")
     invoke(inspector)
@@ -193,6 +197,9 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     wait(lambda: exactly_one_focused_action(
         app, "Inspect Core compatibility…", focused_state
     ), "focus restoration after dialog close")
+    invoke(close_settings)
+    wait(lambda: exactly_one_focused_action(app, "Open settings", focused_state),
+         "focus restoration after Settings close")
 
 def process_start_time(entry: Path, expected_pid: int) -> int:
     try:

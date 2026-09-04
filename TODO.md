@@ -176,7 +176,8 @@ installation targets, production activation, or hardware certification.
   Ubuntu and Debian, including companion windows and orphan-process checks.
   Ubuntu 24.04.4 Wayland now covers the development main window and the extracted
   debug-package main window. A bounded opt-in AT-SPI smoke starts the exact
-  regular executable, opens Settings and the read-only compatibility dialog,
+  regular executable, verifies Settings initial and restored focus, and opens the
+  read-only compatibility dialog,
   verifies the dialog's exact native focusable order and initial Close focus,
   verifies all four development-fixture generation rows, closes only the dialog,
   restores focus to its Settings opener, preserves the main document, stops the
@@ -188,12 +189,12 @@ installation targets, production activation, or hardware certification.
   immediate failure when the packaged process exits before UI readiness, and
   executable pathname replacement after a no-follow descriptor is pinned, and
   stale, missing, invalid, or duplicate AT-SPI application process identities,
-  missing or duplicate restored focus, PID reuse, and malformed or mismatched
-  bounded `/proc` stat identities. The QEMU snapshot keys PID plus kernel start
-  time; the live tree reports the spawned package PID exactly. Package archive
-  validation passes with SHA-256
+  missing or duplicate Settings/dialog restored focus, PID reuse, and malformed
+  or mismatched bounded `/proc` stat identities. The QEMU snapshot keys PID plus
+  kernel start time; the live tree reports the spawned package PID exactly. Package
+  archive validation passes with SHA-256
   `80a578962c18c9ee5076c05ff2c2fa40d92e0097fd7e21efe8e017f0a3d41f12`; no
-  package was installed. Debian, companion windows, broader keyboard-only
+  package was installed. Debian, companion windows, remaining workflow keyboard
   navigation, and pixel rendering remain open. Scheduler-limited formatting and
   Clippy pass, 330 Rust
   tests pass (27 ignored), and all 110 frontend tests plus documentation, hygiene,

@@ -94,6 +94,23 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             smoke.exactly_one_focused_action(root, "Open", focused)
 
+    def test_settings_focus_controls_reject_wrong_or_duplicate_focus(self):
+        focused = "focused"
+        close = FakeNode("Close settings", actionable=True, states={focused})
+        open_control = FakeNode("Open settings", actionable=True)
+        root = FakeNode(children=[close, open_control])
+        self.assertIs(
+            smoke.exactly_one_focused_action(root, "Close settings", focused), close
+        )
+        close.states = set()
+        open_control.states = {focused}
+        self.assertIs(
+            smoke.exactly_one_focused_action(root, "Open settings", focused), open_control
+        )
+        root.children.append(FakeNode("Open settings", actionable=True, states={focused}))
+        with self.assertRaises(RuntimeError):
+            smoke.exactly_one_focused_action(root, "Open settings", focused)
+
     def test_dialog_focus_requires_exact_order_and_single_initial_close(self):
         focusable, focused = "focusable", "focused"
         controls = [FakeNode(name, role=role, states={focusable})
