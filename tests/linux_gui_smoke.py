@@ -81,6 +81,19 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertEqual(len(list(smoke.descendants(chain, max_depth=3))), 4)
         with self.assertRaises(RuntimeError): list(smoke.descendants(FakeNode(children=[FakeNode(), FakeNode()]), max_nodes=2))
 
+    def test_focused_action_requires_exactly_one_matching_control(self):
+        focused = "focused"
+        first = FakeNode("Open", actionable=True, states={focused})
+        root = FakeNode(children=[first, FakeNode("Open", actionable=True)])
+        self.assertIs(smoke.exactly_one_focused_action(root, "Open", focused), first)
+        first.states = set()
+        with self.assertRaises(RuntimeError):
+            smoke.exactly_one_focused_action(root, "Open", focused)
+        first.states = {focused}
+        root.children[1].states = {focused}
+        with self.assertRaises(RuntimeError):
+            smoke.exactly_one_focused_action(root, "Open", focused)
+
     def test_dialog_focus_requires_exact_order_and_single_initial_close(self):
         focusable, focused = "focusable", "focused"
         controls = [FakeNode(name, role=role, states={focusable})

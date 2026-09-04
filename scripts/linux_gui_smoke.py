@@ -91,6 +91,17 @@ def exactly_one_action(root, label: str, roles=None):
         raise RuntimeError(f"Expected one actionable {label!r}, found {len(matches)}; roles={details!r}.")
     return matches[0]
 
+def exactly_one_focused_action(root, label: str, focused_state):
+    matches = []
+    for node in named(root, label):
+        actions = node.get_action_iface()
+        if (actions is not None and actions.get_n_actions() > 0
+                and node.get_state_set().contains(focused_state)):
+            matches.append(node)
+    if len(matches) != 1:
+        raise RuntimeError(f"Expected one focused action {label!r}, found {len(matches)}.")
+    return matches[0]
+
 def exactly_one_role(root, label: str, role: str):
     matches = [node for node in named(root, label) if node.get_role_name() == role]
     if len(matches) != 1:
@@ -179,8 +190,9 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
         if term.get_name() != label:
             raise RuntimeError(f"Accessibility label changed while reading {label!r}.")
     invoke(first_action(dialog, "Close", {"push button", "button"}))
-    wait(lambda: exactly_one_action(app, "Open settings"),
-         "the main document after dialog close")
+    wait(lambda: exactly_one_focused_action(
+        app, "Inspect Core compatibility…", focused_state
+    ), "focus restoration after dialog close")
 
 def process_start_time(entry: Path, expected_pid: int) -> int:
     try:
