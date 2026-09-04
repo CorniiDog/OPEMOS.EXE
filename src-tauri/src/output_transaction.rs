@@ -300,6 +300,15 @@ pub(crate) struct SourceReservation {
 
 impl SourceReservation {
     pub(crate) fn acquire(root: &Path, source_path: &Path) -> Result<Self, String> {
+        Self::acquire_cancellable(root, source_path, || false)
+    }
+
+    pub(crate) fn acquire_cancellable(
+        root: &Path,
+        source_path: &Path,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<Self, String> {
+        check_source_cancellation(&mut cancelled)?;
         let (parent_path, basename) = split_path(source_path)?;
         let parent = PinnedDirectory::open(&parent_path, false)?;
         let source = parent
@@ -321,7 +330,7 @@ impl SourceReservation {
         inode_key.extend_from_slice(&identity.device.to_le_bytes());
         inode_key.extend_from_slice(&identity.inode.to_le_bytes());
         let inode_lock = LockCapability::acquire(root, &inode_key)?;
-        let sha256 = hash_fd(&source, metadata.len())?;
+        let sha256 = hash_fd_cancellable(&source, metadata.len(), &mut cancelled)?;
         let result = Self {
             lock,
             inode_lock,
@@ -331,11 +340,19 @@ impl SourceReservation {
             identity,
             sha256,
         };
-        result.verify()?;
+        result.verify_cancellable(cancelled)?;
         Ok(result)
     }
 
     pub(crate) fn verify(&self) -> Result<(), String> {
+        self.verify_cancellable(|| false)
+    }
+
+    pub(crate) fn verify_cancellable(
+        &self,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<(), String> {
+        check_source_cancellation(&mut cancelled)?;
         self.lock.verify()?;
         self.inode_lock.verify()?;
         self.parent.verify(false)?;
@@ -349,8 +366,8 @@ impl SourceReservation {
         validate_source(&path_metadata)?;
         if FileIdentity::of(&fd) != self.identity
             || FileIdentity::of(&path_metadata) != self.identity
-            || hash_fd(&self.source, self.identity.size)? != self.sha256
-            || hash_fd(&path, self.identity.size)? != self.sha256
+            || hash_fd_cancellable(&self.source, self.identity.size, &mut cancelled)? != self.sha256
+            || hash_fd_cancellable(&path, self.identity.size, &mut cancelled)? != self.sha256
         {
             return Err("SOURCE_RESERVATION_CHANGED".into());
         }
@@ -1752,11 +1769,28 @@ fn validate_record(value: &fs::Metadata) -> Result<(), String> {
     Ok(())
 }
 
+fn check_source_cancellation(cancelled: &mut impl FnMut() -> bool) -> Result<(), String> {
+    if cancelled() {
+        Err("SOURCE_RESERVATION_CANCELLED".into())
+    } else {
+        Ok(())
+    }
+}
+
 fn hash_fd(file: &File, length: u64) -> Result<String, String> {
+    hash_fd_cancellable(file, length, &mut || false)
+}
+
+fn hash_fd_cancellable(
+    file: &File,
+    length: u64,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<String, String> {
     let mut hash = Sha256::new();
     let mut offset = 0_u64;
     let mut buffer = vec![0_u8; 1024 * 1024];
     while offset < length {
+        check_source_cancellation(cancelled)?;
         let wanted = (length - offset).min(buffer.len() as u64) as usize;
         let count = unsafe {
             libc::pread(
@@ -1772,6 +1806,7 @@ fn hash_fd(file: &File, length: u64) -> Result<String, String> {
         hash.update(&buffer[..count as usize]);
         offset += count as u64;
     }
+    check_source_cancellation(cancelled)?;
     Ok(format!("{:x}", hash.finalize()))
 }
 
@@ -1948,6 +1983,88 @@ mod tests {
         assert!(transaction_entries
             .iter()
             .all(|entry| entry.metadata().unwrap().is_file()));
+    }
+
+    #[test]
+    fn cancelled_source_acquisition_releases_locks_and_preserves_bytes() {
+        let bytes = vec![0x5a; 2 * 1024 * 1024 + 17];
+        // Before opening, before/mid/after hashing, and during both verification reads.
+        for cancel_at in [1, 2, 3, 5, 6, 8, 11, 14] {
+            let fixture = Fixture::new("cancel-source-acquisition");
+            let path = fixture.source("source-a.img");
+            fs::write(&path, &bytes).unwrap();
+            let before = FileIdentity::of(&fs::metadata(&path).unwrap());
+            let mut checks = 0;
+            assert_eq!(
+                SourceReservation::acquire_cancellable(&fixture.root(), &path, || {
+                    checks += 1;
+                    checks == cancel_at
+                })
+                .unwrap_err(),
+                "SOURCE_RESERVATION_CANCELLED"
+            );
+            assert_eq!(checks, cancel_at);
+            let resumed = SourceReservation::acquire(&fixture.root(), &path).unwrap();
+            resumed.verify().unwrap();
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            assert_eq!(FileIdentity::of(&fs::metadata(&path).unwrap()), before);
+            assert!(!fixture.output().exists());
+        }
+        let fixture = Fixture::new("cancel-before-source-open");
+        assert_eq!(
+            SourceReservation::acquire_cancellable(
+                &fixture.root(),
+                &fixture.source("missing.img"),
+                || true
+            )
+            .unwrap_err(),
+            "SOURCE_RESERVATION_CANCELLED"
+        );
+        assert_eq!(fs::read_dir(fixture.root()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn cancelled_source_verification_retains_ownership_and_rechecks_mutation() {
+        let fixture = Fixture::new("cancel-source-verification");
+        let path = fixture.source("source-a.img");
+        let bytes = vec![0x3c; 2 * 1024 * 1024 + 17];
+        fs::write(&path, &bytes).unwrap();
+        let source = SourceReservation::acquire(&fixture.root(), &path).unwrap();
+        for cancel_at in [1, 2, 3, 5, 6, 9] {
+            let mut checks = 0;
+            assert_eq!(
+                source
+                    .verify_cancellable(|| {
+                        checks += 1;
+                        checks == cancel_at
+                    })
+                    .unwrap_err(),
+                "SOURCE_RESERVATION_CANCELLED"
+            );
+            assert_eq!(checks, cancel_at);
+            source.verify().unwrap();
+        }
+        assert_eq!(
+            SourceReservation::acquire(&fixture.root(), &path).unwrap_err(),
+            "RESERVATION_ALREADY_HELD"
+        );
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(
+            FileIdentity::of(&fs::metadata(&path).unwrap()),
+            source.identity
+        );
+        // Cancellation must not cache successful verification or bless changed bytes.
+        fs::write(&path, vec![0x4d; bytes.len()]).unwrap();
+        assert_eq!(
+            source.verify_cancellable(|| true).unwrap_err(),
+            "SOURCE_RESERVATION_CANCELLED"
+        );
+        assert_eq!(source.verify().unwrap_err(), "SOURCE_RESERVATION_CHANGED");
+        drop(source);
+        SourceReservation::acquire(&fixture.root(), &path)
+            .unwrap()
+            .verify()
+            .unwrap();
     }
 
     #[test]

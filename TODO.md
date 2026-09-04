@@ -587,6 +587,19 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   abandoned-session recovery through one idempotent cleanup contract.
 - [ ] Replace user-facing string errors incrementally with stable bounded error
   codes, responsibility, retryability, and safe diagnostic detail.
+- [x] Add cooperative cancellation to inactive source reservation acquisition
+  and verification, checking before acquisition and around each 1 MiB hash
+  read (including completion). Eight acquisition and six verification cases
+  cover early, mid-read, and final-read cancellation. Cancelled acquisition
+  releases both locks for retry without changing source bytes/metadata;
+  cancelled verification retains ownership and never caches acceptance of
+  later-mutated bytes. Pre-cancelled missing input performs no root mutation.
+  Existing non-cancellable entry points retain their behavior. Runtime UI
+  cancellation wiring and interruption of a blocked filesystem syscall remain
+  separate gates; production output publication stays inactive. On Ubuntu
+  24.04.4 through the shared scheduler, formatting and Clippy pass, 329 Rust
+  tests pass (27 ignored), and all 105 frontend tests plus documentation, hygiene,
+  and boundary integrity pass against the unchanged Core fixture pin.
 - [ ] Test cancellation and injected failure during download, decompression,
   transfer, QEMU boot, Core validation, package mutation, initramfs, export, USB
   writing, USB verification, and finalization.
