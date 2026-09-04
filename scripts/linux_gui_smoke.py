@@ -4,6 +4,23 @@ from __future__ import annotations
 import argparse, os, signal, stat, subprocess, sys, time
 from pathlib import Path
 
+EXPECTED_NO_ARTIFACT_ROWS = [
+    ("Core status", "no_compatible_artifact"),
+    ("SteamOS target", "3.8.14"),
+    ("Kernel target", "fixture"),
+    ("Architecture", "x86_64"),
+    ("Exact-target support reported by Core", "Not provided"),
+    ("Reason", "no_compatible_release"),
+    (
+        "Message",
+        "No published release matches the exact target kernel within the permitted "
+        "SteamOS compatibility range.",
+    ),
+    ("Next action reported by Core", "build_exact_target"),
+    ("Action architecture", "x86_64"),
+    ("Kernel policy", "exact"),
+]
+
 EXPECTED_ROWS = {
     "Available generations — development fixture": "#41",
     "Selected generation — development fixture": "#42",
@@ -94,6 +111,17 @@ def exactly_one(root, label: str):
     if len(matches) != 1:
         raise RuntimeError(f"Expected one accessible {label!r}, found {len(matches)}.")
     return matches[0]
+
+def validate_named_rows(root, expected_rows, end_label: str):
+    names = [node.get_name() or "" for node in descendants(root)]
+    starts = [index for index, name in enumerate(names) if name == expected_rows[0][0]]
+    ends = [index for index, name in enumerate(names) if name == end_label]
+    if len(starts) != 1 or len(ends) != 1 or ends[0] <= starts[0]:
+        raise RuntimeError("Compatibility result row boundaries changed.")
+    expected = [value for row in expected_rows for value in row]
+    actual = [name for name in names[starts[0]:ends[0]] if name]
+    if actual != expected:
+        raise RuntimeError(f"Compatibility result rows changed: {actual!r}.")
 
 def exactly_one_action(root, label: str, roles=None):
     matches = []
@@ -217,6 +245,14 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
             raise RuntimeError(f"{label!r} did not expose a value beginning with {prefix!r}.")
         if term.get_name() != label:
             raise RuntimeError(f"Accessibility label changed while reading {label!r}.")
+    invoke(exactly_one_action(dialog, "No-artifact fixture"))
+    wait(lambda: exactly_one(dialog, "no_compatible_artifact"),
+         "the no-artifact Core status")
+    validate_named_rows(
+        dialog,
+        EXPECTED_NO_ARTIFACT_ROWS,
+        "Available generations — development fixture",
+    )
     invoke(first_action(dialog, "Close", {"push button", "button"}))
     wait(lambda: exactly_one_focused_action(
         app, "Inspect Core compatibility…", focused_state

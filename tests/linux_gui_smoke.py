@@ -81,6 +81,23 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertEqual(len(list(smoke.descendants(chain, max_depth=3))), 4)
         with self.assertRaises(RuntimeError): list(smoke.descendants(FakeNode(children=[FakeNode(), FakeNode()]), max_nodes=2))
 
+    def test_no_artifact_rows_require_exact_order_and_boundaries(self):
+        names = [value for row in smoke.EXPECTED_NO_ARTIFACT_ROWS for value in row]
+        end = "Available generations — development fixture"
+        root = FakeNode(children=[FakeNode(name) for name in [*names, end]])
+        smoke.validate_named_rows(root, smoke.EXPECTED_NO_ARTIFACT_ROWS, end)
+        root.children[2], root.children[3] = root.children[3], root.children[2]
+        with self.assertRaisesRegex(RuntimeError, "result rows changed"):
+            smoke.validate_named_rows(root, smoke.EXPECTED_NO_ARTIFACT_ROWS, end)
+        root.children[2], root.children[3] = root.children[3], root.children[2]
+        root.children.insert(-1, FakeNode("Unexpected policy"))
+        with self.assertRaisesRegex(RuntimeError, "result rows changed"):
+            smoke.validate_named_rows(root, smoke.EXPECTED_NO_ARTIFACT_ROWS, end)
+        root.children.pop(-2)
+        root.children.append(FakeNode(end))
+        with self.assertRaisesRegex(RuntimeError, "row boundaries changed"):
+            smoke.validate_named_rows(root, smoke.EXPECTED_NO_ARTIFACT_ROWS, end)
+
     def test_focused_action_requires_exactly_one_matching_control(self):
         focused = "focused"
         first = FakeNode("Open", actionable=True, states={focused})
