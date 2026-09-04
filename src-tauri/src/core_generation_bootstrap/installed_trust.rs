@@ -1004,7 +1004,10 @@ mod tests {
                 generation.discovery().generation.signature_filename.clone(),
                 fixture.manifest_signature.clone(),
             ),
-            ("acquisition-trust-v1.json".to_owned(), evidence),
+            (
+                crate::core_generation_verifier::VERIFIER_EVIDENCE_FILENAME.to_owned(),
+                evidence,
+            ),
             ("userspace-lock.json".to_owned(), fixture.payload.clone()),
         ]);
         let reservation = files.values().map(|bytes| bytes.len() as u64).sum();

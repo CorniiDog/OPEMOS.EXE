@@ -86,6 +86,23 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ### 1. Complete the OPEMOS Core migration
 
+Production generation activation is intentionally blocked until the maintainer
+supplies all five independent publication inputs below. Existing schema-1
+filenames, no-redirect behavior, exact-target selection, and replay rules are
+already Core contracts and are not open-ended product choices.
+
+- [ ] Approve one production OpenPGP primary fingerprint and the exact keyring
+  bytes/digest installed independently with OPEMOS.EXE.
+- [ ] Approve one canonical HTTPS origin/channel and immutable release
+  namespace; no mirror, redirect, or mutable-ref fallback is implied.
+- [ ] Approve the first signed discovery/manifest identity and its minimum
+  sequence as the independently installed bootstrap checkpoint.
+- [ ] Name the authorized generation publisher/signing process and the
+  immutable release evidence required before discovery advances.
+- [ ] Define the separately authenticated binary/config procedure for signer
+  rotation or emergency state-loss recovery. Routine data generations may
+  neither rotate authority nor lower a consumer's durable high-water mark.
+
 - [ ] Have Core publish an immutable generation through its canonical
   authenticated release channel. OPEMOS.EXE must never generate the production
   manifest, lock, signer policy, or target policy.
@@ -157,6 +174,14 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   crashes at intent, copy, seal, publication, completion, and retirement
   boundaries. Exact durable file receipts preserve ambiguous or replaced
   entries detected before the final descriptor-relative cleanup boundary.
+- [x] Exercise one immutable, explicitly non-production Core generation from
+  local Core commit `2ab12b29a5c7d7a2e18793e787e5c76c6febb1a5` through EXE
+  acquisition, installed-trust authentication, pending activation, canonical
+  appliance staging, Core guest consumption, handoff retirement, and healthy
+  activation. The integration found and fixed the evidence filename and
+  canonical handoff-JSON mismatches. The cross-repository test is explicitly
+  opt-in until that Core commit is published, and does not activate production
+  trust or the normal path.
 - [ ] Wire staged generations into managed appliances only after Core publishes
   the guest-consumption contract and EXE passes a real subprocess/SIGKILL,
   restart, cancellation, cleanup, and ENOSPC handoff matrix. A routine compatible

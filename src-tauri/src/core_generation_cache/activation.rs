@@ -15,11 +15,10 @@ use crate::{
         DurableGenerationIdentity, GenerationActivationState, GenerationTarget, DISCOVERY_FILENAME,
         DISCOVERY_SIGNATURE_FILENAME, MAX_LINEAGE_GENERATIONS,
     },
-    core_generation_verifier::AuthenticatedGeneration,
+    core_generation_verifier::{AuthenticatedGeneration, VERIFIER_EVIDENCE_FILENAME},
 };
 use std::os::unix::fs::MetadataExt as _;
 
-const TRUST_RECORD_FILENAME: &str = "acquisition-trust-v1.json";
 const INVENTORY_READ_BUFFER_BYTES: usize = 64 * 1024;
 
 pub(super) type ExpectedInventory = BTreeMap<String, (u64, String)>;
@@ -72,6 +71,68 @@ where
         operation_id,
         cancelled,
         |_| {},
+    )
+}
+
+/// Promotes the exact pending generation only while its installed trust and
+/// committed authenticated inventory still match the capability used to begin
+/// activation. The low-level cache transaction invokes this verification both
+/// before and immediately before its durable state commit.
+pub(crate) fn acknowledge_installed_authenticated_activation(
+    cache: &CoreGenerationCache,
+    generation: &InstalledAuthenticatedGeneration,
+    checkpoint: &InstalledAuthenticatedCheckpoint,
+    expected_target: &GenerationTarget,
+    lineage: &[&InstalledAuthenticatedGeneration],
+    operation_id: &str,
+    expected_revision: u64,
+) -> Result<CoreGenerationCacheState, String> {
+    if lineage.len() > MAX_LINEAGE_GENERATIONS {
+        return Err("Authenticated lineage exceeds its generation limit.".into());
+    }
+    let state = cache.load_state()?;
+    let raw_lineage = lineage
+        .iter()
+        .map(|predecessor| predecessor.generation())
+        .collect::<Vec<_>>();
+    let authorized = validate_authenticated_bootstrap_activation(
+        generation.generation(),
+        checkpoint.checkpoint(),
+        expected_target,
+        &GenerationActivationState {
+            high_water_sequence: state.high_water_sequence,
+            active: state
+                .active
+                .as_ref()
+                .map(|identity| DurableGenerationIdentity {
+                    sequence: identity.sequence,
+                    manifest_sha256: identity.manifest_sha256.clone(),
+                }),
+        },
+        &raw_lineage,
+    )?;
+    let identity = CoreGenerationIdentity {
+        sequence: authorized.sequence,
+        generation_id: authorized.manifest_sha256.clone(),
+        manifest_sha256: authorized.manifest_sha256,
+    };
+    let expected_inventory = expected_authenticated_inventory(generation.generation())?;
+    cache.acknowledge_healthy(
+        &identity,
+        operation_id,
+        expected_revision,
+        |generation_path| {
+            revalidate_installed_capabilities(generation, checkpoint, lineage, &|| false)?;
+            let pinned =
+                pin_generation_directory(generation_path, "authenticated cached Core generation")?;
+            verify_authenticated_inventory(&pinned, &expected_inventory, &|| false)?;
+            require_pinned_generation_directory(
+                generation_path,
+                &pinned,
+                "authenticated cached Core generation",
+            )?;
+            revalidate_installed_capabilities(generation, checkpoint, lineage, &|| false)
+        },
     )
 }
 
@@ -286,7 +347,7 @@ pub(super) fn expected_authenticated_inventory(
             discovery.generation.signature_filename.as_str(),
             inputs.manifest_signature,
         ),
-        (TRUST_RECORD_FILENAME, evidence.as_slice()),
+        (VERIFIER_EVIDENCE_FILENAME, evidence.as_slice()),
     ] {
         insert_inventory_record(&mut inventory, name, bytes.len() as u64, sha256(bytes))?;
     }
@@ -646,7 +707,7 @@ mod tests {
                 discovery.generation.signature_filename.clone(),
                 manifest_signature,
             ),
-            (TRUST_RECORD_FILENAME.into(), evidence),
+            (VERIFIER_EVIDENCE_FILENAME.into(), evidence),
             (payload_name, payload),
         ]);
         assert_eq!(
@@ -999,7 +1060,7 @@ mod tests {
                     fs::set_permissions(&generation_root, fs::Permissions::from_mode(0o500))
                         .unwrap();
                 } else {
-                    let path = generation_root.join(TRUST_RECORD_FILENAME);
+                    let path = generation_root.join(VERIFIER_EVIDENCE_FILENAME);
                     if case == "fifo" {
                         fs::set_permissions(&generation_root, fs::Permissions::from_mode(0o700))
                             .unwrap();

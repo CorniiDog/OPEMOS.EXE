@@ -27,6 +27,8 @@ use sha2::{Digest, Sha256};
 mod owned_child;
 
 pub(crate) const MAX_EVIDENCE_BYTES: usize = 64 * 1024;
+pub(crate) const VERIFIER_EVIDENCE_FILENAME: &str =
+    "opemos-userspace-lock-verifier-evidence-v1.json";
 
 const EVIDENCE_KIND: &str = "opemos-userspace-lock-verifier-evidence";
 const VERIFICATION_PROFILE: &str = "openpgp-detached-validsig-v1";

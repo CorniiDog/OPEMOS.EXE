@@ -13,6 +13,7 @@ use crate::{
     core_generation_request_plan::{authenticated_payload_requests, AuthenticatedPayloadRequest},
     core_generation_verifier::{
         authenticate_discovery_snapshot, authenticate_manifest_snapshot, DetachedVerifierOutput,
+        VERIFIER_EVIDENCE_FILENAME,
     },
 };
 use sha2::{Digest, Sha256};
@@ -24,8 +25,10 @@ use std::{
     path::Path,
 };
 
-const TRUST_RECORD_FILENAME: &str = "acquisition-trust-v1.json";
 const STREAM_BUFFER_BYTES: usize = 64 * 1024;
+
+#[cfg(test)]
+mod development_integration;
 
 // Raw transport and verifier adapters are test-only acquisition internals. They
 // must never become production authority or escape this module; future
@@ -251,7 +254,7 @@ fn stage_all<T: GenerationTransport, C: Fn() -> bool>(
             controls.discovery.generation.signature_filename.as_str(),
             controls.manifest_signature,
         ),
-        (TRUST_RECORD_FILENAME, controls.trust_record),
+        (VERIFIER_EVIDENCE_FILENAME, controls.trust_record),
     ] {
         poll_cancelled(cancelled)?;
         write_create_new(lease, name, bytes)?;
@@ -386,7 +389,7 @@ fn expected_inventory(
             discovery.generation.signature_filename.as_str(),
             manifest_signature,
         ),
-        (TRUST_RECORD_FILENAME, trust_record),
+        (VERIFIER_EVIDENCE_FILENAME, trust_record),
     ] {
         insert_inventory(&mut inventory, name, bytes.len() as u64, hash(bytes))?;
     }
@@ -937,7 +940,7 @@ mod tests {
         let trust_record = fs::read(
             root.join("generations")
                 .join(&first.generation_id)
-                .join(TRUST_RECORD_FILENAME),
+                .join(VERIFIER_EVIDENCE_FILENAME),
         )
         .unwrap();
         parse_verifier_evidence_record(&trust_record).unwrap();

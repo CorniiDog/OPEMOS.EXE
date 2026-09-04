@@ -2261,7 +2261,9 @@ fn build_handoff_record(
 }
 
 fn canonical_record(record: &ApplianceHandoffRecord) -> Result<Vec<u8>, String> {
-    let mut bytes = serde_json::to_vec(record)
+    let value = serde_json::to_value(record)
+        .map_err(|error| format!("Could not represent appliance handoff record: {error}"))?;
+    let mut bytes = serde_json::to_vec(&value)
         .map_err(|error| format!("Could not encode appliance handoff record: {error}"))?;
     bytes.push(b'\n');
     if bytes.len() > HANDOFF_RECORD_MAX_BYTES {
@@ -3142,7 +3144,7 @@ mod tests {
             GenerationLock, GenerationManifest, GenerationTargetLock, DISCOVERY_FILENAME,
             DISCOVERY_SIGNATURE_FILENAME, DISCOVERY_SIGNATURE_SCHEME, OPENPGP_HASH_ALGORITHM_IDS,
         },
-        core_generation_verifier::DetachedVerifierOutput,
+        core_generation_verifier::{DetachedVerifierOutput, VERIFIER_EVIDENCE_FILENAME},
     };
     use std::{
         os::unix::fs::symlink,
@@ -3342,7 +3344,7 @@ mod tests {
                         .clone(),
                     manifest_signature,
                 ),
-                ("acquisition-trust-v1.json".to_owned(), evidence),
+                (VERIFIER_EVIDENCE_FILENAME.to_owned(), evidence),
                 ("userspace-lock.json".to_owned(), payload),
             ]);
             let cache = CoreGenerationCache::open(&cache_root).unwrap();
@@ -3528,6 +3530,30 @@ mod tests {
         assert_eq!(second.directory_identity, first_identity);
         assert_eq!(destination_entries(&fixture.destination).len(), 1);
         assert_eq!(fixture.cache.load_state().unwrap(), before);
+    }
+
+    #[test]
+    fn handoff_uses_core_canonical_json_and_verifier_evidence_filename() {
+        const CORE_EVIDENCE_FILENAME: &str = "opemos-userspace-lock-verifier-evidence-v1.json";
+        let fixture = PreparedFixture::create("core-wire-identity");
+        let mut staged = fixture.stage().unwrap();
+        let handoff_root = fixture.destination.join(format!(
+            "handoff-{}-{}",
+            fixture.operation, fixture.identity.manifest_sha256
+        ));
+        let record_bytes = fs::read(handoff_root.join(HANDOFF_FILENAME)).unwrap();
+        let record_value: serde_json::Value = serde_json::from_slice(&record_bytes).unwrap();
+        let mut canonical = serde_json::to_vec(&record_value).unwrap();
+        canonical.push(b'\n');
+        assert_eq!(record_bytes, canonical);
+        assert!(handoff_root.join(CORE_EVIDENCE_FILENAME).is_file());
+        assert!(!handoff_root.join("acquisition-trust-v1.json").exists());
+        assert!(record_value["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| record["filename"] == CORE_EVIDENCE_FILENAME));
+        staged.retire().unwrap();
     }
 
     #[test]
