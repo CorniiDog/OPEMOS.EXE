@@ -1,3 +1,4 @@
+import { installCompatibilityPreview } from "./compatibility-preview.js";
 import { operationContextMatches } from "./operation-context.js";
 import { installWindowDrag } from "./window-drag.js";
 import { installKeyboardBindings, runKeyboardDefaultAction } from "./keyboard.js";
@@ -8,6 +9,7 @@ const openFolder = (options) => invoke("plugin:dialog|open", { options });
 const $ = (selector) => document.querySelector(selector);
 const maintainerWindow = getCurrentWebviewWindow();
 installWindowDrag(maintainerWindow);
+installCompatibilityPreview(document, invoke);
 await maintainerWindow.onCloseRequested(async (event) => {
   event.preventDefault();
   await maintainerWindow.emitTo("main", "companion-window-hidden", { label: "maintainer-workspace" });

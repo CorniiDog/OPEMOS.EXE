@@ -227,3 +227,37 @@ test("File input cancellation preserves preview and close invalidates an ongoing
   assert.equal(doc.getElementById("compatibility-result").hidden, true);
   assert.equal(doc.getElementById("compatibility-status").textContent, "No result loaded.");
 });
+
+
+test("Main and maintainer inspectors isolate concurrent result revisions", async () => {
+  const mainDoc = fakeDocument(), maintainerDoc = fakeDocument();
+  const mainPending = defer(), maintainerPending = defer();
+  installCompatibilityPreview(mainDoc, () => mainPending.promise);
+  installCompatibilityPreview(maintainerDoc, () => maintainerPending.promise);
+  mainDoc.getElementById("compatibility-fixture-compatible").fire("click");
+  maintainerDoc.getElementById("compatibility-fixture-no-artifact").fire("click");
+  maintainerPending.resolve(preview(absent));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(maintainerDoc.getElementById("compatibility-result").hidden, false);
+  assert.equal(mainDoc.getElementById("compatibility-result").hidden, true);
+  maintainerDoc.getElementById("compatibility-close").fire("click");
+  mainPending.resolve(preview(compatible));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(mainDoc.getElementById("compatibility-result").hidden, false);
+  assert.equal(maintainerDoc.getElementById("compatibility-result").hidden, true);
+});
+
+test("Maintainer workspace wires the shared read-only compatibility inspector", async () => {
+  const [html, script] = await Promise.all([
+    readFile(new URL("../src/maintainer.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/maintainer.js", import.meta.url), "utf8"),
+  ]);
+  for (const id of ["compatibility-open", "compatibility-dialog", "compatibility-file",
+    "compatibility-document", "compatibility-result", "compatibility-fields"]) {
+    assert.match(html, new RegExp(`id=["']${id}["']`));
+  }
+  assert.match(html, /compatibility-preview\.css/);
+  assert.match(html, /does not authorize a build, download, source choice, or activation/);
+  assert.match(script, /import \{ installCompatibilityPreview \} from "\.\/compatibility-preview\.js"/);
+  assert.match(script, /installCompatibilityPreview\(document, invoke\)/);
+});

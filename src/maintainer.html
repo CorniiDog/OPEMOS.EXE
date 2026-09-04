@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="/maintainer.css">
     <link rel="stylesheet" href="/window-chrome.css">
     <link rel="stylesheet" href="/glass-controls.css">
+    <link rel="stylesheet" href="/compatibility-preview.css">
 </head>
 <body>
     <div class="window-drag-region" data-tauri-drag-region aria-hidden="true"></div>
@@ -127,6 +128,17 @@
             </div>
         </section>
 
+        <section class="card plan-card">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">Core result</p>
+                    <h2>Inspect exact-target compatibility</h2>
+                </div>
+                <button id="compatibility-open" class="secondary" type="button" aria-haspopup="dialog">Inspect Core compatibility…</button>
+            </div>
+            <p class="section-copy">Read a resolver result without changing source intent, generation state, trust, or activation.</p>
+        </section>
+
         <section class="card actions-card">
             <div>
                 <p class="eyebrow">Maintainer actions</p>
@@ -146,6 +158,32 @@
         <footer>No credentials, recovery images, or generated SteamOS images enter this workspace plan.</footer>
     </main>
     </div>
+    <dialog id="compatibility-dialog" class="compatibility-dialog" aria-labelledby="compatibility-title" aria-describedby="compatibility-notice">
+        <div class="compatibility-heading">
+            <h2 id="compatibility-title">Core compatibility inspector</h2>
+            <button id="compatibility-close" class="secondary" type="button" autofocus>Close</button>
+        </div>
+        <p id="compatibility-notice">Read-only preview. Document structure is checked, but authenticity is not. A compatible result here does not authorize a build, download, source choice, or activation.</p>
+        <label for="compatibility-file">Open a local resolver JSON file (up to 1 MiB)</label>
+        <input id="compatibility-file" type="file" accept=".json,application/json">
+        <label for="compatibility-document">Core resolver JSON (up to 1 MiB)</label>
+        <textarea id="compatibility-document" maxlength="1048576" spellcheck="false" autocomplete="off" placeholder="Paste a Core resolver result"></textarea>
+        <div class="compatibility-actions">
+            <button id="compatibility-inspect" class="secondary" type="button">Inspect pasted result</button>
+            <button id="compatibility-clear" class="secondary" type="button">Clear</button>
+        </div>
+        <p>Development fixtures are non-production and available only in debug builds.</p>
+        <div class="compatibility-actions">
+            <button id="compatibility-fixture-compatible" class="secondary" type="button">Compatible fixture</button>
+            <button id="compatibility-fixture-no-artifact" class="secondary" type="button">No-artifact fixture</button>
+        </div>
+        <p id="compatibility-status" role="status" aria-live="polite">No result loaded.</p>
+        <section id="compatibility-result" hidden aria-label="Unverified Core result">
+            <dl id="compatibility-fields"></dl>
+        </section>
+        <p>Selected file and pasted content are processed locally and cleared when this inspector closes. No credentials, downloads, cache changes, source selection, or guest operations are needed.</p>
+    </dialog>
+
     <script type="module" src="/maintainer.js"></script>
 </body>
 </html>

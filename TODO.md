@@ -210,6 +210,21 @@ installation targets, production activation, or hardware certification.
   tests pass (27 ignored), and 102 frontend tests plus documentation, hygiene,
   and boundary integrity pass against the unchanged Core fixture pin.
 
+- [x] Reuse the read-only Core compatibility inspector in the maintainer
+  workspace as well as normal Settings. Both windows accept the same bounded
+  pasted/local resolver documents and debug-only non-production fixtures, show
+  Core fields verbatim, and expose no source selection, generation mutation,
+  network, cache, guest, build, or activation action. Cross-window concurrency
+  tests prove independent revision state: a stale or closed maintainer request
+  cannot replace the main result and vice versa. Static wiring tests require the
+  shared controller, stylesheet, bounded inputs, and explicit no-authorization
+  notice in the maintainer surface. The broader available/selected/active/LKG
+  generation UI remains gated and open. On Ubuntu 24.04.4 through the shared
+  scheduler, formatting and Clippy pass, 330 Rust tests pass (27 ignored), and
+  all 109 frontend tests plus documentation, hygiene, and boundary integrity
+  pass against the unchanged Core fixture pin. Native maintainer-dialog visual
+  and focus validation remains blocked by GNOME screenshot policy.
+
 ### 1. Complete the OPEMOS Core migration
 
 Production generation activation is intentionally blocked until the maintainer
