@@ -225,6 +225,19 @@ installation targets, production activation, or hardware certification.
   pass against the unchanged Core fixture pin. Native maintainer-dialog visual
   and focus validation remains blocked by GNOME screenshot policy.
 
+- [x] Validate the normal Settings compatibility inspector through the live
+  Ubuntu 24.04.4 Wayland accessibility tree. AT-SPI found the native frame,
+  WebKit document, Settings panel, dialog, fixture controls, and all four debug
+  generation rows; it invoked the fixture, verified selected/active identity
+  values, closed the dialog without closing the main document, and launcher
+  shutdown left no process. This exposed empty native names for generated
+  description terms and values. The renderer now assigns exact text-only ARIA
+  labels, with a hostile-looking value regression proving labels remain data,
+  not markup. Formatting and Clippy pass, 330 Rust tests pass (27 ignored), and
+  all 110 frontend tests plus documentation, hygiene, and boundary integrity
+  pass through the shared scheduler. Pixel rendering, focus order, maintainer
+  companion launch, packaged accessibility, and Debian remain open.
+
 ### 1. Complete the OPEMOS Core migration
 
 Production generation activation is intentionally blocked until the maintainer

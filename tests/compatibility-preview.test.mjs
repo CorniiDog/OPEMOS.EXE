@@ -154,7 +154,10 @@ test("Dialog renders hostile-looking strings as text and isolates keyboard event
   assert.equal(get("compatibility-dialog").open, true);
   await controller.inspect({ source: "fixture", name: "no-artifact" });
   assert.equal(get("compatibility-result").hidden, false);
-  assert.ok(get("compatibility-fields").children.some((row) => row.children[1].textContent === hostile));
+  const hostileRow = get("compatibility-fields").children.find((row) => row.children[1].textContent === hostile);
+  assert.ok(hostileRow);
+  assert.equal(hostileRow.children[0].attributes["aria-label"], "Message");
+  assert.equal(hostileRow.children[1].attributes["aria-label"], hostile);
   let stopped = false;
   get("compatibility-dialog").fire("keydown", { stopPropagation() { stopped = true; } });
   assert.equal(stopped, true);

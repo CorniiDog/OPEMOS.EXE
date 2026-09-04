@@ -155,7 +155,9 @@ export function installCompatibilityPreview(documentRef, invoke) {
       const term = documentRef.createElement("dt");
       const description = documentRef.createElement("dd");
       term.textContent = label;
+      term.setAttribute("aria-label", label);
       description.textContent = value;
+      description.setAttribute("aria-label", value);
       row.append(term, description);
       rows.append(row);
     }

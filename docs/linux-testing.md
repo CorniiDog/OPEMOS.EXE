@@ -17,8 +17,11 @@ testing. Debian is an intended testing platform, not a validated distribution.
 A development binary and the extracted debug-package binary have launched and
 closed in an Ubuntu 24.04.4 Wayland session, with no remaining launcher or EXE
 processes. The package was not installed. GNOME denied noninteractive screenshot
-access, so rendered content, companion windows, focus, desktop integration, and
-interactive close remain unvalidated. These host checks do not establish a
+access, so pixel rendering, focus order, companion windows, desktop integration,
+and interactive close remain unvalidated. AT-SPI has validated the main native
+frame, WebKit Settings/compatibility controls, debug generation row names and
+values, scoped dialog close, and main-document survival on Ubuntu Wayland.
+These host checks do not establish a
 successful appliance boot, complete image build, installed package, or
 physical-hardware result. Consult TODO
 for the exact validation evidence and remaining gates.
