@@ -132,9 +132,11 @@ dpkg-deb -x 'src-tauri/target/debug/bundle/deb/OPEMOS EXE Linux Test_0.1.0_amd64
 
 The smoke inherits the graphical session environment, including its AT-SPI bus
 and accessibility bridge setting. It accepts only the accessibility application
-whose process ID matches the process it launched, then opens Settings and the read-only Core
-compatibility inspector, verifies its ordered focusable controls and initial Close
-focus, verifies all four development-fixture generation rows, closes the dialog, and then stops the isolated application process group. It has
+whose process ID matches the process it launched, then opens Settings and the
+read-only Core compatibility inspector. It verifies the ordered focusable controls,
+initial Close focus, all four development-fixture generation rows, and focus
+restoration to the Settings opener after closing the dialog. It then stops the
+isolated application process group. It has
 a 20-second default deadline (configurable from 1 through 60 seconds), reports
 early application exit immediately with its status, refuses symlink or
 non-executable inputs, pins the accepted regular executable to a no-follow file
