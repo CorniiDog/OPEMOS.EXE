@@ -171,6 +171,19 @@ installation targets, production activation, or hardware certification.
   Native dialog rendering/focus remains part of the graphical validation gate;
   this session has no graphical display or enabled browser surface.
 
+- [x] Extend the read-only compatibility inspector with local resolver JSON
+  selection through the native file input. Enforce nonempty files, the same
+  1 MiB byte bound, strict UTF-8, and unchanged document IPC/Rust validation;
+  label file and pasted results Unverified document. Four new frontend tests
+  cover exact size, BOM preservation, bad sizes/encoding, read failure, changed
+  length, cancelled picker, repeated selection, close, and stale read success
+  or failure after clear or a newer request. File names never enter IPC or
+  establish trust. Native picker/rendering validation remains gated on an
+  available graphical desktop; no production activation is added. On Ubuntu
+  24.04.4 through the shared scheduler, formatting and Clippy pass, 319 Rust
+  tests pass (27 ignored), and 102 frontend tests plus documentation, hygiene,
+  and boundary integrity pass against the unchanged Core fixture pin.
+
 ### 1. Complete the OPEMOS Core migration
 
 Production generation activation is intentionally blocked until the maintainer

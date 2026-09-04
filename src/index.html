@@ -365,6 +365,8 @@
             <button id="compatibility-close" class="secondary" type="button" autofocus>Close</button>
         </div>
         <p id="compatibility-notice">Read-only preview. Document structure is checked, but authenticity is not. A compatible result here does not authorize a build, download, or activation.</p>
+        <label for="compatibility-file">Open a local resolver JSON file (up to 1 MiB)</label>
+        <input id="compatibility-file" type="file" accept=".json,application/json">
         <label for="compatibility-document">Core resolver JSON (up to 1 MiB)</label>
         <textarea id="compatibility-document" maxlength="1048576" spellcheck="false" autocomplete="off" placeholder="Paste a Core resolver result"></textarea>
         <div class="compatibility-actions">
@@ -380,7 +382,7 @@
         <section id="compatibility-result" hidden aria-label="Unverified Core result">
             <dl id="compatibility-fields"></dl>
         </section>
-        <p>Pasted content is processed locally and cleared when this inspector closes. No credentials, downloads, cache changes, or guest operations are needed.</p>
+        <p>Selected file and pasted content are processed locally and cleared when this inspector closes. No credentials, downloads, cache changes, or guest operations are needed.</p>
     </dialog>
 
     <script

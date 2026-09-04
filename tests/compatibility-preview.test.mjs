@@ -14,7 +14,7 @@ test("Core statuses and next actions are presented verbatim with unverified orig
   assert.equal(new Map(accepted.rows).get("Core status"), compatible.status);
   assert.equal(new Map(accepted.rows).get("Artifact trust reported by Core"), "pending-provenance-verification");
   const noArtifact = presentCompatibilityPreview(preview(absent, "unverified-document"));
-  assert.equal(noArtifact.origin, "Unverified pasted document");
+  assert.equal(noArtifact.origin, "Unverified document");
   assert.equal(new Map(noArtifact.rows).get("Next action reported by Core"), absent.nextAction.kind);
   assert.equal(new Map(noArtifact.rows).get("Message"), absent.message);
   assert.equal(noArtifact.rows.some(([label]) => label === "Artifact name"), false);
@@ -132,6 +132,98 @@ test("Editing the input clears a previous result before another submission", asy
   const controller = installCompatibilityPreview(doc, async () => preview());
   await controller.inspect({ source: "fixture", name: "compatible" });
   doc.getElementById("compatibility-document").fire("input");
+  assert.equal(doc.getElementById("compatibility-result").hidden, true);
+  assert.equal(doc.getElementById("compatibility-status").textContent, "No result loaded.");
+});
+
+
+test("Local files use the same unverified document IPC and exact byte limit", async () => {
+  const calls = [], states = [];
+  const controller = createCompatibilityPreviewController(async (name, args) => {
+    calls.push([name, args]); return preview(compatible, "unverified-document");
+  }, (state) => states.push(state));
+  const json = JSON.stringify(compatible);
+  await controller.inspectFile(new Blob([json], { type: "application/octet-stream" }));
+  assert.deepEqual(calls[0], ["preview_core_compatibility", { request: { source: "document", document: json } }]);
+  assert.equal(states.at(-1).preview.origin, "Unverified document");
+  const exact = json.padEnd(1024 * 1024, " ");
+  await controller.inspectFile(new Blob([exact]));
+  assert.equal(calls[1][1].request.document, exact);
+  // Preserve BOM bytes for the same Rust parser decision as pasted input.
+  await controller.inspectFile(new Blob(["\uFEFF", json]));
+  assert.equal(calls[2][1].request.document, "\uFEFF" + json);
+});
+
+test("Invalid file sizes, UTF-8, read failures and changed size stop before IPC", async () => {
+  let calls = 0, reads = 0;
+  const states = [];
+  const controller = createCompatibilityPreviewController(async () => { calls++; return preview(); }, (state) => states.push(state));
+  for (const size of [0, -1, 0.5, NaN, Infinity, 1024 * 1024 + 1]) {
+    await controller.inspectFile({ size, slice() { reads++; throw new Error(); } });
+    assert.equal(states.at(-1).phase, "error");
+  }
+  assert.equal(reads, 0);
+  for (const file of [new Blob([new Uint8Array([0xff])]), new Blob([" "]),
+    { size: 1, slice() { throw new Error("private filename"); } },
+    { size: 1, slice() { return { arrayBuffer: async () => new ArrayBuffer(2) }; } },
+    { size: 1, slice() { return { arrayBuffer: async () => { throw new Error("private filename"); } }; } }]) {
+    await controller.inspectFile(file);
+    assert.equal(states.at(-1).phase, "error");
+    assert.doesNotMatch(states.at(-1).message, /private filename/);
+  }
+  assert.equal(calls, 0);
+});
+
+test("Pending file reads cannot submit after clear, a newer fixture, or a newer file", async () => {
+  for (const action of ["clear", "fixture", "file"]) {
+    for (const fail of [false, true]) {
+      const pending = defer(), states = [], calls = [];
+      const controller = createCompatibilityPreviewController(async (_, args) => {
+        calls.push(args.request); return preview();
+      }, (state) => states.push(state));
+      const old = controller.inspectFile({ size: 2, slice(start, end) {
+        assert.equal(start, 0); assert.equal(end, 1024 * 1024 + 1);
+        return { arrayBuffer: () => pending.promise };
+      } });
+      if (action === "clear") controller.clear();
+      if (action === "fixture") await controller.inspect({ source: "fixture", name: "compatible" });
+      if (action === "file") await controller.inspectFile(new Blob(["{}"]));
+      const last = states.at(-1);
+      if (fail) pending.reject(new Error("stale read error"));
+      else pending.resolve(new TextEncoder().encode("{}").buffer);
+      await old;
+      assert.equal(states.at(-1), last);
+      assert.equal(calls.length, action === "clear" ? 0 : 1);
+    }
+  }
+});
+
+test("File input cancellation preserves preview and close invalidates an ongoing file read", async () => {
+  const doc = fakeDocument(), calls = [], pending = defer();
+  const controller = installCompatibilityPreview(doc, async (_, args) => { calls.push(args.request); return preview(); });
+  await controller.inspect({ source: "fixture", name: "compatible" });
+  const fileInput = doc.getElementById("compatibility-file");
+  fileInput.files = [];
+  fileInput.fire("change");
+  assert.equal(doc.getElementById("compatibility-result").hidden, false);
+  fileInput.files = [new Blob([JSON.stringify(compatible)])];
+  for (let selection = 0; selection < 2; selection++) {
+    fileInput.value = "selected.json";
+    fileInput.fire("change");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(fileInput.value, "");
+  }
+  assert.equal(calls.length, 3);
+  fileInput.value = "selected.json";
+  fileInput.files = [{ size: 2, slice() { return { arrayBuffer: () => pending.promise }; } }];
+  doc.getElementById("compatibility-document").value = "old text";
+  fileInput.fire("change");
+  assert.equal(fileInput.value, "");
+  assert.equal(doc.getElementById("compatibility-document").value, "");
+  doc.getElementById("compatibility-close").fire("click");
+  pending.resolve(new TextEncoder().encode("{}").buffer);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 3);
   assert.equal(doc.getElementById("compatibility-result").hidden, true);
   assert.equal(doc.getElementById("compatibility-status").textContent, "No result loaded.");
 });

@@ -11,7 +11,7 @@ function displayText(value, limit = 2048) {
 // compatibility inference, network action, or activation is derived here.
 export function presentCompatibilityPreview(preview) {
   const origins = {
-    "unverified-document": "Unverified pasted document",
+    "unverified-document": "Unverified document",
     "development-fixture": "Development fixture — non-production",
   };
   if (!preview || !Object.hasOwn(origins, preview.origin)) throw new Error("Unknown compatibility preview origin.");
@@ -49,26 +49,47 @@ export function presentCompatibilityPreview(preview) {
 
 export function createCompatibilityPreviewController(invoke, render) {
   let revision = 0;
+  async function inspect(makeRequest) {
+    const current = ++revision;
+    render({ phase: "loading" });
+    try {
+      const pending = makeRequest();
+      const request = pending && typeof pending.then === "function" ? await pending : pending;
+      if (current !== revision) return;
+      if (request.source === "document" && (typeof request.document !== "string"
+        || !request.document.trim() || new TextEncoder().encode(request.document).length > DOCUMENT_LIMIT)) {
+        throw new Error("Choose or paste a Core resolver JSON document no larger than 1 MiB.");
+      }
+      const response = await invoke("preview_core_compatibility", { request });
+      if (current !== revision) return;
+      render({ phase: "result", preview: presentCompatibilityPreview(response) });
+    } catch (error) {
+      if (current !== revision) return;
+      render({ phase: "error", message: String(error?.message ?? error).slice(0, 2048) });
+    }
+  }
   return {
     clear() {
       revision += 1;
       render({ phase: "empty" });
     },
-    async inspect(request) {
-      const current = ++revision;
-      render({ phase: "loading" });
-      try {
-        if (request.source === "document" && (typeof request.document !== "string"
-          || !request.document.trim() || new TextEncoder().encode(request.document).length > DOCUMENT_LIMIT)) {
-          throw new Error("Paste a Core resolver JSON document no larger than 1 MiB.");
+    inspect(request) { return inspect(() => request); },
+    inspectFile(file) {
+      return inspect(async () => {
+        if (!file || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > DOCUMENT_LIMIT) {
+          throw new Error("Choose a nonempty Core resolver JSON file no larger than 1 MiB.");
         }
-        const response = await invoke("preview_core_compatibility", { request });
-        if (current !== revision) return;
-        render({ phase: "result", preview: presentCompatibilityPreview(response) });
-      } catch (error) {
-        if (current !== revision) return;
-        render({ phase: "error", message: String(error?.message ?? error).slice(0, 2048) });
-      }
+        let document;
+        try {
+          const bytes = await file.slice(0, DOCUMENT_LIMIT + 1).arrayBuffer();
+          if (bytes.byteLength !== file.size || bytes.byteLength > DOCUMENT_LIMIT) throw new Error();
+          // Preserve a BOM rather than silently changing the Rust parser's input.
+          document = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+        } catch {
+          throw new Error("Could not read the selected file as UTF-8 JSON. Choose it again.");
+        }
+        return { source: "document", document };
+      });
     },
   };
 }
@@ -77,6 +98,7 @@ export function installCompatibilityPreview(documentRef, invoke) {
   const get = (id) => documentRef.getElementById(id);
   const dialog = get("compatibility-dialog");
   const input = get("compatibility-document");
+  const fileInput = get("compatibility-file");
   const status = get("compatibility-status");
   const result = get("compatibility-result");
   const rows = get("compatibility-fields");
@@ -98,9 +120,16 @@ export function installCompatibilityPreview(documentRef, invoke) {
       rows.append(row);
     }
   });
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    fileInput.value = "";
+    if (!file) return;
+    input.value = "";
+    void controller.inspectFile(file);
+  });
   get("compatibility-open").addEventListener("click", () => dialog.showModal());
   get("compatibility-close").addEventListener("click", () => dialog.close());
-  dialog.addEventListener("close", () => { input.value = ""; controller.clear(); });
+  dialog.addEventListener("close", () => { input.value = ""; fileInput.value = ""; controller.clear(); });
   // Native dialog owns focus/Tab/Escape; underlying settings shortcuts must not run.
   dialog.addEventListener("keydown", (event) => event.stopPropagation());
   get("compatibility-clear").addEventListener("click", () => { input.value = ""; controller.clear(); });

@@ -175,11 +175,13 @@ verified Linux implementation and safety tests.
 ## Inspect Core compatibility without activation
 
 Open **Settings → Inspect Core compatibility…** in either the macOS application
-or the experimental Linux application. Paste a Core resolver schema-2 JSON
-result and choose **Inspect pasted result**. The existing Rust Core consumer
-checks the same document structure and 1 MiB byte limit used by its resolver
-adapter. Structural validity does not authenticate a pasted result: the dialog
-always identifies it as **Unverified pasted document**.
+or the experimental Linux application. Select a local Core resolver schema-2
+JSON file, or paste its contents and choose **Inspect pasted result**. Local
+files must contain UTF-8 text and be nonempty and no larger than 1 MiB. The
+existing Rust Core consumer checks the same document structure and 1 MiB byte limit used by its resolver
+adapter. Structural validity does not authenticate a supplied result: the dialog
+always identifies it as **Unverified document**. Filenames and file extensions
+do not establish trust; only the selected contents are passed to the parser.
 
 Debug builds also offer **Compatible fixture** and **No-artifact fixture** from
 the existing repository conformance fixtures. Their results are always labeled
@@ -190,7 +192,9 @@ It needs no credentials, network requests, image files, guest, or cache changes.
 
 The dialog displays Core's status, target, reason, publication, artifact trust,
 and next action without inventing another decision. Editing, clearing, or
-closing invalidates pending preview responses; closing also clears pasted text.
+closing invalidates pending file reads and preview responses; closing also
+clears pasted text and the file selection. Cancelling the file picker preserves
+the current preview. Selecting the same file again performs a fresh read.
 Long fields are explicitly truncated for display. Keyboard focus stays within
 the native dialog, and main-window file drops are ignored while it is open.
 Frontend behavior and Rust adapter tests are automated; visual rendering and
