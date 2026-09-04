@@ -178,9 +178,11 @@ installation targets, production activation, or hardware certification.
   debug-package main window. A bounded opt-in AT-SPI smoke starts the exact
   regular executable, opens Settings and the read-only compatibility dialog,
   verifies all four development-fixture generation rows, closes only the dialog,
-  preserves the main document, and stops the complete process group. Unit tests
+  preserves the main document, stops the complete process group, and proves no
+  new `qemu-system-*` process remains. Unit tests
   reject missing opt-in/display, symlink and non-executable inputs, invalid
-  deadlines, missing/duplicate controls, oversized trees, and failed actions.
+  deadlines, missing/duplicate controls, oversized trees, failed actions,
+  malformed or symlinked process data, and a stubborn process group.
   Package archive validation passes with SHA-256
   `80a578962c18c9ee5076c05ff2c2fa40d92e0097fd7e21efe8e017f0a3d41f12`; no
   package was installed. Debian, companion windows, focus order, and pixel
@@ -782,7 +784,10 @@ must be reported; a default-suite pass does not imply hardware certification.
 - [ ] Add an x86_64 Linux integration job for Core bundle, resolver, installer,
   and headless image tests without publishing or touching physical disks.
 - [ ] Add bounded release-package smoke tests which start and close the packaged
-  application and confirm no orphan QEMU processes remain.
+  application and confirm no orphan QEMU processes remain. The experimental
+  Ubuntu debug package now has the equivalent bounded AT-SPI launch/close and
+  before/after QEMU inventory coverage; the signed release-package path remains
+  gated and unclaimed.
 
 ## Release gates
 

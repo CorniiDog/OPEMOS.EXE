@@ -136,8 +136,9 @@ compatibility inspector, verifies all four development-fixture generation rows,
 closes the dialog, and then stops the isolated application process group. It has
 a 20-second default deadline (configurable from 1 through 60 seconds), refuses
 symlink or non-executable inputs, and sends SIGKILL after a bounded SIGTERM grace
-period. It does not install the archive, use production compatibility inputs, or
-start QEMU.
+period. It takes bounded before/after `/proc` snapshots and fails if the launch
+leaves a new `qemu-system-*` process. It does not install the archive, use
+production compatibility inputs, or start QEMU.
 
 The package is written under `src-tauri/target/debug/bundle/deb/`. This command
 needs no graphical session. It deliberately uses a debug build and the `deb`

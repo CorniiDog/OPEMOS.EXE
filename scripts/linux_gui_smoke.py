@@ -122,6 +122,39 @@ def exercise_accessibility(desktop, deadline: float):
     invoke(first_action(dialog, "Close", {"push button", "button"}))
     wait_for(lambda: exactly_one_action(app, "Open settings"), deadline, "the main document after dialog close")
 
+def qemu_processes(proc_root: Path = Path("/proc")) -> set[tuple[int, str]]:
+    metadata = proc_root.lstat()
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise RuntimeError(f"Process root must be a directory, not a symlink: {proc_root}")
+    processes = set()
+    numeric_entries = 0
+    for entry in proc_root.iterdir():
+        if not entry.name.isascii() or not entry.name.isdigit():
+            continue
+        numeric_entries += 1
+        if numeric_entries > 1_000_000:
+            raise RuntimeError("Process inventory exceeded its entry bound.")
+        try:
+            entry_metadata = entry.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(entry_metadata.st_mode) or not stat.S_ISDIR(entry_metadata.st_mode):
+            raise RuntimeError(f"Process entry must be a directory, not a symlink: {entry}")
+        try:
+            with (entry / "comm").open("rb") as stream:
+                raw = stream.read(65)
+        except FileNotFoundError:
+            continue
+        if len(raw) > 64 or not raw.endswith(b"\n"):
+            raise RuntimeError(f"Process {entry.name} has an invalid bounded name.")
+        try:
+            name = raw[:-1].decode("ascii")
+        except UnicodeDecodeError as error:
+            raise RuntimeError(f"Process {entry.name} has a non-ASCII name.") from error
+        if name.startswith("qemu-system-"):
+            processes.add((int(entry.name), name))
+    return processes
+
 def process_group_exists(pgid: int) -> bool:
     try:
         os.killpg(pgid, 0)
@@ -169,14 +202,18 @@ def main(argv=None):
     except (ImportError, ValueError) as error:
         raise RuntimeError("Install the Python GI AT-SPI bindings before GUI smoke testing.") from error
     Atspi.init()
+    qemu_before = qemu_processes()
     process = subprocess.Popen([str(executable)], start_new_session=True)
     try:
         exercise_accessibility(Atspi.get_desktop(0), time.monotonic() + args.timeout)
     finally:
         stop_process_group(process)
+    new_qemu = qemu_processes() - qemu_before
+    if new_qemu:
+        raise RuntimeError(f"Packaged application left new QEMU processes: {sorted(new_qemu)!r}.")
     if process.returncode not in {0, -signal.SIGTERM, -signal.SIGKILL}:
         raise RuntimeError(f"Packaged application exited unexpectedly with {process.returncode}.")
-    print("Packaged Linux accessibility smoke passed; process group stopped.")
+    print("Packaged Linux accessibility smoke passed; process group stopped; no new QEMU process remained.")
 
 if __name__ == "__main__":
     try:

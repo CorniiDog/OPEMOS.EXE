@@ -51,6 +51,29 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertEqual(len(list(smoke.descendants(chain, max_depth=3))), 4)
         with self.assertRaises(RuntimeError): list(smoke.descendants(FakeNode(children=[FakeNode(), FakeNode()]), max_nodes=2))
 
+    def test_qemu_inventory_is_bounded_and_rejects_malformed_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for pid, name in (("12", "qemu-system-x86_64\n"), ("13", "python3\n")):
+                child = root / pid
+                child.mkdir()
+                (child / "comm").write_text(name)
+            self.assertEqual(smoke.qemu_processes(root), {(12, "qemu-system-x86_64")})
+            (root / "12" / "comm").write_bytes(b"qemu-system-" + b"x" * 60 + b"\n")
+            with self.assertRaises(RuntimeError): smoke.qemu_processes(root)
+            (root / "12" / "comm").write_bytes(b"qemu-system-x86_64")
+            with self.assertRaises(RuntimeError): smoke.qemu_processes(root)
+            (root / "12" / "comm").write_text("qemu-system-x86_64\n")
+            (root / "14").symlink_to(root / "12", target_is_directory=True)
+            with self.assertRaises(RuntimeError): smoke.qemu_processes(root)
+            (root / "14").unlink()
+            link = root.parent / (root.name + "-link")
+            link.symlink_to(root)
+            try:
+                with self.assertRaises(RuntimeError): smoke.qemu_processes(link)
+            finally:
+                link.unlink()
+
     def test_stubborn_process_group_is_killed_and_reaped(self):
         process = subprocess.Popen(
             [sys.executable, "-c", "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"],
