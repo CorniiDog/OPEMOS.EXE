@@ -14,6 +14,26 @@ RESULT_SENTINEL_LABELS = [
     "Last-known-good generation — development fixture",
 ]
 
+EXPECTED_COMPATIBLE_ROWS = [
+    ("Core status", "compatible"),
+    ("SteamOS target", "3.8.14"),
+    ("Kernel target", "fixture"),
+    ("Architecture", "x86_64"),
+    ("Exact-target support reported by Core", "exact"),
+    ("Reason", "Not provided"),
+    ("Message", "Not provided"),
+    ("Publication tag", "fixture"),
+    ("Published SteamOS", "3.8.14"),
+    ("Published kernel", "fixture"),
+    ("Published NVIDIA", "575.64.05"),
+    (
+        "Artifact name",
+        "nvidia-open-steamos-3.8.14-nvidia-575.64.05-kfixture-x86_64.tar.gz",
+    ),
+    ("Artifact trust reported by Core", "pending-provenance-verification"),
+    ("Required verification", "external-and-embedded-provenance-byte-match"),
+]
+
 EXPECTED_NO_ARTIFACT_ROWS = [
     ("Core status", "no_compatible_artifact"),
     ("SteamOS target", "3.8.14"),
@@ -258,6 +278,12 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
                   "the compatibility inspector")
     validate_dialog_focus(dialog, focusable_state, focused_state)
     invoke(exactly_one_action(dialog, "Compatible fixture"))
+    wait(lambda: exactly_one(dialog, "compatible"), "the compatible Core status")
+    validate_named_rows(
+        dialog,
+        EXPECTED_COMPATIBLE_ROWS,
+        "Available generations — development fixture",
+    )
     for label, prefix in EXPECTED_ROWS.items():
         term = wait(lambda label=label: exactly_one(dialog, label), label)
         values = [node.get_name() or "" for node in descendants(dialog)]
@@ -276,6 +302,15 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     invoke(exactly_one_action(dialog, "Clear"))
     wait(lambda: validate_cleared_result(dialog, focused_state),
          "cleared compatibility result")
+    invoke(exactly_one_action(dialog, "Compatible fixture"))
+    wait(lambda: exactly_one(dialog, "compatible"),
+         "the compatible Core status after Clear")
+    validate_named_rows(
+        dialog,
+        EXPECTED_COMPATIBLE_ROWS,
+        "Available generations — development fixture",
+    )
+    exactly_one_focused_action(dialog, "Compatible fixture", focused_state)
     invoke(first_action(dialog, "Close", {"push button", "button"}))
     wait(lambda: exactly_one_focused_action(
         app, "Inspect Core compatibility…", focused_state

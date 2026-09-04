@@ -141,10 +141,13 @@ Opening Settings must focus its Close control, and closing Settings must restore
 focus to its opener. The smoke also verifies the ordered compatibility controls,
 initial Close focus, all four development-fixture generation rows, and focus
 restoration to the Settings opener after closing the dialog. It exercises both
-fixture branches: the no-artifact branch must expose Core's exact status, reason,
-message, bounded exact-target build action, architecture, and kernel policy in
-order. Clear must remove the result heading, Core fields, next action, and all
-generation rows from the accessibility tree while retaining focus on Clear.
+fixture branches. The compatible branch must expose Core's exact publication,
+artifact, pending-verification, and target fields. The no-artifact branch must
+expose Core's exact status, reason, message, bounded exact-target build action,
+architecture, and kernel policy in order. Clear must remove the result heading,
+Core fields, next action, and all generation rows from the accessibility tree
+while retaining focus on Clear. Reloading Compatible after Clear must reproduce
+only its exact rows and retain focus on the fixture control.
 These remain non-production fixture data and grant no authorization. It then
 stops the
 isolated application process group. It has

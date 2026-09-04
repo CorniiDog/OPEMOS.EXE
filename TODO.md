@@ -180,11 +180,13 @@ installation targets, production activation, or hardware certification.
   five-control focus order plus initial and restored focus, and opens the read-only
   compatibility dialog,
   verifies the dialog's exact native focusable order and initial Close focus,
-  verifies all four development-fixture generation rows, switches to the
-  no-artifact fixture, and verifies Core's exact status/reason/message plus its
+  verifies Core's exact compatible publication, artifact, pending-verification,
+  and target fields plus all four development-fixture generation rows. It switches
+  to the no-artifact fixture and verifies Core's exact status/reason/message plus its
   bounded exact-target action fields in order. Clear then removes every result,
   action, and generation sentinel from the accessibility tree while retaining
-  Clear focus. It closes only the dialog,
+  Clear focus, then reloading Compatible must restore only its exact rows and
+  focus its fixture control. It closes only the dialog,
   restores focus to its Settings opener, preserves the main document, stops the
   complete process group, and proves no
   new `qemu-system-*` process remains. Unit tests
@@ -200,8 +202,10 @@ installation targets, production activation, or hardware certification.
   kernel start time; the live tree reports the spawned package PID exactly. Package
   archive validation passes with SHA-256
   `80a578962c18c9ee5076c05ff2c2fa40d92e0097fd7e21efe8e017f0a3d41f12`; no
-  package was installed. Fourteen focused harness tests reject reordered, extra,
-  or ambiguously bounded no-artifact rows, stale cleared fields or result headings, and wrong Clear focus; the live package smoke passes. Debian,
+  package was installed. Fifteen focused harness tests reject reordered, extra,
+  or ambiguously bounded rows, stale cleared fields or result headings, wrong
+  Clear focus, stale next actions after recovery, and altered compatible trust
+  text; the live package smoke passes. Debian,
   companion windows, delivered key-event traversal, and pixel
   rendering remain open; GNOME Wayland accepted an exploratory AT-SPI Escape
   synthesis request without delivering it to the WebKit dialog. Scheduler-limited

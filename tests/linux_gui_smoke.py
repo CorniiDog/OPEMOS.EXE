@@ -98,6 +98,19 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Expected no accessible"):
             smoke.validate_cleared_result(dialog, focused)
 
+    def test_compatible_rows_preserve_repeated_values_and_reject_stale_action(self):
+        names = [value for row in smoke.EXPECTED_COMPATIBLE_ROWS for value in row]
+        end = "Available generations — development fixture"
+        root = FakeNode(children=[FakeNode(name) for name in [*names, end]])
+        smoke.validate_named_rows(root, smoke.EXPECTED_COMPATIBLE_ROWS, end)
+        root.children.insert(-1, FakeNode("Next action reported by Core"))
+        with self.assertRaisesRegex(RuntimeError, "result rows changed"):
+            smoke.validate_named_rows(root, smoke.EXPECTED_COMPATIBLE_ROWS, end)
+        root.children.pop(-2)
+        root.children[-2].name = "trusted"
+        with self.assertRaisesRegex(RuntimeError, "result rows changed"):
+            smoke.validate_named_rows(root, smoke.EXPECTED_COMPATIBLE_ROWS, end)
+
     def test_no_artifact_rows_require_exact_order_and_boundaries(self):
         names = [value for row in smoke.EXPECTED_NO_ARTIFACT_ROWS for value in row]
         end = "Available generations — development fixture"
