@@ -448,8 +448,8 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   and manifest rename/directory-sync/published receipt boundary. Restart tests
   prove only exact receipted states resume, incomplete pairs remain untrusted,
   source and foreign files remain unchanged, locks release, and residue stays
-  bounded. Receipt/directory storage faults, real filesystem exhaustion, and
-  production activation remain gated.
+  bounded. Published-artifact/output-directory storage faults, real filesystem
+  exhaustion, and production activation remain gated.
 - [x] Add test-only, thread-local storage fault injection at the inactive EXE
   image/manifest staging write and file-sync calls. Eighteen cases cover
   ENOSPC, EDQUOT, and EIO before the first byte, after a real partial write
@@ -464,8 +464,24 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   publication remains inactive. On Ubuntu 24.04.4 through the shared scheduler,
   formatting and Clippy pass, 313 Rust tests pass (27 ignored), and all 98
   frontend tests plus documentation, hygiene, and boundary integrity pass.
-- [ ] Extend storage-failure coverage to receipt creation/write/sync, published
-  artifact/directory sync, and durable quarantine/retirement before activation.
+- [x] Require the exact validated receipt chain to be synced before inactive
+  output-publication completion, including recovery of apparently complete
+  pairs. A regression first reproduced recovery returning Complete after a
+  failed receipt sync without retrying that sync. The final acceptance path
+  now verifies each receipt's descriptor identity and bytes before and after
+  syncing its file and pinned parent; it then repeats guards and final-pair
+  verification. Thirty-six receipt create/zero-byte/partial-write failures
+  preserve ambiguous evidence or reconstruct only a missing published receipt
+  from the exact intact staged chain. Twenty-four repeated ENOSPC/EDQUOT/EIO
+  file/parent-sync cases stay failed after lock reacquisition until persistence
+  succeeds; an identical-byte replacement inode is rejected. All four receipt
+  phases are covered. These are injected errors, not power-loss certification;
+  receipt bytes/schemas and production activation remain unchanged. On Ubuntu
+  24.04.4 under the shared scheduler, formatting and Clippy pass, 316 Rust tests
+  pass (27 ignored), and all 98 frontend tests plus documentation, hygiene, and
+  boundary integrity pass against the unchanged Core fixture pin.
+- [ ] Extend storage-failure coverage to published artifact/output-directory
+  sync and durable quarantine/retirement before activation.
 - [ ] Formalize lock ordering and prove status polling, cancellation, close,
   and worker completion cannot deadlock.
 - [ ] Route normal cancellation, window close, process failure, and next-launch

@@ -927,6 +927,12 @@ impl OutputReservation {
         validate_staged_published_pair(&receipt_chain[1].value, &receipt.value)?;
         self.verify_published_artifact(&receipt.value, &self.manifest)?;
         receipt_chain.push(receipt);
+        // Existing readable receipt bytes may survive a failed sync in the
+        // same boot. Re-establish durability for the exact validated chain
+        // before accepting a recovered transaction, including completed pairs.
+        for receipt in &receipt_chain {
+            persist_receipt_snapshot(&self.lock.root, receipt)?;
+        }
         // Revalidate the slow source/lock/record guards before the output pair.
         // The pair check must remain the final acceptance operation so a
         // concurrent output mutation cannot hide behind the source rehash.
@@ -1124,6 +1130,14 @@ fn create_receipt(
     if bytes.len() as u64 > RECEIPT_LIMIT {
         return Err("OUTPUT_RECEIPT_OVERSIZED".into());
     }
+    #[cfg(test)]
+    if let Some(fault) = staging_io_faults::take(
+        receipt.kind,
+        staging_io_faults::Operation::ReceiptCreate(receipt.phase),
+    ) {
+        staging_io_faults::observe(0);
+        return Err(map_write_error(io::Error::from_raw_os_error(fault.errno)));
+    }
     let mut file = root
         .openat(
             name,
@@ -1140,13 +1154,36 @@ fn create_receipt(
     if unsafe { libc::fchmod(file.as_raw_fd(), 0o600) } != 0 {
         return Err("OUTPUT_RECEIPT_MODE_FAILED".into());
     }
-    file.write_all(&bytes)
-        .and_then(|_| file.sync_all())
+    write_receipt_bytes(&mut file, &bytes, receipt)
+        .and_then(|_| sync_receipt_file(&file, receipt, false))
         .map_err(map_write_error)?;
     let identity = FileIdentity::of(&file.metadata().map_err(|e| e.to_string())?);
     root.rebind(name, &identity, "OUTPUT_RECEIPT_CHANGED")?;
-    root.file.sync_all().map_err(map_write_error)?;
+    sync_receipt_file(&root.file, receipt, true).map_err(map_write_error)?;
     root.rebind(name, &identity, "OUTPUT_RECEIPT_CHANGED")?;
+    root.verify(true)
+}
+
+fn persist_receipt_snapshot(
+    root: &PinnedDirectory,
+    snapshot: &ReceiptSnapshot,
+) -> Result<(), String> {
+    root.verify(true)?;
+    let file = root
+        .openat(&snapshot.name, libc::O_RDONLY | libc::O_NONBLOCK, 0)
+        .map_err(|_| "OUTPUT_RECEIPT_CHANGED".to_string())?;
+    let verify = || -> Result<(), String> {
+        if FileIdentity::of(&file.metadata().map_err(|e| e.to_string())?) != snapshot.identity
+            || hash_fd(&file, snapshot.identity.size)? != snapshot.sha256
+        {
+            return Err("OUTPUT_RECEIPT_CHANGED".into());
+        }
+        root.rebind(&snapshot.name, &snapshot.identity, "OUTPUT_RECEIPT_CHANGED")
+    };
+    verify()?;
+    sync_receipt_file(&file, &snapshot.value, false).map_err(map_write_error)?;
+    sync_receipt_file(&root.file, &snapshot.value, true).map_err(map_write_error)?;
+    verify()?;
     root.verify(true)
 }
 
@@ -1319,15 +1356,52 @@ fn sync_staged_file(file: &File, _kind: PublicationFileKind) -> io::Result<()> {
     file.sync_all()
 }
 
+fn write_receipt_bytes(
+    file: &mut File,
+    bytes: &[u8],
+    _receipt: &PublicationReceipt,
+) -> io::Result<()> {
+    #[cfg(test)]
+    if let Some(fault) = staging_io_faults::take(
+        _receipt.kind,
+        staging_io_faults::Operation::ReceiptWrite(_receipt.phase),
+    ) {
+        file.write_all(&bytes[..fault.prefix.min(bytes.len())])?;
+        staging_io_faults::observe(file.metadata()?.len());
+        return Err(io::Error::from_raw_os_error(fault.errno));
+    }
+    file.write_all(bytes)
+}
+
+fn sync_receipt_file(file: &File, _receipt: &PublicationReceipt, _parent: bool) -> io::Result<()> {
+    #[cfg(test)]
+    {
+        let operation = if _parent {
+            staging_io_faults::Operation::ReceiptParentSync(_receipt.phase)
+        } else {
+            staging_io_faults::Operation::ReceiptSync(_receipt.phase)
+        };
+        if let Some(fault) = staging_io_faults::take(_receipt.kind, operation) {
+            staging_io_faults::observe(file.metadata()?.len());
+            return Err(io::Error::from_raw_os_error(fault.errno));
+        }
+    }
+    file.sync_all()
+}
+
 #[cfg(test)]
 mod staging_io_faults {
-    use super::PublicationFileKind;
+    use super::{PublicationFileKind, PublicationPhase};
     use std::cell::RefCell;
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub(super) enum Operation {
         Write,
         Sync,
+        ReceiptCreate(PublicationPhase),
+        ReceiptWrite(PublicationPhase),
+        ReceiptSync(PublicationPhase),
+        ReceiptParentSync(PublicationPhase),
     }
 
     pub(super) struct Fault {
@@ -2097,6 +2171,231 @@ mod tests {
                     .unwrap(),
                 PublicationRecovery::Complete
             );
+        }
+    }
+
+    #[test]
+    fn receipt_create_and_partial_write_faults_preserve_ambiguous_evidence() {
+        use staging_io_faults::{Fault, Guard, Operation};
+        for phase in [
+            PublicationPhase::ImageStaged,
+            PublicationPhase::ManifestStaged,
+            PublicationPhase::ImagePublished,
+            PublicationPhase::ManifestPublished,
+        ] {
+            let staged = matches!(
+                phase,
+                PublicationPhase::ImageStaged | PublicationPhase::ManifestStaged
+            );
+            let kind = match phase {
+                PublicationPhase::ImageStaged | PublicationPhase::ImagePublished => {
+                    PublicationFileKind::Image
+                }
+                _ => PublicationFileKind::Manifest,
+            };
+            for (operation, prefix) in [
+                (Operation::ReceiptCreate(phase), 0),
+                (Operation::ReceiptWrite(phase), 0),
+                (Operation::ReceiptWrite(phase), 17),
+            ] {
+                for errno in [libc::ENOSPC, libc::EDQUOT, libc::EIO] {
+                    let fixture = Fixture::new("receipt-storage-failure");
+                    let source_path = fixture.source("source-a.img");
+                    let source_before = FileIdentity::of(&fs::metadata(&source_path).unwrap());
+                    let source = SourceReservation::acquire(&fixture.root(), &source_path).unwrap();
+                    let reservation =
+                        OutputReservation::acquire(&fixture.root(), &source, &fixture.output())
+                            .unwrap();
+                    let names = reservation.names().unwrap();
+                    let receipt_name = match phase {
+                        PublicationPhase::ImageStaged => names.image_receipt,
+                        PublicationPhase::ManifestStaged => names.manifest_receipt,
+                        PublicationPhase::ImagePublished => {
+                            reservation.published_receipt(3, "image-published").unwrap()
+                        }
+                        PublicationPhase::ManifestPublished => reservation
+                            .published_receipt(4, "manifest-published")
+                            .unwrap(),
+                    };
+                    let receipt_path = fixture.root().join(receipt_name.to_string_lossy().as_ref());
+                    let guard = Guard::arm(Fault {
+                        kind,
+                        operation,
+                        errno,
+                        prefix,
+                        skip: 0,
+                    });
+                    let error = reservation
+                        .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+                        .unwrap_err();
+                    assert_eq!(error, map_write_error(io::Error::from_raw_os_error(errno)));
+                    assert_eq!(guard.observed_size(), Some(prefix as u64));
+                    drop(guard);
+                    if operation == Operation::ReceiptCreate(phase) {
+                        assert!(!receipt_path.exists());
+                    } else {
+                        assert_eq!(fs::metadata(&receipt_path).unwrap().len(), prefix as u64);
+                    }
+                    let mut preserved = Vec::new();
+                    for directory in [&fixture.0, &fixture.root()] {
+                        for entry in fs::read_dir(directory).unwrap() {
+                            let entry = entry.unwrap();
+                            if entry.file_type().unwrap().is_file() {
+                                preserved.push((
+                                    entry.path(),
+                                    fs::read(entry.path()).unwrap(),
+                                    FileIdentity::of(&entry.metadata().unwrap()),
+                                ));
+                            }
+                        }
+                    }
+                    drop(reservation);
+                    drop(source);
+                    let source = SourceReservation::acquire(&fixture.root(), &source_path).unwrap();
+                    let reopened =
+                        OutputReservation::reopen(&fixture.root(), &source, &fixture.output())
+                            .unwrap();
+                    if !staged && operation == Operation::ReceiptCreate(phase) {
+                        // A missing published receipt can be recovered from the
+                        // intact staged chain and exact renamed artifact.
+                        assert_eq!(
+                            reopened
+                                .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+                                .unwrap(),
+                            PublicationRecovery::Complete
+                        );
+                    } else {
+                        for _ in 0..2 {
+                            assert!(reopened
+                                .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+                                .is_err());
+                            for (path, bytes, identity) in &preserved {
+                                assert_eq!(&fs::read(path).unwrap(), bytes);
+                                assert_eq!(
+                                    &FileIdentity::of(&fs::metadata(path).unwrap()),
+                                    identity
+                                );
+                            }
+                        }
+                    }
+                    assert_eq!(fs::read(&source_path).unwrap(), b"source-a");
+                    assert_eq!(
+                        FileIdentity::of(&fs::metadata(&source_path).unwrap()),
+                        source_before
+                    );
+                    assert_eq!(
+                        fs::read(fixture.source("source-b.img")).unwrap(),
+                        b"source-b"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn receipt_persistence_rejects_replacement_of_a_validated_snapshot() {
+        let fixture = Fixture::new("receipt-persistence-replacement");
+        let source =
+            SourceReservation::acquire(&fixture.root(), &fixture.source("source-a.img")).unwrap();
+        let reservation =
+            OutputReservation::acquire(&fixture.root(), &source, &fixture.output()).unwrap();
+        reservation
+            .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+            .unwrap();
+        let name = reservation.names().unwrap().image_receipt;
+        let snapshot = read_receipt_snapshot(&reservation.lock.root, &name).unwrap();
+        let path = fixture.root().join(name.to_string_lossy().as_ref());
+        let original = fs::read(&path).unwrap();
+        fs::rename(&path, fixture.root().join("preserved-original-receipt")).unwrap();
+        fs::write(&path, &original).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            persist_receipt_snapshot(&reservation.lock.root, &snapshot).unwrap_err(),
+            "OUTPUT_RECEIPT_CHANGED"
+        );
+        assert_eq!(fs::read(&path).unwrap(), original);
+        source.verify().unwrap();
+    }
+
+    #[test]
+    fn receipt_sync_failure_cannot_be_skipped_after_reopen() {
+        use staging_io_faults::{Fault, Guard, Operation};
+        for phase in [
+            PublicationPhase::ImageStaged,
+            PublicationPhase::ManifestStaged,
+            PublicationPhase::ImagePublished,
+            PublicationPhase::ManifestPublished,
+        ] {
+            let kind = match phase {
+                PublicationPhase::ImageStaged | PublicationPhase::ImagePublished => {
+                    PublicationFileKind::Image
+                }
+                _ => PublicationFileKind::Manifest,
+            };
+            for operation in [
+                Operation::ReceiptSync(phase),
+                Operation::ReceiptParentSync(phase),
+            ] {
+                for errno in [libc::ENOSPC, libc::EDQUOT, libc::EIO] {
+                    let fixture = Fixture::new("receipt-sync-retry");
+                    let source = SourceReservation::acquire(
+                        &fixture.root(),
+                        &fixture.source("source-a.img"),
+                    )
+                    .unwrap();
+                    let reservation =
+                        OutputReservation::acquire(&fixture.root(), &source, &fixture.output())
+                            .unwrap();
+                    let guard = Guard::arm(Fault {
+                        kind,
+                        operation,
+                        errno,
+                        prefix: 0,
+                        skip: 0,
+                    });
+                    assert!(reservation
+                        .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+                        .is_err());
+                    assert!(guard.observed_size().is_some());
+                    drop(guard);
+                    drop(reservation);
+                    drop(source);
+                    let source = SourceReservation::acquire(
+                        &fixture.root(),
+                        &fixture.source("source-a.img"),
+                    )
+                    .unwrap();
+                    let reopened =
+                        OutputReservation::reopen(&fixture.root(), &source, &fixture.output())
+                            .unwrap();
+                    // Complete receipt bytes on disk do not prove the failed sync
+                    // became durable. A repeated failure must still block completion.
+                    let guard = Guard::arm(Fault {
+                        kind,
+                        operation,
+                        errno,
+                        prefix: 0,
+                        skip: 0,
+                    });
+                    let error = reopened
+                        .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+                        .unwrap_err();
+                    assert!(
+                        guard.observed_size().is_some(),
+                        "recovery skipped failed receipt persistence"
+                    );
+                    assert_eq!(error, map_write_error(io::Error::from_raw_os_error(errno)));
+                    drop(guard);
+                    assert_eq!(
+                        reopened
+                            .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+                            .unwrap(),
+                        PublicationRecovery::Complete
+                    );
+                    source.verify().unwrap();
+                    assert_eq!(fs::read(fixture.output()).unwrap(), TEST_IMAGE);
+                }
+            }
         }
     }
 
