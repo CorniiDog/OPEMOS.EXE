@@ -11,6 +11,22 @@ EXPECTED_ROWS = {
     "Last-known-good generation — development fixture": "#41",
 }
 
+EXPECTED_SETTINGS_FOCUS_ORDER = [
+    ("Close settings", "push button"),
+    (
+        "Track SteamOS driver updates Check for a compatible NVIDIA profile when "
+        "SteamOS changes. Never selects an unverified closest kernel.",
+        "check box",
+    ),
+    (
+        "Show experimental upstream NVIDIA releases Add NVIDIA's unpatched open-module "
+        "tags to the per-build selector. Automatic mode never selects them.",
+        "check box",
+    ),
+    ("Connect GitHub", "push button"),
+    ("Inspect Core compatibility…", "combo box"),
+]
+
 EXPECTED_FOCUS_ORDER = [
     ("Close", "push button"),
     ("Open a local resolver JSON file (up to 1 MiB)", "push button"),
@@ -129,6 +145,14 @@ def controls_with_state(root, state):
         controls.append((node.get_name() or "", node.get_role_name()))
     return controls
 
+def validate_settings_focus(settings, focusable_state, focused_state):
+    focusable = controls_with_state(settings, focusable_state)
+    if focusable != EXPECTED_SETTINGS_FOCUS_ORDER:
+        raise RuntimeError(f"Settings focus order changed: {focusable!r}.")
+    focused = controls_with_state(settings, focused_state)
+    if focused != [("Close settings", "push button")]:
+        raise RuntimeError(f"Settings initial focus changed: {focused!r}.")
+
 def validate_dialog_focus(dialog, focusable_state, focused_state):
     focusable = controls_with_state(dialog, focusable_state)
     if focusable != EXPECTED_FOCUS_ORDER:
@@ -175,10 +199,10 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     app = wait(lambda: application_for_pid(desktop, expected_pid),
                "the packaged OPEMOS accessibility tree")
     invoke(exactly_one_action(app, "Open settings"))
-    close_settings = wait(
-        lambda: exactly_one_focused_action(app, "Close settings", focused_state),
-        "initial Settings focus",
-    )
+    settings = wait(lambda: exactly_one_role(app, "Builder settings", "landmark"),
+                    "the Settings landmark")
+    validate_settings_focus(settings, focusable_state, focused_state)
+    close_settings = exactly_one_focused_action(settings, "Close settings", focused_state)
     inspector = wait(lambda: exactly_one_action(app, "Inspect Core compatibility…"),
                      "the Settings compatibility action")
     invoke(inspector)

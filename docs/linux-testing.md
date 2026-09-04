@@ -17,9 +17,10 @@ testing. Debian is an intended testing platform, not a validated distribution.
 A development binary and the extracted debug-package binary have launched and
 closed in an Ubuntu 24.04.4 Wayland session, with no remaining launcher or EXE
 processes. The package was not installed. GNOME denied noninteractive screenshot
-access, so pixel rendering, focus order, companion windows, desktop integration,
-and interactive close remain unvalidated. AT-SPI has validated the main native
-frame, WebKit Settings/compatibility controls, debug generation row names and
+access, so pixel rendering, delivered key-event traversal, companion windows,
+desktop integration, and interactive close remain unvalidated. AT-SPI has
+validated the main native frame, WebKit Settings/compatibility controls, exact
+Settings and compatibility-dialog focus order, debug generation row names and
 values, scoped dialog close, and main-document survival on Ubuntu Wayland.
 These host checks do not establish a
 successful appliance boot, complete image build, installed package, or
@@ -133,9 +134,11 @@ dpkg-deb -x 'src-tauri/target/debug/bundle/deb/OPEMOS EXE Linux Test_0.1.0_amd64
 The smoke inherits the graphical session environment, including its AT-SPI bus
 and accessibility bridge setting. It accepts only the accessibility application
 whose process ID matches the process it launched, then opens Settings and the
-read-only Core compatibility inspector. Opening Settings must focus its Close
-control, and closing Settings must restore focus to its opener. The smoke also
-verifies the ordered compatibility controls,
+read-only Core compatibility inspector. In the tested unauthenticated package
+session, the Settings landmark must expose exactly Close, the two enabled update
+preferences, Connect GitHub, and the compatibility inspector in that focus order.
+Opening Settings must focus its Close control, and closing Settings must restore
+focus to its opener. The smoke also verifies the ordered compatibility controls,
 initial Close focus, all four development-fixture generation rows, and focus
 restoration to the Settings opener after closing the dialog. It then stops the
 isolated application process group. It has

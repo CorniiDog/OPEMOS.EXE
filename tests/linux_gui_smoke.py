@@ -111,6 +111,25 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             smoke.exactly_one_focused_action(root, "Open settings", focused)
 
+    def test_settings_focus_requires_exact_order_and_single_initial_close(self):
+        focusable, focused = "focusable", "focused"
+        controls = [FakeNode(name, role=role, states={focusable})
+                    for name, role in smoke.EXPECTED_SETTINGS_FOCUS_ORDER]
+        controls[0].states = {focusable, focused}
+        settings = FakeNode(children=controls)
+        smoke.validate_settings_focus(settings, focusable, focused)
+        settings.children[1], settings.children[2] = settings.children[2], settings.children[1]
+        with self.assertRaisesRegex(RuntimeError, "focus order changed"):
+            smoke.validate_settings_focus(settings, focusable, focused)
+        settings.children[1], settings.children[2] = settings.children[2], settings.children[1]
+        settings.children.append(FakeNode("Unexpected", actionable=True, states={focusable}))
+        with self.assertRaisesRegex(RuntimeError, "focus order changed"):
+            smoke.validate_settings_focus(settings, focusable, focused)
+        settings.children.pop()
+        controls[1].states = {focusable, focused}
+        with self.assertRaisesRegex(RuntimeError, "initial focus changed"):
+            smoke.validate_settings_focus(settings, focusable, focused)
+
     def test_dialog_focus_requires_exact_order_and_single_initial_close(self):
         focusable, focused = "focusable", "focused"
         controls = [FakeNode(name, role=role, states={focusable})
