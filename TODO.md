@@ -163,9 +163,13 @@ installation targets, production activation, or hardware certification.
   snapshots and restores exact preexisting bytes/modes and removes only a schema
   proven absent before launch, including child-failure paths. Two new tests cover
   absent/preexisting files, modes, parent cleanup, thrown actions, and symlink
-  rejection; all nine focused launcher tests pass. GNOME denied noninteractive
-  screenshot access, so visual content, focus, companion windows, packaged app
-  launch, Debian, and SIGKILL-of-launcher restoration remain open. Formatting,
+  rejection; all nine focused launcher tests pass. The launcher now waits for
+  process-group quiescence before restoration; a repeat package build leaves no
+  schema, Cargo rewrite, or descendant. The validated package was extracted
+  without installation, launched under Wayland, and closed by SIGTERM with no
+  orphan. GNOME denied noninteractive screenshot access, so visual content,
+  focus, companion windows, Debian, and SIGKILL-of-launcher restoration remain
+  open. Formatting,
   Clippy, 330 Rust tests (27 ignored), and 107 frontend tests plus documentation,
   hygiene, and boundary integrity pass through the shared scheduler.
 - [ ] Validate graphical development and packaged application launch/close on

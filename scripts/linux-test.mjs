@@ -93,6 +93,18 @@ export function runLinuxTestCommand(executable, args, { cwd = root, env = proces
       try { process.kill(-child.pid, signal); }
       catch (error) { if (error.code !== "ESRCH") signalError = error; }
     };
+    const groupExists = () => {
+      if (!Number.isSafeInteger(child.pid) || child.pid <= 1) return false;
+      try { process.kill(-child.pid, 0); return true; }
+      catch (error) { if (error.code === "ESRCH") return false; throw error; }
+    };
+    const waitForGroupExit = async () => {
+      const deadline = Date.now() + graceMs;
+      while (groupExists() && Date.now() < deadline) {
+        await new Promise((settle) => setTimeout(settle, 10));
+      }
+      if (groupExists()) throw new Error("Linux command process group did not stop after SIGKILL.");
+    };
     const stop = (signal) => {
       if (stopSignal) return;
       stopSignal = signal;
@@ -111,10 +123,17 @@ export function runLinuxTestCommand(executable, args, { cwd = root, env = proces
     child.once("error", (error) => { cleanup(); reject(error); });
     child.once("exit", (code, signal) => {
       // A finished leader must not leave background children holding the job.
+      // Wait for group quiescence before callers restore files descendants may
+      // still be writing.
       signalGroup("SIGKILL");
-      cleanup();
-      if (signalError) { reject(signalError); return; }
-      resolve({ code, signal: stopSignal ?? signal });
+      void waitForGroupExit().then(() => {
+        cleanup();
+        if (signalError) { reject(signalError); return; }
+        resolve({ code, signal: stopSignal ?? signal });
+      }, (error) => {
+        cleanup();
+        reject(signalError ?? error);
+      });
     });
   });
 }

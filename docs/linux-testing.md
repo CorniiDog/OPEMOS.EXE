@@ -14,12 +14,13 @@ managed disposable appliances.
 
 Ubuntu **24.04.4** is the only host version used for this implementation's local
 testing. Debian is an intended testing platform, not a validated distribution.
-A development binary has launched and closed in an Ubuntu 24.04.4 Wayland
-session through the experimental launcher, with no remaining launcher or EXE
-processes. GNOME denied noninteractive screenshot access, so rendered content,
-companion windows, focus, and packaged application launch remain unvalidated.
-These host checks do not establish a successful appliance boot, complete image
-build, packaged application launch, or physical-hardware result. Consult TODO
+A development binary and the extracted debug-package binary have launched and
+closed in an Ubuntu 24.04.4 Wayland session, with no remaining launcher or EXE
+processes. The package was not installed. GNOME denied noninteractive screenshot
+access, so rendered content, companion windows, focus, desktop integration, and
+interactive close remain unvalidated. These host checks do not establish a
+successful appliance boot, complete image build, installed package, or
+physical-hardware result. Consult TODO
 for the exact validation evidence and remaining gates.
 
 ## Install development prerequisites
@@ -100,8 +101,9 @@ extra CLI arguments are rejected. The separate test configuration uses an opaque
 main window and its own application identifier; macOS defaults remain unchanged.
 The launcher snapshots the exact pre-launch bytes and modes of `Cargo.toml` and
 the Linux capability schema path. After normal exit, signal handling, or child
-failure, it restores preexisting files and removes only a schema proven absent
-before launch. A launcher SIGKILL can still bypass this in-process restoration.
+failure, it waits for the isolated process group to disappear, restores
+preexisting files, and removes only a schema proven absent before launch. A
+launcher SIGKILL can still bypass this in-process restoration.
 
 Create a local **debug Debian package** without installing it:
 
