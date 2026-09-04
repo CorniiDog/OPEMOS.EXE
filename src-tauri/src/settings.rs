@@ -67,20 +67,18 @@ pub(crate) fn bounded_command_output_with_limits(
     let stdout_reader = thread::spawn(move || read_bounded_command_stream(stdout, output_limit));
     let stderr_reader = thread::spawn(move || read_bounded_command_stream(stderr, output_limit));
     let terminate = |child: &mut Child| {
-        #[cfg(unix)]
-        {
-            let _ = Command::new("kill")
-                .args(["-KILL", &format!("-{}", child.id())])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-        }
+        kill_owned_process_group(child);
         let _ = child.kill();
         let _ = child.wait();
     };
     let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status,
+            Ok(Some(status)) => {
+                // A finished leader may leave descendants holding these pipes.
+                // End its isolated group before waiting for reader completion.
+                kill_owned_process_group(&child);
+                break status;
+            }
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
             Ok(None) => {
                 terminate(&mut child);

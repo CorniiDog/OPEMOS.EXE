@@ -2760,7 +2760,7 @@ mod tests {
         reservation
             .publish_bytes_with_hook(&source, TEST_IMAGE, |phase| {
                 if phase == target_phase {
-                    println!("PUBLICATION_READY:{phase}");
+                    println!("\nPUBLICATION_READY:{phase}");
                     io::stdout().flush().unwrap();
                     loop {
                         thread::park_timeout(Duration::from_secs(60));

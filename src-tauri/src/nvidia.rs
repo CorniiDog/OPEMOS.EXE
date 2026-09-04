@@ -958,14 +958,7 @@ pub(crate) fn bounded_git_mutation(
         .spawn()
         .map_err(|error| format!("Could not {description}: {error}"))?;
     let cleanup = |child: &mut Child| {
-        #[cfg(unix)]
-        {
-            let _ = Command::new("kill")
-                .args(["-KILL", &format!("-{}", child.id())])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-        }
+        kill_owned_process_group(child);
         let _ = child.kill();
         let _ = child.wait();
     };

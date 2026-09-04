@@ -2362,6 +2362,8 @@ fn inventory_tombstones(root: &Path) -> Result<Vec<(PathBuf, FilesystemIdentity)
     Ok(tombstones)
 }
 
+// libc field widths differ between macOS and Linux; retain the portable cast.
+#[allow(clippy::unnecessary_cast)]
 fn quarantine_directory(
     path: &Path,
     source_root: &Path,
@@ -2448,6 +2450,8 @@ fn clean_tombstones_bounded(
         .map_err(|error| format!("Could not sync Core generation trash directory: {error}"))
 }
 
+// libc field widths differ between macOS and Linux; retain the portable cast.
+#[allow(clippy::unnecessary_cast)]
 fn clean_tombstone_directory(
     directory: &File,
     trash_device: u64,
@@ -3186,6 +3190,8 @@ fn acquire_bound_cache_lock(
     Ok((CoreGenerationCacheLock { file }, identity))
 }
 
+// libc field widths differ between macOS and Linux; retain the portable cast.
+#[allow(clippy::unnecessary_cast)]
 fn require_lock_path_identity(
     root_file: &File,
     name: &CStr,
@@ -4672,6 +4678,8 @@ fn seal_closed_tree_bound_with_hook(
     Ok(())
 }
 
+// libc field widths differ between macOS and Linux; retain the portable cast.
+#[allow(clippy::unnecessary_cast)]
 fn seal_open_generation_directory(
     directory: &File,
     depth: usize,
@@ -4778,6 +4786,8 @@ fn seal_open_generation_directory(
         .map_err(|error| storage_io_error("Could not sync sealed Core generation directory", error))
 }
 
+// libc field widths differ between macOS and Linux; retain the portable cast.
+#[allow(clippy::unnecessary_cast)]
 fn require_opened_generation_entry(
     opened: &File,
     expected: &libc::stat,
@@ -4798,6 +4808,8 @@ fn require_opened_generation_entry(
     Ok(())
 }
 
+// libc field widths differ between macOS and Linux; retain the portable cast.
+#[allow(clippy::unnecessary_cast)]
 fn verify_open_sealed_generation_directory(
     directory: &File,
     depth: usize,

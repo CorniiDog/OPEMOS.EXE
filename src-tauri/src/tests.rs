@@ -304,6 +304,13 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn qemu_watchdog_rejects_unbounded_process_groups() {
+        assert!(spawn_qemu_watchdog(0).is_err());
+        assert!(spawn_qemu_watchdog(u32::MAX).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn qemu_watchdog_terminates_its_exact_child_when_keepalive_closes() {
         let mut target = Command::new("/bin/sh");
         target
@@ -393,6 +400,37 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn owned_group_cleanup_preserves_unrelated_processes() {
+        use std::os::unix::process::ExitStatusExt;
+        struct Guard(Option<Child>);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                if let Some(mut child) = self.0.take() {
+                    kill_owned_process_group(&child);
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+        let spawn = || {
+            let mut command = Command::new("/bin/sleep");
+            command.arg("30");
+            isolate_process_group(&mut command);
+            Guard(Some(command.spawn().unwrap()))
+        };
+        let mut owned = spawn();
+        let mut unrelated = spawn();
+        let owned_child = owned.0.as_mut().unwrap();
+        assert_ne!(owned_child.id(), unrelated.0.as_ref().unwrap().id());
+        kill_owned_process_group(owned_child);
+        let status = owned_child.wait().unwrap();
+        owned.0.take();
+        assert_eq!(status.signal(), Some(libc::SIGKILL));
+        assert!(unrelated.0.as_mut().unwrap().try_wait().unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn github_command_runner_bounds_runtime_and_output() {
         let (status, stdout, stderr) = bounded_command_output_with_limits(
             Path::new("/bin/sh"),
@@ -427,6 +465,23 @@ mod tests {
         )
         .expect_err("bounded command must cap output");
         assert!(excessive.contains("excessive output"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn completed_command_cannot_leave_descendant_pipes_open() {
+        for code in [0, 7] {
+            let started = Instant::now();
+            let script = format!("sleep 30 & printf done; printf diagnostic >&2; exit {code}");
+            let (status, stdout, stderr) = bounded_command_output_with_limits(
+                Path::new("/bin/sh"), &["-c", &script], "run descendant fixture",
+                Duration::from_secs(1), 64,
+            ).unwrap();
+            assert_eq!(status.code(), Some(code));
+            assert_eq!(stdout, b"done");
+            assert_eq!(stderr, b"diagnostic");
+            assert!(started.elapsed() < Duration::from_secs(2));
+        }
     }
 
     #[test]
@@ -995,9 +1050,12 @@ esac
         assert!(started.elapsed() < Duration::from_secs(2));
         run("descendant", Duration::from_secs(1)).expect("clean descendant mode");
         let descendant = fs::read_to_string(root.0.join("descendant.pid")).expect("descendant pid");
-        let alive = Command::new("kill").args(["-0", descendant.trim()])
-            .stdout(Stdio::null()).stderr(Stdio::null()).status().expect("inspect descendant");
-        assert!(!alive.success(), "bounded runner left a descendant alive");
+        let descendant = descendant.trim().parse::<u32>().expect("numeric descendant PID");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while process_is_alive(descendant) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!process_is_alive(descendant), "bounded runner left a descendant alive");
         let non_utf8 = run("nonutf8", Duration::from_secs(1)).expect("capture non-UTF8 bytes");
         assert!(String::from_utf8(non_utf8).is_err());
         assert!(run("failure", Duration::from_secs(1)).unwrap_err().contains("partial-error"));

@@ -45,6 +45,46 @@ npm run test:package-headless
 Ignored Rust tests perform live GitHub, Arch, Valve, QEMU, recovery-image,
 macOS authorization, or virtual-media work and must be selected deliberately.
 
+## Experimental Ubuntu/Debian validation
+
+The Linux host-testing backend is under development. The current validation
+baseline exercises shared contracts, caches, disposable handoffs, export
+transactions, and process cleanup on Ubuntu 24.04.4 x86_64. It does not establish
+Debian, macOS, real QEMU appliance, physical-media, or SteamOS/NVIDIA hardware
+validation. Linux physical-device writing remains unavailable.
+
+Use Node.js 22 and stable Rust with `clippy` and `rustfmt`. Both `cargo` and
+`rustc` must be on PATH because verifier lifecycle tests compile small fixture
+programs. Install the same Linux build dependencies as CI:
+
+```bash
+sudo -n apt-get install --yes build-essential curl file \
+  libayatana-appindicator3-dev librsvg2-dev libssl-dev \
+  libwebkit2gtk-4.1-dev patchelf pkg-config
+. "$HOME/.cargo/env"
+npm ci
+```
+
+Use an isolated Core fixture checkout at the CI commit and set both variables:
+
+```bash
+export OPEMOS_CORE_CONTRACT_ROOT=/absolute/path/to/core-fixture-checkout
+export OPEMOS_CORE_EXPECTED_COMMIT=3e49323fce266af8686039fb6487918ef5a64fd9
+```
+
+On the coordinated development host, run all compilation and large suites through
+the `heavy.sh` wrapper required by `AGENTS.md`; for example, with
+`OPEMOS_HEAVY` set to that wrapper's absolute path:
+
+```bash
+"$OPEMOS_HEAVY" npm run test:all
+```
+
+The wrapper supplies serial test execution and the shared CPU/memory budget.
+Exit 75 means the slot is busy, not a test failure; wait for the scheduler rather
+than bypassing the wrapper. Production generation trust and activation remain
+blocked by the publication inputs in [TODO.md](../TODO.md).
+
 ## Backend boundaries
 
 | Module | Responsibility |

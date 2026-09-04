@@ -308,15 +308,39 @@ pub(crate) fn isolate_process_group(command: &mut Command) {
     let _ = command;
 }
 
+// Call only for children launched with isolate_process_group. Never signal
+// group zero or interpret a PID through a platform-specific kill utility.
+pub(crate) fn kill_owned_process_group(child: &Child) {
+    #[cfg(unix)]
+    if let Ok(pid) = i32::try_from(child.id()) {
+        if pid > 0 {
+            unsafe { libc::kill(-pid, libc::SIGKILL) };
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = child;
+}
+
 #[cfg(unix)]
 pub(crate) fn spawn_qemu_watchdog(qemu_pid: u32) -> Result<QemuWatchdog, String> {
+    if qemu_pid == 0 || i32::try_from(qemu_pid).is_err() {
+        return Err("QEMU watchdog requires a positive process-group identity.".into());
+    }
+    // Ubuntu/Debian dash's kill builtin rejects `--`. The external Linux
+    // utility supports the explicit option delimiter for negative group IDs.
+    let signal = if cfg!(target_os = "linux") {
+        "/bin/kill"
+    } else {
+        "kill"
+    };
+    let script = format!("cat >/dev/null; {signal} -TERM -- \"-$1\" 2>/dev/null || exit 0; i=0; while {signal} -0 -- \"-$1\" 2>/dev/null && test \"$i\" -lt 20; do sleep 0.1; i=$((i + 1)); done; {signal} -KILL -- \"-$1\" 2>/dev/null || true");
     let (reader, writer) = UnixStream::pair()
         .map_err(|error| format!("Could not create the QEMU lifecycle watchdog: {error}"))?;
     let reader: OwnedFd = reader.into();
     let child = Command::new("/bin/sh")
         .args([
             "-c",
-            "cat >/dev/null; kill -TERM -- \"-$1\" 2>/dev/null || exit 0; i=0; while kill -0 -- \"-$1\" 2>/dev/null && test \"$i\" -lt 20; do sleep 0.1; i=$((i + 1)); done; kill -KILL -- \"-$1\" 2>/dev/null || true",
+            &script,
             "steamos-qemu-watchdog",
             &qemu_pid.to_string(),
         ])

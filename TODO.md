@@ -84,6 +84,31 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
+### Experimental Ubuntu/Debian host testing (current user priority)
+
+This authorizes an EXE host-testing path alongside macOS, not Ubuntu/Debian
+installation targets, production activation, or hardware certification.
+
+- [x] Finish the preserved appliance-handoff test change before extending the
+  host backend. On Ubuntu 24.04.4 x86_64, scheduler-limited formatting and
+  warnings-as-errors Clippy pass; the complete Rust suite passes 302 tests
+  (25 ignored live/helper entries), and all 74 frontend tests plus documentation,
+  hygiene, and boundary integrity checks pass. Core fixtures use immutable CI
+  commit `3e49323fce266af8686039fb6487918ef5a64fd9`. Fix Linux dash watchdog
+  signaling, bound process-group IDs, directly signal isolated Git-runner groups,
+  and stop descendant-held pipes after leader exit. Real subprocess matrices
+  now work with serial test-harness output. Debian, macOS, live QEMU, physical
+  media, and hardware certification are not established by this host run.
+- [ ] Add explicit experimental host capability/dependency reporting. Replace
+  the actual macOS-only RAM, firmware, seed-ISO, and QEMU acceleration adapters;
+  reuse existing Unix storage, descriptor, overlay, cleanup, and export code.
+- [ ] Require usable KVM or explicit software-emulation selection for Linux
+  testing. Keep physical-device writing unavailable until separately validated.
+- [ ] Provide exact Ubuntu/Debian setup and test launch/package commands,
+  disposable appliance lifecycle smoke evidence, and tested-version limits.
+- [ ] Make compatibility-management UI present the same bounded Core results
+  and clearly non-production fixtures without inventing policy or activation.
+
 ### 1. Complete the OPEMOS Core migration
 
 Production generation activation is intentionally blocked until the maintainer
@@ -194,6 +219,15 @@ already Core contracts and are not open-ended product choices.
   restart, cancellation, cleanup, and ENOSPC handoff matrix. A routine compatible
   lock addition must require neither a new EXE binary nor a reimage; unknown
   schema or trust-policy versions must stop safely.
+- [x] Exercise the inactive appliance handoff in real subprocesses killed at
+  all 38 existing staging, partial-file-receipt, and retirement hook boundaries.
+  Fresh-process restart reauthenticates installed trust, reacquires locks,
+  preserves cache/trust bytes and inode identities, and either validates and
+  retires the handoff or preserves ambiguous stage bytes with the stable
+  recovery-required result. Only the exact unfinished lease-record temporary
+  is reconciled in partial-receipt cases. This supplements synthetic fault
+  tests; production wiring, durable quarantine, real storage-failure coverage,
+  and macOS validation remain separate gates.
 - [ ] Add an explicit authenticated maintenance action for a preserved
   `appliance-handoff-recovery-required` pre-receipt stage. Never auto-delete
   ambiguous same-UID residue after the create-to-receipt crash gap.
@@ -491,7 +525,9 @@ must be reported; a default-suite pass does not imply hardware certification.
 
 These are not current OPEMOS.EXE implementation work:
 
-- Windows and Linux application ports, including a signed Windows USB writer.
+- Production Windows and Linux application ports, including a signed Windows USB
+  writer. The explicitly authorized experimental Ubuntu/Debian host-testing
+  path above is current work.
 - Raspberry Pi Imager-style password and Wi-Fi provisioning.
 - Automatic official-image download assistance.
 - Multiple certified NVIDIA profiles and the optional no-CUDA profile beyond

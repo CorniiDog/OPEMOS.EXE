@@ -44,6 +44,8 @@ struct VolumeBudget<'a> {
     purposes: Vec<&'a str>,
 }
 
+// libc field widths differ between macOS and Linux; retain the portable cast.
+#[allow(clippy::unnecessary_cast)]
 pub(crate) fn host_volume_space(path: &Path) -> Result<HostVolumeSpace, String> {
     let resolved = fs::canonicalize(path)
         .map_err(|error| format!("Could not resolve host storage path: {error}"))?;

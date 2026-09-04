@@ -1815,6 +1815,7 @@ pub(crate) fn preview_image_output(path: String) -> Result<ImageOutputPreview, S
     })
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn usb_candidate_from_diskutil_info(
     info: &serde_json::Value,
     image_bytes: u64,

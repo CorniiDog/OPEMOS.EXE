@@ -1673,8 +1673,8 @@ impl StagedApplianceGeneration<'_> {
 
     /// Explicitly retires the descriptor-bound handoff after the owning guest
     /// lifecycle has completed. The durable retiring marker lets a later
-    /// staging call finish synthetic restart reconciliation. Production guest
-    /// wiring and a real subprocess/SIGKILL matrix remain separate gates.
+    /// staging call finish restart reconciliation. Production guest wiring
+    /// remains separately gated by the complete lifecycle and storage matrix.
     pub(crate) fn retire(&mut self) -> Result<(), String> {
         self.retire_with_hook(|_| Ok(()))
     }
@@ -3156,10 +3156,58 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    const STAGING_CRASH_PHASES: &[&str] = &[
+        "after-lease-mkdir",
+        "after-intent-create",
+        "after-intent-write",
+        "after-intent-sync",
+        "after-intent-publish",
+        "after-intent-directory-sync",
+        "after-lease-parent-sync",
+        "after-stage-mkdir",
+        "after-stage-marker-create",
+        "after-stage-marker-write",
+        "after-stage-marker-sync",
+        "after-stage-marker-publish",
+        "after-stage-marker-directory-sync",
+        "after-stage-created",
+        "after-record-sync",
+        "after-files-receipt-publish",
+        "after-files-receipt-directory-sync",
+        "after-copy",
+        "after-seal",
+        "after-rename",
+        "after-destination-sync",
+        "after-published-marker-create",
+        "after-published-marker-write",
+        "after-published-marker-sync",
+        "after-published-marker-publish",
+        "after-published-marker-directory-sync",
+        "after-lease-complete",
+    ];
+
+    const PARTIAL_RECEIPT_CRASH_PHASES: &[&str] = &[
+        "after-files-receipt-create",
+        "after-files-receipt-write",
+        "after-files-receipt-sync",
+    ];
+
+    const RETIREMENT_CRASH_PHASES: &[&str] = &[
+        "after-retiring-marker",
+        "after-retiring-marker-create",
+        "after-retiring-marker-write",
+        "after-retiring-marker-sync",
+        "after-retiring-marker-publish",
+        "after-retiring-marker-directory-sync",
+        "after-retired-handoff",
+        "after-retired-lease",
+    ];
+
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
     struct PreparedFixture {
         base: PathBuf,
+        cleanup: bool,
         cache: CoreGenerationCache,
         destination: PathBuf,
         generation: InstalledAuthenticatedGeneration,
@@ -3172,13 +3220,20 @@ mod tests {
     impl PreparedFixture {
         fn create(name: &str) -> Self {
             let base = temporary_root(name);
+            Self::load(base, true)
+        }
+
+        // Restart reauthenticates without rewriting trust files or cache state.
+        fn load(base: PathBuf, initialize: bool) -> Self {
             let trust = base.join("trust");
             let cache_root = base.join("cache");
             let destination = base.join("appliance");
-            fs::create_dir_all(&trust).unwrap();
-            fs::create_dir(&destination).unwrap();
-            fs::set_permissions(&trust, fs::Permissions::from_mode(0o700)).unwrap();
-            fs::set_permissions(&destination, fs::Permissions::from_mode(0o700)).unwrap();
+            if initialize {
+                fs::create_dir_all(&trust).unwrap();
+                fs::create_dir(&destination).unwrap();
+                fs::set_permissions(&trust, fs::Permissions::from_mode(0o700)).unwrap();
+                fs::set_permissions(&destination, fs::Permissions::from_mode(0o700)).unwrap();
+            }
 
             let keyring = b"fixture-generation-keyring".to_vec();
             let fingerprint = "A".repeat(40);
@@ -3293,9 +3348,11 @@ mod tests {
             };
             let checkpoint_bytes = canonical(&checkpoint_document);
             let pins = InstalledTrustPins::fixture(&policy, &keyring, &checkpoint_bytes);
-            write_private(&trust.join(POLICY_FILENAME), &policy);
-            write_private(&trust.join(KEYRING_FILENAME), &keyring);
-            write_private(&trust.join(CHECKPOINT_FILENAME), &checkpoint_bytes);
+            if initialize {
+                write_private(&trust.join(POLICY_FILENAME), &policy);
+                write_private(&trust.join(KEYRING_FILENAME), &keyring);
+                write_private(&trust.join(CHECKPOINT_FILENAME), &checkpoint_bytes);
+            }
 
             let verifier_fingerprint = fingerprint.clone();
             let pending = authenticate_installed_discovery(
@@ -3348,42 +3405,45 @@ mod tests {
                 ("userspace-lock.json".to_owned(), payload),
             ]);
             let cache = CoreGenerationCache::open(&cache_root).unwrap();
-            let reservation = files.values().map(|bytes| bytes.len() as u64).sum();
-            cache
-                .stage_candidate(
-                    "fixture-cache-stage",
-                    reservation,
-                    &identity,
-                    |root| {
-                        for (name, bytes) in &files {
-                            let mut options = OpenOptions::new();
-                            let mut file = options
-                                .write(true)
-                                .create_new(true)
-                                .mode(0o600)
-                                .open(root.join(name))
-                                .map_err(|error| error.to_string())?;
-                            file.write_all(bytes).map_err(|error| error.to_string())?;
-                            file.sync_all().map_err(|error| error.to_string())?;
-                        }
-                        Ok(())
-                    },
-                    |_| Ok(()),
+            let operation = "fixture-appliance-stage".to_owned();
+            if initialize {
+                let reservation = files.values().map(|bytes| bytes.len() as u64).sum();
+                cache
+                    .stage_candidate(
+                        "fixture-cache-stage",
+                        reservation,
+                        &identity,
+                        |root| {
+                            for (name, bytes) in &files {
+                                let mut options = OpenOptions::new();
+                                let mut file = options
+                                    .write(true)
+                                    .create_new(true)
+                                    .mode(0o600)
+                                    .open(root.join(name))
+                                    .map_err(|error| error.to_string())?;
+                                file.write_all(bytes).map_err(|error| error.to_string())?;
+                                file.sync_all().map_err(|error| error.to_string())?;
+                            }
+                            Ok(())
+                        },
+                        |_| Ok(()),
+                    )
+                    .unwrap();
+                begin_installed_authenticated_activation(
+                    &cache,
+                    &generation,
+                    &checkpoint,
+                    &target,
+                    &[],
+                    &operation,
+                    || false,
                 )
                 .unwrap();
-            let operation = "fixture-appliance-stage".to_owned();
-            begin_installed_authenticated_activation(
-                &cache,
-                &generation,
-                &checkpoint,
-                &target,
-                &[],
-                &operation,
-                || false,
-            )
-            .unwrap();
+            }
             Self {
                 base,
+                cleanup: initialize,
                 cache,
                 destination,
                 generation,
@@ -3443,8 +3503,10 @@ mod tests {
 
     impl Drop for PreparedFixture {
         fn drop(&mut self) {
-            make_writable(&self.base);
-            let _ = fs::remove_dir_all(&self.base);
+            if self.cleanup {
+                make_writable(&self.base);
+                let _ = fs::remove_dir_all(&self.base);
+            }
         }
     }
 
@@ -3980,38 +4042,219 @@ mod tests {
         assert_eq!(destination_entries(&fixture.destination).len(), 1);
     }
 
+    fn disk_snapshot(root: &Path) -> BTreeMap<PathBuf, (u64, u32, Vec<u8>)> {
+        fn visit(root: &Path, path: &Path, entries: &mut BTreeMap<PathBuf, (u64, u32, Vec<u8>)>) {
+            let metadata = fs::symlink_metadata(path).unwrap();
+            assert!(!metadata.file_type().is_symlink());
+            let bytes = if metadata.is_file() {
+                fs::read(path).unwrap()
+            } else {
+                Vec::new()
+            };
+            entries.insert(
+                path.strip_prefix(root).unwrap().to_owned(),
+                (metadata.ino(), metadata.mode(), bytes),
+            );
+            if metadata.is_dir() {
+                for entry in fs::read_dir(path).unwrap() {
+                    visit(root, &entry.unwrap().path(), entries);
+                }
+            }
+        }
+        let mut entries = BTreeMap::new();
+        visit(root, root, &mut entries);
+        entries
+    }
+
+    struct HandoffWorker(std::process::Child);
+
+    impl Drop for HandoffWorker {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    fn spawn_handoff_worker(fixture: &PreparedFixture, mode: &str, phase: &str) -> HandoffWorker {
+        use std::process::{Command, Stdio};
+        HandoffWorker(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "core_generation_cache::appliance_staging::tests::handoff_sigkill_worker",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("OPEMOS_HANDOFF_TEST_ROOT", &fixture.base)
+                .env("OPEMOS_HANDOFF_TEST_MODE", mode)
+                .env("OPEMOS_HANDOFF_TEST_PHASE", phase)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        )
+    }
+
+    fn wait_for_handoff_boundary(worker: &mut HandoffWorker, phase: &str) {
+        use std::io::{BufRead, BufReader};
+        let stdout = worker.0.stdout.take().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let line = line.unwrap();
+                if line.starts_with("HANDOFF_READY:") {
+                    let _ = sender.send(line);
+                    return;
+                }
+            }
+        });
+        let marker = receiver
+            .recv_timeout(Duration::from_secs(20))
+            .expect("handoff worker did not reach the requested boundary");
+        reader.join().unwrap();
+        assert_eq!(marker, format!("HANDOFF_READY:{phase}"));
+        assert!(worker.0.try_wait().unwrap().is_none());
+    }
+
+    fn wait_for_handoff_exit(worker: &mut HandoffWorker) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some(status) = worker.0.try_wait().unwrap() {
+                assert!(status.success(), "handoff restart failed: {status}");
+                return;
+            }
+            assert!(Instant::now() < deadline, "handoff restart timed out");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn subprocess_sigkill_handoff_boundaries_preserve_pending_state_and_restart() {
+        use std::os::unix::process::ExitStatusExt;
+        for (mode, phases, recovery) in [
+            ("stage", STAGING_CRASH_PHASES, "recover"),
+            ("stage", PARTIAL_RECEIPT_CRASH_PHASES, "preserve"),
+            ("retire", RETIREMENT_CRASH_PHASES, "recover"),
+        ] {
+            for &phase in phases {
+                let fixture = PreparedFixture::create("sigkill");
+                let before = fixture.cache.load_state().unwrap();
+                let cache_before = disk_snapshot(&fixture.base.join("cache"));
+                let trust_before = disk_snapshot(&fixture.base.join("trust"));
+                let mut worker = spawn_handoff_worker(&fixture, mode, phase);
+                wait_for_handoff_boundary(&mut worker, phase);
+                worker.0.kill().unwrap();
+                assert_eq!(worker.0.wait().unwrap().signal(), Some(libc::SIGKILL));
+                assert_eq!(fixture.cache.load_state().unwrap(), before);
+
+                // A fresh executable must reacquire released locks, reconstruct
+                // authentication, and reconcile only the surviving disk evidence.
+                let mut restarted = spawn_handoff_worker(&fixture, recovery, phase);
+                wait_for_handoff_exit(&mut restarted);
+                assert_eq!(disk_snapshot(&fixture.base.join("cache")), cache_before);
+                assert_eq!(disk_snapshot(&fixture.base.join("trust")), trust_before);
+                assert_eq!(fixture.cache.load_state().unwrap(), before);
+                if recovery == "recover" {
+                    assert!(destination_entries(&fixture.destination).is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "subprocess helper for appliance handoff SIGKILL boundaries"]
+    fn handoff_sigkill_worker() {
+        let root = PathBuf::from(std::env::var_os("OPEMOS_HANDOFF_TEST_ROOT").unwrap());
+        let root = root.canonicalize().unwrap();
+        assert_eq!(
+            root.parent().unwrap(),
+            std::env::temp_dir().canonicalize().unwrap()
+        );
+        assert!(root
+            .file_name()
+            .unwrap()
+            .as_bytes()
+            .starts_with(b"opemos-appliance-staging-sigkill-"));
+        let mode = std::env::var("OPEMOS_HANDOFF_TEST_MODE").unwrap();
+        let phase = std::env::var("OPEMOS_HANDOFF_TEST_PHASE").unwrap();
+        assert!(
+            STAGING_CRASH_PHASES.contains(&phase.as_str())
+                || PARTIAL_RECEIPT_CRASH_PHASES.contains(&phase.as_str())
+                || RETIREMENT_CRASH_PHASES.contains(&phase.as_str())
+        );
+        // The parent retains stdin. If it dies, do not leave a parked worker.
+        std::thread::spawn(|| {
+            let mut byte = [0_u8; 1];
+            let _ = std::io::stdin().read(&mut byte);
+            std::process::exit(99);
+        });
+        let fixture = PreparedFixture::load(root, false);
+        let before = fixture.cache.load_state().unwrap();
+        let hook = |observed: &'static str| {
+            if observed == phase {
+                println!("\nHANDOFF_READY:{observed}");
+                std::io::stdout().flush().unwrap();
+                loop {
+                    std::thread::park_timeout(Duration::from_secs(1));
+                }
+            }
+            Ok(())
+        };
+        match mode.as_str() {
+            "stage" => {
+                stage_pending_generation_for_appliance_with_hook(
+                    &fixture.cache,
+                    &fixture.generation,
+                    &fixture.checkpoint,
+                    &fixture.target,
+                    &[],
+                    &fixture.operation,
+                    &fixture.destination,
+                    || false,
+                    hook,
+                )
+                .unwrap();
+                panic!("staging worker missed boundary {phase}");
+            }
+            "retire" => {
+                fixture.stage().unwrap().retire_with_hook(hook).unwrap();
+                panic!("retirement worker missed boundary {phase}");
+            }
+            "recover" => {
+                let mut staged = fixture.stage().unwrap();
+                staged.revalidate().unwrap();
+                staged.retire().unwrap();
+                assert!(destination_entries(&fixture.destination).is_empty());
+            }
+            "preserve" => {
+                let mut preserved = disk_snapshot(&fixture.destination);
+                // Recovery removes the exact unfinished lease-record temporary,
+                // but must preserve every stage byte and durable lease entry.
+                preserved.retain(|path, _| {
+                    path.file_name() != Some(OsStr::new(LEASE_FILES_TEMP_FILENAME))
+                });
+                for _ in 0..2 {
+                    let error = match fixture.stage() {
+                        Ok(_) => panic!("partial receipt was accepted after SIGKILL"),
+                        Err(error) => error,
+                    };
+                    assert!(error.starts_with("appliance-handoff-recovery-required:"));
+                    let after = disk_snapshot(&fixture.destination);
+                    for (path, expected) in &preserved {
+                        assert!(after.get(path) == Some(expected), "preserved residue changed at {phase}: {path:?}; before inode/mode {:?}, after {:?}", (expected.0, expected.1), after.get(path).map(|entry| (entry.0, entry.1)));
+                    }
+                    assert_eq!(after.len(), preserved.len());
+                }
+            }
+            _ => panic!("unknown handoff worker mode"),
+        }
+        assert_eq!(fixture.cache.load_state().unwrap(), before);
+    }
+
     #[test]
     fn synthetic_crashes_reconcile_every_staging_publication_boundary() {
-        let phases = [
-            "after-lease-mkdir",
-            "after-intent-create",
-            "after-intent-write",
-            "after-intent-sync",
-            "after-intent-publish",
-            "after-intent-directory-sync",
-            "after-lease-parent-sync",
-            "after-stage-mkdir",
-            "after-stage-marker-create",
-            "after-stage-marker-write",
-            "after-stage-marker-sync",
-            "after-stage-marker-publish",
-            "after-stage-marker-directory-sync",
-            "after-stage-created",
-            "after-record-sync",
-            "after-files-receipt-publish",
-            "after-files-receipt-directory-sync",
-            "after-copy",
-            "after-seal",
-            "after-rename",
-            "after-destination-sync",
-            "after-published-marker-create",
-            "after-published-marker-write",
-            "after-published-marker-sync",
-            "after-published-marker-publish",
-            "after-published-marker-directory-sync",
-            "after-lease-complete",
-        ];
-        for phase in phases {
+        let phases = STAGING_CRASH_PHASES;
+        for &phase in phases {
             let fixture = PreparedFixture::create(&format!("crash-{}", phase.replace('-', "")));
             let before = fixture.cache.load_state().unwrap();
             let crashed = catch_unwind(AssertUnwindSafe(|| {
@@ -4046,11 +4289,7 @@ mod tests {
 
     #[test]
     fn partial_file_receipt_crashes_preserve_stage_and_require_maintenance() {
-        for phase in [
-            "after-files-receipt-create",
-            "after-files-receipt-write",
-            "after-files-receipt-sync",
-        ] {
+        for &phase in PARTIAL_RECEIPT_CRASH_PHASES {
             let fixture = PreparedFixture::create(&format!("partial-{}", phase.replace('-', "")));
             let crashed = catch_unwind(AssertUnwindSafe(|| {
                 let _ = stage_pending_generation_for_appliance_with_hook(
@@ -4086,16 +4325,7 @@ mod tests {
 
     #[test]
     fn synthetic_retirement_crashes_finish_before_a_new_handoff_is_created() {
-        for phase in [
-            "after-retiring-marker",
-            "after-retiring-marker-create",
-            "after-retiring-marker-write",
-            "after-retiring-marker-sync",
-            "after-retiring-marker-publish",
-            "after-retiring-marker-directory-sync",
-            "after-retired-handoff",
-            "after-retired-lease",
-        ] {
+        for &phase in RETIREMENT_CRASH_PHASES {
             let fixture = PreparedFixture::create(&format!("retire-{}", phase.replace('-', "")));
             let mut staged = fixture.stage().unwrap();
             let crashed = catch_unwind(AssertUnwindSafe(|| {

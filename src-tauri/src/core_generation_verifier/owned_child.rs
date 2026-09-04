@@ -294,7 +294,7 @@ impl ExecutableSnapshot {
     fn executable_path(&self) -> String {
         #[cfg(target_os = "linux")]
         {
-            return format!("/proc/self/fd/{}", self.executable.as_raw_fd());
+            format!("/proc/self/fd/{}", self.executable.as_raw_fd())
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -914,6 +914,8 @@ fn statat_optional(parent: &File, name: &CString) -> Result<Option<libc::stat>, 
     }
 }
 
+// libc field widths differ between macOS and Linux; retain the portable cast.
+#[allow(clippy::unnecessary_cast)]
 fn require_root_entry(parent: &File, name: &CString, root: &File) -> Result<(), OwnedChildError> {
     let stat = statat(parent, name)?;
     let opened = root
@@ -930,6 +932,8 @@ fn require_root_entry(parent: &File, name: &CString, root: &File) -> Result<(), 
     Ok(())
 }
 
+// libc field widths differ between macOS and Linux; retain the portable cast.
+#[allow(clippy::unnecessary_cast)]
 fn require_snapshot_entry(
     root: &File,
     name: &std::ffi::CStr,
