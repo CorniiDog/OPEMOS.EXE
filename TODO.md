@@ -453,6 +453,19 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   reject partial or unverifiable installations instead of overwriting them.
 - [ ] Prove repeat runs leave identical media byte-for-byte unchanged and
   upgrades never modify the original source image.
+- [x] Reject overlapping image/adjacent-manifest reservations before inactive
+  staging. A regression reproduced two live reservations sharing one output
+  path. Acquire both paths in image-then-manifest lexical order using the same
+  output-lock namespace, including on reopen; verify both guards through
+  record creation, staging, and recovery. Tests cover both acquisition orders,
+  partial-acquisition lock release, reopen contention, cross-process overlap,
+  manifest-lock replacement before staging, and restrictive umask. Source
+  bytes and output paths remain unchanged after rejected reservations. The
+  SIGKILL inventory allows four locks and ten total private entries, accounting
+  for exactly one additional empty manifest lock. Production remains inactive.
+  On Ubuntu 24.04.4 through the shared scheduler, formatting and Clippy pass,
+  323 Rust tests pass (27 ignored), and all 105 frontend tests plus documentation,
+  hygiene, and boundary integrity pass against the unchanged Core fixture pin.
 - [ ] Test output-name and adjacent-manifest collisions, interrupted two-file
   finalization, stale manifests, and concurrent builds selecting the same
   source or destination.

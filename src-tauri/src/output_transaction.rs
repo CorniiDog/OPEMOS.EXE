@@ -363,6 +363,7 @@ impl SourceReservation {
 #[derive(Debug)]
 pub(crate) struct OutputReservation {
     lock: LockCapability,
+    manifest_lock: LockCapability,
     parent: PinnedDirectory,
     output: CString,
     manifest: CString,
@@ -389,6 +390,10 @@ impl OutputReservation {
         ensure_absent(&parent, &output, "OUTPUT")?;
         ensure_absent(&parent, &manifest, "MANIFEST")?;
         let lock = LockCapability::acquire(root, &output_lock_key(&parent, &output))?;
+        // The image basename is a strict prefix of its manifest basename, so
+        // image then manifest is a consistent lexical order for both paths.
+        // Use one namespace: another image must not reserve this manifest.
+        let manifest_lock = LockCapability::acquire(root, &output_lock_key(&parent, &manifest))?;
         let stem = lock
             .basename
             .to_str()
@@ -401,6 +406,7 @@ impl OutputReservation {
         let record_parent_identity = parent.identity;
         let mut result = Self {
             lock,
+            manifest_lock,
             parent,
             output,
             manifest,
@@ -417,6 +423,7 @@ impl OutputReservation {
 
     pub(crate) fn verify(&self) -> Result<(), String> {
         self.lock.verify()?;
+        self.manifest_lock.verify()?;
         self.parent.verify(false)?;
         ensure_absent(&self.parent, &self.output, "OUTPUT")?;
         ensure_absent(&self.parent, &self.manifest, "MANIFEST")?;
@@ -442,6 +449,7 @@ impl OutputReservation {
 
     fn create_record(&mut self) -> Result<(), String> {
         self.lock.verify()?;
+        self.manifest_lock.verify()?;
         let mut bytes = serde_json::to_vec(&self.value()).map_err(|e| e.to_string())?;
         bytes.push(b'\n');
         let mut file = self
@@ -467,7 +475,8 @@ impl OutputReservation {
         self.lock
             .root
             .rebind(&self.record, &identity, "OUTPUT_RESERVATION_RECORD_CHANGED")?;
-        self.lock.verify()
+        self.lock.verify()?;
+        self.manifest_lock.verify()
     }
 
     fn names(&self) -> Result<PublicationNames, String> {
@@ -508,6 +517,10 @@ impl OutputReservation {
             output.to_str().map_err(|_| "OUTPUT_BASENAME_UTF8")?
         ))?;
         let lock = LockCapability::acquire(root, &output_lock_key(&parent, &output))?;
+        // The image basename is a strict prefix of its manifest basename, so
+        // image then manifest is a consistent lexical order for both paths.
+        // Use one namespace: another image must not reserve this manifest.
+        let manifest_lock = LockCapability::acquire(root, &output_lock_key(&parent, &manifest))?;
         let stem = lock
             .basename
             .to_str()
@@ -529,6 +542,7 @@ impl OutputReservation {
         }
         let result = Self {
             lock,
+            manifest_lock,
             parent,
             output,
             manifest,
@@ -545,6 +559,7 @@ impl OutputReservation {
     fn verify_guards(&self, source: &SourceReservation) -> Result<(), String> {
         source.verify()?;
         self.lock.verify()?;
+        self.manifest_lock.verify()?;
         self.parent.verify(false)?;
         if read_record(&self.lock.root, &self.record)? != self.value() {
             return Err("OUTPUT_RESERVATION_RECORD_CHANGED".into());
@@ -1869,15 +1884,15 @@ mod tests {
             .unwrap()
             .map(|entry| entry.unwrap())
             .collect::<Vec<_>>();
-        // Three locks (source path/inode and output), one reservation, four
+        // Four locks (source path/inode and output image/manifest), one reservation, four
         // publication receipts, and the intentionally preserved foreign file.
-        assert!(root_entries.len() <= 9, "unbounded private residue");
+        assert!(root_entries.len() <= 10, "unbounded private residue");
         assert!(
             root_entries
                 .iter()
                 .filter(|entry| entry.file_name().as_bytes().ends_with(b".lock"))
                 .count()
-                <= 3
+                <= 4
         );
         for entry in root_entries {
             let metadata = entry.metadata().unwrap();
@@ -2974,6 +2989,84 @@ mod tests {
     }
 
     #[test]
+    fn overlapping_image_manifest_reservations_are_exclusive_in_both_orders() {
+        for reverse in [false, true] {
+            let fixture = Fixture::new("overlapping-output-pairs");
+            let a = SourceReservation::acquire(&fixture.root(), &fixture.source("source-a.img"))
+                .unwrap();
+            let b = SourceReservation::acquire(&fixture.root(), &fixture.source("source-b.img"))
+                .unwrap();
+            let output = fixture.output();
+            let manifest = output.with_extension("img.manifest.json");
+            let (first_path, second_path) = if reverse {
+                (&manifest, &output)
+            } else {
+                (&output, &manifest)
+            };
+            let first = OutputReservation::acquire(&fixture.root(), &a, first_path).unwrap();
+            assert_eq!(
+                OutputReservation::acquire(&fixture.root(), &b, second_path).unwrap_err(),
+                "RESERVATION_ALREADY_HELD"
+            );
+            first.verify().unwrap();
+            drop(first);
+            // A failed second-lock acquisition must not strand its first lock.
+            let second = OutputReservation::acquire(&fixture.root(), &b, second_path).unwrap();
+            assert_eq!(
+                OutputReservation::reopen(&fixture.root(), &a, first_path).unwrap_err(),
+                "RESERVATION_ALREADY_HELD"
+            );
+            second.verify().unwrap();
+            drop(second);
+            OutputReservation::reopen(&fixture.root(), &a, first_path)
+                .unwrap()
+                .verify()
+                .unwrap();
+            assert!(!output.exists());
+            assert!(!manifest.exists());
+            assert_eq!(
+                fs::read(fixture.source("source-a.img")).unwrap(),
+                b"source-a"
+            );
+            assert_eq!(
+                fs::read(fixture.source("source-b.img")).unwrap(),
+                b"source-b"
+            );
+        }
+    }
+
+    #[test]
+    fn manifest_lock_replacement_blocks_staging_and_preserves_sources() {
+        let fixture = Fixture::new("manifest-lock-replacement");
+        let source_path = fixture.source("source-a.img");
+        let source = SourceReservation::acquire(&fixture.root(), &source_path).unwrap();
+        let reservation =
+            OutputReservation::acquire(&fixture.root(), &source, &fixture.output()).unwrap();
+        let lock_path = fixture
+            .root()
+            .join(reservation.manifest_lock.basename.to_str().unwrap());
+        fs::rename(&lock_path, fixture.root().join("preserved-manifest-lock")).unwrap();
+        fs::write(&lock_path, b"").unwrap();
+        fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            reservation.verify().unwrap_err(),
+            "RESERVATION_LOCK_CHANGED"
+        );
+        assert_eq!(
+            reservation
+                .publish_bytes_with_hook(&source, TEST_IMAGE, |_| Ok(()))
+                .unwrap_err(),
+            "RESERVATION_LOCK_CHANGED"
+        );
+        assert!(!fixture.output().exists());
+        assert!(!fixture
+            .0
+            .join(reservation.names().unwrap().image_stage.to_str().unwrap())
+            .exists());
+        assert_eq!(fs::read(source_path).unwrap(), b"source-a");
+    }
+
+    #[test]
     fn collision_and_replacement_never_overwrite_or_publish_manifest() {
         let fixture = Fixture::new("publication-collision");
         let source =
@@ -3543,6 +3636,15 @@ mod tests {
             OutputReservation::acquire(&fixture.root(), &other, &fixture.output()).unwrap_err(),
             "RESERVATION_ALREADY_HELD"
         );
+        assert_eq!(
+            OutputReservation::acquire(
+                &fixture.root(),
+                &other,
+                &fixture.output().with_extension("img.manifest.json")
+            )
+            .unwrap_err(),
+            "RESERVATION_ALREADY_HELD"
+        );
         let renamed = fixture.source("renamed-source.img");
         fs::rename(fixture.source("source-a.img"), &renamed).unwrap();
         assert_eq!(
@@ -3597,6 +3699,16 @@ mod tests {
         );
         assert_eq!(
             output_reservation.lock.file.metadata().unwrap().mode() & 0o7777,
+            0o600
+        );
+        assert_eq!(
+            output_reservation
+                .manifest_lock
+                .file
+                .metadata()
+                .unwrap()
+                .mode()
+                & 0o7777,
             0o600
         );
         let record = output_reservation
