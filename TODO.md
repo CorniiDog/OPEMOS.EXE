@@ -316,6 +316,15 @@ already Core contracts and are not open-ended product choices.
 - [ ] Add an explicit authenticated maintenance action for a preserved
   `appliance-handoff-recovery-required` pre-receipt stage. Never auto-delete
   ambiguous same-UID residue after the create-to-receipt crash gap.
+  Awaiting user ownership clarification: does “authenticated maintenance”
+  require a Core-owned authorization contract, or an explicit EXE host-local
+  maintenance approval? EXE owns transfer cleanup; Core owns signer/keyring
+  policy and authorization contracts. The existing recovery path preserves a
+  stage without a durable file receipt and supplies no deletion authority.
+  Stop this action until the user identifies the intended authority; do not
+  infer it from scheduler continuation, mutable lease records, or same-UID
+  ownership. Review at `08d2e9a` found no implementation changes to validate;
+  existing production gates and preserved stages remain unchanged.
 - [ ] Before production wiring, replace final name-based cleanup with a durable
   quarantine/retirement protocol: fsync intent, same-parent create-only rename,
   fsync parent, recheck the receipt, then delete. Preserve mismatches and test
@@ -600,6 +609,17 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   24.04.4 through the shared scheduler, formatting and Clippy pass, 329 Rust
   tests pass (27 ignored), and all 105 frontend tests plus documentation, hygiene,
   and boundary integrity pass against the unchanged Core fixture pin.
+- [x] Add cooperative cancellation to the inactive output publication
+  transaction. Check before mutation and after each staged image/manifest chunk,
+  file sync, durable receipt, rename, and publication sync boundary. Seven early,
+  multi-chunk, receipted, and finalization cancellation cases retain both source
+  and output reservations, preserve exact source bytes and metadata, never expose
+  a manifest without its image, and resume through the same descriptor-bound
+  transaction to an exact verified pair. This does not wire runtime UI
+  cancellation, delete recovery evidence, or activate production publication.
+  On Ubuntu 24.04.4 through the shared scheduler, formatting and Clippy pass,
+  330 Rust tests pass (27 ignored), and all 105 frontend tests plus documentation
+  and hygiene checks pass against the unchanged Core fixture pin.
 - [ ] Test cancellation and injected failure during download, decompression,
   transfer, QEMU boot, Core validation, package mutation, initramfs, export, USB
   writing, USB verification, and finalization.

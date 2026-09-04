@@ -601,6 +601,16 @@ impl OutputReservation {
         Ok(())
     }
 
+    fn publish_bytes_cancellable(
+        &self,
+        source: &SourceReservation,
+        image: &[u8],
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<PublicationRecovery, String> {
+        check_output_cancellation(&mut cancelled)?;
+        self.publish_bytes_with_hook(source, image, |_| check_output_cancellation(&mut cancelled))
+    }
+
     fn publish_bytes_with_hook(
         &self,
         source: &SourceReservation,
@@ -1777,6 +1787,14 @@ fn check_source_cancellation(cancelled: &mut impl FnMut() -> bool) -> Result<(),
     }
 }
 
+fn check_output_cancellation(cancelled: &mut impl FnMut() -> bool) -> Result<(), String> {
+    if cancelled() {
+        Err("OUTPUT_PUBLICATION_CANCELLED".into())
+    } else {
+        Ok(())
+    }
+}
+
 fn hash_fd(file: &File, length: u64) -> Result<String, String> {
     hash_fd_cancellable(file, length, &mut || false)
 }
@@ -2426,6 +2444,46 @@ mod tests {
                     .unwrap(),
                 PublicationRecovery::Complete
             );
+        }
+    }
+
+    #[test]
+    fn cancellable_publication_preserves_recoverable_state_and_locks() {
+        let image = vec![0x5a; COPY_CHUNK * 2 + 17];
+        for cancel_at in [1, 2, 3, 4, 5, 8, 11] {
+            let fixture = Fixture::new(&format!("publication-cancel-{cancel_at}"));
+            let source_path = fixture.source("source-a.img");
+            let source_bytes = fs::read(&source_path).unwrap();
+            let source_identity = FileIdentity::of(&fs::metadata(&source_path).unwrap());
+            let source = SourceReservation::acquire(&fixture.root(), &source_path).unwrap();
+            let reservation =
+                OutputReservation::acquire(&fixture.root(), &source, &fixture.output()).unwrap();
+            let mut checks = 0;
+            let error = reservation
+                .publish_bytes_cancellable(&source, &image, || {
+                    checks += 1;
+                    checks == cancel_at
+                })
+                .unwrap_err();
+            assert_eq!(error, "OUTPUT_PUBLICATION_CANCELLED");
+            assert!(checks >= cancel_at);
+            assert_eq!(fs::read(&source_path).unwrap(), source_bytes);
+            assert_eq!(
+                FileIdentity::of(&fs::metadata(&source_path).unwrap()),
+                source_identity
+            );
+            let visible = fixture.output();
+            let manifest = visible.with_file_name("result.img.manifest.json");
+            assert!(!manifest.exists() || visible.exists());
+            assert!(OutputReservation::acquire(&fixture.root(), &source, &visible).is_err());
+            assert_eq!(
+                reservation
+                    .publish_bytes_cancellable(&source, &image, || false)
+                    .unwrap(),
+                PublicationRecovery::Complete
+            );
+            assert_eq!(fs::read(visible).unwrap(), image);
+            assert!(manifest.exists());
         }
     }
 
