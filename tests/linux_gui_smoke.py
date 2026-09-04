@@ -81,6 +81,23 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertEqual(len(list(smoke.descendants(chain, max_depth=3))), 4)
         with self.assertRaises(RuntimeError): list(smoke.descendants(FakeNode(children=[FakeNode(), FakeNode()]), max_nodes=2))
 
+    def test_cleared_result_rejects_stale_fields_and_wrong_focus(self):
+        focused = "focused"
+        clear = FakeNode("Clear", actionable=True, states={focused})
+        dialog = FakeNode(children=[clear])
+        smoke.validate_cleared_result(dialog, focused)
+        dialog.children.append(FakeNode("Core status"))
+        with self.assertRaisesRegex(RuntimeError, "Expected no accessible"):
+            smoke.validate_cleared_result(dialog, focused)
+        dialog.children.pop()
+        clear.states = set()
+        with self.assertRaisesRegex(RuntimeError, "Expected one focused action"):
+            smoke.validate_cleared_result(dialog, focused)
+        clear.states = {focused}
+        dialog.children.append(FakeNode("Unverified Core result"))
+        with self.assertRaisesRegex(RuntimeError, "Expected no accessible"):
+            smoke.validate_cleared_result(dialog, focused)
+
     def test_no_artifact_rows_require_exact_order_and_boundaries(self):
         names = [value for row in smoke.EXPECTED_NO_ARTIFACT_ROWS for value in row]
         end = "Available generations — development fixture"

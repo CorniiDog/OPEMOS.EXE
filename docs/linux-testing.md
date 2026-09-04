@@ -143,8 +143,10 @@ initial Close focus, all four development-fixture generation rows, and focus
 restoration to the Settings opener after closing the dialog. It exercises both
 fixture branches: the no-artifact branch must expose Core's exact status, reason,
 message, bounded exact-target build action, architecture, and kernel policy in
-order. These remain non-production fixture data and grant no authorization. It
-then stops the
+order. Clear must remove the result heading, Core fields, next action, and all
+generation rows from the accessibility tree while retaining focus on Clear.
+These remain non-production fixture data and grant no authorization. It then
+stops the
 isolated application process group. It has
 a 20-second default deadline (configurable from 1 through 60 seconds), reports
 early application exit immediately with its status, refuses symlink or

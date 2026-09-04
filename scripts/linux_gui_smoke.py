@@ -4,6 +4,16 @@ from __future__ import annotations
 import argparse, os, signal, stat, subprocess, sys, time
 from pathlib import Path
 
+RESULT_SENTINEL_LABELS = [
+    "Unverified Core result",
+    "Core status",
+    "Next action reported by Core",
+    "Available generations — development fixture",
+    "Selected generation — development fixture",
+    "Active generation — development fixture",
+    "Last-known-good generation — development fixture",
+]
+
 EXPECTED_NO_ARTIFACT_ROWS = [
     ("Core status", "no_compatible_artifact"),
     ("SteamOS target", "3.8.14"),
@@ -123,6 +133,12 @@ def validate_named_rows(root, expected_rows, end_label: str):
     if actual != expected:
         raise RuntimeError(f"Compatibility result rows changed: {actual!r}.")
 
+def require_absent(root, labels):
+    for label in labels:
+        matches = named(root, label)
+        if matches:
+            raise RuntimeError(f"Expected no accessible {label!r}, found {len(matches)}.")
+
 def exactly_one_action(root, label: str, roles=None):
     matches = []
     for node in named(root, label):
@@ -180,6 +196,10 @@ def validate_settings_focus(settings, focusable_state, focused_state):
     focused = controls_with_state(settings, focused_state)
     if focused != [("Close settings", "push button")]:
         raise RuntimeError(f"Settings initial focus changed: {focused!r}.")
+
+def validate_cleared_result(dialog, focused_state):
+    require_absent(dialog, RESULT_SENTINEL_LABELS)
+    exactly_one_focused_action(dialog, "Clear", focused_state)
 
 def validate_dialog_focus(dialog, focusable_state, focused_state):
     focusable = controls_with_state(dialog, focusable_state)
@@ -253,6 +273,9 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
         EXPECTED_NO_ARTIFACT_ROWS,
         "Available generations — development fixture",
     )
+    invoke(exactly_one_action(dialog, "Clear"))
+    wait(lambda: validate_cleared_result(dialog, focused_state),
+         "cleared compatibility result")
     invoke(first_action(dialog, "Close", {"push button", "button"}))
     wait(lambda: exactly_one_focused_action(
         app, "Inspect Core compatibility…", focused_state
