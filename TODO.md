@@ -156,6 +156,18 @@ installation targets, production activation, or hardware certification.
   On Ubuntu 24.04.4 through the shared scheduler, formatting and Clippy pass,
   319 Rust tests pass (27 ignored), and all 105 frontend tests plus documentation,
   hygiene, and boundary integrity pass against the unchanged Core fixture pin.
+- [x] Exercise the experimental development launcher in a real Ubuntu 24.04.4
+  Wayland/GNOME user session. The binary started twice and bounded SIGINT closure
+  left no launcher or EXE processes. The run exposed Tauri rewriting Cargo.toml
+  formatting and leaving a generated Linux capability schema; the launcher now
+  snapshots and restores exact preexisting bytes/modes and removes only a schema
+  proven absent before launch, including child-failure paths. Two new tests cover
+  absent/preexisting files, modes, parent cleanup, thrown actions, and symlink
+  rejection; all nine focused launcher tests pass. GNOME denied noninteractive
+  screenshot access, so visual content, focus, companion windows, packaged app
+  launch, Debian, and SIGKILL-of-launcher restoration remain open. Formatting,
+  Clippy, 330 Rust tests (27 ignored), and 107 frontend tests plus documentation,
+  hygiene, and boundary integrity pass through the shared scheduler.
 - [ ] Validate graphical development and packaged application launch/close on
   Ubuntu and Debian, including companion windows and orphan-process checks.
   This session has neither DISPLAY nor WAYLAND_DISPLAY; graphical launch has

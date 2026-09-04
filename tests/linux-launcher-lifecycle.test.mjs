@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { once } from "node:events";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
-import { runLinuxTestCommand } from "../scripts/linux-test.mjs";
+import { runLinuxTestCommand, withRestoredLaunchFiles } from "../scripts/linux-test.mjs";
 
 const linux = process.platform === "linux";
 const moduleUrl = new URL("../scripts/linux-test.mjs", import.meta.url).href;
@@ -97,4 +99,47 @@ test("Linux launcher rejects spawn failures and removes its signal handlers", { 
   await assert.rejects(runLinuxTestCommand("/opemos-nonexistent-test-executable", []), { code: "ENOENT" });
   assert.deepEqual([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")], before);
   for (const graceMs of [0, -1, 5001, NaN]) await assert.rejects(runLinuxTestCommand(process.execPath, [], { graceMs }));
+});
+
+
+test("Linux launcher restores exact preexisting and newly generated source files", async () => {
+  const temporary = await mkdtemp(path.join(tmpdir(), "opemos-linux-launch-restore-"));
+  try {
+    const cargo = path.join(temporary, "Cargo.toml");
+    const schema = path.join(temporary, "gen", "schemas", "linux-schema.json");
+    await writeFile(cargo, "original cargo\n", { mode: 0o640 });
+    const originalMode = (await lstat(cargo)).mode & 0o777;
+    await assert.rejects(withRestoredLaunchFiles([cargo, schema], async () => {
+      await writeFile(cargo, "tauri rewrite\n");
+      await mkdir(path.dirname(schema), { recursive: true });
+      await writeFile(schema, "generated schema\n");
+      throw new Error("child failed");
+    }), /child failed/);
+    assert.equal(await readFile(cargo, "utf8"), "original cargo\n");
+    assert.equal((await lstat(cargo)).mode & 0o777, originalMode);
+    await assert.rejects(lstat(schema), { code: "ENOENT" });
+    await assert.rejects(lstat(path.join(temporary, "gen")), { code: "ENOENT" });
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("Linux launcher preserves preexisting generated files and rejects symlink snapshots", async () => {
+  const temporary = await mkdtemp(path.join(tmpdir(), "opemos-linux-launch-existing-"));
+  try {
+    const schema = path.join(temporary, "gen", "schemas", "linux-schema.json");
+    await mkdir(path.dirname(schema), { recursive: true });
+    await writeFile(schema, "existing schema\n", { mode: 0o600 });
+    await withRestoredLaunchFiles([schema], async () => writeFile(schema, "replacement\n"));
+    assert.equal(await readFile(schema, "utf8"), "existing schema\n");
+    assert.equal((await lstat(schema)).mode & 0o777, 0o600);
+    const linked = path.join(temporary, "linked-schema.json");
+    await symlink(schema, linked);
+    let called = false;
+    await assert.rejects(withRestoredLaunchFiles([linked], async () => { called = true; }), /non-regular/);
+    assert.equal(called, false);
+    assert.equal(await readFile(schema, "utf8"), "existing schema\n");
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 });

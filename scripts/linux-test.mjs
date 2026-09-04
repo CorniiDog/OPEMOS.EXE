@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { chmod, lstat, mkdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -24,6 +25,55 @@ export function linuxTestPlan({ platform, arch, env, args }) {
   }
   return [args[0], ...(args[0] === "build" ? ["--debug", "--bundles", "deb"] : []),
     "--config", path.join(root, "src-tauri/tauri.linux-test.conf.json")];
+}
+
+// Tauri may normalize Cargo.toml and generate a platform capability schema.
+// Snapshot only these known source paths and restore their exact pre-launch state.
+async function snapshotRestoredFile(file) {
+  try {
+    const metadata = await lstat(file);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) {
+      throw new Error(`Refusing to snapshot non-regular launch artifact: ${file}`);
+    }
+    return { file, bytes: await readFile(file), mode: metadata.mode & 0o777, missingParents: [] };
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    const missingParents = [];
+    let parent = path.dirname(file);
+    while (parent !== path.dirname(parent)) {
+      try { await lstat(parent); break; }
+      catch (parentError) {
+        if (parentError.code !== "ENOENT") throw parentError;
+        missingParents.push(parent);
+        parent = path.dirname(parent);
+      }
+    }
+    return { file, bytes: null, mode: null, missingParents };
+  }
+}
+
+async function restoreLaunchFile(snapshot) {
+  if (snapshot.bytes !== null) {
+    await mkdir(path.dirname(snapshot.file), { recursive: true });
+    await writeFile(snapshot.file, snapshot.bytes);
+    await chmod(snapshot.file, snapshot.mode);
+    return;
+  }
+  await rm(snapshot.file, { force: true });
+  for (const parent of snapshot.missingParents) {
+    try { await rmdir(parent); }
+    catch (error) { if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code)) throw error; }
+  }
+}
+
+export async function withRestoredLaunchFiles(files, action) {
+  const snapshots = [];
+  for (const file of files) snapshots.push(await snapshotRestoredFile(file));
+  try {
+    return await action();
+  } finally {
+    for (const snapshot of snapshots.toReversed()) await restoreLaunchFile(snapshot);
+  }
 }
 
 // One isolated process group keeps launcher-only termination from stranding
@@ -74,8 +124,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const args = linuxTestPlan({ platform: process.platform, arch: process.arch,
       env: process.env, args: process.argv.slice(2) });
     console.error("Experimental Linux test build. Use the scheduler heavy.sh wrapper on the coordinated host.");
-    const result = await runLinuxTestCommand(process.execPath,
-      [path.join(root, "node_modules/@tauri-apps/cli/tauri.js"), ...args]);
+    const result = await withRestoredLaunchFiles([
+      path.join(root, "src-tauri/Cargo.toml"),
+      path.join(root, "src-tauri/gen/schemas/linux-schema.json"),
+    ], () => runLinuxTestCommand(process.execPath,
+      [path.join(root, "node_modules/@tauri-apps/cli/tauri.js"), ...args]));
     if (result.signal) {
       console.error(`Linux testing command terminated by ${result.signal}.`);
       process.exitCode = 1;
