@@ -18,6 +18,7 @@ const COPY_CHUNK: usize = 64 * 1024;
 const RECOVERY_REQUIRED: &str = "OUTPUT_RESERVATION_RECOVERY_REQUIRED";
 const RECORD_MALFORMED: &str = "OUTPUT_RESERVATION_RECORD_MALFORMED";
 const RECORD_OVERSIZED: &str = "OUTPUT_RESERVATION_RECORD_OVERSIZED";
+const LOCK_RETRY_LIMIT: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -242,12 +243,22 @@ impl LockCapability {
             metadata = file.metadata().map_err(|e| e.to_string())?;
         }
         validate_lock(&metadata)?;
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-            return if io::Error::last_os_error().kind() == io::ErrorKind::WouldBlock {
-                Err("RESERVATION_ALREADY_HELD".into())
-            } else {
-                Err("RESERVATION_LOCK_FAILED".into())
-            };
+        // A concurrent fork may briefly inherit this close-on-exec descriptor
+        // before exec closes it. Bound that platform window without ever
+        // turning a real conflicting reservation into an unbounded wait.
+        let deadline = Instant::now() + LOCK_RETRY_LIMIT;
+        loop {
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                break;
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::WouldBlock {
+                return Err("RESERVATION_LOCK_FAILED".into());
+            }
+            if Instant::now() >= deadline {
+                return Err("RESERVATION_ALREADY_HELD".into());
+            }
+            thread::sleep(Duration::from_millis(2));
         }
         let result = Self {
             root,
