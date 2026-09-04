@@ -139,8 +139,9 @@ a 20-second default deadline (configurable from 1 through 60 seconds), reports
 early application exit immediately with its status, refuses symlink or
 non-executable inputs, pins the accepted regular executable to a no-follow file
 descriptor before launch, and sends SIGKILL after a bounded SIGTERM grace
-period. It takes bounded before/after `/proc` snapshots and fails if the launch
-leaves a new `qemu-system-*` process. It does not install the archive, use
+period. It takes bounded before/after `/proc` snapshots keyed by PID, kernel
+start time, and process name, so PID reuse cannot hide a new `qemu-system-*`
+process. It does not install the archive, use
 production compatibility inputs, or start QEMU.
 
 The package is written under `src-tauri/target/debug/bundle/deb/`. This command

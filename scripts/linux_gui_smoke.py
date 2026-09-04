@@ -154,7 +154,29 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int, process_
     wait(lambda: exactly_one_action(app, "Open settings"),
          "the main document after dialog close")
 
-def qemu_processes(proc_root: Path = Path("/proc")) -> set[tuple[int, str]]:
+def process_start_time(entry: Path, expected_pid: int) -> int:
+    try:
+        with (entry / "stat").open("rb") as stream:
+            raw = stream.read(4097)
+    except FileNotFoundError:
+        raise
+    if len(raw) > 4096 or not raw.endswith(b"\n"):
+        raise RuntimeError(f"Process {expected_pid} has an invalid bounded stat record.")
+    closing = raw.rfind(b") ")
+    opening = raw.find(b" (")
+    if opening < 1 or closing <= opening:
+        raise RuntimeError(f"Process {expected_pid} has a malformed stat record.")
+    try:
+        recorded_pid = int(raw[:opening].decode("ascii"))
+        fields = raw[closing + 2:-1].split()
+        start_time = int(fields[19].decode("ascii"))
+    except (UnicodeDecodeError, ValueError, IndexError) as error:
+        raise RuntimeError(f"Process {expected_pid} has a malformed stat identity.") from error
+    if recorded_pid != expected_pid or start_time <= 0:
+        raise RuntimeError(f"Process {expected_pid} has a mismatched stat identity.")
+    return start_time
+
+def qemu_processes(proc_root: Path = Path("/proc")) -> set[tuple[int, int, str]]:
     metadata = proc_root.lstat()
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
         raise RuntimeError(f"Process root must be a directory, not a symlink: {proc_root}")
@@ -184,7 +206,12 @@ def qemu_processes(proc_root: Path = Path("/proc")) -> set[tuple[int, str]]:
         except UnicodeDecodeError as error:
             raise RuntimeError(f"Process {entry.name} has a non-ASCII name.") from error
         if name.startswith("qemu-system-"):
-            processes.add((int(entry.name), name))
+            pid = int(entry.name)
+            try:
+                start_time = process_start_time(entry, pid)
+            except FileNotFoundError:
+                continue
+            processes.add((pid, start_time, name))
     return processes
 
 def process_group_exists(pgid: int) -> bool:

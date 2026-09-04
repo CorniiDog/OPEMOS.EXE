@@ -109,12 +109,25 @@ class GuiSmokeTests(unittest.TestCase):
                 child = root / pid
                 child.mkdir()
                 (child / "comm").write_text(name)
-            self.assertEqual(smoke.qemu_processes(root), {(12, "qemu-system-x86_64")})
+                fields = ["S"] + ["0"] * 18 + ["100"]
+                (child / "stat").write_text(f"{pid} (name with ) parenthesis) " + " ".join(fields) + "\n")
+            before = smoke.qemu_processes(root)
+            self.assertEqual(before, {(12, 100, "qemu-system-x86_64")})
+            fields = ["S"] + ["0"] * 18 + ["101"]
+            (root / "12" / "stat").write_text("12 (reused) " + " ".join(fields) + "\n")
+            after = smoke.qemu_processes(root)
+            self.assertEqual(after - before, {(12, 101, "qemu-system-x86_64")})
             (root / "12" / "comm").write_bytes(b"qemu-system-" + b"x" * 60 + b"\n")
             with self.assertRaises(RuntimeError): smoke.qemu_processes(root)
             (root / "12" / "comm").write_bytes(b"qemu-system-x86_64")
             with self.assertRaises(RuntimeError): smoke.qemu_processes(root)
             (root / "12" / "comm").write_text("qemu-system-x86_64\n")
+            (root / "12" / "stat").write_text("12 (bad) S 0\n")
+            with self.assertRaises(RuntimeError): smoke.qemu_processes(root)
+            fields = ["S"] + ["0"] * 18 + ["100"]
+            (root / "12" / "stat").write_text("99 (wrong pid) " + " ".join(fields) + "\n")
+            with self.assertRaises(RuntimeError): smoke.qemu_processes(root)
+            (root / "12" / "stat").write_text("12 (restored) " + " ".join(fields) + "\n")
             (root / "14").symlink_to(root / "12", target_is_directory=True)
             with self.assertRaises(RuntimeError): smoke.qemu_processes(root)
             (root / "14").unlink()
