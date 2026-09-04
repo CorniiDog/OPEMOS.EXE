@@ -120,6 +120,25 @@ directory. It checks metadata, amd64 ELF identity, the exact Tauri bundle-marker
 patch, shared-library resolution, archive permissions, the desktop entry, and absence of maintainer
 scripts. It does not install the package or launch its GUI.
 
+From a graphical desktop, extract the package to a disposable directory and run
+the bounded accessibility smoke against its exact binary path:
+
+```bash
+dpkg-deb -x 'src-tauri/target/debug/bundle/deb/OPEMOS EXE Linux Test_0.1.0_amd64.deb' /tmp/opemos-exe-package
+"$OPEMOS_HEAVY" env OPEMOS_EXPERIMENTAL_LINUX=1 \
+  npm run test:package-linux-gui -- \
+  --executable /tmp/opemos-exe-package/usr/bin/steamos-nvidia-image-builder
+```
+
+The smoke inherits the graphical session environment, including its AT-SPI bus
+and accessibility bridge setting. It opens Settings and the read-only Core
+compatibility inspector, verifies all four development-fixture generation rows,
+closes the dialog, and then stops the isolated application process group. It has
+a 20-second default deadline (configurable from 1 through 60 seconds), refuses
+symlink or non-executable inputs, and sends SIGKILL after a bounded SIGTERM grace
+period. It does not install the archive, use production compatibility inputs, or
+start QEMU.
+
 The package is written under `src-tauri/target/debug/bundle/deb/`. This command
 needs no graphical session. It deliberately uses a debug build and the `deb`
 bundle target, with no signing, publication, or system installation. This test

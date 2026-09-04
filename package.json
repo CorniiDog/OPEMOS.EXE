@@ -19,7 +19,8 @@
     "test:all": "npm run test:frontend && npm run test:rust",
     "dev:linux-test": "node scripts/linux-test.mjs dev",
     "build:linux-test": "node scripts/linux-test.mjs build",
-    "test:package-linux": "python3 tests/linux_packaging.py && python3 scripts/check_linux_packaging.py"
+    "test:package-linux": "python3 tests/linux_packaging.py && python3 tests/linux_gui_smoke.py && python3 scripts/check_linux_packaging.py",
+    "test:package-linux-gui": "python3 scripts/linux_gui_smoke.py"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

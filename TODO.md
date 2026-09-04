@@ -174,9 +174,22 @@ installation targets, production activation, or hardware certification.
   hygiene, and boundary integrity pass through the shared scheduler.
 - [ ] Validate graphical development and packaged application launch/close on
   Ubuntu and Debian, including companion windows and orphan-process checks.
-  This session has neither DISPLAY nor WAYLAND_DISPLAY; graphical launch has
-  not been attempted. Managed-appliance lifecycle and image equivalence remain
-  separately blocked by the unchanged resource minimum above. The Ubuntu
+  Ubuntu 24.04.4 Wayland now covers the development main window and the extracted
+  debug-package main window. A bounded opt-in AT-SPI smoke starts the exact
+  regular executable, opens Settings and the read-only compatibility dialog,
+  verifies all four development-fixture generation rows, closes only the dialog,
+  preserves the main document, and stops the complete process group. Unit tests
+  reject missing opt-in/display, symlink and non-executable inputs, invalid
+  deadlines, missing/duplicate controls, oversized trees, and failed actions.
+  Package archive validation passes with SHA-256
+  `80a578962c18c9ee5076c05ff2c2fa40d92e0097fd7e21efe8e017f0a3d41f12`; no
+  package was installed. Debian, companion windows, focus order, and pixel
+  rendering remain open. Scheduler-limited formatting and Clippy pass, 330 Rust
+  tests pass (27 ignored), and all 110 frontend tests plus documentation, hygiene,
+  package, focused smoke, and boundary integrity checks pass against unchanged
+  Core fixture commit `3e49323fce266af8686039fb6487918ef5a64fd9`.
+  Managed-appliance lifecycle and image equivalence remain separately blocked by
+  the unchanged resource minimum above. The Ubuntu
   glibc-2.39 package is not a validated Debian 12 artifact.
 - [x] Add Settings → Inspect Core compatibility: a read-only host dialog for
   pasted resolver results and the existing compatible/no-artifact development
