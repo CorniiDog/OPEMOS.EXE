@@ -1,5 +1,6 @@
 """Corner cases for the bounded packaged Linux GUI smoke harness."""
 import importlib.util
+import os
 from pathlib import Path
 import signal
 import subprocess
@@ -41,6 +42,28 @@ class GuiSmokeTests(unittest.TestCase):
             with self.assertRaises(ValueError): smoke.validate_launch(link, 1, base)
             for timeout in (0, 61, float("inf")):
                 with self.assertRaises(ValueError): smoke.validate_launch(executable, timeout, base)
+
+    def test_pinned_executable_survives_path_replacement_and_rejects_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "app"
+            path.write_bytes(b"original")
+            path.chmod(0o700)
+            original = path.stat()
+            descriptor = smoke.open_pinned_executable(path)
+            try:
+                replacement = Path(directory) / "replacement"
+                replacement.write_bytes(b"replacement")
+                replacement.chmod(0o700)
+                replacement.replace(path)
+                self.assertEqual(os.fstat(descriptor).st_ino, original.st_ino)
+                self.assertNotEqual(os.fstat(descriptor).st_ino, path.stat().st_ino)
+            finally:
+                os.close(descriptor)
+            link = Path(directory) / "link"
+            link.symlink_to(path)
+            with self.assertRaises(ValueError): smoke.open_pinned_executable(link)
+            path.chmod(0o600)
+            with self.assertRaises(ValueError): smoke.open_pinned_executable(path)
 
     def test_exact_lookup_rejects_missing_duplicate_and_tree_overflow(self):
         with self.assertRaises(RuntimeError): smoke.exactly_one(FakeNode(), "target")

@@ -30,6 +30,21 @@ def validate_launch(executable: Path, timeout: float, env: dict[str, str]) -> Pa
         raise ValueError(f"Packaged executable is not executable: {executable}")
     return executable.resolve(strict=True)
 
+def open_pinned_executable(executable: Path) -> int:
+    flags = os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        descriptor = os.open(executable, flags)
+    except OSError as error:
+        raise ValueError(f"Cannot pin packaged executable: {executable}: {error.strerror}") from error
+    metadata = os.fstat(descriptor)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        os.close(descriptor)
+        raise ValueError(f"Pinned packaged executable must be a regular file: {executable}")
+    if metadata.st_mode & 0o111 == 0:
+        os.close(descriptor)
+        raise ValueError(f"Pinned packaged executable has no execute mode: {executable}")
+    return descriptor
+
 def descendants(root, *, max_nodes: int = 4096, max_depth: int = 32):
     pending, seen = [(root, 0)], 0
     while pending:
@@ -213,7 +228,15 @@ def main(argv=None):
         raise RuntimeError("Install the Python GI AT-SPI bindings before GUI smoke testing.") from error
     Atspi.init()
     qemu_before = qemu_processes()
-    process = subprocess.Popen([str(executable)], start_new_session=True)
+    descriptor = open_pinned_executable(executable)
+    try:
+        process = subprocess.Popen(
+            [f"/proc/self/fd/{descriptor}"],
+            pass_fds=(descriptor,),
+            start_new_session=True,
+        )
+    finally:
+        os.close(descriptor)
     try:
         exercise_accessibility(Atspi.get_desktop(0), time.monotonic() + args.timeout,
                                process_poll=process.poll)
