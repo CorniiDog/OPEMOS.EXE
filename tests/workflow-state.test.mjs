@@ -7,6 +7,7 @@ import {
   admitOutputDirectorySelection,
   admitUsbPreflightCancel,
   admitUsbPreflightStart,
+  admitUsbTargetSelection,
   admitUsbWriteStart,
   deriveBuildAdmission,
 } from "../src/workflow-state.js";
@@ -222,4 +223,26 @@ test("USB preflight cancellation requires one live completed-image session", () 
     () => admitUsbPreflightCancel(complete, { ...available, hasPreflightSession: "yes" }),
     /hasPreflightSession must be boolean/,
   );
+});
+
+test("USB target selection changes only in stable image phases", () => {
+  assert.deepEqual(admitUsbTargetSelection(ready), {
+    accepted: true, phase: "selected", blocker: null,
+  });
+  assert.deepEqual(admitUsbTargetSelection({ ...ready, hasCompletedOutput: true }), {
+    accepted: true, phase: "complete", blocker: null,
+  });
+  const cases = [
+    [{ hasImage: false }, "empty", "no-image"],
+    [{ buildRunning: true }, "building", "building"],
+    [{ usbWriting: true }, "usb-writing", "usb-writing"],
+  ];
+  for (const [change, phase, blocker] of cases) {
+    assert.deepEqual(admitUsbTargetSelection({ ...ready, ...change }), {
+      accepted: false, phase, blocker,
+    });
+  }
+  assert.throws(() => admitUsbTargetSelection({
+    ...ready, buildRunning: true, usbWriting: true,
+  }), /cannot run concurrently/);
 });

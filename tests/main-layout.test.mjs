@@ -87,6 +87,8 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(script, /renderUsbConfirmationPhase\(true\)/);
   assert.match(script, /async function dismissUsbMenu\(\)[\s\S]*usbContextGeneration \+= 1;[\s\S]*cancel_usb_write_preflight/);
   assert.match(script, /const admission = admitUsbPreflightCancel\(currentBuildSnapshot\(\), \{[\s\S]*cancelPending: usbCancelPending,[\s\S]*hasPreflightSession: Boolean\(usbPreflightSession\?\.sessionToken\)/);
+  assert.match(script, /usbTarget\.addEventListener\("change"[\s\S]*admitUsbTargetSelection\(currentBuildSnapshot\(\)\)\.accepted/);
+  assert.doesNotMatch(script, /usbTarget\.addEventListener\("change", async \(\) => \{\s*const generation/);
   assert.match(script, /if \(!admission\.accepted\) return;[\s\S]*const context = \{/);
   assert.doesNotMatch(script, /if \(usbCancelPending \|\| !usbPreflightSession\?\.sessionToken\) return;/);
   assert.match(script, /installKeyboardBindings[\s\S]*keepKeyboardFocusInside[\s\S]*runKeyboardDefaultAction[\s\S]*from "\.\/keyboard\.js";/);
@@ -125,7 +127,7 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /elements\.resultMessage\.title = installedIdentity;/);
   assert.match(script, /Verified existing NVIDIA.*No rebuild needed; select a USB drive/);
   assert.doesNotMatch(script, /Existing NVIDIA output and adjacent manifest match byte-for-byte/);
-  assert.match(script, /admitBuildStart,[\s\S]*admitImageSelection,[\s\S]*admitOutputDirectorySelection,[\s\S]*admitUsbPreflightCancel,[\s\S]*admitUsbPreflightStart,[\s\S]*admitUsbWriteStart,[\s\S]*deriveBuildAdmission,[\s\S]*from "\.\/workflow-state\.js"/);
+  assert.match(script, /admitBuildStart,[\s\S]*admitImageSelection,[\s\S]*admitOutputDirectorySelection,[\s\S]*admitUsbPreflightCancel,[\s\S]*admitUsbPreflightStart,[\s\S]*admitUsbTargetSelection,[\s\S]*admitUsbWriteStart,[\s\S]*deriveBuildAdmission,[\s\S]*from "\.\/workflow-state\.js"/);
   assert.match(script, /hasCompletedOutput: Boolean\(completedOutput\?\.path\)/);
   assert.match(script, /elements\.buildButton\.disabled = !deriveBuildAdmission\(currentBuildSnapshot\(\)\)\.canBuild/);
   assert.match(script, /if \(!admitBuildStart\(currentBuildSnapshot\(\)\)\.accepted\) return;/);

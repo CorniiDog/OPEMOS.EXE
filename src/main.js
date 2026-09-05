@@ -7,6 +7,7 @@ import {
   admitOutputDirectorySelection,
   admitUsbPreflightCancel,
   admitUsbPreflightStart,
+  admitUsbTargetSelection,
   admitUsbWriteStart,
   deriveBuildAdmission,
 } from "./workflow-state.js";
@@ -976,6 +977,7 @@ function renderUsbTargetSelection() {
 }
 
 elements.usbTarget.addEventListener("change", async () => {
+  if (!admitUsbTargetSelection(currentBuildSnapshot()).accepted) return;
   const generation = ++usbContextGeneration;
   const previousSession = usbPreflightSession;
   usbPreflightSession = null;
