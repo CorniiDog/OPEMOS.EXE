@@ -253,6 +253,23 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "initial focus changed"):
             smoke.validate_linux_unavailable_controls(app, focusable, focused)
 
+    def test_closed_image_chooser_rejects_stale_dialog_and_wrong_focus(self):
+        focused = "focused"
+        chooser = FakeNode("Choose Image…", actionable=True, states={focused})
+        app = FakeNode(children=[chooser])
+        self.assertIs(smoke.validate_closed_image_chooser(app, focused), chooser)
+        app.children.append(FakeNode("Open File", role="file chooser"))
+        with self.assertRaisesRegex(RuntimeError, "Expected no accessible"):
+            smoke.validate_closed_image_chooser(app, focused)
+        app.children.pop()
+        chooser.states = set()
+        with self.assertRaisesRegex(RuntimeError, "Expected one focused action"):
+            smoke.validate_closed_image_chooser(app, focused)
+        chooser.states = {focused}
+        app.children.append(FakeNode("Choose Image…", actionable=True, states={focused}))
+        with self.assertRaisesRegex(RuntimeError, "Expected one focused action"):
+            smoke.validate_closed_image_chooser(app, focused)
+
     def test_application_selection_is_bound_to_spawned_pid(self):
         settings = lambda: FakeNode(children=[FakeNode("Open settings")])
         stale = settings()

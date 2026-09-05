@@ -141,7 +141,10 @@ selection, and automatic fallback is disabled. The unavailable surface must
 expose exactly Settings, image selection, and Valve's download page as buttons;
 build and USB-writing actions must remain absent. It rejects any Linux-ready or
 normal-ready heading, altered fallback policy, extra button, or unexpected
-initial button focus. Omit that assertion only when
+initial button focus. The smoke also opens the native recovery-image chooser,
+cancels without selecting a file, requires both chooser accessibility nodes to
+disappear, and requires focus to return to Choose Image. Omit the unavailable
+assertion only when
 running outside this scheduler with a deliberately different resource budget.
 It accepts only the accessibility application
 whose process ID matches the process it launched, then opens Settings and the

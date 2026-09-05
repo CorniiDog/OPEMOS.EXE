@@ -302,6 +302,11 @@ def validate_linux_unavailable_controls(app, focusable_state, focused_state):
         raise RuntimeError(f"Experimental Linux unavailable initial focus changed: {focused!r}.")
     require_absent(app, UNAVAILABLE_FORBIDDEN_ACTIONS)
 
+
+def validate_closed_image_chooser(app, focused_state):
+    require_absent(app, ["Open File", "File Chooser Widget"])
+    return exactly_one_focused_action(app, "Choose Image…", focused_state)
+
 def application_for_pid(desktop, expected_pid: int):
     if not isinstance(expected_pid, int) or isinstance(expected_pid, bool) or expected_pid <= 1:
         raise RuntimeError("Packaged application PID is invalid.")
@@ -344,6 +349,12 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
         wait(lambda: validate_linux_unavailable_gate(app),
              "the scheduler-limited Linux unavailable gate")
         validate_linux_unavailable_controls(app, focusable_state, focused_state)
+    invoke(exactly_one_action(app, "Choose Image…"))
+    chooser = wait(lambda: exactly_one_role(app, "Open File", "file chooser"),
+                   "the native recovery-image chooser")
+    invoke(exactly_one_action(chooser, "Cancel", {"push button", "button"}))
+    wait(lambda: validate_closed_image_chooser(app, focused_state),
+         "image chooser cancellation and focus restoration")
     invoke(exactly_one_action(app, "Open settings"))
     settings = wait(lambda: exactly_one_role(app, "Builder settings", "landmark"),
                     "the Settings landmark")
