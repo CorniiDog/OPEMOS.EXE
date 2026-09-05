@@ -58,6 +58,16 @@ EXPECTED_ROWS = {
     "Last-known-good generation — development fixture": "#41",
 }
 
+EXPECTED_DISABLED_SETTINGS_CONTROLS = [
+    ("Omit optional CUDA (unavailable for current builds)", "check box"),
+    ("Open Workspace…", "push button"),
+    (
+        "Offer automated NVIDIA release After a locally-built artifact passes every "
+        "trust check, ask before publishing it. Defaults to No every time.",
+        "check box",
+    ),
+]
+
 EXPECTED_SETTINGS_FOCUS_ORDER = [
     ("Close settings", "push button"),
     (
@@ -252,6 +262,14 @@ def validate_settings_focus(settings, focusable_state, focused_state):
     if focused != [("Close settings", "push button")]:
         raise RuntimeError(f"Settings initial focus changed: {focused!r}.")
 
+
+def validate_settings_disabled_controls(settings, enabled_state, focusable_state):
+    for label, role in EXPECTED_DISABLED_SETTINGS_CONTROLS:
+        control = exactly_one_role(settings, label, role)
+        states = control.get_state_set()
+        if states.contains(enabled_state) or states.contains(focusable_state):
+            raise RuntimeError(f"Unavailable Settings control became interactive: {label!r}.")
+
 def validate_cleared_result(dialog, focused_state):
     require_absent(dialog, RESULT_SENTINEL_LABELS)
     exactly_one_focused_action(dialog, "Clear", focused_state)
@@ -373,6 +391,7 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     settings = wait(lambda: exactly_one_role(app, "Builder settings", "landmark"),
                     "the Settings landmark")
     validate_settings_focus(settings, focusable_state, focused_state)
+    validate_settings_disabled_controls(settings, enabled_state, focusable_state)
     close_settings = exactly_one_focused_action(settings, "Close settings", focused_state)
     inspector = wait(lambda: exactly_one_action(app, "Inspect Core compatibility…"),
                      "the Settings compatibility action")

@@ -177,6 +177,22 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "initial focus changed"):
             smoke.validate_settings_focus(settings, focusable, focused)
 
+    def test_unavailable_settings_controls_stay_disabled_and_unfocusable(self):
+        enabled, focusable = "enabled", "focusable"
+        controls = [FakeNode(name, role=role) for name, role in smoke.EXPECTED_DISABLED_SETTINGS_CONTROLS]
+        settings = FakeNode(children=controls)
+        smoke.validate_settings_disabled_controls(settings, enabled, focusable)
+        controls[0].states = {enabled}
+        with self.assertRaisesRegex(RuntimeError, "became interactive"):
+            smoke.validate_settings_disabled_controls(settings, enabled, focusable)
+        controls[0].states = {focusable}
+        with self.assertRaisesRegex(RuntimeError, "became interactive"):
+            smoke.validate_settings_disabled_controls(settings, enabled, focusable)
+        controls[0].states = set()
+        settings.children.append(FakeNode(controls[1].name, role=controls[1].role))
+        with self.assertRaisesRegex(RuntimeError, "Expected one push button"):
+            smoke.validate_settings_disabled_controls(settings, enabled, focusable)
+
     def test_reopened_dialog_rejects_stale_result_and_wrong_initial_focus(self):
         focusable, focused = "focusable", "focused"
         controls = [FakeNode(name, role=role, states={focusable})

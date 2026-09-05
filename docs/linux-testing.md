@@ -154,7 +154,9 @@ read-only Core compatibility inspector. In the tested unauthenticated package
 session, the Settings landmark must expose exactly Close, the two enabled update
 preferences, Connect GitHub, and the compatibility inspector in that focus order.
 Opening Settings must focus its Close control, and closing Settings must restore
-focus to its opener. The smoke also verifies the ordered compatibility controls,
+focus to its opener. CUDA omission, maintainer workspace access, and automated
+release must each remain present for explanation but disabled and unfocusable in
+the unauthenticated package session. The smoke also verifies the ordered compatibility controls,
 initial Close focus, all four development-fixture generation rows, and focus
 restoration to the Settings opener after closing the dialog. It exercises both
 fixture branches. The compatible branch must expose Core's exact publication,
