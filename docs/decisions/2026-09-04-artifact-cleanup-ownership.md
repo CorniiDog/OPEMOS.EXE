@@ -25,3 +25,11 @@ implement the maintenance action, delete or retire any artifact, change trust or
 production activation, or authorize either repository to modify the other. The
 EXE commit containing this record is the counterpart Core should pin in its final
 synchronization step.
+
+## Final counterpart repin
+
+Core completed the reverse counterpart pin at commit
+`a7011dca932f5a89426a07005bc52418651b94b5`. Its integrity test pins EXE commit
+`064d1d54c7ef2eda3d56e80c67e9f8e78a554725` and the same canonical blob and
+SHA-256. Core's default and local-only boundary checks pass after the two-sided
+synchronization. This record update changes no boundary bytes or integrity pin.

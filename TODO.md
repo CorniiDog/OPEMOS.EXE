@@ -448,7 +448,10 @@ already Core contracts and are not open-ended product choices.
   assert the creator-ownership, exact revalidation, fail-safe ambiguity, and
   no-blanket-deletion rules. The dated decision handoff is
   `docs/decisions/2026-09-04-artifact-cleanup-ownership.md`; prior TODO and Git
-  history remain preserved. Focused boundary validation passes.
+  history remain preserved. Core completed the reverse counterpart pin at
+  `a7011dca932f5a89426a07005bc52418651b94b5`, targeting exact EXE mirror commit
+  `064d1d54c7ef2eda3d56e80c67e9f8e78a554725`. Both repositories' default and
+  local focused boundary validation passes.
 - [ ] Before production wiring, replace final name-based cleanup with a durable
   quarantine/retirement protocol: fsync intent, same-parent create-only rename,
   fsync parent, recheck the receipt, then delete. Preserve mismatches and test
