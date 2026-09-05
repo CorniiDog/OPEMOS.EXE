@@ -17,11 +17,13 @@ import {
   admitUsbTargetSelection,
   admitUsbTargetRefresh,
   admitUsbTargetClear,
-  admitUsbWriteStart,
-  admitUsbWriteCompletion,
-  admitUsbWriteProgress,
   deriveBuildAdmission,
 } from "../src/workflow-state.js";
+import {
+  admitUsbWriteCompletion,
+  admitUsbWriteProgress,
+  admitUsbWriteStart,
+} from "../src/usb-write-state.js";
 
 const ready = {
   hasImage: true,
@@ -318,6 +320,20 @@ test("USB write progress accepts bounded forward movement only during writing", 
   assert.deepEqual(admitUsbWriteProgress({ ...ready, hasCompletedOutput: true }, base), {
     accepted: false, phase: "complete", blocker: "no-active-usb-write",
   });
+});
+
+test("USB write progress rejects corrupted retained history", () => {
+  const writing = { ...ready, hasCompletedOutput: true, usbWriting: true, exportMode: "both" };
+  const progress = {
+    phase: "verifying", bytesCompleted: 8, bytesTotal: 16, message: "Verifying.",
+  };
+  for (const previous of [
+    { ...progress, phase: "future" },
+    { ...progress, bytesCompleted: -1 },
+    { ...progress, message: "" },
+  ]) {
+    assert.equal(admitUsbWriteProgress(writing, progress, previous).blocker, "malformed-progress");
+  }
 });
 
 test("output directory changes require the selected non-mutating phase", () => {

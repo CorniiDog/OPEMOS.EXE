@@ -17,11 +17,13 @@ import {
   admitUsbTargetSelection,
   admitUsbTargetRefresh,
   admitUsbTargetClear,
-  admitUsbWriteStart,
-  admitUsbWriteCompletion,
-  admitUsbWriteProgress,
   deriveBuildAdmission,
 } from "./workflow-state.js";
+import {
+  admitUsbWriteCompletion,
+  admitUsbWriteProgress,
+  admitUsbWriteStart,
+} from "./usb-write-state.js";
 import { installWindowDrag } from "./window-drag.js";
 import {
   installKeyboardBindings,

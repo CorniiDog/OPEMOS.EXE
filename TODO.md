@@ -1161,6 +1161,15 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     open.
 - [ ] Split oversized frontend workflow/log rendering code only where behavior
   can be covered by focused tests.
+  - [x] Extract the pure USB write start, progress, and completion reducer
+    slice from the general workflow module. The new module retains the same
+    snapshot authority and keeps UI orchestration in the main window while
+    isolating its bounded phase vocabulary, context/result validation, and
+    monotonic progress rules. A new regression rejects malformed retained
+    progress history as well as malformed incoming events. On 2026-09-05, the
+    focused 37-case workflow/layout suite and all 139 frontend tests plus
+    documentation, hygiene, and boundary integrity pass. Further splitting
+    remains limited to behavior with equivalent focused coverage.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.
   The main workflow now uses a native directory chooser, supports an explicit
   return to the source folder, invalidates stale chooser results when image
