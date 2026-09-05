@@ -576,6 +576,14 @@ already Core contracts and are not open-ended product choices.
     2026-09-05, both focused Rust accounting/inventory regressions and formatting
     pass. Multi-source pinning, copying, receipts, recovery, and final
     revalidation remain open.
+  - [x] Stage a positive authenticated successor across an active sequence 1,
+    committed sequence-2 predecessor, and pending sequence-3 generation under
+    one installed trust snapshot. The integration verifies the unchanged cache
+    state, ordered predecessor hash, exact selectively copied manifest/signature
+    bytes and combined receipt inventory, excludes the predecessor discovery
+    document, revalidates the published handoff, and retires it cleanly. On
+    2026-09-05, the focused Rust integration passes. Restart recovery and
+    injected cancellation/storage faults remain open.
 - [x] Exercise the inactive appliance handoff in real subprocesses killed at
   all 38 existing staging, partial-file-receipt, and retirement hook boundaries.
   Fresh-process restart reauthenticates installed trust, reacquires locks,

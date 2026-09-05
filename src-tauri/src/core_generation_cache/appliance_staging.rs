@@ -3282,7 +3282,10 @@ mod tests {
             BootstrapAuthority, BootstrapChannel, BootstrapCheckpoint, BootstrapCompatibility,
             BootstrapPolicy, BootstrapReplayPolicy,
         },
-        core_generation_cache::activation::begin_installed_authenticated_activation,
+        core_generation_cache::activation::{
+            acknowledge_installed_authenticated_activation,
+            begin_installed_authenticated_activation,
+        },
         core_generation_contracts::{
             DiscoveryGeneration, GenerationCompatibility, GenerationDiscovery, GenerationFile,
             GenerationLock, GenerationManifest, GenerationTargetLock, DISCOVERY_FILENAME,
@@ -3654,6 +3657,141 @@ mod tests {
         }
     }
 
+    struct SuccessorFixture {
+        generation: InstalledAuthenticatedGeneration,
+        checkpoint: InstalledAuthenticatedCheckpoint,
+        identity: CoreGenerationIdentity,
+        files: BTreeMap<String, Vec<u8>>,
+    }
+
+    fn successor_fixture(
+        fixture: &PreparedFixture,
+        sequence: u64,
+        previous_manifest_sha256: String,
+    ) -> SuccessorFixture {
+        let source = fixture.generation.generation();
+        let mut manifest_document = source.manifest().clone();
+        manifest_document.sequence = sequence;
+        manifest_document.published_at = format!("2026-09-03T00:00:{sequence:02}Z");
+        manifest_document.previous_manifest_sha256 = Some(previous_manifest_sha256.clone());
+        let manifest = canonical(&manifest_document);
+        let manifest_signature = source.request_plan_inputs().manifest_signature.to_vec();
+        let manifest_hash = sha256(&manifest);
+        let release_tag = format!("opemos-userspace-lock-generation-v1-s{sequence}");
+        let mut discovery_document = source.discovery().clone();
+        discovery_document.sequence = sequence;
+        discovery_document.published_at = manifest_document.published_at.clone();
+        discovery_document.generation = DiscoveryGeneration {
+            release_tag: release_tag.clone(),
+            manifest_filename: format!("{release_tag}.manifest.json"),
+            manifest_sha256: manifest_hash.clone(),
+            manifest_size: manifest.len() as u64,
+            signature_filename: format!("{release_tag}.manifest.json.sig"),
+            signature_sha256: sha256(&manifest_signature),
+            signature_size: manifest_signature.len() as u64,
+            previous_manifest_sha256: Some(previous_manifest_sha256),
+        };
+        let discovery = canonical(&discovery_document);
+        let discovery_signature = source.request_plan_inputs().discovery_signature.to_vec();
+        let (policy, keyring) = source.bootstrap_snapshots();
+        let checkpoint_bytes =
+            fs::read(fixture.base.join("trust").join(CHECKPOINT_FILENAME)).unwrap();
+        let pins = InstalledTrustPins::fixture(policy, keyring, &checkpoint_bytes);
+        let fingerprint = source.authority().signing_key_fingerprint.clone();
+        let pending = authenticate_installed_discovery(
+            &fixture.base.join("trust"),
+            &pins,
+            &discovery,
+            &discovery_signature,
+            &|| false,
+            {
+                let fingerprint = fingerprint.clone();
+                move |_, _, _, _, _| Ok(valid_output(&fingerprint))
+            },
+        )
+        .unwrap();
+        let (generation, checkpoint) = authenticate_installed_manifest(
+            pending,
+            &manifest,
+            &manifest_signature,
+            &|| false,
+            move |_, _, _, _, _| Ok(valid_output(&fingerprint)),
+        )
+        .unwrap();
+        let identity = CoreGenerationIdentity {
+            sequence,
+            generation_id: manifest_hash.clone(),
+            manifest_sha256: manifest_hash,
+        };
+        let payload_name = generation.generation().manifest().files[0].filename.clone();
+        let payload = fs::read(
+            fixture
+                .cache
+                .generation_path(&fixture.identity)
+                .unwrap()
+                .join(&payload_name),
+        )
+        .unwrap();
+        let files = BTreeMap::from([
+            (DISCOVERY_FILENAME.to_owned(), discovery),
+            (DISCOVERY_SIGNATURE_FILENAME.to_owned(), discovery_signature),
+            (
+                generation
+                    .generation()
+                    .discovery()
+                    .generation
+                    .manifest_filename
+                    .clone(),
+                manifest,
+            ),
+            (
+                generation
+                    .generation()
+                    .discovery()
+                    .generation
+                    .signature_filename
+                    .clone(),
+                manifest_signature,
+            ),
+            (
+                VERIFIER_EVIDENCE_FILENAME.to_owned(),
+                generation.generation().canonical_evidence_bytes().unwrap(),
+            ),
+            (payload_name, payload),
+        ]);
+        SuccessorFixture {
+            generation,
+            checkpoint,
+            identity,
+            files,
+        }
+    }
+
+    fn commit_successor(cache: &CoreGenerationCache, candidate: &str, fixture: &SuccessorFixture) {
+        let reservation = fixture.files.values().map(|bytes| bytes.len() as u64).sum();
+        cache
+            .stage_candidate(
+                candidate,
+                reservation,
+                &fixture.identity,
+                |root| {
+                    for (name, bytes) in &fixture.files {
+                        let mut file = OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .mode(0o600)
+                            .open(root.join(name))
+                            .map_err(|error| error.to_string())?;
+                        file.write_all(bytes).map_err(|error| error.to_string())?;
+                        file.sync_all().map_err(|error| error.to_string())?;
+                    }
+                    Ok(())
+                },
+                |_| Ok(()),
+            )
+            .unwrap();
+    }
+
     fn canonical(value: &impl Serialize) -> Vec<u8> {
         let value = serde_json::to_value(value).unwrap();
         let mut bytes = serde_json::to_vec(&value).unwrap();
@@ -3790,6 +3928,79 @@ mod tests {
         .is_err());
         assert!(destination_entries(&fixture.destination).is_empty());
         assert_eq!(fixture.cache.load_state().unwrap(), before);
+    }
+
+    #[test]
+    fn stages_authenticated_successor_with_committed_lineage_receipts() {
+        let fixture = PreparedFixture::create("positive-lineage-stage");
+        let second = successor_fixture(&fixture, 2, fixture.identity.manifest_sha256.clone());
+        let third = successor_fixture(&fixture, 3, second.identity.manifest_sha256.clone());
+        commit_successor(&fixture.cache, "fixture-cache-stage-2", &second);
+        commit_successor(&fixture.cache, "fixture-cache-stage-3", &third);
+
+        let state = fixture.cache.load_state().unwrap();
+        acknowledge_installed_authenticated_activation(
+            &fixture.cache,
+            &fixture.generation,
+            &fixture.checkpoint,
+            &fixture.target,
+            &[],
+            &fixture.operation,
+            state.revision,
+        )
+        .unwrap();
+        let operation = "fixture-positive-lineage-stage";
+        begin_installed_authenticated_activation(
+            &fixture.cache,
+            &third.generation,
+            &third.checkpoint,
+            &fixture.target,
+            &[&second.generation],
+            operation,
+            || false,
+        )
+        .unwrap();
+        let expected_state = fixture.cache.load_state().unwrap();
+
+        let mut staged = stage_pending_generation_for_appliance(
+            &fixture.cache,
+            &third.generation,
+            &third.checkpoint,
+            &fixture.target,
+            &[&second.generation],
+            operation,
+            &fixture.destination,
+            || false,
+        )
+        .unwrap();
+        staged.revalidate().unwrap();
+        assert_eq!(fixture.cache.load_state().unwrap(), expected_state);
+        assert_eq!(staged.record.identity, third.identity);
+        assert_eq!(
+            staged.record.lineage_manifest_sha256,
+            vec![second.identity.manifest_sha256.clone()]
+        );
+        let predecessor = second.generation.generation().discovery();
+        for name in [
+            &predecessor.generation.manifest_filename,
+            &predecessor.generation.signature_filename,
+        ] {
+            let expected = second.files.get(name).unwrap();
+            assert_eq!(
+                read_exact_file(&staged.directory, name, expected.len()).unwrap(),
+                *expected
+            );
+            assert!(staged.record.files.iter().any(|file| {
+                file.filename == *name
+                    && file.size == expected.len() as u64
+                    && file.sha256 == sha256(expected)
+            }));
+        }
+        assert!(!staged.record.files.iter().any(|file| {
+            file.filename == DISCOVERY_FILENAME
+                && file.sha256 == sha256(second.files.get(DISCOVERY_FILENAME).unwrap())
+        }));
+        staged.retire().unwrap();
     }
 
     #[test]
