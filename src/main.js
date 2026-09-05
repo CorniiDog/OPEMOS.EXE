@@ -5,6 +5,7 @@ import {
   admitBuildStart,
   admitImageSelection,
   admitOutputDirectorySelection,
+  admitUsbPreflightStart,
   admitUsbWriteStart,
   deriveBuildAdmission,
 } from "./workflow-state.js";
@@ -998,7 +999,13 @@ elements.usbConfirmation.addEventListener("input", () => {
 
 elements.armUsbPreflight.addEventListener("click", async () => {
   const option = elements.usbTarget.selectedOptions[0];
-  if (usbArmPending || !completedOutput?.path || !option?.value || !option.dataset.identityToken) return;
+  const admission = admitUsbPreflightStart(currentBuildSnapshot(), {
+    armPending: usbArmPending,
+    hasTarget: Boolean(option?.value),
+    hasIdentityToken: Boolean(option?.dataset.identityToken),
+    confirmationMatches: elements.usbConfirmation.value === "ERASE " + option?.value,
+  });
+  if (!admission.accepted) return;
   const generation = usbContextGeneration;
   const imagePath = completedOutput.path;
   const deviceIdentifier = option.value;

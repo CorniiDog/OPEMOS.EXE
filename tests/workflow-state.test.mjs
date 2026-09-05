@@ -5,6 +5,7 @@ import {
   admitBuildStart,
   admitImageSelection,
   admitOutputDirectorySelection,
+  admitUsbPreflightStart,
   admitUsbWriteStart,
   deriveBuildAdmission,
 } from "../src/workflow-state.js";
@@ -163,4 +164,33 @@ test("output directory changes require the selected non-mutating phase", () => {
   assert.throws(() => admitOutputDirectorySelection({
     ...ready, buildRunning: true, usbWriting: true,
   }), /cannot run concurrently/);
+});
+
+test("USB preflight start requires exact completed-image confirmation and target identity", () => {
+  const complete = { ...ready, hasCompletedOutput: true };
+  const capability = {
+    armPending: false, hasTarget: true, hasIdentityToken: true, confirmationMatches: true,
+  };
+  assert.deepEqual(admitUsbPreflightStart(complete, capability), {
+    accepted: true, phase: "complete", blocker: null,
+  });
+  const cases = [
+    [{ armPending: true }, "preflight-pending"],
+    [{ hasTarget: false }, "no-usb-target"],
+    [{ hasIdentityToken: false }, "no-usb-identity"],
+    [{ confirmationMatches: false }, "confirmation-mismatch"],
+  ];
+  for (const [change, blocker] of cases) {
+    assert.deepEqual(admitUsbPreflightStart(complete, { ...capability, ...change }), {
+      accepted: false, phase: "complete", blocker,
+    });
+  }
+  assert.equal(admitUsbPreflightStart(ready, capability).blocker, "no-completed-output");
+  assert.throws(() => admitUsbPreflightStart(complete, null), /capability must be an object/);
+  for (const name of Object.keys(capability)) {
+    assert.throws(
+      () => admitUsbPreflightStart(complete, { ...capability, [name]: "yes" }),
+      new RegExp(name + " must be boolean"),
+    );
+  }
 });

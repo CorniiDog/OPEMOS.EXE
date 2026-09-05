@@ -108,3 +108,26 @@ export function admitOutputDirectorySelection(snapshot) {
       : admission.phase;
   return Object.freeze({ accepted, phase: admission.phase, blocker });
 }
+
+export function admitUsbPreflightStart(snapshot, capability) {
+  const admission = deriveBuildAdmission(snapshot);
+  if (!capability || typeof capability !== "object" || Array.isArray(capability)) {
+    throw new TypeError("USB preflight capability must be an object");
+  }
+  const { armPending, hasTarget, hasIdentityToken, confirmationMatches } = capability;
+  for (const [name, value] of Object.entries({
+    armPending, hasTarget, hasIdentityToken, confirmationMatches,
+  })) requireBoolean(name, value);
+  const blocker = admission.phase !== "complete"
+    ? "no-completed-output"
+    : armPending
+      ? "preflight-pending"
+      : !hasTarget
+        ? "no-usb-target"
+        : !hasIdentityToken
+          ? "no-usb-identity"
+          : !confirmationMatches
+            ? "confirmation-mismatch"
+            : null;
+  return Object.freeze({ accepted: blocker === null, phase: admission.phase, blocker });
+}

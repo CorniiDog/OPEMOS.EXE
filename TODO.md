@@ -903,8 +903,15 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     building, USB-writing, malformed, and impossible concurrent states return
     stable blockers before any native preview call. On 2026-09-05, the focused
     21-case workflow/layout suite and all 123 frontend tests plus documentation,
-    hygiene, and boundary integrity pass. The broader workflow transition model
-    remains open.
+    hygiene, and boundary integrity pass.
+  - [x] Centralize USB preflight admission and require the typed destructive
+    confirmation at the event boundary as well as in native validation. Only a
+    completed image with no pending arm, an exact target identity, and matching
+    ERASE-device text can invoke preflight; malformed capability shapes and all
+    partial combinations fail closed. Native revalidation remains unchanged.
+    On 2026-09-05, the focused 22-case workflow/layout suite and all 124
+    frontend tests plus documentation, hygiene, and boundary integrity pass.
+    The broader workflow transition model remains open.
 - [ ] Split oversized frontend workflow/log rendering code only where behavior
   can be covered by focused tests.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.
