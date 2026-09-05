@@ -177,18 +177,27 @@ test("support contract failures outrank unrelated appliance cleanup output", () 
   );
 });
 
-test("progress-window diagnostics remain in the fixed log toolbar", async () => {
+test("advanced diagnostics start collapsed and expose bounded log tools on request", async () => {
   const [html, css, script] = await Promise.all([
     readFile(new URL("../src/build.html", import.meta.url), "utf8"),
     readFile(new URL("../src/build.css", import.meta.url), "utf8"),
     readFile(new URL("../src/build.js", import.meta.url), "utf8"),
   ]);
-  const tools = html.match(/<div class="log-tools">([\s\S]*?)<\/div>/)?.[1] || "";
-  assert.match(tools, /id="copy-diagnostic-log"/);
-  assert.match(tools, /id="log-follow"/);
-  assert.ok(tools.indexOf("copy-diagnostic-log") < tools.indexOf("log-follow"));
+  assert.match(html, /id="diagnostics-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="diagnostics-panel"/);
+  const panel = html.match(/<div id="diagnostics-panel" class="diagnostics-panel" hidden>([\s\S]*?)<\/div>\s*<\/section>/)?.[1] || "";
+  assert.match(panel, /id="copy-diagnostic-log"/);
+  assert.match(panel, /id="log-follow"/);
+  assert.match(panel, /id="build-log"/);
+  assert.ok(panel.indexOf("copy-diagnostic-log") < panel.indexOf("log-follow"));
   assert.match(css, /\.actions\s*\{[^}]*min-height:\s*41px/s);
-  assert.match(css, /\.logs-card\s*\{[^}]*min-height:\s*0/s);
+  assert.match(css, /\.logs-card\s*\{[^}]*align-self:\s*start/s);
+  assert.match(css, /\.logs-card\.diagnostics-open\s*\{[^}]*height:\s*100%/s);
+  assert.match(css, /\.diagnostics-panel\[hidden\]\s*\{[^}]*display:\s*none/s);
+  const disclosure = script.match(/function setDiagnosticsExpanded\(expanded\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(disclosure, /setAttribute\("aria-expanded", String\(expanded\)\)/);
+  assert.match(disclosure, /diagnosticsPanel\.hidden\s*=\s*!expanded/);
+  assert.match(disclosure, /classList\.toggle\("diagnostics-open", expanded\)/);
+  assert.match(script, /setDiagnosticsExpanded\(false\);[\s\S]*buildLog\.replaceChildren\(\)/);
   const resume = script.match(/function resumeLogFollowing\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
   assert.match(resume, /followingLogs\s*=\s*true/);
   assert.match(resume, /flushPendingLogs\(\)/);

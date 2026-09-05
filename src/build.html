@@ -38,15 +38,21 @@
             </div>
         </div>
 
-        <section class="logs-card">
+        <section id="diagnostics-card" class="logs-card">
             <div class="logs-heading">
-                <h2>Build logs</h2>
+                <button id="diagnostics-toggle" class="diagnostics-toggle" type="button"
+                        aria-expanded="false" aria-controls="diagnostics-panel">
+                    <span>Advanced diagnostics</span>
+                    <span id="diagnostics-toggle-state" aria-hidden="true">Show</span>
+                </button>
+            </div>
+            <div id="diagnostics-panel" class="diagnostics-panel" hidden>
                 <div class="log-tools">
                     <button id="copy-diagnostic-log" class="log-tool" type="button" disabled>Copy Diagnostic Log</button>
                     <button id="log-follow" class="log-follow" type="button">Following live output</button>
                 </div>
+                <pre id="build-log" tabindex="0" aria-label="Selectable build log">Waiting for the build to start…</pre>
             </div>
-            <pre id="build-log" tabindex="0" aria-label="Selectable build log">Waiting for the build to start…</pre>
         </section>
 
         <div class="actions">

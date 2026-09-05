@@ -22,6 +22,8 @@ const elements = {
   inputName: $("#input-name"), statusTitle: $("#status-title"), statusMessage: $("#status-message"),
   statusBadge: $("#status-badge"), progressTrack: $("#progress-track"), progressBar: $("#progress-bar"),
   stepProgressTrack: $("#step-progress-track"), stepProgressBar: $("#step-progress-bar"), buildLog: $("#build-log"),
+  diagnosticsCard: $("#diagnostics-card"), diagnosticsToggle: $("#diagnostics-toggle"),
+  diagnosticsToggleState: $("#diagnostics-toggle-state"), diagnosticsPanel: $("#diagnostics-panel"),
   logFollow: $("#log-follow"), cancelBuild: $("#cancel-build"), copyDiagnosticLog: $("#copy-diagnostic-log"), closeWindow: $("#close-window"),
   releaseDialog: $("#release-dialog"), releaseSummary: $("#release-summary"),
   releaseCancel: $("#release-cancel"), releaseConfirm: $("#release-confirm"),
@@ -91,6 +93,13 @@ function setStatus(state, title, message, progress, activity = "Working", indete
   elements.progressTrack.classList.toggle("indeterminate", indeterminate);
   elements.progressBar.style.width = `${currentProgress}%`;
   setStepProgress(state, `${activity}:${title}`, stepProgress);
+}
+
+function setDiagnosticsExpanded(expanded) {
+  elements.diagnosticsToggle.setAttribute("aria-expanded", String(expanded));
+  elements.diagnosticsToggleState.textContent = expanded ? "Hide" : "Show";
+  elements.diagnosticsPanel.hidden = !expanded;
+  elements.diagnosticsCard.classList.toggle("diagnostics-open", expanded);
 }
 
 function formatElapsed(milliseconds) {
@@ -521,6 +530,7 @@ async function runBuild(request) {
   lastInstallerProgressKey = "";
   validationStartedAt = null;
   followingLogs = true;
+  setDiagnosticsExpanded(false);
   elements.buildLog.replaceChildren();
   elements.logFollow.textContent = "Following live output";
   elements.logFollow.classList.remove("paused");
@@ -846,6 +856,9 @@ async function runBuild(request) {
   }
 }
 
+elements.diagnosticsToggle.addEventListener("click", () => {
+  setDiagnosticsExpanded(elements.diagnosticsToggle.getAttribute("aria-expanded") !== "true");
+});
 elements.cancelBuild.addEventListener("click", () => { void cancelBuild(); });
 elements.copyDiagnosticLog.addEventListener("click", copyDiagnosticLog);
 elements.closeWindow.addEventListener("click", () => { void hideProgressWindow(); });

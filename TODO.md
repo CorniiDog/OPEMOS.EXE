@@ -871,7 +871,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
 - [ ] Split oversized frontend workflow/log rendering code only where behavior
   can be covered by focused tests.
 - [ ] Add a user-selectable image output folder and safe non-overwriting name.
-- [ ] Keep advanced diagnostics accessible without exposing them by default.
+- [x] Keep advanced diagnostics accessible without exposing them by default.
+  Build logs now start behind an explicit keyboard-accessible disclosure with
+  synchronized `aria-expanded`, panel visibility, and expanded layout state.
+  Copy-diagnostic and live-follow controls remain inside the revealed panel;
+  every new build collapses stale diagnostic output again. On 2026-09-04, the
+  focused 11-case diagnostics suite and all 112 frontend tests plus
+  documentation, hygiene, and boundary integrity pass.
 - [ ] Test compact and expanded layouts, long localized text, zoom, reduced
   motion, high contrast, keyboard-only use, and display scaling.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
