@@ -118,8 +118,8 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /elements\.resultMessage\.title = installedIdentity;/);
   assert.match(script, /Verified existing NVIDIA.*No rebuild needed; select a USB drive/);
   assert.doesNotMatch(script, /Existing NVIDIA output and adjacent manifest match byte-for-byte/);
-  assert.match(script, /admitBuildStart,[\s\S]*admitImageSelection,[\s\S]*deriveBuildAdmission,[\s\S]*from "\.\/workflow-state\.js"/);
-  assert.match(script, /hasCompletedOutput: Boolean\(completedOutput\)/);
+  assert.match(script, /admitBuildStart,[\s\S]*admitImageSelection,[\s\S]*admitUsbWriteStart,[\s\S]*deriveBuildAdmission,[\s\S]*from "\.\/workflow-state\.js"/);
+  assert.match(script, /hasCompletedOutput: Boolean\(completedOutput\?\.path\)/);
   assert.match(script, /elements\.buildButton\.disabled = !deriveBuildAdmission\(currentBuildSnapshot\(\)\)\.canBuild/);
   assert.match(script, /if \(!admitBuildStart\(currentBuildSnapshot\(\)\)\.accepted\) return;/);
   assert.doesNotMatch(script, /completedOutput\?\.path \|\| !currentImage \|\| !hostReady/);
@@ -146,6 +146,9 @@ test("image selection is transactional across plain and completed outputs", () =
   assert.match(script, /selection\.phase === "building"[\s\S]*cannot be changed while a build is running/);
   assert.doesNotMatch(script, /if \(buildRunning \|\| usbWriting\)/);
   assert.match(script, /buildRunning = true;[\s\S]*elements\.chooseImage\.disabled = true;/);
+  assert.match(script, /const admission = admitUsbWriteStart\(currentBuildSnapshot\(\), \{[\s\S]*hasPreflightSession: Boolean\(usbPreflightSession\?\.sessionToken\)/);
+  assert.match(script, /if \(!admission\.accepted\) return;[\s\S]*window\.confirm/);
+  assert.doesNotMatch(script, /if \(usbWriting \|\| !usbPreflightSession\?\.sessionToken \|\| !completedOutput\?\.path\) return;/);
   assert.match(script, /usbWriting = true;[\s\S]*elements\.chooseImage\.disabled = true;/);
   assert.match(script, /elements\.nvidiaSource\.disabled = true;[\s\S]*elements\.allowUpstreamBuild\.disabled = true;/);
   assert.match(script, /selectionError = String\(error\);[\s\S]*Choose another SteamOS image[\s\S]*elements\.dropMessage\.title = selectionError \|\| "";/);

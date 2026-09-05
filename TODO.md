@@ -890,8 +890,14 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     and USB-write phases return their exact blocker, and impossible concurrent
     mutation still throws before UI state is cleared. On 2026-09-05, the focused
     19-case workflow/layout suite and all 121 frontend tests plus documentation,
-    hygiene, and boundary integrity pass. The broader workflow transition model
-    remains open.
+    hygiene, and boundary integrity pass.
+  - [x] Centralize USB-write admission without changing its destructive
+    confirmation or native revalidation. The event boundary now requires the
+    completed-image phase and a live preflight capability; missing, malformed,
+    stale-phase, build-active, and already-writing inputs fail closed before the
+    confirmation dialog. On 2026-09-05, the focused 20-case workflow/layout
+    suite and all 122 frontend tests plus documentation, hygiene, and boundary
+    integrity pass. The broader workflow transition model remains open.
 - [ ] Split oversized frontend workflow/log rendering code only where behavior
   can be covered by focused tests.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   admitBuildStart,
   admitImageSelection,
+  admitUsbWriteStart,
   deriveBuildAdmission,
 } from "../src/workflow-state.js";
 
@@ -112,4 +113,33 @@ test("image selection is allowed only outside active mutation phases", () => {
   assert.throws(() => admitImageSelection({
     ...ready, buildRunning: true, usbWriting: true,
   }), /cannot run concurrently/);
+});
+
+test("USB write start requires a completed image and active preflight capability", () => {
+  const complete = { ...ready, hasCompletedOutput: true };
+  assert.deepEqual(admitUsbWriteStart(complete, { hasPreflightSession: true }), {
+    accepted: true, phase: "complete", blocker: null,
+  });
+  assert.deepEqual(admitUsbWriteStart(complete, { hasPreflightSession: false }), {
+    accepted: false, phase: "complete", blocker: "no-usb-preflight",
+  });
+  for (const snapshot of [
+    { ...ready, hasImage: false },
+    ready,
+    { ...ready, buildRunning: true },
+  ]) {
+    const result = admitUsbWriteStart(snapshot, { hasPreflightSession: true });
+    assert.equal(result.accepted, false);
+    assert.equal(result.blocker, "no-completed-output");
+  }
+  assert.throws(() => admitUsbWriteStart(complete, null), /capability must be an object/);
+  assert.throws(
+    () => admitUsbWriteStart(complete, { hasPreflightSession: "yes" }),
+    /hasPreflightSession must be boolean/,
+  );
+  assert.deepEqual(admitUsbWriteStart({
+    ...complete, usbWriting: true,
+  }, { hasPreflightSession: true }), {
+    accepted: false, phase: "usb-writing", blocker: "no-completed-output",
+  });
 });

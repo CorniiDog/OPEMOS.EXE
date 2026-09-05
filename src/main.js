@@ -4,6 +4,7 @@ import { buildCompletionMatches, operationContextMatches } from "./operation-con
 import {
   admitBuildStart,
   admitImageSelection,
+  admitUsbWriteStart,
   deriveBuildAdmission,
 } from "./workflow-state.js";
 import { installWindowDrag } from "./window-drag.js";
@@ -155,7 +156,7 @@ async function waitForProgressWindow(progressWindow) {
 function currentBuildSnapshot() {
   return {
     hasImage: Boolean(currentImage),
-    hasCompletedOutput: Boolean(completedOutput),
+    hasCompletedOutput: Boolean(completedOutput?.path),
     buildRunning,
     usbWriting,
     hostReady,
@@ -1156,7 +1157,10 @@ await mainWindow.listen("usb-write-progress", (event) => {
 });
 
 elements.writeUsbImage.addEventListener("click", async () => {
-  if (usbWriting || !usbPreflightSession?.sessionToken || !completedOutput?.path) return;
+  const admission = admitUsbWriteStart(currentBuildSnapshot(), {
+    hasPreflightSession: Boolean(usbPreflightSession?.sessionToken),
+  });
+  if (!admission.accepted) return;
   const device = usbPreflightSession.deviceNode;
   if (!window.confirm(`FINAL WARNING\n\nErase ${device} and write the validated SteamOS image?\n\nEvery existing partition and file on this device will be destroyed.`)) return;
   usbWriting = true;

@@ -82,3 +82,18 @@ export function admitImageSelection(snapshot) {
     blocker: accepted ? null : admission.blocker,
   });
 }
+
+export function admitUsbWriteStart(snapshot, capability) {
+  const admission = deriveBuildAdmission(snapshot);
+  if (!capability || typeof capability !== "object" || Array.isArray(capability)) {
+    throw new TypeError("USB capability must be an object");
+  }
+  requireBoolean("hasPreflightSession", capability.hasPreflightSession);
+  const accepted = admission.phase === "complete" && capability.hasPreflightSession;
+  const blocker = accepted
+    ? null
+    : admission.phase !== "complete"
+      ? "no-completed-output"
+      : "no-usb-preflight";
+  return Object.freeze({ accepted, phase: admission.phase, blocker });
+}
