@@ -84,6 +84,19 @@ EXPECTED_FOCUS_ORDER = [
     ("No-artifact fixture", "push button"),
 ]
 
+EXPECTED_LINUX_UNAVAILABLE_CONTROLS = [
+    ("Open settings", "push button"),
+    ("Choose Image…", "push button"),
+    ("Open Valve Download Page", "push button"),
+]
+
+UNAVAILABLE_FORBIDDEN_ACTIONS = [
+    "Build NVIDIA Image",
+    "Review & Write Selected USB…",
+    "Confirm & Prepare USB",
+    "Write & Verify USB",
+]
+
 EXPECTED_LINUX_UNAVAILABLE_TEXT = [
     "BUILDER ENVIRONMENT",
     "Experimental Linux host unavailable",
@@ -212,6 +225,17 @@ def invoke(node):
     if actions is None or actions.get_n_actions() < 1 or not actions.do_action(0):
         raise RuntimeError(f"Accessible control {node.get_name()!r} did not accept its action.")
 
+def actionable_controls_with_state(root, state):
+    return [
+        (node.get_name() or "", node.get_role_name())
+        for node in descendants(root)
+        if node is not root
+        and node.get_state_set().contains(state)
+        and node.get_role_name() in {"push button", "button"}
+        and node.get_action_iface() is not None
+        and node.get_action_iface().get_n_actions() > 0
+    ]
+
 def controls_with_state(root, state):
     controls = []
     for node in descendants(root):
@@ -268,6 +292,16 @@ def validate_linux_unavailable_gate(app, text_reader=accessible_text):
     if actual != EXPECTED_LINUX_UNAVAILABLE_TEXT:
         raise RuntimeError(f"Experimental Linux unavailable explanation changed: {actual!r}.")
 
+
+def validate_linux_unavailable_controls(app, focusable_state, focused_state):
+    actual = actionable_controls_with_state(app, focusable_state)
+    if actual != EXPECTED_LINUX_UNAVAILABLE_CONTROLS:
+        raise RuntimeError(f"Experimental Linux unavailable controls changed: {actual!r}.")
+    focused = actionable_controls_with_state(app, focused_state)
+    if focused:
+        raise RuntimeError(f"Experimental Linux unavailable initial focus changed: {focused!r}.")
+    require_absent(app, UNAVAILABLE_FORBIDDEN_ACTIONS)
+
 def application_for_pid(desktop, expected_pid: int):
     if not isinstance(expected_pid, int) or isinstance(expected_pid, bool) or expected_pid <= 1:
         raise RuntimeError("Packaged application PID is invalid.")
@@ -309,6 +343,7 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     if expect_host_unavailable:
         wait(lambda: validate_linux_unavailable_gate(app),
              "the scheduler-limited Linux unavailable gate")
+        validate_linux_unavailable_controls(app, focusable_state, focused_state)
     invoke(exactly_one_action(app, "Open settings"))
     settings = wait(lambda: exactly_one_role(app, "Builder settings", "landmark"),
                     "the Settings landmark")

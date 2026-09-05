@@ -178,8 +178,9 @@ installation targets, production activation, or hardware certification.
   debug-package main window. A bounded opt-in AT-SPI smoke starts the exact
   regular executable, verifies the scheduler-capped package exposes the exact
   experimental frame/readiness/unavailable surface, its ordered KVM-unavailable
-  explanation with explicit TCG opt-in and no automatic fallback, and no ready
-  heading, then
+  explanation with explicit TCG opt-in and no automatic fallback, no ready
+  heading, and exactly the Settings, image chooser, and Valve-page buttons with
+  no build or USB-writing action exposed, then
   verifies the unauthenticated Settings landmark's exact
   five-control focus order plus initial and restored focus, and opens the read-only
   compatibility dialog,
@@ -208,9 +209,10 @@ installation targets, production activation, or hardware certification.
   kernel start time; the live tree reports the spawned package PID exactly. Package
   archive validation passes with SHA-256
   `80a578962c18c9ee5076c05ff2c2fa40d92e0097fd7e21efe8e017f0a3d41f12`; no
-  package was installed. Seventeen focused harness tests reject false-ready or
+  package was installed. Eighteen focused harness tests reject false-ready or
   ambiguous unavailable surfaces, altered unavailable explanations or fallback
-  policy, reordered or extra
+  policy, extra unavailable-mode actions, unexpected initial button focus,
+  reordered or extra
   or ambiguously bounded rows, stale cleared fields or result headings, wrong
   Clear focus, stale next actions after recovery, and altered compatible trust
   text, stale close/reopen state, and wrong reopened focus; the live package

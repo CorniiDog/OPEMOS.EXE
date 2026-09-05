@@ -234,6 +234,25 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unavailable explanation changed"):
             smoke.validate_linux_unavailable_gate(app, reader)
 
+    def test_linux_unavailable_controls_reject_extra_actions_and_initial_focus(self):
+        focusable, focused = "focusable", "focused"
+        controls = [
+            FakeNode(name, actionable=True, role=role, states={focusable})
+            for name, role in smoke.EXPECTED_LINUX_UNAVAILABLE_CONTROLS
+        ]
+        app = FakeNode(children=controls)
+        smoke.validate_linux_unavailable_controls(app, focusable, focused)
+        controls.append(
+            FakeNode("Build NVIDIA Image", actionable=True, role="push button", states={focusable})
+        )
+        app.children = controls
+        with self.assertRaisesRegex(RuntimeError, "controls changed"):
+            smoke.validate_linux_unavailable_controls(app, focusable, focused)
+        controls.pop()
+        controls[0].states = {focusable, focused}
+        with self.assertRaisesRegex(RuntimeError, "initial focus changed"):
+            smoke.validate_linux_unavailable_controls(app, focusable, focused)
+
     def test_application_selection_is_bound_to_spawned_pid(self):
         settings = lambda: FakeNode(children=[FakeNode("Open settings")])
         stale = settings()

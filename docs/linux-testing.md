@@ -137,8 +137,11 @@ and accessibility bridge setting. Because the shared scheduler caps this command
 at 2 GiB while managed appliances require 6 GiB, `--expect-host-unavailable`
 requires the experimental window, readiness section, and unavailable heading and
 the exact ordered explanation that KVM is unavailable, TCG requires explicit
-selection, and automatic fallback is disabled. It rejects any Linux-ready or
-normal-ready heading or altered fallback policy. Omit that assertion only when
+selection, and automatic fallback is disabled. The unavailable surface must
+expose exactly Settings, image selection, and Valve's download page as buttons;
+build and USB-writing actions must remain absent. It rejects any Linux-ready or
+normal-ready heading, altered fallback policy, extra button, or unexpected
+initial button focus. Omit that assertion only when
 running outside this scheduler with a deliberately different resource budget.
 It accepts only the accessibility application
 whose process ID matches the process it launched, then opens Settings and the
