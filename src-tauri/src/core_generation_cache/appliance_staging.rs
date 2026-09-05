@@ -1803,6 +1803,7 @@ where
     hook("after-cache-lock")?;
     poll_cancelled(&cancelled)?;
     revalidate_installed_capabilities(generation, checkpoint, lineage, &cancelled)?;
+    validate_transfer_inventory_names(&inventory, &lineage_inventory)?;
 
     let state = cache.load_state_unlocked()?;
     let authorized = validate_authenticated_bootstrap_activation(
@@ -2220,6 +2221,19 @@ fn require_exact_pending_state(
     require_exact_pending(&current, identity, operation_id)?;
     if &current != expected_state {
         return Err("Core generation cache state changed during appliance staging.".into());
+    }
+    Ok(())
+}
+
+fn validate_transfer_inventory_names(
+    inventory: &BTreeMap<String, (u64, String)>,
+    lineage_inventory: &BTreeMap<String, (u64, String)>,
+) -> Result<(), String> {
+    let mut folded = BTreeSet::new();
+    for name in inventory.keys().chain(lineage_inventory.keys()) {
+        if !folded.insert(name.to_ascii_lowercase()) {
+            return Err("Core appliance handoff transfer contains a filename collision.".into());
+        }
     }
     Ok(())
 }
@@ -3700,6 +3714,18 @@ mod tests {
     }
 
     #[test]
+    fn current_and_lineage_inventory_names_cannot_collide() {
+        let current = BTreeMap::from([("Current.Manifest.JSON".into(), (7, "a".repeat(64)))]);
+        let distinct = BTreeMap::from([("predecessor.sig".into(), (11, "b".repeat(64)))]);
+        validate_transfer_inventory_names(&current, &distinct).unwrap();
+        let collision = BTreeMap::from([("current.manifest.json".into(), (13, "c".repeat(64)))]);
+        assert_eq!(
+            validate_transfer_inventory_names(&current, &collision).unwrap_err(),
+            "Core appliance handoff transfer contains a filename collision."
+        );
+    }
+
+    #[test]
     fn lineage_transfer_totals_are_checked_and_include_predecessors() {
         let current = BTreeMap::from([("current".into(), (7, "a".repeat(64)))]);
         let lineage = BTreeMap::from([
@@ -3763,7 +3789,7 @@ mod tests {
         .expect("a pending generation cannot be its own predecessor");
         assert_eq!(
             error,
-            "Core generation differs from its bootstrap checkpoint."
+            "Core appliance handoff transfer contains a filename collision."
         );
         assert!(destination_entries(&fixture.destination).is_empty());
         assert_eq!(fixture.cache.load_state().unwrap(), before);

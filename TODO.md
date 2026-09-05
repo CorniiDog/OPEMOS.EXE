@@ -545,6 +545,14 @@ already Core contracts and are not open-ended product choices.
     mutation. On 2026-09-05, the focused Rust exact-inventory/collision regression
     passes. Multi-source cache pinning, copying, receipts, capacity accounting,
     restart recovery, and final revalidation remain open before positive staging.
+  - [x] Reject collisions across the current-generation and predecessor transfer
+    inventories, including case-only aliases, after installed-trust validation
+    and before cache or destination paths are opened. This deliberately moves
+    self-lineage failure earlier from the recorded bootstrap-checkpoint mismatch
+    to the exact transfer filename-collision diagnostic; mixed-trust lineage still
+    fails first at its trust boundary. On 2026-09-05, the focused collision,
+    self-lineage, and mixed-trust Rust regressions pass. Multi-source pinning,
+    copying, receipts, recovery, and final revalidation remain open.
   - [x] Include predecessor manifest/signature bytes and file nodes in checked
     handoff storage admission before destination work. Combined current-plus-
     lineage totals reject integer overflow and directory entry-limit excess,
