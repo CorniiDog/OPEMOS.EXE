@@ -1504,8 +1504,14 @@ must be reported; a default-suite pass does not imply hardware certification.
   `main` now resolves to that exact commit after the bounded necessary-CI
   fast-forward. On 2026-09-05, YAML parsing, exact workflow documentation
   assertions, the local ignored resolver and consumer integrations, repository
-  hygiene, and boundary integrity pass. Remote execution remains the purpose of
-  the source push; Debian and managed Fedora appliance boot remain separate.
+  hygiene, and boundary integrity pass. To execute that remote-only CI, EXE lead
+  normally fast-forwarded configured remote
+  `https://github.com/CorniiDog/steamos-nvidia-image-builder.git`, branch `main`,
+  from `14d510787380fc444eb57d2888677c2239ab0b9f` through CI commit
+  `7a911834d9625c7cd6fd3f428eaba0b48ad55211`; GitHub redirected the repository
+  to `CorniiDog/OPEMOS.EXE` without changing the configured remote. Checks run
+  33980895429 was queued for the exact commit. Debian and managed Fedora
+  appliance boot remain separate.
 - [ ] Add bounded release-package smoke tests which start and close the packaged
   application and confirm no orphan QEMU processes remain. The experimental
   Ubuntu debug package now has the equivalent bounded AT-SPI launch/close and
