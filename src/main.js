@@ -3,6 +3,7 @@ import { presentHostEnvironment } from "./host-status.js";
 import { buildCompletionMatches, operationContextMatches } from "./operation-context.js";
 import {
   admitBuildStart,
+  admitBuildSourceSelection,
   admitImageSelection,
   admitExportModeSelection,
   admitOutputDirectorySelection,
@@ -91,6 +92,8 @@ let activeExportMode = "image";
 let pendingBuildFinished = null;
 let buildContextGeneration = 0;
 let activeBuildContext = null;
+let acceptedNvidiaSource = elements.nvidiaSource.value;
+let acceptedUpstreamApproval = elements.allowUpstreamBuild.checked;
 let pendingUsbTarget = null;
 let hostReady = false;
 let progressReady = false;
@@ -454,10 +457,17 @@ async function loadNvidiaSourceBranches() {
     } else {
       elements.nvidiaSource.value = "automatic";
     }
+    acceptedNvidiaSource = elements.nvidiaSource.value;
+    if (!acceptedNvidiaSource.startsWith("upstream:")) {
+      acceptedUpstreamApproval = false;
+      elements.allowUpstreamBuild.checked = false;
+    }
   } catch (error) {
     elements.resultMessage.textContent = `Could not load optional NVIDIA branches: ${error}`;
   } finally {
-    elements.nvidiaSource.disabled = false;
+    const editable = admitBuildSourceSelection(currentBuildSnapshot()).accepted;
+    elements.nvidiaSource.disabled = !editable;
+    elements.allowUpstreamBuild.disabled = !editable;
     renderSourceWarning();
   }
 }
@@ -622,8 +632,26 @@ elements.includeUpstreamNvidia.addEventListener("change", async () => {
   });
   await loadNvidiaSourceBranches();
 });
-elements.nvidiaSource.addEventListener("change", renderSourceWarning);
-elements.allowUpstreamBuild.addEventListener("change", updateBuildButton);
+elements.nvidiaSource.addEventListener("change", () => {
+  if (!admitBuildSourceSelection(currentBuildSnapshot()).accepted) {
+    elements.nvidiaSource.value = acceptedNvidiaSource;
+    elements.allowUpstreamBuild.checked = acceptedUpstreamApproval;
+    renderSourceWarning();
+    return;
+  }
+  acceptedNvidiaSource = elements.nvidiaSource.value;
+  renderSourceWarning();
+  acceptedUpstreamApproval = elements.allowUpstreamBuild.checked;
+});
+elements.allowUpstreamBuild.addEventListener("change", () => {
+  if (!admitBuildSourceSelection(currentBuildSnapshot()).accepted) {
+    elements.allowUpstreamBuild.checked = acceptedUpstreamApproval;
+    updateBuildButton();
+    return;
+  }
+  acceptedUpstreamApproval = elements.allowUpstreamBuild.checked;
+  updateBuildButton();
+});
 elements.autoReleaseNvidia.addEventListener("change", async () => {
   const previous = builderSettings;
   const enabled = elements.autoReleaseNvidia.checked;

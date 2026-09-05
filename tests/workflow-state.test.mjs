@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   admitBuildStart,
+  admitBuildSourceSelection,
   admitImageSelection,
   admitExportModeSelection,
   admitOutputDirectorySelection,
@@ -342,6 +343,25 @@ test("image export-mode changes only before build mutation begins", () => {
     });
   }
   assert.throws(() => admitExportModeSelection({
+    ...ready, buildRunning: true, usbWriting: true,
+  }), /cannot run concurrently/);
+});
+
+test("build source intent changes only before build mutation begins", () => {
+  for (const snapshot of [{ ...ready, hasImage: false }, ready]) {
+    assert.equal(admitBuildSourceSelection(snapshot).accepted, true);
+  }
+  const cases = [
+    [{ hasCompletedOutput: true }, "complete", "complete"],
+    [{ buildRunning: true }, "building", "building"],
+    [{ usbWriting: true }, "usb-writing", "usb-writing"],
+  ];
+  for (const [change, phase, blocker] of cases) {
+    assert.deepEqual(admitBuildSourceSelection({ ...ready, ...change }), {
+      accepted: false, phase, blocker,
+    });
+  }
+  assert.throws(() => admitBuildSourceSelection({
     ...ready, buildRunning: true, usbWriting: true,
   }), /cannot run concurrently/);
 });

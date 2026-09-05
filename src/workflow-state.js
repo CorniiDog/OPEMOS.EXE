@@ -209,6 +209,16 @@ export function admitExportModeSelection(snapshot) {
   });
 }
 
+export function admitBuildSourceSelection(snapshot) {
+  const admission = deriveBuildAdmission(snapshot);
+  const accepted = admission.phase === "empty" || admission.phase === "selected";
+  return Object.freeze({
+    accepted,
+    phase: admission.phase,
+    blocker: accepted ? null : admission.blocker,
+  });
+}
+
 export function admitUsbConfirmationEdit(snapshot, capability) {
   const admission = deriveBuildAdmission(snapshot);
   if (!capability || typeof capability !== "object" || Array.isArray(capability)) {
