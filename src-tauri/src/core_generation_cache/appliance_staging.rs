@@ -3649,6 +3649,30 @@ mod tests {
     }
 
     #[test]
+    fn self_lineage_is_rejected_before_handoff_publication() {
+        let fixture = PreparedFixture::create("self-lineage");
+        let before = fixture.cache.load_state().unwrap();
+        let error = stage_pending_generation_for_appliance(
+            &fixture.cache,
+            &fixture.generation,
+            &fixture.checkpoint,
+            &fixture.target,
+            &[&fixture.generation],
+            &fixture.operation,
+            &fixture.destination,
+            || false,
+        )
+        .err()
+        .expect("a pending generation cannot be its own predecessor");
+        assert_eq!(
+            error,
+            "Core generation differs from its bootstrap checkpoint."
+        );
+        assert!(destination_entries(&fixture.destination).is_empty());
+        assert_eq!(fixture.cache.load_state().unwrap(), before);
+    }
+
+    #[test]
     fn capability_fails_after_pending_state_changes_and_can_be_retired() {
         let fixture = PreparedFixture::create("stale-capability");
         let mut staged = fixture.stage().unwrap();

@@ -527,6 +527,12 @@ already Core contracts and are not open-ended product choices.
     consumption, retirement, and acknowledgment path. Non-empty lineage staging
     and its process-death/failure matrix remain EXE-owned work; no additional Core
     contract gap is established by this baseline.
+  - [x] Reject a pending generation that cites itself as authenticated lineage
+    before appliance handoff publication. The staging bridge returns the exact
+    bootstrap-checkpoint mismatch, leaves the destination without a handoff, and
+    preserves cache state. On 2026-09-05, the focused Rust regression and
+    formatting pass. A positive authenticated successor lineage plus process-
+    death, cancellation, cleanup, and storage-failure coverage remain open.
 - [x] Exercise the inactive appliance handoff in real subprocesses killed at
   all 38 existing staging, partial-file-receipt, and retirement hook boundaries.
   Fresh-process restart reauthenticates installed trust, reacquires locks,
