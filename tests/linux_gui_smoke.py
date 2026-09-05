@@ -84,7 +84,8 @@ class GuiSmokeTests(unittest.TestCase):
     def test_cleared_result_rejects_stale_fields_and_wrong_focus(self):
         focused = "focused"
         clear = FakeNode("Clear", actionable=True, states={focused})
-        dialog = FakeNode(children=[clear])
+        empty_status = FakeNode("No result loaded.", role="status bar")
+        dialog = FakeNode(children=[clear, empty_status])
         smoke.validate_cleared_result(dialog, focused)
         dialog.children.append(FakeNode("Core status"))
         with self.assertRaisesRegex(RuntimeError, "Expected no accessible"):
@@ -96,6 +97,14 @@ class GuiSmokeTests(unittest.TestCase):
         clear.states = {focused}
         dialog.children.append(FakeNode("Unverified Core result"))
         with self.assertRaisesRegex(RuntimeError, "Expected no accessible"):
+            smoke.validate_cleared_result(dialog, focused)
+        dialog.children.pop()
+        empty_status.name = "Development fixture — non-production"
+        with self.assertRaisesRegex(RuntimeError, "Expected no accessible"):
+            smoke.validate_cleared_result(dialog, focused)
+        empty_status.name = "No result loaded."
+        dialog.children.append(FakeNode("No result loaded.", role="status bar"))
+        with self.assertRaisesRegex(RuntimeError, "Expected one status bar"):
             smoke.validate_cleared_result(dialog, focused)
 
     def test_compatible_rows_preserve_repeated_values_and_reject_stale_action(self):
@@ -198,7 +207,7 @@ class GuiSmokeTests(unittest.TestCase):
         controls = [FakeNode(name, role=role, states={focusable})
                     for name, role in smoke.EXPECTED_FOCUS_ORDER]
         controls[0].states = {focusable, focused}
-        dialog = FakeNode(children=controls)
+        dialog = FakeNode(children=[*controls, FakeNode("No result loaded.", role="status bar")])
         smoke.validate_reopened_dialog(dialog, focusable, focused)
         dialog.children.append(FakeNode("Core status"))
         with self.assertRaisesRegex(RuntimeError, "Expected no accessible"):

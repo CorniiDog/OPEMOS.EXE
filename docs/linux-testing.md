@@ -163,7 +163,8 @@ credentials, downloads, cache changes, or guest operations. Dynamic status text
 is also mirrored into its accessibility label: a fixture result must expose
 `Development fixture — non-production` as a status bar and its result container
 as the `Unverified Core result` landmark. Clearing or closing must replace the
-status label with `No result loaded.` The smoke also verifies the ordered
+status label with exactly one `No result loaded.` node and remove the prior
+fixture-origin label. The smoke also verifies the ordered
 compatibility controls, initial Close focus, all four
 development-fixture generation rows, and focus
 restoration to the Settings opener after closing the dialog. It exercises both

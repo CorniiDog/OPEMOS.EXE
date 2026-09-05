@@ -200,10 +200,12 @@ installation targets, production activation, or hardware certification.
   and target fields plus all four development-fixture generation rows. It switches
   to the no-artifact fixture and verifies Core's exact status/reason/message plus its
   bounded exact-target action fields in order. Clear then removes every result,
-  action, and generation sentinel from the accessibility tree while retaining
-  Clear focus, then reloading Compatible must restore only its exact rows and
+  action, generation, and fixture-origin sentinel from the accessibility tree,
+  requires exactly one `No result loaded.` status, and retains Clear focus, then
+  reloading Compatible must restore only its exact rows and
   focus its fixture control. Closing and reopening the populated dialog must
-  remove every prior result sentinel and restore native Close-first focus. It
+  remove every prior result and origin sentinel, restore exactly one empty
+  status, and restore native Close-first focus. It
   closes only the dialog,
   restores focus to its Settings opener, preserves the main document, stops the
   complete process group, and proves no
@@ -229,8 +231,9 @@ installation targets, production activation, or hardware certification.
   altered, missing, or extra compatibility safety warnings, inaccessible fixture
   origin or unverified-result landmark, reordered or extra
   or ambiguously bounded rows, stale cleared fields or result headings, wrong
-  Clear focus, stale next actions after recovery, and altered compatible trust
-  text, stale close/reopen state, and wrong reopened focus; the live package
+  Clear focus, stale or duplicate empty-status labels, stale next actions after
+  recovery, and altered compatible trust text, stale close/reopen state, and wrong
+  reopened focus; the live package
   smoke passes. Debian,
   companion windows, delivered key-event/editable-text traversal, and pixel
   rendering remain open; GNOME Wayland accepted an exploratory AT-SPI Escape

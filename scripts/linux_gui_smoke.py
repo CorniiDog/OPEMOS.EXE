@@ -6,6 +6,7 @@ from pathlib import Path
 
 RESULT_SENTINEL_LABELS = [
     "Unverified Core result",
+    "Development fixture — non-production",
     "Core status",
     "Next action reported by Core",
     "Available generations — development fixture",
@@ -283,8 +284,13 @@ def validate_settings_disabled_controls(settings, enabled_state, focusable_state
         if states.contains(enabled_state) or states.contains(focusable_state):
             raise RuntimeError(f"Unavailable Settings control became interactive: {label!r}.")
 
-def validate_cleared_result(dialog, focused_state):
+def validate_empty_result(dialog):
     require_absent(dialog, RESULT_SENTINEL_LABELS)
+    exactly_one_role(dialog, "No result loaded.", "status bar")
+
+
+def validate_cleared_result(dialog, focused_state):
+    validate_empty_result(dialog)
     exactly_one_focused_action(dialog, "Clear", focused_state)
 
 def validate_dialog_focus(dialog, focusable_state, focused_state):
@@ -309,7 +315,7 @@ def validate_compatibility_safety_text(dialog, text_reader):
 
 def validate_reopened_dialog(dialog, focusable_state, focused_state):
     validate_dialog_focus(dialog, focusable_state, focused_state)
-    require_absent(dialog, RESULT_SENTINEL_LABELS)
+    validate_empty_result(dialog)
 
 def accessible_text(node):
     from gi.repository import Atspi
