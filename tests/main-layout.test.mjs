@@ -222,6 +222,11 @@ test("native image chooser rejects superseded and stale-context results", () => 
   assert.match(script, /chooseImage\.addEventListener\("click"[\s\S]*const chooserGeneration = \+\+imageChooserGeneration;[\s\S]*const selectionGeneration = imageSelectionGeneration;[\s\S]*const selected = await open\([\s\S]*if \(chooserGeneration !== imageChooserGeneration[\s\S]*\|\| selectionGeneration !== imageSelectionGeneration\) return;[\s\S]*await selectImage\(selected\)/);
 });
 
+test("native output chooser rejects superseded and stale-context results", () => {
+  assert.match(script, /let outputChooserGeneration = 0;/);
+  assert.match(script, /chooseOutputFolder\.addEventListener\("click"[\s\S]*const chooserGeneration = \+\+outputChooserGeneration;[\s\S]*const outputGeneration = outputSelectionGeneration;[\s\S]*const selectionGeneration = imageSelectionGeneration;[\s\S]*const directory = await open\([\s\S]*if \(chooserGeneration !== outputChooserGeneration[\s\S]*\|\| outputGeneration !== outputSelectionGeneration[\s\S]*\|\| selectionGeneration !== imageSelectionGeneration\) return;[\s\S]*await selectOutputDirectory\(directory\)/);
+});
+
 test("stale build completions cannot overwrite a newer build context", () => {
   assert.match(script, /import \{ buildCompletionMatches, operationContextMatches \}/);
   assert.match(script, /admitBuildCompletion,/);

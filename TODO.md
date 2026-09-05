@@ -729,6 +729,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     the focused 41-case workflow/layout suite and all 145 frontend tests pass,
     along with documentation, repository hygiene, and boundary integrity
     checks. Other async workers remain under the parent lifecycle item.
+  - [x] Give the native output-folder chooser its own latest-request generation
+    and capture both output and image-selection revisions before opening the
+    dialog. Older overlapping dialogs, resets, and image replacements can no
+    longer apply a stale directory. On 2026-09-05, the focused 42-case
+    workflow/layout suite and all 146 frontend tests pass, along with
+    documentation, repository hygiene, and boundary integrity checks. Other
+    async workers remain under the parent lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.
