@@ -253,6 +253,29 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "initial focus changed"):
             smoke.validate_linux_unavailable_controls(app, focusable, focused)
 
+    def test_open_image_chooser_requires_filter_disabled_open_and_enabled_cancel(self):
+        enabled = "enabled"
+        open_button = FakeNode("Open", actionable=True, role="push button")
+        cancel = FakeNode("Cancel", actionable=True, role="push button", states={enabled})
+        chooser = FakeNode(children=[
+            open_button,
+            cancel,
+            FakeNode("SteamOS recovery image", role="combo box"),
+            FakeNode("SteamOS recovery image", role="menu item"),
+        ])
+        self.assertIs(smoke.validate_open_image_chooser(chooser, enabled), cancel)
+        open_button.states = {enabled}
+        with self.assertRaisesRegex(RuntimeError, "enabled Open"):
+            smoke.validate_open_image_chooser(chooser, enabled)
+        open_button.states = set()
+        cancel.states = set()
+        with self.assertRaisesRegex(RuntimeError, "disabled Cancel"):
+            smoke.validate_open_image_chooser(chooser, enabled)
+        cancel.states = {enabled}
+        chooser.children.append(FakeNode("All files", role="menu item"))
+        with self.assertRaisesRegex(RuntimeError, "Expected no accessible"):
+            smoke.validate_open_image_chooser(chooser, enabled)
+
     def test_closed_image_chooser_rejects_stale_dialog_and_wrong_focus(self):
         focused = "focused"
         chooser = FakeNode("Choose Image…", actionable=True, states={focused})

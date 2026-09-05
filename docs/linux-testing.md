@@ -142,8 +142,10 @@ expose exactly Settings, image selection, and Valve's download page as buttons;
 build and USB-writing actions must remain absent. It rejects any Linux-ready or
 normal-ready heading, altered fallback policy, extra button, or unexpected
 initial button focus. The smoke also opens the native recovery-image chooser,
-cancels without selecting a file, requires both chooser accessibility nodes to
-disappear, and requires focus to return to Choose Image. Omit the unavailable
+requires its SteamOS recovery-image filter without an all-files option, requires
+Open to remain disabled before selection and Cancel to remain enabled, cancels
+without selecting a file, requires both chooser accessibility nodes to disappear,
+and requires focus to return to Choose Image. Omit the unavailable
 assertion only when
 running outside this scheduler with a deliberately different resource budget.
 It accepts only the accessibility application

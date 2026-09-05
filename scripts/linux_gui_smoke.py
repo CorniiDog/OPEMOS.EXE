@@ -303,6 +303,19 @@ def validate_linux_unavailable_controls(app, focusable_state, focused_state):
     require_absent(app, UNAVAILABLE_FORBIDDEN_ACTIONS)
 
 
+def validate_open_image_chooser(chooser, enabled_state):
+    open_button = exactly_one_action(chooser, "Open", {"push button", "button"})
+    cancel_button = exactly_one_action(chooser, "Cancel", {"push button", "button"})
+    if open_button.get_state_set().contains(enabled_state):
+        raise RuntimeError("Native recovery-image chooser enabled Open without a selection.")
+    if not cancel_button.get_state_set().contains(enabled_state):
+        raise RuntimeError("Native recovery-image chooser disabled Cancel.")
+    exactly_one_role(chooser, "SteamOS recovery image", "combo box")
+    exactly_one_role(chooser, "SteamOS recovery image", "menu item")
+    require_absent(chooser, ["All files", "All Files"])
+    return cancel_button
+
+
 def validate_closed_image_chooser(app, focused_state):
     require_absent(app, ["Open File", "File Chooser Widget"])
     return exactly_one_focused_action(app, "Choose Image…", focused_state)
@@ -338,7 +351,8 @@ def wait_for(find, deadline: float, description: str, process_poll=None):
     raise RuntimeError(f"Timed out waiting for {description}: {last_error}")
 
 def exercise_accessibility(desktop, deadline: float, expected_pid: int,
-                           focusable_state, focused_state, process_poll=None,
+                           focusable_state, focused_state, enabled_state,
+                           process_poll=None,
                            expect_host_unavailable=False):
     wait = lambda find, description: wait_for(
         find, deadline, description, process_poll=process_poll
@@ -352,7 +366,7 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     invoke(exactly_one_action(app, "Choose Image…"))
     chooser = wait(lambda: exactly_one_role(app, "Open File", "file chooser"),
                    "the native recovery-image chooser")
-    invoke(exactly_one_action(chooser, "Cancel", {"push button", "button"}))
+    invoke(validate_open_image_chooser(chooser, enabled_state))
     wait(lambda: validate_closed_image_chooser(app, focused_state),
          "image chooser cancellation and focus restoration")
     invoke(exactly_one_action(app, "Open settings"))
@@ -539,6 +553,7 @@ def main(argv=None):
                                expected_pid=process.pid,
                                focusable_state=Atspi.StateType.FOCUSABLE,
                                focused_state=Atspi.StateType.FOCUSED,
+                               enabled_state=Atspi.StateType.ENABLED,
                                process_poll=process.poll,
                                expect_host_unavailable=args.expect_host_unavailable)
     finally:
