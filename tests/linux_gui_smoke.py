@@ -123,6 +123,23 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Expected one status bar"):
             smoke.validate_empty_document_error(dialog)
 
+    def test_fixture_result_surface_rejects_stale_missing_and_duplicate_origins(self):
+        origin = FakeNode("Development fixture — non-production", role="status bar")
+        result = FakeNode("Unverified Core result", role="landmark")
+        dialog = FakeNode(children=[origin, result])
+        smoke.validate_fixture_result_surface(dialog)
+        dialog.children.append(FakeNode("No result loaded.", role="status bar"))
+        with self.assertRaisesRegex(RuntimeError, "Expected no accessible"):
+            smoke.validate_fixture_result_surface(dialog)
+        dialog.children.pop()
+        result.name = "Trusted Core result"
+        with self.assertRaisesRegex(RuntimeError, "Expected one landmark"):
+            smoke.validate_fixture_result_surface(dialog)
+        result.name = "Unverified Core result"
+        dialog.children.append(FakeNode(origin.name, role=origin.role))
+        with self.assertRaisesRegex(RuntimeError, "Expected one status bar"):
+            smoke.validate_fixture_result_surface(dialog)
+
     def test_compatible_rows_preserve_repeated_values_and_reject_stale_action(self):
         names = [value for row in smoke.EXPECTED_COMPATIBLE_ROWS for value in row]
         end = "Available generations — development fixture"

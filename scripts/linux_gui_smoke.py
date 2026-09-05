@@ -296,6 +296,12 @@ def validate_empty_document_error(dialog):
     exactly_one_role(dialog, EMPTY_DOCUMENT_ERROR, "status bar")
 
 
+def validate_fixture_result_surface(dialog):
+    require_absent(dialog, ["No result loaded.", EMPTY_DOCUMENT_ERROR])
+    exactly_one_role(dialog, "Development fixture — non-production", "status bar")
+    exactly_one_role(dialog, "Unverified Core result", "landmark")
+
+
 def validate_cleared_result(dialog, focused_state):
     validate_empty_result(dialog)
     exactly_one_focused_action(dialog, "Clear", focused_state)
@@ -446,8 +452,7 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
          "clearing the empty compatibility document error")
     invoke(exactly_one_action(dialog, "Compatible fixture"))
     wait(lambda: exactly_one(dialog, "compatible"), "the compatible Core status")
-    exactly_one_role(dialog, "Development fixture — non-production", "status bar")
-    exactly_one_role(dialog, "Unverified Core result", "landmark")
+    validate_fixture_result_surface(dialog)
     validate_named_rows(
         dialog,
         EXPECTED_COMPATIBLE_ROWS,
@@ -463,6 +468,7 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     invoke(exactly_one_action(dialog, "No-artifact fixture"))
     wait(lambda: exactly_one(dialog, "no_compatible_artifact"),
          "the no-artifact Core status")
+    validate_fixture_result_surface(dialog)
     validate_named_rows(
         dialog,
         EXPECTED_NO_ARTIFACT_ROWS,
@@ -474,6 +480,7 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     invoke(exactly_one_action(dialog, "Compatible fixture"))
     wait(lambda: exactly_one(dialog, "compatible"),
          "the compatible Core status after Clear")
+    validate_fixture_result_surface(dialog)
     validate_named_rows(
         dialog,
         EXPECTED_COMPATIBLE_ROWS,
