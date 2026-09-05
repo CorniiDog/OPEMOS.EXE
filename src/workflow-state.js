@@ -160,3 +160,17 @@ export function admitUsbTargetSelection(snapshot) {
       : admission.blocker;
   return Object.freeze({ accepted, phase: admission.phase, blocker });
 }
+
+export function admitUsbTargetClear(snapshot, capability) {
+  const admission = admitUsbTargetSelection(snapshot);
+  if (!capability || typeof capability !== "object" || Array.isArray(capability)) {
+    throw new TypeError("USB target clear capability must be an object");
+  }
+  requireBoolean("hasTarget", capability.hasTarget);
+  const blocker = !admission.accepted
+    ? admission.blocker
+    : !capability.hasTarget
+      ? "no-usb-target"
+      : null;
+  return Object.freeze({ accepted: blocker === null, phase: admission.phase, blocker });
+}

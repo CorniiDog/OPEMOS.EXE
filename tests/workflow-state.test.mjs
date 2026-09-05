@@ -8,6 +8,7 @@ import {
   admitUsbPreflightCancel,
   admitUsbPreflightStart,
   admitUsbTargetSelection,
+  admitUsbTargetClear,
   admitUsbWriteStart,
   deriveBuildAdmission,
 } from "../src/workflow-state.js";
@@ -245,4 +246,28 @@ test("USB target selection changes only in stable image phases", () => {
   assert.throws(() => admitUsbTargetSelection({
     ...ready, buildRunning: true, usbWriting: true,
   }), /cannot run concurrently/);
+});
+
+test("USB target clearing requires one target in a stable image phase", () => {
+  const present = { hasTarget: true };
+  assert.deepEqual(admitUsbTargetClear(ready, present), {
+    accepted: true, phase: "selected", blocker: null,
+  });
+  assert.deepEqual(admitUsbTargetClear({ ...ready, hasCompletedOutput: true }, present), {
+    accepted: true, phase: "complete", blocker: null,
+  });
+  assert.deepEqual(admitUsbTargetClear(ready, { hasTarget: false }), {
+    accepted: false, phase: "selected", blocker: "no-usb-target",
+  });
+  assert.deepEqual(admitUsbTargetClear({ ...ready, buildRunning: true }, present), {
+    accepted: false, phase: "building", blocker: "building",
+  });
+  assert.deepEqual(admitUsbTargetClear({ ...ready, usbWriting: true }, present), {
+    accepted: false, phase: "usb-writing", blocker: "usb-writing",
+  });
+  assert.throws(() => admitUsbTargetClear(ready, null), /capability must be an object/);
+  assert.throws(
+    () => admitUsbTargetClear(ready, { hasTarget: "yes" }),
+    /hasTarget must be boolean/,
+  );
 });

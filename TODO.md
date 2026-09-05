@@ -928,6 +928,15 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     2026-09-05, the focused 24-case workflow/layout suite and all 126 frontend
     tests plus documentation, hygiene, and boundary integrity pass. The broader
     workflow transition model remains open.
+  - [x] Route USB target clearing through the reducer before DOM mutation. Clear
+    requests now require a selected target and a stable selected-image or
+    completed-image phase; missing targets, malformed capabilities, active
+    builds, USB writes, and impossible concurrent states fail closed without
+    discarding the visible selection or live preflight context. Native target
+    inspection and destructive confirmation remain unchanged. On 2026-09-05,
+    the focused 25-case workflow/layout suite and all 127 frontend tests plus
+    documentation, hygiene, and boundary integrity pass. The broader workflow
+    transition model remains open.
 - [ ] Split oversized frontend workflow/log rendering code only where behavior
   can be covered by focused tests.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.

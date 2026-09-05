@@ -8,6 +8,7 @@ import {
   admitUsbPreflightCancel,
   admitUsbPreflightStart,
   admitUsbTargetSelection,
+  admitUsbTargetClear,
   admitUsbWriteStart,
   deriveBuildAdmission,
 } from "./workflow-state.js";
@@ -989,7 +990,10 @@ elements.usbTarget.addEventListener("change", async () => {
 });
 
 elements.clearUsbTarget.addEventListener("click", () => {
-  if (!elements.usbTarget.value) return;
+  const admission = admitUsbTargetClear(currentBuildSnapshot(), {
+    hasTarget: Boolean(elements.usbTarget.value),
+  });
+  if (!admission.accepted) return;
   elements.usbTarget.value = "";
   elements.usbTarget.dispatchEvent(new Event("change"));
   elements.usbTarget.focus();
