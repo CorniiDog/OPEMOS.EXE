@@ -341,7 +341,25 @@ installation targets, production activation, or hardware certification.
   choosers, focus restoration, process cleanup, and the no-QEMU
   invariant remain functional. Package SHA-256 is
   `f7a43e115e234ed977ad91d7daa8a7660f0453cad3a6cf73bd692849048dfc76`.
-  The restrictive production CSP and further `core:default` review remain open.
+  At this commit, the restrictive production CSP and further `core:default`
+  review remained open; the follow-up below closes both.
+
+- [x] Enable a restrictive packaged-webview CSP and replace every broad Tauri
+  permission default with the exact frontend calls. The CSP admits only bundled
+  scripts, images, fonts, and styles plus Tauri's documented IPC endpoints;
+  runtime progress/log rendering retains the required inline-style allowance.
+  Objects, forms, frames, base-URL changes, and every other source are denied.
+  `core:default`, `dialog:default`, and `opener:default` are absent. Main receives
+  only listen/unlisten/emit, window inventory/focus/drag, dialog open, and URL
+  open; build progress and maintainer receive only listen/unlisten/emit-to,
+  hide/drag, plus dialog open for maintainer. The exact regression rejects any
+  directive, permission, order, or membership drift. On 2026-09-04, focused
+  frontend and Cargo checks plus a rebuilt extracted-package AT-SPI smoke pass;
+  Settings, both native choosers, compatibility IPC, focus restoration, clean
+  process-group shutdown, and the no-QEMU invariant remain functional. Package
+  SHA-256 is
+  `2fa3e4036e793ecbaaf149979740f9c46aafb3ac0f291e83c0faf1243bb8f883`.
+  This does not grant webview networking or alter production trust/activation.
 
 ### 1. Complete the OPEMOS Core migration
 
@@ -823,8 +841,9 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
 - [ ] Record the exact OPEMOS.EXE source commit, Core bundle identity, appliance
   identity, input image hash, selected policy, and artifact provenance in the
   output manifest without private host paths.
-- [ ] Enable a restrictive production CSP and reduce Tauri dialog/opener/global
-  capabilities to the minimum required per window.
+- [x] Enable a restrictive production CSP and reduce Tauri dialog/opener/global
+  capabilities to the minimum required per window. Completed above with exact
+  per-window permissions and packaged Linux runtime evidence.
 - [ ] Audit licenses and redistribution obligations for bundled QEMU, firmware,
   Fedora components, NVIDIA artifacts, and other third-party material.
 - [ ] Sign and notarize the macOS application, publish checksums and release

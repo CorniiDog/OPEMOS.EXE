@@ -17,10 +17,13 @@ testing. Debian is an intended testing platform, not a validated distribution.
 A development binary and the extracted debug-package binary have launched and
 closed in an Ubuntu 24.04.4 Wayland session, with no remaining launcher or EXE
 processes. The package was not installed. Tauri capabilities are scoped per window:
-the main window owns dialog/opener/focus access, the maintainer owns dialog and
-hide access, and build progress owns hide access; each keeps its shared drag
-permission. The packaged Ubuntu smoke validates the main window after this
-split. GNOME denied noninteractive screenshot access, so pixel rendering,
+the main window owns only its event, window inventory/focus/drag, dialog-open,
+and URL-open calls; maintainer owns event, hide/drag, and dialog-open calls; build
+progress owns event and hide/drag calls. No window receives a broad core, dialog,
+or opener default. The packaged Ubuntu smoke validates the main window after this
+split. Its CSP loads only bundled resources and Tauri IPC, retains inline styles
+for dynamic progress/log presentation, and denies objects, forms, frames, base
+changes, and all other sources. GNOME denied noninteractive screenshot access, so pixel rendering,
 delivered key-event traversal, companion windows,
 desktop integration, and interactive close remain unvalidated. WebKit exposes
 no AT-SPI EditableText interface for the resolver text field, so automated

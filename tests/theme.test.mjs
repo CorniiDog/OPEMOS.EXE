@@ -79,20 +79,35 @@ test("preload and native window backgrounds preserve translucent dark fallback",
     {
       identifier: "main-window",
       windows: ["main"],
-      permissions: ["core:default", "core:window:allow-set-focus", "core:window:allow-start-dragging", "dialog:default", "opener:default"],
+      permissions: ["core:event:allow-listen", "core:event:allow-unlisten", "core:event:allow-emit", "core:window:allow-get-all-windows", "core:window:allow-set-focus", "core:window:allow-start-dragging", "dialog:allow-open", "opener:allow-open-url"],
     },
     {
       identifier: "build-progress",
       windows: ["build-progress"],
-      permissions: ["core:default", "core:window:allow-hide", "core:window:allow-start-dragging"],
+      permissions: ["core:event:allow-listen", "core:event:allow-unlisten", "core:event:allow-emit-to", "core:window:allow-hide", "core:window:allow-start-dragging"],
     },
     {
       identifier: "maintainer-workspace",
       windows: ["maintainer-workspace"],
-      permissions: ["core:default", "core:window:allow-hide", "core:window:allow-start-dragging", "dialog:default"],
+      permissions: ["core:event:allow-listen", "core:event:allow-unlisten", "core:event:allow-emit-to", "core:window:allow-hide", "core:window:allow-start-dragging", "dialog:allow-open"],
     },
   ]);
   assert.equal(new Set(capabilities.flatMap(({ windows }) => windows)).size, 3);
+
+  const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
+  assert.deepEqual(tauriConfig.app.security.csp, {
+    "default-src": "'self'",
+    "connect-src": "ipc: http://ipc.localhost",
+    "font-src": "'self'",
+    "img-src": "'self'",
+    "style-src": "'self' 'unsafe-inline'",
+    "script-src": "'self'",
+    "object-src": "'none'",
+    "base-uri": "'none'",
+    "form-action": "'none'",
+    "frame-src": "'none'",
+    "frame-ancestors": "'none'",
+  });
 });
 
 test("interactive controls share one rounded glass component language", async () => {
