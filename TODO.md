@@ -1421,6 +1421,27 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   broader gate.
 - [ ] Test compact and expanded layouts, long localized text, zoom, reduced
   motion, high contrast, keyboard-only use, and display scaling.
+  - [x] Keep the shared main/maintainer compatibility inspector inside the
+    viewport when long localized headings, notices, labels, actions, and field
+    names meet high zoom. Text-bearing controls now permit character-level wrap
+    without intrinsic-width overflow; at 480 effective pixels in either
+    dimension the dialog uses an eight-pixel viewport inset, reduced padding,
+    bounded scrolling, and a shorter editable input. On 2026-09-05, the focused
+    17-case compatibility suite, all 148 frontend tests, documentation, hygiene,
+    and boundary integrity pass. Pixel rendering, delivered translations,
+    keyboard-only traversal, and real display scaling remain open.
+  - [x] Make compatibility-inspector modal focus deterministic for keyboard use.
+    Opening either shared inspector focuses its close control, while every close
+    path, including native Escape dismissal, clears private input/result state and
+    restores focus to the invoking button. On 2026-09-05, all 17 focused
+    compatibility-preview tests pass. Full keyboard traversal and real display
+    scaling remain open.
+  - [x] Bind both shared compatibility-inspector pages to reduced-motion and
+    forced-color coverage. The focused regression requires each page to load the
+    shared control and inspector styles, suppresses inherited motion, preserves
+    system-adjusted controls and Highlight focus outlines, and keeps the dialog
+    boundary visible with CanvasText. On 2026-09-05, all 18 focused compatibility-
+    preview tests pass. Real OS high-contrast rendering remains open.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
   heartbeats or free-form log text. Unknown structured phases now retain only
   their bounded label and current validation/installation context: even a
@@ -1504,8 +1525,29 @@ must be reported; a default-suite pass does not imply hardware certification.
   `main` now resolves to that exact commit after the bounded necessary-CI
   fast-forward. On 2026-09-05, YAML parsing, exact workflow documentation
   assertions, the local ignored resolver and consumer integrations, repository
-  hygiene, and boundary integrity pass. Remote execution remains the purpose of
-  the source push; Debian and managed Fedora appliance boot remain separate.
+  hygiene, and boundary integrity pass. To execute that remote-only CI, EXE lead
+  normally fast-forwarded configured remote
+  `https://github.com/CorniiDog/steamos-nvidia-image-builder.git`, branch `main`,
+  from `14d510787380fc444eb57d2888677c2239ab0b9f` through CI commit
+  `7a911834d9625c7cd6fd3f428eaba0b48ad55211`; GitHub redirected the repository
+  to `CorniiDog/OPEMOS.EXE` without changing the configured remote. Checks run
+  33980895429 was queued for the exact commit. That run exposed a bounded
+  shallow-checkout failure: `adf372b` was present but pinned ancestor `7f90e45`
+  was not an available object. The integration checkout now fetches exactly 56
+  commits, covering the 55-commit fast-forward plus its pinned baseline without
+  requesting unrelated history. The follow-up online-Core migration removes the
+  sibling-checkout fallback from both CI integration consumers, requires a
+  canonical GitHub `origin`, exact fetched `HEAD`, and exact immutable fixture
+  object before `git show`, and documents the verified cache workflow. A fresh
+  depth-56 canonical clone resolved `HEAD` to `adf372b857cd348b6a18680b45ffcea790f04d4b`
+  and the pinned boundary object to `7f90e45c4c154fdfda81ff594611cf533e4fb894`;
+  both ignored Core-backed integrations pass against that cache. Transition PR
+  #1 then exposed that the regular Rust job still fetched only one commit at
+  fixture head `3e49323fce266af8686039fb6487918ef5a64fd9`; nine existing conformance
+  tests could not resolve immutable ancestors. Canonical GitHub history proves
+  the oldest required pin is ten commits behind that head, so the job now fetches
+  exactly 11 commits and its documentation guard pins that bound. Debian and
+  managed Fedora appliance boot remain separate.
 - [ ] Add bounded release-package smoke tests which start and close the packaged
   application and confirm no orphan QEMU processes remain. The experimental
   Ubuntu debug package now has the equivalent bounded AT-SPI launch/close and

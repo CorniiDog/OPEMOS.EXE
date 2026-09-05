@@ -170,17 +170,33 @@ assert.equal(
   2,
   "Core checkout ref and fixture expectation must use the same immutable commit",
 );
+assert.match(
+  checks,
+  /ref: 3e49323fce266af8686039fb6487918ef5a64fd9\n          path: opemos-core-contracts\n          fetch-depth: 11\n          persist-credentials: false/,
+);
 assert.doesNotMatch(checks, /82241699497fb605b3d8b3fbc0015ec952f81ef3/);
 assert.match(checks, /persist-credentials: false/);
 const developmentLineageCommit = "adf372b857cd348b6a18680b45ffcea790f04d4b";
 assert.match(checks, /^  linux-integration:$/m);
 assert.match(checks, /runs-on: ubuntu-24\.04/);
-assert.equal(checks.split(developmentLineageCommit).length - 1, 1);
+assert.equal(checks.split(developmentLineageCommit).length - 1, 3);
+assert.match(
+  checks,
+  /ref: adf372b857cd348b6a18680b45ffcea790f04d4b\n          path: opemos-core-contracts\n          fetch-depth: 56\n          persist-credentials: false/,
+);
 assert.match(checks, /exact_core_source_intent_matrix_matches_rust_contract -- --ignored/);
 assert.match(checks, /immutable_core_generation_reaches_guest_consumption_and_activation/);
 assert.match(checks, /live_linux_disposable_host_tools -- --ignored/);
 assert.match(checks, /OPEMOS_EXPERIMENTAL_LINUX: '1'/);
 assert.match(checks, /OPEMOS_LINUX_ACCEL: tcg/);
+assert.equal(
+  checks.split(`OPEMOS_CORE_EXPECTED_COMMIT: ${developmentLineageCommit}`).length - 1,
+  2,
+  "each Core-backed Linux integration must verify the fetched GitHub commit",
+);
+const developerGuide = await read("docs/developer-guide.md");
+assert.match(developerGuide, /https:\/\/github\.com\/CorniiDog\/open-gpu-kernel-modules-steamos-support/);
+assert.match(developerGuide, /Do not point these variables at a sibling development checkout/);
 assert.doesNotMatch(checks, /linux-integration:[\s\S]*?(?:publish|release|\/dev\/sd|\/dev\/nvme)/);
 
 const pages = await read(".github/workflows/pages.yml");

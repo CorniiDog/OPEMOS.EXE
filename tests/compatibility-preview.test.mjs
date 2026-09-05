@@ -135,6 +135,7 @@ class Element {
   append(...elements) { this.children.push(...elements); }
   replaceChildren(...elements) { this.children = elements; }
   showModal() { this.open = true; }
+  focus() { this.focusCount = (this.focusCount || 0) + 1; }
   close() { this.open = false; this.fire("close"); }
 }
 function fakeDocument() {
@@ -152,6 +153,7 @@ test("Dialog renders hostile-looking strings as text and isolates keyboard event
   const get = (id) => doc.getElementById(id);
   get("compatibility-open").fire("click");
   assert.equal(get("compatibility-dialog").open, true);
+  assert.equal(get("compatibility-close").focusCount, 1);
   await controller.inspect({ source: "fixture", name: "no-artifact" });
   assert.equal(get("compatibility-result").hidden, false);
   assert.equal(get("compatibility-status").attributes["aria-label"], "Development fixture — non-production");
@@ -165,6 +167,7 @@ test("Dialog renders hostile-looking strings as text and isolates keyboard event
   get("compatibility-document").value = "private pasted content";
   get("compatibility-close").fire("click");
   assert.equal(get("compatibility-document").value, "");
+  assert.equal(get("compatibility-open").focusCount, 1);
   assert.equal(get("compatibility-result").hidden, true);
   assert.equal(get("compatibility-status").attributes["aria-label"], "No result loaded.");
   assert.deepEqual(get("compatibility-fields").children, []);
@@ -326,4 +329,29 @@ test("Maintainer workspace wires the shared read-only compatibility inspector", 
   assert.match(script, /import \{ installCompatibilityPreview \} from "\.\/compatibility-preview\.js"/);
   assert.match(script, /installCompatibilityPreview\(document, invoke, \(\) => openFolder/);
   assert.match(script, /Core resolver JSON/);
+});
+
+test("Compatibility inspector contains long localized controls at high zoom", async () => {
+  const css = await readFile(new URL("../src/compatibility-preview.css", import.meta.url), "utf8");
+  assert.match(css, /\.compatibility-dialog h2,[\s\S]*\.compatibility-dialog button,[\s\S]*\.compatibility-dialog dt\s*\{[^}]*min-width:\s*0;[^}]*max-width:\s*100%;[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/);
+  const compact = css.match(/@media \(max-width: 480px\), \(max-height: 480px\) \{([\s\S]*)\n\}/)?.[1] || "";
+  assert.match(compact, /\.compatibility-dialog\s*\{[^}]*width:\s*calc\(100vw - 16px\);[^}]*max-height:\s*calc\(100vh - 16px\);[^}]*padding:\s*14px;/);
+  assert.match(compact, /\.compatibility-dialog textarea\s*\{\s*min-height:\s*96px;/);
+});
+
+
+test("Main and maintainer inspectors preserve reduced motion and forced colors", async () => {
+  const [mainHtml, maintainerHtml, controlsCss, compatibilityCss] = await Promise.all([
+    readFile(new URL("../src/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/maintainer.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/glass-controls.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/compatibility-preview.css", import.meta.url), "utf8"),
+  ]);
+  for (const html of [mainHtml, maintainerHtml]) {
+    assert.match(html, /glass-controls\.css/);
+    assert.match(html, /compatibility-preview\.css/);
+  }
+  assert.match(controlsCss, /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation-duration:\s*\.01ms !important;[\s\S]*transition-duration:\s*\.01ms !important;/);
+  assert.match(controlsCss, /@media \(forced-colors: active\)[\s\S]*forced-color-adjust:\s*auto;[\s\S]*outline:\s*2px solid Highlight;/);
+  assert.match(compatibilityCss, /@media \(forced-colors: active\)\s*\{\s*\.compatibility-dialog, \.compatibility-dialog textarea\s*\{\s*border-color:\s*CanvasText;/);
 });

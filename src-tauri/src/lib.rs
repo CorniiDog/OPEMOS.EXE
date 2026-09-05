@@ -71,6 +71,8 @@ mod core_contracts;
 // activation until a production trust root and bootstrap checkpoint exist.
 #[allow(dead_code)]
 mod core_generation_contracts;
+#[cfg(test)]
+mod core_test_repository;
 mod host_platform;
 mod host_storage;
 mod image;

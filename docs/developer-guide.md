@@ -67,12 +67,23 @@ sudo -n apt-get install --yes build-essential curl file \
 npm ci
 ```
 
-Use an isolated Core fixture checkout at the CI commit and set both variables:
+Obtain Core inputs from the canonical GitHub repository at the exact commit.
+Do not point these variables at a sibling development checkout. For the current
+lineage integration pin:
 
 ```bash
-export OPEMOS_CORE_CONTRACT_ROOT=/absolute/path/to/core-fixture-checkout
-export OPEMOS_CORE_EXPECTED_COMMIT=3e49323fce266af8686039fb6487918ef5a64fd9
+git clone --depth 56 --branch main \
+  https://github.com/CorniiDog/open-gpu-kernel-modules-steamos-support \
+  /absolute/path/to/github-core-cache
+test "$(git -C /absolute/path/to/github-core-cache rev-parse HEAD)" = \
+  adf372b857cd348b6a18680b45ffcea790f04d4b
+export OPEMOS_CORE_CONTRACT_ROOT=/absolute/path/to/github-core-cache
+export OPEMOS_CORE_EXPECTED_COMMIT=adf372b857cd348b6a18680b45ffcea790f04d4b
 ```
+
+The test guard also requires that cache's `origin` URL is the canonical HTTPS
+GitHub repository and resolves every older fixture pin to its exact commit before
+reading bytes with `git show`.
 
 On the coordinated development host, run all compilation and large suites through
 the `heavy.sh` wrapper required by `AGENTS.md`; for example, with
