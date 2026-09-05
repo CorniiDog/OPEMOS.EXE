@@ -360,8 +360,8 @@ async function pollGithubMaintainer(poll) {
   for (let attempt = 1; attempt <= 150 && poll === githubLoginPoll; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     if (poll !== githubLoginPoll) return;
+    const generation = githubStatusGate.begin();
     try {
-      const generation = githubStatusGate.begin();
       const status = await invoke("get_github_maintainer_status");
       if (poll !== githubLoginPoll || !githubStatusGate.isCurrent(generation)) continue;
       githubMaintainer = status;
@@ -378,6 +378,7 @@ async function pollGithubMaintainer(poll) {
       }
       elements.settingsMessage.textContent = `Waiting for GitHub authorization… ${attempt * 2}s`;
     } catch (error) {
+      if (poll !== githubLoginPoll || !githubStatusGate.isCurrent(generation)) continue;
       elements.settingsMessage.textContent = `Waiting for GitHub authorization: ${String(error)}`;
       elements.settingsMessage.className = "settings-message error";
     }

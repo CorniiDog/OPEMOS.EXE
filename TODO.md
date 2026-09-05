@@ -715,6 +715,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     focused 18-case async/layout suite and all 144 frontend tests pass, along
     with documentation, repository hygiene, and boundary integrity checks.
     Other async workers remain under the parent lifecycle item.
+  - [x] Reject stale GitHub login-poll errors using both the login-attempt
+    identity and latest-status generation before changing the visible message.
+    A refresh or reconnect that supersedes an in-flight rejected poll now keeps
+    its newer state. On 2026-09-05, the focused 18-case async/layout suite and
+    all 144 frontend tests pass, along with documentation, repository hygiene,
+    and boundary integrity checks. Other async workers remain under the parent
+    lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.
