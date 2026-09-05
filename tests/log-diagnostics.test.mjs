@@ -215,6 +215,17 @@ test("progress-window title starts below the macOS separator", async () => {
   assert.match(css, /\.platform-macos \.progress-shell\s*\{[^}]*padding-top:\s*50px;/);
 });
 
+test("progress window reflows at narrow effective width or high zoom", async () => {
+  const css = await readFile(new URL("../src/build.css", import.meta.url), "utf8");
+  const responsive = css.match(/@media \(max-width: 760px\), \(max-height: 760px\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(responsive, /html,[\s\S]*body\s*\{[^}]*min-width:\s*0;[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;/);
+  assert.match(responsive, /\.progress-shell\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*100%;[^}]*overflow:\s*visible;[^}]*grid-template-rows:\s*auto auto 16px auto auto auto;/s);
+  assert.match(responsive, /\.status-card\s*\{[^}]*flex-wrap:\s*wrap;/);
+  assert.match(responsive, /#status-message,[\s\S]*\.input-name\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/);
+  assert.match(responsive, /\.logs-card\.diagnostics-open\s*\{[^}]*min-height:\s*260px;/);
+  assert.match(responsive, /\.actions button\s*\{[^}]*flex:\s*1 1 140px;/);
+});
+
 test("credentials and host usernames are redacted", () => {
   const value = redactDiagnosticSecrets(
     "Input: /Users/connor/Downloads/image.img\nAuthorization: Bearer github_pat_abcdefghijklmnopqrstuvwxyz\nhttps://me:secret@example.com/file?token=secret",

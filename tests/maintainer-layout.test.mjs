@@ -22,3 +22,13 @@ test("macOS keeps a visible drag rail outside the scrolling viewport", () => {
   assert.match(chromeCss, /\.platform-macos \.window-drag-region::after\s*\{[^}]*position:\s*fixed;[^}]*right:\s*0;[^}]*left:\s*0;[^}]*height:\s*1px;/);
   assert.match(css, /html\.platform-macos\s*\{\s*--window-chrome-drag-right:\s*0;/);
 });
+
+test("maintainer controls and long identities reflow at high zoom", () => {
+  const responsive = css.match(/@media \(max-width: 760px\), \(max-height: 760px\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(responsive, /html,[\s\S]*body\s*\{[^}]*min-width:\s*0;[^}]*min-height:\s*0;/);
+  assert.match(responsive, /\.maintainer-shell\s*\{[^}]*width:\s*min\(1040px, calc\(100% - 24px\)\);/);
+  assert.match(responsive, /header,[\s\S]*\.section-heading\s*\{[^}]*flex-wrap:\s*wrap;/);
+  assert.match(responsive, /\.selector-grid,[\s\S]*\.action-grid\s*\{[^}]*grid-template-columns:\s*1fr;/);
+  assert.match(responsive, /\.identity dd,[\s\S]*\.plan-summary strong\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/);
+  assert.match(responsive, /\.patch-preview\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;/);
+});

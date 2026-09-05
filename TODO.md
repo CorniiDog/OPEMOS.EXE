@@ -902,6 +902,16 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   frontend tests plus documentation, hygiene, and boundary integrity pass.
   This is structural coverage; pixel rendering, translated-string fixtures, and
   real display scaling remain in the broader graphical gate.
+- [x] Extend the narrow-effective-width/high-zoom reflow contract to the build
+  progress and compatibility-management windows. At 760 CSS pixels or below in
+  either dimension, fixed desktop minimums no longer force clipping; progress
+  content can scroll, status/actions wrap, expanded diagnostics retain a usable
+  viewport, compatibility grids collapse to one column, and long identities,
+  paths, and patch previews wrap within their cards. On 2026-09-04, the focused
+  build-diagnostics and maintainer-layout regressions pass; all 116 frontend
+  tests plus documentation, hygiene, and boundary integrity pass. Real pixel
+  rendering, translated-string fixtures, and display scaling remain in the
+  broader gate.
 - [ ] Test compact and expanded layouts, long localized text, zoom, reduced
   motion, high contrast, keyboard-only use, and display scaling.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
