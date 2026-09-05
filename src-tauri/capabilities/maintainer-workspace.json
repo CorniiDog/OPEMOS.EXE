@@ -1,0 +1,1 @@
+{"$schema":"../gen/schemas/desktop-schema.json","identifier":"maintainer-workspace","description":"Maintainer workspace permissions","windows":["maintainer-workspace"],"permissions":["core:default","core:window:allow-hide","core:window:allow-start-dragging","dialog:default"]}

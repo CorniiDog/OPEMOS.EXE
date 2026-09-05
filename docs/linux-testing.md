@@ -16,8 +16,12 @@ Ubuntu **24.04.4** is the only host version used for this implementation's local
 testing. Debian is an intended testing platform, not a validated distribution.
 A development binary and the extracted debug-package binary have launched and
 closed in an Ubuntu 24.04.4 Wayland session, with no remaining launcher or EXE
-processes. The package was not installed. GNOME denied noninteractive screenshot
-access, so pixel rendering, delivered key-event traversal, companion windows,
+processes. The package was not installed. Tauri capabilities are scoped per window:
+the main window owns dialog/opener/focus access, the maintainer owns dialog and
+hide access, and build progress owns hide access; each keeps its shared drag
+permission. The packaged Ubuntu smoke validates the main window after this
+split. GNOME denied noninteractive screenshot access, so pixel rendering,
+delivered key-event traversal, companion windows,
 desktop integration, and interactive close remain unvalidated. WebKit exposes
 no AT-SPI EditableText interface for the resolver text field, so automated
 pasted-input entry remains unvalidated. The former HTML file control did not

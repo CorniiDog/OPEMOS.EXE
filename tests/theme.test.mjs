@@ -72,8 +72,27 @@ test("preload and native window backgrounds preserve translucent dark fallback",
   assert.match(dragScript, /pointerdown/);
   assert.match(dragScript, /windowHandle\.startDragging\(\)/);
 
-  const capabilities = JSON.parse(await readFile(new URL("../src-tauri/capabilities/default.json", import.meta.url), "utf8"));
-  assert.ok(capabilities.permissions.includes("core:window:allow-start-dragging"));
+  const capabilityNames = ["default", "build-progress", "maintainer-workspace"];
+  const capabilities = await Promise.all(capabilityNames.map(async (name) =>
+    JSON.parse(await readFile(new URL(`../src-tauri/capabilities/${name}.json`, import.meta.url), "utf8"))));
+  assert.deepEqual(capabilities.map(({ identifier, windows, permissions }) => ({ identifier, windows, permissions })), [
+    {
+      identifier: "main-window",
+      windows: ["main"],
+      permissions: ["core:default", "core:window:allow-set-focus", "core:window:allow-start-dragging", "dialog:default", "opener:default"],
+    },
+    {
+      identifier: "build-progress",
+      windows: ["build-progress"],
+      permissions: ["core:default", "core:window:allow-hide", "core:window:allow-start-dragging"],
+    },
+    {
+      identifier: "maintainer-workspace",
+      windows: ["maintainer-workspace"],
+      permissions: ["core:default", "core:window:allow-hide", "core:window:allow-start-dragging", "dialog:default"],
+    },
+  ]);
+  assert.equal(new Set(capabilities.flatMap(({ windows }) => windows)).size, 3);
 });
 
 test("interactive controls share one rounded glass component language", async () => {

@@ -328,6 +328,21 @@ installation targets, production activation, or hardware certification.
   pass through the shared scheduler. Pixel rendering, focus order, maintainer
   companion launch, packaged accessibility, and Debian remain open.
 
+- [x] Split Tauri permissions into exact main, build-progress, and maintainer
+  window capabilities. Main retains native dialog, URL opener, focus, and drag;
+  maintainer retains native dialog, hide, and drag; build progress retains only
+  hide and drag beyond core IPC. No window receives an unused show permission,
+  build progress receives neither dialog nor opener, and maintainer receives no
+  opener. An exact regression rejects changed window membership, permission
+  order, permission additions, duplicate coverage, or scope collapse. On
+  2026-09-04, Tauri/Cargo capability validation, all 111 frontend tests,
+  documentation, hygiene, 25 Linux GUI harness tests, package validation, and
+  live extracted-package AT-SPI smoke pass; main Settings, native image and JSON
+  choosers, focus restoration, process cleanup, and the no-QEMU
+  invariant remain functional. Package SHA-256 is
+  `f7a43e115e234ed977ad91d7daa8a7660f0453cad3a6cf73bd692849048dfc76`.
+  The restrictive production CSP and further `core:default` review remain open.
+
 ### 1. Complete the OPEMOS Core migration
 
 Production generation activation is intentionally blocked until the maintainer
