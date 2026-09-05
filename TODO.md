@@ -893,6 +893,15 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   every new build collapses stale diagnostic output again. On 2026-09-04, the
   focused 11-case diagnostics suite and all 112 frontend tests plus
   documentation, hygiene, and boundary integrity pass.
+- [x] Add a narrow-effective-width/high-zoom reflow contract for the main
+  workflow. At 760 CSS pixels or below in either dimension, the shell becomes
+  vertically scrollable, two-column readiness/build/download layouts collapse
+  to one column, output actions wrap, and long source/output paths wrap at any
+  character inside bounded scroll regions instead of forcing horizontal
+  clipping. On 2026-09-04, the focused 14-case layout suite and all 114
+  frontend tests plus documentation, hygiene, and boundary integrity pass.
+  This is structural coverage; pixel rendering, translated-string fixtures, and
+  real display scaling remain in the broader graphical gate.
 - [ ] Test compact and expanded layouts, long localized text, zoom, reduced
   motion, high contrast, keyboard-only use, and display scaling.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from

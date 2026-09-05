@@ -523,6 +523,38 @@ footer p { margin: 0; }
 
 @keyframes pulse { 50% { transform: scale(.9); opacity: .65; } }
 
+@media (max-width: 760px), (max-height: 760px) {
+  body { min-width: 0; min-height: 0; }
+  .app-shell {
+    width: calc(100% - 24px);
+    padding-left: 0;
+    padding-right: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .readiness-grid,
+  .readiness-grid.has-selection,
+  .build-options-grid,
+  .download-card { grid-template-columns: minmax(0, 1fr); }
+  .readiness-grid > .environment-card,
+  .readiness-grid.has-selection > .environment-card { grid-column: 1; }
+  .environment-card,
+  .selection-card,
+  .output-destination,
+  .usb-picker-heading { flex-wrap: wrap; }
+  .output-destination-actions { width: 100%; flex-wrap: wrap; }
+  .output-destination-actions button { flex: 1 1 140px; white-space: normal; }
+  .path,
+  .output-destination small,
+  .build-summary strong {
+    max-height: 4.2em;
+    overflow: auto;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+  }
+}
+
 @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
   body { background: var(--fallback); -webkit-backdrop-filter: none; backdrop-filter: none; }
   body::before,

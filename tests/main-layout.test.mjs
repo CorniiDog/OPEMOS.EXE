@@ -16,6 +16,15 @@ test("main workflow keeps readiness compact and balances output and source colum
   assert.match(css, /\.build-side-column \.build-summary\s*\{[^}]*grid-template-columns:\s*1fr;/);
 });
 
+test("narrow effective widths and high zoom reflow without horizontal clipping", () => {
+  assert.match(css, /@media \(max-width: 760px\), \(max-height: 760px\)/);
+  assert.match(css, /body\s*\{\s*min-width:\s*0;\s*min-height:\s*0;/);
+  assert.match(css, /\.app-shell\s*\{[^}]*width:\s*calc\(100% - 24px\);[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/s);
+  assert.match(css, /\.readiness-grid,[\s\S]*\.build-options-grid,[\s\S]*\.download-card\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(css, /\.output-destination-actions\s*\{[^}]*width:\s*100%;[^}]*flex-wrap:\s*wrap;/s);
+  assert.match(css, /\.path,[\s\S]*\.output-destination small,[\s\S]*\.build-summary strong\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/s);
+});
+
 test("image output folder selection is explicit, reversible, and build-bound", async () => {
   const [html, css, script, progress] = await Promise.all([
     readFile(new URL("../src/index.html", import.meta.url), "utf8"),
