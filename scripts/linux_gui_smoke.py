@@ -233,6 +233,12 @@ def validate_reopened_dialog(dialog, focusable_state, focused_state):
     validate_dialog_focus(dialog, focusable_state, focused_state)
     require_absent(dialog, RESULT_SENTINEL_LABELS)
 
+def validate_linux_unavailable_gate(app):
+    exactly_one_role(app, "OPEMOS EXE — Experimental Linux Test", "frame")
+    exactly_one_role(app, "Image and builder readiness", "section")
+    exactly_one_role(app, "Experimental Linux host unavailable", "heading")
+    require_absent(app, ["Experimental Linux host ready", "Ready to build"])
+
 def application_for_pid(desktop, expected_pid: int):
     if not isinstance(expected_pid, int) or isinstance(expected_pid, bool) or expected_pid <= 1:
         raise RuntimeError("Packaged application PID is invalid.")
@@ -264,12 +270,16 @@ def wait_for(find, deadline: float, description: str, process_poll=None):
     raise RuntimeError(f"Timed out waiting for {description}: {last_error}")
 
 def exercise_accessibility(desktop, deadline: float, expected_pid: int,
-                           focusable_state, focused_state, process_poll=None):
+                           focusable_state, focused_state, process_poll=None,
+                           expect_host_unavailable=False):
     wait = lambda find, description: wait_for(
         find, deadline, description, process_poll=process_poll
     )
     app = wait(lambda: application_for_pid(desktop, expected_pid),
                "the packaged OPEMOS accessibility tree")
+    if expect_host_unavailable:
+        wait(lambda: validate_linux_unavailable_gate(app),
+             "the scheduler-limited Linux unavailable gate")
     invoke(exactly_one_action(app, "Open settings"))
     settings = wait(lambda: exactly_one_role(app, "Builder settings", "landmark"),
                     "the Settings landmark")
@@ -429,6 +439,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--executable", required=True, type=Path)
     parser.add_argument("--timeout", type=float, default=20)
+    parser.add_argument("--expect-host-unavailable", action="store_true")
     args = parser.parse_args(argv)
     executable = validate_launch(args.executable, args.timeout, os.environ)
     try:
@@ -453,7 +464,8 @@ def main(argv=None):
                                expected_pid=process.pid,
                                focusable_state=Atspi.StateType.FOCUSABLE,
                                focused_state=Atspi.StateType.FOCUSED,
-                               process_poll=process.poll)
+                               process_poll=process.poll,
+                               expect_host_unavailable=args.expect_host_unavailable)
     finally:
         stop_process_group(process)
     new_qemu = qemu_processes() - qemu_before

@@ -128,11 +128,17 @@ the bounded accessibility smoke against its exact binary path:
 dpkg-deb -x 'src-tauri/target/debug/bundle/deb/OPEMOS EXE Linux Test_0.1.0_amd64.deb' /tmp/opemos-exe-package
 "$OPEMOS_HEAVY" env OPEMOS_EXPERIMENTAL_LINUX=1 \
   npm run test:package-linux-gui -- \
+  --expect-host-unavailable \
   --executable /tmp/opemos-exe-package/usr/bin/steamos-nvidia-image-builder
 ```
 
 The smoke inherits the graphical session environment, including its AT-SPI bus
-and accessibility bridge setting. It accepts only the accessibility application
+and accessibility bridge setting. Because the shared scheduler caps this command
+at 2 GiB while managed appliances require 6 GiB, `--expect-host-unavailable`
+requires the experimental window, readiness section, and unavailable heading and
+rejects any Linux-ready or normal-ready heading. Omit that assertion only when
+running outside this scheduler with a deliberately different resource budget.
+It accepts only the accessibility application
 whose process ID matches the process it launched, then opens Settings and the
 read-only Core compatibility inspector. In the tested unauthenticated package
 session, the Settings landmark must expose exactly Close, the two enabled update

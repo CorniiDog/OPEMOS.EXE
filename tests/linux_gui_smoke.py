@@ -208,6 +208,24 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             smoke.validate_dialog_focus(dialog, focusable, focused)
 
+    def test_linux_unavailable_gate_rejects_ready_or_ambiguous_surfaces(self):
+        frame = FakeNode("OPEMOS EXE — Experimental Linux Test", role="frame")
+        readiness = FakeNode("Image and builder readiness", role="section")
+        unavailable = FakeNode("Experimental Linux host unavailable", role="heading")
+        app = FakeNode(children=[frame, readiness, unavailable])
+        smoke.validate_linux_unavailable_gate(app)
+        app.children.append(FakeNode("Experimental Linux host ready", role="heading"))
+        with self.assertRaisesRegex(RuntimeError, "Expected no accessible"):
+            smoke.validate_linux_unavailable_gate(app)
+        app.children.pop()
+        app.children.append(FakeNode("OPEMOS EXE — Experimental Linux Test", role="frame"))
+        with self.assertRaisesRegex(RuntimeError, "Expected one frame"):
+            smoke.validate_linux_unavailable_gate(app)
+        app.children.pop()
+        app.children.remove(unavailable)
+        with self.assertRaisesRegex(RuntimeError, "Expected one heading"):
+            smoke.validate_linux_unavailable_gate(app)
+
     def test_application_selection_is_bound_to_spawned_pid(self):
         settings = lambda: FakeNode(children=[FakeNode("Open settings")])
         stale = settings()

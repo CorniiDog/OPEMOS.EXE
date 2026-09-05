@@ -176,7 +176,9 @@ installation targets, production activation, or hardware certification.
   Ubuntu and Debian, including companion windows and orphan-process checks.
   Ubuntu 24.04.4 Wayland now covers the development main window and the extracted
   debug-package main window. A bounded opt-in AT-SPI smoke starts the exact
-  regular executable, verifies the unauthenticated Settings landmark's exact
+  regular executable, verifies the scheduler-capped package exposes the exact
+  experimental frame/readiness/unavailable surface and no ready heading, then
+  verifies the unauthenticated Settings landmark's exact
   five-control focus order plus initial and restored focus, and opens the read-only
   compatibility dialog,
   verifies the dialog's exact native focusable order and initial Close focus,
@@ -204,14 +206,17 @@ installation targets, production activation, or hardware certification.
   kernel start time; the live tree reports the spawned package PID exactly. Package
   archive validation passes with SHA-256
   `80a578962c18c9ee5076c05ff2c2fa40d92e0097fd7e21efe8e017f0a3d41f12`; no
-  package was installed. Sixteen focused harness tests reject reordered, extra,
+  package was installed. Seventeen focused harness tests reject false-ready or
+  ambiguous unavailable surfaces, reordered or extra
   or ambiguously bounded rows, stale cleared fields or result headings, wrong
   Clear focus, stale next actions after recovery, and altered compatible trust
   text, stale close/reopen state, and wrong reopened focus; the live package
   smoke passes. Debian,
-  companion windows, delivered key-event traversal, and pixel
+  companion windows, delivered key-event/editable-text traversal, and pixel
   rendering remain open; GNOME Wayland accepted an exploratory AT-SPI Escape
-  synthesis request without delivering it to the WebKit dialog. Scheduler-limited
+  synthesis request without delivering it to the WebKit dialog; WebKit also
+  exposes the resolver field as an entry without an AT-SPI EditableText interface.
+  Scheduler-limited
   formatting and
   Clippy pass, 330 Rust
   tests pass (27 ignored), and all 110 frontend tests plus documentation, hygiene,
