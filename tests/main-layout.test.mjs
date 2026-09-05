@@ -16,6 +16,29 @@ test("main workflow keeps readiness compact and balances output and source colum
   assert.match(css, /\.build-side-column \.build-summary\s*\{[^}]*grid-template-columns:\s*1fr;/);
 });
 
+test("image output folder selection is explicit, reversible, and build-bound", async () => {
+  const [html, css, script, progress] = await Promise.all([
+    readFile(new URL("../src/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/main.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/build.js", import.meta.url), "utf8"),
+  ]);
+  assert.match(html, /id="output-folder-label">Alongside the source image/);
+  assert.match(html, /id="reset-output-folder"[^>]*hidden[^>]*>Use Source Folder/);
+  assert.match(html, /id="choose-output-folder"[^>]*>Choose…/);
+  assert.match(css, /\.output-destination\s*\{[^}]*min-width:\s*0;[^}]*display:\s*flex/s);
+  assert.match(script, /open\(\{\s*multiple:\s*false,\s*directory:\s*true\s*\}\)/);
+  const selection = script.match(/async function selectOutputDirectory\(directory\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(selection, /outputDirectory:\s*directory/);
+  assert.match(selection, /revision !== outputSelectionGeneration/);
+  assert.match(selection, /!currentImage \|\| completedOutput \|\| buildRunning/);
+  assert.match(script, /applyCompletedOutput[\s\S]*chooseOutputFolder\.disabled = true;[\s\S]*resetOutputFolder\.disabled = true;/);
+  assert.match(script, /async function selectImage\(path\) \{\s*outputSelectionGeneration \+= 1;/);
+  assert.match(script, /resetOutputFolder[\s\S]*selectOutputDirectory\(null\)/);
+  assert.match(script, /emit\("build-requested",[\s\S]*outputDirectory,/);
+  assert.match(progress, /invoke\("start_appliance",\s*\{[\s\S]*outputDirectory:\s*request\.outputDirectory \?\? null/);
+});
+
 test("USB drives are embedded beside an independent image-output checkbox", () => {
   assert.match(html, /class="source-choice export-choice"[\s\S]*id="export-image"[^>]*checked[\s\S]*id="usb-target" size="3"[\s\S]*id="review-usb-target"/);
   assert.match(html, /id="usb-scrim" class="usb-scrim hidden"/);

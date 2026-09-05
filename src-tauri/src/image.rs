@@ -717,13 +717,19 @@ test "$MOUNTED" = 0"#;
     })
 }
 
+#[cfg(test)]
 pub(crate) fn output_path_for_input(
     input: &Path,
     nvidia_installed: bool,
 ) -> Result<PathBuf, String> {
-    output_path_for_input_label(input, if nvidia_installed { "nvidia" } else { "marker" })
+    output_path_for_input_label(
+        input,
+        input.parent(),
+        if nvidia_installed { "nvidia" } else { "marker" },
+    )
 }
 
+#[cfg(test)]
 pub(crate) fn output_path_for_nvidia_version(
     input: &Path,
     nvidia_version: &str,
@@ -736,13 +742,47 @@ pub(crate) fn output_path_for_nvidia_version(
     {
         return Err("The resolved NVIDIA version is not safe for an output filename.".into());
     }
-    output_path_for_input_label(input, &format!("nvidia-{nvidia_version}"))
+    output_path_for_input_label(input, input.parent(), &format!("nvidia-{nvidia_version}"))
 }
 
-fn output_path_for_input_label(input: &Path, output_label: &str) -> Result<PathBuf, String> {
-    let parent = input
-        .parent()
-        .ok_or("Could not determine the selected image folder.")?;
+pub(crate) fn output_path_for_input_in_directory(
+    input: &Path,
+    output_directory: &Path,
+    nvidia_installed: bool,
+) -> Result<PathBuf, String> {
+    output_path_for_input_label(
+        input,
+        Some(output_directory),
+        if nvidia_installed { "nvidia" } else { "marker" },
+    )
+}
+
+pub(crate) fn output_path_for_nvidia_version_in_directory(
+    input: &Path,
+    output_directory: &Path,
+    nvidia_version: &str,
+) -> Result<PathBuf, String> {
+    let parts: Vec<_> = nvidia_version.split('.').collect();
+    if !(2..=3).contains(&parts.len())
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err("The resolved NVIDIA version is not safe for an output filename.".into());
+    }
+    output_path_for_input_label(
+        input,
+        Some(output_directory),
+        &format!("nvidia-{nvidia_version}"),
+    )
+}
+
+fn output_path_for_input_label(
+    input: &Path,
+    output_directory: Option<&Path>,
+    output_label: &str,
+) -> Result<PathBuf, String> {
+    let parent = output_directory.ok_or("Could not determine the selected image folder.")?;
     let filename = input
         .file_name()
         .and_then(|value| value.to_str())
@@ -799,12 +839,9 @@ fn output_path_for_input_label(input: &Path, output_label: &str) -> Result<PathB
 
 pub(crate) fn preflight_host_build_space(
     runtime_dir: &Path,
-    input_image: &Path,
+    output_parent: &Path,
     image_bytes: u64,
 ) -> Result<(), String> {
-    let output_parent = input_image
-        .parent()
-        .ok_or("Could not determine the future output folder.")?;
     let output_parent = fs::canonicalize(output_parent)
         .map_err(|error| format!("Could not resolve the future output folder: {error}"))?;
     let runtime_required = checked_space_sum([image_bytes, HOST_RUNTIME_FREE_SPACE_RESERVE])?;
@@ -1522,10 +1559,16 @@ pub(crate) fn export_marker_image_blocking(
             return Err("NVIDIA-installed state omitted its structured result.".into());
         }
         let final_path = match nvidia_installation.as_ref() {
-            Some(installation) => {
-                output_path_for_nvidia_version(&session.input_image, &installation.nvidia_version)?
-            }
-            None => output_path_for_input(&session.input_image, false)?,
+            Some(installation) => output_path_for_nvidia_version_in_directory(
+                &session.input_image,
+                &session.output_directory,
+                &installation.nvidia_version,
+            )?,
+            None => output_path_for_input_in_directory(
+                &session.input_image,
+                &session.output_directory,
+                false,
+            )?,
         };
         let required_output_bytes = session
             .input_preparation
@@ -1796,7 +1839,10 @@ pub(crate) fn validate_image(path: String) -> Result<ImageInfo, String> {
 }
 
 #[tauri::command]
-pub(crate) fn preview_image_output(path: String) -> Result<ImageOutputPreview, String> {
+pub(crate) fn preview_image_output(
+    path: String,
+    output_directory: Option<String>,
+) -> Result<ImageOutputPreview, String> {
     let path = PathBuf::from(path);
     if !path.is_file() {
         return Err("The selected path is not a file.".into());
@@ -1808,7 +1854,21 @@ pub(crate) fn preview_image_output(path: String) -> Result<ImageOutputPreview, S
     }
     let canonical = fs::canonicalize(&path)
         .map_err(|error| format!("Could not resolve the selected image: {error}"))?;
-    let output = output_path_for_input(&canonical, true)?;
+    let output_directory = match output_directory {
+        Some(directory) => {
+            let directory = fs::canonicalize(directory)
+                .map_err(|error| format!("Could not resolve the output folder: {error}"))?;
+            if !directory.is_dir() {
+                return Err("The output folder is not a safe directory.".into());
+            }
+            directory
+        }
+        None => canonical
+            .parent()
+            .ok_or("Could not determine the selected image folder.")?
+            .to_path_buf(),
+    };
+    let output = output_path_for_input_in_directory(&canonical, &output_directory, true)?;
     Ok(ImageOutputPreview {
         input_path: canonical.to_string_lossy().into_owned(),
         output_path: output.to_string_lossy().into_owned(),

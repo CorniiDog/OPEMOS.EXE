@@ -27,7 +27,8 @@ const elements = {
   readinessGrid: $("#readiness-grid"), downloadCard: $("#download-card"),
   selectionCard: $("#selection-card"), selectedName: $("#selected-name"), selectedPath: $("#selected-path"),
   selectionStatus: $("#selection-status"), buildCard: $("#build-card"), buildButton: $("#build-button"),
-  exportImage: $("#export-image"),
+  exportImage: $("#export-image"), chooseOutputFolder: $("#choose-output-folder"),
+  resetOutputFolder: $("#reset-output-folder"), outputFolderLabel: $("#output-folder-label"),
   usbPicker: $("#usb-picker"),
   nvidiaSource: $("#nvidia-source"), upstreamWarning: $("#upstream-warning"),
   allowUpstreamBuild: $("#allow-upstream-build"),
@@ -58,6 +59,8 @@ const elements = {
 
 let currentImage = null;
 let currentImageName = null;
+let outputDirectory = null;
+let outputSelectionGeneration = 0;
 let plannedOutput = null;
 let completedOutput = null;
 let completedOutputImported = false;
@@ -250,6 +253,8 @@ function applyCompletedOutput(output, imported = false) {
   elements.appShell.classList.add("completed-output-selected");
   elements.exportImage.checked = true;
   elements.exportImage.disabled = true;
+  elements.chooseOutputFolder.disabled = true;
+  elements.resetOutputFolder.disabled = true;
   elements.summaryOutput.textContent = output.path;
   elements.summaryOutput.title = output.path;
   elements.selectionStatus.textContent = output.nvidiaVersion
@@ -433,6 +438,7 @@ async function loadNvidiaSourceBranches() {
 }
 
 async function selectImage(path) {
+  outputSelectionGeneration += 1;
   if (buildRunning || usbWriting) {
     elements.resultMessage.textContent = buildRunning
       ? "The selected image cannot be changed while a build is running. Cancel or finish the build first."
@@ -456,6 +462,8 @@ async function selectImage(path) {
   elements.appShell.classList.remove("completed-output-selected");
   elements.exportImage.checked = true;
   elements.exportImage.disabled = false;
+  elements.chooseOutputFolder.disabled = false;
+  elements.resetOutputFolder.disabled = false;
   setUsbMenuOpen(false);
   elements.usbTarget.replaceChildren();
   const usbPlaceholder = document.createElement("option");
@@ -511,7 +519,7 @@ async function selectImage(path) {
     });
     if (selectionGeneration !== imageSelectionGeneration) return;
     const preview = completed ? { input_path: info.path, output_path: info.path }
-      : await invoke("preview_image_output", { path: info.path });
+      : await invoke("preview_image_output", { path: info.path, outputDirectory });
     if (selectionGeneration !== imageSelectionGeneration) return;
     currentImage = info.path;
     currentImageName = info.name;
@@ -652,6 +660,42 @@ elements.openMaintainer.addEventListener("click", async () => {
   }
 });
 
+async function selectOutputDirectory(directory) {
+  const revision = ++outputSelectionGeneration;
+  if (!currentImage || completedOutput || buildRunning) return;
+  elements.chooseOutputFolder.disabled = true;
+  elements.resetOutputFolder.disabled = true;
+  try {
+    const preview = await invoke("preview_image_output", {
+      path: currentImage,
+      outputDirectory: directory,
+    });
+    if (revision !== outputSelectionGeneration || !currentImage) return;
+    outputDirectory = directory;
+    plannedOutput = preview.output_path;
+    elements.summaryOutput.textContent = plannedOutput;
+    elements.summaryOutput.title = plannedOutput;
+    elements.outputFolderLabel.textContent = directory || "Alongside the source image";
+    elements.outputFolderLabel.title = directory || "";
+    elements.resetOutputFolder.classList.toggle("hidden", !directory);
+  } catch (error) {
+    if (revision !== outputSelectionGeneration) return;
+    elements.resultMessage.textContent = String(error);
+    elements.resultMessage.className = "result-message error";
+  } finally {
+    if (revision === outputSelectionGeneration) {
+      elements.chooseOutputFolder.disabled = false;
+      elements.resetOutputFolder.disabled = false;
+    }
+  }
+}
+
+elements.chooseOutputFolder.addEventListener("click", async () => {
+  const directory = await open({ multiple: false, directory: true });
+  if (typeof directory === "string" && directory) await selectOutputDirectory(directory);
+});
+elements.resetOutputFolder.addEventListener("click", () => { void selectOutputDirectory(null); });
+
 elements.buildButton.addEventListener("click", async () => {
   const exportMode = selectedExportMode();
   if (completedOutput?.path || !currentImage || !hostReady || !exportMode || buildRunning || usbWriting) return;
@@ -673,12 +717,14 @@ elements.buildButton.addEventListener("click", async () => {
     }
     : null;
   elements.exportImage.disabled = true;
+  elements.chooseOutputFolder.disabled = true;
+  elements.resetOutputFolder.disabled = true;
   elements.chooseImage.disabled = true;
   elements.usbTarget.disabled = true;
   elements.refreshUsbTargets.disabled = true;
   elements.resultMessage.textContent = "Build progress opened in a separate window.";
   try {
-    const preview = await invoke("preview_image_output", { path: currentImage });
+    const preview = await invoke("preview_image_output", { path: currentImage, outputDirectory });
     plannedOutput = preview.output_path;
     elements.summaryOutput.textContent = plannedOutput;
     elements.summaryOutput.title = plannedOutput;
@@ -696,6 +742,7 @@ elements.buildButton.addEventListener("click", async () => {
       allowExperimentalUpstream: elements.nvidiaSource.value.startsWith("upstream:")
         && elements.allowUpstreamBuild.checked,
       exportMode: activeExportMode,
+      outputDirectory,
     });
   } catch (error) {
     if (!operationContextMatches(buildContext, activeBuildContext || {})) return;
@@ -705,6 +752,8 @@ elements.buildButton.addEventListener("click", async () => {
     elements.resultMessage.className = "result-message error";
     buildRunning = false;
     elements.exportImage.disabled = false;
+    elements.chooseOutputFolder.disabled = false;
+    elements.resetOutputFolder.disabled = false;
     elements.chooseImage.disabled = false;
     elements.usbTarget.disabled = !hasUsbTargets();
     elements.refreshUsbTargets.disabled = false;

@@ -870,7 +870,22 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   DOM state; test every allowed transition and reject impossible ones.
 - [ ] Split oversized frontend workflow/log rendering code only where behavior
   can be covered by focused tests.
-- [ ] Add a user-selectable image output folder and safe non-overwriting name.
+- [x] Add a user-selectable image output folder and safe non-overwriting name.
+  The main workflow now uses a native directory chooser, supports an explicit
+  return to the source folder, invalidates stale chooser results when image
+  selection changes, and disables destination changes during builds or for
+  completed images. Preview, host-space admission, appliance session state, and
+  final export share the same canonical directory. Existing create-only image
+  and adjacent-manifest collision scanning remains authoritative, including
+  manifest-only reservations and versioned NVIDIA names. Missing paths and
+  regular files are rejected as output directories. On 2026-09-04, the focused
+  13-case layout suite and Rust collision/directory test pass; formatting and
+  warnings-as-errors Clippy pass; all 113 frontend tests plus documentation,
+  hygiene, and boundary integrity pass. The complete Rust suite reached 330
+  passes with 27 ignored before one unrelated live sibling Core
+  installer-result fixture conformance case failed while Core was busy changing
+  its local fixtures; that unchanged external failure was not retried or treated
+  as EXE feature validation.
 - [x] Keep advanced diagnostics accessible without exposing them by default.
   Build logs now start behind an explicit keyboard-accessible disclosure with
   synchronized `aria-expanded`, panel visibility, and expanded layout state.

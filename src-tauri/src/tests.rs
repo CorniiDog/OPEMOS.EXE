@@ -4454,6 +4454,51 @@ esac
             "575.64.05/unsafe",
         )
         .is_err());
+        let custom = root.join("chosen output");
+        fs::create_dir(&custom).expect("create selected output directory");
+        assert_eq!(
+            output_path_for_input_in_directory(&compressed, &custom, true).unwrap(),
+            custom.join("steamdeck-repair-nvidia.img")
+        );
+        fs::write(custom.join("steamdeck-repair-nvidia.img"), b"occupied")
+            .expect("reserve selected-directory image");
+        fs::write(
+            manifest_path_for_output(&custom.join("steamdeck-repair-nvidia-2.img")),
+            b"occupied",
+        )
+        .expect("reserve selected-directory manifest");
+        assert_eq!(
+            output_path_for_input_in_directory(&compressed, &custom, true).unwrap(),
+            custom.join("steamdeck-repair-nvidia-3.img")
+        );
+        assert_eq!(
+            output_path_for_nvidia_version_in_directory(&compressed, &custom, "575.64.05")
+                .unwrap(),
+            custom.join("steamdeck-repair-nvidia-575.64.05.img")
+        );
+        let source = root.join("preview-source.img");
+        fs::write(&source, b"source").expect("create preview source");
+        let preview = preview_image_output(
+            source.to_string_lossy().into_owned(),
+            Some(custom.to_string_lossy().into_owned()),
+        )
+        .expect("preview selected output directory");
+        assert_eq!(
+            PathBuf::from(preview.output_path),
+            custom.join("preview-source-nvidia.img")
+        );
+        assert!(preview_image_output(
+            source.to_string_lossy().into_owned(),
+            Some(root.join("missing").to_string_lossy().into_owned()),
+        )
+        .is_err());
+        let not_directory = root.join("not-a-directory");
+        fs::write(&not_directory, b"file").expect("create non-directory output path");
+        assert!(preview_image_output(
+            source.to_string_lossy().into_owned(),
+            Some(not_directory.to_string_lossy().into_owned()),
+        )
+        .is_err());
         fs::write(root.join("already-marker.img"), b"input")
             .expect("create already-suffixed input");
         assert_eq!(

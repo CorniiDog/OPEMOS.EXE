@@ -11,6 +11,7 @@ pub(crate) struct ApplianceSession {
     pub(crate) state: String,
     pub(crate) message: String,
     pub(crate) input_image: PathBuf,
+    pub(crate) output_directory: PathBuf,
     pub(crate) input_sha256_before: String,
     pub(crate) attached_image: PathBuf,
     pub(crate) attached_sha256_before: String,
@@ -1312,6 +1313,16 @@ pub(crate) fn prepare_session(
     cancel: Option<&AtomicBool>,
     plan_export: bool,
 ) -> Result<ApplianceSession, String> {
+    prepare_session_with_output(input_image, None, progress, cancel, plan_export)
+}
+
+pub(crate) fn prepare_session_with_output(
+    input_image: Option<&Path>,
+    output_directory: Option<&Path>,
+    progress: Option<&ProgressCallback<'_>>,
+    cancel: Option<&AtomicBool>,
+    plan_export: bool,
+) -> Result<ApplianceSession, String> {
     current_host_qemu(std::env::consts::ARCH, std::env::consts::ARCH)?;
     if cfg!(target_os = "linux") {
         linux_host_prerequisites()?;
@@ -1479,8 +1490,19 @@ pub(crate) fn prepare_session(
             "Normalized image size changed between measurement ({measured_image_bytes} bytes) and staging ({image_bytes} bytes)."
         ));
     }
+    let output_directory = match output_directory {
+        Some(directory) => fs::canonicalize(directory)
+            .map_err(|error| format!("Could not resolve the output folder: {error}"))?,
+        None => input_image
+            .parent()
+            .ok_or("Could not determine the future output folder.")?
+            .to_path_buf(),
+    };
+    if !output_directory.is_dir() {
+        return Err("The output folder is not a safe directory.".into());
+    }
     if plan_export {
-        preflight_host_build_space(&runtime_dir, &input_image, image_bytes)?;
+        preflight_host_build_space(&runtime_dir, &output_directory, image_bytes)?;
     } else {
         admit_host_storage(&[StorageRequest {
             path: &runtime_dir,
@@ -1664,6 +1686,7 @@ pub(crate) fn prepare_session(
         state: "booting".into(),
         message: "Fedora builder appliance is booting.".into(),
         input_image,
+        output_directory,
         input_sha256_before,
         attached_image,
         attached_sha256_before,
@@ -2783,10 +2806,15 @@ pub(crate) fn check_builder_environment_blocking() -> BuilderEnvironment {
 #[tauri::command]
 pub(crate) async fn start_appliance(
     path: String,
+    output_directory: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<ApplianceStatus, String> {
     let recovery_app = app.clone();
-    match tauri::async_runtime::spawn_blocking(move || start_appliance_blocking(path, app)).await {
+    match tauri::async_runtime::spawn_blocking(move || {
+        start_appliance_blocking(path, output_directory, app)
+    })
+    .await
+    {
         Ok(result) => result,
         Err(error) => {
             if let Ok(mut manager) = recovery_app.state::<Mutex<ApplianceManager>>().lock() {
@@ -2799,6 +2827,7 @@ pub(crate) async fn start_appliance(
 
 pub(crate) fn start_appliance_blocking(
     path: String,
+    output_directory: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<ApplianceStatus, String> {
     let input = fs::canonicalize(PathBuf::from(path))
@@ -2845,7 +2874,14 @@ pub(crate) fn start_appliance_blocking(
             },
         );
     };
-    let prepared = prepare_session(Some(&input), Some(&report_progress), Some(&cancel), true);
+    let output_directory = output_directory.map(PathBuf::from);
+    let prepared = prepare_session_with_output(
+        Some(&input),
+        output_directory.as_deref(),
+        Some(&report_progress),
+        Some(&cancel),
+        true,
+    );
     let mut manager = manager_state
         .lock()
         .map_err(|_| "Appliance state lock is unavailable.")?;

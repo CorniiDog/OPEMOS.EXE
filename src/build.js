@@ -553,7 +553,10 @@ async function runBuild(request) {
   let logTimer = null;
   let nvidiaInstalled = false;
   try {
-    const started = await invoke("start_appliance", { path: request.path });
+    const started = await invoke("start_appliance", {
+      path: request.path,
+      outputDirectory: request.outputDirectory ?? null,
+    });
     addStageLog(`Input preparation: detected ${started.input.sourceFormat}; engine=${started.input.normalizer}; normalized=${started.input.normalized}; ${started.input.sourceBytes} source bytes → ${started.input.imageBytes} raw image bytes.`);
     addStageLog(`Appliance session created on local port ${started.sshPort}.`);
     setStatus("running", "Starting builder", "Waiting for the Fedora guest readiness handshake.", 10);
