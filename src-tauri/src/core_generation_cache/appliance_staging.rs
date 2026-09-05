@@ -1834,6 +1834,7 @@ where
     cache.require_generation_committed(&identity)?;
     cache.require_unique_committed_sequence(&identity)?;
     verify_authenticated_inventory(&source, &inventory, &cancelled)?;
+    let _lineage_sources = pin_lineage_sources(cache, lineage, &cancelled)?;
     require_pinned_generation_directory(
         &source_path,
         &source,
@@ -2223,6 +2224,45 @@ fn require_exact_pending_state(
         return Err("Core generation cache state changed during appliance staging.".into());
     }
     Ok(())
+}
+
+struct PinnedLineageSource {
+    path: PathBuf,
+    _directory: super::PinnedGenerationDirectory,
+    inventory: BTreeMap<String, (u64, String)>,
+}
+
+fn pin_lineage_sources<C>(
+    cache: &CoreGenerationCache,
+    lineage: &[&InstalledAuthenticatedGeneration],
+    cancelled: &C,
+) -> Result<Vec<PinnedLineageSource>, String>
+where
+    C: Fn() -> bool,
+{
+    let mut sources = Vec::with_capacity(lineage.len());
+    for predecessor in lineage {
+        poll_cancelled(cancelled)?;
+        let generation = predecessor.generation();
+        let identity = CoreGenerationIdentity {
+            sequence: generation.discovery().sequence,
+            generation_id: generation.discovery().generation.manifest_sha256.clone(),
+            manifest_sha256: generation.discovery().generation.manifest_sha256.clone(),
+        };
+        cache.require_generation_committed(&identity)?;
+        cache.require_unique_committed_sequence(&identity)?;
+        let path = cache.generation_path(&identity)?;
+        let pinned = pin_generation_directory(&path, "appliance lineage source generation")?;
+        let inventory = expected_authenticated_inventory(generation)?;
+        verify_authenticated_inventory(&pinned, &inventory, cancelled)?;
+        require_pinned_generation_directory(&path, &pinned, "appliance lineage source generation")?;
+        sources.push(PinnedLineageSource {
+            path,
+            _directory: pinned,
+            inventory,
+        });
+    }
+    Ok(sources)
 }
 
 fn validate_transfer_inventory_names(
@@ -3711,6 +3751,35 @@ mod tests {
         .is_err());
         assert!(destination_entries(&fixture.destination).is_empty());
         assert_eq!(fixture.cache.load_state().unwrap(), before);
+    }
+
+    #[test]
+    fn lineage_sources_require_exact_committed_cache_inventory() {
+        let fixture = PreparedFixture::create("lineage-source-pin");
+        let sources =
+            pin_lineage_sources(&fixture.cache, &[&fixture.generation], &|| false).unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(
+            sources[0].path,
+            fixture.cache.generation_path(&fixture.identity).unwrap()
+        );
+        assert!(sources[0].inventory.contains_key(
+            &fixture
+                .generation
+                .generation()
+                .discovery()
+                .generation
+                .manifest_filename
+        ));
+        drop(sources);
+        fs::remove_file(
+            fixture
+                .cache
+                .generation_commit_marker_path(&fixture.identity)
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(pin_lineage_sources(&fixture.cache, &[&fixture.generation], &|| false).is_err());
     }
 
     #[test]
