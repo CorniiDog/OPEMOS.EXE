@@ -4,6 +4,7 @@ import { buildCompletionMatches, operationContextMatches } from "./operation-con
 import {
   admitBuildStart,
   admitImageSelection,
+  admitExportModeSelection,
   admitOutputDirectorySelection,
   admitUsbPreflightCancel,
   admitUsbPreflightStart,
@@ -1123,7 +1124,15 @@ elements.cancelUsbPreflight.addEventListener("click", async () => {
   }
 });
 
-elements.exportImage.addEventListener("change", renderExportMode);
+elements.exportImage.addEventListener("change", () => {
+  const admission = admitExportModeSelection(currentBuildSnapshot());
+  if (!admission.accepted) {
+    elements.exportImage.checked = admission.phase === "complete"
+      || activeExportMode === "image"
+      || activeExportMode === "both";
+  }
+  renderExportMode();
+});
 elements.reviewUsbTarget.addEventListener("click", () => {
   const admission = admitUsbReviewOpen(currentBuildSnapshot(), {
     hasTarget: Boolean(elements.usbTarget.value),

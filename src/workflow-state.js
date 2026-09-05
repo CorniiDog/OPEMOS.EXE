@@ -198,3 +198,13 @@ export function admitUsbReviewDismiss(snapshot) {
     blocker: accepted ? null : "usb-writing",
   });
 }
+
+export function admitExportModeSelection(snapshot) {
+  const admission = deriveBuildAdmission(snapshot);
+  const accepted = admission.phase === "empty" || admission.phase === "selected";
+  return Object.freeze({
+    accepted,
+    phase: admission.phase,
+    blocker: accepted ? null : admission.blocker,
+  });
+}

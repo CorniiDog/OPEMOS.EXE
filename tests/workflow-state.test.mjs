@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   admitBuildStart,
   admitImageSelection,
+  admitExportModeSelection,
   admitOutputDirectorySelection,
   admitUsbPreflightCancel,
   admitUsbPreflightStart,
@@ -317,6 +318,28 @@ test("USB review dismissal remains available until destructive writing starts", 
     accepted: false, phase: "usb-writing", blocker: "usb-writing",
   });
   assert.throws(() => admitUsbReviewDismiss({
+    ...ready, buildRunning: true, usbWriting: true,
+  }), /cannot run concurrently/);
+});
+
+test("image export-mode changes only before build mutation begins", () => {
+  assert.deepEqual(admitExportModeSelection({ ...ready, hasImage: false }), {
+    accepted: true, phase: "empty", blocker: null,
+  });
+  assert.deepEqual(admitExportModeSelection(ready), {
+    accepted: true, phase: "selected", blocker: null,
+  });
+  const cases = [
+    [{ hasCompletedOutput: true }, "complete", "complete"],
+    [{ buildRunning: true }, "building", "building"],
+    [{ usbWriting: true }, "usb-writing", "usb-writing"],
+  ];
+  for (const [change, phase, blocker] of cases) {
+    assert.deepEqual(admitExportModeSelection({ ...ready, ...change }), {
+      accepted: false, phase, blocker,
+    });
+  }
+  assert.throws(() => admitExportModeSelection({
     ...ready, buildRunning: true, usbWriting: true,
   }), /cannot run concurrently/);
 });
