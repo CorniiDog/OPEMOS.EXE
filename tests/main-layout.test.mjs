@@ -266,6 +266,14 @@ test("long selected-image names and paths remain inside the readiness card", () 
   assert.doesNotMatch(css, /\.selection-card h2\s*\{[^}]*text-overflow:\s*ellipsis;/);
 });
 
+test("settings reads and writes reject stale completions and freeze request payloads", () => {
+  assert.match(script, /const settingsGate = createLatestRequestGate\(\)/);
+  assert.match(script, /async function loadSettings\(\)[\s\S]*const generation = settingsGate\.begin\(\)[\s\S]*const settings = await invoke\("get_builder_settings"\)[\s\S]*if \(!settingsGate\.isCurrent\(generation\)\) return;[\s\S]*builderSettings = settings/);
+  assert.match(script, /async function saveSettings\(next\)[\s\S]*const generation = settingsGate\.begin\(\)[\s\S]*const requested = \{ \.\.\.builderSettings, \.\.\.next, schemaVersion: 4 \};[\s\S]*update_builder_settings", \{ settings: requested \}[\s\S]*if \(!settingsGate\.isCurrent\(generation\)\) return;[\s\S]*builderSettings = settings/);
+  assert.match(script, /async function saveSettings\(next\)[\s\S]*catch \(error\) \{[\s\S]*if \(!settingsGate\.isCurrent\(generation\)\) return;[\s\S]*builderSettings = previous;[\s\S]*finally \{[\s\S]*if \(!settingsGate\.isCurrent\(generation\)\) return;[\s\S]*settingsSavePending = false/);
+  assert.match(script, /autoReleaseNvidia\.addEventListener\("change"[\s\S]*const generation = settingsGate\.begin\(\)[\s\S]*const requested = \{ \.\.\.builderSettings, autoReleaseVerifiedNvidia: enabled, schemaVersion: 4 \};[\s\S]*update_builder_settings", \{ settings: requested \}[\s\S]*if \(!settingsGate\.isCurrent\(generation\)\) return;/);
+});
+
 test("maintainer status refreshes reject stale successes and errors", () => {
   assert.match(script, /createLatestRequestGate[\s\S]*const githubStatusGate = createLatestRequestGate\(\)/);
   assert.match(script, /async function refreshGithubMaintainer\(\)[\s\S]*const generation = githubStatusGate\.begin\(\)[\s\S]*const status = await invoke\("get_github_maintainer_status"\)[\s\S]*if \(!githubStatusGate\.isCurrent\(generation\)\) return;[\s\S]*githubMaintainer = status/);

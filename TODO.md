@@ -736,6 +736,14 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     workflow/layout suite and all 146 frontend tests pass, along with
     documentation, repository hygiene, and boundary integrity checks. Other
     async workers remain under the parent lifecycle item.
+  - [x] Gate settings loading, ordinary saves, and automated-release saves with
+    one latest-request generation, and freeze each update payload before its
+    first await. A delayed startup read, stale success or error, and stale
+    pending-state cleanup can no longer overwrite a newer user operation; an
+    older request cannot send a payload mutated by a later edit. On 2026-09-05,
+    the focused 21-case async/layout suite and all 147 frontend tests pass,
+    along with documentation, repository hygiene, and boundary integrity
+    checks. Other async workers remain under the parent lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.

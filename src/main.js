@@ -127,6 +127,7 @@ let builderSettings = {
 let githubMaintainer = null;
 let githubLoginPoll = 0;
 const githubStatusGate = createLatestRequestGate();
+const settingsGate = createLatestRequestGate();
 let githubLoginPending = false;
 let autoReleaseVerificationPending = false;
 let settingsSavePending = false;
@@ -395,11 +396,15 @@ async function pollGithubMaintainer(poll) {
 }
 
 async function loadSettings() {
+  const generation = settingsGate.begin();
   try {
-    builderSettings = await invoke("get_builder_settings");
+    const settings = await invoke("get_builder_settings");
+    if (!settingsGate.isCurrent(generation)) return;
+    builderSettings = settings;
     elements.settingsMessage.textContent = "Settings are saved automatically.";
     elements.settingsMessage.className = "settings-message";
   } catch (error) {
+    if (!settingsGate.isCurrent(generation)) return;
     elements.settingsMessage.textContent = String(error);
     elements.settingsMessage.className = "settings-message error";
   }
@@ -407,22 +412,28 @@ async function loadSettings() {
 }
 
 async function saveSettings(next) {
+  const generation = settingsGate.begin();
   const previous = builderSettings;
-  builderSettings = { ...builderSettings, ...next, schemaVersion: 4 };
+  const requested = { ...builderSettings, ...next, schemaVersion: 4 };
+  builderSettings = requested;
   settingsSavePending = true;
   elements.settingsMessage.textContent = "Saving…";
   elements.settingsMessage.className = "settings-message";
   renderSettings();
   try {
     await waitForPaint();
-    builderSettings = await invoke("update_builder_settings", { settings: builderSettings });
+    const settings = await invoke("update_builder_settings", { settings: requested });
+    if (!settingsGate.isCurrent(generation)) return;
+    builderSettings = settings;
     elements.settingsMessage.textContent = "Settings saved.";
     elements.settingsMessage.className = "settings-message";
   } catch (error) {
+    if (!settingsGate.isCurrent(generation)) return;
     builderSettings = previous;
     elements.settingsMessage.textContent = String(error);
     elements.settingsMessage.className = "settings-message error";
   } finally {
+    if (!settingsGate.isCurrent(generation)) return;
     settingsSavePending = false;
     renderSettings();
   }
@@ -705,9 +716,11 @@ elements.allowUpstreamBuild.addEventListener("change", () => {
   updateBuildButton();
 });
 elements.autoReleaseNvidia.addEventListener("change", async () => {
+  const generation = settingsGate.begin();
   const previous = builderSettings;
   const enabled = elements.autoReleaseNvidia.checked;
-  builderSettings = { ...builderSettings, autoReleaseVerifiedNvidia: enabled, schemaVersion: 4 };
+  const requested = { ...builderSettings, autoReleaseVerifiedNvidia: enabled, schemaVersion: 4 };
+  builderSettings = requested;
   autoReleaseVerificationPending = true;
   settingsSavePending = true;
   elements.autoReleaseStatus.textContent = enabled ? "Checking maintainer permission…" : "Saving…";
@@ -715,14 +728,18 @@ elements.autoReleaseNvidia.addEventListener("change", async () => {
   renderSettings();
   try {
     await waitForPaint();
-    builderSettings = await invoke("update_builder_settings", { settings: builderSettings });
+    const settings = await invoke("update_builder_settings", { settings: requested });
+    if (!settingsGate.isCurrent(generation)) return;
+    builderSettings = settings;
     elements.autoReleaseStatus.textContent = enabled ? "Confirmed" : "Disabled";
     elements.autoReleaseStatus.className = enabled ? "setting-status confirmed" : "setting-status";
   } catch (error) {
+    if (!settingsGate.isCurrent(generation)) return;
     builderSettings = previous;
     elements.autoReleaseStatus.textContent = String(error);
     elements.autoReleaseStatus.className = "setting-status error";
   } finally {
+    if (!settingsGate.isCurrent(generation)) return;
     autoReleaseVerificationPending = false;
     settingsSavePending = false;
     renderSettings();
