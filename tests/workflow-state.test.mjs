@@ -210,7 +210,11 @@ test("USB write start requires a completed image and active preflight capability
 test("USB write completion requires an exact verified result for the admitted device", () => {
   const writing = { ...ready, hasCompletedOutput: true, usbWriting: true, exportMode: "usb" };
   const capability = {
-    deviceIdentifier: "disk4", deviceNode: "/dev/rdisk4", imageSha256: "a".repeat(64),
+    sessionToken: "session-4",
+    imagePath: "/output/image.raw",
+    deviceIdentifier: "disk4",
+    deviceNode: "/dev/rdisk4",
+    imageSha256: "a".repeat(64),
   };
   const result = {
     status: "verified",
@@ -241,6 +245,19 @@ test("USB write completion requires an exact verified result for the admitted de
     assert.equal(admitUsbWriteCompletion(writing, { ...result, ...changed }, capability).blocker, "invalid-write-result");
   }
   assert.equal(admitUsbWriteCompletion(writing, result, null).blocker, "malformed-write-context");
+  for (const changed of [
+    { sessionToken: "" },
+    { sessionToken: "x".repeat(4097) },
+    { imagePath: "" },
+    { imagePath: "x".repeat(4097) },
+    { deviceIdentifier: "" },
+    { deviceNode: "" },
+    { imageSha256: "not-a-hash" },
+  ]) {
+    assert.equal(admitUsbWriteCompletion(writing, result, {
+      ...capability, ...changed,
+    }).blocker, "malformed-write-context");
+  }
   assert.equal(admitUsbWriteCompletion(writing, result, {
     ...capability, imageSha256: "b".repeat(64),
   }).blocker, "invalid-write-result");
@@ -263,6 +280,8 @@ test("verified USB completion retains a valid manual-eject outcome", () => {
     message: "Verified; eject the device manually.",
   };
   assert.equal(admitUsbWriteCompletion(writing, result, {
+    sessionToken: "session-6",
+    imagePath: "/output/manual-eject.raw",
     deviceIdentifier: result.deviceIdentifier,
     deviceNode: result.deviceNode,
     imageSha256: hash,

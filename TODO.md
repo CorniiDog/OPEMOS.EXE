@@ -1149,6 +1149,16 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     frontend tests plus documentation, hygiene, and boundary integrity pass.
     Physical removable-media validation remains a separate release gate, and
     the broader workflow transition model remains open.
+  - [x] Require the complete admitted USB write context at terminal result
+    validation. Empty, oversized, missing, or malformed session tokens, image
+    paths, whole-device identifiers, raw device nodes, and preflight image
+    digests now fail closed even when a result otherwise appears verified. The
+    renderer already dispatches and validates against the same immutable context.
+    On 2026-09-05, all 36 focused workflow/layout tests, including the new context
+    boundary cases, and all 138 frontend tests plus documentation, hygiene, and
+    boundary integrity pass. Physical removable-media validation remains a
+    separate release gate, and the broader workflow transition model remains
+    open.
 - [ ] Split oversized frontend workflow/log rendering code only where behavior
   can be covered by focused tests.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.

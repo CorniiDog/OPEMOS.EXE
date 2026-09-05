@@ -152,6 +152,8 @@ export function admitUsbWriteCompletion(snapshot, result, capability) {
   }
   const validHash = (value) => typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
   if (!capability || typeof capability !== "object" || Array.isArray(capability)
+    || !validBoundedString(capability.sessionToken)
+    || !validBoundedString(capability.imagePath)
     || !validBoundedString(capability.deviceIdentifier)
     || !validBoundedString(capability.deviceNode)
     || !validHash(capability.imageSha256)) {
