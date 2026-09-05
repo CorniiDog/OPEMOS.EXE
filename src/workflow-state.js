@@ -188,3 +188,13 @@ export function admitUsbReviewOpen(snapshot, capability) {
       : null;
   return Object.freeze({ accepted: blocker === null, phase: admission.phase, blocker });
 }
+
+export function admitUsbReviewDismiss(snapshot) {
+  const admission = deriveBuildAdmission(snapshot);
+  const accepted = admission.phase !== "usb-writing";
+  return Object.freeze({
+    accepted,
+    phase: admission.phase,
+    blocker: accepted ? null : "usb-writing",
+  });
+}

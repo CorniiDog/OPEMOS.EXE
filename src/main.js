@@ -8,6 +8,7 @@ import {
   admitUsbPreflightCancel,
   admitUsbPreflightStart,
   admitUsbReviewOpen,
+  admitUsbReviewDismiss,
   admitUsbTargetSelection,
   admitUsbTargetClear,
   admitUsbWriteStart,
@@ -218,7 +219,7 @@ function setUsbMenuOpen(opened) {
 }
 
 async function dismissUsbMenu() {
-  if (usbWriting) return;
+  if (!admitUsbReviewDismiss(currentBuildSnapshot()).accepted) return;
   usbContextGeneration += 1;
   const session = usbPreflightSession;
   usbPreflightSession = null;

@@ -8,6 +8,7 @@ import {
   admitUsbPreflightCancel,
   admitUsbPreflightStart,
   admitUsbReviewOpen,
+  admitUsbReviewDismiss,
   admitUsbTargetSelection,
   admitUsbTargetClear,
   admitUsbWriteStart,
@@ -298,4 +299,24 @@ test("USB review opens only for a completed image with a selected target", () =>
     () => admitUsbReviewOpen(complete, { hasTarget: "yes" }),
     /hasTarget must be boolean/,
   );
+});
+
+test("USB review dismissal remains available until destructive writing starts", () => {
+  const cases = [
+    [{ hasImage: false }, "empty"],
+    [{}, "selected"],
+    [{ hasCompletedOutput: true }, "complete"],
+    [{ buildRunning: true }, "building"],
+  ];
+  for (const [change, phase] of cases) {
+    assert.deepEqual(admitUsbReviewDismiss({ ...ready, ...change }), {
+      accepted: true, phase, blocker: null,
+    });
+  }
+  assert.deepEqual(admitUsbReviewDismiss({ ...ready, usbWriting: true }), {
+    accepted: false, phase: "usb-writing", blocker: "usb-writing",
+  });
+  assert.throws(() => admitUsbReviewDismiss({
+    ...ready, buildRunning: true, usbWriting: true,
+  }), /cannot run concurrently/);
 });
