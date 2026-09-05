@@ -5,10 +5,12 @@ import {
   admitBuildStart,
   admitBuildCompletion,
   admitImageSelection,
-  admitExportModeSelection,
-  admitOutputDirectorySelection,
   deriveBuildAdmission,
 } from "./workflow-state.js";
+import {
+  admitExportModeSelection,
+  admitOutputDirectorySelection,
+} from "./output-state.js";
 import {
   admitBuildSourceRefresh,
   admitBuildSourceSelection,

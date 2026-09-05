@@ -5,10 +5,12 @@ import {
   admitBuildStart,
   admitBuildCompletion,
   admitImageSelection,
-  admitExportModeSelection,
-  admitOutputDirectorySelection,
   deriveBuildAdmission,
 } from "../src/workflow-state.js";
+import {
+  admitExportModeSelection,
+  admitOutputDirectorySelection,
+} from "../src/output-state.js";
 import {
   admitBuildSourceRefresh,
   admitBuildSourceSelection,
@@ -531,6 +533,11 @@ test("image export-mode changes only before build mutation begins", () => {
   });
   assert.deepEqual(admitExportModeSelection(ready), {
     accepted: true, phase: "selected", blocker: null,
+  });
+  assert.deepEqual(admitExportModeSelection({
+    ...ready, hasCompletedOutput: true, hostReady: false,
+  }), {
+    accepted: false, phase: "complete", blocker: "complete",
   });
   const cases = [
     [{ hasCompletedOutput: true }, "complete", "complete"],

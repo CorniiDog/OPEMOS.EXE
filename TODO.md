@@ -1189,6 +1189,15 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     2026-09-05, the focused 38-case workflow/layout suite and all 140 frontend tests
     plus documentation, hygiene, and boundary integrity pass. Further splitting
     remains limited to behavior with equivalent focused coverage.
+  - [x] Extract image export-mode and output-directory admission from the general
+    workflow reducer. The dedicated output-state module still derives every phase
+    from the authoritative workflow snapshot; directory changes remain limited to
+    selected images, while export-mode changes remain limited to empty or selected
+    phases. A combined completed-output and unavailable-host regression proves the
+    completed phase remains authoritative and cannot reopen output controls. On
+    2026-09-05, the focused 38-case workflow/layout suite and all 140 frontend tests
+    plus documentation, hygiene, and boundary integrity pass. Further splitting
+    remains limited to behavior with equivalent focused coverage.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.
   The main workflow now uses a native directory chooser, supports an explicit
   return to the source folder, invalidates stale chooser results when image

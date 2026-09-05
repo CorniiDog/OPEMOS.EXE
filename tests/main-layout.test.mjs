@@ -150,7 +150,8 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /elements\.resultMessage\.title = installedIdentity;/);
   assert.match(script, /Verified existing NVIDIA.*No rebuild needed; select a USB drive/);
   assert.doesNotMatch(script, /Existing NVIDIA output and adjacent manifest match byte-for-byte/);
-  assert.match(script, /admitBuildStart,[\s\S]*admitImageSelection,[\s\S]*admitExportModeSelection,[\s\S]*admitOutputDirectorySelection,[\s\S]*deriveBuildAdmission,[\s\S]*from "\.\/workflow-state\.js"/);
+  assert.match(script, /admitBuildStart,[\s\S]*admitImageSelection,[\s\S]*deriveBuildAdmission,[\s\S]*from "\.\/workflow-state\.js"/);
+  assert.match(script, /admitExportModeSelection,[\s\S]*admitOutputDirectorySelection,[\s\S]*from "\.\/output-state\.js"/);
   assert.match(script, /admitBuildSourceRefresh,[\s\S]*admitBuildSourceSelection,[\s\S]*from "\.\/build-source-state\.js"/);
   assert.match(script, /admitUsbConfirmationEdit,[\s\S]*admitUsbPreflightCancel,[\s\S]*admitUsbPreflightStart,[\s\S]*admitUsbReviewDismiss,[\s\S]*admitUsbReviewOpen,[\s\S]*admitUsbTargetClear,[\s\S]*admitUsbTargetRefresh,[\s\S]*admitUsbTargetSelection,[\s\S]*from "\.\/usb-target-state\.js"/);
   assert.match(script, /admitUsbWriteCompletion,[\s\S]*admitUsbWriteProgress,[\s\S]*admitUsbWriteStart,[\s\S]*from "\.\/usb-write-state\.js"/);
