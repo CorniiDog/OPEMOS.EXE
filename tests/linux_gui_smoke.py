@@ -209,6 +209,22 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "initial focus changed"):
             smoke.validate_reopened_dialog(dialog, focusable, focused)
 
+    def test_compatibility_safety_text_requires_exact_nonproduction_warnings(self):
+        paragraphs = [FakeNode(value, role="paragraph") for value in smoke.EXPECTED_COMPATIBILITY_SAFETY_TEXT]
+        dialog = FakeNode(children=paragraphs)
+        reader = lambda node: node.get_name() or None
+        smoke.validate_compatibility_safety_text(dialog, reader)
+        paragraphs[1].name = "Development fixtures are trusted."
+        with self.assertRaisesRegex(RuntimeError, "safety text changed"):
+            smoke.validate_compatibility_safety_text(dialog, reader)
+        paragraphs[1].name = smoke.EXPECTED_COMPATIBILITY_SAFETY_TEXT[1]
+        dialog.children.pop()
+        with self.assertRaisesRegex(RuntimeError, "safety text changed"):
+            smoke.validate_compatibility_safety_text(dialog, reader)
+        dialog.children.append(FakeNode("Production authorized.", role="paragraph"))
+        with self.assertRaisesRegex(RuntimeError, "safety text changed"):
+            smoke.validate_compatibility_safety_text(dialog, reader)
+
     def test_dialog_focus_requires_exact_order_and_single_initial_close(self):
         focusable, focused = "focusable", "focused"
         controls = [FakeNode(name, role=role, states={focusable})

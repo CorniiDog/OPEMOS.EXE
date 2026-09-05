@@ -84,6 +84,19 @@ EXPECTED_SETTINGS_FOCUS_ORDER = [
     ("Inspect Core compatibility…", "combo box"),
 ]
 
+EXPECTED_COMPATIBILITY_SAFETY_TEXT = [
+    (
+        "Read-only preview. Document structure is checked, but authenticity is not. "
+        "A compatible result here does not authorize a build, download, or activation."
+    ),
+    "Development fixtures are non-production and available only in debug builds.",
+    (
+        "Selected file and pasted content are processed locally and cleared when this "
+        "inspector closes. No credentials, downloads, cache changes, or guest operations "
+        "are needed."
+    ),
+]
+
 EXPECTED_FOCUS_ORDER = [
     ("Close", "push button"),
     ("Open a local resolver JSON file (up to 1 MiB)", "push button"),
@@ -282,6 +295,18 @@ def validate_dialog_focus(dialog, focusable_state, focused_state):
     if focused != [("Close", "push button")]:
         raise RuntimeError(f"Compatibility dialog initial focus changed: {focused!r}.")
 
+
+def validate_compatibility_safety_text(dialog, text_reader):
+    actual = []
+    for node in descendants(dialog):
+        if node.get_role_name() != "paragraph":
+            continue
+        value = text_reader(node)
+        if value:
+            actual.append(value)
+    if actual != EXPECTED_COMPATIBILITY_SAFETY_TEXT:
+        raise RuntimeError(f"Compatibility safety text changed: {actual!r}.")
+
 def validate_reopened_dialog(dialog, focusable_state, focused_state):
     validate_dialog_focus(dialog, focusable_state, focused_state)
     require_absent(dialog, RESULT_SENTINEL_LABELS)
@@ -399,6 +424,7 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     dialog = wait(lambda: exactly_one_role(app, "Core compatibility inspector", "dialog"),
                   "the compatibility inspector")
     validate_dialog_focus(dialog, focusable_state, focused_state)
+    validate_compatibility_safety_text(dialog, accessible_text)
     invoke(exactly_one_action(dialog, "Compatible fixture"))
     wait(lambda: exactly_one(dialog, "compatible"), "the compatible Core status")
     validate_named_rows(

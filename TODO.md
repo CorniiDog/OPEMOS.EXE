@@ -189,8 +189,10 @@ installation targets, production activation, or hardware certification.
   five-control focus order plus initial and restored focus, and proves CUDA
   omission, maintainer workspace, and automated-release controls remain disabled
   and unfocusable. It then opens the read-only
-  compatibility dialog,
-  verifies the dialog's exact native focusable order and initial Close focus,
+  compatibility dialog, verifies its exact accessible warnings that preview
+  structure is unauthenticated and non-authorizing, fixtures are debug-only and
+  non-production, and local inputs are cleared without credentials or guest work,
+  then verifies the dialog's exact native focusable order and initial Close focus,
   verifies Core's exact compatible publication, artifact, pending-verification,
   and target fields plus all four development-fixture generation rows. It switches
   to the no-artifact fixture and verifies Core's exact status/reason/message plus its
@@ -215,13 +217,13 @@ installation targets, production activation, or hardware certification.
   kernel start time; the live tree reports the spawned package PID exactly. Package
   archive validation passes with SHA-256
   `80a578962c18c9ee5076c05ff2c2fa40d92e0097fd7e21efe8e017f0a3d41f12`; no
-  package was installed. Twenty-one focused harness tests reject false-ready or
+  package was installed. Twenty-two focused harness tests reject false-ready or
   ambiguous unavailable surfaces, altered unavailable explanations or fallback
   policy, extra unavailable-mode actions, unexpected initial button focus,
   missing or broadened chooser filters, unsafe empty-selection Open/Cancel
   state, a stale native chooser, missing or duplicate chooser focus restoration,
   enabled, focusable, missing, or duplicate unavailable Settings controls,
-  reordered or extra
+  altered, missing, or extra compatibility safety warnings, reordered or extra
   or ambiguously bounded rows, stale cleared fields or result headings, wrong
   Clear focus, stale next actions after recovery, and altered compatible trust
   text, stale close/reopen state, and wrong reopened focus; the live package
