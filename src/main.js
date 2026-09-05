@@ -602,6 +602,7 @@ async function selectImage(path) {
 }
 
 elements.chooseImage.addEventListener("click", async () => {
+  if (!admitImageSelection(currentBuildSnapshot()).accepted) return;
   const selected = await open({ multiple: false, directory: false, filters: [{ name: "SteamOS recovery image", extensions: ["img", "bz2", "gz", "xz"] }] });
   if (typeof selected === "string") await selectImage(selected);
 });
