@@ -72,3 +72,13 @@ export function admitBuildStart(snapshot) {
     blocker: admission.canBuild ? null : admission.blocker,
   });
 }
+
+export function admitImageSelection(snapshot) {
+  const admission = deriveBuildAdmission(snapshot);
+  const accepted = admission.phase !== "building" && admission.phase !== "usb-writing";
+  return Object.freeze({
+    accepted,
+    phase: admission.phase,
+    blocker: accepted ? null : admission.blocker,
+  });
+}

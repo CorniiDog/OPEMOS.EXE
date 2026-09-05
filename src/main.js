@@ -1,7 +1,11 @@
 import { installCompatibilityPreview } from "./compatibility-preview.js";
 import { presentHostEnvironment } from "./host-status.js";
 import { buildCompletionMatches, operationContextMatches } from "./operation-context.js";
-import { admitBuildStart, deriveBuildAdmission } from "./workflow-state.js";
+import {
+  admitBuildStart,
+  admitImageSelection,
+  deriveBuildAdmission,
+} from "./workflow-state.js";
 import { installWindowDrag } from "./window-drag.js";
 import {
   installKeyboardBindings,
@@ -449,8 +453,9 @@ async function loadNvidiaSourceBranches() {
 
 async function selectImage(path) {
   outputSelectionGeneration += 1;
-  if (buildRunning || usbWriting) {
-    elements.resultMessage.textContent = buildRunning
+  const selection = admitImageSelection(currentBuildSnapshot());
+  if (!selection.accepted) {
+    elements.resultMessage.textContent = selection.phase === "building"
       ? "The selected image cannot be changed while a build is running. Cancel or finish the build first."
       : "The selected image cannot be changed while a USB write is running.";
     elements.resultMessage.className = "result-message error";

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { admitBuildStart, deriveBuildAdmission } from "../src/workflow-state.js";
+import {
+  admitBuildStart,
+  admitImageSelection,
+  deriveBuildAdmission,
+} from "../src/workflow-state.js";
 
 const ready = {
   hasImage: true,
@@ -85,6 +89,27 @@ test("build start uses the same fail-closed admission at the event boundary", ()
     assert.notEqual(result.blocker, null);
   }
   assert.throws(() => admitBuildStart({
+    ...ready, buildRunning: true, usbWriting: true,
+  }), /cannot run concurrently/);
+});
+
+test("image selection is allowed only outside active mutation phases", () => {
+  for (const snapshot of [
+    { ...ready, hasImage: false },
+    ready,
+    { ...ready, hasCompletedOutput: true },
+  ]) {
+    const result = admitImageSelection(snapshot);
+    assert.equal(result.accepted, true);
+    assert.equal(result.blocker, null);
+  }
+  assert.deepEqual(admitImageSelection({ ...ready, buildRunning: true }), {
+    accepted: false, phase: "building", blocker: "building",
+  });
+  assert.deepEqual(admitImageSelection({ ...ready, usbWriting: true }), {
+    accepted: false, phase: "usb-writing", blocker: "usb-writing",
+  });
+  assert.throws(() => admitImageSelection({
     ...ready, buildRunning: true, usbWriting: true,
   }), /cannot run concurrently/);
 });
