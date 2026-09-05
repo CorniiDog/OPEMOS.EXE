@@ -123,6 +123,14 @@ test("interactive controls share one rounded glass component language", async ()
   assert.doesNotMatch(mainHtml, /aria-label="Close (?:settings|USB menu)">×/);
 });
 
+test("shared controls honor reduced motion and forced colors without hiding state", () => {
+  assert.match(controlsCss, /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation-duration:\s*\.01ms !important;[\s\S]*animation-iteration-count:\s*1 !important;[\s\S]*transition-duration:\s*\.01ms !important;/);
+  assert.match(controlsCss, /@media \(prefers-reduced-motion: reduce\)[\s\S]*button:active:not\(:disabled\)\s*\{\s*transform:\s*none;/);
+  assert.match(controlsCss, /@media \(forced-colors: active\)[\s\S]*input\[type="checkbox"\],[\s\S]*\.status\s*\{[\s\S]*border:\s*1px solid ButtonText;[\s\S]*box-shadow:\s*none;/);
+  assert.match(controlsCss, /@media \(forced-colors: active\)[\s\S]*outline:\s*2px solid Highlight;[\s\S]*input\[type="checkbox"\]::after\s*\{\s*border-color:\s*CanvasText;/);
+  assert.match(controlsCss, /button:disabled,[\s\S]*select:disabled,[\s\S]*input:disabled\s*\{[^}]*border-color:\s*GrayText;[^}]*opacity:\s*1;/);
+});
+
 test("build progress uses two rounded glass channels inside one glass pill", async () => {
   const css = await readFile(new URL("../src/build.css", import.meta.url), "utf8");
   assert.match(css, /\.progress-stack\s*\{[^}]*border:\s*1px solid rgba\(184, 220, 241, \.18\);[^}]*border-radius:\s*999px;[^}]*backdrop-filter:\s*blur\(12px\)/);

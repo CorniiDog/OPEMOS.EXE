@@ -361,6 +361,19 @@ installation targets, production activation, or hardware certification.
   `2fa3e4036e793ecbaaf149979740f9c46aafb3ac0f291e83c0faf1243bb8f883`.
   This does not grant webview networking or alter production trust/activation.
 
+- [x] Add shared reduced-motion and forced-color behavior to main, build-progress,
+  maintainer, and compatibility controls. Reduced motion bounds every animation
+  to one effectively instantaneous iteration, removes transition delay, and
+  disables pressed-button displacement while retaining final progress/status
+  state. Forced colors use system button, canvas, highlight, and disabled colors
+  for borders, custom checkbox marks, focus outlines, and unavailable controls;
+  disabled controls remain visibly distinct without opacity loss. An exact
+  regression covers repetition, transition, focus, checkbox, status, and disabled
+  boundaries across the shared stylesheet. On 2026-09-04, the focused five-case
+  theme suite and all 112 frontend tests plus documentation, hygiene, and boundary
+  integrity pass. Pixel-level forced-color/reduced-motion rendering, zoom, long
+  localization, and display scaling remain in the broader graphical gate.
+
 ### 1. Complete the OPEMOS Core migration
 
 Production generation activation is intentionally blocked until the maintainer

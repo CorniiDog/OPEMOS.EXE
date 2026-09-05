@@ -150,8 +150,41 @@ input[type="text"]::placeholder { color: #7f8da0; }
 @keyframes glass-control-spin { to { transform: rotate(360deg); } }
 
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    transition-delay: 0ms !important;
+  }
+
+  button:active:not(:disabled) { transform: none; }
+}
+
+@media (forced-colors: active) {
   button,
   select,
   textarea,
-  input { transition: none; }
+  input[type="text"],
+  input[type="checkbox"],
+  .status {
+    border: 1px solid ButtonText;
+    box-shadow: none;
+    forced-color-adjust: auto;
+  }
+
+  button:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  input:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 3px;
+  }
+
+  input[type="checkbox"]::after { border-color: CanvasText; }
+  button:disabled,
+  select:disabled,
+  input:disabled { border-color: GrayText; color: GrayText; opacity: 1; }
 }

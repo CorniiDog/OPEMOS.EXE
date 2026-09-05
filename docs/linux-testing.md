@@ -23,7 +23,9 @@ progress owns event and hide/drag calls. No window receives a broad core, dialog
 or opener default. The packaged Ubuntu smoke validates the main window after this
 split. Its CSP loads only bundled resources and Tauri IPC, retains inline styles
 for dynamic progress/log presentation, and denies objects, forms, frames, base
-changes, and all other sources. GNOME denied noninteractive screenshot access, so pixel rendering,
+changes, and all other sources. Shared controls also honor reduced motion and
+forced colors without hiding focus, status, checkbox, or disabled state. GNOME
+denied noninteractive screenshot access, so pixel rendering,
 delivered key-event traversal, companion windows,
 desktop integration, and interactive close remain unvalidated. WebKit exposes
 no AT-SPI EditableText interface for the resolver text field, so automated
