@@ -176,6 +176,10 @@ const developmentLineageCommit = "adf372b857cd348b6a18680b45ffcea790f04d4b";
 assert.match(checks, /^  linux-integration:$/m);
 assert.match(checks, /runs-on: ubuntu-24\.04/);
 assert.equal(checks.split(developmentLineageCommit).length - 1, 1);
+assert.match(
+  checks,
+  /ref: adf372b857cd348b6a18680b45ffcea790f04d4b\n          path: opemos-core-contracts\n          fetch-depth: 56\n          persist-credentials: false/,
+);
 assert.match(checks, /exact_core_source_intent_matrix_matches_rust_contract -- --ignored/);
 assert.match(checks, /immutable_core_generation_reaches_guest_consumption_and_activation/);
 assert.match(checks, /live_linux_disposable_host_tools -- --ignored/);

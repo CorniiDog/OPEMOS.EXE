@@ -88,6 +88,7 @@ jobs:
           repository: CorniiDog/open-gpu-kernel-modules-steamos-support
           ref: adf372b857cd348b6a18680b45ffcea790f04d4b
           path: opemos-core-contracts
+          fetch-depth: 56
           persist-credentials: false
 
       - name: Install bounded Linux integration dependencies

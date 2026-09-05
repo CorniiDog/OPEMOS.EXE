@@ -1510,8 +1510,12 @@ must be reported; a default-suite pass does not imply hardware certification.
   from `14d510787380fc444eb57d2888677c2239ab0b9f` through CI commit
   `7a911834d9625c7cd6fd3f428eaba0b48ad55211`; GitHub redirected the repository
   to `CorniiDog/OPEMOS.EXE` without changing the configured remote. Checks run
-  33980895429 was queued for the exact commit. Debian and managed Fedora
-  appliance boot remain separate.
+  33980895429 was queued for the exact commit. That run exposed a bounded
+  shallow-checkout failure: `adf372b` was present but pinned ancestor `7f90e45`
+  was not an available object. The integration checkout now fetches exactly 56
+  commits, covering the 55-commit fast-forward plus its pinned baseline without
+  requesting unrelated history. Debian and managed Fedora appliance boot remain
+  separate.
 - [ ] Add bounded release-package smoke tests which start and close the packaged
   application and confirm no orphan QEMU processes remain. The experimental
   Ubuntu debug package now has the equivalent bounded AT-SPI launch/close and
