@@ -48,6 +48,9 @@ export function deriveBuildAdmission(snapshot) {
   if (usbWriting && !hasCompletedOutput) {
     throw new Error("USB writing requires a completed output");
   }
+  if (usbWriting && exportMode !== "usb" && exportMode !== "both") {
+    throw new Error("USB writing requires a USB output mode");
+  }
   if (upstreamApproved && !upstreamSelected) {
     throw new Error("upstream approval requires an upstream source");
   }
