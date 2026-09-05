@@ -191,7 +191,10 @@ installation targets, production activation, or hardware certification.
   and unfocusable. It then opens the read-only
   compatibility dialog, verifies its exact accessible warnings that preview
   structure is unauthenticated and non-authorizing, fixtures are debug-only and
-  non-production, and local inputs are cleared without credentials or guest work,
+  non-production, and local inputs are cleared without credentials or guest work.
+  The dynamic status now mirrors its bounded text into an accessibility label;
+  the live fixture result exposes `Development fixture — non-production` as a
+  status bar and `Unverified Core result` as a landmark,
   then verifies the dialog's exact native focusable order and initial Close focus,
   verifies Core's exact compatible publication, artifact, pending-verification,
   and target fields plus all four development-fixture generation rows. It switches
@@ -216,14 +219,15 @@ installation targets, production activation, or hardware certification.
   or mismatched bounded `/proc` stat identities. The QEMU snapshot keys PID plus
   kernel start time; the live tree reports the spawned package PID exactly. Package
   archive validation passes with SHA-256
-  `80a578962c18c9ee5076c05ff2c2fa40d92e0097fd7e21efe8e017f0a3d41f12`; no
+  `be99b68caca319511db134df6c532592fc6b2129edbd63f8d9679e4825f53e4b`; no
   package was installed. Twenty-two focused harness tests reject false-ready or
   ambiguous unavailable surfaces, altered unavailable explanations or fallback
   policy, extra unavailable-mode actions, unexpected initial button focus,
   missing or broadened chooser filters, unsafe empty-selection Open/Cancel
   state, a stale native chooser, missing or duplicate chooser focus restoration,
   enabled, focusable, missing, or duplicate unavailable Settings controls,
-  altered, missing, or extra compatibility safety warnings, reordered or extra
+  altered, missing, or extra compatibility safety warnings, inaccessible fixture
+  origin or unverified-result landmark, reordered or extra
   or ambiguously bounded rows, stale cleared fields or result headings, wrong
   Clear focus, stale next actions after recovery, and altered compatible trust
   text, stale close/reopen state, and wrong reopened focus; the live package

@@ -427,6 +427,8 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     validate_compatibility_safety_text(dialog, accessible_text)
     invoke(exactly_one_action(dialog, "Compatible fixture"))
     wait(lambda: exactly_one(dialog, "compatible"), "the compatible Core status")
+    exactly_one_role(dialog, "Development fixture — non-production", "status bar")
+    exactly_one_role(dialog, "Unverified Core result", "landmark")
     validate_named_rows(
         dialog,
         EXPECTED_COMPATIBLE_ROWS,

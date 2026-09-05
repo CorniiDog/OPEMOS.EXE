@@ -159,8 +159,12 @@ release must each remain present for explanation but disabled and unfocusable in
 the unauthenticated package session. The compatibility dialog must expose exact
 warnings that its structural preview is unauthenticated and non-authorizing,
 fixtures are debug-only and non-production, and local inputs are cleared without
-credentials, downloads, cache changes, or guest operations. The smoke also
-verifies the ordered compatibility controls, initial Close focus, all four
+credentials, downloads, cache changes, or guest operations. Dynamic status text
+is also mirrored into its accessibility label: a fixture result must expose
+`Development fixture — non-production` as a status bar and its result container
+as the `Unverified Core result` landmark. Clearing or closing must replace the
+status label with `No result loaded.` The smoke also verifies the ordered
+compatibility controls, initial Close focus, all four
 development-fixture generation rows, and focus
 restoration to the Settings opener after closing the dialog. It exercises both
 fixture branches. The compatible branch must expose Core's exact publication,

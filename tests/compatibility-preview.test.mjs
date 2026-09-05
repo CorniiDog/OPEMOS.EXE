@@ -154,6 +154,7 @@ test("Dialog renders hostile-looking strings as text and isolates keyboard event
   assert.equal(get("compatibility-dialog").open, true);
   await controller.inspect({ source: "fixture", name: "no-artifact" });
   assert.equal(get("compatibility-result").hidden, false);
+  assert.equal(get("compatibility-status").attributes["aria-label"], "Development fixture — non-production");
   const hostileRow = get("compatibility-fields").children.find((row) => row.children[1].textContent === hostile);
   assert.ok(hostileRow);
   assert.equal(hostileRow.children[0].attributes["aria-label"], "Message");
@@ -165,6 +166,7 @@ test("Dialog renders hostile-looking strings as text and isolates keyboard event
   get("compatibility-close").fire("click");
   assert.equal(get("compatibility-document").value, "");
   assert.equal(get("compatibility-result").hidden, true);
+  assert.equal(get("compatibility-status").attributes["aria-label"], "No result loaded.");
   assert.deepEqual(get("compatibility-fields").children, []);
 });
 
@@ -175,6 +177,7 @@ test("Editing the input clears a previous result before another submission", asy
   doc.getElementById("compatibility-document").fire("input");
   assert.equal(doc.getElementById("compatibility-result").hidden, true);
   assert.equal(doc.getElementById("compatibility-status").textContent, "No result loaded.");
+  assert.equal(doc.getElementById("compatibility-status").attributes["aria-label"], "No result loaded.");
 });
 
 

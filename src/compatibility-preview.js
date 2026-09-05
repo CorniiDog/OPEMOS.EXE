@@ -146,9 +146,11 @@ export function installCompatibilityPreview(documentRef, invoke) {
     dialog.setAttribute("aria-busy", String(state.phase === "loading"));
     result.hidden = state.phase !== "result";
     rows.replaceChildren();
-    status.textContent = state.phase === "loading" ? "Checking document structure…"
+    const statusText = state.phase === "loading" ? "Checking document structure…"
       : state.phase === "error" ? state.message
       : state.phase === "result" ? state.preview.origin : "No result loaded.";
+    status.textContent = statusText;
+    status.setAttribute("aria-label", statusText);
     if (state.phase !== "result") return;
     for (const [label, value] of state.preview.rows) {
       const row = documentRef.createElement("div");
