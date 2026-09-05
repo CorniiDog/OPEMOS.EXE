@@ -3,6 +3,7 @@ import { presentHostEnvironment } from "./host-status.js";
 import { buildCompletionMatches, operationContextMatches } from "./operation-context.js";
 import {
   admitBuildStart,
+  admitBuildSourceRefresh,
   admitBuildSourceSelection,
   admitImageSelection,
   admitExportModeSelection,
@@ -94,6 +95,7 @@ let buildContextGeneration = 0;
 let activeBuildContext = null;
 let acceptedNvidiaSource = elements.nvidiaSource.value;
 let acceptedUpstreamApproval = elements.allowUpstreamBuild.checked;
+let sourceBranchLoadGeneration = 0;
 let pendingUsbTarget = null;
 let hostReady = false;
 let progressReady = false;
@@ -434,9 +436,9 @@ async function checkEnvironment() {
 }
 
 async function loadNvidiaSourceBranches() {
-  const previous = elements.nvidiaSource.value;
+  const generation = ++sourceBranchLoadGeneration;
+  const previous = acceptedNvidiaSource;
   elements.nvidiaSource.disabled = true;
-  elements.nvidiaSource.querySelectorAll("optgroup").forEach((group) => group.remove());
   try {
     const branches = await invoke("list_nvidia_source_branches");
     const project = document.createElement("optgroup");
@@ -450,6 +452,11 @@ async function loadNvidiaSourceBranches() {
       option.dataset.nvidiaVersion = branch.version;
       (branch.experimental ? upstream : project).append(option);
     }
+    if (!admitBuildSourceRefresh(currentBuildSnapshot(), {
+      generation,
+      currentGeneration: sourceBranchLoadGeneration,
+    }).accepted) return;
+    elements.nvidiaSource.querySelectorAll("optgroup").forEach((group) => group.remove());
     if (project.children.length) elements.nvidiaSource.append(project);
     if (upstream.children.length) elements.nvidiaSource.append(upstream);
     if ([...elements.nvidiaSource.options].some((option) => option.value === previous)) {
@@ -463,8 +470,11 @@ async function loadNvidiaSourceBranches() {
       elements.allowUpstreamBuild.checked = false;
     }
   } catch (error) {
-    elements.resultMessage.textContent = `Could not load optional NVIDIA branches: ${error}`;
+    if (generation === sourceBranchLoadGeneration) {
+      elements.resultMessage.textContent = `Could not load optional NVIDIA branches: ${error}`;
+    }
   } finally {
+    if (generation !== sourceBranchLoadGeneration) return;
     const editable = admitBuildSourceSelection(currentBuildSnapshot()).accepted;
     elements.nvidiaSource.disabled = !editable;
     elements.allowUpstreamBuild.disabled = !editable;

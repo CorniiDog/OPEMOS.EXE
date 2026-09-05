@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   admitBuildStart,
+  admitBuildSourceRefresh,
   admitBuildSourceSelection,
   admitImageSelection,
   admitExportModeSelection,
@@ -364,6 +365,37 @@ test("build source intent changes only before build mutation begins", () => {
   assert.throws(() => admitBuildSourceSelection({
     ...ready, buildRunning: true, usbWriting: true,
   }), /cannot run concurrently/);
+});
+
+test("source branch refresh commits only for the latest editable request", () => {
+  const current = { generation: 3, currentGeneration: 3 };
+  assert.deepEqual(admitBuildSourceRefresh(ready, current), {
+    accepted: true, phase: "selected", blocker: null,
+  });
+  assert.deepEqual(admitBuildSourceRefresh(ready, {
+    generation: 2, currentGeneration: 3,
+  }), {
+    accepted: false, phase: "selected", blocker: "stale-source-refresh",
+  });
+  assert.equal(
+    admitBuildSourceRefresh({ ...ready, buildRunning: true }, current).blocker,
+    "building",
+  );
+  assert.equal(
+    admitBuildSourceRefresh({ ...ready, hasCompletedOutput: true }, current).blocker,
+    "complete",
+  );
+  assert.throws(() => admitBuildSourceRefresh(ready, null), /capability must be an object/);
+  for (const capability of [
+    { generation: 0, currentGeneration: 1 },
+    { generation: 1, currentGeneration: 1.5 },
+    { generation: Number.MAX_SAFE_INTEGER + 1, currentGeneration: 1 },
+  ]) {
+    assert.throws(
+      () => admitBuildSourceRefresh(ready, capability),
+      /must be a positive safe integer/,
+    );
+  }
 });
 
 test("USB confirmation editing requires an idle completed-image target", () => {
