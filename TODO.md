@@ -1496,8 +1496,16 @@ must be reported; a default-suite pass does not imply hardware certification.
 
 - [x] Add CI coverage for formatting, warnings-as-errors, Rust tests,
   frontend tests, documentation, and repository hygiene.
-- [ ] Add an x86_64 Linux integration job for Core bundle, resolver, installer,
-  and headless image tests without publishing or touching physical disks.
+- [x] Add an x86_64 Ubuntu 24.04 integration job for the immutable Core
+  resolver contract, authenticated guest handoff/activation consumer, and the
+  disposable TCG headless image-tool smoke. The job checks out exact Core commit
+  `adf372b857cd348b6a18680b45ffcea790f04d4b` without credentials, explicitly
+  opts into TCG, and exposes no publication or physical-device operation. Core
+  `main` now resolves to that exact commit after the bounded necessary-CI
+  fast-forward. On 2026-09-05, YAML parsing, exact workflow documentation
+  assertions, the local ignored resolver and consumer integrations, repository
+  hygiene, and boundary integrity pass. Remote execution remains the purpose of
+  the source push; Debian and managed Fedora appliance boot remain separate.
 - [ ] Add bounded release-package smoke tests which start and close the packaged
   application and confirm no orphan QEMU processes remain. The experimental
   Ubuntu debug package now has the equivalent bounded AT-SPI launch/close and

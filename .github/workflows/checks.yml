@@ -74,3 +74,51 @@ jobs:
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
           OPEMOS_CORE_EXPECTED_COMMIT: 3e49323fce266af8686039fb6487918ef5a64fd9
+
+  linux-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check out immutable OPEMOS Core integration sources
+        uses: actions/checkout@v4
+        with:
+          repository: CorniiDog/open-gpu-kernel-modules-steamos-support
+          ref: adf372b857cd348b6a18680b45ffcea790f04d4b
+          path: opemos-core-contracts
+          persist-credentials: false
+
+      - name: Install bounded Linux integration dependencies
+        run: >-
+          sudo apt-get update && sudo apt-get install --yes
+          build-essential genisoimage libayatana-appindicator3-dev librsvg2-dev
+          libssl-dev libwebkit2gtk-4.1-dev ovmf patchelf pkg-config
+          qemu-system-x86 qemu-utils
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Exercise immutable Core resolver contract
+        run: >-
+          cargo test --manifest-path src-tauri/Cargo.toml
+          exact_core_source_intent_matrix_matches_rust_contract -- --ignored
+        env:
+          OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
+
+      - name: Exercise authenticated Core guest handoff and activation
+        run: >-
+          cargo test --manifest-path src-tauri/Cargo.toml
+          immutable_core_generation_reaches_guest_consumption_and_activation
+          -- --ignored
+        env:
+          OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
+
+      - name: Exercise disposable headless Linux image tools with TCG
+        run: >-
+          cargo test --manifest-path src-tauri/Cargo.toml
+          live_linux_disposable_host_tools -- --ignored
+        env:
+          OPEMOS_EXPERIMENTAL_LINUX: '1'
+          OPEMOS_LINUX_ACCEL: tcg
