@@ -151,6 +151,8 @@ export function installCompatibilityPreview(documentRef, invoke, openFile = null
   const dialog = get("compatibility-dialog");
   const input = get("compatibility-document");
   const fileOpen = get("compatibility-file-open");
+  const openButton = get("compatibility-open");
+  const closeButton = get("compatibility-close");
   const status = get("compatibility-status");
   const result = get("compatibility-result");
   const rows = get("compatibility-fields");
@@ -187,9 +189,13 @@ export function installCompatibilityPreview(documentRef, invoke, openFile = null
       void controller.inspectPath(path);
     }, (error) => controller.fail(error));
   });
-  get("compatibility-open").addEventListener("click", () => dialog.showModal());
-  get("compatibility-close").addEventListener("click", () => dialog.close());
-  dialog.addEventListener("close", () => { input.value = ""; controller.clear(); });
+  openButton.addEventListener("click", () => { dialog.showModal(); closeButton.focus(); });
+  closeButton.addEventListener("click", () => dialog.close());
+  dialog.addEventListener("close", () => {
+    input.value = "";
+    controller.clear();
+    openButton.focus();
+  });
   // Native dialog owns focus/Tab/Escape; underlying settings shortcuts must not run.
   dialog.addEventListener("keydown", (event) => event.stopPropagation());
   get("compatibility-clear").addEventListener("click", () => { input.value = ""; controller.clear(); });

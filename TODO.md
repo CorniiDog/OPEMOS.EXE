@@ -1430,6 +1430,12 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     17-case compatibility suite, all 148 frontend tests, documentation, hygiene,
     and boundary integrity pass. Pixel rendering, delivered translations,
     keyboard-only traversal, and real display scaling remain open.
+  - [x] Make compatibility-inspector modal focus deterministic for keyboard use.
+    Opening either shared inspector focuses its close control, while every close
+    path, including native Escape dismissal, clears private input/result state and
+    restores focus to the invoking button. On 2026-09-05, all 17 focused
+    compatibility-preview tests pass. Full keyboard traversal and real display
+    scaling remain open.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
   heartbeats or free-form log text. Unknown structured phases now retain only
   their bounded label and current validation/installation context: even a

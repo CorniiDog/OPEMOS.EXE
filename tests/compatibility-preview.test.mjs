@@ -135,6 +135,7 @@ class Element {
   append(...elements) { this.children.push(...elements); }
   replaceChildren(...elements) { this.children = elements; }
   showModal() { this.open = true; }
+  focus() { this.focusCount = (this.focusCount || 0) + 1; }
   close() { this.open = false; this.fire("close"); }
 }
 function fakeDocument() {
@@ -152,6 +153,7 @@ test("Dialog renders hostile-looking strings as text and isolates keyboard event
   const get = (id) => doc.getElementById(id);
   get("compatibility-open").fire("click");
   assert.equal(get("compatibility-dialog").open, true);
+  assert.equal(get("compatibility-close").focusCount, 1);
   await controller.inspect({ source: "fixture", name: "no-artifact" });
   assert.equal(get("compatibility-result").hidden, false);
   assert.equal(get("compatibility-status").attributes["aria-label"], "Development fixture — non-production");
@@ -165,6 +167,7 @@ test("Dialog renders hostile-looking strings as text and isolates keyboard event
   get("compatibility-document").value = "private pasted content";
   get("compatibility-close").fire("click");
   assert.equal(get("compatibility-document").value, "");
+  assert.equal(get("compatibility-open").focusCount, 1);
   assert.equal(get("compatibility-result").hidden, true);
   assert.equal(get("compatibility-status").attributes["aria-label"], "No result loaded.");
   assert.deepEqual(get("compatibility-fields").children, []);
