@@ -63,3 +63,12 @@ export function deriveBuildAdmission(snapshot) {
                 : null;
   return Object.freeze({ phase, canBuild: blocker === null, blocker });
 }
+
+export function admitBuildStart(snapshot) {
+  const admission = deriveBuildAdmission(snapshot);
+  return Object.freeze({
+    accepted: admission.canBuild,
+    phase: admission.canBuild ? "building" : admission.phase,
+    blocker: admission.canBuild ? null : admission.blocker,
+  });
+}

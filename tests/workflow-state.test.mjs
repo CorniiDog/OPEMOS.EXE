@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { deriveBuildAdmission } from "../src/workflow-state.js";
+import { admitBuildStart, deriveBuildAdmission } from "../src/workflow-state.js";
 
 const ready = {
   hasImage: true,
@@ -66,4 +66,25 @@ test("build admission fails closed for malformed and impossible snapshots", () =
   assert.throws(() => deriveBuildAdmission({
     ...ready, buildRunning: true, hasCompletedOutput: true,
   }), /completed output cannot still be building/);
+});
+
+test("build start uses the same fail-closed admission at the event boundary", () => {
+  assert.deepEqual(admitBuildStart(ready), {
+    accepted: true, phase: "building", blocker: null,
+  });
+  for (const change of [
+    { hasImage: false },
+    { hostReady: false },
+    { exportMode: null },
+    { upstreamSelected: true, upstreamApproved: false },
+    { hasCompletedOutput: true },
+    { usbWriting: true },
+  ]) {
+    const result = admitBuildStart({ ...ready, ...change });
+    assert.equal(result.accepted, false);
+    assert.notEqual(result.blocker, null);
+  }
+  assert.throws(() => admitBuildStart({
+    ...ready, buildRunning: true, usbWriting: true,
+  }), /cannot run concurrently/);
 });

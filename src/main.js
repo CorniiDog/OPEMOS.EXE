@@ -1,7 +1,7 @@
 import { installCompatibilityPreview } from "./compatibility-preview.js";
 import { presentHostEnvironment } from "./host-status.js";
 import { buildCompletionMatches, operationContextMatches } from "./operation-context.js";
-import { deriveBuildAdmission } from "./workflow-state.js";
+import { admitBuildStart, deriveBuildAdmission } from "./workflow-state.js";
 import { installWindowDrag } from "./window-drag.js";
 import {
   installKeyboardBindings,
@@ -148,8 +148,8 @@ async function waitForProgressWindow(progressWindow) {
   throw new Error("The build progress window did not become ready.");
 }
 
-function updateBuildButton() {
-  const admission = deriveBuildAdmission({
+function currentBuildSnapshot() {
+  return {
     hasImage: Boolean(currentImage),
     hasCompletedOutput: Boolean(completedOutput),
     buildRunning,
@@ -158,8 +158,11 @@ function updateBuildButton() {
     exportMode: selectedExportMode(),
     upstreamSelected: elements.nvidiaSource.value.startsWith("upstream:"),
     upstreamApproved: elements.allowUpstreamBuild.checked,
-  });
-  elements.buildButton.disabled = !admission.canBuild;
+  };
+}
+
+function updateBuildButton() {
+  elements.buildButton.disabled = !deriveBuildAdmission(currentBuildSnapshot()).canBuild;
 }
 
 function selectedExportMode() {
@@ -705,7 +708,7 @@ elements.resetOutputFolder.addEventListener("click", () => { void selectOutputDi
 
 elements.buildButton.addEventListener("click", async () => {
   const exportMode = selectedExportMode();
-  if (completedOutput?.path || !currentImage || !hostReady || !exportMode || buildRunning || usbWriting) return;
+  if (!admitBuildStart(currentBuildSnapshot()).accepted) return;
   const buildContext = {
     generation: ++buildContextGeneration,
     requestId: crypto.randomUUID(),

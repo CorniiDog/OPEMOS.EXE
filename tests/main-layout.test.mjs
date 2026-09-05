@@ -118,9 +118,11 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /elements\.resultMessage\.title = installedIdentity;/);
   assert.match(script, /Verified existing NVIDIA.*No rebuild needed; select a USB drive/);
   assert.doesNotMatch(script, /Existing NVIDIA output and adjacent manifest match byte-for-byte/);
-  assert.match(script, /import \{ deriveBuildAdmission \} from "\.\/workflow-state\.js"/);
+  assert.match(script, /import \{ admitBuildStart, deriveBuildAdmission \} from "\.\/workflow-state\.js"/);
   assert.match(script, /hasCompletedOutput: Boolean\(completedOutput\)/);
-  assert.match(script, /elements\.buildButton\.disabled = !admission\.canBuild/);
+  assert.match(script, /elements\.buildButton\.disabled = !deriveBuildAdmission\(currentBuildSnapshot\(\)\)\.canBuild/);
+  assert.match(script, /if \(!admitBuildStart\(currentBuildSnapshot\(\)\)\.accepted\) return;/);
+  assert.doesNotMatch(script, /completedOutput\?\.path \|\| !currentImage \|\| !hostReady/);
   assert.match(css, /\.build-card\.completed-output-selected \.nvidia-choice,[\s\S]*#build-button\s*\{\s*display:\s*none;/);
   assert.doesNotMatch(css, /\.build-card\.completed-output-selected \.build-side-column,[\s\S]{0,100}display:\s*none;/);
   assert.match(script, /elements\.appShell\.classList\.add\("completed-output-selected"\)/);
@@ -146,7 +148,7 @@ test("image selection is transactional across plain and completed outputs", () =
   assert.match(script, /elements\.nvidiaSource\.disabled = true;[\s\S]*elements\.allowUpstreamBuild\.disabled = true;/);
   assert.match(script, /selectionError = String\(error\);[\s\S]*Choose another SteamOS image[\s\S]*elements\.dropMessage\.title = selectionError \|\| "";/);
   assert.match(script, /elements\.usbTarget\.disabled = !hasUsbTargets\(\);/);
-  assert.match(script, /if \(completedOutput\?\.path \|\| !currentImage \|\| !hostReady \|\| !exportMode \|\| buildRunning \|\| usbWriting\) return;/);
+  assert.match(script, /if \(!admitBuildStart\(currentBuildSnapshot\(\)\)\.accepted\) return;/);
   assert.match(script, /const buildContext = activeBuildContext;[\s\S]*invoke\("inspect_completed_nvidia_image"[\s\S]*buildContext\.selectionGeneration !== imageSelectionGeneration[\s\S]*inputPath !== currentImage/);
   assert.doesNotMatch(script, /buildRunning = true;[\s\S]{0,900}refreshUsbTargets\.textContent = "Scanning…";/);
 });
