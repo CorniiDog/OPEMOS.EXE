@@ -127,6 +127,14 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(css, /\.primary:disabled,[\s\S]*\.secondary:disabled\s*\{[^}]*cursor:\s*not-allowed;/);
 });
 
+test("USB disconnect warning spans every accepted destructive progress phase", () => {
+  assert.match(html, /id="usb-active-warning"[^>]*role="alert"[\s\S]*writing, read-back verification, flushing, and safe ejection/);
+  const progressHandler = script.match(/mainWindow\.listen\("usb-write-progress"[\s\S]*?}\);/)?.[0];
+  assert.ok(progressHandler);
+  assert.doesNotMatch(progressHandler, /usbActiveWarning\.classList\.(?:add|toggle)\("hidden"/);
+  assert.match(script, /usbActiveWarning\.classList\.remove\("hidden"\)[\s\S]*await invoke\("write_image_to_usb"[\s\S]*finally \{[\s\S]*usbActiveWarning\.classList\.add\("hidden"\)/);
+});
+
 test("image chooser uses a rounded glass download mark", () => {
   assert.match(html, /class="drop-icon" aria-hidden="true"[\s\S]*<svg viewBox="0 0 32 32"[\s\S]*M16 7v15M10\.5 17\.5 16 23l5\.5-5\.5/);
   assert.match(css, /\.drop-icon\s*\{[^}]*border-radius:\s*999px;[^}]*linear-gradient\(90deg, rgba\(26, 159, 255, \.72\), rgba\(8, 117, 181, \.58\) 48%, rgba\(118, 185, 0, \.64\)\) border-box;/);

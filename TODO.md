@@ -1286,8 +1286,14 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   failure, and insufficient capacity.
 - [ ] Revalidate the whole physical device, capacity, identity token, selected
   image, and destructive phrase immediately before opening it for writing.
-- [ ] Keep a conspicuous “do not disconnect” warning visible throughout write,
-  verification, flush, and eject.
+- [x] Keep a conspicuous “do not disconnect” warning visible throughout write,
+  verification, flush, and eject. The alert is exposed before native destructive
+  work begins, remains present across every admitted progress update, and clears
+  only from the terminal cleanup path after the native operation resolves or
+  fails. Its visible text explicitly covers writing, read-back verification,
+  flushing, and safe ejection. On 2026-09-05, the focused 15-case main-layout
+  suite and all 141 frontend tests plus documentation, hygiene, and boundary
+  integrity pass. Linux physical-device writing remains unavailable.
 - [ ] Never expose internal/system disks or accept a partition when a whole
   removable device is required.
 
