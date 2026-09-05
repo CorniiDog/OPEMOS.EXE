@@ -42,6 +42,9 @@ export function deriveBuildAdmission(snapshot) {
   if (hasCompletedOutput && !hasImage) {
     throw new Error("a completed output requires its selected image");
   }
+  if (hasCompletedOutput && exportMode === null) {
+    throw new Error("a completed output requires an output mode");
+  }
   if (usbWriting && !hasCompletedOutput) {
     throw new Error("USB writing requires a completed output");
   }

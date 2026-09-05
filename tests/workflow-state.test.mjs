@@ -90,6 +90,9 @@ test("build admission fails closed for malformed and impossible snapshots", () =
     ...ready, hasImage: false, hasCompletedOutput: true,
   }), /completed output requires its selected image/);
   assert.throws(() => deriveBuildAdmission({
+    ...ready, hasCompletedOutput: true, exportMode: null,
+  }), /completed output requires an output mode/);
+  assert.throws(() => deriveBuildAdmission({
     ...ready, usbWriting: true,
   }), /USB writing requires a completed output/);
   assert.throws(() => deriveBuildAdmission({
