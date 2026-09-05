@@ -1180,6 +1180,15 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     workflow/layout suite and all 140 frontend tests plus documentation, hygiene,
     and boundary integrity pass. Further splitting remains limited to behavior
     with equivalent focused coverage.
+  - [x] Extract build-source selection and asynchronous branch-refresh admission
+    from the general workflow reducer. The dedicated module still derives its phase
+    from the authoritative workflow snapshot, accepts changes only in empty/selected
+    phases, and rejects stale refresh generations before they can update the source
+    menu. A new combined stale-and-building regression preserves the stronger active-
+    mutation blocker, and static wiring requires the separate reducer import. On
+    2026-09-05, the focused 38-case workflow/layout suite and all 140 frontend tests
+    plus documentation, hygiene, and boundary integrity pass. Further splitting
+    remains limited to behavior with equivalent focused coverage.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.
   The main workflow now uses a native directory chooser, supports an explicit
   return to the source folder, invalidates stale chooser results when image

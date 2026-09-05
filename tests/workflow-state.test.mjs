@@ -4,13 +4,15 @@ import test from "node:test";
 import {
   admitBuildStart,
   admitBuildCompletion,
-  admitBuildSourceRefresh,
-  admitBuildSourceSelection,
   admitImageSelection,
   admitExportModeSelection,
   admitOutputDirectorySelection,
   deriveBuildAdmission,
 } from "../src/workflow-state.js";
+import {
+  admitBuildSourceRefresh,
+  admitBuildSourceSelection,
+} from "../src/build-source-state.js";
 import {
   admitUsbConfirmationEdit,
   admitUsbPreflightCancel,
@@ -573,6 +575,11 @@ test("source branch refresh commits only for the latest editable request", () =>
     generation: 2, currentGeneration: 3,
   }), {
     accepted: false, phase: "selected", blocker: "stale-source-refresh",
+  });
+  assert.deepEqual(admitBuildSourceRefresh({ ...ready, buildRunning: true }, {
+    generation: 2, currentGeneration: 3,
+  }), {
+    accepted: false, phase: "building", blocker: "building",
   });
   assert.equal(
     admitBuildSourceRefresh({ ...ready, buildRunning: true }, current).blocker,

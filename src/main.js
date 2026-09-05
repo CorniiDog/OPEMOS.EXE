@@ -4,13 +4,15 @@ import { buildCompletionMatches, operationContextMatches } from "./operation-con
 import {
   admitBuildStart,
   admitBuildCompletion,
-  admitBuildSourceRefresh,
-  admitBuildSourceSelection,
   admitImageSelection,
   admitExportModeSelection,
   admitOutputDirectorySelection,
   deriveBuildAdmission,
 } from "./workflow-state.js";
+import {
+  admitBuildSourceRefresh,
+  admitBuildSourceSelection,
+} from "./build-source-state.js";
 import {
   admitUsbConfirmationEdit,
   admitUsbPreflightCancel,
