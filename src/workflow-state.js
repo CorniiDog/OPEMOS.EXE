@@ -100,6 +100,16 @@ export function admitBuildStart(snapshot) {
   });
 }
 
+export function admitBuildCompletion(snapshot) {
+  const admission = deriveBuildAdmission(snapshot);
+  const accepted = admission.phase === "building";
+  return Object.freeze({
+    accepted,
+    phase: admission.phase,
+    blocker: accepted ? null : "no-active-build",
+  });
+}
+
 export function admitImageSelection(snapshot) {
   const admission = deriveBuildAdmission(snapshot);
   const accepted = admission.phase !== "building" && admission.phase !== "usb-writing";

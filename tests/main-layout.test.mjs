@@ -201,11 +201,13 @@ test("image selection is transactional across plain and completed outputs", () =
 
 test("stale build completions cannot overwrite a newer build context", () => {
   assert.match(script, /import \{ buildCompletionMatches, operationContextMatches \}/);
+  assert.match(script, /admitBuildCompletion,/);
   assert.match(script, /let buildContextGeneration = 0;/);
   assert.match(script, /requestId: crypto\.randomUUID\(\)/);
   assert.match(script, /activeBuildContext = buildContext;/);
   assert.match(script, /progressWindow\.emit\("build-requested", \{\s*requestId: buildContext\.requestId,/);
   assert.match(script, /if \(!buildCompletionMatches\(event\.payload, activeBuildContext\)\) return;/);
+  assert.match(script, /async function applyBuildFinished[\s\S]*if \(!admitBuildCompletion\(currentBuildSnapshot\(\)\)\.accepted[\s\S]*buildCompletionMatches\(completion, buildContext\)/);
   assert.match(script, /if \(pendingBuildFinished\) return;/);
   assert.match(script, /selectionGeneration: imageSelectionGeneration/);
   assert.match(script, /activeBuildContext = null;[\s\S]*buildRunning = false;/);

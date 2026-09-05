@@ -3,6 +3,7 @@ import { presentHostEnvironment } from "./host-status.js";
 import { buildCompletionMatches, operationContextMatches } from "./operation-context.js";
 import {
   admitBuildStart,
+  admitBuildCompletion,
   admitBuildSourceRefresh,
   admitBuildSourceSelection,
   admitImageSelection,
@@ -868,7 +869,8 @@ async function revealCompletedImage(path) {
 async function applyBuildFinished(completion) {
   const { state, message, output, inputPath } = completion;
   const buildContext = activeBuildContext;
-  if (!buildCompletionMatches(completion, buildContext)
+  if (!admitBuildCompletion(currentBuildSnapshot()).accepted
+    || !buildCompletionMatches(completion, buildContext)
     || buildContext.selectionGeneration !== imageSelectionGeneration) return;
   elements.resultMessage.textContent = message;
   elements.resultMessage.className = `result-message ${state === "complete" ? "success" : state === "failed" ? "error" : ""}`;

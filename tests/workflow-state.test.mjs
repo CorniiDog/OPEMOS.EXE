@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   admitBuildStart,
+  admitBuildCompletion,
   admitBuildSourceRefresh,
   admitBuildSourceSelection,
   admitImageSelection,
@@ -131,6 +132,25 @@ test("build start uses the same fail-closed admission at the event boundary", ()
     assert.notEqual(result.blocker, null);
   }
   assert.throws(() => admitBuildStart({
+    ...ready, buildRunning: true, usbWriting: true,
+  }), /cannot run concurrently/);
+});
+
+test("build completion is admitted only from the active build phase", () => {
+  assert.deepEqual(admitBuildCompletion({ ...ready, buildRunning: true }), {
+    accepted: true, phase: "building", blocker: null,
+  });
+  for (const snapshot of [
+    { ...ready, hasImage: false },
+    ready,
+    { ...ready, hasCompletedOutput: true },
+    { ...ready, hasCompletedOutput: true, usbWriting: true, exportMode: "both" },
+  ]) {
+    const result = admitBuildCompletion(snapshot);
+    assert.equal(result.accepted, false);
+    assert.equal(result.blocker, "no-active-build");
+  }
+  assert.throws(() => admitBuildCompletion({
     ...ready, buildRunning: true, usbWriting: true,
   }), /cannot run concurrently/);
 });
