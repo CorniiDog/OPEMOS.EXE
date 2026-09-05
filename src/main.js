@@ -5,6 +5,7 @@ import {
   admitBuildStart,
   admitImageSelection,
   admitOutputDirectorySelection,
+  admitUsbPreflightCancel,
   admitUsbPreflightStart,
   admitUsbWriteStart,
   deriveBuildAdmission,
@@ -1060,7 +1061,11 @@ elements.armUsbPreflight.addEventListener("click", async () => {
 });
 
 elements.cancelUsbPreflight.addEventListener("click", async () => {
-  if (usbCancelPending || !usbPreflightSession?.sessionToken) return;
+  const admission = admitUsbPreflightCancel(currentBuildSnapshot(), {
+    cancelPending: usbCancelPending,
+    hasPreflightSession: Boolean(usbPreflightSession?.sessionToken),
+  });
+  if (!admission.accepted) return;
   const context = {
     generation: usbContextGeneration,
     imagePath: completedOutput?.path,

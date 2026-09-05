@@ -131,3 +131,21 @@ export function admitUsbPreflightStart(snapshot, capability) {
             : null;
   return Object.freeze({ accepted: blocker === null, phase: admission.phase, blocker });
 }
+
+export function admitUsbPreflightCancel(snapshot, capability) {
+  const admission = deriveBuildAdmission(snapshot);
+  if (!capability || typeof capability !== "object" || Array.isArray(capability)) {
+    throw new TypeError("USB cancellation capability must be an object");
+  }
+  const { cancelPending, hasPreflightSession } = capability;
+  requireBoolean("cancelPending", cancelPending);
+  requireBoolean("hasPreflightSession", hasPreflightSession);
+  const blocker = admission.phase !== "complete"
+    ? "no-completed-output"
+    : cancelPending
+      ? "cancellation-pending"
+      : !hasPreflightSession
+        ? "no-usb-preflight"
+        : null;
+  return Object.freeze({ accepted: blocker === null, phase: admission.phase, blocker });
+}

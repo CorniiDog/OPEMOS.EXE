@@ -86,11 +86,14 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.doesNotMatch(script, /if \(usbArmPending \|\| !completedOutput\?\.path \|\| !option\?\.value/);
   assert.match(script, /renderUsbConfirmationPhase\(true\)/);
   assert.match(script, /async function dismissUsbMenu\(\)[\s\S]*usbContextGeneration \+= 1;[\s\S]*cancel_usb_write_preflight/);
+  assert.match(script, /const admission = admitUsbPreflightCancel\(currentBuildSnapshot\(\), \{[\s\S]*cancelPending: usbCancelPending,[\s\S]*hasPreflightSession: Boolean\(usbPreflightSession\?\.sessionToken\)/);
+  assert.match(script, /if \(!admission\.accepted\) return;[\s\S]*const context = \{/);
+  assert.doesNotMatch(script, /if \(usbCancelPending \|\| !usbPreflightSession\?\.sessionToken\) return;/);
   assert.match(script, /installKeyboardBindings[\s\S]*keepKeyboardFocusInside[\s\S]*runKeyboardDefaultAction[\s\S]*from "\.\/keyboard\.js";/);
   assert.match(script, /installKeyboardBindings\(\[[\s\S]*key: "Enter"[\s\S]*usbConfirmation\.value === `ERASE \$\{elements\.usbTarget\.value\}`[\s\S]*runKeyboardDefaultAction\(elements\.armUsbPreflight\)[\s\S]*key: "Tab"[\s\S]*keepKeyboardFocusInside[\s\S]*key: "Escape"[\s\S]*dismissUsbMenu\(\)[\s\S]*key: "Escape"[\s\S]*setSettingsOpen\(false\)/);
   assert.match(script, /const wasOpen = !elements\.usbCard\.classList\.contains\("hidden"\);[\s\S]*else if \(wasOpen/);
   assert.match(script, /armUsbPreflight\.setAttribute\("aria-busy", "true"\)[\s\S]*armUsbPreflight\.textContent = "Revalidating…"/);
-  assert.match(script, /usbCancelPending \|\| !usbPreflightSession\?\.sessionToken[\s\S]*cancelUsbPreflight\.textContent = "Cancelling…"/);
+  assert.match(script, /const context = \{[\s\S]*cancelUsbPreflight\.textContent = "Cancelling…"/);
   assert.match(html, /id="usb-active-warning"[^>]*role="alert"[\s\S]*Do not disconnect the USB drive/);
   assert.match(script, /usbWriting = true;[\s\S]*usbActiveWarning\.classList\.remove\("hidden"\)[\s\S]*usbWriting = false;[\s\S]*usbActiveWarning\.classList\.add\("hidden"\)/);
   assert.match(css, /\.usb-dialog-actions > button\s*\{[^}]*height:\s*42px;[^}]*min-height:\s*42px;[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;/);
@@ -122,7 +125,7 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /elements\.resultMessage\.title = installedIdentity;/);
   assert.match(script, /Verified existing NVIDIA.*No rebuild needed; select a USB drive/);
   assert.doesNotMatch(script, /Existing NVIDIA output and adjacent manifest match byte-for-byte/);
-  assert.match(script, /admitBuildStart,[\s\S]*admitImageSelection,[\s\S]*admitOutputDirectorySelection,[\s\S]*admitUsbPreflightStart,[\s\S]*admitUsbWriteStart,[\s\S]*deriveBuildAdmission,[\s\S]*from "\.\/workflow-state\.js"/);
+  assert.match(script, /admitBuildStart,[\s\S]*admitImageSelection,[\s\S]*admitOutputDirectorySelection,[\s\S]*admitUsbPreflightCancel,[\s\S]*admitUsbPreflightStart,[\s\S]*admitUsbWriteStart,[\s\S]*deriveBuildAdmission,[\s\S]*from "\.\/workflow-state\.js"/);
   assert.match(script, /hasCompletedOutput: Boolean\(completedOutput\?\.path\)/);
   assert.match(script, /elements\.buildButton\.disabled = !deriveBuildAdmission\(currentBuildSnapshot\(\)\)\.canBuild/);
   assert.match(script, /if \(!admitBuildStart\(currentBuildSnapshot\(\)\)\.accepted\) return;/);

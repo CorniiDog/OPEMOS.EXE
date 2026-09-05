@@ -912,6 +912,14 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     On 2026-09-05, the focused 22-case workflow/layout suite and all 124
     frontend tests plus documentation, hygiene, and boundary integrity pass.
     The broader workflow transition model remains open.
+  - [x] Route USB preflight cancellation through the reducer. Cancellation now
+    requires the completed-image phase, one live session, and no cancellation
+    already pending; missing and malformed capabilities or stale workflow phases
+    fail closed before native cancellation while existing operation-context race
+    checks remain authoritative. On 2026-09-05, the focused 23-case
+    workflow/layout suite and all 125 frontend tests plus documentation, hygiene,
+    and boundary integrity pass. The broader workflow transition model remains
+    open.
 - [ ] Split oversized frontend workflow/log rendering code only where behavior
   can be covered by focused tests.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.

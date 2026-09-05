@@ -5,6 +5,7 @@ import {
   admitBuildStart,
   admitImageSelection,
   admitOutputDirectorySelection,
+  admitUsbPreflightCancel,
   admitUsbPreflightStart,
   admitUsbWriteStart,
   deriveBuildAdmission,
@@ -193,4 +194,32 @@ test("USB preflight start requires exact completed-image confirmation and target
       new RegExp(name + " must be boolean"),
     );
   }
+});
+
+test("USB preflight cancellation requires one live completed-image session", () => {
+  const complete = { ...ready, hasCompletedOutput: true };
+  const available = { cancelPending: false, hasPreflightSession: true };
+  assert.deepEqual(admitUsbPreflightCancel(complete, available), {
+    accepted: true, phase: "complete", blocker: null,
+  });
+  assert.deepEqual(admitUsbPreflightCancel(complete, {
+    ...available, cancelPending: true,
+  }), {
+    accepted: false, phase: "complete", blocker: "cancellation-pending",
+  });
+  assert.deepEqual(admitUsbPreflightCancel(complete, {
+    ...available, hasPreflightSession: false,
+  }), {
+    accepted: false, phase: "complete", blocker: "no-usb-preflight",
+  });
+  assert.equal(admitUsbPreflightCancel(ready, available).blocker, "no-completed-output");
+  assert.throws(() => admitUsbPreflightCancel(complete, null), /capability must be an object/);
+  assert.throws(
+    () => admitUsbPreflightCancel(complete, { ...available, cancelPending: 1 }),
+    /cancelPending must be boolean/,
+  );
+  assert.throws(
+    () => admitUsbPreflightCancel(complete, { ...available, hasPreflightSession: "yes" }),
+    /hasPreflightSession must be boolean/,
+  );
 });
