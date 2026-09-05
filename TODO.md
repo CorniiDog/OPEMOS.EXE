@@ -723,6 +723,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     at that second candidate forces `-3.img`. Both blocking artifacts retain
     their exact bytes. On 2026-09-05, the focused Rust naming regression passes.
     Interrupted finalization and cross-process build concurrency remain open.
+  - [x] Race two fresh subprocess reservations from different source images
+    against the same image/adjacent-manifest destination pair behind one start
+    barrier. Exactly one process acquires both locks while the other receives
+    `RESERVATION_ALREADY_HELD`; after release, both source bytes are unchanged
+    and neither destination exists. On 2026-09-05, the focused Rust subprocess
+    regression and formatting pass. Full build-level concurrency and
+    interrupted two-file finalization remain open.
 
 ### 4. Lifecycle and failure hardening
 

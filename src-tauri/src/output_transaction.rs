@@ -4055,6 +4055,60 @@ mod tests {
     }
 
     #[test]
+    fn simultaneous_processes_cannot_reserve_the_same_output_pair() {
+        let fixture = Fixture::new("process-output-race");
+        let start = fixture.0.join("race-start");
+        let mut children = Vec::new();
+        for (index, source) in ["source-a.img", "source-b.img"].iter().enumerate() {
+            let result = fixture.0.join(format!("race-result-{index}"));
+            let child = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "output_transaction::tests::reservation_race_worker",
+                    "--ignored",
+                ])
+                .env("RESERVATION_TEST_ROOT", fixture.root())
+                .env("RESERVATION_TEST_SOURCE", fixture.source(source))
+                .env("RESERVATION_TEST_OUTPUT", fixture.output())
+                .env("RESERVATION_TEST_START", &start)
+                .env("RESERVATION_TEST_RESULT", &result)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .spawn()
+                .unwrap();
+            children.push((child, result));
+        }
+        fs::write(&start, b"start\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while children.iter().any(|(_, result)| !result.is_file()) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        let mut outcomes = children
+            .iter()
+            .map(|(_, result)| fs::read_to_string(result).unwrap())
+            .collect::<Vec<_>>();
+        outcomes.sort();
+        assert_eq!(outcomes, ["RESERVATION_ALREADY_HELD\n", "reserved\n"]);
+        for (child, _) in &mut children {
+            drop(child.stdin.take());
+            assert!(child.wait().unwrap().success());
+        }
+        assert_eq!(
+            fs::read(fixture.source("source-a.img")).unwrap(),
+            b"source-a"
+        );
+        assert_eq!(
+            fs::read(fixture.source("source-b.img")).unwrap(),
+            b"source-b"
+        );
+        assert!(!fixture.output().exists());
+        assert!(!fixture
+            .output()
+            .with_extension("img.manifest.json")
+            .exists());
+    }
+
+    #[test]
     fn restrictive_umask_cannot_poison_new_lock_or_record_modes() {
         let fixture = Fixture::new("umask");
         let status = Command::new(std::env::current_exe().unwrap())
@@ -4071,6 +4125,34 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success());
+    }
+
+    #[test]
+    #[ignore = "subprocess helper for simultaneous output reservation"]
+    fn reservation_race_worker() {
+        let root = PathBuf::from(std::env::var_os("RESERVATION_TEST_ROOT").unwrap());
+        let source_path = PathBuf::from(std::env::var_os("RESERVATION_TEST_SOURCE").unwrap());
+        let output = PathBuf::from(std::env::var_os("RESERVATION_TEST_OUTPUT").unwrap());
+        let start = PathBuf::from(std::env::var_os("RESERVATION_TEST_START").unwrap());
+        let result = PathBuf::from(std::env::var_os("RESERVATION_TEST_RESULT").unwrap());
+        let source = SourceReservation::acquire(&root, &source_path).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !start.is_file() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(start.is_file(), "reservation race did not start");
+        let reservation = OutputReservation::acquire(&root, &source, &output);
+        let outcome = match &reservation {
+            Ok(_) => "reserved\n",
+            Err(error) => {
+                assert_eq!(error, "RESERVATION_ALREADY_HELD");
+                "RESERVATION_ALREADY_HELD\n"
+            }
+        };
+        fs::write(result, outcome).unwrap();
+        let mut byte = [0_u8; 1];
+        let _ = io::stdin().read(&mut byte);
+        drop(reservation);
     }
 
     #[test]
