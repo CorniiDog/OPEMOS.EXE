@@ -81,6 +81,23 @@ test("structured installer validation progress is strict and measurable", () => 
       unit: "none",
     },
   );
+  assert.deepEqual(
+    inferInstallerValidationProgress([
+      `${prefix}{"schemaVersion":1,"attempt":1,"phase":"modules","indeterminate":false,"completed":4,"total":5,"unit":"items"}`,
+      `${prefix}{"schemaVersion":1,"attempt":1,"phase":"future_core_phase","indeterminate":false,"completed":99,"total":100,"unit":"items"}`,
+    ].join("\n")),
+    {
+      attempt: 1,
+      completed: null,
+      kind: "validation",
+      label: "OPEMOS Core: future core phase",
+      overallProgress: null,
+      stage: "future_core_phase",
+      stepProgress: null,
+      total: null,
+      unit: "none",
+    },
+  );
   assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"attempt":1,"phase":"future_core_phase","indeterminate":true,"completed":1,"total":2,"unit":"items"}`), null);
   assert.equal(inferInstallerValidationProgress(`${prefix}{"schemaVersion":1,"attempt":1,"phase":"modules","indeterminate":false,"completed":6,"total":5,"unit":"items"}`), null);
   assert.equal(inferInstallerValidationProgress(`${marker}\n${prefix}{"schemaVersion":1,`), null);

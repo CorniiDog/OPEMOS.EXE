@@ -874,8 +874,16 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
 - [ ] Keep advanced diagnostics accessible without exposing them by default.
 - [ ] Test compact and expanded layouts, long localized text, zoom, reduced
   motion, high contrast, keyboard-only use, and display scaling.
-- [ ] Keep unknown Core phases indeterminate; never infer percentages from
-  heartbeats or free-form log text.
+- [x] Keep unknown Core phases indeterminate; never infer percentages from
+  heartbeats or free-form log text. Unknown structured phases now retain only
+  their bounded label and current validation/installation context: even a
+  syntactically determinate future record exposes no inherited overall progress,
+  completed/total values, unit, or step fraction. The focused progress parser
+  regression covers unknown phases before and after known determinate progress;
+  existing strict parsing continues to reject malformed, regressing, oversized,
+  and contradictory records. On 2026-09-04, the focused 11-case diagnostics
+  suite and all 112 frontend tests plus documentation, hygiene, and boundary
+  integrity pass.
 
 ### Host and appliance
 

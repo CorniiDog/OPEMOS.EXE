@@ -64,7 +64,6 @@ export function inferInstallerValidationProgress(value) {
   const previous = new Map();
   let latestAttempt = -1;
   let lastKnownKind = null;
-  let lastKnownOverall = null;
   for (const rawLine of normalized.split("\n")) {
     const line = rawLine.trim();
     if (!line.startsWith(INSTALLER_PROGRESS_PREFIX)) continue;
@@ -115,18 +114,18 @@ export function inferInstallerValidationProgress(value) {
     }
     if (stage) {
       lastKnownKind = stage[2];
-      lastKnownOverall = stage[0];
     }
+    const displayDeterminate = Boolean(stage) && total !== null;
     records.push({
       attempt,
-      completed,
+      completed: displayDeterminate ? completed : null,
       kind: stage?.[2] ?? lastKnownKind ?? "validation",
       label: stage?.[1] ?? `OPEMOS Core: ${document.phase.replaceAll("_", " ")}`,
-      overallProgress: stage?.[0] ?? lastKnownOverall,
+      overallProgress: stage?.[0] ?? null,
       stage: document.phase,
-      stepProgress: total === null ? null : completed / total,
-      total,
-      unit: indeterminate ? "none" : unit,
+      stepProgress: displayDeterminate ? completed / total : null,
+      total: displayDeterminate ? total : null,
+      unit: displayDeterminate ? unit : "none",
     });
   }
   return records.at(-1) ?? null;
