@@ -722,7 +722,10 @@ elements.chooseOutputFolder.addEventListener("click", async () => {
   const directory = await open({ multiple: false, directory: true });
   if (typeof directory === "string" && directory) await selectOutputDirectory(directory);
 });
-elements.resetOutputFolder.addEventListener("click", () => { void selectOutputDirectory(null); });
+elements.resetOutputFolder.addEventListener("click", () => {
+  if (!admitOutputDirectorySelection(currentBuildSnapshot()).accepted) return;
+  void selectOutputDirectory(null);
+});
 
 elements.buildButton.addEventListener("click", async () => {
   const exportMode = selectedExportMode();
