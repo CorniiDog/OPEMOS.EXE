@@ -3673,6 +3673,31 @@ mod tests {
     }
 
     #[test]
+    fn different_installed_trust_lineage_is_rejected_before_publication() {
+        let fixture = PreparedFixture::create("mixed-lineage-primary");
+        let other = PreparedFixture::create("mixed-lineage-other");
+        let before = fixture.cache.load_state().unwrap();
+        let error = stage_pending_generation_for_appliance(
+            &fixture.cache,
+            &fixture.generation,
+            &fixture.checkpoint,
+            &fixture.target,
+            &[&other.generation],
+            &fixture.operation,
+            &fixture.destination,
+            || false,
+        )
+        .err()
+        .expect("lineage from another installed trust root must fail");
+        assert_eq!(
+            error,
+            "Authenticated lineage does not share installed trust."
+        );
+        assert!(destination_entries(&fixture.destination).is_empty());
+        assert_eq!(fixture.cache.load_state().unwrap(), before);
+    }
+
+    #[test]
     fn capability_fails_after_pending_state_changes_and_can_be_retired() {
         let fixture = PreparedFixture::create("stale-capability");
         let mut staged = fixture.stage().unwrap();

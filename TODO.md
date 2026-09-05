@@ -533,6 +533,11 @@ already Core contracts and are not open-ended product choices.
     preserves cache state. On 2026-09-05, the focused Rust regression and
     formatting pass. A positive authenticated successor lineage plus process-
     death, cancellation, cleanup, and storage-failure coverage remain open.
+  - [x] Reject non-empty lineage authenticated under a different installed-trust
+    snapshot before staging begins. The bridge returns the exact mixed-trust
+    diagnostic, publishes no handoff, and leaves the pending cache state unchanged.
+    On 2026-09-05, the focused Rust regression and formatting pass. The positive
+    same-trust successor fixture and broader failure matrix remain open.
 - [x] Exercise the inactive appliance handoff in real subprocesses killed at
   all 38 existing staging, partial-file-receipt, and retirement hook boundaries.
   Fresh-process restart reauthenticates installed trust, reacquires locks,
