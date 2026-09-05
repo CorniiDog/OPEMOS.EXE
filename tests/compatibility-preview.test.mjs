@@ -327,3 +327,11 @@ test("Maintainer workspace wires the shared read-only compatibility inspector", 
   assert.match(script, /installCompatibilityPreview\(document, invoke, \(\) => openFolder/);
   assert.match(script, /Core resolver JSON/);
 });
+
+test("Compatibility inspector contains long localized controls at high zoom", async () => {
+  const css = await readFile(new URL("../src/compatibility-preview.css", import.meta.url), "utf8");
+  assert.match(css, /\.compatibility-dialog h2,[\s\S]*\.compatibility-dialog button,[\s\S]*\.compatibility-dialog dt\s*\{[^}]*min-width:\s*0;[^}]*max-width:\s*100%;[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/);
+  const compact = css.match(/@media \(max-width: 480px\), \(max-height: 480px\) \{([\s\S]*)\n\}/)?.[1] || "";
+  assert.match(compact, /\.compatibility-dialog\s*\{[^}]*width:\s*calc\(100vw - 16px\);[^}]*max-height:\s*calc\(100vh - 16px\);[^}]*padding:\s*14px;/);
+  assert.match(compact, /\.compatibility-dialog textarea\s*\{\s*min-height:\s*96px;/);
+});

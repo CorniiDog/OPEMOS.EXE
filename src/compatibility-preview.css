@@ -32,7 +32,25 @@
 .compatibility-dialog dl > div { border-top: 1px solid #526b7a; padding: 10px 0; }
 .compatibility-dialog dt { color: #b8d5e5; font-size: 13px; }
 .compatibility-dialog dd { margin: 5px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.compatibility-dialog h2,
+.compatibility-dialog p,
+.compatibility-dialog label,
+.compatibility-dialog button,
+.compatibility-dialog dt {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .compatibility-dialog :focus-visible { outline: 2px solid #66c0f4; outline-offset: 3px; }
 @media (forced-colors: active) {
   .compatibility-dialog, .compatibility-dialog textarea { border-color: CanvasText; }
+}
+@media (max-width: 480px), (max-height: 480px) {
+  .compatibility-dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+    padding: 14px;
+  }
+  .compatibility-dialog textarea { min-height: 96px; }
 }

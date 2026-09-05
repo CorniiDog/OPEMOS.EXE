@@ -1421,6 +1421,15 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   broader gate.
 - [ ] Test compact and expanded layouts, long localized text, zoom, reduced
   motion, high contrast, keyboard-only use, and display scaling.
+  - [x] Keep the shared main/maintainer compatibility inspector inside the
+    viewport when long localized headings, notices, labels, actions, and field
+    names meet high zoom. Text-bearing controls now permit character-level wrap
+    without intrinsic-width overflow; at 480 effective pixels in either
+    dimension the dialog uses an eight-pixel viewport inset, reduced padding,
+    bounded scrolling, and a shorter editable input. On 2026-09-05, the focused
+    17-case compatibility suite, all 148 frontend tests, documentation, hygiene,
+    and boundary integrity pass. Pixel rendering, delivered translations,
+    keyboard-only traversal, and real display scaling remain open.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
   heartbeats or free-form log text. Unknown structured phases now retain only
   their bounded label and current validation/installation context: even a
