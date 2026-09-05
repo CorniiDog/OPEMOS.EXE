@@ -1785,12 +1785,9 @@ where
         return Err("Authenticated lineage exceeds its generation limit.".into());
     }
     let inventory = expected_authenticated_inventory(generation.generation())?;
-    let _lineage_inventory = expected_lineage_inventory(lineage)?;
-    let total_bytes = inventory.values().try_fold(0_u64, |total, (size, _)| {
-        total
-            .checked_add(*size)
-            .ok_or("Core appliance handoff size overflowed.")
-    })?;
+    let lineage_inventory = expected_lineage_inventory(lineage)?;
+    let (total_bytes, transfer_file_count) =
+        transfer_inventory_totals(&inventory, &lineage_inventory)?;
     if total_bytes == 0 || total_bytes > MAX_GENERATION_STORAGE_BYTES {
         return Err("Core appliance handoff size is invalid.".into());
     }
@@ -1929,7 +1926,7 @@ where
         .checked_add(record_bytes.len() as u64)
         .and_then(|bytes| bytes.checked_add((LEASE_RECORD_MAX_BYTES as u64) * 5))
         .ok_or("Core appliance handoff size overflowed.")?;
-    let file_nodes = u64::try_from(inventory.len())
+    let file_nodes = u64::try_from(transfer_file_count)
         .ok()
         .and_then(|count| count.checked_add(8))
         .ok_or("Core appliance handoff file count overflowed.")?;
@@ -2225,6 +2222,28 @@ fn require_exact_pending_state(
         return Err("Core generation cache state changed during appliance staging.".into());
     }
     Ok(())
+}
+
+fn transfer_inventory_totals(
+    inventory: &BTreeMap<String, (u64, String)>,
+    lineage_inventory: &BTreeMap<String, (u64, String)>,
+) -> Result<(u64, usize), String> {
+    let total_bytes = inventory
+        .values()
+        .chain(lineage_inventory.values())
+        .try_fold(0_u64, |total, (size, _)| {
+            total
+                .checked_add(*size)
+                .ok_or("Core appliance handoff size overflowed.")
+        })?;
+    let file_count = inventory
+        .len()
+        .checked_add(lineage_inventory.len())
+        .ok_or("Core appliance handoff file count overflowed.")?;
+    if file_count.saturating_add(1) > MAX_HANDOFF_DIRECTORY_ENTRIES {
+        return Err("Core appliance handoff file count is invalid.".into());
+    }
+    Ok((total_bytes, file_count))
 }
 
 fn expected_lineage_inventory(
@@ -3678,6 +3697,24 @@ mod tests {
         .is_err());
         assert!(destination_entries(&fixture.destination).is_empty());
         assert_eq!(fixture.cache.load_state().unwrap(), before);
+    }
+
+    #[test]
+    fn lineage_transfer_totals_are_checked_and_include_predecessors() {
+        let current = BTreeMap::from([("current".into(), (7, "a".repeat(64)))]);
+        let lineage = BTreeMap::from([
+            ("predecessor.manifest.json".into(), (11, "b".repeat(64))),
+            ("predecessor.manifest.json.sig".into(), (13, "c".repeat(64))),
+        ]);
+        assert_eq!(
+            transfer_inventory_totals(&current, &lineage).unwrap(),
+            (31, 3)
+        );
+        let overflow = BTreeMap::from([("overflow".into(), (u64::MAX, "d".repeat(64)))]);
+        assert_eq!(
+            transfer_inventory_totals(&overflow, &current).unwrap_err(),
+            "Core appliance handoff size overflowed."
+        );
     }
 
     #[test]

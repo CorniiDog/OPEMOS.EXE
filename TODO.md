@@ -545,6 +545,13 @@ already Core contracts and are not open-ended product choices.
     mutation. On 2026-09-05, the focused Rust exact-inventory/collision regression
     passes. Multi-source cache pinning, copying, receipts, capacity accounting,
     restart recovery, and final revalidation remain open before positive staging.
+  - [x] Include predecessor manifest/signature bytes and file nodes in checked
+    handoff storage admission before destination work. Combined current-plus-
+    lineage totals reject integer overflow and directory entry-limit excess,
+    preventing lineage catch-up from bypassing byte or inode reservations. On
+    2026-09-05, both focused Rust accounting/inventory regressions and formatting
+    pass. Multi-source pinning, copying, receipts, recovery, and final
+    revalidation remain open.
 - [x] Exercise the inactive appliance handoff in real subprocesses killed at
   all 38 existing staging, partial-file-receipt, and retirement hook boundaries.
   Fresh-process restart reauthenticates installed trust, reacquires locks,
