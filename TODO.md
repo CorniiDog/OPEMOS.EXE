@@ -730,6 +730,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     and neither destination exists. On 2026-09-05, the focused Rust subprocess
     regression and formatting pass. Full build-level concurrency and
     interrupted two-file finalization remain open.
+  - [x] Extend the real subprocess SIGKILL/reopen matrix through both
+    pre-rename boundaries. Termination immediately before image publication and
+    in the image-visible/manifest-hidden window both remain uncommitted, release
+    process locks, preserve source and foreign bytes, and resume through the
+    durable receipt chain to the exact verified image/manifest pair. On
+    2026-09-05, the focused 12-boundary Rust subprocess matrix and formatting
+    pass. Full build-level concurrency remains open.
 
 ### 4. Lifecycle and failure hardening
 

@@ -3875,6 +3875,11 @@ mod tests {
                 committed_at_kill: false,
             },
             Boundary {
+                phase: "before-image-rename",
+                resumable: true,
+                committed_at_kill: false,
+            },
+            Boundary {
                 phase: "image-renamed",
                 resumable: true,
                 committed_at_kill: false,
@@ -3886,6 +3891,11 @@ mod tests {
             },
             Boundary {
                 phase: "image-published-receipt-synced",
+                resumable: true,
+                committed_at_kill: false,
+            },
+            Boundary {
+                phase: "before-manifest-rename",
                 resumable: true,
                 committed_at_kill: false,
             },
