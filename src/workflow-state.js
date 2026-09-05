@@ -97,3 +97,14 @@ export function admitUsbWriteStart(snapshot, capability) {
       : "no-usb-preflight";
   return Object.freeze({ accepted, phase: admission.phase, blocker });
 }
+
+export function admitOutputDirectorySelection(snapshot) {
+  const admission = deriveBuildAdmission(snapshot);
+  const accepted = admission.phase === "selected";
+  const blocker = accepted
+    ? null
+    : admission.phase === "empty"
+      ? "no-image"
+      : admission.phase;
+  return Object.freeze({ accepted, phase: admission.phase, blocker });
+}

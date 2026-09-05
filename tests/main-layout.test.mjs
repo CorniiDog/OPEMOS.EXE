@@ -40,7 +40,8 @@ test("image output folder selection is explicit, reversible, and build-bound", a
   const selection = script.match(/async function selectOutputDirectory\(directory\) \{([\s\S]*?)\n\}/)?.[1] || "";
   assert.match(selection, /outputDirectory:\s*directory/);
   assert.match(selection, /revision !== outputSelectionGeneration/);
-  assert.match(selection, /!currentImage \|\| completedOutput \|\| buildRunning/);
+  assert.match(selection, /!admitOutputDirectorySelection\(currentBuildSnapshot\(\)\)\.accepted/);
+  assert.doesNotMatch(selection, /!currentImage \|\| completedOutput \|\| buildRunning/);
   assert.match(script, /applyCompletedOutput[\s\S]*chooseOutputFolder\.disabled = true;[\s\S]*resetOutputFolder\.disabled = true;/);
   assert.match(script, /async function selectImage\(path\) \{\s*outputSelectionGeneration \+= 1;/);
   assert.match(script, /resetOutputFolder[\s\S]*selectOutputDirectory\(null\)/);
@@ -118,7 +119,7 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /elements\.resultMessage\.title = installedIdentity;/);
   assert.match(script, /Verified existing NVIDIA.*No rebuild needed; select a USB drive/);
   assert.doesNotMatch(script, /Existing NVIDIA output and adjacent manifest match byte-for-byte/);
-  assert.match(script, /admitBuildStart,[\s\S]*admitImageSelection,[\s\S]*admitUsbWriteStart,[\s\S]*deriveBuildAdmission,[\s\S]*from "\.\/workflow-state\.js"/);
+  assert.match(script, /admitBuildStart,[\s\S]*admitImageSelection,[\s\S]*admitOutputDirectorySelection,[\s\S]*admitUsbWriteStart,[\s\S]*deriveBuildAdmission,[\s\S]*from "\.\/workflow-state\.js"/);
   assert.match(script, /hasCompletedOutput: Boolean\(completedOutput\?\.path\)/);
   assert.match(script, /elements\.buildButton\.disabled = !deriveBuildAdmission\(currentBuildSnapshot\(\)\)\.canBuild/);
   assert.match(script, /if \(!admitBuildStart\(currentBuildSnapshot\(\)\)\.accepted\) return;/);

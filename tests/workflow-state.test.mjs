@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   admitBuildStart,
   admitImageSelection,
+  admitOutputDirectorySelection,
   admitUsbWriteStart,
   deriveBuildAdmission,
 } from "../src/workflow-state.js";
@@ -142,4 +143,24 @@ test("USB write start requires a completed image and active preflight capability
   }, { hasPreflightSession: true }), {
     accepted: false, phase: "usb-writing", blocker: "no-completed-output",
   });
+});
+
+test("output directory changes require the selected non-mutating phase", () => {
+  assert.deepEqual(admitOutputDirectorySelection(ready), {
+    accepted: true, phase: "selected", blocker: null,
+  });
+  const cases = [
+    [{ hasImage: false }, "empty", "no-image"],
+    [{ hasCompletedOutput: true }, "complete", "complete"],
+    [{ buildRunning: true }, "building", "building"],
+    [{ usbWriting: true }, "usb-writing", "usb-writing"],
+  ];
+  for (const [change, phase, blocker] of cases) {
+    assert.deepEqual(admitOutputDirectorySelection({ ...ready, ...change }), {
+      accepted: false, phase, blocker,
+    });
+  }
+  assert.throws(() => admitOutputDirectorySelection({
+    ...ready, buildRunning: true, usbWriting: true,
+  }), /cannot run concurrently/);
 });

@@ -4,6 +4,7 @@ import { buildCompletionMatches, operationContextMatches } from "./operation-con
 import {
   admitBuildStart,
   admitImageSelection,
+  admitOutputDirectorySelection,
   admitUsbWriteStart,
   deriveBuildAdmission,
 } from "./workflow-state.js";
@@ -678,7 +679,7 @@ elements.openMaintainer.addEventListener("click", async () => {
 
 async function selectOutputDirectory(directory) {
   const revision = ++outputSelectionGeneration;
-  if (!currentImage || completedOutput || buildRunning) return;
+  if (!admitOutputDirectorySelection(currentBuildSnapshot()).accepted) return;
   elements.chooseOutputFolder.disabled = true;
   elements.resetOutputFolder.disabled = true;
   try {
