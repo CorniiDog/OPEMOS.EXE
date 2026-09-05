@@ -4530,6 +4530,18 @@ esac
             fs::read(manifest_path_for_output(&versioned)).unwrap(),
             b"stale manifest"
         );
+        let second = custom.join("steamdeck-repair-nvidia-575.64.05-2.img");
+        fs::write(&second, b"foreign image").expect("reserve second versioned image");
+        assert_eq!(
+            output_path_for_nvidia_version_in_directory(&compressed, &custom, "575.64.05")
+                .unwrap(),
+            custom.join("steamdeck-repair-nvidia-575.64.05-3.img")
+        );
+        assert_eq!(fs::read(second).unwrap(), b"foreign image");
+        assert_eq!(
+            fs::read(manifest_path_for_output(&versioned)).unwrap(),
+            b"stale manifest"
+        );
         let source = root.join("preview-source.img");
         fs::write(&source, b"source").expect("create preview source");
         let preview = preview_image_output(

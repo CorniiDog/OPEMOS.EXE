@@ -718,6 +718,11 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     creating the blocked image or changing the stale manifest bytes. On
     2026-09-05, the focused Rust naming regression passes. Interrupted
     two-file finalization and broader concurrent-build cases remain open.
+  - [x] Extend the version-pinned collision regression across mixed pair
+    occupancy: after the stale base manifest forces `-2.img`, a foreign image
+    at that second candidate forces `-3.img`. Both blocking artifacts retain
+    their exact bytes. On 2026-09-05, the focused Rust naming regression passes.
+    Interrupted finalization and cross-process build concurrency remain open.
 
 ### 4. Lifecycle and failure hardening
 
