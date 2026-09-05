@@ -3825,6 +3825,21 @@ mod tests {
         (fixture, second, third, operation)
     }
 
+    fn reload_pending_successor_fixture(
+        root: PathBuf,
+    ) -> (PreparedFixture, SuccessorFixture, SuccessorFixture, String) {
+        let fixture = PreparedFixture::load(root, false);
+        let second = successor_fixture(&fixture, 2, fixture.identity.manifest_sha256.clone());
+        let third = successor_fixture(&fixture, 3, second.identity.manifest_sha256.clone());
+        let operation = fixture
+            .cache
+            .load_state()
+            .unwrap()
+            .pending_operation_id
+            .unwrap();
+        (fixture, second, third, operation)
+    }
+
     fn canonical(value: &impl Serialize) -> Vec<u8> {
         let value = serde_json::to_value(value).unwrap();
         let mut bytes = serde_json::to_vec(&value).unwrap();
@@ -4693,6 +4708,30 @@ mod tests {
     }
 
     #[test]
+    fn subprocess_sigkill_lineage_handoff_reauthenticates_and_recovers() {
+        use std::os::unix::process::ExitStatusExt;
+        for phase in ["after-copy", "after-rename"] {
+            let (fixture, _second, _third, _operation) =
+                pending_successor_fixture(&format!("sigkill-lineage-{phase}"));
+            let before = fixture.cache.load_state().unwrap();
+            let cache_before = disk_snapshot(&fixture.base.join("cache"));
+            let trust_before = disk_snapshot(&fixture.base.join("trust"));
+            let mut worker = spawn_handoff_worker(&fixture, "lineage-stage", phase);
+            wait_for_handoff_boundary(&mut worker, phase);
+            worker.0.kill().unwrap();
+            assert_eq!(worker.0.wait().unwrap().signal(), Some(libc::SIGKILL));
+            assert_eq!(fixture.cache.load_state().unwrap(), before);
+
+            let mut restarted = spawn_handoff_worker(&fixture, "lineage-recover", phase);
+            wait_for_handoff_exit(&mut restarted);
+            assert_eq!(disk_snapshot(&fixture.base.join("cache")), cache_before);
+            assert_eq!(disk_snapshot(&fixture.base.join("trust")), trust_before);
+            assert_eq!(fixture.cache.load_state().unwrap(), before);
+            assert!(destination_entries(&fixture.destination).is_empty());
+        }
+    }
+
+    #[test]
     fn subprocess_sigkill_handoff_boundaries_preserve_pending_state_and_restart() {
         use std::os::unix::process::ExitStatusExt;
         for (mode, phases, recovery) in [
@@ -4752,7 +4791,13 @@ mod tests {
             let _ = std::io::stdin().read(&mut byte);
             std::process::exit(99);
         });
-        let fixture = PreparedFixture::load(root, false);
+        let lineage_mode = mode.starts_with("lineage-");
+        let (fixture, second, third, lineage_operation) = if lineage_mode {
+            let (fixture, second, third, operation) = reload_pending_successor_fixture(root);
+            (fixture, Some(second), Some(third), Some(operation))
+        } else {
+            (PreparedFixture::load(root, false), None, None, None)
+        };
         let before = fixture.cache.load_state().unwrap();
         let hook = |observed: &'static str| {
             if observed == phase {
@@ -4765,6 +4810,47 @@ mod tests {
             Ok(())
         };
         match mode.as_str() {
+            "lineage-stage" | "lineage-recover" => {
+                let second = second.as_ref().unwrap();
+                let third = third.as_ref().unwrap();
+                let operation = lineage_operation.as_ref().unwrap();
+                let staged = if mode == "lineage-stage" {
+                    let staged = stage_pending_generation_for_appliance_with_hook(
+                        &fixture.cache,
+                        &third.generation,
+                        &third.checkpoint,
+                        &fixture.target,
+                        &[&second.generation],
+                        operation,
+                        &fixture.destination,
+                        || false,
+                        hook,
+                    )
+                    .unwrap();
+                    drop(staged);
+                    panic!("lineage staging worker missed boundary {phase}");
+                } else {
+                    stage_pending_generation_for_appliance(
+                        &fixture.cache,
+                        &third.generation,
+                        &third.checkpoint,
+                        &fixture.target,
+                        &[&second.generation],
+                        operation,
+                        &fixture.destination,
+                        || false,
+                    )
+                    .unwrap()
+                };
+                let mut staged = staged;
+                staged.revalidate().unwrap();
+                assert_eq!(
+                    staged.record.lineage_manifest_sha256,
+                    vec![second.identity.manifest_sha256.clone()]
+                );
+                staged.retire().unwrap();
+                assert!(destination_entries(&fixture.destination).is_empty());
+            }
             "stage" => {
                 stage_pending_generation_for_appliance_with_hook(
                     &fixture.cache,

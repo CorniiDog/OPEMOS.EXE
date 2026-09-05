@@ -591,6 +591,16 @@ already Core contracts and are not open-ended product choices.
     2026-09-05, the focused two-path lineage fault regression, the refactored
     positive lineage integration, formatting, and warnings-as-errors Clippy pass.
     Lineage-aware process-death restart recovery remains open.
+  - [x] Kill a real staging subprocess after the combined lineage copy and
+    after atomic handoff rename, then start a fresh executable which reloads the
+    installed trust snapshot, reconstructs the authenticated sequence-2/3 chain,
+    reconciles the durable lease, revalidates the ordered predecessor receipt,
+    and retires the handoff. Both boundaries preserve cache/trust bytes, inode
+    identities, and active/pending state exactly. On 2026-09-05, the focused
+    two-boundary SIGKILL/restart regression, formatting, warnings-as-errors
+    Clippy, repository hygiene, and boundary integrity pass. This closes the
+    currently identified lineage staging restart/fault matrix; normal managed-
+    appliance wiring remains gated by its broader lifecycle and production inputs.
 - [x] Exercise the inactive appliance handoff in real subprocesses killed at
   all 38 existing staging, partial-file-receipt, and retirement hook boundaries.
   Fresh-process restart reauthenticates installed trust, reacquires locks,
