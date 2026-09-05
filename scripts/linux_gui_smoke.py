@@ -84,6 +84,17 @@ EXPECTED_FOCUS_ORDER = [
     ("No-artifact fixture", "push button"),
 ]
 
+EXPECTED_LINUX_UNAVAILABLE_TEXT = [
+    "BUILDER ENVIRONMENT",
+    "Experimental Linux host unavailable",
+    (
+        "KVM is unavailable or inaccessible. Explicitly select OPEMOS_LINUX_ACCEL=tcg "
+        "for software testing; no automatic fallback is used."
+    ),
+    "linux · x86_64",
+    "Unavailable",
+]
+
 def validate_launch(executable: Path, timeout: float, env: dict[str, str]) -> Path:
     if sys.platform != "linux" or os.uname().machine not in {"x86_64", "amd64"}:
         raise ValueError("Packaged GUI smoke requires an x86_64 Linux host.")
@@ -233,11 +244,29 @@ def validate_reopened_dialog(dialog, focusable_state, focused_state):
     validate_dialog_focus(dialog, focusable_state, focused_state)
     require_absent(dialog, RESULT_SENTINEL_LABELS)
 
-def validate_linux_unavailable_gate(app):
+def accessible_text(node):
+    from gi.repository import Atspi
+
+    iface = node.get_text_iface()
+    if iface is None:
+        return None
+    count = iface.get_character_count()
+    return Atspi.Text.get_text(iface, 0, count)
+
+def validate_linux_unavailable_gate(app, text_reader=accessible_text):
     exactly_one_role(app, "OPEMOS EXE — Experimental Linux Test", "frame")
-    exactly_one_role(app, "Image and builder readiness", "section")
+    readiness = exactly_one_role(app, "Image and builder readiness", "section")
     exactly_one_role(app, "Experimental Linux host unavailable", "heading")
     require_absent(app, ["Experimental Linux host ready", "Ready to build"])
+    actual = []
+    for node in descendants(readiness):
+        if node is readiness:
+            continue
+        value = text_reader(node)
+        if value:
+            actual.append(value)
+    if actual != EXPECTED_LINUX_UNAVAILABLE_TEXT:
+        raise RuntimeError(f"Experimental Linux unavailable explanation changed: {actual!r}.")
 
 def application_for_pid(desktop, expected_pid: int):
     if not isinstance(expected_pid, int) or isinstance(expected_pid, bool) or expected_pid <= 1:

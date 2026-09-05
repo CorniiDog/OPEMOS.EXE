@@ -210,21 +210,29 @@ class GuiSmokeTests(unittest.TestCase):
 
     def test_linux_unavailable_gate_rejects_ready_or_ambiguous_surfaces(self):
         frame = FakeNode("OPEMOS EXE — Experimental Linux Test", role="frame")
-        readiness = FakeNode("Image and builder readiness", role="section")
-        unavailable = FakeNode("Experimental Linux host unavailable", role="heading")
-        app = FakeNode(children=[frame, readiness, unavailable])
-        smoke.validate_linux_unavailable_gate(app)
+        readiness_children = [FakeNode(value) for value in smoke.EXPECTED_LINUX_UNAVAILABLE_TEXT]
+        readiness_children[1].role = "heading"
+        readiness = FakeNode(
+            "Image and builder readiness", children=readiness_children, role="section"
+        )
+        app = FakeNode(children=[frame, readiness])
+        reader = lambda node: node.get_name() or None
+        smoke.validate_linux_unavailable_gate(app, reader)
         app.children.append(FakeNode("Experimental Linux host ready", role="heading"))
         with self.assertRaisesRegex(RuntimeError, "Expected no accessible"):
-            smoke.validate_linux_unavailable_gate(app)
+            smoke.validate_linux_unavailable_gate(app, reader)
         app.children.pop()
         app.children.append(FakeNode("OPEMOS EXE — Experimental Linux Test", role="frame"))
         with self.assertRaisesRegex(RuntimeError, "Expected one frame"):
-            smoke.validate_linux_unavailable_gate(app)
+            smoke.validate_linux_unavailable_gate(app, reader)
         app.children.pop()
-        app.children.remove(unavailable)
+        unavailable = readiness.children.pop(1)
         with self.assertRaisesRegex(RuntimeError, "Expected one heading"):
-            smoke.validate_linux_unavailable_gate(app)
+            smoke.validate_linux_unavailable_gate(app, reader)
+        readiness.children.insert(1, unavailable)
+        readiness.children[2].name = "Automatic software fallback enabled."
+        with self.assertRaisesRegex(RuntimeError, "unavailable explanation changed"):
+            smoke.validate_linux_unavailable_gate(app, reader)
 
     def test_application_selection_is_bound_to_spawned_pid(self):
         settings = lambda: FakeNode(children=[FakeNode("Open settings")])
