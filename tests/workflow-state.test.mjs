@@ -83,6 +83,12 @@ test("build admission fails closed for malformed and impossible snapshots", () =
   assert.throws(() => deriveBuildAdmission({
     ...ready, buildRunning: true, hasCompletedOutput: true,
   }), /completed output cannot still be building/);
+  assert.throws(() => deriveBuildAdmission({
+    ...ready, hasImage: false, hasCompletedOutput: true,
+  }), /completed output requires its selected image/);
+  assert.throws(() => deriveBuildAdmission({
+    ...ready, usbWriting: true,
+  }), /USB writing requires a completed output/);
 });
 
 test("build start uses the same fail-closed admission at the event boundary", () => {
@@ -95,7 +101,7 @@ test("build start uses the same fail-closed admission at the event boundary", ()
     { exportMode: null },
     { upstreamSelected: true, upstreamApproved: false },
     { hasCompletedOutput: true },
-    { usbWriting: true },
+    { hasCompletedOutput: true, usbWriting: true },
   ]) {
     const result = admitBuildStart({ ...ready, ...change });
     assert.equal(result.accepted, false);
@@ -119,7 +125,7 @@ test("image selection is allowed only outside active mutation phases", () => {
   assert.deepEqual(admitImageSelection({ ...ready, buildRunning: true }), {
     accepted: false, phase: "building", blocker: "building",
   });
-  assert.deepEqual(admitImageSelection({ ...ready, usbWriting: true }), {
+  assert.deepEqual(admitImageSelection({ ...ready, hasCompletedOutput: true, usbWriting: true }), {
     accepted: false, phase: "usb-writing", blocker: "usb-writing",
   });
   assert.throws(() => admitImageSelection({
@@ -164,7 +170,7 @@ test("output directory changes require the selected non-mutating phase", () => {
     [{ hasImage: false }, "empty", "no-image"],
     [{ hasCompletedOutput: true }, "complete", "complete"],
     [{ buildRunning: true }, "building", "building"],
-    [{ usbWriting: true }, "usb-writing", "usb-writing"],
+    [{ hasCompletedOutput: true, usbWriting: true }, "usb-writing", "usb-writing"],
   ];
   for (const [change, phase, blocker] of cases) {
     assert.deepEqual(admitOutputDirectorySelection({ ...ready, ...change }), {
@@ -243,7 +249,7 @@ test("USB target selection changes only in stable image phases", () => {
   const cases = [
     [{ hasImage: false }, "empty", "no-image"],
     [{ buildRunning: true }, "building", "building"],
-    [{ usbWriting: true }, "usb-writing", "usb-writing"],
+    [{ hasCompletedOutput: true, usbWriting: true }, "usb-writing", "usb-writing"],
   ];
   for (const [change, phase, blocker] of cases) {
     assert.deepEqual(admitUsbTargetSelection({ ...ready, ...change }), {
@@ -269,7 +275,7 @@ test("USB target clearing requires one target in a stable image phase", () => {
   assert.deepEqual(admitUsbTargetClear({ ...ready, buildRunning: true }, present), {
     accepted: false, phase: "building", blocker: "building",
   });
-  assert.deepEqual(admitUsbTargetClear({ ...ready, usbWriting: true }, present), {
+  assert.deepEqual(admitUsbTargetClear({ ...ready, hasCompletedOutput: true, usbWriting: true }, present), {
     accepted: false, phase: "usb-writing", blocker: "usb-writing",
   });
   assert.throws(() => admitUsbTargetClear(ready, null), /capability must be an object/);
@@ -296,7 +302,7 @@ test("USB review opens only for a completed image with a selected target", () =>
     "no-completed-output",
   );
   assert.equal(
-    admitUsbReviewOpen({ ...ready, usbWriting: true }, { hasTarget: true }).blocker,
+    admitUsbReviewOpen({ ...ready, hasCompletedOutput: true, usbWriting: true }, { hasTarget: true }).blocker,
     "no-completed-output",
   );
   assert.throws(() => admitUsbReviewOpen(complete, null), /capability must be an object/);
@@ -318,7 +324,7 @@ test("USB review dismissal remains available until destructive writing starts", 
       accepted: true, phase, blocker: null,
     });
   }
-  assert.deepEqual(admitUsbReviewDismiss({ ...ready, usbWriting: true }), {
+  assert.deepEqual(admitUsbReviewDismiss({ ...ready, hasCompletedOutput: true, usbWriting: true }), {
     accepted: false, phase: "usb-writing", blocker: "usb-writing",
   });
   assert.throws(() => admitUsbReviewDismiss({
@@ -336,7 +342,7 @@ test("image export-mode changes only before build mutation begins", () => {
   const cases = [
     [{ hasCompletedOutput: true }, "complete", "complete"],
     [{ buildRunning: true }, "building", "building"],
-    [{ usbWriting: true }, "usb-writing", "usb-writing"],
+    [{ hasCompletedOutput: true, usbWriting: true }, "usb-writing", "usb-writing"],
   ];
   for (const [change, phase, blocker] of cases) {
     assert.deepEqual(admitExportModeSelection({ ...ready, ...change }), {
@@ -355,7 +361,7 @@ test("build source intent changes only before build mutation begins", () => {
   const cases = [
     [{ hasCompletedOutput: true }, "complete", "complete"],
     [{ buildRunning: true }, "building", "building"],
-    [{ usbWriting: true }, "usb-writing", "usb-writing"],
+    [{ hasCompletedOutput: true, usbWriting: true }, "usb-writing", "usb-writing"],
   ];
   for (const [change, phase, blocker] of cases) {
     assert.deepEqual(admitBuildSourceSelection({ ...ready, ...change }), {
@@ -416,7 +422,7 @@ test("USB confirmation editing requires an idle completed-image target", () => {
   }
   assert.equal(admitUsbConfirmationEdit(ready, editable).blocker, "no-completed-output");
   assert.equal(
-    admitUsbConfirmationEdit({ ...ready, usbWriting: true }, editable).blocker,
+    admitUsbConfirmationEdit({ ...ready, hasCompletedOutput: true, usbWriting: true }, editable).blocker,
     "no-completed-output",
   );
   assert.throws(() => admitUsbConfirmationEdit(complete, null), /capability must be an object/);
@@ -438,7 +444,7 @@ test("manual USB target refresh runs only in stable image phases", () => {
   const cases = [
     [{ hasImage: false }, "empty", "no-image"],
     [{ buildRunning: true }, "building", "building"],
-    [{ usbWriting: true }, "usb-writing", "usb-writing"],
+    [{ hasCompletedOutput: true, usbWriting: true }, "usb-writing", "usb-writing"],
   ];
   for (const [change, phase, blocker] of cases) {
     assert.deepEqual(admitUsbTargetRefresh({ ...ready, ...change }), {

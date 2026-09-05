@@ -1054,6 +1054,14 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     32-case workflow/layout suite and all 134 frontend tests plus documentation,
     hygiene, and boundary integrity pass. The broader workflow transition model
     remains open.
+  - [x] Reject impossible completed-output relationships in the reducer. A
+    completed output now requires its selected source image, and USB-writing
+    state requires that completed output; all ordinary USB-writing fixtures
+    model the retained completed image explicitly. On 2026-09-05, the focused
+    32-case workflow/layout suite passes after correcting the newly exposed
+    invalid fixture, and all 134 frontend tests plus documentation, hygiene,
+    and boundary integrity pass. The broader workflow transition model remains
+    open.
 - [ ] Split oversized frontend workflow/log rendering code only where behavior
   can be covered by focused tests.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.

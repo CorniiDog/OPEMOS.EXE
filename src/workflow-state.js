@@ -36,6 +36,12 @@ export function deriveBuildAdmission(snapshot) {
   if (buildRunning && hasCompletedOutput) {
     throw new Error("a completed output cannot still be building");
   }
+  if (hasCompletedOutput && !hasImage) {
+    throw new Error("a completed output requires its selected image");
+  }
+  if (usbWriting && !hasCompletedOutput) {
+    throw new Error("USB writing requires a completed output");
+  }
 
   const phase = usbWriting
     ? "usb-writing"
