@@ -1255,9 +1255,13 @@ elements.writeUsbImage.addEventListener("click", async () => {
 
 await mainWindow.onDragDropEvent(async (event) => {
   if (document.getElementById("compatibility-dialog").open) return;
-  if (event.payload.type === "over") { elements.dropZone.classList.add("dragging"); return; }
+  const admission = admitImageSelection(currentBuildSnapshot());
+  if (event.payload.type === "over") {
+    elements.dropZone.classList.toggle("dragging", admission.accepted);
+    return;
+  }
   elements.dropZone.classList.remove("dragging");
-  if (event.payload.type === "drop") {
+  if (event.payload.type === "drop" && admission.accepted) {
     const [path] = event.payload.paths;
     if (path) await selectImage(path);
   }
