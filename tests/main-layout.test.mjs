@@ -45,6 +45,8 @@ test("image output folder selection is explicit, reversible, and build-bound", a
   assert.match(script, /applyCompletedOutput[\s\S]*chooseOutputFolder\.disabled = true;[\s\S]*resetOutputFolder\.disabled = true;/);
   assert.match(script, /async function selectImage\(path\) \{\s*outputSelectionGeneration \+= 1;/);
   assert.match(script, /chooseImage\.addEventListener\("click", async \(\) => \{[\s\S]*admitImageSelection\(currentBuildSnapshot\(\)\)\.accepted[\s\S]*await open/);
+  assert.match(script, /chooseOutputFolder\.addEventListener\("click", async \(\) => \{[\s\S]*admitOutputDirectorySelection\(currentBuildSnapshot\(\)\)\.accepted[\s\S]*await open/);
+  assert.doesNotMatch(script, /chooseOutputFolder\.addEventListener\("click", async \(\) => \{\s*const directory = await open/);
   assert.doesNotMatch(script, /chooseImage\.addEventListener\("click", async \(\) => \{\s*const selected = await open/);
   assert.match(script, /resetOutputFolder[\s\S]*selectOutputDirectory\(null\)/);
   assert.match(script, /emit\("build-requested",[\s\S]*outputDirectory,/);

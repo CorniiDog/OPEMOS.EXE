@@ -717,6 +717,7 @@ async function selectOutputDirectory(directory) {
 }
 
 elements.chooseOutputFolder.addEventListener("click", async () => {
+  if (!admitOutputDirectorySelection(currentBuildSnapshot()).accepted) return;
   const directory = await open({ multiple: false, directory: true });
   if (typeof directory === "string" && directory) await selectOutputDirectory(directory);
 });
