@@ -707,6 +707,14 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     regressions cover the slice. On 2026-09-05, the focused 18-case async/layout
     suite and all 144 frontend tests plus documentation, hygiene, and boundary
     integrity pass. Other async workers remain under the parent lifecycle item.
+  - [x] Bind the initial GitHub maintainer-connect response to the same
+    latest-status generation and its existing login-attempt identity. A newer
+    refresh can supersede a delayed connect success without preventing the
+    current login poll from starting; a superseded connect error clears pending
+    login state without replacing the newer status message. On 2026-09-05, the
+    focused 18-case async/layout suite and all 144 frontend tests pass, along
+    with documentation, repository hygiene, and boundary integrity checks.
+    Other async workers remain under the parent lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.

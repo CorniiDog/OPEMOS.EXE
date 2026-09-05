@@ -723,19 +723,29 @@ elements.autoReleaseNvidia.addEventListener("change", async () => {
 });
 elements.githubConnect.addEventListener("click", async () => {
   const poll = ++githubLoginPoll;
+  const generation = githubStatusGate.begin();
   githubLoginPending = true;
   elements.githubConnect.disabled = true;
   renderSettings();
   elements.settingsMessage.textContent = "Opening a visible GitHub login in Terminal…";
   elements.settingsMessage.className = "settings-message";
   try {
-    githubMaintainer = await invoke("connect_github_maintainer");
-    renderSettings();
-    elements.githubConnect.disabled = true;
-    elements.settingsMessage.textContent = githubMaintainer.message;
+    const status = await invoke("connect_github_maintainer");
+    if (poll !== githubLoginPoll) return;
+    if (githubStatusGate.isCurrent(generation)) {
+      githubMaintainer = status;
+      renderSettings();
+      elements.githubConnect.disabled = true;
+      elements.settingsMessage.textContent = githubMaintainer.message;
+    }
     void pollGithubMaintainer(poll);
   } catch (error) {
+    if (poll !== githubLoginPoll) return;
     githubLoginPending = false;
+    if (!githubStatusGate.isCurrent(generation)) {
+      renderSettings();
+      return;
+    }
     elements.settingsMessage.textContent = String(error);
     elements.settingsMessage.className = "settings-message error";
     elements.githubConnect.disabled = false;
