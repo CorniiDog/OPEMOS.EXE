@@ -217,6 +217,11 @@ test("image selection is transactional across plain and completed outputs", () =
   assert.doesNotMatch(script, /buildRunning = true;[\s\S]{0,900}refreshUsbTargets\.textContent = "Scanning…";/);
 });
 
+test("native image chooser rejects superseded and stale-context results", () => {
+  assert.match(script, /let imageChooserGeneration = 0;/);
+  assert.match(script, /chooseImage\.addEventListener\("click"[\s\S]*const chooserGeneration = \+\+imageChooserGeneration;[\s\S]*const selectionGeneration = imageSelectionGeneration;[\s\S]*const selected = await open\([\s\S]*if \(chooserGeneration !== imageChooserGeneration[\s\S]*\|\| selectionGeneration !== imageSelectionGeneration\) return;[\s\S]*await selectImage\(selected\)/);
+});
+
 test("stale build completions cannot overwrite a newer build context", () => {
   assert.match(script, /import \{ buildCompletionMatches, operationContextMatches \}/);
   assert.match(script, /admitBuildCompletion,/);
