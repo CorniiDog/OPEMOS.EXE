@@ -118,7 +118,9 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /elements\.resultMessage\.title = installedIdentity;/);
   assert.match(script, /Verified existing NVIDIA.*No rebuild needed; select a USB drive/);
   assert.doesNotMatch(script, /Existing NVIDIA output and adjacent manifest match byte-for-byte/);
-  assert.match(script, /Boolean\(completedOutput\) \|\| buildRunning/);
+  assert.match(script, /import \{ deriveBuildAdmission \} from "\.\/workflow-state\.js"/);
+  assert.match(script, /hasCompletedOutput: Boolean\(completedOutput\)/);
+  assert.match(script, /elements\.buildButton\.disabled = !admission\.canBuild/);
   assert.match(css, /\.build-card\.completed-output-selected \.nvidia-choice,[\s\S]*#build-button\s*\{\s*display:\s*none;/);
   assert.doesNotMatch(css, /\.build-card\.completed-output-selected \.build-side-column,[\s\S]{0,100}display:\s*none;/);
   assert.match(script, /elements\.appShell\.classList\.add\("completed-output-selected"\)/);

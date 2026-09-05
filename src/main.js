@@ -1,6 +1,7 @@
 import { installCompatibilityPreview } from "./compatibility-preview.js";
 import { presentHostEnvironment } from "./host-status.js";
 import { buildCompletionMatches, operationContextMatches } from "./operation-context.js";
+import { deriveBuildAdmission } from "./workflow-state.js";
 import { installWindowDrag } from "./window-drag.js";
 import {
   installKeyboardBindings,
@@ -148,11 +149,17 @@ async function waitForProgressWindow(progressWindow) {
 }
 
 function updateBuildButton() {
-  const upstreamSelected = elements.nvidiaSource.value.startsWith("upstream:");
-  const exportMode = selectedExportMode();
-  elements.buildButton.disabled = Boolean(completedOutput) || buildRunning || usbWriting || !currentImage || !hostReady
-    || !exportMode
-    || (upstreamSelected && !elements.allowUpstreamBuild.checked);
+  const admission = deriveBuildAdmission({
+    hasImage: Boolean(currentImage),
+    hasCompletedOutput: Boolean(completedOutput),
+    buildRunning,
+    usbWriting,
+    hostReady,
+    exportMode: selectedExportMode(),
+    upstreamSelected: elements.nvidiaSource.value.startsWith("upstream:"),
+    upstreamApproved: elements.allowUpstreamBuild.checked,
+  });
+  elements.buildButton.disabled = !admission.canBuild;
 }
 
 function selectedExportMode() {

@@ -868,6 +868,15 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
 
 - [ ] Model the main workflow as an explicit state machine rather than scattered
   DOM state; test every allowed transition and reject impossible ones.
+  - [x] Centralize build admission as the first bounded state-machine slice.
+    A pure snapshot reducer names empty, selected, building, complete, and
+    USB-writing phases; derives every build blocker; accepts all three output
+    modes and acknowledged upstream intent; and rejects malformed snapshots,
+    concurrent build/write activity, and build-after-completion. The main
+    renderer now consumes this single result instead of repeating admission
+    predicates. On 2026-09-04, the focused 17-case workflow/layout suite and
+    all 119 frontend tests plus documentation, hygiene, and boundary integrity
+    pass. The broader workflow transition model remains open.
 - [ ] Split oversized frontend workflow/log rendering code only where behavior
   can be covered by focused tests.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.
