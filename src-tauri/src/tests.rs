@@ -4512,10 +4512,23 @@ esac
             output_path_for_input_in_directory(&compressed, &custom, true).unwrap(),
             custom.join("steamdeck-repair-nvidia-3.img")
         );
+        let versioned = custom.join("steamdeck-repair-nvidia-575.64.05.img");
         assert_eq!(
             output_path_for_nvidia_version_in_directory(&compressed, &custom, "575.64.05")
                 .unwrap(),
-            custom.join("steamdeck-repair-nvidia-575.64.05.img")
+            versioned
+        );
+        fs::write(manifest_path_for_output(&versioned), b"stale manifest")
+            .expect("reserve versioned adjacent manifest");
+        assert_eq!(
+            output_path_for_nvidia_version_in_directory(&compressed, &custom, "575.64.05")
+                .unwrap(),
+            custom.join("steamdeck-repair-nvidia-575.64.05-2.img")
+        );
+        assert!(!versioned.exists());
+        assert_eq!(
+            fs::read(manifest_path_for_output(&versioned)).unwrap(),
+            b"stale manifest"
         );
         let source = root.join("preview-source.img");
         fs::write(&source, b"source").expect("create preview source");
