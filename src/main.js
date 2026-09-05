@@ -7,6 +7,7 @@ import {
   admitOutputDirectorySelection,
   admitUsbPreflightCancel,
   admitUsbPreflightStart,
+  admitUsbReviewOpen,
   admitUsbTargetSelection,
   admitUsbTargetClear,
   admitUsbWriteStart,
@@ -1123,9 +1124,10 @@ elements.cancelUsbPreflight.addEventListener("click", async () => {
 
 elements.exportImage.addEventListener("change", renderExportMode);
 elements.reviewUsbTarget.addEventListener("click", () => {
-  if (currentImage && completedOutput?.path && elements.usbTarget.value) {
-    setUsbMenuOpen(true);
-  }
+  const admission = admitUsbReviewOpen(currentBuildSnapshot(), {
+    hasTarget: Boolean(elements.usbTarget.value),
+  });
+  if (admission.accepted) setUsbMenuOpen(true);
 });
 elements.closeUsbMenu.addEventListener("click", () => { void dismissUsbMenu(); });
 elements.usbScrim.addEventListener("click", () => { void dismissUsbMenu(); });

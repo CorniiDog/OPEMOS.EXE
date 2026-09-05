@@ -7,6 +7,7 @@ import {
   admitOutputDirectorySelection,
   admitUsbPreflightCancel,
   admitUsbPreflightStart,
+  admitUsbReviewOpen,
   admitUsbTargetSelection,
   admitUsbTargetClear,
   admitUsbWriteStart,
@@ -268,6 +269,33 @@ test("USB target clearing requires one target in a stable image phase", () => {
   assert.throws(() => admitUsbTargetClear(ready, null), /capability must be an object/);
   assert.throws(
     () => admitUsbTargetClear(ready, { hasTarget: "yes" }),
+    /hasTarget must be boolean/,
+  );
+});
+
+test("USB review opens only for a completed image with a selected target", () => {
+  const complete = { ...ready, hasCompletedOutput: true };
+  assert.deepEqual(admitUsbReviewOpen(complete, { hasTarget: true }), {
+    accepted: true, phase: "complete", blocker: null,
+  });
+  assert.deepEqual(admitUsbReviewOpen(complete, { hasTarget: false }), {
+    accepted: false, phase: "complete", blocker: "no-usb-target",
+  });
+  assert.equal(
+    admitUsbReviewOpen(ready, { hasTarget: true }).blocker,
+    "no-completed-output",
+  );
+  assert.equal(
+    admitUsbReviewOpen({ ...ready, buildRunning: true }, { hasTarget: true }).blocker,
+    "no-completed-output",
+  );
+  assert.equal(
+    admitUsbReviewOpen({ ...ready, usbWriting: true }, { hasTarget: true }).blocker,
+    "no-completed-output",
+  );
+  assert.throws(() => admitUsbReviewOpen(complete, null), /capability must be an object/);
+  assert.throws(
+    () => admitUsbReviewOpen(complete, { hasTarget: "yes" }),
     /hasTarget must be boolean/,
   );
 });

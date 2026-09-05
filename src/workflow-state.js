@@ -174,3 +174,17 @@ export function admitUsbTargetClear(snapshot, capability) {
       : null;
   return Object.freeze({ accepted: blocker === null, phase: admission.phase, blocker });
 }
+
+export function admitUsbReviewOpen(snapshot, capability) {
+  const admission = deriveBuildAdmission(snapshot);
+  if (!capability || typeof capability !== "object" || Array.isArray(capability)) {
+    throw new TypeError("USB review capability must be an object");
+  }
+  requireBoolean("hasTarget", capability.hasTarget);
+  const blocker = admission.phase !== "complete"
+    ? "no-completed-output"
+    : !capability.hasTarget
+      ? "no-usb-target"
+      : null;
+  return Object.freeze({ accepted: blocker === null, phase: admission.phase, blocker });
+}
