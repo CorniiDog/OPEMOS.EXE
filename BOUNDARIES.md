@@ -133,6 +133,19 @@ OPEMOS repository owns the interstitial's source, renderer, behavior, tests,
 packaging, release, and device lifecycle. The interactive installation-media
 welcome application remains builder-owned and separate.
 
+## Artifact cleanup ownership
+
+Artifact cleanup follows creator ownership. OPEMOS.EXE owns and cleans artifacts
+it creates. Core owns and cleans artifacts it creates when Core can safely identify
+them. Neither component gains authority to remove artifacts created by the other.
+
+For a concerning conflict involving a Core-created artifact, Core may expose a
+bounded, provenance-preserving flag that OPEMOS.EXE can consume to drive the
+defined resolution. Before acting, the consumer must revalidate the exact artifact
+identity and applicable provenance. Missing, stale, malformed, mismatched,
+conflicting, or ambiguous evidence fails safely without cleanup. The flag grants
+no blanket deletion authority and does not transfer ownership to OPEMOS.EXE.
+
 ## Shared handoff
 
 1. OPEMOS.EXE discovers the exact target from the recovery image.

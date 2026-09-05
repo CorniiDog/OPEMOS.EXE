@@ -432,6 +432,23 @@ already Core contracts and are not open-ended product choices.
   infer it from scheduler continuation, mutable lease records, or same-UID
   ownership. Review at `08d2e9a` found no implementation changes to validate;
   existing production gates and preserved stages remain unchanged.
+  Decision recorded 2026-09-04: the user approved Core's canonical creator-owned
+  cleanup boundary from commit `3a6f0652f4118936820871f8201f7c5e1250acbf`.
+  Core owns cleanup of Core-created artifacts it can safely identify; EXE may
+  consume a bounded provenance-preserving Core flag only after revalidating exact
+  artifact identity and provenance. Missing, stale, malformed, mismatched,
+  conflicting, or ambiguous evidence still preserves the artifact. This resolves
+  the ownership question but does not implement or activate maintenance cleanup.
+- [x] Mirror the explicitly authorized artifact-cleanup ownership boundary from
+  canonical Core commit `3a6f0652f4118936820871f8201f7c5e1250acbf` without
+  rewording. EXE integrity pins now require Git blob
+  `68fd9553bb8fee79cee803a38f980a94b2d80e57` and SHA-256
+  `136d3572effa90c1b84bcf51002d7f9641c367132de20d54dd7173f68f13c6a8`,
+  verify the pinned Core counterpart bytes when the sibling checkout exists, and
+  assert the creator-ownership, exact revalidation, fail-safe ambiguity, and
+  no-blanket-deletion rules. The dated decision handoff is
+  `docs/decisions/2026-09-04-artifact-cleanup-ownership.md`; prior TODO and Git
+  history remain preserved. Focused boundary validation passes.
 - [ ] Before production wiring, replace final name-based cleanup with a durable
   quarantine/retirement protocol: fsync intent, same-parent create-only rename,
   fsync parent, recheck the receipt, then delete. Preserve mismatches and test

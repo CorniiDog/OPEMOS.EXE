@@ -7,9 +7,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_COMMIT = "32ac0c28109ceee40bbaa356003755d5acf33646"
-EXPECTED_GIT_BLOB = "a8123b2134a3b6ed536353ab16ed9496ba263c01"
-EXPECTED_SHA256 = "3d995e054dbad65f871dfbf20234d5be7977a54eba765b10635d09a954d01bbb"
+SOURCE_COMMIT = "3a6f0652f4118936820871f8201f7c5e1250acbf"
+EXPECTED_GIT_BLOB = "68fd9553bb8fee79cee803a38f980a94b2d80e57"
+EXPECTED_SHA256 = "136d3572effa90c1b84bcf51002d7f9641c367132de20d54dd7173f68f13c6a8"
 
 
 def git_blob_id(payload):
@@ -54,6 +54,11 @@ def main():
         "## Sole UI exception",
         "authenticated OPEMOS-owned\ninterstitial target payload",
         "Core-owned installed-device supervisor may launch and\nmonitor",
+        "## Artifact cleanup ownership",
+        "Artifact cleanup follows creator ownership",
+        "Neither component gains authority to remove artifacts created by the other",
+        "Missing, stale, malformed, mismatched,\nconflicting, or ambiguous evidence fails safely without cleanup",
+        "The flag grants\nno blanket deletion authority and does not transfer ownership to OPEMOS.EXE",
         "This ownership is cross-platform",
     ):
         assert required in text, f"boundary authority omitted required rule: {required}"
