@@ -1198,6 +1198,15 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     2026-09-05, the focused 38-case workflow/layout suite and all 140 frontend tests
     plus documentation, hygiene, and boundary integrity pass. Further splitting
     remains limited to behavior with equivalent focused coverage.
+  - [x] Extract build-start and terminal-completion admission from the general
+    workflow reducer. The dedicated lifecycle module still derives its decision
+    from the authoritative snapshot: starts require every readiness input, while
+    completion remains admitted for an already-running build even if host readiness
+    drops afterward, allowing bounded terminal cleanup and result handling. Static
+    wiring requires the separate lifecycle import. On 2026-09-05, the focused
+    38-case workflow/layout suite and all 140 frontend tests plus documentation,
+    hygiene, and boundary integrity pass. Further splitting remains limited to
+    behavior with equivalent focused coverage.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.
   The main workflow now uses a native directory chooser, supports an explicit
   return to the source folder, invalidates stale chooser results when image

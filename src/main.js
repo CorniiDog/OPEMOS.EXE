@@ -2,11 +2,13 @@ import { installCompatibilityPreview } from "./compatibility-preview.js";
 import { presentHostEnvironment } from "./host-status.js";
 import { buildCompletionMatches, operationContextMatches } from "./operation-context.js";
 import {
-  admitBuildStart,
-  admitBuildCompletion,
   admitImageSelection,
   deriveBuildAdmission,
 } from "./workflow-state.js";
+import {
+  admitBuildCompletion,
+  admitBuildStart,
+} from "./build-lifecycle-state.js";
 import {
   admitExportModeSelection,
   admitOutputDirectorySelection,

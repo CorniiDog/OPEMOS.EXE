@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  admitBuildStart,
-  admitBuildCompletion,
   admitImageSelection,
   deriveBuildAdmission,
 } from "../src/workflow-state.js";
+import {
+  admitBuildCompletion,
+  admitBuildStart,
+} from "../src/build-lifecycle-state.js";
 import {
   admitExportModeSelection,
   admitOutputDirectorySelection,
@@ -148,6 +150,11 @@ test("build start uses the same fail-closed admission at the event boundary", ()
 
 test("build completion is admitted only from the active build phase", () => {
   assert.deepEqual(admitBuildCompletion({ ...ready, buildRunning: true }), {
+    accepted: true, phase: "building", blocker: null,
+  });
+  assert.deepEqual(admitBuildCompletion({
+    ...ready, buildRunning: true, hostReady: false,
+  }), {
     accepted: true, phase: "building", blocker: null,
   });
   for (const snapshot of [
