@@ -39,6 +39,9 @@ export function deriveBuildAdmission(snapshot) {
   if (buildRunning && !hasImage) {
     throw new Error("an active build requires its selected image");
   }
+  if (buildRunning && exportMode === null) {
+    throw new Error("an active build requires its output mode");
+  }
   if (hasCompletedOutput && !hasImage) {
     throw new Error("a completed output requires its selected image");
   }

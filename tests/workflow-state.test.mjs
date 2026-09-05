@@ -87,6 +87,9 @@ test("build admission fails closed for malformed and impossible snapshots", () =
     ...ready, hasImage: false, buildRunning: true,
   }), /active build requires its selected image/);
   assert.throws(() => deriveBuildAdmission({
+    ...ready, buildRunning: true, exportMode: null,
+  }), /active build requires its output mode/);
+  assert.throws(() => deriveBuildAdmission({
     ...ready, hasImage: false, hasCompletedOutput: true,
   }), /completed output requires its selected image/);
   assert.throws(() => deriveBuildAdmission({
