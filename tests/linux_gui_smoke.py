@@ -107,6 +107,22 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Expected one status bar"):
             smoke.validate_cleared_result(dialog, focused)
 
+    def test_empty_document_error_rejects_results_and_wrong_or_duplicate_status(self):
+        error_status = FakeNode(smoke.EMPTY_DOCUMENT_ERROR, role="status bar")
+        dialog = FakeNode(children=[error_status])
+        smoke.validate_empty_document_error(dialog)
+        dialog.children.append(FakeNode("Unverified Core result", role="landmark"))
+        with self.assertRaisesRegex(RuntimeError, "Expected no accessible"):
+            smoke.validate_empty_document_error(dialog)
+        dialog.children.pop()
+        error_status.name = "Resolver failed with private details"
+        with self.assertRaisesRegex(RuntimeError, "Expected one status bar"):
+            smoke.validate_empty_document_error(dialog)
+        error_status.name = smoke.EMPTY_DOCUMENT_ERROR
+        dialog.children.append(FakeNode(smoke.EMPTY_DOCUMENT_ERROR, role="status bar"))
+        with self.assertRaisesRegex(RuntimeError, "Expected one status bar"):
+            smoke.validate_empty_document_error(dialog)
+
     def test_compatible_rows_preserve_repeated_values_and_reject_stale_action(self):
         names = [value for row in smoke.EXPECTED_COMPATIBLE_ROWS for value in row]
         end = "Available generations — development fixture"

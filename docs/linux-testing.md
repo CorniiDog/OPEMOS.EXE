@@ -165,8 +165,11 @@ is also mirrored into its accessibility label: a fixture result must expose
 as the `Unverified Core result` landmark. Clearing or closing must replace the
 status label with exactly one `No result loaded.` node and remove the prior
 fixture-origin label. The smoke also verifies the ordered
-compatibility controls, initial Close focus, all four
-development-fixture generation rows, and focus
+compatibility controls and initial Close focus. Inspecting an empty pasted
+document must expose the bounded `Choose or paste` error as exactly one status
+bar without a result landmark; Clear must restore the exact empty status before
+fixture use. The smoke then verifies all four development-fixture generation
+rows and focus
 restoration to the Settings opener after closing the dialog. It exercises both
 fixture branches. The compatible branch must expose Core's exact publication,
 artifact, pending-verification, and target fields. The no-artifact branch must

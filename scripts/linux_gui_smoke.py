@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse, os, signal, stat, subprocess, sys, time
 from pathlib import Path
 
+EMPTY_DOCUMENT_ERROR = "Choose or paste a Core resolver JSON document no larger than 1 MiB."
+
 RESULT_SENTINEL_LABELS = [
     "Unverified Core result",
     "Development fixture — non-production",
@@ -289,6 +291,11 @@ def validate_empty_result(dialog):
     exactly_one_role(dialog, "No result loaded.", "status bar")
 
 
+def validate_empty_document_error(dialog):
+    require_absent(dialog, RESULT_SENTINEL_LABELS)
+    exactly_one_role(dialog, EMPTY_DOCUMENT_ERROR, "status bar")
+
+
 def validate_cleared_result(dialog, focused_state):
     validate_empty_result(dialog)
     exactly_one_focused_action(dialog, "Clear", focused_state)
@@ -431,6 +438,12 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
                   "the compatibility inspector")
     validate_dialog_focus(dialog, focusable_state, focused_state)
     validate_compatibility_safety_text(dialog, accessible_text)
+    invoke(exactly_one_action(dialog, "Inspect pasted result"))
+    wait(lambda: validate_empty_document_error(dialog),
+         "the empty compatibility document error")
+    invoke(exactly_one_action(dialog, "Clear"))
+    wait(lambda: validate_cleared_result(dialog, focused_state),
+         "clearing the empty compatibility document error")
     invoke(exactly_one_action(dialog, "Compatible fixture"))
     wait(lambda: exactly_one(dialog, "compatible"), "the compatible Core status")
     exactly_one_role(dialog, "Development fixture — non-production", "status bar")

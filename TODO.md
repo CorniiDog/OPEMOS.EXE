@@ -195,8 +195,11 @@ installation targets, production activation, or hardware certification.
   The dynamic status now mirrors its bounded text into an accessibility label;
   the live fixture result exposes `Development fixture — non-production` as a
   status bar and `Unverified Core result` as a landmark,
-  then verifies the dialog's exact native focusable order and initial Close focus,
-  verifies Core's exact compatible publication, artifact, pending-verification,
+  then verifies the dialog's exact native focusable order and initial Close focus.
+  Inspecting an empty document must expose the bounded `Choose or paste` error as
+  exactly one status bar without a result landmark; Clear must restore the exact
+  empty status before fixture use. It then verifies Core's exact compatible
+  publication, artifact, pending-verification,
   and target fields plus all four development-fixture generation rows. It switches
   to the no-artifact fixture and verifies Core's exact status/reason/message plus its
   bounded exact-target action fields in order. Clear then removes every result,
@@ -222,7 +225,7 @@ installation targets, production activation, or hardware certification.
   kernel start time; the live tree reports the spawned package PID exactly. Package
   archive validation passes with SHA-256
   `be99b68caca319511db134df6c532592fc6b2129edbd63f8d9679e4825f53e4b`; no
-  package was installed. Twenty-two focused harness tests reject false-ready or
+  package was installed. Twenty-three focused harness tests reject false-ready or
   ambiguous unavailable surfaces, altered unavailable explanations or fallback
   policy, extra unavailable-mode actions, unexpected initial button focus,
   missing or broadened chooser filters, unsafe empty-selection Open/Cancel
@@ -231,7 +234,8 @@ installation targets, production activation, or hardware certification.
   altered, missing, or extra compatibility safety warnings, inaccessible fixture
   origin or unverified-result landmark, reordered or extra
   or ambiguously bounded rows, stale cleared fields or result headings, wrong
-  Clear focus, stale or duplicate empty-status labels, stale next actions after
+  Clear focus, altered or duplicate empty-document errors, a result exposed for
+  empty input, stale or duplicate empty-status labels, stale next actions after
   recovery, and altered compatible trust text, stale close/reopen state, and wrong
   reopened focus; the live package
   smoke passes. Debian,
