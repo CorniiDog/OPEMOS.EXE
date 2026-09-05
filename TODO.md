@@ -699,6 +699,14 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
 
 - [ ] Give every build, appliance, handoff, USB operation, and async worker a
   generation ID so stale completions cannot overwrite newer state.
+  - [x] Gate overlapping GitHub maintainer-status refreshes and login-poll
+    responses with one bounded latest-request generation. Older successes and
+    errors cannot replace a newer authentication/authorization result; polling
+    additionally retains its existing login-attempt identity. Independent gate,
+    invalid-candidate, stale-success/error wiring, and mutable-counter exposure
+    regressions cover the slice. On 2026-09-05, the focused 18-case async/layout
+    suite and all 144 frontend tests plus documentation, hygiene, and boundary
+    integrity pass. Other async workers remain under the parent lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.

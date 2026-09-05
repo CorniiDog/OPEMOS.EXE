@@ -256,6 +256,12 @@ test("long selected-image names and paths remain inside the readiness card", () 
   assert.doesNotMatch(css, /\.selection-card h2\s*\{[^}]*text-overflow:\s*ellipsis;/);
 });
 
+test("maintainer status refreshes reject stale successes and errors", () => {
+  assert.match(script, /createLatestRequestGate[\s\S]*const githubStatusGate = createLatestRequestGate\(\)/);
+  assert.match(script, /async function refreshGithubMaintainer\(\)[\s\S]*const generation = githubStatusGate\.begin\(\)[\s\S]*const status = await invoke\("get_github_maintainer_status"\)[\s\S]*if \(!githubStatusGate\.isCurrent\(generation\)\) return;[\s\S]*githubMaintainer = status/);
+  assert.match(script, /async function pollGithubMaintainer\(poll\)[\s\S]*const generation = githubStatusGate\.begin\(\)[\s\S]*if \(poll !== githubLoginPoll \|\| !githubStatusGate\.isCurrent\(generation\)\) continue;[\s\S]*githubMaintainer = status/);
+});
+
 test("compact main window height agrees between web content and Tauri", () => {
   const mainWindow = tauriConfig.app.windows.find(({ label }) => label === "main");
   assert.equal(mainWindow.height, 800);

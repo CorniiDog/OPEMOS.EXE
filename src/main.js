@@ -1,4 +1,5 @@
 import { installCompatibilityPreview } from "./compatibility-preview.js";
+import { createLatestRequestGate } from "./async-generation.js";
 import { presentHostEnvironment } from "./host-status.js";
 import { buildCompletionMatches, operationContextMatches } from "./operation-context.js";
 import {
@@ -123,6 +124,7 @@ let builderSettings = {
 };
 let githubMaintainer = null;
 let githubLoginPoll = 0;
+const githubStatusGate = createLatestRequestGate();
 let githubLoginPending = false;
 let autoReleaseVerificationPending = false;
 let settingsSavePending = false;
@@ -339,10 +341,14 @@ function renderSettings() {
 }
 
 async function refreshGithubMaintainer() {
+  const generation = githubStatusGate.begin();
   elements.githubStatus.textContent = "Checking GitHub authentication and repository permission…";
   try {
-    githubMaintainer = await invoke("get_github_maintainer_status");
+    const status = await invoke("get_github_maintainer_status");
+    if (!githubStatusGate.isCurrent(generation)) return;
+    githubMaintainer = status;
   } catch (error) {
+    if (!githubStatusGate.isCurrent(generation)) return;
     githubMaintainer = null;
     elements.settingsMessage.textContent = String(error);
     elements.settingsMessage.className = "settings-message error";
@@ -355,7 +361,10 @@ async function pollGithubMaintainer(poll) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     if (poll !== githubLoginPoll) return;
     try {
-      githubMaintainer = await invoke("get_github_maintainer_status");
+      const generation = githubStatusGate.begin();
+      const status = await invoke("get_github_maintainer_status");
+      if (poll !== githubLoginPoll || !githubStatusGate.isCurrent(generation)) continue;
+      githubMaintainer = status;
       renderSettings();
       if (githubMaintainer.authenticated) {
         githubLoginPending = false;
