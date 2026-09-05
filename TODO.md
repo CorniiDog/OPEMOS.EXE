@@ -538,6 +538,13 @@ already Core contracts and are not open-ended product choices.
     diagnostic, publishes no handoff, and leaves the pending cache state unchanged.
     On 2026-09-05, the focused Rust regression and formatting pass. The positive
     same-trust successor fixture and broader failure matrix remain open.
+  - [x] Derive the bounded predecessor transfer inventory from authenticated
+    capabilities, admitting only each generation manifest and its detached
+    signature with exact sizes and hashes. Duplicate and case-folded filename
+    collisions now fail during staging admission before locks or destination
+    mutation. On 2026-09-05, the focused Rust exact-inventory/collision regression
+    passes. Multi-source cache pinning, copying, receipts, capacity accounting,
+    restart recovery, and final revalidation remain open before positive staging.
 - [x] Exercise the inactive appliance handoff in real subprocesses killed at
   all 38 existing staging, partial-file-receipt, and retirement hook boundaries.
   Fresh-process restart reauthenticates installed trust, reacquires locks,

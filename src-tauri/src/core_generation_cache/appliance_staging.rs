@@ -1785,6 +1785,7 @@ where
         return Err("Authenticated lineage exceeds its generation limit.".into());
     }
     let inventory = expected_authenticated_inventory(generation.generation())?;
+    let _lineage_inventory = expected_lineage_inventory(lineage)?;
     let total_bytes = inventory.values().try_fold(0_u64, |total, (size, _)| {
         total
             .checked_add(*size)
@@ -2224,6 +2225,37 @@ fn require_exact_pending_state(
         return Err("Core generation cache state changed during appliance staging.".into());
     }
     Ok(())
+}
+
+fn expected_lineage_inventory(
+    lineage: &[&InstalledAuthenticatedGeneration],
+) -> Result<BTreeMap<String, (u64, String)>, String> {
+    let mut inventory = BTreeMap::new();
+    let mut folded = BTreeSet::new();
+    for predecessor in lineage {
+        let generation = predecessor.generation();
+        let discovery = generation.discovery();
+        let inputs = generation.request_plan_inputs();
+        for (name, bytes) in [
+            (
+                discovery.generation.manifest_filename.as_str(),
+                inputs.manifest_payload,
+            ),
+            (
+                discovery.generation.signature_filename.as_str(),
+                inputs.manifest_signature,
+            ),
+        ] {
+            if !folded.insert(name.to_ascii_lowercase())
+                || inventory
+                    .insert(name.to_owned(), (bytes.len() as u64, sha256(bytes)))
+                    .is_some()
+            {
+                return Err("Authenticated lineage contains a filename collision.".into());
+            }
+        }
+    }
+    Ok(inventory)
 }
 
 fn build_handoff_record(
@@ -3646,6 +3678,34 @@ mod tests {
         .is_err());
         assert!(destination_entries(&fixture.destination).is_empty());
         assert_eq!(fixture.cache.load_state().unwrap(), before);
+    }
+
+    #[test]
+    fn lineage_inventory_contains_only_exact_manifest_signature_pairs() {
+        let fixture = PreparedFixture::create("lineage-inventory");
+        let generation = fixture.generation.generation();
+        let discovery = generation.discovery();
+        let inputs = generation.request_plan_inputs();
+        let inventory = expected_lineage_inventory(&[&fixture.generation]).unwrap();
+        assert_eq!(inventory.len(), 2);
+        assert_eq!(
+            inventory[&discovery.generation.manifest_filename],
+            (
+                inputs.manifest_payload.len() as u64,
+                sha256(inputs.manifest_payload)
+            )
+        );
+        assert_eq!(
+            inventory[&discovery.generation.signature_filename],
+            (
+                inputs.manifest_signature.len() as u64,
+                sha256(inputs.manifest_signature)
+            )
+        );
+        assert_eq!(
+            expected_lineage_inventory(&[&fixture.generation, &fixture.generation]).unwrap_err(),
+            "Authenticated lineage contains a filename collision."
+        );
     }
 
     #[test]
