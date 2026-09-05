@@ -170,6 +170,26 @@ test("Dialog renders hostile-looking strings as text and isolates keyboard event
   assert.deepEqual(get("compatibility-fields").children, []);
 });
 
+test("Accessible status label follows loading, result, error, and clear without stale text", async () => {
+  const doc = fakeDocument();
+  const pending = defer();
+  const controller = installCompatibilityPreview(doc, () => pending.promise);
+  const status = doc.getElementById("compatibility-status");
+  const work = controller.inspect({ source: "fixture", name: "compatible" });
+  assert.equal(status.textContent, "Checking document structure…");
+  assert.equal(status.attributes["aria-label"], "Checking document structure…");
+  pending.resolve(preview());
+  await work;
+  assert.equal(status.textContent, "Development fixture — non-production");
+  assert.equal(status.attributes["aria-label"], "Development fixture — non-production");
+  await controller.inspect({ source: "document", document: "" });
+  assert.equal(status.textContent, "Choose or paste a Core resolver JSON document no larger than 1 MiB.");
+  assert.equal(status.attributes["aria-label"], status.textContent);
+  controller.clear();
+  assert.equal(status.textContent, "No result loaded.");
+  assert.equal(status.attributes["aria-label"], "No result loaded.");
+});
+
 test("Editing the input clears a previous result before another submission", async () => {
   const doc = fakeDocument();
   const controller = installCompatibilityPreview(doc, async () => preview());

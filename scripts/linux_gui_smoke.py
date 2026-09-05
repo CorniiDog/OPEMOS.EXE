@@ -444,6 +444,7 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
                   "the compatibility inspector")
     validate_dialog_focus(dialog, focusable_state, focused_state)
     validate_compatibility_safety_text(dialog, accessible_text)
+    validate_empty_result(dialog)
     invoke(exactly_one_action(dialog, "Inspect pasted result"))
     wait(lambda: validate_empty_document_error(dialog),
          "the empty compatibility document error")

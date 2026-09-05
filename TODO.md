@@ -195,8 +195,9 @@ installation targets, production activation, or hardware certification.
   The dynamic status now mirrors its bounded text into an accessibility label;
   the live fixture result exposes `Development fixture — non-production` as a
   status bar and `Unverified Core result` as a landmark,
-  then verifies the dialog's exact native focusable order and initial Close focus.
-  Inspecting an empty document must expose the bounded `Choose or paste` error as
+  then verifies the dialog's exact native focusable order, initial Close focus,
+  and initial empty status. Inspecting an empty document must expose the bounded
+  `Choose or paste` error as
   exactly one status bar without a result landmark; Clear must restore the exact
   empty status before fixture use. It then verifies Core's exact compatible
   publication, artifact, pending-verification,
@@ -245,12 +246,15 @@ installation targets, production activation, or hardware certification.
   smoke passes. Debian,
   companion windows, delivered key-event/editable-text traversal, and pixel
   rendering remain open; GNOME Wayland accepted an exploratory AT-SPI Escape
-  synthesis request without delivering it to the WebKit dialog; WebKit also
-  exposes the resolver field as an entry without an AT-SPI EditableText interface.
+  synthesis request without delivering it to the WebKit dialog. WebKit exposes
+  the resolver text field as an entry without an AT-SPI EditableText interface;
+  it also advertises and accepts a `press` action on the local-file control without
+  opening its native chooser. The renderer test proves the accessible status label
+  follows loading, result, error, and clear without retaining stale text.
   Scheduler-limited
   formatting and
   Clippy pass, 330 Rust
-  tests pass (27 ignored), and all 110 frontend tests plus documentation, hygiene,
+  tests pass (27 ignored), and all 111 frontend tests plus documentation, hygiene,
   package, focused smoke, and boundary integrity checks pass against unchanged
   Core fixture commit `3e49323fce266af8686039fb6487918ef5a64fd9`.
   Managed-appliance lifecycle and image equivalence remain separately blocked by

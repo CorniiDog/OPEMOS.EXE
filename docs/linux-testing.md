@@ -18,10 +18,15 @@ A development binary and the extracted debug-package binary have launched and
 closed in an Ubuntu 24.04.4 Wayland session, with no remaining launcher or EXE
 processes. The package was not installed. GNOME denied noninteractive screenshot
 access, so pixel rendering, delivered key-event traversal, companion windows,
-desktop integration, and interactive close remain unvalidated. AT-SPI has
+desktop integration, and interactive close remain unvalidated. WebKit exposes
+no AT-SPI EditableText interface for the resolver text field and accepts the
+local-file control's advertised `press` action without opening its chooser, so
+those automated input paths also remain unvalidated. AT-SPI has
 validated the main native frame, WebKit Settings/compatibility controls, exact
 Settings and compatibility-dialog focus order, debug generation row names and
-values, scoped dialog close, and main-document survival on Ubuntu Wayland.
+values, scoped dialog close, and main-document survival on Ubuntu Wayland. A
+focused renderer test requires the accessible status label to follow loading,
+result, error, and clear without retaining stale text.
 These host checks do not establish a
 successful appliance boot, complete image build, installed package, or
 physical-hardware result. Consult TODO
@@ -165,7 +170,8 @@ is also mirrored into its accessibility label: a fixture result must expose
 as the `Unverified Core result` landmark. Clearing or closing must replace the
 status label with exactly one `No result loaded.` node and remove the prior
 fixture-origin label. The smoke also verifies the ordered
-compatibility controls and initial Close focus. Inspecting an empty pasted
+compatibility controls, initial Close focus, and initial empty status.
+Inspecting an empty pasted
 document must expose the bounded `Choose or paste` error as exactly one status
 bar without a result landmark; Clear must restore the exact empty status before
 fixture use. Every compatible, no-artifact, and compatible-after-clear fixture
