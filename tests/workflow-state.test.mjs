@@ -107,6 +107,11 @@ test("build admission fails closed for malformed and impossible snapshots", () =
   assert.throws(() => deriveBuildAdmission({
     ...ready, upstreamApproved: true,
   }), /upstream approval requires an upstream source/);
+  for (const exportMode of ["usb", "both"]) {
+    assert.throws(() => deriveBuildAdmission({
+      ...ready, hasImage: false, exportMode,
+    }), /USB output mode requires a selected image/);
+  }
 });
 
 test("build start uses the same fail-closed admission at the event boundary", () => {

@@ -60,6 +60,9 @@ export function deriveBuildAdmission(snapshot) {
   if (upstreamApproved && !upstreamSelected) {
     throw new Error("upstream approval requires an upstream source");
   }
+  if (!hasImage && (exportMode === "usb" || exportMode === "both")) {
+    throw new Error("a USB output mode requires a selected image");
+  }
 
   const phase = usbWriting
     ? "usb-writing"
