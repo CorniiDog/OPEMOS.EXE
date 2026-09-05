@@ -150,12 +150,13 @@ export function admitUsbWriteCompletion(snapshot, result, capability) {
   if (admission.phase !== "usb-writing") {
     return Object.freeze({ accepted: false, phase: admission.phase, blocker: "no-active-usb-write" });
   }
+  const validHash = (value) => typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
   if (!capability || typeof capability !== "object" || Array.isArray(capability)
     || !validBoundedString(capability.deviceIdentifier)
-    || !validBoundedString(capability.deviceNode)) {
+    || !validBoundedString(capability.deviceNode)
+    || !validHash(capability.imageSha256)) {
     return Object.freeze({ accepted: false, phase: admission.phase, blocker: "malformed-write-context" });
   }
-  const validHash = (value) => typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
   const validResult = result
     && typeof result === "object"
     && !Array.isArray(result)
@@ -166,6 +167,7 @@ export function admitUsbWriteCompletion(snapshot, result, capability) {
     && result.bytesWritten > 0
     && validHash(result.imageSha256)
     && validHash(result.verifiedSha256)
+    && result.imageSha256.toLowerCase() === capability.imageSha256.toLowerCase()
     && result.imageSha256.toLowerCase() === result.verifiedSha256.toLowerCase()
     && typeof result.ejected === "boolean"
     && validBoundedString(result.message, 8192);

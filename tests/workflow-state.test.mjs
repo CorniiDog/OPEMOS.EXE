@@ -209,7 +209,9 @@ test("USB write start requires a completed image and active preflight capability
 
 test("USB write completion requires an exact verified result for the admitted device", () => {
   const writing = { ...ready, hasCompletedOutput: true, usbWriting: true, exportMode: "usb" };
-  const capability = { deviceIdentifier: "disk4", deviceNode: "/dev/rdisk4" };
+  const capability = {
+    deviceIdentifier: "disk4", deviceNode: "/dev/rdisk4", imageSha256: "a".repeat(64),
+  };
   const result = {
     status: "verified",
     deviceIdentifier: "disk4",
@@ -229,6 +231,7 @@ test("USB write completion requires an exact verified result for the admitted de
     { deviceNode: "/dev/rdisk5" },
     { bytesWritten: 0 },
     { bytesWritten: Number.MAX_SAFE_INTEGER + 1 },
+    { imageSha256: "b".repeat(64), verifiedSha256: "b".repeat(64) },
     { imageSha256: "g".repeat(64) },
     { verifiedSha256: "b".repeat(64) },
     { ejected: "yes" },
@@ -238,9 +241,32 @@ test("USB write completion requires an exact verified result for the admitted de
     assert.equal(admitUsbWriteCompletion(writing, { ...result, ...changed }, capability).blocker, "invalid-write-result");
   }
   assert.equal(admitUsbWriteCompletion(writing, result, null).blocker, "malformed-write-context");
+  assert.equal(admitUsbWriteCompletion(writing, result, {
+    ...capability, imageSha256: "b".repeat(64),
+  }).blocker, "invalid-write-result");
   assert.deepEqual(admitUsbWriteCompletion({ ...ready, hasCompletedOutput: true }, result, capability), {
     accepted: false, phase: "complete", blocker: "no-active-usb-write",
   });
+});
+
+test("verified USB completion retains a valid manual-eject outcome", () => {
+  const writing = { ...ready, hasCompletedOutput: true, usbWriting: true, exportMode: "both" };
+  const hash = "c".repeat(64);
+  const result = {
+    status: "verified",
+    deviceIdentifier: "disk6",
+    deviceNode: "/dev/rdisk6",
+    bytesWritten: 32,
+    imageSha256: hash,
+    verifiedSha256: hash,
+    ejected: false,
+    message: "Verified; eject the device manually.",
+  };
+  assert.equal(admitUsbWriteCompletion(writing, result, {
+    deviceIdentifier: result.deviceIdentifier,
+    deviceNode: result.deviceNode,
+    imageSha256: hash,
+  }).accepted, true);
 });
 
 test("USB write progress accepts bounded forward movement only during writing", () => {

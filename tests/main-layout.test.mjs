@@ -118,8 +118,9 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(script, /usbWriting = true;[\s\S]*usbActiveWarning\.classList\.remove\("hidden"\)[\s\S]*usbWriting = false;[\s\S]*usbActiveWarning\.classList\.add\("hidden"\)/);
   assert.match(script, /usb-write-progress[\s\S]*admitUsbWriteProgress\(currentBuildSnapshot\(\), progress, usbWriteProgress\)[\s\S]*if \(!admission\.accepted\) return;[\s\S]*usbWriteProgress = progress/);
   assert.match(script, /usbWriting = true;\s*usbWriteProgress = null;[\s\S]*finally \{\s*usbWriting = false;\s*usbWriteProgress = null;/);
-  assert.match(script, /const writeContext = Object\.freeze\(\{[\s\S]*sessionToken: usbPreflightSession\.sessionToken,[\s\S]*deviceIdentifier: usbPreflightSession\.deviceIdentifier,[\s\S]*deviceNode: usbPreflightSession\.deviceNode/);
+  assert.match(script, /const writeContext = Object\.freeze\(\{[\s\S]*sessionToken: usbPreflightSession\.sessionToken,[\s\S]*deviceIdentifier: usbPreflightSession\.deviceIdentifier,[\s\S]*deviceNode: usbPreflightSession\.deviceNode,[\s\S]*imageSha256: usbPreflightSession\.imageSha256/);
   assert.match(script, /invoke\("write_image_to_usb", \{[\s\S]*sessionToken: writeContext\.sessionToken,[\s\S]*imagePath: writeContext\.imagePath[\s\S]*admitUsbWriteCompletion\(currentBuildSnapshot\(\), result, writeContext\)\.accepted/);
+  assert.match(script, /usbMessage\.className = `result-message \$\{result\.ejected \? "success" : "error"\}`/);
   assert.match(css, /\.usb-dialog-actions > button\s*\{[^}]*height:\s*42px;[^}]*min-height:\s*42px;[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;/);
   assert.match(css, /\.usb-active-warning\s*\{[^}]*border:[^}]*color:\s*#f4d08b;/);
   assert.match(css, /#usb-card > \.result-message\s*\{[^}]*max-height:\s*5em;[^}]*overflow:\s*auto;/);

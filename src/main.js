@@ -1289,6 +1289,7 @@ elements.writeUsbImage.addEventListener("click", async () => {
     imagePath: completedOutput.path,
     deviceIdentifier: usbPreflightSession.deviceIdentifier,
     deviceNode: usbPreflightSession.deviceNode,
+    imageSha256: usbPreflightSession.imageSha256,
   });
   if (!window.confirm(`FINAL WARNING\n\nErase ${writeContext.deviceNode} and write the validated SteamOS image?\n\nEvery existing partition and file on this device will be destroyed.`)) return;
   usbWriting = true;
@@ -1310,7 +1311,7 @@ elements.writeUsbImage.addEventListener("click", async () => {
     }
     usbPreflightSession = null;
     elements.usbMessage.textContent = result.message;
-    elements.usbMessage.className = "result-message success";
+    elements.usbMessage.className = `result-message ${result.ejected ? "success" : "error"}`;
     elements.writeUsbImage.classList.add("hidden");
     elements.cancelUsbPreflight.classList.add("hidden");
     // An imported image already exists at a user-selected path. Revealing it
