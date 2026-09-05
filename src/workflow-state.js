@@ -1,4 +1,10 @@
 const EXPORT_MODES = new Set(["image", "usb", "both"]);
+const USB_PROGRESS_PHASES = new Map([
+  ["unmounting", 0],
+  ["authorizing", 1],
+  ["writing", 2],
+  ["verifying", 3],
+]);
 
 function requireBoolean(name, value) {
   if (typeof value !== "boolean") throw new TypeError(`${name} must be boolean`);
@@ -133,6 +139,44 @@ export function admitUsbWriteStart(snapshot, capability) {
       ? "no-completed-output"
       : "no-usb-preflight";
   return Object.freeze({ accepted, phase: admission.phase, blocker });
+}
+
+function validUsbProgress(progress) {
+  return Boolean(progress
+    && typeof progress === "object"
+    && !Array.isArray(progress)
+    && USB_PROGRESS_PHASES.has(progress.phase)
+    && Number.isSafeInteger(progress.bytesCompleted)
+    && progress.bytesCompleted >= 0
+    && Number.isSafeInteger(progress.bytesTotal)
+    && progress.bytesTotal > 0
+    && progress.bytesCompleted <= progress.bytesTotal
+    && typeof progress.message === "string"
+    && progress.message.length > 0
+    && progress.message.length <= 8192
+    && ((progress.phase === "unmounting" || progress.phase === "authorizing")
+      ? progress.bytesCompleted === 0
+      : true));
+}
+
+export function admitUsbWriteProgress(snapshot, progress, previous = null) {
+  const admission = deriveBuildAdmission(snapshot);
+  if (admission.phase !== "usb-writing") {
+    return Object.freeze({ accepted: false, phase: admission.phase, blocker: "no-active-usb-write" });
+  }
+  if (!validUsbProgress(progress) || (previous !== null && !validUsbProgress(previous))) {
+    return Object.freeze({ accepted: false, phase: admission.phase, blocker: "malformed-progress" });
+  }
+  const currentPhase = USB_PROGRESS_PHASES.get(progress.phase);
+  const previousPhase = previous === null ? -1 : USB_PROGRESS_PHASES.get(previous.phase);
+  const regressed = currentPhase < previousPhase
+    || (currentPhase === previousPhase && progress.bytesCompleted < previous.bytesCompleted)
+    || (previous !== null && progress.bytesTotal !== previous.bytesTotal);
+  return Object.freeze({
+    accepted: !regressed,
+    phase: admission.phase,
+    blocker: regressed ? "regressing-progress" : null,
+  });
 }
 
 export function admitOutputDirectorySelection(snapshot) {

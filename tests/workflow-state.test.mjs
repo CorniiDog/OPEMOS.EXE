@@ -18,6 +18,7 @@ import {
   admitUsbTargetRefresh,
   admitUsbTargetClear,
   admitUsbWriteStart,
+  admitUsbWriteProgress,
   deriveBuildAdmission,
 } from "../src/workflow-state.js";
 
@@ -202,6 +203,38 @@ test("USB write start requires a completed image and active preflight capability
     ...complete, usbWriting: true, exportMode: "both",
   }, { hasPreflightSession: true }), {
     accepted: false, phase: "usb-writing", blocker: "no-completed-output",
+  });
+});
+
+test("USB write progress accepts bounded forward movement only during writing", () => {
+  const writing = { ...ready, hasCompletedOutput: true, usbWriting: true, exportMode: "both" };
+  const base = {
+    phase: "writing", bytesCompleted: 4, bytesTotal: 16, message: "Writing.",
+  };
+  assert.deepEqual(admitUsbWriteProgress(writing, base), {
+    accepted: true, phase: "usb-writing", blocker: null,
+  });
+  assert.equal(admitUsbWriteProgress(writing, {
+    ...base, phase: "verifying", bytesCompleted: 0,
+  }, base).accepted, true);
+  assert.equal(admitUsbWriteProgress(writing, { ...base, bytesCompleted: 3 }, base).blocker, "regressing-progress");
+  assert.equal(admitUsbWriteProgress(writing, { ...base, bytesTotal: 17 }, base).blocker, "regressing-progress");
+  assert.equal(admitUsbWriteProgress(writing, { ...base, phase: "authorizing", bytesCompleted: 0 }, base).blocker, "regressing-progress");
+  for (const progress of [
+    null,
+    { ...base, phase: "future" },
+    { ...base, bytesCompleted: -1 },
+    { ...base, bytesCompleted: 17 },
+    { ...base, bytesTotal: 0 },
+    { ...base, bytesTotal: Number.MAX_SAFE_INTEGER + 1 },
+    { ...base, message: "" },
+    { ...base, message: "x".repeat(8193) },
+    { ...base, phase: "unmounting", bytesCompleted: 1 },
+  ]) {
+    assert.equal(admitUsbWriteProgress(writing, progress).blocker, "malformed-progress");
+  }
+  assert.deepEqual(admitUsbWriteProgress({ ...ready, hasCompletedOutput: true }, base), {
+    accepted: false, phase: "complete", blocker: "no-active-usb-write",
   });
 });
 

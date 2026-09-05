@@ -18,6 +18,7 @@ import {
   admitUsbTargetRefresh,
   admitUsbTargetClear,
   admitUsbWriteStart,
+  admitUsbWriteProgress,
   deriveBuildAdmission,
 } from "./workflow-state.js";
 import { installWindowDrag } from "./window-drag.js";
@@ -89,6 +90,7 @@ let usbContextGeneration = 0;
 let usbArmPending = false;
 let usbCancelPending = false;
 let usbWriting = false;
+let usbWriteProgress = null;
 let buildRunning = false;
 let activeExportMode = "image";
 let pendingBuildFinished = null;
@@ -1267,9 +1269,11 @@ installKeyboardBindings([
 ]);
 
 await mainWindow.listen("usb-write-progress", (event) => {
-  if (!usbWriting) return;
   const progress = event.payload;
-  const ratio = progress.bytesTotal > 0 ? progress.bytesCompleted / progress.bytesTotal : 0;
+  const admission = admitUsbWriteProgress(currentBuildSnapshot(), progress, usbWriteProgress);
+  if (!admission.accepted) return;
+  usbWriteProgress = progress;
+  const ratio = progress.bytesCompleted / progress.bytesTotal;
   elements.usbMessage.textContent = `${progress.message} ${(ratio * 100).toFixed(1)}%`;
   elements.usbMessage.className = "result-message";
 });
@@ -1282,6 +1286,7 @@ elements.writeUsbImage.addEventListener("click", async () => {
   const device = usbPreflightSession.deviceNode;
   if (!window.confirm(`FINAL WARNING\n\nErase ${device} and write the validated SteamOS image?\n\nEvery existing partition and file on this device will be destroyed.`)) return;
   usbWriting = true;
+  usbWriteProgress = null;
   elements.chooseImage.disabled = true;
   elements.usbActiveWarning.classList.remove("hidden");
   elements.writeUsbImage.disabled = true;
@@ -1313,6 +1318,7 @@ elements.writeUsbImage.addEventListener("click", async () => {
     renderUsbConfirmationPhase(false);
   } finally {
     usbWriting = false;
+    usbWriteProgress = null;
     elements.chooseImage.disabled = false;
     elements.usbActiveWarning.classList.add("hidden");
     elements.writeUsbImage.disabled = false;
