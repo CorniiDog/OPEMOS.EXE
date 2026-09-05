@@ -1804,6 +1804,8 @@ where
     poll_cancelled(&cancelled)?;
     revalidate_installed_capabilities(generation, checkpoint, lineage, &cancelled)?;
     validate_transfer_inventory_names(&inventory, &lineage_inventory)?;
+    let mut transfer_inventory = inventory.clone();
+    transfer_inventory.extend(lineage_inventory);
 
     let state = cache.load_state_unlocked()?;
     let authorized = validate_authenticated_bootstrap_activation(
@@ -1834,7 +1836,7 @@ where
     cache.require_generation_committed(&identity)?;
     cache.require_unique_committed_sequence(&identity)?;
     verify_authenticated_inventory(&source, &inventory, &cancelled)?;
-    let _lineage_sources = pin_lineage_sources(cache, lineage, &cancelled)?;
+    let lineage_sources = pin_lineage_sources(cache, lineage, &cancelled)?;
     require_pinned_generation_directory(
         &source_path,
         &source,
@@ -1860,10 +1862,10 @@ where
         identity.clone(),
         expected_target.clone(),
         lineage,
-        &inventory,
+        &transfer_inventory,
     );
     let record_bytes = canonical_record(&record)?;
-    let mut expected_files = inventory
+    let mut expected_files = transfer_inventory
         .iter()
         .map(|(name, (size, sha256))| {
             (
@@ -1890,7 +1892,7 @@ where
         &identity,
         source_identity,
         &record,
-        &inventory,
+        &transfer_inventory,
         &cancelled,
     )? {
         require_destination_root(destination_root, &destination, destination_identity)?;
@@ -1915,7 +1917,7 @@ where
             directory_identity: recovered.directory_identity,
             lease: recovered.lease,
             record,
-            inventory,
+            inventory: transfer_inventory,
             retired: false,
             _seal: StagedApplianceGenerationSeal,
         });
@@ -2024,6 +2026,19 @@ where
             poll_cancelled(&cancelled)?;
             copy_inventory_file(&source.file, &stage, name, *size, hash, &cancelled)?;
         }
+        for lineage_source in &lineage_sources {
+            for (name, (size, hash)) in &lineage_source.transfer_inventory {
+                poll_cancelled(&cancelled)?;
+                copy_inventory_file(
+                    &lineage_source.directory.file,
+                    &stage,
+                    name,
+                    *size,
+                    hash,
+                    &cancelled,
+                )?;
+            }
+        }
         poll_cancelled(&cancelled)?;
         create_exact_file(&stage, HANDOFF_FILENAME, &record_bytes)?;
         stage
@@ -2046,8 +2061,9 @@ where
         destination_guard.revalidate(&destination)?;
         require_staging_directory(&destination, &stage_name, &stage, stage_identity)?;
         destination_guard.revalidate(&destination)?;
-        verify_published_handoff(&stage, &record, &inventory, &cancelled)?;
+        verify_published_handoff(&stage, &record, &transfer_inventory, &cancelled)?;
         verify_authenticated_inventory(&source, &inventory, &cancelled)?;
+        revalidate_lineage_sources(&lineage_sources, &cancelled)?;
         require_pinned_generation_directory(
             &source_path,
             &source,
@@ -2072,6 +2088,7 @@ where
         // No caller-controlled work occurs after this point. Recheck every
         // authority and identity non-cancellably, then publish atomically.
         verify_authenticated_inventory(&source, &inventory, &|| false)?;
+        revalidate_lineage_sources(&lineage_sources, &|| false)?;
         require_pinned_generation_directory(
             &source_path,
             &source,
@@ -2118,8 +2135,9 @@ where
         {
             return Err("Published appliance handoff identity changed.".into());
         }
-        verify_published_handoff(&published, &record, &inventory, &|| false)?;
+        verify_published_handoff(&published, &record, &transfer_inventory, &|| false)?;
         verify_authenticated_inventory(&source, &inventory, &|| false)?;
+        revalidate_lineage_sources(&lineage_sources, &|| false)?;
         require_pinned_generation_directory(
             &source_path,
             &source,
@@ -2175,7 +2193,7 @@ where
             directory_identity,
             lease,
             record,
-            inventory,
+            inventory: transfer_inventory,
             retired: false,
             _seal: StagedApplianceGenerationSeal,
         }),
@@ -2228,8 +2246,9 @@ fn require_exact_pending_state(
 
 struct PinnedLineageSource {
     path: PathBuf,
-    _directory: super::PinnedGenerationDirectory,
+    directory: super::PinnedGenerationDirectory,
     inventory: BTreeMap<String, (u64, String)>,
+    transfer_inventory: BTreeMap<String, (u64, String)>,
 }
 
 fn pin_lineage_sources<C>(
@@ -2256,13 +2275,33 @@ where
         let inventory = expected_authenticated_inventory(generation)?;
         verify_authenticated_inventory(&pinned, &inventory, cancelled)?;
         require_pinned_generation_directory(&path, &pinned, "appliance lineage source generation")?;
+        let transfer_inventory = expected_lineage_inventory(&[*predecessor])?;
         sources.push(PinnedLineageSource {
             path,
-            _directory: pinned,
+            directory: pinned,
             inventory,
+            transfer_inventory,
         });
     }
     Ok(sources)
+}
+
+fn revalidate_lineage_sources<C>(
+    sources: &[PinnedLineageSource],
+    cancelled: &C,
+) -> Result<(), String>
+where
+    C: Fn() -> bool,
+{
+    for source in sources {
+        verify_authenticated_inventory(&source.directory, &source.inventory, cancelled)?;
+        require_pinned_generation_directory(
+            &source.path,
+            &source.directory,
+            "appliance lineage source generation",
+        )?;
+    }
+    Ok(())
 }
 
 fn validate_transfer_inventory_names(
@@ -3771,6 +3810,26 @@ mod tests {
                 .generation
                 .manifest_filename
         ));
+        let copy_path = fixture.base.join("lineage-copy");
+        fs::create_dir(&copy_path).unwrap();
+        let copy = File::open(&copy_path).unwrap();
+        for (name, (size, hash)) in &sources[0].transfer_inventory {
+            copy_inventory_file(
+                &sources[0].directory.file,
+                &copy,
+                name,
+                *size,
+                hash,
+                &|| false,
+            )
+            .unwrap();
+        }
+        let copied = directory_names(&copy, 3).unwrap();
+        assert_eq!(copied.len(), 2);
+        assert!(copied.iter().all(|name| {
+            let name = name.to_string_lossy();
+            name.ends_with(".manifest.json") || name.ends_with(".manifest.json.sig")
+        }));
         drop(sources);
         fs::remove_file(
             fixture

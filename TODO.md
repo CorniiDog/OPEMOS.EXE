@@ -560,6 +560,15 @@ already Core contracts and are not open-ended product choices.
     On 2026-09-05, the focused Rust committed/missing-predecessor regression and
     formatting pass. Multi-source selective copying, receipts, restart recovery,
     and final revalidation remain open.
+  - [x] Copy only each pinned predecessor manifest and detached signature into
+    the combined handoff inventory using descriptor-relative create-only writes.
+    The complete predecessor cache inventory and pinned directory identity are
+    rechecked before copying, before atomic publication, and after publication;
+    combined records, receipts, and published-directory verification include the
+    transferred lineage files. On 2026-09-05, warnings-as-errors Clippy plus the
+    focused selective-copy and existing zero-lineage staging/reuse regressions
+    pass. A positive same-trust successor integration, restart recovery, and
+    injected cancellation/storage faults remain open.
   - [x] Include predecessor manifest/signature bytes and file nodes in checked
     handoff storage admission before destination work. Combined current-plus-
     lineage totals reject integer overflow and directory entry-limit excess,
