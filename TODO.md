@@ -1170,6 +1170,16 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     focused 37-case workflow/layout suite and all 139 frontend tests plus
     documentation, hygiene, and boundary integrity pass. Further splitting
     remains limited to behavior with equivalent focused coverage.
+  - [x] Extract the pure USB target, review, confirmation, and preflight
+    admission slice from the general workflow module. The dedicated module
+    continues to consume the same authoritative phase reducer while keeping
+    destructive-review capability checks separate from unrelated build/source
+    transitions. A new combined-invalid-input regression proves blocker
+    precedence remains preflight pending, target identity, identity token, then
+    exact destructive confirmation. On 2026-09-05, the focused 38-case
+    workflow/layout suite and all 140 frontend tests plus documentation, hygiene,
+    and boundary integrity pass. Further splitting remains limited to behavior
+    with equivalent focused coverage.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.
   The main workflow now uses a native directory chooser, supports an explicit
   return to the source folder, invalidates stale chooser results when image

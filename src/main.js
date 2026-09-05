@@ -9,16 +9,18 @@ import {
   admitImageSelection,
   admitExportModeSelection,
   admitOutputDirectorySelection,
-  admitUsbPreflightCancel,
-  admitUsbConfirmationEdit,
-  admitUsbPreflightStart,
-  admitUsbReviewOpen,
-  admitUsbReviewDismiss,
-  admitUsbTargetSelection,
-  admitUsbTargetRefresh,
-  admitUsbTargetClear,
   deriveBuildAdmission,
 } from "./workflow-state.js";
+import {
+  admitUsbConfirmationEdit,
+  admitUsbPreflightCancel,
+  admitUsbPreflightStart,
+  admitUsbReviewDismiss,
+  admitUsbReviewOpen,
+  admitUsbTargetClear,
+  admitUsbTargetRefresh,
+  admitUsbTargetSelection,
+} from "./usb-target-state.js";
 import {
   admitUsbWriteCompletion,
   admitUsbWriteProgress,

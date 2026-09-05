@@ -9,16 +9,18 @@ import {
   admitImageSelection,
   admitExportModeSelection,
   admitOutputDirectorySelection,
-  admitUsbPreflightCancel,
-  admitUsbConfirmationEdit,
-  admitUsbPreflightStart,
-  admitUsbReviewOpen,
-  admitUsbReviewDismiss,
-  admitUsbTargetSelection,
-  admitUsbTargetRefresh,
-  admitUsbTargetClear,
   deriveBuildAdmission,
 } from "../src/workflow-state.js";
+import {
+  admitUsbConfirmationEdit,
+  admitUsbPreflightCancel,
+  admitUsbPreflightStart,
+  admitUsbReviewDismiss,
+  admitUsbReviewOpen,
+  admitUsbTargetClear,
+  admitUsbTargetRefresh,
+  admitUsbTargetSelection,
+} from "../src/usb-target-state.js";
 import {
   admitUsbWriteCompletion,
   admitUsbWriteProgress,
@@ -383,6 +385,21 @@ test("USB preflight start requires exact completed-image confirmation and target
       new RegExp(name + " must be boolean"),
     );
   }
+});
+
+test("USB preflight start reports blockers in destructive safety order", () => {
+  const complete = { ...ready, hasCompletedOutput: true };
+  const blocked = {
+    armPending: true, hasTarget: false, hasIdentityToken: false, confirmationMatches: false,
+  };
+  assert.equal(admitUsbPreflightStart(complete, blocked).blocker, "preflight-pending");
+  assert.equal(admitUsbPreflightStart(complete, { ...blocked, armPending: false }).blocker, "no-usb-target");
+  assert.equal(admitUsbPreflightStart(complete, {
+    ...blocked, armPending: false, hasTarget: true,
+  }).blocker, "no-usb-identity");
+  assert.equal(admitUsbPreflightStart(complete, {
+    ...blocked, armPending: false, hasTarget: true, hasIdentityToken: true,
+  }).blocker, "confirmation-mismatch");
 });
 
 test("USB preflight cancellation requires one live completed-image session", () => {
