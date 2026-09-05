@@ -80,6 +80,7 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(css, /\.usb-picker\.is-loading #refresh-usb-targets::before\s*\{[^}]*animation:\s*glass-control-spin \.8s linear infinite;/);
   assert.doesNotMatch(html, /Check Preparation Status/);
   assert.match(script, /function renderUsbConfirmationPhase\(prepared = Boolean\(usbPreflightSession\)\)/);
+  assert.match(script, /usbConfirmation\.addEventListener\("input"[\s\S]*admitUsbConfirmationEdit\(currentBuildSnapshot\(\), \{[\s\S]*hasPreflightSession: Boolean\(usbPreflightSession\?\.sessionToken\)[\s\S]*if \(!admission\.accepted\)[\s\S]*usbConfirmation\.value = "";[\s\S]*armUsbPreflight\.disabled = true;/);
   assert.match(script, /const admission = admitUsbPreflightStart\(currentBuildSnapshot\(\), \{[\s\S]*confirmationMatches:[\s\S]*"ERASE " \+ option\?\.value/);
   assert.match(script, /if \(!admission\.accepted\) return;/);
   assert.doesNotMatch(script, /if \(usbArmPending \|\| !completedOutput\?\.path \|\| !option\?\.value/);
@@ -134,7 +135,7 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /elements\.resultMessage\.title = installedIdentity;/);
   assert.match(script, /Verified existing NVIDIA.*No rebuild needed; select a USB drive/);
   assert.doesNotMatch(script, /Existing NVIDIA output and adjacent manifest match byte-for-byte/);
-  assert.match(script, /admitBuildStart,[\s\S]*admitImageSelection,[\s\S]*admitExportModeSelection,[\s\S]*admitOutputDirectorySelection,[\s\S]*admitUsbPreflightCancel,[\s\S]*admitUsbPreflightStart,[\s\S]*admitUsbReviewOpen,[\s\S]*admitUsbReviewDismiss,[\s\S]*admitUsbTargetSelection,[\s\S]*admitUsbTargetClear,[\s\S]*admitUsbWriteStart,[\s\S]*deriveBuildAdmission,[\s\S]*from "\.\/workflow-state\.js"/);
+  assert.match(script, /admitBuildStart,[\s\S]*admitImageSelection,[\s\S]*admitExportModeSelection,[\s\S]*admitOutputDirectorySelection,[\s\S]*admitUsbPreflightCancel,[\s\S]*admitUsbConfirmationEdit,[\s\S]*admitUsbPreflightStart,[\s\S]*admitUsbReviewOpen,[\s\S]*admitUsbReviewDismiss,[\s\S]*admitUsbTargetSelection,[\s\S]*admitUsbTargetClear,[\s\S]*admitUsbWriteStart,[\s\S]*deriveBuildAdmission,[\s\S]*from "\.\/workflow-state\.js"/);
   assert.match(script, /hasCompletedOutput: Boolean\(completedOutput\?\.path\)/);
   assert.match(script, /elements\.buildButton\.disabled = !deriveBuildAdmission\(currentBuildSnapshot\(\)\)\.canBuild/);
   assert.match(script, /if \(!admitBuildStart\(currentBuildSnapshot\(\)\)\.accepted\) return;/);

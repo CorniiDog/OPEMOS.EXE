@@ -7,6 +7,7 @@ import {
   admitExportModeSelection,
   admitOutputDirectorySelection,
   admitUsbPreflightCancel,
+  admitUsbConfirmationEdit,
   admitUsbPreflightStart,
   admitUsbReviewOpen,
   admitUsbReviewDismiss,
@@ -342,4 +343,34 @@ test("image export-mode changes only before build mutation begins", () => {
   assert.throws(() => admitExportModeSelection({
     ...ready, buildRunning: true, usbWriting: true,
   }), /cannot run concurrently/);
+});
+
+test("USB confirmation editing requires an idle completed-image target", () => {
+  const complete = { ...ready, hasCompletedOutput: true };
+  const editable = { hasTarget: true, armPending: false, hasPreflightSession: false };
+  assert.deepEqual(admitUsbConfirmationEdit(complete, editable), {
+    accepted: true, phase: "complete", blocker: null,
+  });
+  const cases = [
+    [{ armPending: true }, "preflight-pending"],
+    [{ hasPreflightSession: true }, "usb-preflight-active"],
+    [{ hasTarget: false }, "no-usb-target"],
+  ];
+  for (const [change, blocker] of cases) {
+    assert.deepEqual(admitUsbConfirmationEdit(complete, { ...editable, ...change }), {
+      accepted: false, phase: "complete", blocker,
+    });
+  }
+  assert.equal(admitUsbConfirmationEdit(ready, editable).blocker, "no-completed-output");
+  assert.equal(
+    admitUsbConfirmationEdit({ ...ready, usbWriting: true }, editable).blocker,
+    "no-completed-output",
+  );
+  assert.throws(() => admitUsbConfirmationEdit(complete, null), /capability must be an object/);
+  for (const name of Object.keys(editable)) {
+    assert.throws(
+      () => admitUsbConfirmationEdit(complete, { ...editable, [name]: "yes" }),
+      new RegExp(name + " must be boolean"),
+    );
+  }
 });

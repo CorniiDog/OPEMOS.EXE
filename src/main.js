@@ -7,6 +7,7 @@ import {
   admitExportModeSelection,
   admitOutputDirectorySelection,
   admitUsbPreflightCancel,
+  admitUsbConfirmationEdit,
   admitUsbPreflightStart,
   admitUsbReviewOpen,
   admitUsbReviewDismiss,
@@ -1003,6 +1004,16 @@ elements.clearUsbTarget.addEventListener("click", () => {
 });
 
 elements.usbConfirmation.addEventListener("input", () => {
+  const admission = admitUsbConfirmationEdit(currentBuildSnapshot(), {
+    hasTarget: Boolean(elements.usbTarget.value),
+    armPending: usbArmPending,
+    hasPreflightSession: Boolean(usbPreflightSession?.sessionToken),
+  });
+  if (!admission.accepted) {
+    elements.usbConfirmation.value = "";
+    elements.armUsbPreflight.disabled = true;
+    return;
+  }
   elements.armUsbPreflight.disabled = usbArmPending
     || elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
 });

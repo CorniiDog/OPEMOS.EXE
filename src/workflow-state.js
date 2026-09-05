@@ -208,3 +208,24 @@ export function admitExportModeSelection(snapshot) {
     blocker: accepted ? null : admission.blocker,
   });
 }
+
+export function admitUsbConfirmationEdit(snapshot, capability) {
+  const admission = deriveBuildAdmission(snapshot);
+  if (!capability || typeof capability !== "object" || Array.isArray(capability)) {
+    throw new TypeError("USB confirmation capability must be an object");
+  }
+  const { hasTarget, armPending, hasPreflightSession } = capability;
+  for (const [name, value] of Object.entries({
+    hasTarget, armPending, hasPreflightSession,
+  })) requireBoolean(name, value);
+  const blocker = admission.phase !== "complete"
+    ? "no-completed-output"
+    : armPending
+      ? "preflight-pending"
+      : hasPreflightSession
+        ? "usb-preflight-active"
+        : !hasTarget
+          ? "no-usb-target"
+          : null;
+  return Object.freeze({ accepted: blocker === null, phase: admission.phase, blocker });
+}
