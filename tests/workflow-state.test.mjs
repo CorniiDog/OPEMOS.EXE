@@ -18,6 +18,7 @@ import {
   admitUsbTargetRefresh,
   admitUsbTargetClear,
   admitUsbWriteStart,
+  admitUsbWriteCompletion,
   admitUsbWriteProgress,
   deriveBuildAdmission,
 } from "../src/workflow-state.js";
@@ -203,6 +204,42 @@ test("USB write start requires a completed image and active preflight capability
     ...complete, usbWriting: true, exportMode: "both",
   }, { hasPreflightSession: true }), {
     accepted: false, phase: "usb-writing", blocker: "no-completed-output",
+  });
+});
+
+test("USB write completion requires an exact verified result for the admitted device", () => {
+  const writing = { ...ready, hasCompletedOutput: true, usbWriting: true, exportMode: "usb" };
+  const capability = { deviceIdentifier: "disk4", deviceNode: "/dev/rdisk4" };
+  const result = {
+    status: "verified",
+    deviceIdentifier: "disk4",
+    deviceNode: "/dev/rdisk4",
+    bytesWritten: 16,
+    imageSha256: "a".repeat(64),
+    verifiedSha256: "A".repeat(64),
+    ejected: true,
+    message: "Written, verified, and ejected.",
+  };
+  assert.deepEqual(admitUsbWriteCompletion(writing, result, capability), {
+    accepted: true, phase: "usb-writing", blocker: null,
+  });
+  for (const changed of [
+    { status: "complete" },
+    { deviceIdentifier: "disk5" },
+    { deviceNode: "/dev/rdisk5" },
+    { bytesWritten: 0 },
+    { bytesWritten: Number.MAX_SAFE_INTEGER + 1 },
+    { imageSha256: "g".repeat(64) },
+    { verifiedSha256: "b".repeat(64) },
+    { ejected: "yes" },
+    { message: "" },
+    { message: "x".repeat(8193) },
+  ]) {
+    assert.equal(admitUsbWriteCompletion(writing, { ...result, ...changed }, capability).blocker, "invalid-write-result");
+  }
+  assert.equal(admitUsbWriteCompletion(writing, result, null).blocker, "malformed-write-context");
+  assert.deepEqual(admitUsbWriteCompletion({ ...ready, hasCompletedOutput: true }, result, capability), {
+    accepted: false, phase: "complete", blocker: "no-active-usb-write",
   });
 });
 

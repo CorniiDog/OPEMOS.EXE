@@ -141,6 +141,41 @@ export function admitUsbWriteStart(snapshot, capability) {
   return Object.freeze({ accepted, phase: admission.phase, blocker });
 }
 
+function validBoundedString(value, maximum = 4096) {
+  return typeof value === "string" && value.length > 0 && value.length <= maximum;
+}
+
+export function admitUsbWriteCompletion(snapshot, result, capability) {
+  const admission = deriveBuildAdmission(snapshot);
+  if (admission.phase !== "usb-writing") {
+    return Object.freeze({ accepted: false, phase: admission.phase, blocker: "no-active-usb-write" });
+  }
+  if (!capability || typeof capability !== "object" || Array.isArray(capability)
+    || !validBoundedString(capability.deviceIdentifier)
+    || !validBoundedString(capability.deviceNode)) {
+    return Object.freeze({ accepted: false, phase: admission.phase, blocker: "malformed-write-context" });
+  }
+  const validHash = (value) => typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
+  const validResult = result
+    && typeof result === "object"
+    && !Array.isArray(result)
+    && result.status === "verified"
+    && result.deviceIdentifier === capability.deviceIdentifier
+    && result.deviceNode === capability.deviceNode
+    && Number.isSafeInteger(result.bytesWritten)
+    && result.bytesWritten > 0
+    && validHash(result.imageSha256)
+    && validHash(result.verifiedSha256)
+    && result.imageSha256.toLowerCase() === result.verifiedSha256.toLowerCase()
+    && typeof result.ejected === "boolean"
+    && validBoundedString(result.message, 8192);
+  return Object.freeze({
+    accepted: Boolean(validResult),
+    phase: admission.phase,
+    blocker: validResult ? null : "invalid-write-result",
+  });
+}
+
 function validUsbProgress(progress) {
   return Boolean(progress
     && typeof progress === "object"

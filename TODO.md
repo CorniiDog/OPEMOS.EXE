@@ -1128,6 +1128,17 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     tests plus documentation, hygiene, and boundary integrity pass. Physical
     removable-media validation remains a separate release gate, and the broader
     workflow transition model remains open.
+  - [x] Validate USB write completion before rendering verified success. The
+    admitted preflight session now binds the image, session, whole-device
+    identifier, and raw device node before native IPC. A resolved result must
+    retain that exact device identity, report a positive safe byte count,
+    `verified` status, matching hexadecimal image/readback SHA-256 values, a
+    boolean eject outcome, and a bounded nonempty message. Malformed, mismatched,
+    stale-phase, or false-success results enter the existing safe error UI. On
+    2026-09-05, the focused 35-case workflow/layout suite and all 137 frontend
+    tests plus documentation, hygiene, and boundary integrity pass. Physical
+    removable-media validation remains a separate release gate, and the broader
+    workflow transition model remains open.
 - [ ] Split oversized frontend workflow/log rendering code only where behavior
   can be covered by focused tests.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.

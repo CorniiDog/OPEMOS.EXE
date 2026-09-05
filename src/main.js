@@ -18,6 +18,7 @@ import {
   admitUsbTargetRefresh,
   admitUsbTargetClear,
   admitUsbWriteStart,
+  admitUsbWriteCompletion,
   admitUsbWriteProgress,
   deriveBuildAdmission,
 } from "./workflow-state.js";
@@ -1283,8 +1284,13 @@ elements.writeUsbImage.addEventListener("click", async () => {
     hasPreflightSession: Boolean(usbPreflightSession?.sessionToken),
   });
   if (!admission.accepted) return;
-  const device = usbPreflightSession.deviceNode;
-  if (!window.confirm(`FINAL WARNING\n\nErase ${device} and write the validated SteamOS image?\n\nEvery existing partition and file on this device will be destroyed.`)) return;
+  const writeContext = Object.freeze({
+    sessionToken: usbPreflightSession.sessionToken,
+    imagePath: completedOutput.path,
+    deviceIdentifier: usbPreflightSession.deviceIdentifier,
+    deviceNode: usbPreflightSession.deviceNode,
+  });
+  if (!window.confirm(`FINAL WARNING\n\nErase ${writeContext.deviceNode} and write the validated SteamOS image?\n\nEvery existing partition and file on this device will be destroyed.`)) return;
   usbWriting = true;
   usbWriteProgress = null;
   elements.chooseImage.disabled = true;
@@ -1296,9 +1302,12 @@ elements.writeUsbImage.addEventListener("click", async () => {
   elements.usbMessage.textContent = "Unmounting and revalidating the selected removable disk…";
   try {
     const result = await invoke("write_image_to_usb", {
-      sessionToken: usbPreflightSession.sessionToken,
-      imagePath: completedOutput.path,
+      sessionToken: writeContext.sessionToken,
+      imagePath: writeContext.imagePath,
     });
+    if (!admitUsbWriteCompletion(currentBuildSnapshot(), result, writeContext).accepted) {
+      throw new Error("USB writing returned an invalid verification result.");
+    }
     usbPreflightSession = null;
     elements.usbMessage.textContent = result.message;
     elements.usbMessage.className = "result-message success";
