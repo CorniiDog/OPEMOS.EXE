@@ -262,32 +262,33 @@ test("Pending file reads cannot submit after clear, a newer fixture, or a newer 
   }
 });
 
-test("File input cancellation preserves preview and close invalidates an ongoing file read", async () => {
+test("Native file cancellation preserves preview and close invalidates an ongoing request", async () => {
   const doc = fakeDocument(), calls = [], pending = defer();
-  const controller = installCompatibilityPreview(doc, async (_, args) => { calls.push(args.request); return preview(); });
+  const selections = [null, "/tmp/first.json", "/tmp/repeat.json", "/tmp/pending.json"];
+  const controller = installCompatibilityPreview(doc, async (_, args) => {
+    calls.push(args.request);
+    return args.request.path === "/tmp/pending.json" ? pending.promise : preview();
+  }, async () => selections.shift());
   await controller.inspect({ source: "fixture", name: "compatible" });
-  const fileInput = doc.getElementById("compatibility-file");
-  fileInput.files = [];
-  fileInput.fire("change");
+  const fileOpen = doc.getElementById("compatibility-file-open");
+  fileOpen.fire("click");
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(doc.getElementById("compatibility-result").hidden, false);
-  fileInput.files = [new Blob([JSON.stringify(compatible)])];
   for (let selection = 0; selection < 2; selection++) {
-    fileInput.value = "selected.json";
-    fileInput.fire("change");
+    fileOpen.fire("click");
     await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(fileInput.value, "");
   }
-  assert.equal(calls.length, 3);
-  fileInput.value = "selected.json";
-  fileInput.files = [{ size: 2, slice() { return { arrayBuffer: () => pending.promise }; } }];
+  assert.deepEqual(calls.slice(1), [
+    { source: "file", path: "/tmp/first.json" },
+    { source: "file", path: "/tmp/repeat.json" },
+  ]);
   doc.getElementById("compatibility-document").value = "old text";
-  fileInput.fire("change");
-  assert.equal(fileInput.value, "");
+  fileOpen.fire("click");
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(doc.getElementById("compatibility-document").value, "");
   doc.getElementById("compatibility-close").fire("click");
-  pending.resolve(new TextEncoder().encode("{}").buffer);
+  pending.resolve(preview());
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(calls.length, 3);
   assert.equal(doc.getElementById("compatibility-result").hidden, true);
   assert.equal(doc.getElementById("compatibility-status").textContent, "No result loaded.");
 });
@@ -316,12 +317,13 @@ test("Maintainer workspace wires the shared read-only compatibility inspector", 
     readFile(new URL("../src/maintainer.html", import.meta.url), "utf8"),
     readFile(new URL("../src/maintainer.js", import.meta.url), "utf8"),
   ]);
-  for (const id of ["compatibility-open", "compatibility-dialog", "compatibility-file",
+  for (const id of ["compatibility-open", "compatibility-dialog", "compatibility-file-open",
     "compatibility-document", "compatibility-result", "compatibility-fields"]) {
     assert.match(html, new RegExp(`id=["']${id}["']`));
   }
   assert.match(html, /compatibility-preview\.css/);
   assert.match(html, /does not authorize a build, download, source choice, or activation/);
   assert.match(script, /import \{ installCompatibilityPreview \} from "\.\/compatibility-preview\.js"/);
-  assert.match(script, /installCompatibilityPreview\(document, invoke\)/);
+  assert.match(script, /installCompatibilityPreview\(document, invoke, \(\) => openFolder/);
+  assert.match(script, /Core resolver JSON/);
 });

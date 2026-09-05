@@ -189,7 +189,10 @@ installation targets, production activation, or hardware certification.
   five-control focus order plus initial and restored focus, and proves CUDA
   omission, maintainer workspace, and automated-release controls remain disabled
   and unfocusable. It then opens the read-only
-  compatibility dialog, verifies its exact accessible warnings that preview
+  compatibility dialog, opens its native resolver JSON chooser, requires the
+  JSON-only filter with no all-files option, disabled empty-selection Open and
+  enabled Cancel, cancels without reading a file, proves the chooser is gone,
+  and restores focus to its opener. It verifies the exact accessible warnings that preview
   structure is unauthenticated and non-authorizing, fixtures are debug-only and
   non-production, and local inputs are cleared without credentials or guest work.
   The dynamic status now mirrors its bounded text into an accessibility label;
@@ -228,8 +231,8 @@ installation targets, production activation, or hardware certification.
   or mismatched bounded `/proc` stat identities. The QEMU snapshot keys PID plus
   kernel start time; the live tree reports the spawned package PID exactly. Package
   archive validation passes with SHA-256
-  `be99b68caca319511db134df6c532592fc6b2129edbd63f8d9679e4825f53e4b`; no
-  package was installed. Twenty-four focused harness tests reject false-ready or
+  `28fd817d490c06b76d35190ac4bcf63816f8478d910d9e9620a345cde7213ad5`; no
+  package was installed. Twenty-five focused harness tests reject false-ready or
   ambiguous unavailable surfaces, altered unavailable explanations or fallback
   policy, extra unavailable-mode actions, unexpected initial button focus,
   missing or broadened chooser filters, unsafe empty-selection Open/Cancel
@@ -247,13 +250,14 @@ installation targets, production activation, or hardware certification.
   companion windows, delivered key-event/editable-text traversal, and pixel
   rendering remain open; GNOME Wayland accepted an exploratory AT-SPI Escape
   synthesis request without delivering it to the WebKit dialog. WebKit exposes
-  the resolver text field as an entry without an AT-SPI EditableText interface;
-  it also advertises and accepts a `press` action on the local-file control without
-  opening its native chooser. The renderer test proves the accessible status label
+  the resolver text field as an entry without an AT-SPI EditableText interface.
+  The former HTML file control also accepted `press` without opening a chooser;
+  replacing it with the native Tauri dialog closed that blocker in the packaged
+  smoke while retaining local-only, unverified parsing. The renderer test proves the accessible status label
   follows loading, result, error, and clear without retaining stale text.
   Scheduler-limited
   formatting and
-  Clippy pass, 330 Rust
+  Clippy pass, 331 Rust
   tests pass (27 ignored), and all 111 frontend tests plus documentation, hygiene,
   package, focused smoke, and boundary integrity checks pass against unchanged
   Core fixture commit `3e49323fce266af8686039fb6487918ef5a64fd9`.
@@ -280,17 +284,21 @@ installation targets, production activation, or hardware certification.
   this session has no graphical display or enabled browser surface.
 
 - [x] Extend the read-only compatibility inspector with local resolver JSON
-  selection through the native file input. Enforce nonempty files, the same
+  selection, now through a native Tauri file dialog and bounded EXE-owned reader. Enforce nonempty files, the same
   1 MiB byte bound, strict UTF-8, and unchanged document IPC/Rust validation;
   label file and pasted results Unverified document. Four new frontend tests
   cover exact size, BOM preservation, bad sizes/encoding, read failure, changed
   length, cancelled picker, repeated selection, close, and stale read success
-  or failure after clear or a newer request. File names never enter IPC or
-  establish trust. Native picker/rendering validation remains gated on an
-  available graphical desktop; no production activation is added. On Ubuntu
-  24.04.4 through the shared scheduler, formatting and Clippy pass, 319 Rust
-  tests pass (27 ignored), and 102 frontend tests plus documentation, hygiene,
-  and boundary integrity pass against the unchanged Core fixture pin.
+  or failure after clear or a newer request. A Rust regression additionally
+  rejects relative paths, empty/oversized/nonregular files, and symlinks. Paths
+  enter only the EXE-local preview command and never establish trust. The rebuilt
+  Ubuntu package now passes the native chooser accessibility smoke; pixel
+  rendering remains gated. No production activation is added. The earlier HTML
+  input implementation passed 319 Rust tests (27 ignored) and 102 frontend tests.
+  On 2026-09-04, the native chooser follow-up passes formatting and Clippy, 331
+  Rust tests (27 ignored), all 111 frontend tests, 25 focused smoke-harness tests,
+  live extracted-package AT-SPI smoke, package validation, documentation, hygiene,
+  and boundary integrity against the unchanged Core fixture pin.
 
 - [x] Reuse the read-only Core compatibility inspector in the maintainer
   workspace as well as normal Settings. Both windows accept the same bounded

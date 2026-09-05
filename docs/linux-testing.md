@@ -19,10 +19,11 @@ closed in an Ubuntu 24.04.4 Wayland session, with no remaining launcher or EXE
 processes. The package was not installed. GNOME denied noninteractive screenshot
 access, so pixel rendering, delivered key-event traversal, companion windows,
 desktop integration, and interactive close remain unvalidated. WebKit exposes
-no AT-SPI EditableText interface for the resolver text field and accepts the
-local-file control's advertised `press` action without opening its chooser, so
-those automated input paths also remain unvalidated. AT-SPI has
-validated the main native frame, WebKit Settings/compatibility controls, exact
+no AT-SPI EditableText interface for the resolver text field, so automated
+pasted-input entry remains unvalidated. The former HTML file control did not
+open its chooser through AT-SPI; the inspector now uses Tauri's native chooser,
+and the packaged smoke validates that chooser, its JSON-only filter, cancellation,
+and restored opener focus. AT-SPI has validated the main native frame, WebKit Settings/compatibility controls, exact
 Settings and compatibility-dialog focus order, debug generation row names and
 values, scoped dialog close, and main-document survival on Ubuntu Wayland. A
 focused renderer test requires the accessible status label to follow loading,
@@ -169,7 +170,11 @@ is also mirrored into its accessibility label: a fixture result must expose
 `Development fixture — non-production` as a status bar and its result container
 as the `Unverified Core result` landmark. Clearing or closing must replace the
 status label with exactly one `No result loaded.` node and remove the prior
-fixture-origin label. The smoke also verifies the ordered
+fixture-origin label. Before parsing fixtures, the smoke opens the native local
+resolver chooser, requires the `Core resolver JSON` filter without an all-files
+option, keeps Open disabled until selection, keeps Cancel enabled, cancels without
+reading a file, proves the chooser closes, and requires focus to return to its
+opener. The smoke also verifies the ordered
 compatibility controls, initial Close focus, and initial empty status.
 Inspecting an empty pasted
 document must expose the bounded `Choose or paste` error as exactly one status
@@ -280,6 +285,8 @@ Open **Settings → Inspect Core compatibility…** in either the macOS applicat
 or the experimental Linux application. Select a local Core resolver schema-2
 JSON file, or paste its contents and choose **Inspect pasted result**. Local
 files must contain UTF-8 text and be nonempty and no larger than 1 MiB. The
+EXE opens only an absolute, regular, non-symlink file, performs a bounded read,
+and rejects a file whose descriptor length changes during that read. The
 existing Rust Core consumer checks the same document structure and 1 MiB byte limit used by its resolver
 adapter. Structural validity does not authenticate a supplied result: the dialog
 always identifies it as **Unverified document**. Filenames and file extensions
@@ -294,8 +301,7 @@ It needs no credentials, network requests, image files, guest, or cache changes.
 
 The dialog displays Core's status, target, reason, publication, artifact trust,
 and next action without inventing another decision. Editing, clearing, or
-closing invalidates pending file reads and preview responses; closing also
-clears pasted text and the file selection. Cancelling the file picker preserves
+closing invalidates pending preview responses; closing also clears pasted text. Cancelling the file picker preserves
 the current preview. Selecting the same file again performs a fresh read.
 Long fields are explicitly truncated for display. Keyboard focus stays within
 the native dialog, and main-window file drops are ignored while it is open.

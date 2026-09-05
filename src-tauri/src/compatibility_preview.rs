@@ -2,11 +2,15 @@
 //! source authorization, a generation handle, or an executable request.
 use crate::core_contracts::{parse_core_resolver_result, CoreResolverResult};
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt as _;
+use std::{fs::OpenOptions, io::Read, path::Path};
 
 #[derive(Deserialize)]
 #[serde(tag = "source", rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) enum CompatibilityPreviewRequest {
     Document { document: String },
+    File { path: String },
     Fixture { name: String },
 }
 
@@ -69,6 +73,43 @@ fn fixture_bytes(name: &str, enabled: bool) -> Result<&'static [u8], String> {
     }
 }
 
+fn read_unverified_preview_file(path: &str) -> Result<Vec<u8>, String> {
+    use crate::core_contracts::CORE_RESOLVER_RESULT_LIMIT;
+    let path = Path::new(path);
+    if !path.is_absolute() || path.as_os_str().len() > 4096 {
+        return Err("Choose an absolute local resolver JSON path.".into());
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let mut file = options
+        .open(path)
+        .map_err(|_| "Could not open the selected local resolver JSON file.".to_string())?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| "Could not inspect the selected local resolver JSON file.".to_string())?;
+    if !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > CORE_RESOLVER_RESULT_LIMIT as u64
+    {
+        return Err("Choose a nonempty Core resolver JSON file no larger than 1 MiB.".into());
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.by_ref()
+        .take(CORE_RESOLVER_RESULT_LIMIT as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Could not read the selected local resolver JSON file.".to_string())?;
+    let final_len = file
+        .metadata()
+        .map_err(|_| "Could not revalidate the selected local resolver JSON file.".to_string())?
+        .len();
+    if bytes.len() != metadata.len() as usize || final_len != metadata.len() {
+        return Err("The selected local resolver JSON file changed while it was read.".into());
+    }
+    Ok(bytes)
+}
+
 #[tauri::command]
 pub(crate) fn preview_core_compatibility(
     request: CompatibilityPreviewRequest,
@@ -77,6 +118,11 @@ pub(crate) fn preview_core_compatibility(
         CompatibilityPreviewRequest::Document { document } => (
             "unverified-document",
             parse_core_resolver_result(document.as_bytes())?,
+            None,
+        ),
+        CompatibilityPreviewRequest::File { path } => (
+            "unverified-document",
+            parse_core_resolver_result(&read_unverified_preview_file(&path)?)?,
             None,
         ),
         CompatibilityPreviewRequest::Fixture { name } => (
@@ -150,6 +196,57 @@ mod tests {
         assert!(document(at_limit.clone()).is_ok());
         at_limit.push(' ');
         assert!(document(at_limit).is_err());
+    }
+
+    #[test]
+    fn local_preview_file_is_bounded_absolute_regular_and_no_follow() {
+        use std::fs;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "opemos-compatibility-preview-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        let fixture = fixture_bytes("compatible", true).unwrap();
+        let valid = root.join("valid.json");
+        fs::write(&valid, fixture).unwrap();
+        let result = preview_core_compatibility(CompatibilityPreviewRequest::File {
+            path: valid.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+        assert_eq!(result.origin, "unverified-document");
+        assert!(result.generation_state.is_none());
+
+        let empty = root.join("empty.json");
+        fs::write(&empty, []).unwrap();
+        let oversized = root.join("oversized.json");
+        fs::write(&oversized, vec![b' '; CORE_RESOLVER_RESULT_LIMIT + 1]).unwrap();
+        for path in [
+            Path::new("relative.json"),
+            empty.as_path(),
+            oversized.as_path(),
+            root.as_path(),
+        ] {
+            assert!(
+                preview_core_compatibility(CompatibilityPreviewRequest::File {
+                    path: path.to_string_lossy().into_owned(),
+                })
+                .is_err()
+            );
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&valid, root.join("link.json")).unwrap();
+            assert!(
+                preview_core_compatibility(CompatibilityPreviewRequest::File {
+                    path: root.join("link.json").to_string_lossy().into_owned(),
+                })
+                .is_err()
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

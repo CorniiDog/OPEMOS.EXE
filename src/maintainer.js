@@ -9,7 +9,11 @@ const openFolder = (options) => invoke("plugin:dialog|open", { options });
 const $ = (selector) => document.querySelector(selector);
 const maintainerWindow = getCurrentWebviewWindow();
 installWindowDrag(maintainerWindow);
-installCompatibilityPreview(document, invoke);
+installCompatibilityPreview(document, invoke, () => openFolder({
+  multiple: false,
+  directory: false,
+  filters: [{ name: "Core resolver JSON", extensions: ["json"] }],
+}));
 await maintainerWindow.onCloseRequested(async (event) => {
   event.preventDefault();
   await maintainerWindow.emitTo("main", "companion-window-hidden", { label: "maintainer-workspace" });

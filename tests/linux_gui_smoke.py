@@ -367,6 +367,32 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Expected one focused action"):
             smoke.validate_closed_image_chooser(app, focused)
 
+    def test_resolver_chooser_requires_json_filter_and_restores_opener_focus(self):
+        enabled, focused = "enabled", "focused"
+        open_button = FakeNode("Open", actionable=True, role="push button")
+        cancel = FakeNode("Cancel", actionable=True, role="push button", states={enabled})
+        chooser = FakeNode(children=[
+            open_button,
+            cancel,
+            FakeNode("Core resolver JSON", role="combo box"),
+            FakeNode("Core resolver JSON", role="menu item"),
+        ])
+        self.assertIs(smoke.validate_open_resolver_chooser(chooser, enabled), cancel)
+        chooser.children[-1].name = "All files"
+        with self.assertRaises(RuntimeError):
+            smoke.validate_open_resolver_chooser(chooser, enabled)
+
+        opener = FakeNode(
+            "Open a local resolver JSON file (up to 1 MiB)",
+            actionable=True,
+            states={focused},
+        )
+        app = FakeNode(children=[opener])
+        self.assertIs(smoke.validate_closed_resolver_chooser(app, focused), opener)
+        app.children.append(FakeNode("Open File", role="file chooser"))
+        with self.assertRaises(RuntimeError):
+            smoke.validate_closed_resolver_chooser(app, focused)
+
     def test_application_selection_is_bound_to_spawned_pid(self):
         settings = lambda: FakeNode(children=[FakeNode("Open settings")])
         stale = settings()

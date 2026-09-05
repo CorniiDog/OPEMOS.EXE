@@ -114,6 +114,18 @@ export function createCompatibilityPreviewController(invoke, render) {
       render({ phase: "empty" });
     },
     inspect(request) { return inspect(() => request); },
+    inspectPath(path) {
+      return inspect(() => {
+        if (typeof path !== "string" || !path || path.length > 4096) {
+          throw new Error("Choose an absolute local resolver JSON path.");
+        }
+        return { source: "file", path };
+      });
+    },
+    fail(error) {
+      revision += 1;
+      render({ phase: "error", message: String(error?.message ?? error).slice(0, 2048) });
+    },
     inspectFile(file) {
       return inspect(async () => {
         if (!file || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > DOCUMENT_LIMIT) {
@@ -134,11 +146,11 @@ export function createCompatibilityPreviewController(invoke, render) {
   };
 }
 
-export function installCompatibilityPreview(documentRef, invoke) {
+export function installCompatibilityPreview(documentRef, invoke, openFile = null) {
   const get = (id) => documentRef.getElementById(id);
   const dialog = get("compatibility-dialog");
   const input = get("compatibility-document");
-  const fileInput = get("compatibility-file");
+  const fileOpen = get("compatibility-file-open");
   const status = get("compatibility-status");
   const result = get("compatibility-result");
   const rows = get("compatibility-fields");
@@ -164,16 +176,20 @@ export function installCompatibilityPreview(documentRef, invoke) {
       rows.append(row);
     }
   });
-  fileInput.addEventListener("change", () => {
-    const file = fileInput.files?.[0];
-    fileInput.value = "";
-    if (!file) return;
-    input.value = "";
-    void controller.inspectFile(file);
+  fileOpen.addEventListener("click", () => {
+    if (typeof openFile !== "function") {
+      controller.fail(new Error("Native local-file selection is unavailable."));
+      return;
+    }
+    void openFile().then((path) => {
+      if (path == null) return;
+      input.value = "";
+      void controller.inspectPath(path);
+    }, (error) => controller.fail(error));
   });
   get("compatibility-open").addEventListener("click", () => dialog.showModal());
   get("compatibility-close").addEventListener("click", () => dialog.close());
-  dialog.addEventListener("close", () => { input.value = ""; fileInput.value = ""; controller.clear(); });
+  dialog.addEventListener("close", () => { input.value = ""; controller.clear(); });
   // Native dialog owns focus/Tab/Escape; underlying settings shortcuts must not run.
   dialog.addEventListener("keydown", (event) => event.stopPropagation());
   get("compatibility-clear").addEventListener("click", () => { input.value = ""; controller.clear(); });

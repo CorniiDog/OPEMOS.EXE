@@ -9,9 +9,13 @@ import {
 } from "./keyboard.js";
 
 const { invoke } = window.__TAURI__.core;
-installCompatibilityPreview(document, invoke);
 const { getAllWebviewWindows, getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 const open = (options) => invoke("plugin:dialog|open", { options });
+installCompatibilityPreview(document, invoke, () => open({
+  multiple: false,
+  directory: false,
+  filters: [{ name: "Core resolver JSON", extensions: ["json"] }],
+}));
 const openUrl = (url) => invoke("plugin:opener|open_url", { url });
 
 const $ = (selector) => document.querySelector(selector);

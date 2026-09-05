@@ -382,6 +382,26 @@ def validate_closed_image_chooser(app, focused_state):
     require_absent(app, ["Open File", "File Chooser Widget"])
     return exactly_one_focused_action(app, "Choose Image…", focused_state)
 
+def validate_open_resolver_chooser(chooser, enabled_state):
+    open_button = exactly_one_action(chooser, "Open", {"push button", "button"})
+    cancel_button = exactly_one_action(chooser, "Cancel", {"push button", "button"})
+    if open_button.get_state_set().contains(enabled_state):
+        raise RuntimeError("Native resolver chooser enabled Open without a selection.")
+    if not cancel_button.get_state_set().contains(enabled_state):
+        raise RuntimeError("Native resolver chooser disabled Cancel.")
+    exactly_one_role(chooser, "Core resolver JSON", "combo box")
+    exactly_one_role(chooser, "Core resolver JSON", "menu item")
+    require_absent(chooser, ["All files", "All Files"])
+    return cancel_button
+
+
+def validate_closed_resolver_chooser(app, focused_state):
+    require_absent(app, ["Open File", "File Chooser Widget"])
+    return exactly_one_focused_action(
+        app, "Open a local resolver JSON file (up to 1 MiB)", focused_state
+    )
+
+
 def application_for_pid(desktop, expected_pid: int):
     if not isinstance(expected_pid, int) or isinstance(expected_pid, bool) or expected_pid <= 1:
         raise RuntimeError("Packaged application PID is invalid.")
@@ -445,6 +465,12 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     validate_dialog_focus(dialog, focusable_state, focused_state)
     validate_compatibility_safety_text(dialog, accessible_text)
     validate_empty_result(dialog)
+    invoke(exactly_one_action(dialog, "Open a local resolver JSON file (up to 1 MiB)"))
+    chooser = wait(lambda: exactly_one_role(app, "Open File", "file chooser"),
+                   "the native resolver JSON chooser")
+    invoke(validate_open_resolver_chooser(chooser, enabled_state))
+    wait(lambda: validate_closed_resolver_chooser(app, focused_state),
+         "resolver chooser cancellation and focus restoration")
     invoke(exactly_one_action(dialog, "Inspect pasted result"))
     wait(lambda: validate_empty_document_error(dialog),
          "the empty compatibility document error")
