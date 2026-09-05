@@ -647,7 +647,9 @@ elements.includeUpstreamNvidia.addEventListener("change", async () => {
   await loadNvidiaSourceBranches();
 });
 elements.nvidiaSource.addEventListener("change", () => {
-  if (!admitBuildSourceSelection(currentBuildSnapshot()).accepted) {
+  const proposedSnapshot = currentBuildSnapshot();
+  if (!proposedSnapshot.upstreamSelected) proposedSnapshot.upstreamApproved = false;
+  if (!admitBuildSourceSelection(proposedSnapshot).accepted) {
     elements.nvidiaSource.value = acceptedNvidiaSource;
     elements.allowUpstreamBuild.checked = acceptedUpstreamApproval;
     renderSourceWarning();
@@ -658,6 +660,12 @@ elements.nvidiaSource.addEventListener("change", () => {
   acceptedUpstreamApproval = elements.allowUpstreamBuild.checked;
 });
 elements.allowUpstreamBuild.addEventListener("change", () => {
+  if (!elements.nvidiaSource.value.startsWith("upstream:")) {
+    elements.allowUpstreamBuild.checked = false;
+    acceptedUpstreamApproval = false;
+    updateBuildButton();
+    return;
+  }
   if (!admitBuildSourceSelection(currentBuildSnapshot()).accepted) {
     elements.allowUpstreamBuild.checked = acceptedUpstreamApproval;
     updateBuildButton();

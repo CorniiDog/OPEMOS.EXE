@@ -89,6 +89,9 @@ test("build admission fails closed for malformed and impossible snapshots", () =
   assert.throws(() => deriveBuildAdmission({
     ...ready, usbWriting: true,
   }), /USB writing requires a completed output/);
+  assert.throws(() => deriveBuildAdmission({
+    ...ready, upstreamApproved: true,
+  }), /upstream approval requires an upstream source/);
 });
 
 test("build start uses the same fail-closed admission at the event boundary", () => {

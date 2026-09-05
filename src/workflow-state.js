@@ -42,6 +42,9 @@ export function deriveBuildAdmission(snapshot) {
   if (usbWriting && !hasCompletedOutput) {
     throw new Error("USB writing requires a completed output");
   }
+  if (upstreamApproved && !upstreamSelected) {
+    throw new Error("upstream approval requires an upstream source");
+  }
 
   const phase = usbWriting
     ? "usb-writing"
