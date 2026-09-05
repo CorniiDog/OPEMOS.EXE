@@ -229,6 +229,10 @@ def validate_dialog_focus(dialog, focusable_state, focused_state):
     if focused != [("Close", "push button")]:
         raise RuntimeError(f"Compatibility dialog initial focus changed: {focused!r}.")
 
+def validate_reopened_dialog(dialog, focusable_state, focused_state):
+    validate_dialog_focus(dialog, focusable_state, focused_state)
+    require_absent(dialog, RESULT_SENTINEL_LABELS)
+
 def application_for_pid(desktop, expected_pid: int):
     if not isinstance(expected_pid, int) or isinstance(expected_pid, bool) or expected_pid <= 1:
         raise RuntimeError("Packaged application PID is invalid.")
@@ -315,6 +319,14 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     wait(lambda: exactly_one_focused_action(
         app, "Inspect Core compatibility…", focused_state
     ), "focus restoration after dialog close")
+    invoke(exactly_one_action(app, "Inspect Core compatibility…"))
+    dialog = wait(lambda: exactly_one_role(app, "Core compatibility inspector", "dialog"),
+                  "the reopened compatibility inspector")
+    validate_reopened_dialog(dialog, focusable_state, focused_state)
+    invoke(first_action(dialog, "Close", {"push button", "button"}))
+    wait(lambda: exactly_one_focused_action(
+        app, "Inspect Core compatibility…", focused_state
+    ), "focus restoration after empty dialog close")
     invoke(close_settings)
     wait(lambda: exactly_one_focused_action(app, "Open settings", focused_state),
          "focus restoration after Settings close")

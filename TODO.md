@@ -186,7 +186,9 @@ installation targets, production activation, or hardware certification.
   bounded exact-target action fields in order. Clear then removes every result,
   action, and generation sentinel from the accessibility tree while retaining
   Clear focus, then reloading Compatible must restore only its exact rows and
-  focus its fixture control. It closes only the dialog,
+  focus its fixture control. Closing and reopening the populated dialog must
+  remove every prior result sentinel and restore native Close-first focus. It
+  closes only the dialog,
   restores focus to its Settings opener, preserves the main document, stops the
   complete process group, and proves no
   new `qemu-system-*` process remains. Unit tests
@@ -202,10 +204,11 @@ installation targets, production activation, or hardware certification.
   kernel start time; the live tree reports the spawned package PID exactly. Package
   archive validation passes with SHA-256
   `80a578962c18c9ee5076c05ff2c2fa40d92e0097fd7e21efe8e017f0a3d41f12`; no
-  package was installed. Fifteen focused harness tests reject reordered, extra,
+  package was installed. Sixteen focused harness tests reject reordered, extra,
   or ambiguously bounded rows, stale cleared fields or result headings, wrong
   Clear focus, stale next actions after recovery, and altered compatible trust
-  text; the live package smoke passes. Debian,
+  text, stale close/reopen state, and wrong reopened focus; the live package
+  smoke passes. Debian,
   companion windows, delivered key-event traversal, and pixel
   rendering remain open; GNOME Wayland accepted an exploratory AT-SPI Escape
   synthesis request without delivering it to the WebKit dialog. Scheduler-limited

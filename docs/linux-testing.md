@@ -147,8 +147,10 @@ expose Core's exact status, reason, message, bounded exact-target build action,
 architecture, and kernel policy in order. Clear must remove the result heading,
 Core fields, next action, and all generation rows from the accessibility tree
 while retaining focus on Clear. Reloading Compatible after Clear must reproduce
-only its exact rows and retain focus on the fixture control.
-These remain non-production fixture data and grant no authorization. It then
+only its exact rows and retain focus on the fixture control. Closing and reopening
+the populated dialog must expose no prior result fields and must restore the
+native Close-first focus order. These remain non-production fixture data and
+grant no authorization. It then
 stops the
 isolated application process group. It has
 a 20-second default deadline (configurable from 1 through 60 seconds), reports

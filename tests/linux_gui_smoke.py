@@ -177,6 +177,22 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "initial focus changed"):
             smoke.validate_settings_focus(settings, focusable, focused)
 
+    def test_reopened_dialog_rejects_stale_result_and_wrong_initial_focus(self):
+        focusable, focused = "focusable", "focused"
+        controls = [FakeNode(name, role=role, states={focusable})
+                    for name, role in smoke.EXPECTED_FOCUS_ORDER]
+        controls[0].states = {focusable, focused}
+        dialog = FakeNode(children=controls)
+        smoke.validate_reopened_dialog(dialog, focusable, focused)
+        dialog.children.append(FakeNode("Core status"))
+        with self.assertRaisesRegex(RuntimeError, "Expected no accessible"):
+            smoke.validate_reopened_dialog(dialog, focusable, focused)
+        dialog.children.pop()
+        controls[0].states = {focusable}
+        controls[1].states = {focusable, focused}
+        with self.assertRaisesRegex(RuntimeError, "initial focus changed"):
+            smoke.validate_reopened_dialog(dialog, focusable, focused)
+
     def test_dialog_focus_requires_exact_order_and_single_initial_close(self):
         focusable, focused = "focusable", "focused"
         controls = [FakeNode(name, role=role, states={focusable})
