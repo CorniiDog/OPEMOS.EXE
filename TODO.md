@@ -584,6 +584,13 @@ already Core contracts and are not open-ended product choices.
     document, revalidates the published handoff, and retires it cleanly. On
     2026-09-05, the focused Rust integration passes. Restart recovery and
     injected cancellation/storage faults remain open.
+  - [x] Exercise cancellation and an injected ENOSPC-equivalent failure after
+    the complete current-generation plus predecessor copy. Both paths remove
+    every receipted private payload, stage, and lease while retaining only the
+    destination lock and preserving the active/pending cache state exactly. On
+    2026-09-05, the focused two-path lineage fault regression, the refactored
+    positive lineage integration, formatting, and warnings-as-errors Clippy pass.
+    Lineage-aware process-death restart recovery remains open.
 - [x] Exercise the inactive appliance handoff in real subprocesses killed at
   all 38 existing staging, partial-file-receipt, and retirement hook boundaries.
   Fresh-process restart reauthenticates installed trust, reacquires locks,

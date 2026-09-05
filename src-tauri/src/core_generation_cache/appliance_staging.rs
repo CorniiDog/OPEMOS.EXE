@@ -3792,6 +3792,39 @@ mod tests {
             .unwrap();
     }
 
+    fn pending_successor_fixture(
+        name: &str,
+    ) -> (PreparedFixture, SuccessorFixture, SuccessorFixture, String) {
+        let fixture = PreparedFixture::create(name);
+        let second = successor_fixture(&fixture, 2, fixture.identity.manifest_sha256.clone());
+        let third = successor_fixture(&fixture, 3, second.identity.manifest_sha256.clone());
+        commit_successor(&fixture.cache, "fixture-cache-stage-2", &second);
+        commit_successor(&fixture.cache, "fixture-cache-stage-3", &third);
+        let state = fixture.cache.load_state().unwrap();
+        acknowledge_installed_authenticated_activation(
+            &fixture.cache,
+            &fixture.generation,
+            &fixture.checkpoint,
+            &fixture.target,
+            &[],
+            &fixture.operation,
+            state.revision,
+        )
+        .unwrap();
+        let operation = format!("fixture-{name}");
+        begin_installed_authenticated_activation(
+            &fixture.cache,
+            &third.generation,
+            &third.checkpoint,
+            &fixture.target,
+            &[&second.generation],
+            &operation,
+            || false,
+        )
+        .unwrap();
+        (fixture, second, third, operation)
+    }
+
     fn canonical(value: &impl Serialize) -> Vec<u8> {
         let value = serde_json::to_value(value).unwrap();
         let mut bytes = serde_json::to_vec(&value).unwrap();
@@ -3932,34 +3965,8 @@ mod tests {
 
     #[test]
     fn stages_authenticated_successor_with_committed_lineage_receipts() {
-        let fixture = PreparedFixture::create("positive-lineage-stage");
-        let second = successor_fixture(&fixture, 2, fixture.identity.manifest_sha256.clone());
-        let third = successor_fixture(&fixture, 3, second.identity.manifest_sha256.clone());
-        commit_successor(&fixture.cache, "fixture-cache-stage-2", &second);
-        commit_successor(&fixture.cache, "fixture-cache-stage-3", &third);
-
-        let state = fixture.cache.load_state().unwrap();
-        acknowledge_installed_authenticated_activation(
-            &fixture.cache,
-            &fixture.generation,
-            &fixture.checkpoint,
-            &fixture.target,
-            &[],
-            &fixture.operation,
-            state.revision,
-        )
-        .unwrap();
-        let operation = "fixture-positive-lineage-stage";
-        begin_installed_authenticated_activation(
-            &fixture.cache,
-            &third.generation,
-            &third.checkpoint,
-            &fixture.target,
-            &[&second.generation],
-            operation,
-            || false,
-        )
-        .unwrap();
+        let (fixture, second, third, operation) =
+            pending_successor_fixture("positive-lineage-stage");
         let expected_state = fixture.cache.load_state().unwrap();
 
         let mut staged = stage_pending_generation_for_appliance(
@@ -3968,7 +3975,7 @@ mod tests {
             &third.checkpoint,
             &fixture.target,
             &[&second.generation],
-            operation,
+            &operation,
             &fixture.destination,
             || false,
         )
@@ -4001,6 +4008,52 @@ mod tests {
                 && file.sha256 == sha256(second.files.get(DISCOVERY_FILENAME).unwrap())
         }));
         staged.retire().unwrap();
+    }
+
+    #[test]
+    fn lineage_copy_cancellation_and_enospc_remove_all_private_residue() {
+        for fault in ["cancel", "enospc"] {
+            let (fixture, second, third, operation) =
+                pending_successor_fixture(&format!("lineage-{fault}-after-copy"));
+            let before = fixture.cache.load_state().unwrap();
+            let cancelled = AtomicBool::new(false);
+            let result = stage_pending_generation_for_appliance_with_hook(
+                &fixture.cache,
+                &third.generation,
+                &third.checkpoint,
+                &fixture.target,
+                &[&second.generation],
+                &operation,
+                &fixture.destination,
+                || cancelled.load(Ordering::SeqCst),
+                |phase| {
+                    if phase != "after-copy" {
+                        return Ok(());
+                    }
+                    if fault == "cancel" {
+                        cancelled.store(true, Ordering::SeqCst);
+                        Ok(())
+                    } else {
+                        Err("storage-admission-no-space: injected lineage staging failure".into())
+                    }
+                },
+            );
+            let error = result
+                .err()
+                .expect("injected lineage fault must stop staging");
+            if fault == "cancel" {
+                assert_eq!(error, "Core appliance handoff was cancelled.");
+            } else {
+                assert!(
+                    error.contains("storage-admission-no-space: injected lineage staging failure")
+                );
+            }
+            assert_eq!(fixture.cache.load_state().unwrap(), before);
+            assert_eq!(
+                all_destination_entries(&fixture.destination),
+                vec![fixture.destination.join(DESTINATION_LOCK_FILENAME)]
+            );
+        }
     }
 
     #[test]
