@@ -338,3 +338,20 @@ test("Compatibility inspector contains long localized controls at high zoom", as
   assert.match(compact, /\.compatibility-dialog\s*\{[^}]*width:\s*calc\(100vw - 16px\);[^}]*max-height:\s*calc\(100vh - 16px\);[^}]*padding:\s*14px;/);
   assert.match(compact, /\.compatibility-dialog textarea\s*\{\s*min-height:\s*96px;/);
 });
+
+
+test("Main and maintainer inspectors preserve reduced motion and forced colors", async () => {
+  const [mainHtml, maintainerHtml, controlsCss, compatibilityCss] = await Promise.all([
+    readFile(new URL("../src/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/maintainer.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/glass-controls.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/compatibility-preview.css", import.meta.url), "utf8"),
+  ]);
+  for (const html of [mainHtml, maintainerHtml]) {
+    assert.match(html, /glass-controls\.css/);
+    assert.match(html, /compatibility-preview\.css/);
+  }
+  assert.match(controlsCss, /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation-duration:\s*\.01ms !important;[\s\S]*transition-duration:\s*\.01ms !important;/);
+  assert.match(controlsCss, /@media \(forced-colors: active\)[\s\S]*forced-color-adjust:\s*auto;[\s\S]*outline:\s*2px solid Highlight;/);
+  assert.match(compatibilityCss, /@media \(forced-colors: active\)\s*\{\s*\.compatibility-dialog, \.compatibility-dialog textarea\s*\{\s*border-color:\s*CanvasText;/);
+});

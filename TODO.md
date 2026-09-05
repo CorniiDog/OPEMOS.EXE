@@ -1436,6 +1436,12 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     restores focus to the invoking button. On 2026-09-05, all 17 focused
     compatibility-preview tests pass. Full keyboard traversal and real display
     scaling remain open.
+  - [x] Bind both shared compatibility-inspector pages to reduced-motion and
+    forced-color coverage. The focused regression requires each page to load the
+    shared control and inspector styles, suppresses inherited motion, preserves
+    system-adjusted controls and Highlight focus outlines, and keeps the dialog
+    boundary visible with CanvasText. On 2026-09-05, all 18 focused compatibility-
+    preview tests pass. Real OS high-contrast rendering remains open.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
   heartbeats or free-form log text. Unknown structured phases now retain only
   their bounded label and current validation/installation context: even a
