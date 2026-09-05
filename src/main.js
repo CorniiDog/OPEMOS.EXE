@@ -734,6 +734,9 @@ elements.buildButton.addEventListener("click", async () => {
     generation: ++buildContextGeneration,
     requestId: crypto.randomUUID(),
     inputPath: currentImage,
+    inputName: currentImageName,
+    exportMode,
+    outputDirectory,
     sourceSelection: elements.nvidiaSource.value,
     allowExperimentalUpstream: elements.nvidiaSource.value.startsWith("upstream:")
       && elements.allowUpstreamBuild.checked,
@@ -760,7 +763,10 @@ elements.buildButton.addEventListener("click", async () => {
   elements.refreshUsbTargets.disabled = true;
   elements.resultMessage.textContent = "Build progress opened in a separate window.";
   try {
-    const preview = await invoke("preview_image_output", { path: currentImage, outputDirectory });
+    const preview = await invoke("preview_image_output", {
+      path: buildContext.inputPath,
+      outputDirectory: buildContext.outputDirectory,
+    });
     plannedOutput = preview.output_path;
     elements.summaryOutput.textContent = plannedOutput;
     elements.summaryOutput.title = plannedOutput;
@@ -772,12 +778,12 @@ elements.buildButton.addEventListener("click", async () => {
     await waitForProgressWindow(progressWindow);
     await progressWindow.emit("build-requested", {
       requestId: buildContext.requestId,
-      path: currentImage,
-      name: currentImageName,
+      path: buildContext.inputPath,
+      name: buildContext.inputName,
       sourceSelection: buildContext.sourceSelection,
       allowExperimentalUpstream: buildContext.allowExperimentalUpstream,
-      exportMode: activeExportMode,
-      outputDirectory,
+      exportMode: buildContext.exportMode,
+      outputDirectory: buildContext.outputDirectory,
     });
   } catch (error) {
     if (!operationContextMatches(buildContext, activeBuildContext || {})) return;
