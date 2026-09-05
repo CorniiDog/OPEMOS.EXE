@@ -229,3 +229,14 @@ export function admitUsbConfirmationEdit(snapshot, capability) {
           : null;
   return Object.freeze({ accepted: blocker === null, phase: admission.phase, blocker });
 }
+
+export function admitUsbTargetRefresh(snapshot) {
+  const admission = deriveBuildAdmission(snapshot);
+  const accepted = admission.phase === "selected" || admission.phase === "complete";
+  const blocker = accepted
+    ? null
+    : admission.phase === "empty"
+      ? "no-image"
+      : admission.blocker;
+  return Object.freeze({ accepted, phase: admission.phase, blocker });
+}

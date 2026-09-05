@@ -12,6 +12,7 @@ import {
   admitUsbReviewOpen,
   admitUsbReviewDismiss,
   admitUsbTargetSelection,
+  admitUsbTargetRefresh,
   admitUsbTargetClear,
   admitUsbWriteStart,
   deriveBuildAdmission,
@@ -956,6 +957,7 @@ async function refreshUsbTargets(preferredTarget = null) {
 }
 
 elements.refreshUsbTargets.addEventListener("click", async () => {
+  if (!admitUsbTargetRefresh(currentBuildSnapshot()).accepted) return;
   await refreshUsbTargets();
 });
 

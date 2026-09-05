@@ -12,6 +12,7 @@ import {
   admitUsbReviewOpen,
   admitUsbReviewDismiss,
   admitUsbTargetSelection,
+  admitUsbTargetRefresh,
   admitUsbTargetClear,
   admitUsbWriteStart,
   deriveBuildAdmission,
@@ -373,4 +374,26 @@ test("USB confirmation editing requires an idle completed-image target", () => {
       new RegExp(name + " must be boolean"),
     );
   }
+});
+
+test("manual USB target refresh runs only in stable image phases", () => {
+  assert.deepEqual(admitUsbTargetRefresh(ready), {
+    accepted: true, phase: "selected", blocker: null,
+  });
+  assert.deepEqual(admitUsbTargetRefresh({ ...ready, hasCompletedOutput: true }), {
+    accepted: true, phase: "complete", blocker: null,
+  });
+  const cases = [
+    [{ hasImage: false }, "empty", "no-image"],
+    [{ buildRunning: true }, "building", "building"],
+    [{ usbWriting: true }, "usb-writing", "usb-writing"],
+  ];
+  for (const [change, phase, blocker] of cases) {
+    assert.deepEqual(admitUsbTargetRefresh({ ...ready, ...change }), {
+      accepted: false, phase, blocker,
+    });
+  }
+  assert.throws(() => admitUsbTargetRefresh({
+    ...ready, buildRunning: true, usbWriting: true,
+  }), /cannot run concurrently/);
 });
