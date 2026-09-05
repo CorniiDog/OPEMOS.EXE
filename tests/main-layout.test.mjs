@@ -156,7 +156,7 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /buildRunning = true;[\s\S]*nvidiaSource\.disabled = true;[\s\S]*allowUpstreamBuild\.disabled = true;[\s\S]*emit\("build-requested", \{[\s\S]*sourceSelection: buildContext\.sourceSelection,[\s\S]*allowExperimentalUpstream: buildContext\.allowExperimentalUpstream/);
   assert.doesNotMatch(script, /emit\("build-requested", \{[\s\S]*sourceSelection: elements\.nvidiaSource\.value/);
   assert.match(script, /catch \(error\) \{[\s\S]*buildRunning = false;[\s\S]*nvidiaSource\.disabled = false;[\s\S]*allowUpstreamBuild\.disabled = false;/);
-  assert.match(script, /async function applyBuildFinished[\s\S]*buildRunning = false;[\s\S]*nvidiaSource\.disabled = false;[\s\S]*allowUpstreamBuild\.disabled = false;/);
+  assert.match(script, /async function applyBuildFinished[\s\S]*const hasCompletedOutput = Boolean\(completedOutput\?\.path\);[\s\S]*exportImage\.disabled = hasCompletedOutput;[\s\S]*chooseOutputFolder\.disabled = hasCompletedOutput;[\s\S]*resetOutputFolder\.disabled = hasCompletedOutput;[\s\S]*chooseImage\.disabled = false;[\s\S]*nvidiaSource\.disabled = hasCompletedOutput;[\s\S]*allowUpstreamBuild\.disabled = hasCompletedOutput;/);
   assert.doesNotMatch(script, /completedOutput\?\.path \|\| !currentImage \|\| !hostReady/);
   assert.match(css, /\.build-card\.completed-output-selected \.nvidia-choice,[\s\S]*#build-button\s*\{\s*display:\s*none;/);
   assert.doesNotMatch(css, /\.build-card\.completed-output-selected \.build-side-column,[\s\S]{0,100}display:\s*none;/);

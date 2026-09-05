@@ -866,10 +866,13 @@ async function applyBuildFinished(completion) {
   if (!operationContextMatches(buildContext, activeBuildContext || {})) return;
   activeBuildContext = null;
   buildRunning = false;
-  elements.exportImage.disabled = false;
+  const hasCompletedOutput = Boolean(completedOutput?.path);
+  elements.exportImage.disabled = hasCompletedOutput;
+  elements.chooseOutputFolder.disabled = hasCompletedOutput;
+  elements.resetOutputFolder.disabled = hasCompletedOutput;
   elements.chooseImage.disabled = false;
-  elements.nvidiaSource.disabled = false;
-  elements.allowUpstreamBuild.disabled = false;
+  elements.nvidiaSource.disabled = hasCompletedOutput;
+  elements.allowUpstreamBuild.disabled = hasCompletedOutput;
   elements.usbTarget.disabled = !hasUsbTargets();
   elements.refreshUsbTargets.disabled = false;
   updateBuildButton();

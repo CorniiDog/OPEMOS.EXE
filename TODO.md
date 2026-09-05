@@ -1023,6 +1023,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     workflow/layout suite and all 132 frontend tests plus documentation, hygiene,
     and boundary integrity pass. The broader workflow transition model remains
     open.
+  - [x] Restore build controls from the actual asynchronous terminal phase.
+    Failed build completions now re-enable source and output configuration,
+    while verified completed outputs keep those immutable controls locked and
+    still allow selecting a different image. On 2026-09-05, the focused 30-case
+    workflow/layout suite and all 132 frontend tests plus documentation, hygiene,
+    and boundary integrity pass. The broader workflow transition model remains
+    open.
 - [ ] Split oversized frontend workflow/log rendering code only where behavior
   can be covered by focused tests.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.
