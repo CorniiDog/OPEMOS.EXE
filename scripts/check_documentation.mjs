@@ -170,6 +170,10 @@ assert.equal(
   2,
   "Core checkout ref and fixture expectation must use the same immutable commit",
 );
+assert.match(
+  checks,
+  /ref: 3e49323fce266af8686039fb6487918ef5a64fd9\n          path: opemos-core-contracts\n          fetch-depth: 11\n          persist-credentials: false/,
+);
 assert.doesNotMatch(checks, /82241699497fb605b3d8b3fbc0015ec952f81ef3/);
 assert.match(checks, /persist-credentials: false/);
 const developmentLineageCommit = "adf372b857cd348b6a18680b45ffcea790f04d4b";

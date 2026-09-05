@@ -48,6 +48,7 @@ jobs:
           repository: CorniiDog/open-gpu-kernel-modules-steamos-support
           ref: 3e49323fce266af8686039fb6487918ef5a64fd9
           path: opemos-core-contracts
+          fetch-depth: 11
           persist-credentials: false
 
       - name: Install Tauri Linux dependencies

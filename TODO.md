@@ -1541,7 +1541,12 @@ must be reported; a default-suite pass does not imply hardware certification.
   object before `git show`, and documents the verified cache workflow. A fresh
   depth-56 canonical clone resolved `HEAD` to `adf372b857cd348b6a18680b45ffcea790f04d4b`
   and the pinned boundary object to `7f90e45c4c154fdfda81ff594611cf533e4fb894`;
-  both ignored Core-backed integrations pass against that cache. Debian and
+  both ignored Core-backed integrations pass against that cache. Transition PR
+  #1 then exposed that the regular Rust job still fetched only one commit at
+  fixture head `3e49323fce266af8686039fb6487918ef5a64fd9`; nine existing conformance
+  tests could not resolve immutable ancestors. Canonical GitHub history proves
+  the oldest required pin is ten commits behind that head, so the job now fetches
+  exactly 11 commits and its documentation guard pins that bound. Debian and
   managed Fedora appliance boot remain separate.
 - [ ] Add bounded release-package smoke tests which start and close the packaged
   application and confirm no orphan QEMU processes remain. The experimental
