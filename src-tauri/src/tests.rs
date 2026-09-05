@@ -1139,10 +1139,51 @@ esac
 
         assert!(usb_candidate_from_diskutil_info(&removable, 32_000_000_000, Some("disk8")).is_none());
 
-        let mut partition = removable;
+        let mut partition = removable.clone();
         partition["DeviceIdentifier"] = serde_json::json!("disk7s1");
         partition["DeviceNode"] = serde_json::json!("/dev/disk7s1");
         assert!(usb_candidate_from_diskutil_info(&partition, 32_000_000_000, Some("disk7s1")).is_none());
+
+        let required_boolean_cases = [
+            ("WholeDisk", serde_json::json!(false)),
+            ("WholeDisk", serde_json::json!("true")),
+            ("Internal", serde_json::json!(true)),
+            ("Internal", serde_json::Value::Null),
+            ("Writable", serde_json::json!(false)),
+            ("Writable", serde_json::json!(1)),
+        ];
+        for (key, value) in required_boolean_cases {
+            let mut changed = removable.clone();
+            changed[key] = value;
+            assert!(usb_candidate_from_diskutil_info(&changed, 32_000_000_000, Some("disk7")).is_none());
+        }
+        for key in ["WholeDisk", "Internal", "Writable", "VirtualOrPhysical", "DeviceNode", "DeviceTreePath"] {
+            let mut missing = removable.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert!(usb_candidate_from_diskutil_info(&missing, 32_000_000_000, Some("disk7")).is_none());
+        }
+        for (key, value) in [
+            ("RemovableMedia", serde_json::json!(false)),
+            ("Ejectable", serde_json::json!(false)),
+        ] {
+            let mut neither = removable.clone();
+            neither["RemovableMedia"] = serde_json::json!(false);
+            neither["Ejectable"] = serde_json::json!(false);
+            neither[key] = value;
+            assert!(usb_candidate_from_diskutil_info(&neither, 32_000_000_000, Some("disk7")).is_none());
+        }
+        for (key, value) in [
+            ("VirtualOrPhysical", serde_json::json!("physical")),
+            ("DeviceNode", serde_json::json!("/dev/rdisk7")),
+            ("DeviceTreePath", serde_json::json!("")),
+            ("TotalSize", serde_json::json!(2_u64 * 1024 * 1024 * 1024 * 1024 + 1)),
+            ("DeviceBlockSize", serde_json::json!(8192)),
+        ] {
+            let mut changed = removable.clone();
+            changed[key] = value;
+            assert!(usb_candidate_from_diskutil_info(&changed, 32_000_000_000, Some("disk7")).is_none());
+        }
+        assert!(usb_candidate_from_diskutil_info(&removable, 32_000_000_001, Some("disk7")).is_none());
     }
 
     #[cfg(target_os = "macos")]

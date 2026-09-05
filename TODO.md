@@ -1294,8 +1294,20 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   flushing, and safe ejection. On 2026-09-05, the focused 15-case main-layout
   suite and all 141 frontend tests plus documentation, hygiene, and boundary
   integrity pass. Linux physical-device writing remains unavailable.
-- [ ] Never expose internal/system disks or accept a partition when a whole
-  removable device is required.
+- [x] Never expose internal/system disks or accept a partition when a whole
+  removable device is required. macOS discovery requires an exact numeric whole-
+  disk identifier and canonical `/dev/diskN` node, explicit external physical,
+  writable, removable-or-ejectable metadata, a bounded capacity, supported block
+  size and image alignment, plus nonempty device-tree provenance; final preflight
+  reruns the same eligibility parser and binds its identity token. The expanded
+  fail-closed matrix covers every required field missing or malformed, internal,
+  partition, virtual, non-writable, non-removable, deceptive raw-node, oversized,
+  unsupported-block, and unaligned cases. On 2026-09-05, formatting, warnings-as-
+  errors Clippy, and the focused native safety test pass. The full Rust suite
+  reached 330 passes with 27 ignored; its sole failure was the already-recorded
+  mutable sibling-Core installer-result fixture mismatch while Core was busy,
+  which was not retried or counted as USB validation. Linux physical-device
+  discovery and writing remain unavailable.
 
 ## CI and test commands
 
