@@ -27,8 +27,9 @@ use std::{
 };
 
 // This exact, explicitly non-production Core successor adds authenticated
-// appliance-generation lineage consumption. It must not be promoted to the
-// production bundle pin merely because it is available in a local Core worktree.
+// appliance-generation lineage consumption. Tests obtain it only from a cache
+// verified against the canonical GitHub repository; availability does not
+// promote it to the production bundle pin.
 const DEVELOPMENT_HANDOFF_COMMIT: &str = "adf372b857cd348b6a18680b45ffcea790f04d4b";
 const HANDOFF_FILENAME: &str = "opemos-core-generation-handoff-v1.json";
 const DEVELOPMENT_OPERATION: &str = "development-generation-v1";
@@ -84,34 +85,8 @@ fn valid_development_signature() -> DetachedVerifierOutput {
     }
 }
 
-fn local_core_repository() -> PathBuf {
-    let configured = std::env::var_os("OPEMOS_CORE_CONTRACT_ROOT").map(PathBuf::from);
-    let fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("src-tauri has a repository parent")
-        .parent()
-        .expect("repository has a workspace parent")
-        .join("open-gpu-kernel-modules-steamos-support");
-    let repository = configured.unwrap_or(fallback);
-    assert!(
-        repository.join(".git").exists(),
-        "development generation integration requires a local Core repository"
-    );
-    let present = Command::new("git")
-        .args([
-            "cat-file",
-            "-e",
-            &format!("{DEVELOPMENT_HANDOFF_COMMIT}^{{commit}}"),
-        ])
-        .current_dir(&repository)
-        .output()
-        .ok()
-        .is_some_and(|output| output.status.success());
-    assert!(
-        present,
-        "development generation integration requires exact Core commit {DEVELOPMENT_HANDOFF_COMMIT}"
-    );
-    repository
+fn github_core_repository() -> PathBuf {
+    crate::core_test_repository::required_github_core_repository(DEVELOPMENT_HANDOFF_COMMIT)
 }
 
 fn export_core_sources(repository: &Path, destination: &Path) {
@@ -199,7 +174,7 @@ impl Drop for TemporaryRoot {
 #[test]
 #[ignore = "requires the exact unpublished Core development-generation commit"]
 fn immutable_core_generation_reaches_guest_consumption_and_activation() {
-    let repository = local_core_repository();
+    let repository = github_core_repository();
     let temporary = TemporaryRoot::create();
     let root = temporary.path();
     let source_root = root.join("core-source");

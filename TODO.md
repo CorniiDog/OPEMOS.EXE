@@ -1535,8 +1535,14 @@ must be reported; a default-suite pass does not imply hardware certification.
   shallow-checkout failure: `adf372b` was present but pinned ancestor `7f90e45`
   was not an available object. The integration checkout now fetches exactly 56
   commits, covering the 55-commit fast-forward plus its pinned baseline without
-  requesting unrelated history. Debian and managed Fedora appliance boot remain
-  separate.
+  requesting unrelated history. The follow-up online-Core migration removes the
+  sibling-checkout fallback from both CI integration consumers, requires a
+  canonical GitHub `origin`, exact fetched `HEAD`, and exact immutable fixture
+  object before `git show`, and documents the verified cache workflow. A fresh
+  depth-56 canonical clone resolved `HEAD` to `adf372b857cd348b6a18680b45ffcea790f04d4b`
+  and the pinned boundary object to `7f90e45c4c154fdfda81ff594611cf533e4fb894`;
+  both ignored Core-backed integrations pass against that cache. Debian and
+  managed Fedora appliance boot remain separate.
 - [ ] Add bounded release-package smoke tests which start and close the packaged
   application and confirm no orphan QEMU processes remain. The experimental
   Ubuntu debug package now has the equivalent bounded AT-SPI launch/close and

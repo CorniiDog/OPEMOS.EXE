@@ -873,16 +873,7 @@ mod tests {
     }
 
     fn core_repository() -> PathBuf {
-        std::env::var_os("OPEMOS_CORE_CONTRACT_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .parent()
-                    .unwrap()
-                    .parent()
-                    .unwrap()
-                    .join("open-gpu-kernel-modules-steamos-support")
-            })
+        crate::core_test_repository::required_github_core_repository(CORE_SOURCE_INTENT_COMMIT)
     }
 
     fn export(repository: &Path, root: &Path, relative: &str) {

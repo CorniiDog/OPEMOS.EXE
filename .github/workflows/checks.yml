@@ -107,6 +107,7 @@ jobs:
           exact_core_source_intent_matrix_matches_rust_contract -- --ignored
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
+          OPEMOS_CORE_EXPECTED_COMMIT: adf372b857cd348b6a18680b45ffcea790f04d4b
 
       - name: Exercise authenticated Core guest handoff and activation
         run: >-
@@ -115,6 +116,7 @@ jobs:
           -- --ignored
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
+          OPEMOS_CORE_EXPECTED_COMMIT: adf372b857cd348b6a18680b45ffcea790f04d4b
 
       - name: Exercise disposable headless Linux image tools with TCG
         run: >-
