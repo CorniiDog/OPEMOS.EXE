@@ -734,6 +734,9 @@ elements.buildButton.addEventListener("click", async () => {
     generation: ++buildContextGeneration,
     requestId: crypto.randomUUID(),
     inputPath: currentImage,
+    sourceSelection: elements.nvidiaSource.value,
+    allowExperimentalUpstream: elements.nvidiaSource.value.startsWith("upstream:")
+      && elements.allowUpstreamBuild.checked,
     selectionGeneration: imageSelectionGeneration,
   };
   activeBuildContext = buildContext;
@@ -751,6 +754,8 @@ elements.buildButton.addEventListener("click", async () => {
   elements.chooseOutputFolder.disabled = true;
   elements.resetOutputFolder.disabled = true;
   elements.chooseImage.disabled = true;
+  elements.nvidiaSource.disabled = true;
+  elements.allowUpstreamBuild.disabled = true;
   elements.usbTarget.disabled = true;
   elements.refreshUsbTargets.disabled = true;
   elements.resultMessage.textContent = "Build progress opened in a separate window.";
@@ -769,9 +774,8 @@ elements.buildButton.addEventListener("click", async () => {
       requestId: buildContext.requestId,
       path: currentImage,
       name: currentImageName,
-      sourceSelection: elements.nvidiaSource.value,
-      allowExperimentalUpstream: elements.nvidiaSource.value.startsWith("upstream:")
-        && elements.allowUpstreamBuild.checked,
+      sourceSelection: buildContext.sourceSelection,
+      allowExperimentalUpstream: buildContext.allowExperimentalUpstream,
       exportMode: activeExportMode,
       outputDirectory,
     });
@@ -786,6 +790,8 @@ elements.buildButton.addEventListener("click", async () => {
     elements.chooseOutputFolder.disabled = false;
     elements.resetOutputFolder.disabled = false;
     elements.chooseImage.disabled = false;
+    elements.nvidiaSource.disabled = false;
+    elements.allowUpstreamBuild.disabled = false;
     elements.usbTarget.disabled = !hasUsbTargets();
     elements.refreshUsbTargets.disabled = false;
     updateBuildButton();
@@ -856,6 +862,8 @@ async function applyBuildFinished(completion) {
   buildRunning = false;
   elements.exportImage.disabled = false;
   elements.chooseImage.disabled = false;
+  elements.nvidiaSource.disabled = false;
+  elements.allowUpstreamBuild.disabled = false;
   elements.usbTarget.disabled = !hasUsbTargets();
   elements.refreshUsbTargets.disabled = false;
   updateBuildButton();
