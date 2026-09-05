@@ -500,7 +500,7 @@ already Core contracts and are not open-ended product choices.
   restart, cancellation, cleanup, and ENOSPC handoff matrix. A routine compatible
   lock addition must require neither a new EXE binary nor a reimage; unknown
   schema or trust-policy versions must stop safely.
-  - [ ] Core handoff requested 2026-09-05: complete the smallest inactive
+  - [x] Core handoff requested 2026-09-05: complete the smallest inactive
     guest-consumption gap by defining and implementing non-empty lineage
     handling for schema-1 `opemos-core-appliance-generation-handoff`. The
     current development consumer at `7f90e45c4c154fdfda81ff594611cf533e4fb894`
@@ -518,7 +518,15 @@ already Core contracts and are not open-ended product choices.
     no production key, endpoint, publication, activation, host transport, or
     boundary change. After that handoff, EXE can repin and extend its existing
     ignored end-to-end generation test to a non-empty successor lineage before
-    normal managed-appliance wiring.
+    normal managed-appliance wiring. Core completed the bounded consumer at exact
+    local commit `adf372b857cd348b6a18680b45ffcea790f04d4b`; its focused lineage
+    suite passed under the shared scheduler. EXE can consume that commit directly
+    from the sibling object database without remote publication: on 2026-09-05,
+    the repinned ignored Rust integration passed the complete existing zero-lineage
+    acquisition, installed-trust, pending-activation, appliance-staging, guest-
+    consumption, retirement, and acknowledgment path. Non-empty lineage staging
+    and its process-death/failure matrix remain EXE-owned work; no additional Core
+    contract gap is established by this baseline.
 - [x] Exercise the inactive appliance handoff in real subprocesses killed at
   all 38 existing staging, partial-file-receipt, and retirement hook boundaries.
   Fresh-process restart reauthenticates installed trust, reacquires locks,

@@ -26,10 +26,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-// This is the same exact, explicitly non-production Core generation used by
-// the source-intent integration test. It must not be promoted to the production
-// bundle pin merely because it is available in a local Core worktree.
-const DEVELOPMENT_HANDOFF_COMMIT: &str = "7f90e45c4c154fdfda81ff594611cf533e4fb894";
+// This exact, explicitly non-production Core successor adds authenticated
+// appliance-generation lineage consumption. It must not be promoted to the
+// production bundle pin merely because it is available in a local Core worktree.
+const DEVELOPMENT_HANDOFF_COMMIT: &str = "adf372b857cd348b6a18680b45ffcea790f04d4b";
 const HANDOFF_FILENAME: &str = "opemos-core-generation-handoff-v1.json";
 const DEVELOPMENT_OPERATION: &str = "development-generation-v1";
 const DEVELOPMENT_STEAMOS: &str = "3.8.14";
