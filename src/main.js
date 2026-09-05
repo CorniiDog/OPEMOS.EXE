@@ -436,6 +436,7 @@ async function checkEnvironment() {
 }
 
 async function loadNvidiaSourceBranches() {
+  if (!admitBuildSourceSelection(currentBuildSnapshot()).accepted) return;
   const generation = ++sourceBranchLoadGeneration;
   const previous = acceptedNvidiaSource;
   elements.nvidiaSource.disabled = true;
@@ -470,7 +471,10 @@ async function loadNvidiaSourceBranches() {
       elements.allowUpstreamBuild.checked = false;
     }
   } catch (error) {
-    if (generation === sourceBranchLoadGeneration) {
+    if (admitBuildSourceRefresh(currentBuildSnapshot(), {
+      generation,
+      currentGeneration: sourceBranchLoadGeneration,
+    }).accepted) {
       elements.resultMessage.textContent = `Could not load optional NVIDIA branches: ${error}`;
     }
   } finally {
