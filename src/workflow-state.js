@@ -42,6 +42,9 @@ export function deriveBuildAdmission(snapshot) {
   if (buildRunning && exportMode === null) {
     throw new Error("an active build requires its output mode");
   }
+  if (buildRunning && upstreamSelected && !upstreamApproved) {
+    throw new Error("an active upstream build requires explicit approval");
+  }
   if (hasCompletedOutput && !hasImage) {
     throw new Error("a completed output requires its selected image");
   }

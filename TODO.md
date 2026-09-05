@@ -1096,6 +1096,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     On 2026-09-05, the focused 32-case workflow/layout suite and all 134 frontend
     tests plus documentation, hygiene, and boundary integrity pass. The broader
     workflow transition model remains open.
+  - [x] Reject active upstream builds without retained explicit approval.
+    Upstream admission requires consent before mutation and source controls stay
+    locked throughout the build, so a missing approval now fails closed instead
+    of becoming an ordinary active-build snapshot. On 2026-09-05, the focused
+    32-case workflow/layout suite and all 134 frontend tests plus documentation,
+    hygiene, and boundary integrity pass. The broader workflow transition model
+    remains open.
 - [ ] Split oversized frontend workflow/log rendering code only where behavior
   can be covered by focused tests.
 - [x] Add a user-selectable image output folder and safe non-overwriting name.
