@@ -148,22 +148,16 @@
                     </div>
                     <span class="status">Inactive</span>
                 </div>
-                <p class="section-copy">Review the immutable Core and bundle identities plus every host evidence gate before explicitly authorizing a release run. This review does not publish, sign, or activate anything.</p>
+                <p class="section-copy">Review Core's immutable operation identity and complete asset inventory before explicitly authorizing creation or a missing-asset retry. This review does not publish, sign, or activate anything.</p>
                 <dl class="identity release-identity">
-                    <div><dt>Core commit</dt><dd id="release-core-commit">—</dd></div>
-                    <div><dt>Bundle</dt><dd id="release-bundle-id">—</dd></div>
-                    <div><dt>Bundle SHA-256</dt><dd id="release-bundle-sha256">—</dd></div>
-                    <div><dt>Release</dt><dd id="release-id">—</dd></div>
+                    <div><dt>Repository</dt><dd id="release-repository">—</dd></div>
+                    <div><dt>Tag</dt><dd id="release-tag">—</dd></div>
+                    <div><dt>Target commit</dt><dd id="release-target-commit">—</dd></div>
+                    <div><dt>Operation ID</dt><dd id="release-operation-id">—</dd></div>
                 </dl>
-                <ul class="release-gates" aria-label="Release evidence gates">
-                    <li>Package <strong data-release-gate="package">pending</strong></li>
-                    <li>Build <strong data-release-gate="build">pending</strong></li>
-                    <li>Signature <strong data-release-gate="signature">pending</strong></li>
-                    <li>Checksum <strong data-release-gate="checksum">pending</strong></li>
-                    <li>Provenance <strong data-release-gate="provenance">pending</strong></li>
-                </ul>
+                <ul id="release-assets" class="release-assets" aria-label="Immutable release asset inventory"></ul>
                 <button id="authorize-release" class="primary" type="button" disabled>Authorize Exact Release Run</button>
-                <p id="release-plan-status" class="message" role="status" aria-live="polite">No immutable release plan loaded.</p>
+                <p id="release-plan-status" class="message" role="status" aria-live="polite">No immutable Core release operation loaded.</p>
             </div>
             <div>
                 <p class="eyebrow">Maintainer actions</p>

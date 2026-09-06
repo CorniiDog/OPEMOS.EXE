@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://corniidog.github.io/OPEMOS/contracts/schemas/release-operation-v1.schema.json",
+  "title": "OPEMOS immutable release operation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "operationId", "repository", "tag", "targetCommit", "attempt", "lifecycle", "decision", "assets"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "operationId": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "tag": {"type": "string", "minLength": 1, "maxLength": 200},
+    "targetCommit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "attempt": {"type": "integer", "minimum": 1, "maximum": 1000},
+    "lifecycle": {"enum": ["planned", "reconciling", "succeeded", "failed", "cancelled"]},
+    "decision": {"enum": ["create", "retry-missing", "already-complete", "conflict", "cancelled"]},
+    "assets": {
+      "type": "array", "minItems": 4, "maxItems": 16,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "sha256", "bytes", "state"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,254}$"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "bytes": {"type": "integer", "minimum": 1, "maximum": 2147483648},
+          "state": {"enum": ["pending", "present", "missing", "conflict"]}
+        }
+      }
+    },
+    "message": {"type": "string", "maxLength": 500}
+  }
+}

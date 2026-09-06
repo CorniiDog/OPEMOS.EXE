@@ -443,6 +443,19 @@ installation targets, production activation, or hardware certification.
   trust, or activation path is connected. On 2026-09-06, 7 focused and all 197
   frontend tests pass with documentation, hygiene, and boundary integrity.
 
+- [x] Bind the inactive maintainer release review to Core's canonical closed
+  release-operation schema from authenticated GitHub commit
+  `8ebaccac5f0969da4955931d094f3cb47a587ef5`. The exact schema bytes have
+  SHA-256 `84cbb630e69cbd3d1bbee351ab65123a5afb8567700a15a2a963887a6bfc0609`.
+  Render repository, tag, target commit, operation ID, attempt, lifecycle,
+  decision, message, and every asset identity/state. Explicit authorization is
+  available only for a closed `planned/create` inventory or a missing-only
+  `reconciling/retry-missing` inventory; already-complete, conflict, cancelled,
+  malformed, additive, duplicate, and oversized inputs remain closed. This
+  fixture consumer does not invoke Core, publish, sign, use credentials, access
+  the network at runtime, or activate production. On 2026-09-06, 8 focused and
+  all 198 frontend tests pass with documentation, hygiene, and boundary integrity.
+
 ### 1. Complete the OPEMOS Core migration
 
 Production generation activation is intentionally blocked until the maintainer
