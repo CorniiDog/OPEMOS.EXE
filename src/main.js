@@ -132,6 +132,7 @@ let githubMaintainer = null;
 let githubLoginPoll = 0;
 const githubStatusGate = createLatestRequestGate();
 const settingsGate = createLatestRequestGate();
+const environmentCheckGate = createLatestRequestGate();
 let githubLoginPending = false;
 let autoReleaseVerificationPending = false;
 let settingsSavePending = false;
@@ -457,8 +458,10 @@ function setSettingsOpen(opened) {
 }
 
 async function checkEnvironment() {
+  const generation = environmentCheckGate.begin();
   try {
     const environment = await invoke("check_builder_environment");
+    if (!environmentCheckGate.isCurrent(generation)) return;
     const presentation = presentHostEnvironment(environment);
     hostReady = presentation.ready;
     elements.environmentTitle.textContent = presentation.title;
@@ -467,13 +470,14 @@ async function checkEnvironment() {
     elements.environmentStatus.textContent = presentation.status;
     elements.environmentStatus.className = `status ${presentation.ready ? "" : "failed"}`;
   } catch (error) {
+    if (!environmentCheckGate.isCurrent(generation)) return;
     hostReady = false;
     elements.environmentTitle.textContent = "Environment check failed";
     elements.environmentMessage.textContent = String(error);
     elements.environmentStatus.textContent = "Failed";
     elements.environmentStatus.className = "status failed";
   }
-  updateBuildButton();
+  if (environmentCheckGate.isCurrent(generation)) updateBuildButton();
 }
 
 async function loadNvidiaSourceBranches() {

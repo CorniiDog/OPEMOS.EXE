@@ -283,6 +283,14 @@ test("maintainer status refreshes reject stale successes and errors", () => {
   assert.match(script, /catch \(error\) \{[\s\S]*if \(poll !== githubLoginPoll\) return;[\s\S]*githubLoginPending = false;[\s\S]*if \(!githubStatusGate\.isCurrent\(generation\)\)[\s\S]*renderSettings\(\);[\s\S]*return;/);
 });
 
+test("environment checks commit only the latest readiness result", () => {
+  assert.match(script, /const environmentCheckGate = createLatestRequestGate\(\)/);
+  assert.match(script, /async function checkEnvironment\(\) \{\n  const generation = environmentCheckGate\.begin\(\)/);
+  assert.match(script, /const environment = await invoke\("check_builder_environment"\);\n    if \(!environmentCheckGate\.isCurrent\(generation\)\) return;\n    const presentation/);
+  assert.match(script, /catch \(error\) \{\n    if \(!environmentCheckGate\.isCurrent\(generation\)\) return;[\s\S]*?hostReady = false;/);
+  assert.match(script, /if \(environmentCheckGate\.isCurrent\(generation\)\) updateBuildButton\(\);/);
+});
+
 test("compact main window height agrees between web content and Tauri", () => {
   const mainWindow = tauriConfig.app.windows.find(({ label }) => label === "main");
   assert.equal(mainWindow.height, 800);
