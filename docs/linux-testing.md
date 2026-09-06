@@ -169,14 +169,21 @@ failure, it waits for the isolated process group to disappear, restores
 preexisting files, and removes only a schema proven absent before launch. A
 launcher SIGKILL can still bypass this in-process restoration.
 
-Create a local Ubuntu-built **debug Debian archive** without installing it:
+Create local Ubuntu-built **debug Debian and AppImage artifacts** without
+installing either artifact:
 
 ```bash
 "$OPEMOS_HEAVY" npm run build:linux-test
 "$OPEMOS_HEAVY" npm run test:package-linux
+"$OPEMOS_HEAVY" python3 scripts/check_linux_appimage.py
 ```
 
-
+The AppImage check requires exactly one regular executable x86_64 AppImage,
+uses extract-and-run mode so FUSE is not required, and invokes only the
+packaged `resolve-core-driver` command. It hash-binds the closed local Core
+fixture and verifies the returned artifact and exact target. It does not open a
+window, access the network, download a driver, or activate anything. The
+AppImage remains an experimental unsigned debug artifact and is not published.
 
 CI separately builds the same debug-only application in the pinned Debian
 12.15 amd64 container with:
@@ -186,6 +193,7 @@ export OPEMOS_EXPERIMENTAL_LINUX=1
 export OPEMOS_LINUX_ACCEL=tcg
 npm run build:debian12-test
 python3 scripts/check_linux_packaging.py --expected-libc 2.36 --expected-openssl libssl3
+python3 scripts/check_linux_appimage.py
 ```
 
 The Debian-specific configuration changes only the declared glibc/OpenSSL
@@ -212,9 +220,10 @@ dpkg-deb -x 'src-tauri/target/debug/bundle/deb/OPEMOS EXE Linux Test_0.1.0_amd64
 ```
 
 The smoke inherits the graphical session environment, including its AT-SPI bus
-and accessibility bridge setting. Because the shared scheduler caps this command
-at 2 GiB while managed appliances require 6 GiB, `--expect-host-unavailable`
-requires the experimental window, readiness section, and unavailable heading and
+and accessibility bridge setting. The shared scheduler supplies the current
+one-CPU/6 GiB test budget, while this package smoke runs without an approved KVM
+path. `--expect-host-unavailable` requires the experimental window, readiness
+section, and unavailable heading and
 the exact ordered explanation that KVM is unavailable, TCG requires explicit
 selection, and automatic fallback is disabled. The unavailable surface must
 expose exactly Settings, image selection, and Valve's download page as buttons;

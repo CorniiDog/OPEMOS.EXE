@@ -27,7 +27,7 @@ export function linuxTestPlan({ platform, arch, env, args }) {
   const config = args[0] === "build-debian12"
     ? "tauri.linux-debian12-test.conf.json"
     : "tauri.linux-test.conf.json";
-  return [build ? "build" : "dev", ...(build ? ["--debug", "--bundles", "deb"] : []),
+  return [build ? "build" : "dev", ...(build ? ["--debug", "--bundles", "deb,appimage"] : []),
     "--config", path.join(root, "src-tauri", config)];
 }
 

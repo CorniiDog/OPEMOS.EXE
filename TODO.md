@@ -832,7 +832,23 @@ already Core contracts and are not open-ended product choices.
     an authorized Core input and was not retried. Production discovery, trust
     roots, downloads, and activation remain gated. PR
     https://github.com/CorniiDog/OPEMOS.EXE/pull/45 preserves pre-squash commit
-    `58f79d7`; required checks and squash-commit evidence remain pending.
+    `58f79d7` plus evidence commit `62af319`; all required duplicated checks
+    passed and the PR squash-merged as
+    `437d55f65b8d56d4b0039e63cd61279d6a00a920`.
+  - [x] Package the same experimental debug application as a portable x86_64
+    AppImage alongside the Debian archive. Both Ubuntu and pinned Debian 12
+    build plans request the exact `deb,appimage` target pair. CI requires one
+    regular executable x86_64 ELF AppImage, runs it in extract-and-run mode,
+    invokes only the packaged `resolve-core-driver`, hash-binds the closed local
+    schema-2 fixture, and verifies the exact selected artifact and target.
+    The local scheduler-limited Debian 12 build produced both bundles; the
+    AppImage check passed with SHA-256
+    `a72f60844ac3516032c1b74b95d20d447cadda928673856aa8dcd677eeaa9cf7`,
+    and the companion Debian archive inspection passed with SHA-256
+    `62d19731b83d156678157f0488c034a2092800a4ff2d175c90c41f153d373dc7`.
+    No package was installed, no graphical application opened, and no network
+    request, driver download, publication, production activation, KVM, or
+    hardware operation occurred. PR and squash evidence follow.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,

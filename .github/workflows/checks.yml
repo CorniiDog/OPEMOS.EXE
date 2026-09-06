@@ -174,6 +174,9 @@ jobs:
           python3 scripts/check_linux_packaging.py
           --expected-libc 2.36 --expected-openssl libssl3
 
+      - name: Exercise the portable AppImage resolver without a graphical session
+        run: python3 scripts/check_linux_appimage.py
+
       - name: Install and purge the package in the disposable Debian container
         run: >-
           dbus-run-session -- xvfb-run --auto-servernum
