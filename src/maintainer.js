@@ -63,6 +63,7 @@ const branchListGate = createLatestRequestGate();
 const checkoutReviewGate = createLatestRequestGate();
 const recentWorktreeGate = createLatestRequestGate();
 const worktreeSelectionGate = createLatestRequestGate();
+const vscodeOpenGate = createLatestRequestGate();
 let preserveWorktreeSelectionRequest = false;
 
 installKeyboardBindings([
@@ -117,6 +118,7 @@ function resetPlan({ invalidateRequest = true } = {}) {
   checkoutReviewGate.begin();
   recentWorktreeGate.begin();
   worktreeSelectionGate.begin();
+  vscodeOpenGate.begin();
   workspaceGeneration += 1;
   plannedRepository = null;
   plannedSource = null;
@@ -268,6 +270,7 @@ function renderWorktree(worktree) {
   branchListGate.begin();
   checkoutReviewGate.begin();
   recentWorktreeGate.begin();
+  vscodeOpenGate.begin();
   if (!preserveWorktreeSelectionRequest) worktreeSelectionGate.begin();
   workspaceGeneration += 1;
   localWorktree = worktree;
@@ -436,6 +439,7 @@ elements.makeWorktree.addEventListener("click", async () => {
 });
 
 elements.openVscode.addEventListener("click", async () => {
+  const requestGeneration = vscodeOpenGate.begin();
   if (!localWorktree || !plannedRepository) return;
   const context = {
     generation: workspaceGeneration,
@@ -448,7 +452,8 @@ elements.openVscode.addEventListener("click", async () => {
     const refreshed = await invoke("open_maintainer_worktree_in_vscode", {
       path: context.path, repository: context.repository,
     });
-    if (!operationContextMatches(context, {
+    if (!vscodeOpenGate.isCurrent(requestGeneration)
+      || !operationContextMatches(context, {
       generation: workspaceGeneration,
       path: localWorktree?.path,
       repository: plannedRepository,
@@ -456,7 +461,8 @@ elements.openVscode.addEventListener("click", async () => {
     renderWorktree(refreshed);
     elements.worktreeMessage.textContent = "Opened the validated worktree in VS Code.";
   } catch (error) {
-    if (!operationContextMatches(context, {
+    if (!vscodeOpenGate.isCurrent(requestGeneration)
+      || !operationContextMatches(context, {
       generation: workspaceGeneration,
       path: localWorktree?.path,
       repository: plannedRepository,

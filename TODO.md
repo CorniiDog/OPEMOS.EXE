@@ -986,6 +986,14 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     request-gate/maintainer suite passes 12/12 and all 180 frontend tests plus
     documentation, hygiene, and boundary integrity pass on 2026-09-06. Other
     async workers remain under the parent lifecycle item.
+  - [x] Give VS Code open/revalidation requests a dedicated generation,
+    invalidated by plan reset and worktree replacement. Older same-worktree
+    successes and errors cannot replace the current worktree, status, or controls;
+    every accepted result still revalidates the exact generation, path, and
+    repository. The focused request-gate/maintainer suite passes 13/13 and all
+    181 frontend tests plus documentation, hygiene, and boundary integrity pass
+    on 2026-09-06. No VS Code process was launched during validation. Other
+    async workers remain under the parent lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.
