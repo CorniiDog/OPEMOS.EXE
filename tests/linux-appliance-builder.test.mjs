@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, cp, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 const scriptUrl = new URL("../builder/appliance/build_linux.sh", import.meta.url);
@@ -40,9 +43,96 @@ test("Linux appliance preparation requires authenticated checksums and atomic ou
   const script = await readFile(scriptUrl, "utf8");
   assert.match(script, /command -v "\$tool"[\s\S]*Required tool not found/);
   assert.match(script, /gpgv[\s\S]*--keyring "\$GPG_PATH"[\s\S]*--output "\$VERIFIED_CHECKSUM"/);
-  assert.match(script, /grep "\$IMAGE_NAME" "\$VERIFIED_CHECKSUM"[\s\S]*sha256sum -c -/);
+  assert.match(script, /gpgv[\s\S]*CHECKSUM_LINE_PREFIX[\s\S]*EXPECTED_IMAGE_SHA256/);
   assert.doesNotMatch(script, /Falling back|without signature validation/);
   assert.match(script, /OUTPUT_TEMP="\$\{OUTPUT_IMAGE\}\.partial"[\s\S]*trap cleanup_partial_outputs EXIT/);
   assert.match(script, /qemu-img check "\$OUTPUT_TEMP"[\s\S]*mv "\$OUTPUT_TEMP" "\$OUTPUT_IMAGE"[\s\S]*mv "\$METADATA_TEMP" "\$METADATA_PATH"/);
   assert.match(script, /"checksumSignatureVerified": signature_verified == "1"/);
+});
+
+
+const prepareFakeEnvironment = async (imageBytes) => {
+  const root = await mkdtemp(join(tmpdir(), "opemos-linux-appliance-cache-"));
+  const applianceDir = join(root, "builder", "appliance");
+  const fakeBin = join(root, "bin");
+  const fixtures = join(root, "fixtures");
+  await mkdir(applianceDir, { recursive: true });
+  await mkdir(fakeBin);
+  await mkdir(fixtures);
+  await cp(scriptUrl, join(applianceDir, "build_linux.sh"));
+  const image = join(fixtures, "image.qcow2");
+  const checksum = join(fixtures, "checksum");
+  const keyring = join(fixtures, "fedora.gpg");
+  const digest = createHash("sha256").update(imageBytes).digest("hex");
+  await writeFile(image, imageBytes);
+  await writeFile(checksum, `SHA256 (Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2) = ${digest}\n`);
+  await writeFile(keyring, "bounded test keyring\n");
+  const tools = {
+    uname: `#!/bin/sh\n[ "$1" = "-s" ] && echo Linux || echo x86_64\n`,
+    curl: `#!/bin/sh\nout=\nurl=\nwhile [ "$#" -gt 0 ]; do\n  case "$1" in\n    --output) out=$2; shift 2 ;;\n    --fail|--location|--progress-bar|--silent|--show-error) shift ;;\n    *) url=$1; shift ;;\n  esac\ndone\ncase "$url" in\n  *-CHECKSUM) cp "$FIXTURE_CHECKSUM" "$out" ;;\n  *fedora.gpg) cp "$FIXTURE_KEYRING" "$out" ;;\n  *.qcow2) cp "$FIXTURE_IMAGE" "$out" ;;\n  *) exit 91 ;;\nesac\n`,
+    gpgv: `#!/bin/sh\nout=\ninput=\nwhile [ "$#" -gt 0 ]; do\n  case "$1" in\n    --keyring) shift 2 ;;\n    --output) out=$2; shift 2 ;;\n    *) input=$1; shift ;;\n  esac\ndone\ncp "$input" "$out"\n`,
+    "qemu-img": "#!/bin/sh\n[ \"$1\" = check ]\n",
+  };
+  await Promise.all(Object.entries(tools).map(async ([name, body]) => {
+    const path = join(fakeBin, name);
+    await writeFile(path, body);
+    await chmod(path, 0o755);
+  }));
+  return {
+    root,
+    applianceDir,
+    image,
+    checksum,
+    keyring,
+    digest,
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}:/usr/bin:/bin`,
+      FIXTURE_IMAGE: image,
+      FIXTURE_CHECKSUM: checksum,
+      FIXTURE_KEYRING: keyring,
+    },
+  };
+};
+
+test("corrupt cached appliance is replaced only after authenticated verification", async () => {
+  const fixture = await prepareFakeEnvironment(Buffer.from("authenticated Fedora image\n"));
+  const cache = join(fixture.applianceDir, "work", "Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2");
+  const output = join(fixture.root, "result.qcow2");
+  await mkdir(join(fixture.applianceDir, "work"));
+  await writeFile(cache, "corrupt cache\n");
+  const result = spawnSync("bash", [join(fixture.applianceDir, "build_linux.sh"), "--output", output], {
+    encoding: "utf8",
+    env: fixture.env,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Cached Fedora Cloud image is invalid; downloading an authenticated replacement/);
+  assert.deepEqual(await readFile(cache), await readFile(fixture.image));
+  assert.deepEqual(await readFile(output), await readFile(fixture.image));
+  const metadata = JSON.parse(await readFile(`${output}.metadata.json`, "utf8"));
+  assert.equal(metadata.fedora.imageSha256, fixture.digest);
+  assert.equal(metadata.fedora.checksumSignatureVerified, true);
+});
+
+test("failed authenticated replacement preserves the prior corrupt cache", async () => {
+  const fixture = await prepareFakeEnvironment(Buffer.from("downloaded but unauthenticated\n"));
+  await writeFile(
+    fixture.checksum,
+    `SHA256 (Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2) = ${"0".repeat(64)}\n`,
+  );
+  const work = join(fixture.applianceDir, "work");
+  const cache = join(work, "Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2");
+  const output = join(fixture.root, "result.qcow2");
+  const original = Buffer.from("preserve this corrupt cache\n");
+  await mkdir(work);
+  await writeFile(cache, original);
+  const result = spawnSync("bash", [join(fixture.applianceDir, "build_linux.sh"), "--output", output], {
+    encoding: "utf8",
+    env: fixture.env,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /did not match the signed checksum/);
+  assert.deepEqual(await readFile(cache), original);
+  await assert.rejects(readFile(`${cache}.download.partial`));
+  await assert.rejects(readFile(output));
 });

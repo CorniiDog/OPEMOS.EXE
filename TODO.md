@@ -1731,6 +1731,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   phases, and preserve a stable no-space/quota reason on write failures.
 - [ ] Detect corrupt cached appliances and recover only through an authenticated
   replacement.
+  - [x] The Linux Fedora builder now authenticates the signed checksum before
+    trusting cached image bytes. A corrupt cache entry is replaced only after a
+    temporary download matches that authenticated SHA-256; download or hash
+    failure removes only the temporary file and preserves the prior cache. Five
+    focused builder tests cover valid resolution, malformed options, mandatory
+    signatures, successful corrupt-cache replacement, and failed-replacement
+    preservation. Packaged/native appliance cache recovery remains open.
 - [ ] Move large generated guest scripts into versioned templates when doing so
   improves reviewability without weakening fixed-operation boundaries.
 - [ ] Measure decompression, transfer, VM boot, mutation, export, and USB speed;
