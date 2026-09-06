@@ -870,6 +870,10 @@ already Core contracts and are not open-ended product choices.
     allocated bytes. Focused validation passes 5/5. This slice downloads no ISO,
     creates no disk or credential, starts no VM, accesses no network, and does
     not alter production discovery, trust, activation, KVM, or hardware gates.
+    Remote CI and review require publishing source commit `6211884` on branch
+    `work/exe-windows-vm-containment` to configured origin
+    `https://github.com/CorniiDog/steamos-nvidia-image-builder.git`; PR and
+    squash evidence follow.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
