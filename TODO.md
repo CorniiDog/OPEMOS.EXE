@@ -858,6 +858,22 @@ already Core contracts and are not open-ended product choices.
     `work/exe-linux-appimage-package` to configured origin
     `https://github.com/CorniiDog/steamos-nvidia-image-builder.git`; source commit
     `c03a1d6` contains only this bounded slice. PR and squash evidence follow.
+  - [x] Establish the repository-local Windows packaging VM containment before
+    obtaining installation media or creating a guest. The gitignored
+    `local-inputs/windows-vm/` tree has an exact private seven-directory layout,
+    a create-only OPEMOS.EXE identity marker, current-user ownership and strict
+    `0700`/`0600` modes. Inspection rejects links, special files, foreign root
+    entries, changed identity, excessive traversal, and storage-limit breaches;
+    sparse logical and allocated bytes are accounted separately under the
+    recorded 8 GiB source, 12 GiB overlay, 40 GiB soft-total, and 55 GiB
+    hard-total bounds. The real empty root reports 74 logical bytes and 4096
+    allocated bytes. Focused validation passes 5/5. This slice downloads no ISO,
+    creates no disk or credential, starts no VM, accesses no network, and does
+    not alter production discovery, trust, activation, KVM, or hardware gates.
+    Remote CI and review require publishing source commit `6211884` on branch
+    `work/exe-windows-vm-containment` to configured origin
+    `https://github.com/CorniiDog/steamos-nvidia-image-builder.git`; PR and
+    squash evidence follow.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,

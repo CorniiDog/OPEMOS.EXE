@@ -1,4 +1,5 @@
 node_modules
+local-inputs/windows-vm/
 src-tauri/target/
 .venv
 __pycache__/
