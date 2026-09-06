@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, cp, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -135,4 +135,59 @@ test("failed authenticated replacement preserves the prior corrupt cache", async
   assert.deepEqual(await readFile(cache), original);
   await assert.rejects(readFile(`${cache}.download.partial`));
   await assert.rejects(readFile(output));
+});
+
+
+test("termination during authenticated replacement download preserves cache and removes partial bytes", async () => {
+  const fixture = await prepareFakeEnvironment(Buffer.from("replacement image\n"));
+  const work = join(fixture.applianceDir, "work");
+  const cache = join(work, "Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2");
+  const partial = `${cache}.download.partial`;
+  const marker = join(fixture.root, "download-started");
+  const original = Buffer.from("existing corrupt cache\n");
+  await mkdir(work);
+  await writeFile(cache, original);
+  const curlPath = join(fixture.root, "bin", "curl");
+  await writeFile(curlPath, `#!/bin/sh
+out=
+url=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output) out=$2; shift 2 ;;
+    --fail|--location|--progress-bar|--silent|--show-error) shift ;;
+    *) url=$1; shift ;;
+  esac
+done
+case "$url" in
+  *-CHECKSUM) cp "$FIXTURE_CHECKSUM" "$out" ;;
+  *fedora.gpg) cp "$FIXTURE_KEYRING" "$out" ;;
+  *.qcow2)
+    printf partial > "$out"
+    : > "$DOWNLOAD_STARTED_MARKER"
+    sleep 30
+    ;;
+  *) exit 91 ;;
+esac
+`);
+  await chmod(curlPath, 0o755);
+  const child = spawn("bash", [join(fixture.applianceDir, "build_linux.sh")], {
+    detached: true,
+    env: { ...fixture.env, DOWNLOAD_STARTED_MARKER: marker },
+    stdio: "ignore",
+  });
+  const deadline = Date.now() + 5000;
+  while (true) {
+    try {
+      await readFile(marker);
+      break;
+    } catch (error) {
+      if (error.code !== "ENOENT" || Date.now() >= deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  process.kill(-child.pid, "SIGTERM");
+  const status = await new Promise((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
+  assert.notEqual(status.code, 0);
+  assert.deepEqual(await readFile(cache), original);
+  await assert.rejects(readFile(partial));
 });
