@@ -874,6 +874,18 @@ already Core contracts and are not open-ended product choices.
     `work/exe-windows-vm-containment` to configured origin
     `https://github.com/CorniiDog/steamos-nvidia-image-builder.git`; PR and
     squash evidence follow.
+  - [x] Add the local Windows evaluation-media identity boundary before download
+    or unattended installation. It accepts only one exact schema-1 Windows 11
+    Enterprise Evaluation x86_64 identity from canonical Microsoft HTTPS,
+    bounded to an 8 GiB ISO with explicit filename, release, size, and lowercase
+    SHA-256. Verification requires a current-user-owned regular source file in
+    the contained tree with immutable mode `0400`, then streams and matches the
+    exact bytes. Closed tests reject HTTP and deceptive hosts, unknown fields,
+    unsupported architecture, oversize input, mutable permissions, wrong size,
+    and wrong digest. Focused Windows validation passes 7/7. This slice performs
+    no download, ISO derivation, unattended generation, disk creation, network
+    access, VM launch, production discovery/trust/activation, KVM, or hardware
+    operation. PR and squash evidence follow.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,

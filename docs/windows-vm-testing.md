@@ -32,3 +32,24 @@ credentials, start QEMU, access a network, or activate Core discovery or
 production trust. Later VM operations remain serialized through the shared
 `heavy.sh` wrapper and must retain loopback-only SSH, no host-disk passthrough,
 and local closed compatibility inputs.
+
+
+## Bind official evaluation media
+
+Before an ISO may be used, create a local identity document with the exact
+schema accepted by `scripts/windows-media.mjs`. It binds the canonical Microsoft
+HTTPS source, Windows 11 Enterprise Evaluation product and edition, x86_64
+architecture, release label, filename, byte size, and lowercase SHA-256. Then
+make the downloaded ISO read-only and verify it locally:
+
+```bash
+chmod 0400 local-inputs/windows-vm/sources/windows-eval.iso
+node scripts/windows-media.mjs verify local-inputs/windows-vm/manifests/windows-media.json
+```
+
+Verification refuses non-Microsoft or non-HTTPS origins, additional or missing
+identity fields, unsupported products or architectures, files above 8 GiB,
+links, mutable permissions, size mismatch, and byte-hash mismatch. The identity
+document and ISO remain ignored local inputs. This verifier does not download
+media, choose a mutable release, or authenticate an absent Microsoft signature;
+the exact official release and digest must be recorded before acquisition.
