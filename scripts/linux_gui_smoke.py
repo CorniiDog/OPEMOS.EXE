@@ -307,7 +307,7 @@ def validate_locale_selector(app, settings):
         "日本語（日本）", "العربية",
     ]
     for label in expected:
-        option = exactly_one(app, label)
+        option = exactly_one(settings, label)
         if option.get_role_name() not in {"table cell", "menu item", "list item"}:
             raise RuntimeError(f"Accessible locale option {label!r} has an unexpected role.")
     invoke(combo)

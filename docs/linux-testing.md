@@ -19,9 +19,12 @@ runs the real `/etc/os-release` host inventory with explicit TCG, builds the
 debug test package against Debian's glibc 2.36 and OpenSSL 3 baseline, and
 inspects it, then installs and purges it inside that disposable Debian container
 while verifying package state, installed binary bytes, desktop-entry identity,
-and residue-free cleanup. It does not launch the application. Debian graphical
-behavior,
-managed-appliance boot, KVM, and hardware remain unvalidated.
+and residue-free cleanup. CI also launches the installed debug application in an
+isolated Xvfb and D-Bus session beneath a child-process subreaper, exercises the bounded AT-SPI unavailable-host,
+chooser, Settings, compatibility-dialog, focus, process-group, and QEMU-orphan
+checks, then purges the package even when the graphical check fails. A physical
+Debian graphical desktop, managed-appliance boot, KVM, and hardware remain
+unvalidated.
 A development binary and the extracted debug-package binary have launched and
 closed in an Ubuntu 24.04.4 Wayland session, with no remaining launcher or EXE
 processes. The package was not installed. Tauri capabilities are scoped per window:

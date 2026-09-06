@@ -44,6 +44,8 @@ class GuiSmokeTests(unittest.TestCase):
         app = FakeNode(children=[combo, *options])
         smoke.validate_locale_selector(app, app)
         self.assertTrue(combo.invoked)
+        mirrored_app = FakeNode(children=[app, *[FakeNode(label, role="menu item") for label in labels]])
+        smoke.validate_locale_selector(mirrored_app, app)
         options[-1].role = "paragraph"
         with self.assertRaisesRegex(RuntimeError, "unexpected role"):
             smoke.validate_locale_selector(app, app)
