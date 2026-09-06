@@ -905,7 +905,11 @@ already Core contracts and are not open-ended product choices.
     WebView2, accessibility, recovery, or device services. Focused Windows tests
     pass 11/11. No real credential was generated, ISO derived, disk created,
     network accessed, VM launched, or production trust/activation/hardware path
-    enabled. PR and squash evidence follow.
+    enabled. The complete JavaScript suite passes 220/220 with documentation,
+    hygiene, and diff checks. Remote CI and review require publishing source
+    commit `4c05e6d` on branch `work/exe-windows-unattend-plan` to configured
+    origin `https://github.com/CorniiDog/steamos-nvidia-image-builder.git`; PR
+    and squash evidence follow.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
