@@ -885,7 +885,11 @@ already Core contracts and are not open-ended product choices.
     and wrong digest. Focused Windows validation passes 7/7. This slice performs
     no download, ISO derivation, unattended generation, disk creation, network
     access, VM launch, production discovery/trust/activation, KVM, or hardware
-    operation. PR and squash evidence follow.
+    operation. The complete JavaScript suite passes 216/216 with documentation,
+    hygiene, and diff checks. Remote CI and review require publishing source
+    commit `e54a82c` on branch `work/exe-windows-media-plan` to configured origin
+    `https://github.com/CorniiDog/steamos-nvidia-image-builder.git`; PR and squash
+    evidence follow.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
