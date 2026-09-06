@@ -100,3 +100,20 @@ for exact size, matched to Microsoft's published EN-US digest, changed to mode
 `0400`, and independently rehashed by `windows-media.mjs`. Total containment
 allocation was `7092822016` bytes after verification. The official ISO remains
 an immutable local input and is never committed or redistributed.
+
+## Private answer media
+
+The official Windows ISO stays unchanged. `windows-installer-media.mjs create`
+builds a separate small answer ISO from only the generated private pair. It
+checks their ownership, mode, size, reviewed markers, and resolved placeholders,
+then invokes `genisoimage` with fixed Joliet and Rock Ridge graft names. Output
+is create-only and removed if creation or post-validation fails.
+
+The first local answer media is 374784 bytes with SHA-256
+`7c4feeccb81b890fa50b999e2af60af63e37f5b43100d0fc5dd945ad103543ae`.
+Both Joliet and Rock Ridge inventories contain exactly `autounattend.xml` and
+`opemos-provision.ps1`. Its unique ED25519 public-key fingerprint is
+`SHA256:yE5d5TQXr4G63Hd5dPlMs4HJiQ5kENP3j5BqRL29O1o`; private key and password
+remain unprinted mode-`0600` runtime inputs. Total containment allocation is
+`7093252096` bytes. These derived secrets must be removed after provisioning and
+before sealing the base.
