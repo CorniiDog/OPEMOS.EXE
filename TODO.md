@@ -1024,6 +1024,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     184 frontend tests plus documentation, hygiene, and boundary integrity pass
     on 2026-09-06. No network source refresh ran during validation. Other async
     workers remain under the parent lifecycle item.
+  - [x] Replace the compatibility-preview controller's exposed mutable revision
+    counter with the shared overflow-safe latest-request gate. Existing clear,
+    close, explicit-failure, pending-file-read, and native-preview invalidation
+    semantics remain intact. The focused compatibility/generation suite passes
+    21/21 and all 185 frontend tests plus documentation, hygiene, and boundary
+    integrity pass on 2026-09-06. Other async workers remain under the parent
+    lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.

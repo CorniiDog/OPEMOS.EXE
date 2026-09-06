@@ -70,6 +70,17 @@ test("Unknown origin, schema, status and non-text fields never produce a preview
   assert.ok(new Map(long.rows).get("Message").length < 2100);
 });
 
+test("compatibility controller uses the shared private request gate", async () => {
+  const script = await readFile(new URL("../src/compatibility-preview.js", import.meta.url), "utf8");
+  assert.match(script, /import \{ createLatestRequestGate \} from "\.\/async-generation\.js"/);
+  assert.match(script, /const requestGate = createLatestRequestGate\(\)/);
+  assert.match(script, /const current = requestGate\.begin\(\)/);
+  assert.match(script, /if \(!requestGate\.isCurrent\(current\)\) return;/);
+  assert.match(script, /clear\(\) \{\n      requestGate\.begin\(\);/);
+  assert.match(script, /fail\(error\) \{\n      requestGate\.begin\(\);/);
+  assert.doesNotMatch(script, /let revision = 0|revision \+= 1|\+\+revision/);
+});
+
 test("Newer requests win and stale errors cannot replace a newer result", async () => {
   const first = defer(), second = defer(), states = [], requests = [];
   const controller = createCompatibilityPreviewController((name, args) => {
