@@ -1505,6 +1505,18 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     a network translation service. Focused locale, compatibility, and layout tests
     pass 43/43, and all 160 frontend tests pass under the serialized heavy wrapper.
     Documentation and repository integrity validation are recorded with the PR.
+  - [x] Extend the packaged Ubuntu AT-SPI smoke over the delivered locale selector
+    and capture translated compatibility surfaces. The smoke now requires the exact
+    System default, English, German, Japanese, and Arabic plain-text options, rejects
+    missing, duplicate, or unexpected-role options, and keeps the existing complete
+    English compatibility flow. On Ubuntu 24.04.4 GNOME Wayland, explicit choices
+    rendered OPEMOS-only inspector crops for `de-DE` at 453x481 (RGB variance
+    423.1/334.9/290.1), `ja-JP` at 453x440 (441.7/348.3/298.0), and RTL `ar` at
+    453x473 (432.1/491.8/500.6); all were non-flat with broad channel extrema.
+    Frame and crop bytes were discarded in memory, the exact test lease was
+    released, application processes stopped, and no new QEMU remained. The focused
+    30-case smoke-harness suite and packaged live accessibility smoke pass; full
+    validation and PR evidence follow on this branch.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
   heartbeats or free-form log text. Unknown structured phases now retain only
   their bounded label and current validation/installation context: even a

@@ -171,7 +171,10 @@ It accepts only the accessibility application
 whose process ID matches the process it launched, then opens Settings and the
 read-only Core compatibility inspector. In the tested unauthenticated package
 session, the Settings landmark must expose exactly Close, the two enabled update
-preferences, Connect GitHub, and the compatibility inspector in that focus order.
+preferences, the local language selector, Connect GitHub, and the compatibility
+inspector in that focus order. Opening the selector must expose exactly System
+default, English (United States), Deutsch (Deutschland), 日本語（日本）, and العربية
+as plain-text accessibility options before the selector closes again.
 Opening Settings must focus its Close control, and closing Settings must restore
 focus to its opener. CUDA omission, maintainer workspace access, and automated
 release must each remain present for explanation but disabled and unfocusable in
