@@ -181,7 +181,9 @@ installing either artifact:
 The AppImage check requires exactly one regular executable x86_64 AppImage,
 uses extract-and-run mode so FUSE is not required, and invokes only the
 packaged `resolve-core-driver` command. It hash-binds the closed local Core
-fixture and verifies the returned artifact and exact target. It does not open a
+fixture and verifies the returned artifact and exact target. It also proves that a
+bad candidate digest, an exact-kernel mismatch, and two different compatible
+decisions all fail closed inside the packaged executable. It does not open a
 window, access the network, download a driver, or activate anything. The
 AppImage remains an experimental unsigned debug artifact and is not published.
 

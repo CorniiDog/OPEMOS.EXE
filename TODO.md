@@ -848,7 +848,13 @@ already Core contracts and are not open-ended product choices.
     `62d19731b83d156678157f0488c034a2092800a4ff2d175c90c41f153d373dc7`.
     No package was installed, no graphical application opened, and no network
     request, driver download, publication, production activation, KVM, or
-    hardware operation occurred. Remote CI and review require publishing branch
+    hardware operation occurred. A follow-up portable-package gate also proves
+    the packaged command rejects a wrong authenticated digest, an exact-kernel
+    mismatch, and two different compatible decisions; its temporary hostile
+    candidate is removed automatically. The focused AppImage check passes with
+    no GUI, network, download, or activation. The follow-up source commit is
+    `319c929` on `work/exe-appimage-resolver-failures`; remote CI and review
+    require publishing that bounded branch. The original package slice required publishing branch
     `work/exe-linux-appimage-package` to configured origin
     `https://github.com/CorniiDog/steamos-nvidia-image-builder.git`; source commit
     `c03a1d6` contains only this bounded slice. PR and squash evidence follow.
