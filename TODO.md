@@ -925,7 +925,12 @@ already Core contracts and are not open-ended product choices.
     reverification passed; containment allocation is `7092822016` bytes. The ISO
     and manifest remain gitignored and will not be redistributed. No derived
     installer, credential, disk, VM, production trust/activation, KVM, or
-    hardware operation occurred. PR and squash evidence follow.
+    hardware operation occurred. Focused media validation passes 2/2 and the
+    complete JavaScript suite passes 220/220 with documentation, hygiene, and
+    diff checks. Remote CI and review require publishing source commit `91b2147`
+    on branch `work/exe-windows-evaluation-source` to configured origin
+    `https://github.com/CorniiDog/steamos-nvidia-image-builder.git`; PR and squash
+    evidence follow.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
