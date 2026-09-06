@@ -978,6 +978,14 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     maintainer suite passes 11/11 and all 179 frontend tests plus documentation,
     hygiene, and boundary integrity pass on 2026-09-06. Other async workers
     remain under the parent lifecycle item.
+  - [x] Extend the shared worktree-selection generation through managed
+    worktree creation/reopen and bind the request to the exact planned source.
+    A newer selection, plan reset, source change, or independently rendered
+    worktree invalidates older creation successes, errors, and finalizers before
+    they can replace the current worktree or clear its pending state. The focused
+    request-gate/maintainer suite passes 12/12 and all 180 frontend tests plus
+    documentation, hygiene, and boundary integrity pass on 2026-09-06. Other
+    async workers remain under the parent lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.

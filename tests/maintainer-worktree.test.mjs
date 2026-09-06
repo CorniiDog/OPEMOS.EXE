@@ -119,3 +119,14 @@ test("recent worktree selection commits only the latest inspection", async () =>
   assert.match(handler, /catch \(error\) \{\n    if \(!worktreeSelectionGate\.isCurrent\(requestGeneration\)[\s\S]*?repository !== plannedRepository\) return;/);
   assert.match(handler, /finally \{\n    if \(worktreeSelectionGate\.isCurrent\(requestGeneration\)[\s\S]*?setWorkspaceMutationPending\(false\);/);
 });
+
+
+test("managed worktree creation commits only the latest exact-source request", async () => {
+  const script = await readFile(new URL("../src/maintainer.js", import.meta.url), "utf8");
+  const handler = script.match(/elements\.makeWorktree\.addEventListener\("click", async \(\) => \{[\s\S]*?\n\}\);/)?.[0] || "";
+  assert.match(handler, /const requestGeneration = worktreeSelectionGate\.begin\(\)[\s\S]*?const sourceIdentity = JSON\.stringify\(source\)/);
+  assert.match(handler, /const worktree = await invoke\("make_maintainer_worktree", source\)[\s\S]*?if \(!worktreeSelectionGate\.isCurrent\(requestGeneration\)[\s\S]*?sourceIdentity !== JSON\.stringify\(plannedSource\)\) return;/);
+  assert.match(handler, /setWorkspaceMutationPending\(false\);\n    renderWorktreeForSelection\(worktree\);/);
+  assert.match(handler, /catch \(error\) \{\n    if \(!worktreeSelectionGate\.isCurrent\(requestGeneration\)[\s\S]*?sourceIdentity !== JSON\.stringify\(plannedSource\)\) return;/);
+  assert.match(handler, /finally \{\n    if \(worktreeSelectionGate\.isCurrent\(requestGeneration\)[\s\S]*?sourceIdentity === JSON\.stringify\(plannedSource\)\) \{[\s\S]*?setWorkspaceMutationPending\(false\);/);
+});
