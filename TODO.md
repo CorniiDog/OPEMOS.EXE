@@ -1031,6 +1031,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     21/21 and all 185 frontend tests plus documentation, hygiene, and boundary
     integrity pass on 2026-09-06. Other async workers remain under the parent
     lifecycle item.
+  - [x] Replace the native image chooser's exposed mutable request counter with
+    the shared overflow-safe latest-request gate while retaining the separate
+    image-selection revision that invalidates stale dialogs after drag-and-drop
+    or another selection. The focused async/layout suite passes 22/22 and all
+    185 frontend tests plus documentation, hygiene, and boundary integrity pass
+    on 2026-09-06. No native chooser opened during validation. Other async
+    workers remain under the parent lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.

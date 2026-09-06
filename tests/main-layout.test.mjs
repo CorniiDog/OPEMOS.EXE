@@ -220,8 +220,9 @@ test("image selection is transactional across plain and completed outputs", () =
 });
 
 test("native image chooser rejects superseded and stale-context results", () => {
-  assert.match(script, /let imageChooserGeneration = 0;/);
-  assert.match(script, /chooseImage\.addEventListener\("click"[\s\S]*const chooserGeneration = \+\+imageChooserGeneration;[\s\S]*const selectionGeneration = imageSelectionGeneration;[\s\S]*const selected = await open\([\s\S]*if \(chooserGeneration !== imageChooserGeneration[\s\S]*\|\| selectionGeneration !== imageSelectionGeneration\) return;[\s\S]*await selectImage\(selected\)/);
+  assert.match(script, /const imageChooserGate = createLatestRequestGate\(\)/);
+  assert.match(script, /chooseImage\.addEventListener\("click"[\s\S]*const chooserGeneration = imageChooserGate\.begin\(\);[\s\S]*const selectionGeneration = imageSelectionGeneration;[\s\S]*const selected = await open\([\s\S]*if \(!imageChooserGate\.isCurrent\(chooserGeneration\)[\s\S]*\|\| selectionGeneration !== imageSelectionGeneration\) return;[\s\S]*await selectImage\(selected\)/);
+  assert.doesNotMatch(script, /let imageChooserGeneration = 0|\+\+imageChooserGeneration/);
 });
 
 test("native output chooser rejects superseded and stale-context results", () => {
