@@ -1,3 +1,4 @@
+import { createLatestRequestGate } from "./async-generation.js";
 import { translate } from "./locale.js";
 
 const DOCUMENT_LIMIT = 1024 * 1024;
@@ -90,29 +91,29 @@ export function presentCompatibilityPreview(preview) {
 }
 
 export function createCompatibilityPreviewController(invoke, render) {
-  let revision = 0;
+  const requestGate = createLatestRequestGate();
   async function inspect(makeRequest) {
-    const current = ++revision;
+    const current = requestGate.begin();
     render({ phase: "loading" });
     try {
       const pending = makeRequest();
       const request = pending && typeof pending.then === "function" ? await pending : pending;
-      if (current !== revision) return;
+      if (!requestGate.isCurrent(current)) return;
       if (request.source === "document" && (typeof request.document !== "string"
         || !request.document.trim() || new TextEncoder().encode(request.document).length > DOCUMENT_LIMIT)) {
         throw new Error("Choose or paste a Core resolver JSON document no larger than 1 MiB.");
       }
       const response = await invoke("preview_core_compatibility", { request });
-      if (current !== revision) return;
+      if (!requestGate.isCurrent(current)) return;
       render({ phase: "result", preview: presentCompatibilityPreview(response) });
     } catch (error) {
-      if (current !== revision) return;
+      if (!requestGate.isCurrent(current)) return;
       render({ phase: "error", message: String(error?.message ?? error).slice(0, 2048) });
     }
   }
   return {
     clear() {
-      revision += 1;
+      requestGate.begin();
       render({ phase: "empty" });
     },
     inspect(request) { return inspect(() => request); },
@@ -125,7 +126,7 @@ export function createCompatibilityPreviewController(invoke, render) {
       });
     },
     fail(error) {
-      revision += 1;
+      requestGate.begin();
       render({ phase: "error", message: String(error?.message ?? error).slice(0, 2048) });
     },
     inspectFile(file) {
