@@ -42,6 +42,25 @@ Settings and compatibility-dialog focus order, debug generation row names and
 values, scoped dialog close, and main-document survival on Ubuntu Wayland. A
 focused renderer test requires the accessible status label to follow loading,
 result, error, and clear without retaining stale text.
+A separate no-screenshot Google Chrome **152.0.7977.82** check loads the actual
+application CSS from the main, build-progress, maintainer, shared-control, and
+compatibility-inspector surfaces. It first proves regular mode does not report
+forced colors, then starts a fresh isolated headless profile with forced high
+contrast and network resolution disabled:
+
+```bash
+"$OPEMOS_HEAVY" env PATH="/path/to/node/bin:$PATH"   node scripts/check_forced_colors_browser.mjs
+```
+
+Computed styles must prove `forced-colors: active`, remove decorative body
+layers and backdrop filters, retain one-pixel control/status borders without
+shadows, preserve a two-pixel focus outline and full disabled opacity, and use
+one CanvasText dialog-border color. The disposable document and profiles are
+removed on every success or failure path; no screenshot, desktop capture,
+application launch, or network input is used. The parser/state regressions run
+in the frontend suite, while the live browser invocation remains local because
+the mandated host `heavy.sh` wrapper is unavailable on GitHub runners.
+
 These host checks do not establish a
 successful appliance boot, complete image build, installed package, or
 physical-hardware result. Consult TODO

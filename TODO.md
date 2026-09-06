@@ -1506,6 +1506,18 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     `PATH` and passed when rerun with the installed Node directory. Documentation,
     hygiene, and boundary integrity pass. Delivered translations, browser/OS
     forced-colors behavior, and real monitor scaling remain open.
+  - [x] Exercise application forced-colors CSS in a real browser. Google Chrome
+    152.0.7977.82, under the shared resource wrapper, used fresh disposable
+    headless profiles and a synthetic document containing the actual main,
+    build-progress, maintainer, shared-control, and compatibility CSS. Normal
+    mode reported inactive; forced high contrast reported active and preserved
+    exact body/card, control/status, focus, disabled, checkbox, and dialog
+    computed-style invariants. Three parser/state edge tests reject absent,
+    repeated, malformed, scalar, inactive, hidden-focus, faded-disabled,
+    shadowed, borderless, and mismatched-dialog results. No screenshot, desktop
+    capture, app launch, or network input occurred. The live browser check stays
+    local because GitHub runners cannot use the mandated host `heavy.sh`
+    wrapper; remote frontend CI covers the regression tests.
   - [x] Deliver a bounded local compatibility-interface catalog with `en-US` as
     source/fallback and initial `de-DE`, `ja-JP`, and `ar` translations. Settings
     follows the first supported system locale or a persisted explicit choice;
