@@ -434,6 +434,15 @@ installation targets, production activation, or hardware certification.
   integrity pass. Pixel-level forced-color/reduced-motion rendering, zoom, long
   localization, and display scaling remain in the broader graphical gate.
 
+- [x] Add the first inactive maintainer-facing release review surface. It displays
+  exact Core commit, bundle identity and SHA-256, and release identity together
+  with package, build, signature, checksum, and provenance states. The model
+  rejects mutable/malformed identities and unknown states, freezes accepted
+  plans, and enables explicit authorization only when all five evidence gates
+  pass. No publisher, signer, network request, release execution, production
+  trust, or activation path is connected. On 2026-09-06, 7 focused and all 197
+  frontend tests pass with documentation, hygiene, and boundary integrity.
+
 ### 1. Complete the OPEMOS Core migration
 
 Production generation activation is intentionally blocked until the maintainer

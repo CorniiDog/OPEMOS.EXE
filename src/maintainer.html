@@ -140,6 +140,31 @@
         </section>
 
         <section class="card actions-card">
+            <div class="release-review">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">Release workflow</p>
+                        <h2>Review exact release plan</h2>
+                    </div>
+                    <span class="status">Inactive</span>
+                </div>
+                <p class="section-copy">Review the immutable Core and bundle identities plus every host evidence gate before explicitly authorizing a release run. This review does not publish, sign, or activate anything.</p>
+                <dl class="identity release-identity">
+                    <div><dt>Core commit</dt><dd id="release-core-commit">—</dd></div>
+                    <div><dt>Bundle</dt><dd id="release-bundle-id">—</dd></div>
+                    <div><dt>Bundle SHA-256</dt><dd id="release-bundle-sha256">—</dd></div>
+                    <div><dt>Release</dt><dd id="release-id">—</dd></div>
+                </dl>
+                <ul class="release-gates" aria-label="Release evidence gates">
+                    <li>Package <strong data-release-gate="package">pending</strong></li>
+                    <li>Build <strong data-release-gate="build">pending</strong></li>
+                    <li>Signature <strong data-release-gate="signature">pending</strong></li>
+                    <li>Checksum <strong data-release-gate="checksum">pending</strong></li>
+                    <li>Provenance <strong data-release-gate="provenance">pending</strong></li>
+                </ul>
+                <button id="authorize-release" class="primary" type="button" disabled>Authorize Exact Release Run</button>
+                <p id="release-plan-status" class="message" role="status" aria-live="polite">No immutable release plan loaded.</p>
+            </div>
             <div>
                 <p class="eyebrow">Maintainer actions</p>
                 <h2>Explicit gates</h2>
