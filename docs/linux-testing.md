@@ -304,11 +304,19 @@ integration, Debian compatibility, managed guest boot, or hardware.
 ## Validation and limits
 
 Managed-appliance planning uses the smaller of physical RAM and all inherited
-cgroup-v2 `memory.max` limits. Its existing minimum is 6 GiB; the shared 2 GiB
-scheduler budget therefore leaves managed-appliance readiness unavailable.
-Do not lift that cap. The disposable tool smoke below uses only a 64 MiB paused
+cgroup-v2 `memory.max` limits. Its existing minimum is 6 GiB; the user-authorized shared 6 GiB
+scheduler budget now permits bounded managed-appliance validation while retaining
+one-CPU serialization and no swap. The disposable tool smoke below uses only a 64 MiB paused
 QEMU machine, with no host disks or networking, and does not establish Fedora
 boot or image-build readiness.
+
+Resolve and prepare the pinned Fedora 44 development appliance with mandatory
+signed-checksum verification:
+
+```bash
+./builder/appliance/build_linux.sh --resolve-only
+"$OPEMOS_HEAVY" ./builder/appliance/build_linux.sh
+```
 
 After installing prerequisites, explicitly exercise seed-ISO creation,
 qcow2 backing-file preservation, and TCG startup/cleanup:
@@ -416,3 +424,5 @@ authorize source fallback, or activate a generation. Existing production trust a
 intact. macOS regression validation, Debian validation, managed-appliance smoke
 tests, final-image equivalence, and real SteamOS/NVIDIA certification require
 their own recorded evidence.
+
+The managed Fedora appliance boot does not currently complete under the scheduler's one-vCPU TCG path. Fedora reaches the real root, but guest device deadlines expire before slow udev coldplug recreates the UUID links, and the guest enters emergency mode. Use of KVM remains a separate hardware validation gate.

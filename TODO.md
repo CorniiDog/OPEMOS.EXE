@@ -156,11 +156,22 @@ installation targets, production activation, or hardware certification.
   focus, process-group, and no-new-QEMU contracts, then purges it; both final
   Debian runs pass. This establishes virtual-X11 graphical launch, not a physical
   Debian desktop, KVM, managed-appliance boot, publication, or hardware support.
-- [ ] Validate managed Fedora appliance boot and image equivalence. The current
-  2 GiB scheduler cap is below the existing 6 GiB host-budget minimum; runtime
-  cgroup discovery now refuses readiness, and the live smoke verifies that
-  refusal. Do not raise the cap or equate the small tool smoke with guest boot.
-  KVM hardware, Debian, macOS runtime, and SteamOS hardware remain unvalidated.
+- [ ] Validate managed Fedora appliance boot and image equivalence. The
+  user-authorized scheduler cap is now 6 GiB, matching the existing host-budget
+  minimum while retaining one-CPU serialization and no swap. A Linux-specific
+  Fedora 44 appliance builder now resolves the pinned compose, requires Fedora's
+  signed checksum plus exact image SHA-256, validates qcow2 structure, and
+  atomically installs the image and provenance sidecar; resolve-only, malformed
+  option, mandatory-signature, and atomic-publication tests pass. The authenticated
+  x86_64 download verified Fedora key DBFCF71C6D9F90A6, signed image SHA-256
+  28680fe5b371a5a82ebf43a31926e086a168e59949d03969c5093e7071f90b7f, and
+  qcow2 structure. A one-vCPU TCG boot entered emergency mode after its 45-second
+  guest device deadlines expired before slow udev coldplug exposed the image UUIDs;
+  extending the host handshake wait to ten minutes did not change that result and
+  was reverted. QEMU/runtime cleanup and base-image immutability passed. Managed
+  boot and image equivalence remain blocked on an approved accelerated/hardware
+  path or a separately justified guest-device-timeout change. Debian, macOS runtime,
+  and SteamOS hardware remain unvalidated.
 - [x] Provide exact Ubuntu/Debian setup and experimental launch/package commands
   with tested-version limits. Add `dev:linux-test`, debug-only `build:linux-test`,
   and `test:package-linux`, a separate opaque Linux main-window configuration,
