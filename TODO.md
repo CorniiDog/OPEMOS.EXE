@@ -504,7 +504,7 @@ installation targets, production activation, or hardware certification.
   invalidates it before invoking Core's closed command adapter. No runtime host
   adapter, network transport, publisher, credentials, production trust,
   activation, KVM, or hardware path is connected. On 2026-09-06, 13 focused and all 207 frontend tests pass with
-  documentation, hygiene, and boundary integrity; PR evidence follows.
+  documentation, hygiene, and boundary integrity. EXE lead pushed source commit `e0d287a644b9690266d35d2341805d9e7f27ab11` on branch `work/exe-release-status-polling` to configured remote `https://github.com/CorniiDog/steamos-nvidia-image-builder.git` (redirected by GitHub to OPEMOS.EXE) because PR review and remote CI are required; PR https://github.com/CorniiDog/OPEMOS.EXE/pull/43 is open. Squash evidence follows.
 
 ### 1. Complete the OPEMOS Core migration
 
