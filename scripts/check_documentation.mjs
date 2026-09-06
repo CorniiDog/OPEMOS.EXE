@@ -193,6 +193,11 @@ assert.match(checks, /immutable_core_generation_reaches_guest_consumption_and_ac
 assert.match(checks, /live_linux_disposable_host_tools -- --ignored/);
 assert.match(checks, /OPEMOS_EXPERIMENTAL_LINUX: '1'/);
 assert.match(checks, /OPEMOS_LINUX_ACCEL: tcg/);
+const debian12Image = "debian@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867";
+assert.match(checks, /^  debian-12-package:$/m);
+assert.equal(checks.split(debian12Image).length - 1, 1, "Debian CI must use one immutable amd64 image");
+assert.match(checks, /npm run build:debian12-test/);
+assert.match(checks, /--expected-libc 2\.36 --expected-openssl libssl3/);
 assert.equal(
   checks.split(`OPEMOS_CORE_EXPECTED_COMMIT: ${developmentLineageCommit}`).length - 1,
   2,

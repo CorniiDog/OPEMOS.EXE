@@ -17,14 +17,18 @@ export function linuxTestPlan({ platform, arch, env, args }) {
   if (!["kvm", "tcg"].includes(env.OPEMOS_LINUX_ACCEL)) {
     throw new Error("Select OPEMOS_LINUX_ACCEL=kvm or tcg explicitly; there is no automatic fallback.");
   }
-  if (args.length !== 1 || !["dev", "build"].includes(args[0])) {
-    throw new Error("Usage: linux-test.mjs dev|build (additional CLI overrides are unsupported).");
+  if (args.length !== 1 || !["dev", "build", "build-debian12"].includes(args[0])) {
+    throw new Error("Usage: linux-test.mjs dev|build|build-debian12 (additional CLI overrides are unsupported).");
   }
   if (args[0] === "dev" && !env.DISPLAY?.trim() && !env.WAYLAND_DISPLAY?.trim()) {
     throw new Error("Launch development windows from an X11 or Wayland graphical desktop session.");
   }
-  return [args[0], ...(args[0] === "build" ? ["--debug", "--bundles", "deb"] : []),
-    "--config", path.join(root, "src-tauri/tauri.linux-test.conf.json")];
+  const build = args[0] !== "dev";
+  const config = args[0] === "build-debian12"
+    ? "tauri.linux-debian12-test.conf.json"
+    : "tauri.linux-test.conf.json";
+  return [build ? "build" : "dev", ...(build ? ["--debug", "--bundles", "deb"] : []),
+    "--config", path.join(root, "src-tauri", config)];
 }
 
 export function linuxTestEnvironment(env) {

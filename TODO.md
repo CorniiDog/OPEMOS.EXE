@@ -126,6 +126,16 @@ installation targets, production activation, or hardware certification.
   319 Rust tests pass (27 ignored), and all 98 frontend tests plus documentation,
   hygiene, and boundary integrity pass against the unchanged Core fixture pin.
   This does not change the scheduler cap or establish managed-appliance boot.
+- [ ] Validate a real Debian 12 headless host/package path in CI. The exact
+  official Debian 12.15 slim amd64 platform manifest is pinned at
+  `sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867`.
+  A disposable local instance passed the real Debian 12 `/etc/os-release`
+  prerequisite inventory with QEMU, OVMF, SSH, Python, and explicitly selected
+  TCG under the shared 2 GiB/one-CPU wrapper. The separate debug-package
+  configuration preserves the Linux test window and app identity while declaring
+  Debian's glibc 2.36 and `libssl3` baseline. Remote Debian compilation and
+  archive inspection remain pending; this does not establish graphical launch,
+  KVM, managed-appliance boot, installation, publication, or hardware support.
 - [ ] Validate managed Fedora appliance boot and image equivalence. The current
   2 GiB scheduler cap is below the existing 6 GiB host-budget minimum; runtime
   cgroup discovery now refuses readiness, and the live smoke verifies that
