@@ -476,6 +476,24 @@ installation targets, production activation, or hardware certification.
   production path is connected. On 2026-09-06, 8 focused and all 202 frontend
   tests pass with documentation, hygiene, and boundary integrity.
 
+- [x] Consume Core's durable closed release-session boundary from authenticated
+  canonical GitHub commit `fe0080afecb7784083d56d36dc22d3aecdf8058d`
+  (Core PR #25, preserved source `78b96ed`). The updated exact
+  release-operation schema bytes have SHA-256
+  `59c6e25d3121e307d60e91612694fff0edf5b86bf754eb4c0ad603932451a2ed`;
+  the session implementation and closed fixture hashes are
+  `df2e815e03eb5d429b3d6e6ff13df9d126d9befd066a8efe14fe37bdf4975330`
+  and `e8c95599e4f296db85b5e328a2679b8d4540ad8a45db9abd346f0bdbce78716f`.
+  EXE now validates and renders exact bounded progress and exposes an injectable
+  inactive controller for Core's stable execute/status/reconcile/cancel commands.
+  Start and missing-only retry require the exact local authorization; concurrent,
+  stale, malformed, substituted-identity, inconsistent-progress, and
+  post-terminal results fail closed. The maintainer surface includes disabled
+  start/resume, verify, retry, cancel, and progress controls until an
+  authenticated host adapter is supplied. No publisher, signer, credentials,
+  network transport, production trust, or activation path is connected. On
+  2026-09-06, 14 focused and all 204 frontend tests pass with documentation, hygiene, and boundary integrity. EXE lead pushed source commit `e90343dea4c92fdc88d8a3c38ae4eec89b597e21` on branch `work/exe-release-session-controls` to configured remote `https://github.com/CorniiDog/steamos-nvidia-image-builder.git` (redirected by GitHub to OPEMOS.EXE) because PR review and remote CI are required; PR https://github.com/CorniiDog/OPEMOS.EXE/pull/42 is open. Squash evidence follows.
+
 ### 1. Complete the OPEMOS Core migration
 
 Production generation activation is intentionally blocked until the maintainer

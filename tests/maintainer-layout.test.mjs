@@ -40,5 +40,9 @@ test("maintainer release review exposes the exact Core operation identity and cl
   }
   assert.match(html, /id="release-assets"[^>]*aria-label="Immutable release asset inventory"/);
   assert.match(html, /id="authorize-release"[^>]*disabled/);
+  for (const id of ["release-start", "release-verify", "release-retry", "release-cancel-operation"]) {
+    assert.match(html, new RegExp(`id="${id}"[^>]*disabled`));
+  }
+  assert.match(html, /id="release-progress"[^>]*>No durable release progress loaded/);
   assert.match(html, /does not publish, sign, or activate anything/);
 });
