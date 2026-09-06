@@ -139,7 +139,7 @@ jobs:
           build-essential ca-certificates curl file genisoimage git
           libayatana-appindicator3-dev librsvg2-dev libssl-dev
           libwebkit2gtk-4.1-dev openssh-client ovmf patchelf
-          pkg-config python3 qemu-system-x86 qemu-utils xz-utils
+          pkg-config python3 qemu-system-x86 qemu-utils xdg-utils xz-utils
           at-spi2-core dbus-x11 gir1.2-atspi-2.0 python3-gi tini xauth xvfb
 
       - name: Check out repository

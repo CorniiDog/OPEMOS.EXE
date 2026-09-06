@@ -94,7 +94,7 @@ OPEMOS_HEAVY="/home/connor/Documents/ChatGPT/Handoff troubleshooting/opemos-sche
 "$OPEMOS_HEAVY" sudo -n apt-get install --yes --no-install-recommends \
   build-essential pkg-config curl wget file libssl-dev liblzma-dev \
   libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev \
-  libayatana-appindicator3-dev patchelf \
+  libayatana-appindicator3-dev patchelf xdg-utils \
   qemu-system-x86 qemu-utils ovmf genisoimage openssh-client python3
 ```
 
