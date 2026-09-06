@@ -517,8 +517,12 @@ installation targets, production activation, or hardware certification.
   Cancellation remains terminal and cannot claim success. No authenticated
   runtime adapter, publisher, signer, credentials, network transport,
   production activation, KVM, or hardware path is connected. Focused validation passes 15/15 and all 209 frontend tests pass with
-  documentation, hygiene, and boundary integrity; PR evidence follows on this
-  branch.
+  documentation, hygiene, and boundary integrity. EXE lead pushed source commit
+  `bb58ad9` on branch `work/exe-release-session-ui-fixture` to configured remote
+  `https://github.com/CorniiDog/steamos-nvidia-image-builder.git` (redirected by
+  GitHub to OPEMOS.EXE) because PR review and remote CI are required; PR
+  https://github.com/CorniiDog/OPEMOS.EXE/pull/44 is open. Squash evidence
+  follows.
 
 ### 1. Complete the OPEMOS Core migration
 
