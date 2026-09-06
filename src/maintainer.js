@@ -59,6 +59,7 @@ let workspaceGeneration = 0;
 const sourceRefreshGate = createLatestRequestGate();
 const planRequestGate = createLatestRequestGate();
 const stagedReviewGate = createLatestRequestGate();
+const branchListGate = createLatestRequestGate();
 
 installKeyboardBindings([
   {
@@ -108,6 +109,7 @@ function renderSelection() {
 function resetPlan({ invalidateRequest = true } = {}) {
   if (invalidateRequest) planRequestGate.begin();
   stagedReviewGate.begin();
+  branchListGate.begin();
   workspaceGeneration += 1;
   plannedRepository = null;
   plannedSource = null;
@@ -256,6 +258,7 @@ elements.planButton.addEventListener("click", async () => {
 
 function renderWorktree(worktree) {
   stagedReviewGate.begin();
+  branchListGate.begin();
   workspaceGeneration += 1;
   localWorktree = worktree;
   commitReview = null;
@@ -503,6 +506,7 @@ elements.createLocalCommit.addEventListener("click", async () => {
 
 elements.loadLocalBranches.addEventListener("click", async () => {
   if (!localWorktree || !plannedRepository) return;
+  const requestGeneration = branchListGate.begin();
   const generation = workspaceGeneration;
   const worktreePath = localWorktree.path;
   const repository = plannedRepository;
@@ -514,8 +518,8 @@ elements.loadLocalBranches.addEventListener("click", async () => {
     const branches = await invoke("list_maintainer_local_branches", {
       path: worktreePath, repository,
     });
-    if (generation !== workspaceGeneration || worktreePath !== localWorktree?.path
-      || repository !== plannedRepository) return;
+    if (!branchListGate.isCurrent(requestGeneration) || generation !== workspaceGeneration
+      || worktreePath !== localWorktree?.path || repository !== plannedRepository) return;
     elements.localBranch.replaceChildren();
     for (const branch of branches) {
       const option = document.createElement("option");
@@ -527,14 +531,16 @@ elements.loadLocalBranches.addEventListener("click", async () => {
     elements.reviewCheckout.disabled = false;
     elements.checkoutStatus.textContent = `${branches.length} clean local branch context${branches.length === 1 ? "" : "s"} available. No remote was queried.`;
   } catch (error) {
-    if (generation !== workspaceGeneration) return;
+    if (!branchListGate.isCurrent(requestGeneration) || generation !== workspaceGeneration) return;
     elements.localBranch.replaceChildren(new Option("Clean local branches unavailable", ""));
     elements.localBranch.disabled = true;
     elements.reviewCheckout.disabled = true;
     elements.checkoutStatus.textContent = String(error);
     elements.checkoutStatus.className = "message error";
   } finally {
-    elements.loadLocalBranches.disabled = false;
+    if (branchListGate.isCurrent(requestGeneration) && generation === workspaceGeneration) {
+      elements.loadLocalBranches.disabled = false;
+    }
   }
 });
 

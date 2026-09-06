@@ -53,3 +53,16 @@ test("maintainer staged review commits only the latest snapshot request", async 
   assert.match(handler, /catch \(error\) \{\n    if \(!stagedReviewGate\.isCurrent\(requestGeneration\)/);
   assert.match(handler, /finally \{\n    if \(stagedReviewGate\.isCurrent\(requestGeneration\) && generation === workspaceGeneration\) \{/);
 });
+
+
+test("maintainer local branch loading commits only the latest request", async () => {
+  const script = await readFile(new URL("../src/maintainer.js", import.meta.url), "utf8");
+  const handler = script.match(/elements\.loadLocalBranches\.addEventListener\("click", async \(\) => \{[\s\S]*?\n\}\);/)?.[0] || "";
+  assert.match(script, /const branchListGate = createLatestRequestGate\(\)/);
+  assert.match(script, /function resetPlan[\s\S]*?branchListGate\.begin\(\);[\s\S]*?function disableSourceControls/);
+  assert.match(script, /function renderWorktree\(worktree\) \{[\s\S]*?branchListGate\.begin\(\);/);
+  assert.match(handler, /const requestGeneration = branchListGate\.begin\(\)/);
+  assert.match(handler, /const branches = await invoke\("list_maintainer_local_branches"[\s\S]*?if \(!branchListGate\.isCurrent\(requestGeneration\)/);
+  assert.match(handler, /catch \(error\) \{\n    if \(!branchListGate\.isCurrent\(requestGeneration\)/);
+  assert.match(handler, /finally \{\n    if \(branchListGate\.isCurrent\(requestGeneration\) && generation === workspaceGeneration\) \{/);
+});
