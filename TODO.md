@@ -830,8 +830,9 @@ already Core contracts and are not open-ended product choices.
     pass. The full Rust run passed 343 tests with 28 ignored and one unrelated
     failure from the mutable sibling Core installer-result fixture, which is not
     an authorized Core input and was not retried. Production discovery, trust
-    roots, downloads, and activation remain gated; PR and squash-commit evidence
-    follow after required checks.
+    roots, downloads, and activation remain gated. PR
+    https://github.com/CorniiDog/OPEMOS.EXE/pull/45 preserves pre-squash commit
+    `58f79d7`; required checks and squash-commit evidence remain pending.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
