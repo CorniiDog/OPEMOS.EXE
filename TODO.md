@@ -1010,6 +1010,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     all 183 frontend tests plus documentation, hygiene, and boundary integrity
     pass on 2026-09-06. No checkout or Git mutation ran during validation. Other
     async workers remain under the parent lifecycle item.
+  - [x] Gate overlapping host-environment checks with a dedicated latest-request
+    generation. Older successes and errors cannot replace newer `hostReady`,
+    readiness presentation, or build-button state; host policy and native probe
+    behavior remain unchanged. The focused async/layout suite passes 22/22 and
+    all 184 frontend tests plus documentation, hygiene, and boundary integrity
+    pass on 2026-09-06. No host probe ran during validation. Other async workers
+    remain under the parent lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.
