@@ -1480,8 +1480,21 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     maintainer surface rendered at 634x546 under HighContrast with RGB variances
     2754.3/2915.4/3206.7. Every case discarded frame/crop bytes in memory,
     released its viewer lease, stopped its process group, and left no new QEMU.
-    Delivered translations, browser/OS forced-colors behavior, zoom, and real
-    monitor scaling remain open.
+    A shared bounded page-zoom adapter now gives main, progress, and maintainer
+    webviews standard primary-modifier `+`, `-`, and `0` controls from 80% through
+    200%, with per-window state and polite accessibility announcements. Focused
+    tests cover both platform modifiers, editable-field compatibility, malformed
+    modifier/repeat/composition rejection, intermediate-value recovery, limits,
+    reset, and exact installation in all three entry points. On Ubuntu GNOME
+    Wayland, the main-window control grew from 148x41 to 163x45 after one delivered
+    zoom step; the viewer lease returned to zero, the process group stopped, and
+    no new QEMU remained. Automated portal focus could not be transferred to the
+    separately foregrounded companion windows, so their live shortcut geometry
+    remains unclaimed despite sharing the tested adapter. All 154 frontend cases
+    pass; two headless-harness cases initially lacked `node` in the escalated child
+    `PATH` and passed when rerun with the installed Node directory. Documentation,
+    hygiene, and boundary integrity pass. Delivered translations, browser/OS
+    forced-colors behavior, and real monitor scaling remain open.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
   heartbeats or free-form log text. Unknown structured phases now retain only
   their bounded label and current validation/installation context: even a

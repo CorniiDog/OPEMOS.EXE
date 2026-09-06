@@ -1,9 +1,11 @@
 import { installCompatibilityPreview } from "./compatibility-preview.js";
 import { operationContextMatches } from "./operation-context.js";
 import { installWindowDrag } from "./window-drag.js";
+import { installPageZoom } from "./zoom.js";
 import { installKeyboardBindings, runKeyboardDefaultAction } from "./keyboard.js";
 
 const { invoke } = window.__TAURI__.core;
+installPageZoom();
 const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 const openFolder = (options) => invoke("plugin:dialog|open", { options });
 const $ = (selector) => document.querySelector(selector);
