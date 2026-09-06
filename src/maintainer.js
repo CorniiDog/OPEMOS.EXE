@@ -64,6 +64,7 @@ const checkoutReviewGate = createLatestRequestGate();
 const recentWorktreeGate = createLatestRequestGate();
 const worktreeSelectionGate = createLatestRequestGate();
 const vscodeOpenGate = createLatestRequestGate();
+const localCommitGate = createLatestRequestGate();
 let preserveWorktreeSelectionRequest = false;
 
 installKeyboardBindings([
@@ -119,6 +120,7 @@ function resetPlan({ invalidateRequest = true } = {}) {
   recentWorktreeGate.begin();
   worktreeSelectionGate.begin();
   vscodeOpenGate.begin();
+  localCommitGate.begin();
   workspaceGeneration += 1;
   plannedRepository = null;
   plannedSource = null;
@@ -271,6 +273,7 @@ function renderWorktree(worktree) {
   checkoutReviewGate.begin();
   recentWorktreeGate.begin();
   vscodeOpenGate.begin();
+  localCommitGate.begin();
   if (!preserveWorktreeSelectionRequest) worktreeSelectionGate.begin();
   workspaceGeneration += 1;
   localWorktree = worktree;
@@ -475,6 +478,7 @@ elements.openVscode.addEventListener("click", async () => {
 
 elements.commitMessage.addEventListener("input", () => {
   stagedReviewGate.begin();
+  localCommitGate.begin();
   commitReview = null;
   elements.reviewStaged.disabled = !localWorktree || !elements.commitMessage.value.trim();
   elements.stagedReview.classList.add("hidden");
@@ -485,6 +489,7 @@ elements.commitMessage.addEventListener("input", () => {
 elements.reviewStaged.addEventListener("click", async () => {
   if (!localWorktree || !plannedRepository) return;
   const requestGeneration = stagedReviewGate.begin();
+  localCommitGate.begin();
   const generation = workspaceGeneration;
   const worktreePath = localWorktree.path;
   const repository = plannedRepository;
@@ -522,18 +527,32 @@ elements.reviewStaged.addEventListener("click", async () => {
 
 elements.createLocalCommit.addEventListener("click", async () => {
   if (!commitReview || !localWorktree || !plannedRepository) return;
+  const requestGeneration = localCommitGate.begin();
+  const context = {
+    generation: workspaceGeneration,
+    path: localWorktree.path,
+    repository: plannedRepository,
+  };
+  const review = commitReview;
+  const message = elements.commitMessage.value;
   elements.createLocalCommit.disabled = true;
   setWorkspaceMutationPending(true);
   elements.commitStatus.textContent = "Revalidating HEAD and the staged tree before the atomic local commit…";
   try {
     const result = await invoke("create_maintainer_local_commit", {
-      path: localWorktree.path,
-      repository: plannedRepository,
-      message: elements.commitMessage.value,
-      expectedHead: commitReview.head,
-      expectedIndexTree: commitReview.indexTree,
-      expectedPatchSha256: commitReview.patchSha256,
+      path: context.path,
+      repository: context.repository,
+      message,
+      expectedHead: review.head,
+      expectedIndexTree: review.indexTree,
+      expectedPatchSha256: review.patchSha256,
     });
+    if (!localCommitGate.isCurrent(requestGeneration)
+      || !operationContextMatches(context, {
+        generation: workspaceGeneration,
+        path: localWorktree?.path,
+        repository: plannedRepository,
+      })) return;
     elements.commitStatus.textContent = `${result.message} ${result.commit.slice(0, 12)} on ${result.branch}.`;
     elements.commitStatus.className = "message";
     elements.commitMessage.value = "";
@@ -542,11 +561,25 @@ elements.createLocalCommit.addEventListener("click", async () => {
     elements.stagedPatch.classList.add("hidden");
     elements.createLocalCommit.classList.add("hidden");
     const refreshed = await invoke("inspect_maintainer_worktree", {
-      path: localWorktree.path, repository: plannedRepository,
+      path: context.path, repository: context.repository,
     });
+    if (!localCommitGate.isCurrent(requestGeneration)
+      || !operationContextMatches(context, {
+        generation: workspaceGeneration,
+        path: localWorktree?.path,
+        repository: plannedRepository,
+      })) return;
+    setWorkspaceMutationPending(false);
+    elements.createLocalCommit.disabled = false;
     renderWorktree(refreshed);
     elements.commitStatus.textContent = `${result.message} ${result.commit.slice(0, 12)} on ${result.branch}.`;
   } catch (error) {
+    if (!localCommitGate.isCurrent(requestGeneration)
+      || !operationContextMatches(context, {
+        generation: workspaceGeneration,
+        path: localWorktree?.path,
+        repository: plannedRepository,
+      })) return;
     commitReview = null;
     elements.commitStatus.textContent = String(error);
     elements.commitStatus.className = "message error";
@@ -554,9 +587,16 @@ elements.createLocalCommit.addEventListener("click", async () => {
     elements.stagedReview.classList.add("hidden");
     elements.stagedPatch.classList.add("hidden");
   } finally {
-    setWorkspaceMutationPending(false);
-    elements.createLocalCommit.disabled = false;
-    elements.reviewStaged.disabled = !localWorktree || !elements.commitMessage.value.trim();
+    if (localCommitGate.isCurrent(requestGeneration)
+      && operationContextMatches(context, {
+        generation: workspaceGeneration,
+        path: localWorktree?.path,
+        repository: plannedRepository,
+      })) {
+      setWorkspaceMutationPending(false);
+      elements.createLocalCommit.disabled = false;
+      elements.reviewStaged.disabled = !localWorktree || !elements.commitMessage.value.trim();
+    }
   }
 });
 
