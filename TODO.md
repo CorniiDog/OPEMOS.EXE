@@ -71,6 +71,14 @@ this repository.
 - [x] Reopen a manifest-bound existing NVIDIA image without rebuilding it.
 - [x] Install the fullscreen welcome application and guarded target-disk picker
   into generated recovery media.
+- [x] Provide Linux parity for the safe mock welcome preview. The root launcher
+  serves only the real welcome frontend through its loopback mock controller,
+  discovers Google Chrome/Chromium in fixed order, isolates browser and XDG state,
+  refuses absent graphical sessions, and reaps both processes plus runtime state
+  after normal server exit, browser close, or signals. Print-only mode retains the
+  non-GUI contract; no disks, privileges, QEMU processes, or installers are reachable.
+  PR #13 passed Debian package, frontend/docs, Linux integration, and Rust in both
+  initial GitHub runs; build also passed.
 - [x] Preserve an opaque fallback behind the cross-platform frosted-glass UI.
 - [x] Provide bounded, color-aware logs, smart diagnostic copying, monotonic
   progress, keyboard navigation, and coupled companion windows.

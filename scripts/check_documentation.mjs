@@ -158,6 +158,8 @@ assert.deepEqual(await pngRgbaCornerAlphas("src-tauri/icons/icon.png"), [0, 0, 0
 const linuxTesting = await read("docs/linux-testing.md");
 assert.match(linuxTesting, /System default[\s\S]*en-US[\s\S]*de-DE[\s\S]*ja-JP[\s\S]*ar/);
 assert.match(linuxTesting, /No translation service,\nnetwork request, Core-field translation, trust decision, or activation/);
+assert.match(linuxTesting, /\.\/test_welcome_linux\.sh/);
+assert.match(linuxTesting, /OPEMOS_GRAPHICAL_TEST_PRINT_ONLY=1/);
 
 const checks = await read(".github/workflows/checks.yml");
 const coreContractCommit = "3e49323fce266af8686039fb6487918ef5a64fd9";
