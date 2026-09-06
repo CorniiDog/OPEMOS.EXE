@@ -2454,6 +2454,75 @@ pub(crate) fn validate_core_resolver_result(result: &CoreResolverResult) -> Resu
     Ok(())
 }
 
+fn compatible_capabilities(result: &CoreResolverResult) -> Result<(), String> {
+    let capabilities = result
+        .capabilities
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .ok_or("OPEMOS Core compatible result omitted capability metadata.")?;
+    if capabilities.get("safeAdditiveField") != Some(&serde_json::Value::Bool(true)) {
+        return Err("OPEMOS Core compatible result does not permit safe additive metadata.".into());
+    }
+    let optional_cuda = capabilities
+        .get("optionalCudaOmission")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|value| value.get("supported"))
+        .and_then(serde_json::Value::as_bool)
+        .ok_or("OPEMOS Core compatible result has invalid optional-CUDA capability metadata.")?;
+    if optional_cuda {
+        return Err("Optional CUDA omission is not supported by this OPEMOS.EXE build.".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn select_core_driver_resolution(
+    target: &CoreResolverTarget,
+    documents: &[Vec<u8>],
+) -> Result<CoreResolverResult, String> {
+    if target.architecture != "x86_64"
+        || !valid_three_part_version(&target.steamos_version)
+        || !safe_token(&target.kernel_version, 255)
+    {
+        return Err("EXE Core-driver target metadata is invalid or unsupported.".into());
+    }
+    if documents.is_empty() || documents.len() > 256 {
+        return Err(
+            "Supply between one and 256 authenticated OPEMOS Core resolver documents.".into(),
+        );
+    }
+    let mut compatible = Vec::new();
+    for bytes in documents {
+        let result = parse_core_resolver_result(bytes)?;
+        if result.status != "compatible" || &result.target != target {
+            continue;
+        }
+        compatible_capabilities(&result)?;
+        let publication = result
+            .publication
+            .as_ref()
+            .ok_or("OPEMOS Core compatible result omitted publication metadata.")?;
+        if publication.kernel_version != target.kernel_version {
+            return Err("OPEMOS Core publication kernel ABI does not match its target.".into());
+        }
+        compatible.push((
+            serde_json::to_vec(&result)
+                .map_err(|error| format!("Could not canonicalize Core resolution: {error}"))?,
+            result,
+        ));
+    }
+    if compatible.is_empty() {
+        return Err("No compatible OPEMOS Core driver artifact matches the exact target.".into());
+    }
+    compatible.sort_by(|left, right| left.0.cmp(&right.0));
+    compatible.dedup_by(|left, right| left.0 == right.0);
+    if compatible.len() != 1 {
+        return Err(
+            "Multiple different compatible OPEMOS Core driver decisions are ambiguous.".into(),
+        );
+    }
+    Ok(compatible.pop().expect("one compatible candidate").1)
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CoreInstallerProgress {
@@ -3254,6 +3323,68 @@ pub(crate) fn compare_core_and_legacy_resolver(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn driver_candidate(version: &str, tag: &str) -> Vec<u8> {
+        let mut value: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../tests/fixtures/opemos-core/resolver-compatible-v2.json"
+        ))
+        .unwrap();
+        value["publication"]["nvidiaVersion"] = serde_json::json!(version);
+        value["publication"]["tag"] = serde_json::json!(tag);
+        serde_json::to_vec(&value).unwrap()
+    }
+
+    #[test]
+    fn core_driver_selection_is_order_independent_and_exact_target_bound() {
+        let target = CoreResolverTarget {
+            steamos_version: "3.8.14".into(),
+            kernel_version: "fixture".into(),
+            architecture: "x86_64".into(),
+        };
+        let candidate = driver_candidate("575.64.05", "selected");
+        let left = select_core_driver_resolution(&target, &[candidate.clone(), candidate.clone()])
+            .unwrap();
+        let right = select_core_driver_resolution(&target, &[candidate]).unwrap();
+        assert_eq!(left.publication, right.publication);
+        assert_eq!(left.publication.unwrap().tag, "selected");
+
+        let other = CoreResolverTarget {
+            kernel_version: "other-abi".into(),
+            ..target.clone()
+        };
+        assert!(
+            select_core_driver_resolution(&other, &[driver_candidate("580.2.1", "high")]).is_err()
+        );
+    }
+
+    #[test]
+    fn core_driver_selection_rejects_unsupported_capabilities_and_conflicts() {
+        let target = CoreResolverTarget {
+            steamos_version: "3.8.14".into(),
+            kernel_version: "fixture".into(),
+            architecture: "x86_64".into(),
+        };
+        let first = driver_candidate("580.2.1", "same");
+        let other = driver_candidate("575.64.05", "other");
+        assert!(select_core_driver_resolution(&target, &[first.clone(), other]).is_err());
+        let mut unsupported: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        unsupported["capabilities"]["optionalCudaOmission"]["supported"] = serde_json::json!(true);
+        assert!(select_core_driver_resolution(
+            &target,
+            &[serde_json::to_vec(&unsupported).unwrap()]
+        )
+        .is_err());
+
+        let mut conflict: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        conflict["artifact"]["url"] = serde_json::json!(
+            "https://github.com/CorniiDog/OPEMOS/releases/download/other/nvidia.tar.gz"
+        );
+        assert!(select_core_driver_resolution(
+            &target,
+            &[first, serde_json::to_vec(&conflict).unwrap()]
+        )
+        .is_err());
+    }
 
     fn fixture(name: &str) -> Vec<u8> {
         fs::read(

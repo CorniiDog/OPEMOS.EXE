@@ -5716,4 +5716,30 @@ trap - EXIT"#,
         );
         stop_session(&mut session).expect("stop recovery-image appliance session");
     }
+
+    #[test]
+    fn packaged_core_driver_resolver_requires_exact_candidate_hash() {
+        let path = std::env::temp_dir().join(format!(
+            "opemos-core-driver-candidate-{}-{}.json",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let bytes = include_bytes!("../../tests/fixtures/opemos-core/resolver-compatible-v2.json");
+        fs::write(&path, bytes).unwrap();
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        let base = vec![
+            "resolve-core-driver".to_string(), "--steamos".to_string(), "3.8.14".to_string(),
+            "--kernel".to_string(), "fixture".to_string(), "--architecture".to_string(),
+            "x86_64".to_string(), "--candidate-sha256".to_string(),
+        ];
+        let mut valid = base.clone(); valid.extend([digest, path.to_string_lossy().into_owned()]);
+        let output = run_core_driver_resolver(&valid).unwrap().unwrap();
+        let selected: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(selected["artifact"]["name"], serde_json::json!("nvidia-open-steamos-3.8.14-nvidia-575.64.05-kfixture-x86_64.tar.gz"));
+
+        let mut wrong = base; wrong.extend(["0".repeat(64), path.to_string_lossy().into_owned()]);
+        assert!(run_core_driver_resolver(&wrong).unwrap_err().contains("authenticated SHA-256"));
+        fs::remove_file(path).unwrap();
+    }
+
 }

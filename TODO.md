@@ -813,6 +813,25 @@ already Core contracts and are not open-ended product choices.
   duplicated Core-owned release/source-selection policy. Retain Rust parsing,
   bounds, session binding, diagnostics, orchestration, and independent final-
   image verification.
+  - [x] Add the first EXE-owned packaged resolver entrypoint without activating
+    production discovery. `resolve-core-driver` accepts only resolver schema-2
+    documents whose bytes match an explicit lowercase SHA-256, binds exact
+    SteamOS/kernel-ABI/architecture and supported capability metadata, rejects
+    conflicting or multiple different compatible decisions, and accepts one
+    unique Core decision regardless of candidate order. Closed fixtures cover
+    ordering and identical duplicates, exact-ABI mismatch,
+    unsupported optional-CUDA capability, conflicting metadata, and hash mismatch.
+    Canonical Core resolver source at immutable commit `a1c03c9658c5ed885f094b5f8e0896d818fee785`
+    was fetched from authenticated GitHub and hashed as
+    `d7fe29e02df03abd84f1558311a448adeb198fe50549a74ec9077482e68c70bc`.
+    The real packaged binary command emitted the selected closed fixture without
+    network or mutation. Focused Rust tests pass 3/3, JavaScript passes 209/209,
+    documentation, hygiene/boundary, formatting, and warnings-as-errors Clippy
+    pass. The full Rust run passed 343 tests with 28 ignored and one unrelated
+    failure from the mutable sibling Core installer-result fixture, which is not
+    an authorized Core input and was not retried. Production discovery, trust
+    roots, downloads, and activation remain gated; PR and squash-commit evidence
+    follow after required checks.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
