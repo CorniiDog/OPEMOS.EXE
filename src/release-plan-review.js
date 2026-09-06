@@ -5,7 +5,8 @@ const ASSET_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,254}$/;
 const LIFECYCLES = new Set(["planned", "reconciling", "succeeded", "failed", "cancelled"]);
 const DECISIONS = new Set(["create", "retry-missing", "already-complete", "conflict", "cancelled"]);
 const ASSET_STATES = new Set(["pending", "present", "missing", "conflict"]);
-const REQUIRED = new Set(["schemaVersion", "operationId", "repository", "tag", "targetCommit", "attempt", "lifecycle", "decision", "assets"]);
+const REQUIRED = new Set(["schemaVersion", "operationId", "repository", "tag", "targetCommit", "attempt", "lifecycle", "decision", "progress", "assets"]);
+const PROGRESS_PHASES = new Set(["planning", "reconciling", "complete", "failed", "cancelled"]);
 
 function exactKeys(value, required, optional = []) {
   const keys = Object.keys(value);
@@ -36,9 +37,20 @@ export function normalizeReleaseOperation(value) {
     names.add(asset.name);
     assets.push(Object.freeze({ name: asset.name, sha256: asset.sha256, bytes: asset.bytes, state: asset.state }));
   }
+  const progress = value.progress;
+  const completedAssets = assets.filter((asset) => asset.state === "present").length;
+  if (!progress || typeof progress !== "object" || Array.isArray(progress)
+    || !exactKeys(progress, new Set(["phase", "completedAssets", "totalAssets", "indeterminate"]))
+    || !PROGRESS_PHASES.has(progress.phase) || !Number.isInteger(progress.completedAssets)
+    || progress.completedAssets < 0 || progress.completedAssets > 16
+    || progress.totalAssets !== assets.length || progress.completedAssets !== completedAssets
+    || typeof progress.indeterminate !== "boolean") return null;
   const normalized = { schemaVersion: 1, operationId: value.operationId, repository: value.repository,
     tag: value.tag, targetCommit: value.targetCommit, attempt: value.attempt,
-    lifecycle: value.lifecycle, decision: value.decision, assets: Object.freeze(assets) };
+    lifecycle: value.lifecycle, decision: value.decision,
+    progress: Object.freeze({ phase: progress.phase, completedAssets: progress.completedAssets,
+      totalAssets: progress.totalAssets, indeterminate: progress.indeterminate }),
+    assets: Object.freeze(assets) };
   if (Object.hasOwn(value, "message")) normalized.message = value.message;
   return Object.freeze(normalized);
 }
@@ -118,13 +130,56 @@ export function createReleaseReviewSession() {
       authorization = null;
       return operation;
     },
+    acceptCommandResult(value) {
+      const next = normalizeReleaseOperation(value);
+      if (!operation || !next) throw new Error("Release command result is malformed or has no reviewed operation.");
+      if (!sameReleaseIdentity(operation, next)) throw new Error("Release command changed the immutable operation identity.");
+      if (next.attempt < operation.attempt) throw new Error("Release command result is stale.");
+      if (terminalReleaseOperation(operation) && JSON.stringify(next) !== JSON.stringify(operation)) {
+        throw new Error("A terminal release result cannot be replaced.");
+      }
+      operation = next;
+      if (!authorizationMatches()) authorization = null;
+      return operation;
+    },
     snapshot() {
       return Object.freeze({ operation, authorization: authorizationMatches() ? authorization : null });
     },
   });
 }
 
-export function installReleasePlanReview(document) {
+export function createReleaseCommandController(session, runCommand) {
+  if (!session || typeof runCommand !== "function") throw new TypeError("A release session and command runner are required.");
+  let request = 0;
+  let busy = false;
+  async function run(command, requiresAuthorization = false) {
+    if (busy) throw new Error("A release command is already in progress.");
+    const before = session.snapshot();
+    if (!before.operation) throw new Error("No immutable Core release operation is loaded.");
+    const authorization = before.authorization;
+    if (requiresAuthorization && !authorization) {
+      throw new Error("Explicit authorization for this exact release attempt is required.");
+    }
+    const token = ++request;
+    busy = true;
+    try {
+      const value = await runCommand(command, Object.freeze({ operationId: before.operation.operationId,
+        attempt: before.operation.attempt, authorization }));
+      if (token !== request) return session.snapshot().operation;
+      return session.acceptCommandResult(value);
+    } finally {
+      if (token === request) busy = false;
+    }
+  }
+  return Object.freeze({
+    start: () => run("execute", true), verify: () => run("status"),
+    retry: () => run("reconcile", true), cancel: () => run("cancel"),
+    invalidate() { request += 1; busy = false; },
+    snapshot: () => Object.freeze({ ...session.snapshot(), busy }),
+  });
+}
+
+export function installReleasePlanReview(document, runCommand = null) {
   const fields = {
     repository: document.querySelector("#release-repository"), tag: document.querySelector("#release-tag"),
     targetCommit: document.querySelector("#release-target-commit"), operationId: document.querySelector("#release-operation-id"),
@@ -132,7 +187,13 @@ export function installReleasePlanReview(document) {
   const authorize = document.querySelector("#authorize-release");
   const status = document.querySelector("#release-plan-status");
   const assets = document.querySelector("#release-assets");
+  const progress = document.querySelector("#release-progress");
+  const start = document.querySelector("#release-start");
+  const verify = document.querySelector("#release-verify");
+  const retry = document.querySelector("#release-retry");
+  const cancel = document.querySelector("#release-cancel-operation");
   const session = createReleaseReviewSession();
+  const commands = runCommand ? createReleaseCommandController(session, runCommand) : null;
 
   function render(value) {
     const operation = session.review(value);
@@ -145,20 +206,44 @@ export function installReleasePlanReview(document) {
       assets.append(item);
     }
     authorize.disabled = !releaseOperationAuthorizable(operation);
+    const commandReady = Boolean(commands && operation);
+    const authorized = Boolean(session.snapshot().authorization);
+    start.disabled = !commandReady || !authorized || operation.decision !== "create";
+    verify.disabled = !commandReady;
+    retry.disabled = !commandReady || !authorized || operation.decision !== "retry-missing";
+    cancel.disabled = !commandReady || terminalReleaseOperation(operation);
+    progress.textContent = operation
+      ? `${operation.progress.phase} / ${operation.progress.completedAssets}/${operation.progress.totalAssets} assets${operation.progress.indeterminate ? " / waiting" : ""}`
+      : "No durable release progress loaded.";
     status.textContent = describeReleaseOperation(operation);
   }
 
   authorize.addEventListener("click", () => {
     try {
       const authorization = session.authorize();
+      render(session.snapshot().operation);
       authorize.disabled = true;
-      status.textContent = "Explicit local authorization recorded for operation " + authorization.operationId + ", attempt " + authorization.attempt + ". No release executor is connected.";
+      status.textContent = "Explicit local authorization recorded for operation " + authorization.operationId + ", attempt " + authorization.attempt + ". The inactive command adapter may now start this exact attempt.";
     } catch (error) {
       authorize.disabled = true;
       status.textContent = String(error);
     }
   });
 
+  for (const [button, command, label] of [[start, "start", "Starting"], [verify, "verify", "Verifying"],
+    [retry, "retry", "Retrying missing assets"], [cancel, "cancel", "Cancelling"]]) {
+    button.addEventListener("click", async () => {
+      if (!commands) return;
+      for (const node of [start, verify, retry, cancel, authorize]) node.disabled = true;
+      status.textContent = `${label} exact operation...`;
+      try { render(await commands[command]()); }
+      catch (error) {
+        render(session.snapshot().operation);
+        status.textContent = String(error);
+      }
+    });
+  }
+
   render(null);
-  return Object.freeze({ render, snapshot: session.snapshot });
+  return Object.freeze({ render, snapshot: session.snapshot, commands });
 }

@@ -157,6 +157,13 @@
                 </dl>
                 <ul id="release-assets" class="release-assets" aria-label="Immutable release asset inventory"></ul>
                 <button id="authorize-release" class="primary" type="button" disabled>Authorize Exact Release Run</button>
+                <div class="release-controls" aria-label="Inactive release operation controls">
+                    <button id="release-start" class="primary" type="button" disabled>Start or Resume</button>
+                    <button id="release-verify" class="secondary" type="button" disabled>Verify Status</button>
+                    <button id="release-retry" class="secondary" type="button" disabled>Retry Missing</button>
+                    <button id="release-cancel-operation" class="secondary" type="button" disabled>Cancel</button>
+                </div>
+                <p id="release-progress" class="message">No durable release progress loaded.</p>
                 <p id="release-plan-status" class="message" role="status" aria-live="polite">No immutable Core release operation loaded.</p>
             </div>
             <div>
