@@ -142,3 +142,19 @@ test("VS Code open commits only the latest exact-worktree request", async () => 
   assert.match(handler, /const refreshed = await invoke\("open_maintainer_worktree_in_vscode"[\s\S]*?if \(!vscodeOpenGate\.isCurrent\(requestGeneration\)[\s\S]*?!operationContextMatches\(context,[\s\S]*?renderWorktree\(refreshed\);/);
   assert.match(handler, /catch \(error\) \{\n    if \(!vscodeOpenGate\.isCurrent\(requestGeneration\)[\s\S]*?!operationContextMatches\(context,[\s\S]*?elements\.worktreeMessage\.textContent = String\(error\);/);
 });
+
+
+test("local commit and refresh commit only the latest exact-review request", async () => {
+  const script = await readFile(new URL("../src/maintainer.js", import.meta.url), "utf8");
+  const handler = script.match(/elements\.createLocalCommit\.addEventListener\("click", async \(\) => \{[\s\S]*?\n\}\);/)?.[0] || "";
+  assert.match(script, /const localCommitGate = createLatestRequestGate\(\)/);
+  assert.match(script, /function resetPlan[\s\S]*?localCommitGate\.begin\(\);[\s\S]*?function disableSourceControls/);
+  assert.match(script, /function renderWorktree\(worktree\) \{[\s\S]*?localCommitGate\.begin\(\);/);
+  assert.match(script, /elements\.commitMessage\.addEventListener[\s\S]*?localCommitGate\.begin\(\);/);
+  assert.match(script, /const requestGeneration = stagedReviewGate\.begin\(\);\n  localCommitGate\.begin\(\);/);
+  assert.match(handler, /const requestGeneration = localCommitGate\.begin\(\)[\s\S]*?const review = commitReview;[\s\S]*?const message = elements\.commitMessage\.value;/);
+  assert.match(handler, /const result = await invoke\("create_maintainer_local_commit"[\s\S]*?if \(!localCommitGate\.isCurrent\(requestGeneration\)[\s\S]*?!operationContextMatches\(context,/);
+  assert.match(handler, /const refreshed = await invoke\("inspect_maintainer_worktree"[\s\S]*?if \(!localCommitGate\.isCurrent\(requestGeneration\)[\s\S]*?renderWorktree\(refreshed\);/);
+  assert.match(handler, /catch \(error\) \{\n    if \(!localCommitGate\.isCurrent\(requestGeneration\)[\s\S]*?!operationContextMatches\(context,/);
+  assert.match(handler, /finally \{\n    if \(localCommitGate\.isCurrent\(requestGeneration\)[\s\S]*?setWorkspaceMutationPending\(false\);/);
+});

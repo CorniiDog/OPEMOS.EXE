@@ -994,6 +994,14 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     181 frontend tests plus documentation, hygiene, and boundary integrity pass
     on 2026-09-06. No VS Code process was launched during validation. Other
     async workers remain under the parent lifecycle item.
+  - [x] Gate maintainer local-commit and follow-up worktree-refresh requests
+    with a dedicated generation bound to the exact reviewed inputs and workspace.
+    Plan reset, worktree replacement, message edits, or a newer review/request
+    invalidates older successes, errors, refreshes, and finalizers before they can
+    replace newer status or controls. The focused request-gate/maintainer suite
+    passes 14/14 and all 182 frontend tests plus documentation, hygiene, and
+    boundary integrity pass on 2026-09-06. No Git mutation ran during validation.
+    Other async workers remain under the parent lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.
