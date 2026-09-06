@@ -62,8 +62,8 @@ const stagedReviewGate = createLatestRequestGate();
 const branchListGate = createLatestRequestGate();
 const checkoutReviewGate = createLatestRequestGate();
 const recentWorktreeGate = createLatestRequestGate();
-const worktreeChooserGate = createLatestRequestGate();
-let preserveWorktreeChooserRequest = false;
+const worktreeSelectionGate = createLatestRequestGate();
+let preserveWorktreeSelectionRequest = false;
 
 installKeyboardBindings([
   {
@@ -116,7 +116,7 @@ function resetPlan({ invalidateRequest = true } = {}) {
   branchListGate.begin();
   checkoutReviewGate.begin();
   recentWorktreeGate.begin();
-  worktreeChooserGate.begin();
+  worktreeSelectionGate.begin();
   workspaceGeneration += 1;
   plannedRepository = null;
   plannedSource = null;
@@ -268,7 +268,7 @@ function renderWorktree(worktree) {
   branchListGate.begin();
   checkoutReviewGate.begin();
   recentWorktreeGate.begin();
-  if (!preserveWorktreeChooserRequest) worktreeChooserGate.begin();
+  if (!preserveWorktreeSelectionRequest) worktreeSelectionGate.begin();
   workspaceGeneration += 1;
   localWorktree = worktree;
   commitReview = null;
@@ -293,12 +293,12 @@ function renderWorktree(worktree) {
   elements.executeCheckout.classList.add("hidden");
 }
 
-function renderWorktreeForChooser(worktree) {
-  preserveWorktreeChooserRequest = true;
+function renderWorktreeForSelection(worktree) {
+  preserveWorktreeSelectionRequest = true;
   try {
     renderWorktree(worktree);
   } finally {
-    preserveWorktreeChooserRequest = false;
+    preserveWorktreeSelectionRequest = false;
   }
 }
 
@@ -332,35 +332,35 @@ async function refreshRecentWorktrees(repository, generation = workspaceGenerati
 
 elements.chooseWorktree.addEventListener("click", async () => {
   if (!plannedRepository) return;
-  const requestGeneration = worktreeChooserGate.begin();
+  const requestGeneration = worktreeSelectionGate.begin();
   const dialogGeneration = workspaceGeneration;
   const repository = plannedRepository;
   const path = await openFolder({ directory: true, multiple: false, title: "Select matching Git worktree" });
   if (!path) return;
-  if (!worktreeChooserGate.isCurrent(requestGeneration)
+  if (!worktreeSelectionGate.isCurrent(requestGeneration)
     || dialogGeneration !== workspaceGeneration || repository !== plannedRepository) return;
   elements.worktreeMessage.textContent = "Validating the worktree root, origin, HEAD, and change state…";
   elements.worktreeMessage.className = "message";
-  renderWorktreeForChooser(null);
+  renderWorktreeForSelection(null);
   const generation = workspaceGeneration;
   setWorkspaceMutationPending(true);
   try {
     const worktree = await invoke("inspect_maintainer_worktree", { path, repository });
-    if (!worktreeChooserGate.isCurrent(requestGeneration)
+    if (!worktreeSelectionGate.isCurrent(requestGeneration)
       || generation !== workspaceGeneration || repository !== plannedRepository) return;
     setWorkspaceMutationPending(false);
-    renderWorktreeForChooser(worktree);
+    renderWorktreeForSelection(worktree);
     void refreshRecentWorktrees(repository, workspaceGeneration);
     elements.worktreeMessage.textContent = worktree.vscodeAvailable
       ? "Valid local target. VS Code can reuse its current window for this worktree."
       : "Valid local target, but the VS Code command-line launcher was not found.";
   } catch (error) {
-    if (!worktreeChooserGate.isCurrent(requestGeneration)
+    if (!worktreeSelectionGate.isCurrent(requestGeneration)
       || generation !== workspaceGeneration || repository !== plannedRepository) return;
     elements.worktreeMessage.textContent = String(error);
     elements.worktreeMessage.className = "message error";
   } finally {
-    if (worktreeChooserGate.isCurrent(requestGeneration)
+    if (worktreeSelectionGate.isCurrent(requestGeneration)
       && generation === workspaceGeneration && repository === plannedRepository) {
       setWorkspaceMutationPending(false);
     }
@@ -368,6 +368,7 @@ elements.chooseWorktree.addEventListener("click", async () => {
 });
 
 elements.recentWorktree.addEventListener("change", async () => {
+  const requestGeneration = worktreeSelectionGate.begin();
   const path = elements.recentWorktree.value;
   if (!path || !plannedRepository) return;
   const repository = plannedRepository;
@@ -377,19 +378,25 @@ elements.recentWorktree.addEventListener("change", async () => {
   elements.worktreeMessage.className = "message";
   try {
     const worktree = await invoke("inspect_maintainer_worktree", { path, repository });
-    if (generation !== workspaceGeneration || repository !== plannedRepository) return;
-    renderWorktree(worktree);
+    if (!worktreeSelectionGate.isCurrent(requestGeneration)
+      || generation !== workspaceGeneration || repository !== plannedRepository) return;
+    setWorkspaceMutationPending(false);
+    renderWorktreeForSelection(worktree);
     void refreshRecentWorktrees(repository, workspaceGeneration);
     elements.worktreeMessage.textContent = worktree.vscodeAvailable
       ? "Recent local target revalidated. VS Code can reuse its current window for this worktree."
       : "Recent local target revalidated, but the VS Code command-line launcher was not found.";
   } catch (error) {
-    if (generation !== workspaceGeneration) return;
+    if (!worktreeSelectionGate.isCurrent(requestGeneration)
+      || generation !== workspaceGeneration || repository !== plannedRepository) return;
     elements.worktreeMessage.textContent = String(error);
     elements.worktreeMessage.className = "message error";
     void refreshRecentWorktrees(repository, workspaceGeneration);
   } finally {
-    setWorkspaceMutationPending(false);
+    if (worktreeSelectionGate.isCurrent(requestGeneration)
+      && generation === workspaceGeneration && repository === plannedRepository) {
+      setWorkspaceMutationPending(false);
+    }
   }
 });
 

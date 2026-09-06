@@ -98,13 +98,24 @@ test("recent worktree refresh commits only the latest repository request", async
 test("native worktree chooser commits only the latest dialog and inspection", async () => {
   const script = await readFile(new URL("../src/maintainer.js", import.meta.url), "utf8");
   const handler = script.match(/elements\.chooseWorktree\.addEventListener\("click", async \(\) => \{[\s\S]*?\n\}\);/)?.[0] || "";
-  assert.match(script, /const worktreeChooserGate = createLatestRequestGate\(\)/);
-  assert.match(script, /function resetPlan[\s\S]*?worktreeChooserGate\.begin\(\);[\s\S]*?function disableSourceControls/);
-  assert.match(script, /function renderWorktree\(worktree\) \{[\s\S]*?if \(!preserveWorktreeChooserRequest\) worktreeChooserGate\.begin\(\);/);
-  assert.match(script, /function renderWorktreeForChooser\(worktree\) \{[\s\S]*?renderWorktree\(worktree\);[\s\S]*?preserveWorktreeChooserRequest = false;/);
-  assert.match(handler, /const requestGeneration = worktreeChooserGate\.begin\(\)[\s\S]*?const path = await openFolder/);
-  assert.match(handler, /if \(!worktreeChooserGate\.isCurrent\(requestGeneration\)[\s\S]*?dialogGeneration !== workspaceGeneration[\s\S]*?repository !== plannedRepository\) return;/);
-  assert.match(handler, /const worktree = await invoke\("inspect_maintainer_worktree"[\s\S]*?if \(!worktreeChooserGate\.isCurrent\(requestGeneration\)[\s\S]*?renderWorktreeForChooser\(worktree\)/);
-  assert.match(handler, /catch \(error\) \{\n    if \(!worktreeChooserGate\.isCurrent\(requestGeneration\)[\s\S]*?repository !== plannedRepository\) return;/);
-  assert.match(handler, /finally \{\n    if \(worktreeChooserGate\.isCurrent\(requestGeneration\)[\s\S]*?setWorkspaceMutationPending\(false\);/);
+  assert.match(script, /const worktreeSelectionGate = createLatestRequestGate\(\)/);
+  assert.match(script, /function resetPlan[\s\S]*?worktreeSelectionGate\.begin\(\);[\s\S]*?function disableSourceControls/);
+  assert.match(script, /function renderWorktree\(worktree\) \{[\s\S]*?if \(!preserveWorktreeSelectionRequest\) worktreeSelectionGate\.begin\(\);/);
+  assert.match(script, /function renderWorktreeForSelection\(worktree\) \{[\s\S]*?renderWorktree\(worktree\);[\s\S]*?preserveWorktreeSelectionRequest = false;/);
+  assert.match(handler, /const requestGeneration = worktreeSelectionGate\.begin\(\)[\s\S]*?const path = await openFolder/);
+  assert.match(handler, /if \(!worktreeSelectionGate\.isCurrent\(requestGeneration\)[\s\S]*?dialogGeneration !== workspaceGeneration[\s\S]*?repository !== plannedRepository\) return;/);
+  assert.match(handler, /const worktree = await invoke\("inspect_maintainer_worktree"[\s\S]*?if \(!worktreeSelectionGate\.isCurrent\(requestGeneration\)[\s\S]*?renderWorktreeForSelection\(worktree\)/);
+  assert.match(handler, /catch \(error\) \{\n    if \(!worktreeSelectionGate\.isCurrent\(requestGeneration\)[\s\S]*?repository !== plannedRepository\) return;/);
+  assert.match(handler, /finally \{\n    if \(worktreeSelectionGate\.isCurrent\(requestGeneration\)[\s\S]*?setWorkspaceMutationPending\(false\);/);
+});
+
+
+test("recent worktree selection commits only the latest inspection", async () => {
+  const script = await readFile(new URL("../src/maintainer.js", import.meta.url), "utf8");
+  const handler = script.match(/elements\.recentWorktree\.addEventListener\("change", async \(\) => \{[\s\S]*?\n\}\);/)?.[0] || "";
+  assert.match(handler, /const requestGeneration = worktreeSelectionGate\.begin\(\)[\s\S]*?const path = elements\.recentWorktree\.value/);
+  assert.match(handler, /const worktree = await invoke\("inspect_maintainer_worktree"[\s\S]*?if \(!worktreeSelectionGate\.isCurrent\(requestGeneration\)[\s\S]*?repository !== plannedRepository\) return;/);
+  assert.match(handler, /setWorkspaceMutationPending\(false\);\n    renderWorktreeForSelection\(worktree\);/);
+  assert.match(handler, /catch \(error\) \{\n    if \(!worktreeSelectionGate\.isCurrent\(requestGeneration\)[\s\S]*?repository !== plannedRepository\) return;/);
+  assert.match(handler, /finally \{\n    if \(worktreeSelectionGate\.isCurrent\(requestGeneration\)[\s\S]*?setWorkspaceMutationPending\(false\);/);
 });
