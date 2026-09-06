@@ -336,6 +336,18 @@ This changes presentation only. It does not change compatibility results, build
 inputs, trust, authorization, or activation. Real monitor scaling and native OS
 forced-colors behavior require separate validation.
 
+## Interface language
+
+Settings offers a local interface-language choice. **System default** follows the
+first supported system locale, with `en-US` as the source and fallback. The
+initial delivered catalogs are `de-DE`, `ja-JP`, and `ar`; Arabic applies RTL
+page direction while resolver JSON remains left-to-right and displayed Core
+values select their own bidi direction. The explicit choice is stored locally
+and shared with already-open application windows. No translation service,
+network request, Core-field translation, trust decision, or activation follows
+from this preference. Missing or unsupported locales and keys fail closed to the
+English catalog.
+
 This host opt-in does not install production keys, select publication policy,
 authorize source fallback, or activate a generation. Existing production trust and activation gates remain
 intact. macOS regression validation, Debian validation, managed-appliance smoke

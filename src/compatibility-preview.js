@@ -1,10 +1,12 @@
+import { translate } from "./locale.js";
+
 const DOCUMENT_LIMIT = 1024 * 1024;
 const statuses = new Set(["compatible", "invalid_target", "no_compatible_artifact", "resolver_error", "unsupported_target"]);
 
 function displayText(value, limit = 2048) {
-  if (value == null) return "Not provided";
+  if (value == null) return translate("notProvided");
   if (typeof value !== "string") throw new Error("Malformed compatibility preview response.");
-  return value.length > limit ? `${value.slice(0, limit)}… (truncated for display)` : value;
+  return value.length > limit ? `${value.slice(0, limit)}… (${translate("truncated")})` : value;
 }
 
 function generationIdentity(value) {
@@ -33,16 +35,16 @@ function generationRows(preview) {
   const availableKeys = new Set(available.map(([key]) => key));
   if (availableKeys.size !== available.length) throw new Error("Duplicate generation status preview.");
   const optional = (value) => {
-    if (value == null) return "None";
+    if (value == null) return translate("none");
     const displayed = generationIdentity(value);
     if (!availableKeys.has(identityKey(value))) throw new Error("Generation status is not available.");
     return displayed;
   };
   return [
-    ["Available generations — development fixture", available.map(([, value]) => value).join("; ")],
-    ["Selected generation — development fixture", optional(state.selected)],
-    ["Active generation — development fixture", optional(state.active)],
-    ["Last-known-good generation — development fixture", optional(state.lastKnownGood)],
+    [translate("availableGenerations"), available.map(([, value]) => value).join("; ")],
+    [translate("selectedGeneration"), optional(state.selected)],
+    [translate("activeGeneration"), optional(state.active)],
+    [translate("lastKnownGood"), optional(state.lastKnownGood)],
   ];
 }
 
@@ -50,8 +52,8 @@ function generationRows(preview) {
 // compatibility inference, network action, or activation is derived here.
 export function presentCompatibilityPreview(preview) {
   const origins = {
-    "unverified-document": "Unverified document",
-    "development-fixture": "Development fixture — non-production",
+    "unverified-document": translate("unverified"),
+    "development-fixture": translate("development"),
   };
   if (!preview || !Object.hasOwn(origins, preview.origin)) throw new Error("Unknown compatibility preview origin.");
   const result = preview.result;
@@ -59,29 +61,29 @@ export function presentCompatibilityPreview(preview) {
     throw new Error("Unsupported compatibility preview response.");
   }
   const rows = [
-    ["Core status", result.status],
-    ["SteamOS target", displayText(result.target.steamosVersion, 64)],
-    ["Kernel target", displayText(result.target.kernelVersion, 255)],
-    ["Architecture", displayText(result.target.architecture, 64)],
-    ["Exact-target support reported by Core", displayText(result.compatibility)],
-    ["Reason", displayText(result.reason, 128)],
-    ["Message", displayText(result.message)],
+    [translate("coreStatus"), result.status],
+    [translate("steamosTarget"), displayText(result.target.steamosVersion, 64)],
+    [translate("kernelTarget"), displayText(result.target.kernelVersion, 255)],
+    [translate("architecture"), displayText(result.target.architecture, 64)],
+    [translate("exactSupport"), displayText(result.compatibility)],
+    [translate("reason"), displayText(result.reason, 128)],
+    [translate("message"), displayText(result.message)],
   ];
   if (result.publication) rows.push(
-    ["Publication tag", displayText(result.publication.tag, 1024)],
-    ["Published SteamOS", displayText(result.publication.steamosVersion, 64)],
-    ["Published kernel", displayText(result.publication.kernelVersion, 255)],
-    ["Published NVIDIA", displayText(result.publication.nvidiaVersion, 128)],
+    [translate("publicationTag"), displayText(result.publication.tag, 1024)],
+    [translate("publishedSteamOS"), displayText(result.publication.steamosVersion, 64)],
+    [translate("publishedKernel"), displayText(result.publication.kernelVersion, 255)],
+    [translate("publishedNvidia"), displayText(result.publication.nvidiaVersion, 128)],
   );
   if (result.artifact) rows.push(
-    ["Artifact name", displayText(result.artifact.name, 255)],
-    ["Artifact trust reported by Core", displayText(result.artifact.trust?.classification)],
-    ["Required verification", displayText(result.artifact.trust?.requiredVerification)],
+    [translate("artifactName"), displayText(result.artifact.name, 255)],
+    [translate("artifactTrust"), displayText(result.artifact.trust?.classification)],
+    [translate("requiredVerification"), displayText(result.artifact.trust?.requiredVerification)],
   );
   if (result.nextAction) rows.push(
-    ["Next action reported by Core", displayText(result.nextAction.kind)],
-    ["Action architecture", displayText(result.nextAction.executionArchitecture, 64)],
-    ["Kernel policy", displayText(result.nextAction.kernelPolicy, 64)],
+    [translate("nextAction"), displayText(result.nextAction.kind)],
+    [translate("actionArchitecture"), displayText(result.nextAction.executionArchitecture, 64)],
+    [translate("kernelPolicy"), displayText(result.nextAction.kernelPolicy, 64)],
   );
   rows.push(...generationRows(preview));
   return { origin: origins[preview.origin], rows };
@@ -160,9 +162,9 @@ export function installCompatibilityPreview(documentRef, invoke, openFile = null
     dialog.setAttribute("aria-busy", String(state.phase === "loading"));
     result.hidden = state.phase !== "result";
     rows.replaceChildren();
-    const statusText = state.phase === "loading" ? "Checking document structure…"
+    const statusText = state.phase === "loading" ? translate("checking")
       : state.phase === "error" ? state.message
-      : state.phase === "result" ? state.preview.origin : "No result loaded.";
+      : state.phase === "result" ? state.preview.origin : translate("noResult");
     status.textContent = statusText;
     status.setAttribute("aria-label", statusText);
     if (state.phase !== "result") return;
@@ -174,6 +176,7 @@ export function installCompatibilityPreview(documentRef, invoke, openFile = null
       term.setAttribute("aria-label", label);
       description.textContent = value;
       description.setAttribute("aria-label", value);
+      description.setAttribute("dir", "auto");
       row.append(term, description);
       rows.append(row);
     }
@@ -209,6 +212,7 @@ export function installCompatibilityPreview(documentRef, invoke, openFile = null
       void controller.inspect({ source: "fixture", name });
     });
   }
+  documentRef.addEventListener?.("opemos-locale-change", () => controller.clear());
   controller.clear();
   return controller;
 }
