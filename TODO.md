@@ -848,7 +848,10 @@ already Core contracts and are not open-ended product choices.
     `62d19731b83d156678157f0488c034a2092800a4ff2d175c90c41f153d373dc7`.
     No package was installed, no graphical application opened, and no network
     request, driver download, publication, production activation, KVM, or
-    hardware operation occurred. PR and squash evidence follow.
+    hardware operation occurred. Remote CI and review require publishing branch
+    `work/exe-linux-appimage-package` to configured origin
+    `https://github.com/CorniiDog/steamos-nvidia-image-builder.git`; source commit
+    `c03a1d6` contains only this bounded slice. PR and squash evidence follow.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
