@@ -155,6 +155,10 @@ assert.deepEqual(iconDimensions, { width: 1024, height: 1024 });
 assert.deepEqual(await pngRgbaCornerAlphas("docs/assets/images/opemos-app-icon.png"), [0, 0, 0, 0]);
 assert.deepEqual(await pngRgbaCornerAlphas("src-tauri/icons/icon.png"), [0, 0, 0, 0]);
 
+const linuxTesting = await read("docs/linux-testing.md");
+assert.match(linuxTesting, /System default[\s\S]*en-US[\s\S]*de-DE[\s\S]*ja-JP[\s\S]*ar/);
+assert.match(linuxTesting, /No translation service,\nnetwork request, Core-field translation, trust decision, or activation/);
+
 const checks = await read(".github/workflows/checks.yml");
 const coreContractCommit = "3e49323fce266af8686039fb6487918ef5a64fd9";
 assert.match(checks, /^name: Checks$/m);

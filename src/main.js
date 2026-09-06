@@ -35,6 +35,7 @@ import {
 } from "./usb-write-state.js";
 import { installWindowDrag } from "./window-drag.js";
 import { installPageZoom } from "./zoom.js";
+import { installLocale } from "./locale.js";
 import {
   installKeyboardBindings,
   keepKeyboardFocusInside,
@@ -42,6 +43,7 @@ import {
 } from "./keyboard.js";
 
 const { invoke } = window.__TAURI__.core;
+installLocale();
 installPageZoom();
 const { getAllWebviewWindows, getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 const open = (options) => invoke("plugin:dialog|open", { options });

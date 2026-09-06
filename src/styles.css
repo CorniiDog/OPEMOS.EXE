@@ -503,6 +503,7 @@ footer p { margin: 0; }
 .settings-message { display: block; margin: 5px 0 0; color: #8f9bae; font-size: 12px; line-height: 1.42; }
 .setting-row input { flex: none; width: 18px; height: 18px; margin-top: 2px; accent-color: #6688ff; }
 .setting-row input:disabled { opacity: .42; cursor: not-allowed; }
+.locale-setting select { flex: none; width: min(48%, 210px); min-width: 0; padding: 8px 34px 8px 10px; border: 1px solid rgba(169, 211, 237, .2); border-radius: 10px; color: #e2ebf6; }
 .setting-row.pending { color: #778296; cursor: wait; }
 .setting-row.pending strong { color: #a4adbc; }
 .setting-row.unavailable { cursor: default; }

@@ -1495,6 +1495,16 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     `PATH` and passed when rerun with the installed Node directory. Documentation,
     hygiene, and boundary integrity pass. Delivered translations, browser/OS
     forced-colors behavior, and real monitor scaling remain open.
+  - [x] Deliver a bounded local compatibility-interface catalog with `en-US` as
+    source/fallback and initial `de-DE`, `ja-JP`, and `ar` translations. Settings
+    follows the first supported system locale or a persisted explicit choice;
+    already-open windows observe explicit changes. Arabic sets RTL page direction,
+    resolver JSON remains LTR, and verbatim Core values use automatic bidi
+    isolation. Catalog admission rejects missing, extra, empty, non-string, and
+    markup-bearing entries; unsupported locales and keys fall back safely without
+    a network translation service. Focused locale, compatibility, and layout tests
+    pass 43/43, and all 160 frontend tests pass under the serialized heavy wrapper.
+    Documentation and repository integrity validation are recorded with the PR.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
   heartbeats or free-form log text. Unknown structured phases now retain only
   their bounded label and current validation/installation context: even a

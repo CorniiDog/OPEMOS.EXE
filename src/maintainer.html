@@ -165,13 +165,13 @@
         </div>
         <p id="compatibility-notice">Read-only preview. Document structure is checked, but authenticity is not. A compatible result here does not authorize a build, download, source choice, or activation.</p>
         <button id="compatibility-file-open" class="secondary" type="button">Open a local resolver JSON file (up to 1 MiB)</button>
-        <label for="compatibility-document">Core resolver JSON (up to 1 MiB)</label>
-        <textarea id="compatibility-document" maxlength="1048576" spellcheck="false" autocomplete="off" placeholder="Paste a Core resolver result"></textarea>
+        <label id="compatibility-document-label" for="compatibility-document">Core resolver JSON (up to 1 MiB)</label>
+        <textarea id="compatibility-document" dir="ltr" maxlength="1048576" spellcheck="false" autocomplete="off" placeholder="Paste a Core resolver result"></textarea>
         <div class="compatibility-actions">
             <button id="compatibility-inspect" class="secondary" type="button">Inspect pasted result</button>
             <button id="compatibility-clear" class="secondary" type="button">Clear</button>
         </div>
-        <p>Development fixtures are non-production and available only in debug builds.</p>
+        <p id="compatibility-fixture-help">Development fixtures are non-production and available only in debug builds.</p>
         <div class="compatibility-actions">
             <button id="compatibility-fixture-compatible" class="secondary" type="button">Compatible fixture</button>
             <button id="compatibility-fixture-no-artifact" class="secondary" type="button">No-artifact fixture</button>
@@ -180,7 +180,7 @@
         <section id="compatibility-result" hidden aria-label="Unverified Core result">
             <dl id="compatibility-fields"></dl>
         </section>
-        <p>Selected file and pasted content are processed locally and cleared when this inspector closes. No credentials, downloads, cache changes, source selection, or guest operations are needed.</p>
+        <p id="compatibility-privacy">Selected file and pasted content are processed locally and cleared when this inspector closes. No credentials, downloads, cache changes, source selection, or guest operations are needed.</p>
     </dialog>
 
     <script type="module" src="/maintainer.js"></script>
