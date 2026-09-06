@@ -58,6 +58,7 @@ let branchReview = null;
 let workspaceGeneration = 0;
 const sourceRefreshGate = createLatestRequestGate();
 const planRequestGate = createLatestRequestGate();
+const stagedReviewGate = createLatestRequestGate();
 
 installKeyboardBindings([
   {
@@ -106,6 +107,7 @@ function renderSelection() {
 
 function resetPlan({ invalidateRequest = true } = {}) {
   if (invalidateRequest) planRequestGate.begin();
+  stagedReviewGate.begin();
   workspaceGeneration += 1;
   plannedRepository = null;
   plannedSource = null;
@@ -253,6 +255,7 @@ elements.planButton.addEventListener("click", async () => {
 });
 
 function renderWorktree(worktree) {
+  stagedReviewGate.begin();
   workspaceGeneration += 1;
   localWorktree = worktree;
   commitReview = null;
@@ -412,6 +415,7 @@ elements.openVscode.addEventListener("click", async () => {
 });
 
 elements.commitMessage.addEventListener("input", () => {
+  stagedReviewGate.begin();
   commitReview = null;
   elements.reviewStaged.disabled = !localWorktree || !elements.commitMessage.value.trim();
   elements.stagedReview.classList.add("hidden");
@@ -421,6 +425,7 @@ elements.commitMessage.addEventListener("input", () => {
 
 elements.reviewStaged.addEventListener("click", async () => {
   if (!localWorktree || !plannedRepository) return;
+  const requestGeneration = stagedReviewGate.begin();
   const generation = workspaceGeneration;
   const worktreePath = localWorktree.path;
   const repository = plannedRepository;
@@ -429,11 +434,13 @@ elements.reviewStaged.addEventListener("click", async () => {
   elements.commitStatus.textContent = "Revalidating the worktree and snapshotting its exact staged tree…";
   elements.commitStatus.className = "message";
   try {
-    commitReview = await invoke("review_maintainer_staged_commit", {
+    const reviewedCommit = await invoke("review_maintainer_staged_commit", {
       path: worktreePath, repository, message,
     });
-    if (generation !== workspaceGeneration || worktreePath !== localWorktree?.path
-      || repository !== plannedRepository || message !== elements.commitMessage.value) return;
+    if (!stagedReviewGate.isCurrent(requestGeneration) || generation !== workspaceGeneration
+      || worktreePath !== localWorktree?.path || repository !== plannedRepository
+      || message !== elements.commitMessage.value) return;
+    commitReview = reviewedCommit;
     const visiblePaths = commitReview.stagedPaths.slice(0, 20).join(", ");
     const remaining = Math.max(0, commitReview.stagedPaths.length - 20);
     elements.stagedReview.textContent = `${commitReview.stagedPaths.length} staged path${commitReview.stagedPaths.length === 1 ? "" : "s"}: ${visiblePaths}${remaining ? `, and ${remaining} more` : ""}`;
@@ -443,12 +450,14 @@ elements.reviewStaged.addEventListener("click", async () => {
     elements.createLocalCommit.classList.remove("hidden");
     elements.commitStatus.textContent = `Review bound to ${commitReview.head.slice(0, 12)} and tree ${commitReview.indexTree.slice(0, 12)}. Nothing has been committed or pushed.`;
   } catch (error) {
-    if (generation !== workspaceGeneration) return;
+    if (!stagedReviewGate.isCurrent(requestGeneration) || generation !== workspaceGeneration) return;
     commitReview = null;
     elements.commitStatus.textContent = String(error);
     elements.commitStatus.className = "message error";
   } finally {
-    elements.reviewStaged.disabled = !localWorktree || !elements.commitMessage.value.trim();
+    if (stagedReviewGate.isCurrent(requestGeneration) && generation === workspaceGeneration) {
+      elements.reviewStaged.disabled = !localWorktree || !elements.commitMessage.value.trim();
+    }
   }
 });
 
