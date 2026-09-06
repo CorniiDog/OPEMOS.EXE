@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspectWindowsVmRoot, WINDOWS_VM_LIMITS } from "./windows-vm.mjs";
 
-const KEYS = ["schemaVersion", "kind", "filename", "sourceUrl", "product", "release", "edition", "architecture", "size", "sha256"];
+const KEYS = ["schemaVersion", "kind", "filename", "sourceUrl", "product", "release", "edition", "architecture", "locale", "size", "sha256", "hashDocumentUrl", "hashDocumentSha256"];
 const HASH = /^[0-9a-f]{64}$/;
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.iso$/;
 
@@ -26,9 +26,13 @@ export function validateWindowsMediaIdentity(value) {
   for (const field of ["product", "release", "edition"]) {
     if (typeof value[field] !== "string" || value[field].length < 1 || value[field].length > 96 || /[\u0000-\u001f]/.test(value[field])) fail(`Windows media ${field} is invalid.`);
   }
-  if (value.product !== "Windows 11 Enterprise Evaluation" || value.edition !== "Enterprise Evaluation" || value.architecture !== "x86_64") fail("Windows media product, edition, or architecture is unsupported.");
+  if (value.product !== "Windows 11 Enterprise Evaluation" || value.edition !== "Enterprise Evaluation" || value.architecture !== "x86_64" || value.locale !== "en-US") fail("Windows media product, edition, or architecture is unsupported.");
   if (!Number.isSafeInteger(value.size) || value.size < 1 || BigInt(value.size) > WINDOWS_VM_LIMITS.sourceLogicalBytes) fail("Windows media size exceeds the 8 GiB source limit.");
   if (typeof value.sha256 !== "string" || !HASH.test(value.sha256)) fail("Windows media SHA-256 is invalid.");
+  let hashDocument;
+  try { hashDocument = new URL(value.hashDocumentUrl); } catch { fail("Windows media hash-document URL is invalid."); }
+  if (hashDocument.protocol !== "https:" || !(hashDocument.hostname === "microsoft.com" || hashDocument.hostname.endsWith(".microsoft.com")) || !hashDocument.pathname.toLowerCase().endsWith(".pdf")) fail("Windows media hash document must be canonical Microsoft HTTPS PDF.");
+  if (typeof value.hashDocumentSha256 !== "string" || !HASH.test(value.hashDocumentSha256)) fail("Windows media hash-document SHA-256 is invalid.");
   return Object.freeze({ ...value });
 }
 async function sha256(file) {
