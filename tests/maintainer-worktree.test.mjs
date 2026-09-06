@@ -27,3 +27,15 @@ test("maintainer source refresh commits only the latest request", async () => {
   assert.match(loadSources, /catch \(error\) \{\n    if \(!sourceRefreshGate\.isCurrent\(generation\)\) return;/);
   assert.match(loadSources, /finally \{\n    if \(sourceRefreshGate\.isCurrent\(generation\)\) \{[\s\S]*?loading = false;/);
 });
+
+
+test("maintainer plan verification commits only the latest request", async () => {
+  const script = await readFile(new URL("../src/maintainer.js", import.meta.url), "utf8");
+  const planHandler = script.match(/elements\.planButton\.addEventListener\("click", async \(\) => \{[\s\S]*?\n\}\);/)?.[0] || "";
+  assert.match(script, /const planRequestGate = createLatestRequestGate\(\)/);
+  assert.match(script, /function resetPlan\(\{ invalidateRequest = true \} = \{\}\) \{\n  if \(invalidateRequest\) planRequestGate\.begin\(\);/);
+  assert.match(planHandler, /const generation = planRequestGate\.begin\(\)/);
+  assert.match(planHandler, /const plan = await invoke\("plan_maintainer_workspace", \{[\s\S]*?\n    \}\);\n    if \(!planRequestGate\.isCurrent\(generation\)\) return;/);
+  assert.match(planHandler, /catch \(error\) \{\n    if \(!planRequestGate\.isCurrent\(generation\)\) return;\n    resetPlan\(\{ invalidateRequest: false \}\);/);
+  assert.match(planHandler, /finally \{\n    if \(planRequestGate\.isCurrent\(generation\)\) \{[\s\S]*?loading = false;/);
+});
