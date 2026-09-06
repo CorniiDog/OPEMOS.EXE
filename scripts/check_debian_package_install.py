@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Install and purge the locally built test package in a disposable Debian container."""
 from __future__ import annotations
-import hashlib, json, os, subprocess
+import hashlib, json, os, subprocess, sys
 from pathlib import Path
 from typing import Callable
 PACKAGE_ID = "opemos-exe-linux-test"
@@ -29,6 +29,17 @@ def require_disposable_debian(root: Path, environ: dict[str, str]) -> None:
     if os.geteuid() != 0: raise ValueError("the disposable package smoke must run as container root")
 def verify_regular(path: Path, description: str) -> None:
     if path.is_symlink() or not path.is_file(): raise ValueError(f"{description} must be one regular non-symlink file")
+def run_graphical_smoke(repo: Path, installed_binary: Path, environ: dict[str, str], run: Run = subprocess.run) -> None:
+    if environ.get("OPEMOS_DEBIAN_GUI_SMOKE") != "1": return
+    result = run(
+        (sys.executable, str(repo / "scripts/linux_gui_smoke.py"),
+         "--executable", str(installed_binary), "--expect-host-unavailable"),
+        text=True, capture_output=True, timeout=60, check=False,
+        env={**environ, "OPEMOS_EXPERIMENTAL_LINUX": "1"},
+    )
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"installed Debian graphical smoke failed: {detail}")
 def run_smoke(repo: Path, root: Path, environ: dict[str, str], run: Run = subprocess.run) -> None:
     require_disposable_debian(root, environ)
     package, staged_binary = package_path(repo)
@@ -60,6 +71,7 @@ def run_smoke(repo: Path, root: Path, environ: dict[str, str], run: Run = subpro
             rooted = root / candidate.relative_to("/")
             if rooted.is_file() or rooted.is_symlink(): installed_files.append(rooted)
         if installed_binary not in installed_files or matches[0] not in installed_files: raise RuntimeError("installed package inventory omits required files")
+        run_graphical_smoke(repo, installed_binary, environ, run)
     except BaseException as error: failure = error
     finally:
         if attempted:
@@ -74,5 +86,5 @@ def run_smoke(repo: Path, root: Path, environ: dict[str, str], run: Run = subpro
 def main() -> None:
     run_smoke(Path(__file__).resolve().parent.parent, Path("/"), dict(os.environ))
     print("PASS: exact local test package installed, verified, purged, and left no package residue.")
-    print("No graphical application launched.")
+    print("Graphical smoke ran before purge." if os.environ.get("OPEMOS_DEBIAN_GUI_SMOKE") == "1" else "No graphical application launched.")
 if __name__ == "__main__": main()

@@ -5,10 +5,13 @@ from unittest import mock
 spec = importlib.util.spec_from_file_location("debian_install", Path(__file__).resolve().parents[1] / "scripts/check_debian_package_install.py")
 install = importlib.util.module_from_spec(spec); spec.loader.exec_module(install)
 class FakeRunner:
-    def __init__(self, root, staged, fail_install=False, fail_verify=False, fail_purge=False):
-        self.root, self.staged = root, staged; self.fail_install, self.fail_verify, self.fail_purge = fail_install, fail_verify, fail_purge; self.calls=[]
-    def __call__(self, args, **_kwargs):
+    def __init__(self, root, staged, fail_install=False, fail_verify=False, fail_purge=False, fail_gui=False):
+        self.root, self.staged = root, staged; self.fail_install, self.fail_verify, self.fail_purge, self.fail_gui = fail_install, fail_verify, fail_purge, fail_gui; self.calls=[]
+    def __call__(self, args, **kwargs):
         self.calls.append(tuple(args))
+        if args and Path(args[0]).name.startswith("python") and str(args[1]).endswith("linux_gui_smoke.py"):
+            self.gui_env = kwargs.get("env", {})
+            return subprocess.CompletedProcess(args,1 if self.fail_gui else 0,"","gui failed" if self.fail_gui else "")
         if args[:2] == ("dpkg-deb", "--field"):
             value = "opemos-exe-linux-test\n" if args[-1] == "Package" else "amd64\n"
             return subprocess.CompletedProcess(args,0,value,"")
@@ -41,6 +44,16 @@ class DebianInstallSmokeTests(unittest.TestCase):
                          Path("OPEMOS EXE Linux Test_0.1.0_amd64/data") / install.BINARY)
     def test_success_installs_verifies_and_purges(self):
         runner=FakeRunner(self.root,self.staged); self.run_it(runner); self.assertFalse((self.root/install.BINARY).exists()); self.assertIn(("dpkg","--purge",install.PACKAGE_ID),runner.calls)
+    def test_opt_in_graphical_smoke_runs_installed_binary_before_purge(self):
+        runner=FakeRunner(self.root,self.staged); self.env["OPEMOS_DEBIAN_GUI_SMOKE"]="1"; self.run_it(runner)
+        gui=[call for call in runner.calls if len(call)>1 and call[1].endswith("linux_gui_smoke.py")]
+        self.assertEqual(len(gui),1); self.assertIn(str(self.root/install.BINARY),gui[0]); self.assertIn("--expect-host-unavailable",gui[0])
+        self.assertEqual(runner.gui_env["OPEMOS_EXPERIMENTAL_LINUX"],"1")
+        self.assertLess(runner.calls.index(gui[0]),runner.calls.index(("dpkg","--purge",install.PACKAGE_ID)))
+    def test_graphical_failure_is_reported_and_package_is_purged(self):
+        runner=FakeRunner(self.root,self.staged,fail_gui=True); self.env["OPEMOS_DEBIAN_GUI_SMOKE"]="1"
+        with self.assertRaisesRegex(RuntimeError,"graphical smoke failed: gui failed"): self.run_it(runner)
+        self.assertIn(("dpkg","--purge",install.PACKAGE_ID),runner.calls)
     def test_partial_install_and_failed_verification_are_always_purged(self):
         for option in ("fail_install","fail_verify"):
             with self.subTest(option=option):
