@@ -57,6 +57,7 @@ let commitReview = null;
 let branchReview = null;
 let workspaceGeneration = 0;
 const sourceRefreshGate = createLatestRequestGate();
+const planRequestGate = createLatestRequestGate();
 
 installKeyboardBindings([
   {
@@ -103,7 +104,8 @@ function renderSelection() {
   elements.planButton.disabled = loading || !selected;
 }
 
-function resetPlan() {
+function resetPlan({ invalidateRequest = true } = {}) {
+  if (invalidateRequest) planRequestGate.begin();
   workspaceGeneration += 1;
   plannedRepository = null;
   plannedSource = null;
@@ -194,6 +196,7 @@ elements.refresh.addEventListener("click", loadSources);
 elements.planButton.addEventListener("click", async () => {
   const source = selectedSource();
   if (!source) return;
+  const generation = planRequestGate.begin();
   loading = true;
   disableSourceControls(true);
   renderSelection();
@@ -208,6 +211,7 @@ elements.planButton.addEventListener("click", async () => {
       reference: source.reference,
       commit: source.commit,
     });
+    if (!planRequestGate.isCurrent(generation)) return;
     const current = selectedSource();
     if (!current || current.repository !== source.repository || current.reference !== source.reference
       || current.commit !== source.commit) {
@@ -233,15 +237,18 @@ elements.planButton.addEventListener("click", async () => {
     elements.message.textContent = plan.message;
     await refreshRecentWorktrees(plan.repository, workspaceGeneration);
   } catch (error) {
-    resetPlan();
+    if (!planRequestGate.isCurrent(generation)) return;
+    resetPlan({ invalidateRequest: false });
     elements.planStatus.textContent = "Rejected";
     elements.planStatus.className = "status failed";
     elements.message.textContent = String(error);
     elements.message.className = "message error";
   } finally {
-    loading = false;
-    disableSourceControls(false);
-    renderSelection();
+    if (planRequestGate.isCurrent(generation)) {
+      loading = false;
+      disableSourceControls(false);
+      renderSelection();
+    }
   }
 });
 

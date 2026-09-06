@@ -926,6 +926,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     and all 172 frontend tests plus documentation, hygiene, and boundary
     integrity pass on 2026-09-06. Other async workers remain under the parent
     lifecycle item.
+  - [x] Gate overlapping maintainer workspace plan verifications with a
+    dedicated latest-request generation, invalidated by source or plan resets.
+    Older same-source successes, errors, and finalizers cannot replace or clear
+    a newer verified plan, message, loading state, or enabled-control state.
+    The focused request-gate/maintainer suite passes 5/5 and all 173 frontend
+    tests plus documentation, hygiene, and boundary integrity pass on
+    2026-09-06. Other async workers remain under the parent lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.
