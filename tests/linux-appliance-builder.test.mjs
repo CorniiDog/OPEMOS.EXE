@@ -191,3 +191,38 @@ esac
   assert.deepEqual(await readFile(cache), original);
   await assert.rejects(readFile(partial));
 });
+
+test("failed replacement download preserves cache and removes partial bytes", async () => {
+  const fixture = await prepareFakeEnvironment(Buffer.from("unused replacement\n"));
+  const work = join(fixture.applianceDir, "work");
+  const cache = join(work, "Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2");
+  const original = Buffer.from("existing corrupt cache\n");
+  await mkdir(work);
+  await writeFile(cache, original);
+  const curlPath = join(fixture.root, "bin", "curl");
+  await writeFile(curlPath, `#!/bin/sh
+out=
+url=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output) out=$2; shift 2 ;;
+    --fail|--location|--progress-bar|--silent|--show-error) shift ;;
+    *) url=$1; shift ;;
+  esac
+done
+case "$url" in
+  *-CHECKSUM) cp "$FIXTURE_CHECKSUM" "$out" ;;
+  *fedora.gpg) cp "$FIXTURE_KEYRING" "$out" ;;
+  *.qcow2) printf partial > "$out"; exit 22 ;;
+  *) exit 91 ;;
+esac
+`);
+  await chmod(curlPath, 0o755);
+  const result = spawnSync("bash", [join(fixture.applianceDir, "build_linux.sh")], {
+    encoding: "utf8",
+    env: fixture.env,
+  });
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(await readFile(cache), original);
+  await assert.rejects(readFile(`${cache}.download.partial`));
+});
