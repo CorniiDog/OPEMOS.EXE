@@ -466,6 +466,16 @@ installation targets, production activation, or hardware certification.
   focused and all 200 frontend tests pass with documentation, hygiene, and
   boundary integrity.
 
+- [x] Add inactive host-side release status/reconciliation admission. A newer
+  result must preserve operation ID, repository, tag, target commit, and every
+  ordered asset name/hash/size; stale attempts, changed same-attempt results,
+  and identity substitutions are rejected without replacing the reviewed state.
+  A newer accepted attempt clears prior authorization, exact repeated results
+  are idempotent, and succeeded/failed/cancelled terminal results cannot be
+  replaced. No Core process, remote inventory, publisher, credentials, or
+  production path is connected. On 2026-09-06, 8 focused and all 202 frontend
+  tests pass with documentation, hygiene, and boundary integrity.
+
 ### 1. Complete the OPEMOS Core migration
 
 Production generation activation is intentionally blocked until the maintainer
