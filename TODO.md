@@ -1203,6 +1203,11 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
 - [ ] Test cancellation and injected failure during download, decompression,
   transfer, QEMU boot, Core validation, package mutation, initramfs, export, USB
   writing, USB verification, and finalization.
+  - [x] Cover Linux Fedora cache replacement download interruption with a real
+    child process and process-group SIGTERM. Once partial bytes exist, termination
+    returns nonzero, preserves the exact prior cache bytes, and removes the
+    temporary download. The focused builder suite passes 6/6. Other listed
+    cancellation and injected-failure phases remain open.
 - [ ] On every terminal path prove: original unchanged, partial output absent,
   mounts released, guests stopped, locks released, secrets removed, and no
   partial result accepted as trusted.
