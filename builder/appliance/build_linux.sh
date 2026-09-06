@@ -161,19 +161,6 @@ log "Output: ${OUTPUT_IMAGE}"
 
 mkdir -p "$(dirname "$OUTPUT_IMAGE")"
 
-if [[ ! -f "$IMAGE_PATH" ]]; then
-    log "Downloading Fedora Cloud image..."
-
-    curl \
-        --fail \
-        --location \
-        --progress-bar \
-        --output "$IMAGE_PATH" \
-        "$IMAGE_URL"
-else
-    log "Fedora Cloud image already downloaded."
-fi
-
 log "Downloading Fedora checksum..."
 
 curl \
@@ -205,14 +192,54 @@ gpgv \
     "$CHECKSUM_PATH"
 SIGNATURE_VERIFIED=1
 
+CHECKSUM_LINE_PREFIX="SHA256 (${IMAGE_NAME}) = "
+mapfile -t IMAGE_CHECKSUM_LINES < <(grep -F "$CHECKSUM_LINE_PREFIX" "$VERIFIED_CHECKSUM")
+[[ "${#IMAGE_CHECKSUM_LINES[@]}" == "1" ]] || \
+    die "Signed checksum did not contain exactly one entry for ${IMAGE_NAME}."
+EXPECTED_IMAGE_SHA256="${IMAGE_CHECKSUM_LINES[0]#"$CHECKSUM_LINE_PREFIX"}"
+[[ "$EXPECTED_IMAGE_SHA256" =~ ^[0-9a-f]{64}$ ]] || \
+    die "Signed checksum contained an invalid SHA-256 for ${IMAGE_NAME}."
+
+verify_image()
+{
+    local candidate="$1"
+    local actual_sha256
+    actual_sha256="$(sha256sum "$candidate" | awk '{ print $1 }')"
+    [[ "$actual_sha256" == "$EXPECTED_IMAGE_SHA256" ]]
+}
+
+DOWNLOAD_TEMP="${IMAGE_PATH}.download.partial"
+cleanup_download()
+{
+    rm -f "$DOWNLOAD_TEMP"
+}
+trap cleanup_download EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+cleanup_download
+
+if [[ -f "$IMAGE_PATH" ]] && verify_image "$IMAGE_PATH"; then
+    log "Authenticated Fedora Cloud image cache is valid."
+else
+    if [[ -f "$IMAGE_PATH" ]]; then
+        log "Cached Fedora Cloud image is invalid; downloading an authenticated replacement."
+    else
+        log "Downloading Fedora Cloud image..."
+    fi
+    curl \
+        --fail \
+        --location \
+        --progress-bar \
+        --output "$DOWNLOAD_TEMP" \
+        "$IMAGE_URL"
+    verify_image "$DOWNLOAD_TEMP" || \
+        die "Downloaded Fedora Cloud image did not match the signed checksum."
+    mv "$DOWNLOAD_TEMP" "$IMAGE_PATH"
+fi
+trap - EXIT INT TERM
+
 log "Verifying image SHA256..."
-
-(
-    cd "$WORK_DIR"
-
-    grep "$IMAGE_NAME" "$VERIFIED_CHECKSUM" |
-        sha256sum -c -
-)
+verify_image "$IMAGE_PATH" || die "Fedora Cloud image did not match the signed checksum."
 
 log "Preparing builder appliance..."
 

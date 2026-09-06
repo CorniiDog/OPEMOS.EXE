@@ -37,6 +37,9 @@ checksum verification:
 
 The Linux builder requires `curl`, `gpgv`, `qemu-img`, and `sha256sum`.
 It fails closed when signature verification is unavailable or fails.
+Cached image bytes are checked against the authenticated checksum on every run.
+An invalid cache is replaced atomically only after the replacement hash passes;
+a failed replacement leaves the prior cache bytes intact.
 
 A successful build also writes `<appliance>.metadata.json`. The sidecar records
 the Fedora release, compose, architecture, source URLs, source/checksum/keyring
