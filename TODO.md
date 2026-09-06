@@ -1472,8 +1472,16 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     947.7/842.9/864.9 with the same extrema. The frame and both crops were
     discarded immediately after assertions, the short-lived viewer lease returned
     to zero, the application process group stopped, and no new QEMU remained.
-    Delivered translations, high contrast, zoom, and real display scaling remain
-    open.
+    An isolated per-process Ubuntu GNOME Wayland matrix also rendered main and
+    progress surfaces under `GTK_THEME=HighContrast` at `GDK_SCALE=1` /
+    `GDK_DPI_SCALE=1` and `GDK_SCALE=2` / `GDK_DPI_SCALE=0.5`; both combinations
+    produced distinct non-flat RGB rasters from the default baseline while
+    preserving usable 541x599 and 488x519 frame bounds. The authenticated
+    maintainer surface rendered at 634x546 under HighContrast with RGB variances
+    2754.3/2915.4/3206.7. Every case discarded frame/crop bytes in memory,
+    released its viewer lease, stopped its process group, and left no new QEMU.
+    Delivered translations, browser/OS forced-colors behavior, zoom, and real
+    monitor scaling remain open.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
   heartbeats or free-form log text. Unknown structured phases now retain only
   their bounded label and current validation/installation context: even a
