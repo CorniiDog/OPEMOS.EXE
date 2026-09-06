@@ -150,8 +150,12 @@ installation targets, production activation, or hardware certification.
   It refuses missing opt-in, non-container/Debian 12 contexts, symlink packages,
   wrong package identity, and preinstalled packages. PR #12 passed the Debian package,
   frontend/docs, Linux integration, and Rust checks in both repaired GitHub runs;
-  build also passed. This does not establish graphical launch, KVM,
-  managed-appliance boot, publication, or hardware support.
+  build also passed. PR #14 extends this disposable job with an isolated Xvfb,
+  D-Bus, AT-SPI, and child-process subreaper session. It launches the installed
+  debug package, verifies the unavailable-host, chooser, Settings, compatibility,
+  focus, process-group, and no-new-QEMU contracts, then purges it; both final
+  Debian runs pass. This establishes virtual-X11 graphical launch, not a physical
+  Debian desktop, KVM, managed-appliance boot, publication, or hardware support.
 - [ ] Validate managed Fedora appliance boot and image equivalence. The current
   2 GiB scheduler cap is below the existing 6 GiB host-budget minimum; runtime
   cgroup discovery now refuses readiness, and the live smoke verifies that
@@ -299,9 +303,16 @@ installation targets, production activation, or hardware certification.
   tests pass (27 ignored), and all 111 frontend tests plus documentation, hygiene,
   package, focused smoke, and boundary integrity checks pass against unchanged
   Core fixture commit `3e49323fce266af8686039fb6487918ef5a64fd9`.
-  Managed-appliance lifecycle and image equivalence remain separately blocked by
-  the unchanged resource minimum above. The Ubuntu
-  glibc-2.39 package is not a validated Debian 12 artifact.
+  PR #14 adds the corresponding installed Debian 12 virtual-X11 smoke. Both final
+  Debian jobs pass the full main-window/Settings/compatibility AT-SPI flow, strict
+  process-group and QEMU-orphan checks, and unconditional package purge. A child
+  subreaper handles WebKit descendants without weakening the cleanup assertion;
+  locale options remain exact within their owning Settings landmark while an
+  external native popup mirror is allowed. Thirty-eight focused lifecycle and
+  accessibility tests and 171 frontend tests pass. Physical Debian graphics and
+  Debian companion-window coverage remain open. Managed-appliance lifecycle and
+  image equivalence remain separately blocked by the unchanged resource minimum
+  above. The Ubuntu glibc-2.39 package is not a validated Debian 12 artifact.
 - [x] Add Settings → Inspect Core compatibility: a read-only host dialog for
   pasted resolver results and the existing compatible/no-artifact development
   fixtures. Reuse the same Rust Core schema-2 parser and 1 MiB byte bound;
