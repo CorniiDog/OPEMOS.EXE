@@ -77,3 +77,36 @@ test("terminal reconciliation explains completion, conflict, and cancellation wi
     assert.throws(() => session.authorize(), /not authorizable/);
   }
 });
+
+test("reconciliation preserves exact operation and ordered asset identities", () => {
+  const session = createReleaseReviewSession();
+  session.review(planned);
+  session.authorize();
+  const retry = { ...planned, attempt: 2, lifecycle: "reconciling", decision: "retry-missing",
+    assets: assets.map((asset, index) => ({ ...asset, state: index === 3 ? "missing" : "present" })) };
+  const accepted = session.reconcile(retry);
+  assert.equal(accepted.attempt, 2);
+  assert.equal(session.snapshot().authorization, null);
+  for (const changed of [
+    { ...retry, operationId: "c".repeat(64), attempt: 3 },
+    { ...retry, repository: "CorniiDog/Other", attempt: 3 },
+    { ...retry, tag: "other", attempt: 3 },
+    { ...retry, targetCommit: "d".repeat(40), attempt: 3 },
+    { ...retry, attempt: 3, assets: [...retry.assets].reverse() },
+    { ...retry, attempt: 3, assets: retry.assets.map((asset, index) => index ? asset : { ...asset, sha256: "e".repeat(64) }) },
+  ]) assert.throws(() => session.reconcile(changed), /immutable operation identity/);
+});
+
+test("reconciliation rejects stale and same-attempt changes and preserves terminal results", () => {
+  const session = createReleaseReviewSession();
+  session.review(planned);
+  assert.strictEqual(session.reconcile(planned), session.snapshot().operation);
+  assert.throws(() => session.reconcile({ ...planned, decision: "cancelled", lifecycle: "cancelled" }), /existing attempt/);
+  const complete = { ...planned, attempt: 2, lifecycle: "succeeded", decision: "already-complete",
+    assets: assets.map((asset) => ({ ...asset, state: "present" })) };
+  const accepted = session.reconcile(complete);
+  assert.strictEqual(session.reconcile(complete), accepted);
+  assert.throws(() => session.reconcile({ ...planned, attempt: 1 }), /stale/);
+  assert.throws(() => session.reconcile({ ...complete, attempt: 3 }), /terminal release result/);
+  assert.strictEqual(session.snapshot().operation, accepted);
+});

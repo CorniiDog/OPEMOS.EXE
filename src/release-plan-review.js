@@ -67,6 +67,21 @@ export function describeReleaseOperation(operation) {
   return (operation.lifecycle + " · " + operation.decision + " · attempt " + operation.attempt + ". " + (operation.message || "")).trim();
 }
 
+function sameReleaseIdentity(left, right) {
+  return left.operationId === right.operationId && left.repository === right.repository
+    && left.tag === right.tag && left.targetCommit === right.targetCommit
+    && left.assets.length === right.assets.length
+    && left.assets.every((asset, index) => {
+      const other = right.assets[index];
+      return asset.name === other.name && asset.sha256 === other.sha256 && asset.bytes === other.bytes;
+    });
+}
+
+function terminalReleaseOperation(operation) {
+  return operation.lifecycle === "succeeded" || operation.lifecycle === "failed"
+    || operation.lifecycle === "cancelled";
+}
+
 export function createReleaseReviewSession() {
   let operation = null;
   let authorization = null;
@@ -88,6 +103,20 @@ export function createReleaseReviewSession() {
         operationId: operation.operationId, attempt: operation.attempt, decision: operation.decision,
       });
       return authorization;
+    },
+    reconcile(value) {
+      const next = normalizeReleaseOperation(value);
+      if (!operation || !next) throw new Error("Release reconciliation result is malformed or has no reviewed plan.");
+      if (!sameReleaseIdentity(operation, next)) throw new Error("Release reconciliation changed the immutable operation identity.");
+      if (next.attempt < operation.attempt) throw new Error("Release reconciliation result is stale.");
+      if (next.attempt === operation.attempt) {
+        if (JSON.stringify(next) !== JSON.stringify(operation)) throw new Error("Release reconciliation changed an existing attempt.");
+        return operation;
+      }
+      if (terminalReleaseOperation(operation)) throw new Error("A terminal release result cannot be replaced.");
+      operation = next;
+      authorization = null;
+      return operation;
     },
     snapshot() {
       return Object.freeze({ operation, authorization: authorizationMatches() ? authorization : null });
