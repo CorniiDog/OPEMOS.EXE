@@ -280,11 +280,13 @@ test("settings reads and writes reject stale completions and freeze request payl
 
 test("maintainer status refreshes reject stale successes and errors", () => {
   assert.match(script, /createLatestRequestGate[\s\S]*const githubStatusGate = createLatestRequestGate\(\)/);
+  assert.match(script, /const githubLoginGate = createLatestRequestGate\(\)/);
   assert.match(script, /async function refreshGithubMaintainer\(\)[\s\S]*const generation = githubStatusGate\.begin\(\)[\s\S]*const status = await invoke\("get_github_maintainer_status"\)[\s\S]*if \(!githubStatusGate\.isCurrent\(generation\)\) return;[\s\S]*githubMaintainer = status/);
-  assert.match(script, /async function pollGithubMaintainer\(poll\)[\s\S]*const generation = githubStatusGate\.begin\(\)[\s\S]*if \(poll !== githubLoginPoll \|\| !githubStatusGate\.isCurrent\(generation\)\) continue;[\s\S]*githubMaintainer = status/);
-  assert.match(script, /async function pollGithubMaintainer\(poll\)[\s\S]*catch \(error\) \{[\s\S]*if \(poll !== githubLoginPoll \|\| !githubStatusGate\.isCurrent\(generation\)\) continue;[\s\S]*`Waiting for GitHub authorization: \${String\(error\)}`/);
-  assert.match(script, /githubConnect\.addEventListener\("click"[\s\S]*const poll = \+\+githubLoginPoll;[\s\S]*const generation = githubStatusGate\.begin\(\)[\s\S]*const status = await invoke\("connect_github_maintainer"\)[\s\S]*if \(poll !== githubLoginPoll\) return;[\s\S]*if \(githubStatusGate\.isCurrent\(generation\)\)[\s\S]*githubMaintainer = status;[\s\S]*void pollGithubMaintainer\(poll\)/);
-  assert.match(script, /catch \(error\) \{[\s\S]*if \(poll !== githubLoginPoll\) return;[\s\S]*githubLoginPending = false;[\s\S]*if \(!githubStatusGate\.isCurrent\(generation\)\)[\s\S]*renderSettings\(\);[\s\S]*return;/);
+  assert.match(script, /async function pollGithubMaintainer\(poll\)[\s\S]*const generation = githubStatusGate\.begin\(\)[\s\S]*if \(!githubLoginGate\.isCurrent\(poll\) \|\| !githubStatusGate\.isCurrent\(generation\)\) continue;[\s\S]*githubMaintainer = status/);
+  assert.match(script, /async function pollGithubMaintainer\(poll\)[\s\S]*catch \(error\) \{[\s\S]*if \(!githubLoginGate\.isCurrent\(poll\) \|\| !githubStatusGate\.isCurrent\(generation\)\) continue;[\s\S]*`Waiting for GitHub authorization: \${String\(error\)}`/);
+  assert.match(script, /githubConnect\.addEventListener\("click"[\s\S]*const poll = githubLoginGate\.begin\(\);[\s\S]*const generation = githubStatusGate\.begin\(\)[\s\S]*const status = await invoke\("connect_github_maintainer"\)[\s\S]*if \(!githubLoginGate\.isCurrent\(poll\)\) return;[\s\S]*if \(githubStatusGate\.isCurrent\(generation\)\)[\s\S]*githubMaintainer = status;[\s\S]*void pollGithubMaintainer\(poll\)/);
+  assert.match(script, /catch \(error\) \{[\s\S]*if \(!githubLoginGate\.isCurrent\(poll\)\) return;[\s\S]*githubLoginPending = false;[\s\S]*if \(!githubStatusGate\.isCurrent\(generation\)\)[\s\S]*renderSettings\(\);[\s\S]*return;/);
+  assert.doesNotMatch(script, /let githubLoginPoll = 0|\+\+githubLoginPoll/);
 });
 
 test("environment checks commit only the latest readiness result", () => {

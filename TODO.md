@@ -1045,6 +1045,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     passes 22/22 and all 185 frontend tests plus documentation, hygiene, and
     boundary integrity pass on 2026-09-06. No native chooser opened during
     validation. Other async workers remain under the parent lifecycle item.
+  - [x] Replace the GitHub maintainer login poll's exposed mutable request
+    counter with a dedicated shared overflow-safe latest-request gate while
+    retaining the independent status gate and stale connect, poll, error, and
+    timeout rejection. The focused async/layout suite and complete frontend,
+    documentation, hygiene, and boundary checks pass on 2026-09-06. No login,
+    network request, or authorization change ran during validation. Other async
+    workers remain under the parent lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.

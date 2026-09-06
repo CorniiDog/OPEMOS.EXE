@@ -129,7 +129,7 @@ let builderSettings = {
   recentMaintainerWorktrees: [],
 };
 let githubMaintainer = null;
-let githubLoginPoll = 0;
+const githubLoginGate = createLatestRequestGate();
 const githubStatusGate = createLatestRequestGate();
 const settingsGate = createLatestRequestGate();
 const environmentCheckGate = createLatestRequestGate();
@@ -365,13 +365,13 @@ async function refreshGithubMaintainer() {
 }
 
 async function pollGithubMaintainer(poll) {
-  for (let attempt = 1; attempt <= 150 && poll === githubLoginPoll; attempt += 1) {
+  for (let attempt = 1; attempt <= 150 && githubLoginGate.isCurrent(poll); attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
-    if (poll !== githubLoginPoll) return;
+    if (!githubLoginGate.isCurrent(poll)) return;
     const generation = githubStatusGate.begin();
     try {
       const status = await invoke("get_github_maintainer_status");
-      if (poll !== githubLoginPoll || !githubStatusGate.isCurrent(generation)) continue;
+      if (!githubLoginGate.isCurrent(poll) || !githubStatusGate.isCurrent(generation)) continue;
       githubMaintainer = status;
       renderSettings();
       if (githubMaintainer.authenticated) {
@@ -386,12 +386,12 @@ async function pollGithubMaintainer(poll) {
       }
       elements.settingsMessage.textContent = `Waiting for GitHub authorization… ${attempt * 2}s`;
     } catch (error) {
-      if (poll !== githubLoginPoll || !githubStatusGate.isCurrent(generation)) continue;
+      if (!githubLoginGate.isCurrent(poll) || !githubStatusGate.isCurrent(generation)) continue;
       elements.settingsMessage.textContent = `Waiting for GitHub authorization: ${String(error)}`;
       elements.settingsMessage.className = "settings-message error";
     }
   }
-  if (poll === githubLoginPoll) {
+  if (githubLoginGate.isCurrent(poll)) {
     githubLoginPending = false;
     elements.githubConnect.disabled = false;
     elements.settingsMessage.textContent = "GitHub login is still pending. Finish it in Terminal, then reconnect to check again.";
@@ -758,7 +758,7 @@ elements.autoReleaseNvidia.addEventListener("change", async () => {
   }
 });
 elements.githubConnect.addEventListener("click", async () => {
-  const poll = ++githubLoginPoll;
+  const poll = githubLoginGate.begin();
   const generation = githubStatusGate.begin();
   githubLoginPending = true;
   elements.githubConnect.disabled = true;
@@ -767,7 +767,7 @@ elements.githubConnect.addEventListener("click", async () => {
   elements.settingsMessage.className = "settings-message";
   try {
     const status = await invoke("connect_github_maintainer");
-    if (poll !== githubLoginPoll) return;
+    if (!githubLoginGate.isCurrent(poll)) return;
     if (githubStatusGate.isCurrent(generation)) {
       githubMaintainer = status;
       renderSettings();
@@ -776,7 +776,7 @@ elements.githubConnect.addEventListener("click", async () => {
     }
     void pollGithubMaintainer(poll);
   } catch (error) {
-    if (poll !== githubLoginPoll) return;
+    if (!githubLoginGate.isCurrent(poll)) return;
     githubLoginPending = false;
     if (!githubStatusGate.isCurrent(generation)) {
       renderSettings();
