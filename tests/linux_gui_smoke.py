@@ -31,6 +31,27 @@ class FakeNode:
     def do_action(self, index): self.invoked = index == 0; return self.invoked
 
 class GuiSmokeTests(unittest.TestCase):
+    def test_locale_selector_requires_exact_plain_text_options(self):
+        combo = FakeNode(
+            "Language Choose an interface language or follow the system locale. System default",
+            actionable=True, role="combo box",
+        )
+        labels = [
+            "System default", "English (United States)", "Deutsch (Deutschland)",
+            "日本語（日本）", "العربية",
+        ]
+        options = [FakeNode(label, role="table cell") for label in labels]
+        app = FakeNode(children=[combo, *options])
+        smoke.validate_locale_selector(app, app)
+        self.assertTrue(combo.invoked)
+        options[-1].role = "paragraph"
+        with self.assertRaisesRegex(RuntimeError, "unexpected role"):
+            smoke.validate_locale_selector(app, app)
+        options[-1].role = "table cell"
+        app.children.append(FakeNode(labels[-1], role="table cell"))
+        with self.assertRaisesRegex(RuntimeError, "Expected one accessible"):
+            smoke.validate_locale_selector(app, app)
+
     def test_launch_environment_forces_capture_compatible_renderer_without_mutating_input(self):
         for existing in (None, "", "0", "unexpected"):
             env = {"KEEP": "value"}

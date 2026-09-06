@@ -83,6 +83,10 @@ EXPECTED_SETTINGS_FOCUS_ORDER = [
         "tags to the per-build selector. Automatic mode never selects them.",
         "check box",
     ),
+    (
+        "Language Choose an interface language or follow the system locale. System default",
+        "combo box",
+    ),
     ("Connect GitHub", "push button"),
     ("Inspect Core compatibility…", "combo box"),
 ]
@@ -289,6 +293,24 @@ def validate_settings_focus(settings, focusable_state, focused_state):
     focused = controls_with_state(settings, focused_state)
     if focused != [("Close settings", "push button")]:
         raise RuntimeError(f"Settings initial focus changed: {focused!r}.")
+
+
+def validate_locale_selector(app, settings):
+    combo = exactly_one_role(
+        settings,
+        "Language Choose an interface language or follow the system locale. System default",
+        "combo box",
+    )
+    invoke(combo)
+    expected = [
+        "System default", "English (United States)", "Deutsch (Deutschland)",
+        "日本語（日本）", "العربية",
+    ]
+    for label in expected:
+        option = exactly_one(app, label)
+        if option.get_role_name() not in {"table cell", "menu item", "list item"}:
+            raise RuntimeError(f"Accessible locale option {label!r} has an unexpected role.")
+    invoke(combo)
 
 
 def validate_settings_disabled_controls(settings, enabled_state, focusable_state, controls=None):
@@ -508,6 +530,7 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
         settings, enabled_state, focusable_state, disabled_settings
     )
     close_settings = exactly_one_focused_action(settings, "Close settings", focused_state)
+    validate_locale_selector(app, settings)
     inspector = wait(lambda: exactly_one_action(app, "Inspect Core compatibility…"),
                      "the Settings compatibility action")
     invoke(inspector)
