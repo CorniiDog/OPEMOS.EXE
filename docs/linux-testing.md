@@ -69,6 +69,17 @@ successful appliance boot, complete image build, installed package, or
 physical-hardware result. Consult TODO
 for the exact validation evidence and remaining gates.
 
+## Preview the installation-media welcome flow
+
+Run `./test_welcome_linux.sh` from an existing X11 or Wayland session. The
+launcher selects the first installed browser in the fixed Google Chrome/Chromium
+order, gives it a disposable profile and XDG state, and serves the real welcome
+frontend from the loopback-only mock controller. Closing the preview or sending a
+termination signal stops both processes and removes that state. Set
+`OPEMOS_GRAPHICAL_TEST_PRINT_ONLY=1` to print the mock-controller contract without
+requiring Linux, a display, or a browser. The preview uses synthetic disks and
+never requests privileges, inspects storage, starts QEMU, or invokes an installer.
+
 ## Install development prerequisites
 
 Use Rust with Cargo and Node.js **22**, including npm. For Ubuntu 24.04 or a

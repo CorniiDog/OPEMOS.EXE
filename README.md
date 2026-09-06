@@ -27,10 +27,11 @@ slots so delayed-network repair remains available after the USB is removed.
 The original recovery image is opened read-only and is never redistributed by
 this project.
 
-Preview the installation-media welcome flow safely on macOS with:
+Preview the installation-media welcome flow safely on macOS or Linux with:
 
 ```bash
 ./test_welcome_macos.sh
+./test_welcome_linux.sh
 ```
 
 The preview uses synthetic disks and mocked progress only. It never requests
