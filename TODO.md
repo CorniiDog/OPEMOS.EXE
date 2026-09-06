@@ -1465,8 +1465,15 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     stopped its process group, left no new QEMU process, and released the in-memory
     capture lease to zero viewers. Focused launcher and harness tests cover absent,
     empty, conflicting, and unexpected inherited values without mutating caller
-    environments. Companion-window pixels, delivered translations, high contrast,
-    zoom, and real display scaling remain open.
+    environments. On Ubuntu 24.04.4 GNOME Wayland, the debug-only idle
+    build-progress companion then passed an OPEMOS-window-only, memory-only pixel
+    validation: the 541x599 main crop had RGB variances 805.4/733.2/740.3 and
+    extrema 0..255/1..255/0..255; the 488x519 progress crop had variances
+    947.7/842.9/864.9 with the same extrema. The frame and both crops were
+    discarded immediately after assertions, the short-lived viewer lease returned
+    to zero, the application process group stopped, and no new QEMU remained.
+    Delivered translations, high contrast, zoom, and real display scaling remain
+    open.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
   heartbeats or free-form log text. Unknown structured phases now retain only
   their bounded label and current validation/installation context: even a
