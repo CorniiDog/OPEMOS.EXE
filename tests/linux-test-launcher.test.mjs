@@ -8,7 +8,7 @@ const valid = { platform: "linux", arch: "x64", args: ["build"],
 
 test("Linux test packaging is debug-only and needs no graphical session", () => {
   const args = linuxTestPlan(valid);
-  assert.deepEqual(args.slice(0, 4), ["build", "--debug", "--bundles", "deb"]);
+  assert.deepEqual(args.slice(0, 4), ["build", "--debug", "--bundles", "deb,appimage"]);
   assert.equal(args[4], "--config");
   assert.ok(args[5].endsWith("/src-tauri/tauri.linux-test.conf.json"));
   assert.deepEqual(linuxTestPlan({ ...valid, env: { ...valid.env, OPEMOS_LINUX_ACCEL: "kvm" } }), args);
@@ -16,7 +16,7 @@ test("Linux test packaging is debug-only and needs no graphical session", () => 
 
 test("Debian 12 packaging selects only the pinned Debian dependency config", () => {
   const args = linuxTestPlan({ ...valid, args: ["build-debian12"] });
-  assert.deepEqual(args.slice(0, 4), ["build", "--debug", "--bundles", "deb"]);
+  assert.deepEqual(args.slice(0, 4), ["build", "--debug", "--bundles", "deb,appimage"]);
   assert.ok(args[5].endsWith("/src-tauri/tauri.linux-debian12-test.conf.json"));
 });
 
@@ -61,7 +61,7 @@ test("Linux test window replaces Mac glass settings and isolates app identity", 
   const linux = await read("../src-tauri/tauri.linux-test.conf.json");
   assert.notEqual(linux.identifier, base.identifier);
   assert.deepEqual(base.bundle.targets, ["app", "dmg"]);
-  assert.deepEqual(linux.bundle.targets, ["deb"]);
+  assert.deepEqual(linux.bundle.targets, ["deb", "appimage"]);
   assert.ok(linux.bundle.linux.deb.depends.includes("libc6 (>= 2.39)"));
   assert.ok(linux.bundle.linux.deb.depends.includes("libssl3t64 | libssl3"));
   assert.ok(linux.bundle.linux.deb.depends.includes("liblzma5"));

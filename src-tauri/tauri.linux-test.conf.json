@@ -29,7 +29,8 @@
   },
   "bundle": {
     "targets": [
-      "deb"
+      "deb",
+      "appimage"
     ],
     "shortDescription": "Experimental OPEMOS EXE Linux host testing; no hardware certification",
     "linux": {
