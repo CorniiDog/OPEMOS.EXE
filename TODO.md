@@ -492,7 +492,19 @@ installation targets, production activation, or hardware certification.
   start/resume, verify, retry, cancel, and progress controls until an
   authenticated host adapter is supplied. No publisher, signer, credentials,
   network transport, production trust, or activation path is connected. On
-  2026-09-06, 14 focused and all 204 frontend tests pass with documentation, hygiene, and boundary integrity. EXE lead pushed source commit `e90343dea4c92fdc88d8a3c38ae4eec89b597e21` on branch `work/exe-release-session-controls` to configured remote `https://github.com/CorniiDog/steamos-nvidia-image-builder.git` (redirected by GitHub to OPEMOS.EXE) because PR review and remote CI are required; PR https://github.com/CorniiDog/OPEMOS.EXE/pull/42 is open. Squash evidence follows.
+  2026-09-06, 14 focused and all 204 frontend tests pass with documentation, hygiene, and boundary integrity. EXE lead pushed source commit `e90343dea4c92fdc88d8a3c38ae4eec89b597e21` on branch `work/exe-release-session-controls` to configured remote `https://github.com/CorniiDog/steamos-nvidia-image-builder.git` (redirected by GitHub to OPEMOS.EXE) because PR review and remote CI are required; PR https://github.com/CorniiDog/OPEMOS.EXE/pull/42 passed all duplicated checks and squash-merged as `b9cdb8de5b2d1d8a49626110109df1abed12860f`; preserved branch head `61e87bff824e7b09898fadf4478da1ad6c77a938`.
+
+- [x] Add bounded restart-safe observation for the inactive release session.
+  The UI checks durable status immediately after resume and then schedules at
+  most one poll at a time, stops on every terminal lifecycle, and fails closed
+  at a configurable finite poll bound. Stopping or cancelling invalidates an
+  in-flight result through the shared overflow-safe request gate, so late status
+  cannot replace the current operation; overlapping poll owners are rejected.
+  Successful inactive start/retry commands enter this observer, while cancel
+  invalidates it before invoking Core's closed command adapter. No runtime host
+  adapter, network transport, publisher, credentials, production trust,
+  activation, KVM, or hardware path is connected. On 2026-09-06, 13 focused and all 207 frontend tests pass with
+  documentation, hygiene, and boundary integrity; PR evidence follows.
 
 ### 1. Complete the OPEMOS Core migration
 
