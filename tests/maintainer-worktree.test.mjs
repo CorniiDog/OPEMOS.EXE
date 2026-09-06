@@ -158,3 +158,19 @@ test("local commit and refresh commit only the latest exact-review request", asy
   assert.match(handler, /catch \(error\) \{\n    if \(!localCommitGate\.isCurrent\(requestGeneration\)[\s\S]*?!operationContextMatches\(context,/);
   assert.match(handler, /finally \{\n    if \(localCommitGate\.isCurrent\(requestGeneration\)[\s\S]*?setWorkspaceMutationPending\(false\);/);
 });
+
+
+test("checkout execution and refresh commit only the latest exact-review request", async () => {
+  const script = await readFile(new URL("../src/maintainer.js", import.meta.url), "utf8");
+  const handler = script.match(/elements\.executeCheckout\.addEventListener\("click", async \(\) => \{[\s\S]*?\n\}\);/)?.[0] || "";
+  assert.match(script, /const checkoutExecutionGate = createLatestRequestGate\(\)/);
+  assert.match(script, /function resetPlan[\s\S]*?checkoutExecutionGate\.begin\(\);[\s\S]*?function disableSourceControls/);
+  assert.match(script, /function renderWorktree\(worktree\) \{[\s\S]*?checkoutExecutionGate\.begin\(\);/);
+  assert.match(script, /elements\.localBranch\.addEventListener[\s\S]*?checkoutExecutionGate\.begin\(\);/);
+  assert.match(script, /const requestGeneration = checkoutReviewGate\.begin\(\);\n  checkoutExecutionGate\.begin\(\);/);
+  assert.match(handler, /const requestGeneration = checkoutExecutionGate\.begin\(\)[\s\S]*?const review = branchReview;/);
+  assert.match(handler, /const result = await invoke\("execute_maintainer_checkout"[\s\S]*?if \(!checkoutExecutionGate\.isCurrent\(requestGeneration\)[\s\S]*?!operationContextMatches\(context,/);
+  assert.match(handler, /const refreshed = await invoke\("inspect_maintainer_worktree"[\s\S]*?if \(!checkoutExecutionGate\.isCurrent\(requestGeneration\)[\s\S]*?renderWorktree\(refreshed\);/);
+  assert.match(handler, /catch \(error\) \{\n    if \(!checkoutExecutionGate\.isCurrent\(requestGeneration\)[\s\S]*?!operationContextMatches\(context,/);
+  assert.match(handler, /finally \{\n    if \(checkoutExecutionGate\.isCurrent\(requestGeneration\)[\s\S]*?setWorkspaceMutationPending\(false\);/);
+});

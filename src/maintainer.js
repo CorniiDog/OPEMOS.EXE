@@ -65,6 +65,7 @@ const recentWorktreeGate = createLatestRequestGate();
 const worktreeSelectionGate = createLatestRequestGate();
 const vscodeOpenGate = createLatestRequestGate();
 const localCommitGate = createLatestRequestGate();
+const checkoutExecutionGate = createLatestRequestGate();
 let preserveWorktreeSelectionRequest = false;
 
 installKeyboardBindings([
@@ -121,6 +122,7 @@ function resetPlan({ invalidateRequest = true } = {}) {
   worktreeSelectionGate.begin();
   vscodeOpenGate.begin();
   localCommitGate.begin();
+  checkoutExecutionGate.begin();
   workspaceGeneration += 1;
   plannedRepository = null;
   plannedSource = null;
@@ -274,6 +276,7 @@ function renderWorktree(worktree) {
   recentWorktreeGate.begin();
   vscodeOpenGate.begin();
   localCommitGate.begin();
+  checkoutExecutionGate.begin();
   if (!preserveWorktreeSelectionRequest) worktreeSelectionGate.begin();
   workspaceGeneration += 1;
   localWorktree = worktree;
@@ -604,6 +607,7 @@ elements.loadLocalBranches.addEventListener("click", async () => {
   if (!localWorktree || !plannedRepository) return;
   const requestGeneration = branchListGate.begin();
   checkoutReviewGate.begin();
+  checkoutExecutionGate.begin();
   const generation = workspaceGeneration;
   const worktreePath = localWorktree.path;
   const repository = plannedRepository;
@@ -643,6 +647,7 @@ elements.loadLocalBranches.addEventListener("click", async () => {
 
 elements.localBranch.addEventListener("change", () => {
   checkoutReviewGate.begin();
+  checkoutExecutionGate.begin();
   branchReview = null;
   elements.checkoutReview.classList.add("hidden");
   elements.executeCheckout.classList.add("hidden");
@@ -651,6 +656,7 @@ elements.localBranch.addEventListener("change", () => {
 elements.reviewCheckout.addEventListener("click", async () => {
   if (!localWorktree || !plannedRepository || !elements.localBranch.value) return;
   const requestGeneration = checkoutReviewGate.begin();
+  checkoutExecutionGate.begin();
   const generation = workspaceGeneration;
   const worktreePath = localWorktree.path;
   const repository = plannedRepository;
@@ -686,33 +692,67 @@ elements.reviewCheckout.addEventListener("click", async () => {
 
 elements.executeCheckout.addEventListener("click", async () => {
   if (!branchReview || !localWorktree || !plannedRepository) return;
+  const requestGeneration = checkoutExecutionGate.begin();
+  const context = {
+    generation: workspaceGeneration,
+    path: localWorktree.path,
+    repository: plannedRepository,
+  };
+  const review = branchReview;
   elements.executeCheckout.disabled = true;
   setWorkspaceMutationPending(true);
   elements.checkoutStatus.textContent = "Performing the freshly revalidated clean local branch change…";
   try {
     const result = await invoke("execute_maintainer_checkout", {
-      path: localWorktree.path,
-      repository: plannedRepository,
-      targetBranch: branchReview.targetBranch,
-      expectedHead: branchReview.currentHead,
-      expectedTargetCommit: branchReview.targetCommit,
+      path: context.path,
+      repository: context.repository,
+      targetBranch: review.targetBranch,
+      expectedHead: review.currentHead,
+      expectedTargetCommit: review.targetCommit,
     });
+    if (!checkoutExecutionGate.isCurrent(requestGeneration)
+      || !operationContextMatches(context, {
+        generation: workspaceGeneration,
+        path: localWorktree?.path,
+        repository: plannedRepository,
+      })) return;
     const message = `${result.message} ${result.branch} at ${result.head.slice(0, 12)}.`;
     const refreshed = await invoke("inspect_maintainer_worktree", {
-      path: localWorktree.path, repository: plannedRepository,
+      path: context.path, repository: context.repository,
     });
+    if (!checkoutExecutionGate.isCurrent(requestGeneration)
+      || !operationContextMatches(context, {
+        generation: workspaceGeneration,
+        path: localWorktree?.path,
+        repository: plannedRepository,
+      })) return;
+    setWorkspaceMutationPending(false);
+    elements.executeCheckout.disabled = false;
     renderWorktree(refreshed);
     elements.checkoutStatus.textContent = message;
     elements.checkoutStatus.className = "message";
   } catch (error) {
+    if (!checkoutExecutionGate.isCurrent(requestGeneration)
+      || !operationContextMatches(context, {
+        generation: workspaceGeneration,
+        path: localWorktree?.path,
+        repository: plannedRepository,
+      })) return;
     branchReview = null;
     elements.checkoutStatus.textContent = String(error);
     elements.checkoutStatus.className = "message error";
     elements.checkoutReview.classList.add("hidden");
     elements.executeCheckout.classList.add("hidden");
   } finally {
-    setWorkspaceMutationPending(false);
-    elements.executeCheckout.disabled = false;
+    if (checkoutExecutionGate.isCurrent(requestGeneration)
+      && operationContextMatches(context, {
+        generation: workspaceGeneration,
+        path: localWorktree?.path,
+        repository: plannedRepository,
+      })) {
+      setWorkspaceMutationPending(false);
+      elements.executeCheckout.disabled = false;
+    }
   }
 });
 
