@@ -226,8 +226,9 @@ test("native image chooser rejects superseded and stale-context results", () => 
 });
 
 test("native output chooser rejects superseded and stale-context results", () => {
-  assert.match(script, /let outputChooserGeneration = 0;/);
-  assert.match(script, /chooseOutputFolder\.addEventListener\("click"[\s\S]*const chooserGeneration = \+\+outputChooserGeneration;[\s\S]*const outputGeneration = outputSelectionGeneration;[\s\S]*const selectionGeneration = imageSelectionGeneration;[\s\S]*const directory = await open\([\s\S]*if \(chooserGeneration !== outputChooserGeneration[\s\S]*\|\| outputGeneration !== outputSelectionGeneration[\s\S]*\|\| selectionGeneration !== imageSelectionGeneration\) return;[\s\S]*await selectOutputDirectory\(directory\)/);
+  assert.match(script, /const outputChooserGate = createLatestRequestGate\(\)/);
+  assert.match(script, /chooseOutputFolder\.addEventListener\("click"[\s\S]*const chooserGeneration = outputChooserGate\.begin\(\);[\s\S]*const outputGeneration = outputSelectionGeneration;[\s\S]*const selectionGeneration = imageSelectionGeneration;[\s\S]*const directory = await open\([\s\S]*if \(!outputChooserGate\.isCurrent\(chooserGeneration\)[\s\S]*\|\| outputGeneration !== outputSelectionGeneration[\s\S]*\|\| selectionGeneration !== imageSelectionGeneration\) return;[\s\S]*await selectOutputDirectory\(directory\)/);
+  assert.doesNotMatch(script, /let outputChooserGeneration = 0|\+\+outputChooserGeneration/);
 });
 
 test("stale build completions cannot overwrite a newer build context", () => {

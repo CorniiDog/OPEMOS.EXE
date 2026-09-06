@@ -97,7 +97,7 @@ let currentImage = null;
 let currentImageName = null;
 let outputDirectory = null;
 let outputSelectionGeneration = 0;
-let outputChooserGeneration = 0;
+const outputChooserGate = createLatestRequestGate();
 let plannedOutput = null;
 let completedOutput = null;
 let completedOutputImported = false;
@@ -838,11 +838,11 @@ async function selectOutputDirectory(directory) {
 
 elements.chooseOutputFolder.addEventListener("click", async () => {
   if (!admitOutputDirectorySelection(currentBuildSnapshot()).accepted) return;
-  const chooserGeneration = ++outputChooserGeneration;
+  const chooserGeneration = outputChooserGate.begin();
   const outputGeneration = outputSelectionGeneration;
   const selectionGeneration = imageSelectionGeneration;
   const directory = await open({ multiple: false, directory: true });
-  if (chooserGeneration !== outputChooserGeneration
+  if (!outputChooserGate.isCurrent(chooserGeneration)
     || outputGeneration !== outputSelectionGeneration
     || selectionGeneration !== imageSelectionGeneration) return;
   if (typeof directory === "string" && directory) await selectOutputDirectory(directory);
