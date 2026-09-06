@@ -60,6 +60,7 @@ const sourceRefreshGate = createLatestRequestGate();
 const planRequestGate = createLatestRequestGate();
 const stagedReviewGate = createLatestRequestGate();
 const branchListGate = createLatestRequestGate();
+const checkoutReviewGate = createLatestRequestGate();
 
 installKeyboardBindings([
   {
@@ -110,6 +111,7 @@ function resetPlan({ invalidateRequest = true } = {}) {
   if (invalidateRequest) planRequestGate.begin();
   stagedReviewGate.begin();
   branchListGate.begin();
+  checkoutReviewGate.begin();
   workspaceGeneration += 1;
   plannedRepository = null;
   plannedSource = null;
@@ -259,6 +261,7 @@ elements.planButton.addEventListener("click", async () => {
 function renderWorktree(worktree) {
   stagedReviewGate.begin();
   branchListGate.begin();
+  checkoutReviewGate.begin();
   workspaceGeneration += 1;
   localWorktree = worktree;
   commitReview = null;
@@ -507,6 +510,7 @@ elements.createLocalCommit.addEventListener("click", async () => {
 elements.loadLocalBranches.addEventListener("click", async () => {
   if (!localWorktree || !plannedRepository) return;
   const requestGeneration = branchListGate.begin();
+  checkoutReviewGate.begin();
   const generation = workspaceGeneration;
   const worktreePath = localWorktree.path;
   const repository = plannedRepository;
@@ -545,6 +549,7 @@ elements.loadLocalBranches.addEventListener("click", async () => {
 });
 
 elements.localBranch.addEventListener("change", () => {
+  checkoutReviewGate.begin();
   branchReview = null;
   elements.checkoutReview.classList.add("hidden");
   elements.executeCheckout.classList.add("hidden");
@@ -552,6 +557,7 @@ elements.localBranch.addEventListener("change", () => {
 
 elements.reviewCheckout.addEventListener("click", async () => {
   if (!localWorktree || !plannedRepository || !elements.localBranch.value) return;
+  const requestGeneration = checkoutReviewGate.begin();
   const generation = workspaceGeneration;
   const worktreePath = localWorktree.path;
   const repository = plannedRepository;
@@ -559,25 +565,29 @@ elements.reviewCheckout.addEventListener("click", async () => {
   elements.reviewCheckout.disabled = true;
   elements.checkoutStatus.textContent = "Revalidating the clean current and target branch identities…";
   try {
-    branchReview = await invoke("review_maintainer_checkout", {
+    const reviewedCheckout = await invoke("review_maintainer_checkout", {
       path: worktreePath,
       repository,
       targetBranch,
     });
-    if (generation !== workspaceGeneration || worktreePath !== localWorktree?.path
-      || repository !== plannedRepository || targetBranch !== elements.localBranch.value) return;
+    if (!checkoutReviewGate.isCurrent(requestGeneration) || generation !== workspaceGeneration
+      || worktreePath !== localWorktree?.path || repository !== plannedRepository
+      || targetBranch !== elements.localBranch.value) return;
+    branchReview = reviewedCheckout;
     elements.checkoutReview.textContent = `${branchReview.currentBranch} ${branchReview.currentHead.slice(0, 12)} → ${branchReview.targetBranch} ${branchReview.targetCommit.slice(0, 12)}. ${branchReview.message}`;
     elements.checkoutReview.classList.remove("hidden");
     elements.executeCheckout.classList.remove("hidden");
     elements.checkoutStatus.textContent = "Branch change reviewed; execute will revalidate everything again.";
     elements.checkoutStatus.className = "message";
   } catch (error) {
-    if (generation !== workspaceGeneration) return;
+    if (!checkoutReviewGate.isCurrent(requestGeneration) || generation !== workspaceGeneration) return;
     branchReview = null;
     elements.checkoutStatus.textContent = String(error);
     elements.checkoutStatus.className = "message error";
   } finally {
-    elements.reviewCheckout.disabled = !elements.localBranch.value;
+    if (checkoutReviewGate.isCurrent(requestGeneration) && generation === workspaceGeneration) {
+      elements.reviewCheckout.disabled = !elements.localBranch.value;
+    }
   }
 });
 

@@ -66,3 +66,18 @@ test("maintainer local branch loading commits only the latest request", async ()
   assert.match(handler, /catch \(error\) \{\n    if \(!branchListGate\.isCurrent\(requestGeneration\)/);
   assert.match(handler, /finally \{\n    if \(branchListGate\.isCurrent\(requestGeneration\) && generation === workspaceGeneration\) \{/);
 });
+
+
+test("maintainer checkout review commits only the latest branch request", async () => {
+  const script = await readFile(new URL("../src/maintainer.js", import.meta.url), "utf8");
+  const handler = script.match(/elements\.reviewCheckout\.addEventListener\("click", async \(\) => \{[\s\S]*?\n\}\);/)?.[0] || "";
+  assert.match(script, /const checkoutReviewGate = createLatestRequestGate\(\)/);
+  assert.match(script, /function resetPlan[\s\S]*?checkoutReviewGate\.begin\(\);[\s\S]*?function disableSourceControls/);
+  assert.match(script, /function renderWorktree\(worktree\) \{[\s\S]*?checkoutReviewGate\.begin\(\);/);
+  assert.match(script, /const requestGeneration = branchListGate\.begin\(\);\n  checkoutReviewGate\.begin\(\);/);
+  assert.match(script, /elements\.localBranch\.addEventListener\("change", \(\) => \{\n  checkoutReviewGate\.begin\(\);/);
+  assert.match(handler, /const requestGeneration = checkoutReviewGate\.begin\(\)/);
+  assert.match(handler, /const reviewedCheckout = await invoke\("review_maintainer_checkout"[\s\S]*?if \(!checkoutReviewGate\.isCurrent\(requestGeneration\)[\s\S]*?branchReview = reviewedCheckout;/);
+  assert.match(handler, /catch \(error\) \{\n    if \(!checkoutReviewGate\.isCurrent\(requestGeneration\)/);
+  assert.match(handler, /finally \{\n    if \(checkoutReviewGate\.isCurrent\(requestGeneration\) && generation === workspaceGeneration\) \{/);
+});
