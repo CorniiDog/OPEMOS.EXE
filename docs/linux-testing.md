@@ -12,8 +12,13 @@ Ownership remains defined by [BOUNDARIES.md](../BOUNDARIES.md). Core supplies
 compatibility policy and authenticated contracts; EXE owns host adapters and
 managed disposable appliances.
 
-Ubuntu **24.04.4** is the only host version used for this implementation's local
-testing. Debian is an intended testing platform, not a validated distribution.
+Ubuntu **24.04.4** is the host version used for local graphical testing. Debian
+**12.15** amd64 is covered by a headless CI build in the exact official
+`debian:12.15-slim` image pinned by platform-manifest digest. That Debian check
+runs the real `/etc/os-release` host inventory with explicit TCG, builds the
+debug test package against Debian's glibc 2.36 and OpenSSL 3 baseline, and
+inspects it without installation or launch. Debian graphical behavior,
+managed-appliance boot, KVM, and hardware remain unvalidated.
 A development binary and the extracted debug-package binary have launched and
 closed in an Ubuntu 24.04.4 Wayland session, with no remaining launcher or EXE
 processes. The package was not installed. Tauri capabilities are scoped per window:
@@ -128,12 +133,31 @@ failure, it waits for the isolated process group to disappear, restores
 preexisting files, and removes only a schema proven absent before launch. A
 launcher SIGKILL can still bypass this in-process restoration.
 
-Create a local **debug Debian package** without installing it:
+Create a local Ubuntu-built **debug Debian archive** without installing it:
 
 ```bash
 "$OPEMOS_HEAVY" npm run build:linux-test
 "$OPEMOS_HEAVY" npm run test:package-linux
 ```
+
+
+
+CI separately builds the same debug-only application in the pinned Debian
+12.15 amd64 container with:
+
+```bash
+export OPEMOS_EXPERIMENTAL_LINUX=1
+export OPEMOS_LINUX_ACCEL=tcg
+npm run build:debian12-test
+python3 scripts/check_linux_packaging.py --expected-libc 2.36 --expected-openssl libssl3
+```
+
+The Debian-specific configuration changes only the declared glibc/OpenSSL
+baseline and is guarded against window, identity, target, and description
+drift from the regular Linux test configuration. The image digest and both
+dependency expectations are asserted by documentation tests. This path makes
+network requests only while CI installs Debian build dependencies; the built
+archive is never installed, launched, signed, or published.
 
 The package check extracts only this locally generated archive into a temporary
 directory. It checks metadata, amd64 ELF identity, the exact Tauri bundle-marker
@@ -227,7 +251,7 @@ bundle target, with no signing, publication, or system installation. This test
 package requires glibc **2.39 or newer**, matching the Ubuntu 24.04 build
 baseline; the Ubuntu-built binary is not a Debian 12 package. OpenSSL 3 and
 liblzma runtime dependencies are declared alongside Tauri's GTK/WebKit
-dependencies. Debian packaging still requires its own build and validation.
+dependencies. The pinned Debian 12.15 CI job supplies that separate headless build and archive validation.
 The test
 application identifier does not provide isolation for user-selected images or
 shared host tools: use disposable inputs. To test the compiled application from

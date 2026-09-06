@@ -14,10 +14,16 @@ test("Linux test packaging is debug-only and needs no graphical session", () => 
   assert.deepEqual(linuxTestPlan({ ...valid, env: { ...valid.env, OPEMOS_LINUX_ACCEL: "kvm" } }), args);
 });
 
+test("Debian 12 packaging selects only the pinned Debian dependency config", () => {
+  const args = linuxTestPlan({ ...valid, args: ["build-debian12"] });
+  assert.deepEqual(args.slice(0, 4), ["build", "--debug", "--bundles", "deb"]);
+  assert.ok(args[5].endsWith("/src-tauri/tauri.linux-debian12-test.conf.json"));
+});
+
 test("Linux launcher rejects unsupported hosts, implicit opt-ins and CLI overrides", () => {
   for (const changes of [{ platform: "darwin" }, { platform: "win32" }, { arch: "arm64" },
     { args: [] }, { args: ["build", "--release"] }, { args: ["dev", "--config", "other.json"] },
-    { args: ["bundle"] }]) {
+    { args: ["bundle"] }, { args: ["build-debian13"] }]) {
     assert.throws(() => linuxTestPlan({ ...valid, ...changes }));
   }
   for (const optin of [undefined, "", "true", "01", "1 "]) {
@@ -70,4 +76,18 @@ test("Linux test window replaces Mac glass settings and isolates app identity", 
   assert.equal(linux.app.security, undefined);
   // Tauri rewrites Cargo features from this flag; inherit the macOS feature.
   assert.equal(linux.app.macOSPrivateApi, undefined);
+});
+
+
+test("Debian 12 config changes dependencies without drifting the Linux test window", async () => {
+  const read = async (file) => JSON.parse(await readFile(new URL(file, import.meta.url)));
+  const ubuntu = await read("../src-tauri/tauri.linux-test.conf.json");
+  const debian = await read("../src-tauri/tauri.linux-debian12-test.conf.json");
+  assert.deepEqual(debian.app, ubuntu.app);
+  assert.equal(debian.productName, ubuntu.productName);
+  assert.equal(debian.identifier, ubuntu.identifier);
+  assert.equal(debian.bundle.shortDescription, ubuntu.bundle.shortDescription);
+  assert.deepEqual(debian.bundle.targets, ubuntu.bundle.targets);
+  assert.deepEqual(debian.bundle.linux.deb.depends,
+    ["libc6 (>= 2.36)", "libssl3", "liblzma5", "libgcc-s1"]);
 });

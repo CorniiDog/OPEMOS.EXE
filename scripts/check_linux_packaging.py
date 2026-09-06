@@ -1,4 +1,5 @@
 import hashlib
+import argparse
 import json
 import os
 from pathlib import Path
@@ -48,9 +49,14 @@ def verify_bundle_marker(build, packaged):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--expected-libc', default='2.39', choices=('2.36', '2.39'))
+    parser.add_argument('--expected-openssl', default='libssl3t64 | libssl3',
+                        choices=('libssl3', 'libssl3t64 | libssl3'))
+    arguments = parser.parse_args()
     metadata = command('dpkg-deb', '--field', str(package))
     for expected in ('Package: opemos-exe-linux-test\n', 'Architecture: amd64\n', f'Version: {version}\n',
-                     'libc6 (>= 2.39)', 'libssl3t64 | libssl3', 'liblzma5',
+                     f'libc6 (>= {arguments.expected_libc})', arguments.expected_openssl, 'liblzma5',
                      'libwebkit2gtk-4.1-0', 'libgtk-3-0'):
         assert expected in metadata, expected
     print(metadata)

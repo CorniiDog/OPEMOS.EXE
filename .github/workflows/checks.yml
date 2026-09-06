@@ -126,3 +126,49 @@ jobs:
         env:
           OPEMOS_EXPERIMENTAL_LINUX: '1'
           OPEMOS_LINUX_ACCEL: tcg
+
+  debian-12-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    container:
+      image: debian@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867
+    steps:
+      - name: Install Debian build and host-test dependencies
+        run: >-
+          apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --yes
+          build-essential ca-certificates curl file genisoimage git
+          libayatana-appindicator3-dev librsvg2-dev libssl-dev
+          libwebkit2gtk-4.1-dev openssh-client ovmf patchelf
+          pkg-config python3 qemu-system-x86 qemu-utils xz-utils
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify the real Debian 12 host inventory with explicit TCG
+        run: bash scripts/check_linux_host.sh
+        env:
+          OPEMOS_EXPERIMENTAL_LINUX: '1'
+          OPEMOS_LINUX_ACCEL: tcg
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Build the Debian 12 debug test package
+        run: npm run build:debian12-test
+        env:
+          OPEMOS_EXPERIMENTAL_LINUX: '1'
+          OPEMOS_LINUX_ACCEL: tcg
+
+      - name: Inspect the Debian 12 package without installing or launching it
+        run: >-
+          python3 scripts/check_linux_packaging.py
+          --expected-libc 2.36 --expected-openssl libssl3
