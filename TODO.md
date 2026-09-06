@@ -140,8 +140,10 @@ installation targets, production activation, or hardware certification.
   installed binary bytes, desktop-entry identity, and the complete installed-file
   inventory, then purges it on success, partial installation, or verification failure.
   It refuses missing opt-in, non-container/Debian 12 contexts, symlink packages,
-  wrong package identity, and preinstalled packages. This does not establish graphical
-  launch, KVM, managed-appliance boot, publication, or hardware support.
+  wrong package identity, and preinstalled packages. PR #12 passed the Debian package,
+  frontend/docs, Linux integration, and Rust checks in both repaired GitHub runs;
+  build also passed. This does not establish graphical launch, KVM,
+  managed-appliance boot, publication, or hardware support.
 - [ ] Validate managed Fedora appliance boot and image equivalence. The current
   2 GiB scheduler cap is below the existing 6 GiB host-budget minimum; runtime
   cgroup discovery now refuses readiness, and the live smoke verifies that
