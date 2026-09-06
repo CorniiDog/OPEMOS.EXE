@@ -401,27 +401,37 @@ elements.recentWorktree.addEventListener("change", async () => {
 });
 
 elements.makeWorktree.addEventListener("click", async () => {
+  const requestGeneration = worktreeSelectionGate.begin();
   if (!plannedSource) return;
   const source = { ...plannedSource };
+  const sourceIdentity = JSON.stringify(source);
   const generation = workspaceGeneration;
   setWorkspaceMutationPending(true);
   elements.worktreeMessage.textContent = "Creating or reopening a dedicated checkout at the exact verified commit…";
   elements.worktreeMessage.className = "message";
   try {
     const worktree = await invoke("make_maintainer_worktree", source);
-    if (generation !== workspaceGeneration
-      || JSON.stringify(source) !== JSON.stringify(plannedSource)) return;
-    renderWorktree(worktree);
+    if (!worktreeSelectionGate.isCurrent(requestGeneration)
+      || generation !== workspaceGeneration
+      || sourceIdentity !== JSON.stringify(plannedSource)) return;
+    setWorkspaceMutationPending(false);
+    renderWorktreeForSelection(worktree);
     void refreshRecentWorktrees(source.repository, workspaceGeneration);
     elements.worktreeMessage.textContent = worktree.vscodeAvailable
       ? "Managed local target is ready. VS Code can reuse its current window for this worktree."
       : "Managed local target is ready, but the VS Code command-line launcher was not found.";
   } catch (error) {
-    if (generation !== workspaceGeneration) return;
+    if (!worktreeSelectionGate.isCurrent(requestGeneration)
+      || generation !== workspaceGeneration
+      || sourceIdentity !== JSON.stringify(plannedSource)) return;
     elements.worktreeMessage.textContent = String(error);
     elements.worktreeMessage.className = "message error";
   } finally {
-    setWorkspaceMutationPending(false);
+    if (worktreeSelectionGate.isCurrent(requestGeneration)
+      && generation === workspaceGeneration
+      && sourceIdentity === JSON.stringify(plannedSource)) {
+      setWorkspaceMutationPending(false);
+    }
   }
 });
 
