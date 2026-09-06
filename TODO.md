@@ -955,6 +955,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     request-gate/maintainer suite passes 8/8 and all 176 frontend tests plus
     documentation, hygiene, and boundary integrity pass on 2026-09-06. Other
     async workers remain under the parent lifecycle item.
+  - [x] Gate overlapping recent-worktree refreshes with a dedicated generation
+    invalidated by plan reset and worktree replacement. Older same-workspace
+    lists and errors cannot replace a newer recent-folder inventory, status, or
+    control state, and both paths revalidate the exact planned repository. The
+    focused request-gate/maintainer suite passes 9/9 and all 177 frontend tests
+    plus documentation, hygiene, and boundary integrity pass on 2026-09-06.
+    Other async workers remain under the parent lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.

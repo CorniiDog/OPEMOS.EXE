@@ -81,3 +81,15 @@ test("maintainer checkout review commits only the latest branch request", async 
   assert.match(handler, /catch \(error\) \{\n    if \(!checkoutReviewGate\.isCurrent\(requestGeneration\)/);
   assert.match(handler, /finally \{\n    if \(checkoutReviewGate\.isCurrent\(requestGeneration\) && generation === workspaceGeneration\) \{/);
 });
+
+
+test("recent worktree refresh commits only the latest repository request", async () => {
+  const script = await readFile(new URL("../src/maintainer.js", import.meta.url), "utf8");
+  const refresh = script.match(/async function refreshRecentWorktrees\(repository, generation = workspaceGeneration\) \{[\s\S]*?\n\}/)?.[0] || "";
+  assert.match(script, /const recentWorktreeGate = createLatestRequestGate\(\)/);
+  assert.match(script, /function resetPlan[\s\S]*?recentWorktreeGate\.begin\(\);[\s\S]*?function disableSourceControls/);
+  assert.match(script, /function renderWorktree\(worktree\) \{[\s\S]*?recentWorktreeGate\.begin\(\);/);
+  assert.match(refresh, /const requestGeneration = recentWorktreeGate\.begin\(\)/);
+  assert.match(refresh, /const worktrees = await invoke\("list_recent_maintainer_worktrees"[\s\S]*?if \(!recentWorktreeGate\.isCurrent\(requestGeneration\)[\s\S]*?repository !== plannedRepository\) return;/);
+  assert.match(refresh, /catch \(error\) \{\n    if \(!recentWorktreeGate\.isCurrent\(requestGeneration\)[\s\S]*?repository !== plannedRepository\) return;/);
+});

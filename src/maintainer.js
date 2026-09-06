@@ -61,6 +61,7 @@ const planRequestGate = createLatestRequestGate();
 const stagedReviewGate = createLatestRequestGate();
 const branchListGate = createLatestRequestGate();
 const checkoutReviewGate = createLatestRequestGate();
+const recentWorktreeGate = createLatestRequestGate();
 
 installKeyboardBindings([
   {
@@ -112,6 +113,7 @@ function resetPlan({ invalidateRequest = true } = {}) {
   stagedReviewGate.begin();
   branchListGate.begin();
   checkoutReviewGate.begin();
+  recentWorktreeGate.begin();
   workspaceGeneration += 1;
   plannedRepository = null;
   plannedSource = null;
@@ -262,6 +264,7 @@ function renderWorktree(worktree) {
   stagedReviewGate.begin();
   branchListGate.begin();
   checkoutReviewGate.begin();
+  recentWorktreeGate.begin();
   workspaceGeneration += 1;
   localWorktree = worktree;
   commitReview = null;
@@ -287,11 +290,13 @@ function renderWorktree(worktree) {
 }
 
 async function refreshRecentWorktrees(repository, generation = workspaceGeneration) {
+  const requestGeneration = recentWorktreeGate.begin();
   elements.recentWorktree.replaceChildren(new Option("Checking Recent Folders…", ""));
   elements.recentWorktree.disabled = true;
   try {
     const worktrees = await invoke("list_recent_maintainer_worktrees", { repository });
-    if (generation !== workspaceGeneration || repository !== plannedRepository) return;
+    if (!recentWorktreeGate.isCurrent(requestGeneration) || generation !== workspaceGeneration
+      || repository !== plannedRepository) return;
     elements.recentWorktree.replaceChildren(new Option(
       worktrees.length ? "Select Recent Folder" : "No Recent Folders",
       "",
@@ -303,7 +308,8 @@ async function refreshRecentWorktrees(repository, generation = workspaceGenerati
     }
     elements.recentWorktree.disabled = !worktrees.length;
   } catch (error) {
-    if (generation !== workspaceGeneration) return;
+    if (!recentWorktreeGate.isCurrent(requestGeneration) || generation !== workspaceGeneration
+      || repository !== plannedRepository) return;
     elements.recentWorktree.replaceChildren(new Option("Recent Folders Unavailable", ""));
     elements.recentWorktree.disabled = true;
     elements.worktreeMessage.textContent = String(error);
