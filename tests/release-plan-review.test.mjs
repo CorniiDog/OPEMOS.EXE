@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { normalizeReleaseOperation, releaseOperationAuthorizable } from "../src/release-plan-review.js";
+import { createReleaseReviewSession, describeReleaseOperation, normalizeReleaseOperation, releaseOperationAuthorizable } from "../src/release-plan-review.js";
 
 const schema = JSON.parse(await readFile(new URL("./fixtures/opemos-core/release-operation-v1.schema.json", import.meta.url)));
 const assets = ["archive.tar", "manifest.json", "manifest.json.sig", "provenance.json"].map((name, index) => ({
@@ -46,4 +46,34 @@ test("authorization admits only create or missing-only retry and never terminal 
     { ...planned, lifecycle: "failed", decision: "conflict", assets: assets.map((asset) => ({ ...asset, state: "conflict" })) },
     { ...planned, lifecycle: "cancelled", decision: "cancelled" },
   ]) assert.equal(releaseOperationAuthorizable(normalizeReleaseOperation(value)), false);
+});
+
+
+test("explicit authorization is identity-bound, idempotent, and invalidated by a new attempt", () => {
+  const session = createReleaseReviewSession();
+  session.review(planned);
+  const first = session.authorize();
+  assert.strictEqual(session.authorize(), first);
+  assert.deepEqual(first, { operationId: planned.operationId, attempt: 1, decision: "create" });
+  session.review({ ...planned, attempt: 2 });
+  assert.equal(session.snapshot().authorization, null);
+  const second = session.authorize();
+  assert.notStrictEqual(second, first);
+  assert.deepEqual(second, { operationId: planned.operationId, attempt: 2, decision: "create" });
+});
+
+test("terminal reconciliation explains completion, conflict, and cancellation without authorizing", () => {
+  const complete = normalizeReleaseOperation({ ...planned, lifecycle: "succeeded", decision: "already-complete",
+    assets: assets.map((asset) => ({ ...asset, state: "present" })) });
+  const conflict = normalizeReleaseOperation({ ...planned, lifecycle: "failed", decision: "conflict",
+    assets: assets.map((asset) => ({ ...asset, state: "conflict" })) });
+  const cancelled = normalizeReleaseOperation({ ...planned, lifecycle: "cancelled", decision: "cancelled" });
+  assert.match(describeReleaseOperation(complete), /exactly matches/);
+  assert.match(describeReleaseOperation(conflict), /conflict.*blocked/i);
+  assert.match(describeReleaseOperation(cancelled), /cancelled.*cannot claim success/i);
+  const session = createReleaseReviewSession();
+  for (const operation of [complete, conflict, cancelled]) {
+    session.review(operation);
+    assert.throws(() => session.authorize(), /not authorizable/);
+  }
 });

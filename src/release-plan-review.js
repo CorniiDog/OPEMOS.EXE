@@ -53,6 +53,48 @@ export function releaseOperationAuthorizable(operation) {
     && operation.assets.every((asset) => asset.state === "present" || asset.state === "missing");
 }
 
+export function describeReleaseOperation(operation) {
+  if (!operation) return "No immutable Core release operation loaded.";
+  if (operation.lifecycle === "succeeded" && operation.decision === "already-complete") {
+    return "The remote release exactly matches this immutable operation. No action is needed.";
+  }
+  if (operation.lifecycle === "failed" || operation.decision === "conflict") {
+    return "Release reconciliation found a conflict. Authorization is blocked.";
+  }
+  if (operation.lifecycle === "cancelled" || operation.decision === "cancelled") {
+    return "This release operation was cancelled and cannot claim success.";
+  }
+  return (operation.lifecycle + " · " + operation.decision + " · attempt " + operation.attempt + ". " + (operation.message || "")).trim();
+}
+
+export function createReleaseReviewSession() {
+  let operation = null;
+  let authorization = null;
+  const authorizationMatches = () => Boolean(authorization && operation
+    && authorization.operationId === operation.operationId
+    && authorization.attempt === operation.attempt
+    && authorization.decision === operation.decision);
+
+  return Object.freeze({
+    review(value) {
+      const next = normalizeReleaseOperation(value);
+      operation = next;
+      if (!authorizationMatches()) authorization = null;
+      return operation;
+    },
+    authorize() {
+      if (!releaseOperationAuthorizable(operation)) throw new Error("This release operation is not authorizable.");
+      if (!authorizationMatches()) authorization = Object.freeze({
+        operationId: operation.operationId, attempt: operation.attempt, decision: operation.decision,
+      });
+      return authorization;
+    },
+    snapshot() {
+      return Object.freeze({ operation, authorization: authorizationMatches() ? authorization : null });
+    },
+  });
+}
+
 export function installReleasePlanReview(document) {
   const fields = {
     repository: document.querySelector("#release-repository"), tag: document.querySelector("#release-tag"),
@@ -61,9 +103,10 @@ export function installReleasePlanReview(document) {
   const authorize = document.querySelector("#authorize-release");
   const status = document.querySelector("#release-plan-status");
   const assets = document.querySelector("#release-assets");
+  const session = createReleaseReviewSession();
 
   function render(value) {
-    const operation = normalizeReleaseOperation(value);
+    const operation = session.review(value);
     for (const [name, node] of Object.entries(fields)) node.textContent = operation?.[name] || "—";
     assets.replaceChildren();
     for (const asset of operation?.assets || []) {
@@ -73,11 +116,20 @@ export function installReleasePlanReview(document) {
       assets.append(item);
     }
     authorize.disabled = !releaseOperationAuthorizable(operation);
-    status.textContent = operation
-      ? (operation.lifecycle + " · " + operation.decision + " · attempt " + operation.attempt + ". " + (operation.message || "")).trim()
-      : "No immutable Core release operation loaded.";
+    status.textContent = describeReleaseOperation(operation);
   }
 
+  authorize.addEventListener("click", () => {
+    try {
+      const authorization = session.authorize();
+      authorize.disabled = true;
+      status.textContent = "Explicit local authorization recorded for operation " + authorization.operationId + ", attempt " + authorization.attempt + ". No release executor is connected.";
+    } catch (error) {
+      authorize.disabled = true;
+      status.textContent = String(error);
+    }
+  });
+
   render(null);
-  return Object.freeze({ render });
+  return Object.freeze({ render, snapshot: session.snapshot });
 }

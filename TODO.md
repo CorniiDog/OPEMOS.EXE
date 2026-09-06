@@ -456,6 +456,16 @@ installation targets, production activation, or hardware certification.
   the network at runtime, or activate production. On 2026-09-06, 8 focused and
   all 198 frontend tests pass with documentation, hygiene, and boundary integrity.
 
+- [x] Add an inactive explicit-authorization session around the exact Core
+  release operation. Authorization is bound to operation ID, attempt, and
+  decision, is idempotent for the same reviewed request, and is invalidated by
+  any new attempt or operation. The UI explains exact completion, conflict, and
+  cancellation without claiming success or enabling action; accepted local
+  authorization states that no executor is connected. This does not invoke Core,
+  publish, sign, use credentials, or activate production. On 2026-09-06, 10
+  focused and all 200 frontend tests pass with documentation, hygiene, and
+  boundary integrity.
+
 ### 1. Complete the OPEMOS Core migration
 
 Production generation activation is intentionally blocked until the maintainer
