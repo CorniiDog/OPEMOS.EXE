@@ -102,7 +102,7 @@ let plannedOutput = null;
 let completedOutput = null;
 let completedOutputImported = false;
 let imageSelectionGeneration = 0;
-let imageChooserGeneration = 0;
+const imageChooserGate = createLatestRequestGate();
 let usbPreflightSession = null;
 let usbContextGeneration = 0;
 let usbArmPending = false;
@@ -677,10 +677,10 @@ async function selectImage(path) {
 
 elements.chooseImage.addEventListener("click", async () => {
   if (!admitImageSelection(currentBuildSnapshot()).accepted) return;
-  const chooserGeneration = ++imageChooserGeneration;
+  const chooserGeneration = imageChooserGate.begin();
   const selectionGeneration = imageSelectionGeneration;
   const selected = await open({ multiple: false, directory: false, filters: [{ name: "SteamOS recovery image", extensions: ["img", "bz2", "gz", "xz"] }] });
-  if (chooserGeneration !== imageChooserGeneration
+  if (!imageChooserGate.isCurrent(chooserGeneration)
     || selectionGeneration !== imageSelectionGeneration) return;
   if (typeof selected === "string") await selectImage(selected);
 });
