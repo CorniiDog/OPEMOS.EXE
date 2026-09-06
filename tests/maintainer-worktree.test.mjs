@@ -39,3 +39,17 @@ test("maintainer plan verification commits only the latest request", async () =>
   assert.match(planHandler, /catch \(error\) \{\n    if \(!planRequestGate\.isCurrent\(generation\)\) return;\n    resetPlan\(\{ invalidateRequest: false \}\);/);
   assert.match(planHandler, /finally \{\n    if \(planRequestGate\.isCurrent\(generation\)\) \{[\s\S]*?loading = false;/);
 });
+
+
+test("maintainer staged review commits only the latest snapshot request", async () => {
+  const script = await readFile(new URL("../src/maintainer.js", import.meta.url), "utf8");
+  const handler = script.match(/elements\.reviewStaged\.addEventListener\("click", async \(\) => \{[\s\S]*?\n\}\);/)?.[0] || "";
+  assert.match(script, /const stagedReviewGate = createLatestRequestGate\(\)/);
+  assert.match(script, /function resetPlan[\s\S]*?stagedReviewGate\.begin\(\);[\s\S]*?function disableSourceControls/);
+  assert.match(script, /function renderWorktree\(worktree\) \{\n  stagedReviewGate\.begin\(\);/);
+  assert.match(script, /elements\.commitMessage\.addEventListener\("input", \(\) => \{\n  stagedReviewGate\.begin\(\);/);
+  assert.match(handler, /const requestGeneration = stagedReviewGate\.begin\(\)/);
+  assert.match(handler, /const reviewedCommit = await invoke\("review_maintainer_staged_commit"[\s\S]*?if \(!stagedReviewGate\.isCurrent\(requestGeneration\)[\s\S]*?commitReview = reviewedCommit;/);
+  assert.match(handler, /catch \(error\) \{\n    if \(!stagedReviewGate\.isCurrent\(requestGeneration\)/);
+  assert.match(handler, /finally \{\n    if \(stagedReviewGate\.isCurrent\(requestGeneration\) && generation === workspaceGeneration\) \{/);
+});

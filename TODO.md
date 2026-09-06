@@ -933,6 +933,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     The focused request-gate/maintainer suite passes 5/5 and all 173 frontend
     tests plus documentation, hygiene, and boundary integrity pass on
     2026-09-06. Other async workers remain under the parent lifecycle item.
+  - [x] Give maintainer staged-commit review requests a dedicated generation,
+    invalidated by message edits, workspace resets, and worktree replacement.
+    An older same-context snapshot success, error, or finalizer can no longer
+    replace the newer reviewed tree or alter its controls. The focused
+    request-gate/maintainer suite passes 6/6 and all 174 frontend tests plus
+    documentation, hygiene, and boundary integrity pass on 2026-09-06. Other
+    async workers remain under the parent lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.
