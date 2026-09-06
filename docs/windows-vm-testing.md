@@ -53,3 +53,31 @@ links, mutable permissions, size mismatch, and byte-hash mismatch. The identity
 document and ISO remain ignored local inputs. This verifier does not download
 media, choose a mutable release, or authenticate an absent Microsoft signature;
 the exact official release and digest must be recorded before acquisition.
+
+## Generate reviewed unattended inputs
+
+The committed `templates/windows/` files contain placeholders and no account
+password or SSH key. Put a unique one-time account password and public key in a
+mode-`0600` ignored runtime JSON file with exactly `account`, `password`, and
+`sshPublicKey`, then generate the private installer inputs:
+
+```bash
+node scripts/windows-unattend.mjs generate \
+  local-inputs/windows-vm/runtime/provision-input.json
+```
+
+Generation publishes `generated/autounattend.xml` and
+`generated/provision.ps1` as create-only mode-`0600` files. It refuses unsafe
+account names, short or control-bearing passwords, malformed public keys,
+unknown fields, permissive input files, template drift, and existing outputs.
+If the second output cannot be published, it removes only the answer file it
+created and preserves the conflicting file.
+
+The answer file limits autologon to one setup login. The reviewed provisioning
+script installs the Microsoft OpenSSH Server capability, enables its existing
+firewall rule, installs only the supplied public key with restricted ACLs,
+disables SSH password authentication, restarts the service, and writes a bounded
+completion marker. It does not disable Defender, Windows Update, firewall,
+WebView2, accessibility, recovery, or device services. Derived files and the
+runtime input remain ignored private state and must be removed after successful
+provisioning before a base is sealed.

@@ -890,6 +890,22 @@ already Core contracts and are not open-ended product choices.
     commit `e54a82c` on branch `work/exe-windows-media-plan` to configured origin
     `https://github.com/CorniiDog/steamos-nvidia-image-builder.git`; PR and squash
     evidence follow.
+  - [x] Add reviewed secret-free Windows unattended templates and a private
+    create-only generator. Committed XML and PowerShell contain placeholders,
+    while a mode-`0600` ignored runtime document supplies one bounded test
+    account, one-time password, and SSH public key. Generated answer/provisioning
+    files remain mode `0600`; unknown fields, unsafe accounts, weak/control-byte
+    passwords, malformed keys, permissive inputs, template drift, and existing
+    outputs fail closed. Pair publication preserves a conflicting second file
+    and removes only the first output created by that attempt. The answer file
+    permits one setup autologon. The idempotent provisioning script installs the
+    Microsoft OpenSSH capability, starts it automatically, preserves the
+    firewall, installs the public key with restricted ACLs, disables SSH password
+    authentication, and records completion without disabling Defender, Update,
+    WebView2, accessibility, recovery, or device services. Focused Windows tests
+    pass 11/11. No real credential was generated, ISO derived, disk created,
+    network accessed, VM launched, or production trust/activation/hardware path
+    enabled. PR and squash evidence follow.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,

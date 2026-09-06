@@ -1,0 +1,19 @@
+$ErrorActionPreference = 'Stop'
+$root = 'C:\OPEMOS'
+$marker = Join-Path $root 'provisioned-v1.json'
+if (Test-Path -LiteralPath $marker) { exit 0 }
+Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-Null
+Set-Service -Name sshd -StartupType Automatic
+Start-Service sshd
+$rule = Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue
+if ($null -eq $rule) { New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null }
+$key = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__SSH_PUBLIC_KEY_BASE64__'))
+$authorized = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys'
+Set-Content -LiteralPath $authorized -Value $key -Encoding ascii -NoNewline
+icacls.exe $authorized /inheritance:r /grant 'Administrators:F' /grant 'SYSTEM:F' | Out-Null
+$config = Join-Path $env:ProgramData 'ssh\sshd_config'
+$content = Get-Content -LiteralPath $config
+$content = $content -replace '^\s*#?\s*PasswordAuthentication\s+.*$', 'PasswordAuthentication no'
+Set-Content -LiteralPath $config -Value $content -Encoding ascii
+Restart-Service sshd
+@{ schemaVersion = 1; status = 'provisioned'; passwordAuthentication = $false } | ConvertTo-Json -Compress | Set-Content -LiteralPath $marker -Encoding ascii
