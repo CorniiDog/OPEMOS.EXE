@@ -81,3 +81,22 @@ completion marker. It does not disable Defender, Windows Update, firewall,
 WebView2, accessibility, recovery, or device services. Derived files and the
 runtime input remain ignored private state and must be removed after successful
 provisioning before a base is sealed.
+
+## Current verified evaluation source
+
+On 2026-09-06, Microsoft Evaluation Center identified Windows 11 Enterprise
+Evaluation version 25H2 for x64 and linked the EN-US ISO plus its verification
+PDF. The resolved immutable local identity is:
+
+- ISO: `windows-11-enterprise-evaluation-25h2-en-us-x64.iso`
+- size: `7092807680` bytes
+- SHA-256: `a61adeab895ef5a4db436e0a7011c92a2ff17bb0357f58b13bbc4062e535e7b9`
+- build: `26200.6584`
+- Microsoft hash PDF SHA-256:
+  `0d44bc561af90844c0a0da5ddc420f5fa84459872c02a1def6240fcfe1aac2c7`
+
+The ISO was downloaded through `heavy.sh` into the ignored containment, checked
+for exact size, matched to Microsoft's published EN-US digest, changed to mode
+`0400`, and independently rehashed by `windows-media.mjs`. Total containment
+allocation was `7092822016` bytes after verification. The official ISO remains
+an immutable local input and is never committed or redistributed.

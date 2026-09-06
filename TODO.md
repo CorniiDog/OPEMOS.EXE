@@ -910,6 +910,22 @@ already Core contracts and are not open-ended product choices.
     commit `4c05e6d` on branch `work/exe-windows-unattend-plan` to configured
     origin `https://github.com/CorniiDog/steamos-nvidia-image-builder.git`; PR
     and squash evidence follow.
+  - [x] Acquire and authenticate the official Microsoft Windows 11 Enterprise
+    Evaluation 25H2 EN-US x64 ISO as an immutable ignored local input. Microsoft
+    Evaluation Center identified version 25H2 and linked the x64 ISO and hash
+    PDF. The resolved ISO is build `26200.6584`, exactly `7092807680` bytes, with
+    Microsoft-published SHA-256
+    `a61adeab895ef5a4db436e0a7011c92a2ff17bb0357f58b13bbc4062e535e7b9`.
+    The downloaded Microsoft hash PDF has SHA-256
+    `0d44bc561af90844c0a0da5ddc420f5fa84459872c02a1def6240fcfe1aac2c7`.
+    The serialized download published only after size/hash success, the ISO is
+    mode `0400`, and the strengthened local identity binds the canonical
+    Microsoft ISO URL, hash-PDF URL/digest, EN-US locale, product, edition,
+    architecture, release, size, and ISO digest. Independent streamed
+    reverification passed; containment allocation is `7092822016` bytes. The ISO
+    and manifest remain gitignored and will not be redistributed. No derived
+    installer, credential, disk, VM, production trust/activation, KVM, or
+    hardware operation occurred. PR and squash evidence follow.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
