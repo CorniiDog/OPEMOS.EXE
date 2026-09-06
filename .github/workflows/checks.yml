@@ -177,7 +177,7 @@ jobs:
       - name: Install and purge the package in the disposable Debian container
         run: >-
           dbus-run-session -- xvfb-run --auto-servernum
-          tini --subreaper -- python3 scripts/check_debian_package_install.py
+          tini -s -- python3 scripts/check_debian_package_install.py
         env:
           OPEMOS_DEBIAN_GUI_SMOKE: '1'
           OPEMOS_DISPOSABLE_DEBIAN_CONTAINER: '1'
