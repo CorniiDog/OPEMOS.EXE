@@ -32,3 +32,14 @@ test("maintainer controls and long identities reflow at high zoom", () => {
   assert.match(responsive, /\.identity dd,[\s\S]*\.plan-summary strong\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/);
   assert.match(responsive, /\.patch-preview\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;/);
 });
+
+
+test("maintainer release review exposes immutable identity and closed evidence gates", () => {
+  assert.match(html, /id="release-core-commit"/);
+  assert.match(html, /id="release-bundle-sha256"/);
+  for (const gate of ["package", "build", "signature", "checksum", "provenance"]) {
+    assert.match(html, new RegExp(`data-release-gate="${gate}"`));
+  }
+  assert.match(html, /id="authorize-release"[^>]*disabled/);
+  assert.match(html, /does not publish, sign, or activate anything/);
+});
