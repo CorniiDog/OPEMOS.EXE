@@ -94,6 +94,61 @@ use installer::*;
 use nvidia::*;
 use settings::*;
 
+pub fn run_core_driver_resolver(arguments: &[String]) -> Result<Option<String>, String> {
+    if arguments.first().map(String::as_str) != Some("resolve-core-driver") {
+        return Ok(None);
+    }
+    let (mut steamos, mut kernel, mut architecture) = (None, None, None);
+    let mut candidates = Vec::new();
+    let mut index = 1;
+    while index < arguments.len() {
+        let value = arguments
+            .get(index + 1)
+            .ok_or_else(|| format!("Missing value for {}.", arguments[index]))?;
+        match arguments[index].as_str() {
+            "--steamos" if steamos.is_none() => steamos = Some(value.clone()),
+            "--kernel" if kernel.is_none() => kernel = Some(value.clone()),
+            "--architecture" if architecture.is_none() => architecture = Some(value.clone()),
+            "--steamos" | "--kernel" | "--architecture" => {
+                return Err(format!("Duplicate resolver option {}.", arguments[index]));
+            }
+            "--candidate-sha256" => {
+                let path = arguments
+                    .get(index + 2)
+                    .ok_or("Missing candidate path after SHA-256.")?;
+                let bytes = fs::read(path)
+                    .map_err(|error| format!("Could not read Core candidate: {error}"))?;
+                let observed = format!("{:x}", Sha256::digest(&bytes));
+                if value.len() != 64
+                    || !value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    || observed != *value
+                {
+                    return Err(
+                        "OPEMOS Core candidate does not match its authenticated SHA-256.".into(),
+                    );
+                }
+                candidates.push(bytes);
+                index += 1;
+            }
+            option => return Err(format!("Unsupported resolver option {option}.")),
+        }
+        index += 2;
+    }
+    let target = core_contracts::CoreResolverTarget {
+        steamos_version: steamos.ok_or("Missing --steamos resolver target.")?,
+        kernel_version: kernel.ok_or("Missing --kernel resolver target.")?,
+        architecture: architecture.ok_or("Missing --architecture resolver target.")?,
+    };
+    serde_json::to_string(&core_contracts::select_core_driver_resolution(
+        &target,
+        &candidates,
+    )?)
+    .map(Some)
+    .map_err(|error| format!("Could not encode selected Core driver resolution: {error}"))
+}
+
 const READY_MARKER: &str = "SteamOS NVIDIA Image Builder appliance\nREADY";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
 const NVIDIA_BUILD_BOOT_TIMEOUT: Duration = Duration::from_secs(600);

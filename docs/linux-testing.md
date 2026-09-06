@@ -383,6 +383,26 @@ A reported exact-target action is shown as text and cannot be executed here.
 The inspector offers no build, download, trust, or generation-activation action.
 It needs no credentials, network requests, image files, guest, or cache changes.
 
+The packaged executable also exposes a closed host-orchestration entrypoint for
+already-authenticated resolver documents:
+
+```bash
+steamos-nvidia-image-builder resolve-core-driver \
+  --steamos 3.8.14 \
+  --kernel 6.16.12-valve24.4-1-neptune-616-gfe145653a794 \
+  --architecture x86_64 \
+  --candidate-sha256 LOWERCASE_SHA256 /absolute/path/resolver.json
+```
+
+Repeat `--candidate-sha256 HASH PATH` for each independently authenticated Core
+candidate. The executable verifies every supplied byte hash, consumes resolver
+schema 2 and its capability metadata, requires the exact kernel ABI and target,
+rejects conflicting or multiple different compatible decisions, and emits the
+one unique Core document as compact JSON. Candidate order does not affect the result. Supplying a hash is only a byte
+binding; the caller must obtain that expected hash through an authenticated Core
+channel. This entrypoint performs no network access, download, build, install,
+release publication, or activation.
+
 The dialog displays Core's status, target, reason, publication, artifact trust,
 and next action without inventing another decision. Editing, clearing, or
 closing invalidates pending preview responses; closing also clears pasted text. Cancelling the file picker preserves
