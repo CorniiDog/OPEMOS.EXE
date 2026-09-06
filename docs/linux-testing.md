@@ -321,6 +321,21 @@ the native dialog, and main-window file drops are ignored while it is open.
 Frontend behavior and Rust adapter tests are automated; visual rendering and
 native keyboard/focus behavior still require a graphical desktop validation.
 
+## Page zoom
+
+The main, build-progress, and maintainer windows provide bounded page zoom even
+when WebKitGTK does not implement browser zoom shortcuts itself. Use
+**Ctrl++** or **Command++** to increase zoom, **Ctrl+-** or **Command+-** to
+decrease it, and **Ctrl+0** or **Command+0** to reset it. Zoom steps range from
+80% through 200%, remain local to the current window, and are announced through
+an accessibility status region. The shortcuts also work while an editable field
+is focused; unrelated, repeated, composing, Alt-modified, or ambiguous
+Ctrl+Command input is ignored.
+
+This changes presentation only. It does not change compatibility results, build
+inputs, trust, authorization, or activation. Real monitor scaling and native OS
+forced-colors behavior require separate validation.
+
 This host opt-in does not install production keys, select publication policy,
 authorize source fallback, or activate a generation. Existing production trust and activation gates remain
 intact. macOS regression validation, Debian validation, managed-appliance smoke

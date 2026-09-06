@@ -12,9 +12,11 @@ import {
   normalizeTerminalText,
 } from "./terminal-renderer.js";
 import { installWindowDrag } from "./window-drag.js";
+import { installPageZoom } from "./zoom.js";
 import { installKeyboardBindings, selectKeyboardRegionContents } from "./keyboard.js";
 
 const { invoke } = window.__TAURI__.core;
+installPageZoom();
 const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 
 const $ = (selector) => document.querySelector(selector);
