@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { createReleaseCommandController, createReleaseReviewSession, describeReleaseOperation, normalizeReleaseOperation, releaseOperationAuthorizable } from "../src/release-plan-review.js";
+import { createReleaseCommandController, createReleaseReviewSession, createReleaseStatusPoller, describeReleaseOperation, normalizeReleaseOperation, releaseOperationAuthorizable } from "../src/release-plan-review.js";
 
 const schema = JSON.parse(await readFile(new URL("./fixtures/opemos-core/release-operation-v1.schema.json", import.meta.url)));
 const baseAssets = ["archive.tar", "manifest.json", "manifest.json.sig", "provenance.json"].map((name, index) => ({
@@ -140,4 +140,65 @@ test("command cancellation is accepted once and terminal results are immutable",
   assert.equal(session.snapshot().operation.lifecycle, "cancelled");
   const altered = { ...cancelled, message: "substituted" };
   assert.throws(() => session.acceptCommandResult(altered), /terminal release result/);
+});
+
+
+const turn = () => new Promise((resolve) => setImmediate(resolve));
+
+test("status poller resumes immediately, reports progress, and stops at terminal state", async () => {
+  const session = createReleaseReviewSession();
+  session.review(planned);
+  const outputs = [
+    operation({ attempt: 2, lifecycle: "reconciling", decision: "retry-missing", assets: retryAssets, progress: retryProgress }),
+    operation({ attempt: 2, lifecycle: "succeeded", decision: "already-complete", assets: presentAssets, progress: completeProgress }),
+  ];
+  const controller = createReleaseCommandController(session, async (command) => {
+    assert.equal(command, "status");
+    return outputs.shift();
+  });
+  const scheduled = [];
+  const updates = [];
+  const errors = [];
+  const poller = createReleaseStatusPoller(controller, { schedule: (callback) => scheduled.push(callback), maxPolls: 4 });
+  poller.start((value) => updates.push(value), (error) => errors.push(error));
+  await turn();
+  assert.equal(updates[0].progress.completedAssets, 3);
+  assert.equal(poller.snapshot().active, true);
+  assert.equal(scheduled.length, 1);
+  scheduled.shift()();
+  await turn();
+  assert.equal(updates[1].lifecycle, "succeeded");
+  assert.deepEqual(poller.snapshot(), { active: false, polls: 2 });
+  assert.deepEqual(errors, []);
+});
+
+test("stopping status polling invalidates an in-flight result", async () => {
+  const session = createReleaseReviewSession();
+  session.review(planned);
+  let resolveStatus;
+  const pending = new Promise((resolve) => { resolveStatus = resolve; });
+  const controller = createReleaseCommandController(session, async () => pending);
+  const updates = [];
+  const poller = createReleaseStatusPoller(controller, { schedule: () => {}, maxPolls: 2 });
+  poller.start((value) => updates.push(value));
+  poller.stop();
+  resolveStatus(operation({ attempt: 2, lifecycle: "succeeded", decision: "already-complete", assets: presentAssets, progress: completeProgress }));
+  await turn();
+  assert.deepEqual(updates, []);
+  assert.equal(session.snapshot().operation.attempt, 1);
+  assert.equal(poller.snapshot().active, false);
+});
+
+test("status polling is single-owner and fails closed at its configured bound", async () => {
+  const session = createReleaseReviewSession();
+  session.review(planned);
+  const controller = createReleaseCommandController(session, async () => planned);
+  const errors = [];
+  const poller = createReleaseStatusPoller(controller, { schedule: () => assert.fail("bounded poll scheduled again"), maxPolls: 1 });
+  poller.start(() => {}, (error) => errors.push(error));
+  assert.throws(() => poller.start(() => {}), /already active/);
+  await turn();
+  assert.match(errors[0].message, /bounded limit/);
+  assert.deepEqual(poller.snapshot(), { active: false, polls: 1 });
+  assert.throws(() => createReleaseStatusPoller(controller, { maxPolls: 0 }), /options are invalid/);
 });

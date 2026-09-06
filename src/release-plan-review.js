@@ -1,3 +1,5 @@
+import { createLatestRequestGate } from "./async-generation.js";
+
 const SHA256 = /^[0-9a-f]{64}$/;
 const COMMIT = /^[0-9a-f]{40}$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -150,7 +152,7 @@ export function createReleaseReviewSession() {
 
 export function createReleaseCommandController(session, runCommand) {
   if (!session || typeof runCommand !== "function") throw new TypeError("A release session and command runner are required.");
-  let request = 0;
+  const requestGate = createLatestRequestGate();
   let busy = false;
   async function run(command, requiresAuthorization = false) {
     if (busy) throw new Error("A release command is already in progress.");
@@ -160,22 +162,82 @@ export function createReleaseCommandController(session, runCommand) {
     if (requiresAuthorization && !authorization) {
       throw new Error("Explicit authorization for this exact release attempt is required.");
     }
-    const token = ++request;
+    const token = requestGate.begin();
     busy = true;
     try {
       const value = await runCommand(command, Object.freeze({ operationId: before.operation.operationId,
         attempt: before.operation.attempt, authorization }));
-      if (token !== request) return session.snapshot().operation;
+      if (!requestGate.isCurrent(token)) return session.snapshot().operation;
       return session.acceptCommandResult(value);
     } finally {
-      if (token === request) busy = false;
+      if (requestGate.isCurrent(token)) busy = false;
     }
   }
   return Object.freeze({
     start: () => run("execute", true), verify: () => run("status"),
     retry: () => run("reconcile", true), cancel: () => run("cancel"),
-    invalidate() { request += 1; busy = false; },
+    invalidate() { requestGate.begin(); busy = false; },
     snapshot: () => Object.freeze({ ...session.snapshot(), busy }),
+  });
+}
+
+export function createReleaseStatusPoller(controller, options = {}) {
+  if (!controller || typeof controller.verify !== "function" || typeof controller.invalidate !== "function") {
+    throw new TypeError("A release command controller is required.");
+  }
+  const schedule = options.schedule || ((callback) => setTimeout(callback, 1000));
+  const maxPolls = options.maxPolls ?? 120;
+  if (typeof schedule !== "function" || !Number.isInteger(maxPolls) || maxPolls < 1 || maxPolls > 3600) {
+    throw new TypeError("Release polling options are invalid.");
+  }
+  const pollGate = createLatestRequestGate();
+  let active = false;
+  let polls = 0;
+
+  function stop() {
+    pollGate.begin();
+    active = false;
+    controller.invalidate();
+  }
+
+  async function step(token, onUpdate, onError) {
+    if (!active || !pollGate.isCurrent(token)) return;
+    try {
+      const operation = await controller.verify();
+      if (!active || !pollGate.isCurrent(token)) return;
+      polls += 1;
+      onUpdate(operation);
+      if (terminalReleaseOperation(operation)) {
+        active = false;
+        return;
+      }
+      if (polls >= maxPolls) {
+        active = false;
+        onError(new Error("Release status polling reached its bounded limit."));
+        return;
+      }
+      schedule(() => step(token, onUpdate, onError));
+    } catch (error) {
+      if (!active || !pollGate.isCurrent(token)) return;
+      active = false;
+      onError(error);
+    }
+  }
+
+  return Object.freeze({
+    start(onUpdate, onError = () => {}) {
+      if (typeof onUpdate !== "function" || typeof onError !== "function") {
+        throw new TypeError("Release polling callbacks are required.");
+      }
+      if (active) throw new Error("Release status polling is already active.");
+      const token = pollGate.begin();
+      active = true;
+      polls = 0;
+      void step(token, onUpdate, onError);
+      return token;
+    },
+    stop,
+    snapshot: () => Object.freeze({ active, polls }),
   });
 }
 
@@ -194,6 +256,7 @@ export function installReleasePlanReview(document, runCommand = null) {
   const cancel = document.querySelector("#release-cancel-operation");
   const session = createReleaseReviewSession();
   const commands = runCommand ? createReleaseCommandController(session, runCommand) : null;
+  const poller = commands ? createReleaseStatusPoller(commands) : null;
 
   function render(value) {
     const operation = session.review(value);
@@ -236,7 +299,14 @@ export function installReleasePlanReview(document, runCommand = null) {
       if (!commands) return;
       for (const node of [start, verify, retry, cancel, authorize]) node.disabled = true;
       status.textContent = `${label} exact operation...`;
-      try { render(await commands[command]()); }
+      if (command === "cancel") poller.stop();
+      try {
+        const operation = await commands[command]();
+        render(operation);
+        if ((command === "start" || command === "retry") && !terminalReleaseOperation(operation)) {
+          poller.start(render, (error) => { status.textContent = String(error); });
+        }
+      }
       catch (error) {
         render(session.snapshot().operation);
         status.textContent = String(error);
@@ -245,5 +315,5 @@ export function installReleasePlanReview(document, runCommand = null) {
   }
 
   render(null);
-  return Object.freeze({ render, snapshot: session.snapshot, commands });
+  return Object.freeze({ render, snapshot: session.snapshot, commands, poller });
 }
