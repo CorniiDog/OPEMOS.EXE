@@ -226,3 +226,35 @@ esac
   assert.deepEqual(await readFile(cache), original);
   await assert.rejects(readFile(`${cache}.download.partial`));
 });
+
+test("ambiguous or malformed signed image checksums stop before cache replacement", async () => {
+  for (const [name, checksumBody, expectedError] of [
+    [
+      "duplicate",
+      `SHA256 (Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2) = ${"1".repeat(64)}\n`.repeat(2),
+      /did not contain exactly one entry/,
+    ],
+    [
+      "malformed",
+      "SHA256 (Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2) = not-a-digest\n",
+      /contained an invalid SHA-256/,
+    ],
+  ]) {
+    const fixture = await prepareFakeEnvironment(Buffer.from("unused replacement\n"));
+    const work = join(fixture.applianceDir, "work");
+    const cache = join(work, "Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2");
+    const output = join(fixture.root, `${name}.qcow2`);
+    const original = Buffer.from(`preserve ${name} cache\n`);
+    await mkdir(work);
+    await writeFile(cache, original);
+    await writeFile(fixture.checksum, checksumBody);
+    const result = spawnSync("bash", [join(fixture.applianceDir, "build_linux.sh"), "--output", output], {
+      encoding: "utf8",
+      env: fixture.env,
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, expectedError);
+    assert.deepEqual(await readFile(cache), original);
+    await assert.rejects(readFile(output));
+  }
+});

@@ -1208,8 +1208,10 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     returns nonzero, preserves the exact prior cache bytes, and removes the
     temporary download. A separate injected download exit after writing partial
     bytes also preserves the cache and removes the partial file. The focused
-    builder suite passes 7/7. Other listed cancellation and injected-failure
-    phases remain open.
+    builder suite passes 7/7. Signed-checksum trust-failure coverage also rejects
+    duplicate and malformed entries before any cache or output replacement. The
+    focused builder suite passes 8/8. Other listed cancellation and injected-
+    failure phases remain open.
 - [ ] On every terminal path prove: original unchanged, partial output absent,
   mounts released, guests stopped, locks released, secrets removed, and no
   partial result accepted as trusted.
