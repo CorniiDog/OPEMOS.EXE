@@ -17,7 +17,7 @@ def package_path(repo: Path):
     linux = json.loads((repo / "src-tauri/tauri.linux-test.conf.json").read_text())
     name = f'{linux["productName"]}_{base["version"]}_amd64'
     bundle = repo / "src-tauri/target/debug/bundle/deb"
-    return bundle / f"{name}.deb", bundle / name / BINARY
+    return bundle / f"{name}.deb", bundle / name / "data" / BINARY
 def require_disposable_debian(root: Path, environ: dict[str, str]) -> None:
     if environ.get("OPEMOS_DISPOSABLE_DEBIAN_CONTAINER") != "1": raise ValueError("exact disposable-container opt-in is required")
     if not (root / ".dockerenv").is_file(): raise ValueError("refusing package mutation outside a disposable container")

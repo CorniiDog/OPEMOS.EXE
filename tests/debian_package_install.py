@@ -36,6 +36,9 @@ class DebianInstallSmokeTests(unittest.TestCase):
     def tearDown(self): self.temp.cleanup()
     def run_it(self, runner):
         with mock.patch.object(os,"geteuid",return_value=0): install.run_smoke(self.repo,self.root,self.env,runner)
+    def test_package_path_uses_tauri_debian_staging_tree(self):
+        self.assertEqual(self.staged.relative_to(self.package.parent),
+                         Path("OPEMOS EXE Linux Test_0.1.0_amd64/data") / install.BINARY)
     def test_success_installs_verifies_and_purges(self):
         runner=FakeRunner(self.root,self.staged); self.run_it(runner); self.assertFalse((self.root/install.BINARY).exists()); self.assertIn(("dpkg","--purge",install.PACKAGE_ID),runner.calls)
     def test_partial_install_and_failed_verification_are_always_purged(self):
