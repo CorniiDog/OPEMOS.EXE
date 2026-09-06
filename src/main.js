@@ -116,7 +116,7 @@ let buildContextGeneration = 0;
 let activeBuildContext = null;
 let acceptedNvidiaSource = elements.nvidiaSource.value;
 let acceptedUpstreamApproval = elements.allowUpstreamBuild.checked;
-let sourceBranchLoadGeneration = 0;
+const sourceBranchLoadGate = createLatestRequestGate();
 let pendingUsbTarget = null;
 let hostReady = false;
 let progressReady = false;
@@ -480,9 +480,19 @@ async function checkEnvironment() {
   if (environmentCheckGate.isCurrent(generation)) updateBuildButton();
 }
 
+
+function sourceBranchRefreshCapability(generation) {
+  return {
+    generation,
+    currentGeneration: sourceBranchLoadGate.isCurrent(generation)
+      ? generation
+      : generation === 1 ? 2 : 1,
+  };
+}
+
 async function loadNvidiaSourceBranches() {
   if (!admitBuildSourceSelection(currentBuildSnapshot()).accepted) return;
-  const generation = ++sourceBranchLoadGeneration;
+  const generation = sourceBranchLoadGate.begin();
   const previous = acceptedNvidiaSource;
   elements.nvidiaSource.disabled = true;
   try {
@@ -498,10 +508,7 @@ async function loadNvidiaSourceBranches() {
       option.dataset.nvidiaVersion = branch.version;
       (branch.experimental ? upstream : project).append(option);
     }
-    if (!admitBuildSourceRefresh(currentBuildSnapshot(), {
-      generation,
-      currentGeneration: sourceBranchLoadGeneration,
-    }).accepted) return;
+    if (!admitBuildSourceRefresh(currentBuildSnapshot(), sourceBranchRefreshCapability(generation)).accepted) return;
     elements.nvidiaSource.querySelectorAll("optgroup").forEach((group) => group.remove());
     if (project.children.length) elements.nvidiaSource.append(project);
     if (upstream.children.length) elements.nvidiaSource.append(upstream);
@@ -516,14 +523,11 @@ async function loadNvidiaSourceBranches() {
       elements.allowUpstreamBuild.checked = false;
     }
   } catch (error) {
-    if (admitBuildSourceRefresh(currentBuildSnapshot(), {
-      generation,
-      currentGeneration: sourceBranchLoadGeneration,
-    }).accepted) {
+    if (admitBuildSourceRefresh(currentBuildSnapshot(), sourceBranchRefreshCapability(generation)).accepted) {
       elements.resultMessage.textContent = `Could not load optional NVIDIA branches: ${error}`;
     }
   } finally {
-    if (generation !== sourceBranchLoadGeneration) return;
+    if (!sourceBranchLoadGate.isCurrent(generation)) return;
     const editable = admitBuildSourceSelection(currentBuildSnapshot()).accepted;
     elements.nvidiaSource.disabled = !editable;
     elements.allowUpstreamBuild.disabled = !editable;

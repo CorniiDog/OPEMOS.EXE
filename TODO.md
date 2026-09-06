@@ -1017,6 +1017,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     all 184 frontend tests plus documentation, hygiene, and boundary integrity
     pass on 2026-09-06. No host probe ran during validation. Other async workers
     remain under the parent lifecycle item.
+  - [x] Replace the NVIDIA source-branch refresh's exposed mutable generation
+    counter with the shared overflow-safe latest-request gate while preserving
+    the workflow admission contract and stale success, error, and finalizer
+    behavior. The focused generation/layout/workflow suite passes 46/46 and all
+    184 frontend tests plus documentation, hygiene, and boundary integrity pass
+    on 2026-09-06. No network source refresh ran during validation. Other async
+    workers remain under the parent lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.
