@@ -130,3 +130,15 @@ test("managed worktree creation commits only the latest exact-source request", a
   assert.match(handler, /catch \(error\) \{\n    if \(!worktreeSelectionGate\.isCurrent\(requestGeneration\)[\s\S]*?sourceIdentity !== JSON\.stringify\(plannedSource\)\) return;/);
   assert.match(handler, /finally \{\n    if \(worktreeSelectionGate\.isCurrent\(requestGeneration\)[\s\S]*?sourceIdentity === JSON\.stringify\(plannedSource\)\) \{[\s\S]*?setWorkspaceMutationPending\(false\);/);
 });
+
+
+test("VS Code open commits only the latest exact-worktree request", async () => {
+  const script = await readFile(new URL("../src/maintainer.js", import.meta.url), "utf8");
+  const handler = script.match(/elements\.openVscode\.addEventListener\("click", async \(\) => \{[\s\S]*?\n\}\);/)?.[0] || "";
+  assert.match(script, /const vscodeOpenGate = createLatestRequestGate\(\)/);
+  assert.match(script, /function resetPlan[\s\S]*?vscodeOpenGate\.begin\(\);[\s\S]*?function disableSourceControls/);
+  assert.match(script, /function renderWorktree\(worktree\) \{[\s\S]*?vscodeOpenGate\.begin\(\);/);
+  assert.match(handler, /const requestGeneration = vscodeOpenGate\.begin\(\);\n  if \(!localWorktree \|\| !plannedRepository\) return;/);
+  assert.match(handler, /const refreshed = await invoke\("open_maintainer_worktree_in_vscode"[\s\S]*?if \(!vscodeOpenGate\.isCurrent\(requestGeneration\)[\s\S]*?!operationContextMatches\(context,[\s\S]*?renderWorktree\(refreshed\);/);
+  assert.match(handler, /catch \(error\) \{\n    if \(!vscodeOpenGate\.isCurrent\(requestGeneration\)[\s\S]*?!operationContextMatches\(context,[\s\S]*?elements\.worktreeMessage\.textContent = String\(error\);/);
+});
