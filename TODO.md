@@ -931,6 +931,23 @@ already Core contracts and are not open-ended product choices.
     on branch `work/exe-windows-evaluation-source` to configured origin
     `https://github.com/CorniiDog/steamos-nvidia-image-builder.git`; PR and squash
     evidence follow.
+  - [x] Build one private answer ISO without modifying or duplicating the
+    official Windows ISO. The answer file now locates `opemos-provision.ps1` on
+    attached filesystems and fails with code 31 when absent. A confined
+    create-only builder validates the mode-`0600` generated pair and reviewed
+    markers, grafts only `autounattend.xml` and `opemos-provision.ps1` through
+    `genisoimage`, bounds stderr/output size, and removes only its failed output.
+    Closed tests reject permissive or changed inputs, collision, and failed
+    creation while preserving the source pair. Focused Windows tests pass 15/15.
+    One unique ignored ED25519 key and one-time password generated without being
+    printed or passed as process arguments. The 374784-byte answer ISO has
+    SHA-256 `7c4feeccb81b890fa50b999e2af60af63e37f5b43100d0fc5dd945ad103543ae`;
+    Joliet and Rock Ridge inventories contain exactly the two intended names.
+    Public-key fingerprint is
+    `SHA256:yE5d5TQXr4G63Hd5dPlMs4HJiQ5kENP3j5BqRL29O1o`; total containment allocation
+    is `7093252096` bytes. No system disk or VM was created/launched, and no
+    production trust/activation, KVM, or hardware path was enabled. PR and
+    squash evidence follow.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,

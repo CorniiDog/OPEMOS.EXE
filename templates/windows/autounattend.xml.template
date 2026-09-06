@@ -8,7 +8,7 @@
         <Password><Value>__PASSWORD_XML__</Value><PlainText>true</PlainText></Password>
       </LocalAccount></LocalAccounts></UserAccounts>
       <AutoLogon><Username>__ACCOUNT_XML__</Username><Password><Value>__PASSWORD_XML__</Value><PlainText>true</PlainText></Password><Enabled>true</Enabled><LogonCount>1</LogonCount></AutoLogon>
-      <FirstLogonCommands><SynchronousCommand wcm:action="add"><Order>1</Order><Description>Provision isolated OPEMOS.EXE test VM</Description><CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\OPEMOS\provision.ps1</CommandLine></SynchronousCommand></FirstLogonCommands>
+      <FirstLogonCommands><SynchronousCommand wcm:action="add"><Order>1</Order><Description>Provision isolated OPEMOS.EXE test VM</Description><CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;$p=(Get-PSDrive -PSProvider FileSystem | ForEach-Object { Join-Path $_.Root &apos;opemos-provision.ps1&apos; } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1); if(-not $p){exit 31}; &amp; $p&quot;</CommandLine></SynchronousCommand></FirstLogonCommands>
     </component>
   </settings>
 </unattend>
