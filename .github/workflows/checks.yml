@@ -172,3 +172,8 @@ jobs:
         run: >-
           python3 scripts/check_linux_packaging.py
           --expected-libc 2.36 --expected-openssl libssl3
+
+      - name: Install and purge the package in the disposable Debian container
+        run: python3 scripts/check_debian_package_install.py
+        env:
+          OPEMOS_DISPOSABLE_DEBIAN_CONTAINER: '1'

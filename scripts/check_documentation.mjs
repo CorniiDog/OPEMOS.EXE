@@ -198,6 +198,8 @@ assert.match(checks, /^  debian-12-package:$/m);
 assert.equal(checks.split(debian12Image).length - 1, 1, "Debian CI must use one immutable amd64 image");
 assert.match(checks, /npm run build:debian12-test/);
 assert.match(checks, /--expected-libc 2\.36 --expected-openssl libssl3/);
+assert.match(checks, /python3 scripts\/check_debian_package_install\.py/);
+assert.match(checks, /OPEMOS_DISPOSABLE_DEBIAN_CONTAINER: '1'/);
 assert.equal(
   checks.split(`OPEMOS_CORE_EXPECTED_COMMIT: ${developmentLineageCommit}`).length - 1,
   2,

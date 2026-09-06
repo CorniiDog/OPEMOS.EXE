@@ -17,7 +17,10 @@ Ubuntu **24.04.4** is the host version used for local graphical testing. Debian
 `debian:12.15-slim` image pinned by platform-manifest digest. That Debian check
 runs the real `/etc/os-release` host inventory with explicit TCG, builds the
 debug test package against Debian's glibc 2.36 and OpenSSL 3 baseline, and
-inspects it without installation or launch. Debian graphical behavior,
+inspects it, then installs and purges it inside that disposable Debian container
+while verifying package state, installed binary bytes, desktop-entry identity,
+and residue-free cleanup. It does not launch the application. Debian graphical
+behavior,
 managed-appliance boot, KVM, and hardware remain unvalidated.
 A development binary and the extracted debug-package binary have launched and
 closed in an Ubuntu 24.04.4 Wayland session, with no remaining launcher or EXE
