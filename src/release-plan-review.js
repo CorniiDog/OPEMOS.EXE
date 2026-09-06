@@ -241,7 +241,7 @@ export function createReleaseStatusPoller(controller, options = {}) {
   });
 }
 
-export function installReleasePlanReview(document, runCommand = null) {
+export function installReleasePlanReview(document, runCommand = null, pollOptions = {}) {
   const fields = {
     repository: document.querySelector("#release-repository"), tag: document.querySelector("#release-tag"),
     targetCommit: document.querySelector("#release-target-commit"), operationId: document.querySelector("#release-operation-id"),
@@ -256,7 +256,7 @@ export function installReleasePlanReview(document, runCommand = null) {
   const cancel = document.querySelector("#release-cancel-operation");
   const session = createReleaseReviewSession();
   const commands = runCommand ? createReleaseCommandController(session, runCommand) : null;
-  const poller = commands ? createReleaseStatusPoller(commands) : null;
+  const poller = commands ? createReleaseStatusPoller(commands, pollOptions) : null;
 
   function render(value) {
     const operation = session.review(value);
@@ -299,7 +299,7 @@ export function installReleasePlanReview(document, runCommand = null) {
       if (!commands) return;
       for (const node of [start, verify, retry, cancel, authorize]) node.disabled = true;
       status.textContent = `${label} exact operation...`;
-      if (command === "cancel") poller.stop();
+      if (command === "start" || command === "retry" || command === "cancel") poller.stop();
       try {
         const operation = await commands[command]();
         render(operation);
