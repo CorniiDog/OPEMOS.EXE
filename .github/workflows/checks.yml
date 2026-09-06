@@ -140,7 +140,7 @@ jobs:
           libayatana-appindicator3-dev librsvg2-dev libssl-dev
           libwebkit2gtk-4.1-dev openssh-client ovmf patchelf
           pkg-config python3 qemu-system-x86 qemu-utils xz-utils
-          at-spi2-core dbus-x11 gir1.2-atspi-2.0 python3-gi xauth xvfb
+          at-spi2-core dbus-x11 gir1.2-atspi-2.0 python3-gi tini xauth xvfb
 
       - name: Check out repository
         uses: actions/checkout@v4
@@ -177,7 +177,7 @@ jobs:
       - name: Install and purge the package in the disposable Debian container
         run: >-
           dbus-run-session -- xvfb-run --auto-servernum
-          python3 scripts/check_debian_package_install.py
+          tini --subreaper -- python3 scripts/check_debian_package_install.py
         env:
           OPEMOS_DEBIAN_GUI_SMOKE: '1'
           OPEMOS_DISPOSABLE_DEBIAN_CONTAINER: '1'
