@@ -209,6 +209,9 @@ assert.match(developerGuide, /Do not point these variables at a sibling developm
 const linuxGuide = await read("docs/linux-testing.md");
 assert.match(linuxGuide, /WEBKIT_DISABLE_DMABUF_RENDERER=1/);
 assert.match(linuxGuide, /complete AT-SPI tree but[\s\S]*blank captured surface/);
+assert.match(linuxGuide, /Google Chrome \*\*152\.0\.7977\.82\*\*/);
+assert.match(linuxGuide, /node scripts\/check_forced_colors_browser\.mjs/);
+assert.match(linuxGuide, /no screenshot, desktop capture,/);
 assert.doesNotMatch(checks, /linux-integration:[\s\S]*?(?:publish|release|\/dev\/sd|\/dev\/nvme)/);
 
 const pages = await read(".github/workflows/pages.yml");
