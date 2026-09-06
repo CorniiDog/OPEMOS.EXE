@@ -27,6 +27,17 @@ downloading anything with:
 ./builder/appliance/build_macos.sh --architecture x86_64 --resolve-only
 ```
 
+On Linux, prepare the same pinned Fedora 44 appliance with mandatory signed
+checksum verification:
+
+```bash
+./builder/appliance/build_linux.sh --resolve-only
+./builder/appliance/build_linux.sh
+```
+
+The Linux builder requires `curl`, `gpgv`, `qemu-img`, and `sha256sum`.
+It fails closed when signature verification is unavailable or fails.
+
 A successful build also writes `<appliance>.metadata.json`. The sidecar records
 the Fedora release, compose, architecture, source URLs, source/checksum/keyring
 hashes, appliance protocol version, and whether the checksum signature was
