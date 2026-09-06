@@ -16,3 +16,14 @@ test("maintainer workspace offers a bounded managed-checkout action", async () =
   assert.match(script, /Creating or reopening a dedicated checkout at the exact verified commit/);
   assert.match(script, /installKeyboardBindings[\s\S]*key: "Enter"[\s\S]*accelerator: true[\s\S]*document\.activeElement === elements\.commitMessage[\s\S]*runKeyboardDefaultAction\(elements\.reviewStaged\)/);
 });
+
+
+test("maintainer source refresh commits only the latest request", async () => {
+  const script = await readFile(new URL("../src/maintainer.js", import.meta.url), "utf8");
+  const loadSources = script.match(/async function loadSources\(\) \{[\s\S]*?\n\}/)?.[0] || "";
+  assert.match(script, /import \{ createLatestRequestGate \} from "\.\/async-generation\.js"/);
+  assert.match(loadSources, /const generation = sourceRefreshGate\.begin\(\)/);
+  assert.match(loadSources, /const refreshedSources = await invoke\("list_maintainer_workspace_sources"\);\n    if \(!sourceRefreshGate\.isCurrent\(generation\)\) return;\n    sources = refreshedSources/);
+  assert.match(loadSources, /catch \(error\) \{\n    if \(!sourceRefreshGate\.isCurrent\(generation\)\) return;/);
+  assert.match(loadSources, /finally \{\n    if \(sourceRefreshGate\.isCurrent\(generation\)\) \{[\s\S]*?loading = false;/);
+});

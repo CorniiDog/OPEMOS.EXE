@@ -1,5 +1,6 @@
 import { installCompatibilityPreview } from "./compatibility-preview.js";
 import { operationContextMatches } from "./operation-context.js";
+import { createLatestRequestGate } from "./async-generation.js";
 import { installWindowDrag } from "./window-drag.js";
 import { installPageZoom } from "./zoom.js";
 import { installLocale } from "./locale.js";
@@ -55,6 +56,7 @@ let localWorktree = null;
 let commitReview = null;
 let branchReview = null;
 let workspaceGeneration = 0;
+const sourceRefreshGate = createLatestRequestGate();
 
 installKeyboardBindings([
   {
@@ -147,6 +149,7 @@ function setWorkspaceMutationPending(pending) {
 }
 
 async function loadSources() {
+  const generation = sourceRefreshGate.begin();
   loading = true;
   elements.refresh.disabled = true;
   elements.component.disabled = true;
@@ -159,23 +162,28 @@ async function loadSources() {
   elements.message.className = "message";
   resetPlan();
   try {
-    sources = await invoke("list_maintainer_workspace_sources");
+    const refreshedSources = await invoke("list_maintainer_workspace_sources");
+    if (!sourceRefreshGate.isCurrent(generation)) return;
+    sources = refreshedSources;
     elements.permission.textContent = "Maintainer verified";
     elements.permission.className = "status ready";
     elements.message.textContent = `${sources.length} exact source identities available.`;
   } catch (error) {
+    if (!sourceRefreshGate.isCurrent(generation)) return;
     sources = [];
     elements.permission.textContent = "Access denied";
     elements.permission.className = "status failed";
     elements.message.textContent = String(error);
     elements.message.className = "message error";
   } finally {
-    loading = false;
-    elements.refresh.disabled = false;
-    elements.component.disabled = !sources.length;
-    elements.origin.disabled = !sources.length;
-    elements.referenceSelect.disabled = !sources.length;
-    renderSelection();
+    if (sourceRefreshGate.isCurrent(generation)) {
+      loading = false;
+      elements.refresh.disabled = false;
+      elements.component.disabled = !sources.length;
+      elements.origin.disabled = !sources.length;
+      elements.referenceSelect.disabled = !sources.length;
+      renderSelection();
+    }
   }
 }
 

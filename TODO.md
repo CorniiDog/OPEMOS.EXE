@@ -918,6 +918,14 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     the focused 21-case async/layout suite and all 147 frontend tests pass,
     along with documentation, repository hygiene, and boundary integrity
     checks. Other async workers remain under the parent lifecycle item.
+  - [x] Gate overlapping maintainer workspace source refreshes with the shared
+    overflow-safe latest-request generation. An older source-list success or
+    error can no longer replace a newer inventory, permission result, message,
+    loading state, or enabled-control state; stale finalizers leave the newer
+    request in control. The focused request-gate/maintainer suite passes 4/4,
+    and all 172 frontend tests plus documentation, hygiene, and boundary
+    integrity pass on 2026-09-06. Other async workers remain under the parent
+    lifecycle item.
 - [x] Add the inactive descriptor-bound source/output reservation foundation:
   pinned source and parent descriptors, exclusive immutable locks, strict
   basenames, and a closed durable record that preserves torn or stale state.
