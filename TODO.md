@@ -504,7 +504,25 @@ installation targets, production activation, or hardware certification.
   invalidates it before invoking Core's closed command adapter. No runtime host
   adapter, network transport, publisher, credentials, production trust,
   activation, KVM, or hardware path is connected. On 2026-09-06, 13 focused and all 207 frontend tests pass with
-  documentation, hygiene, and boundary integrity. EXE lead pushed source commit `e0d287a644b9690266d35d2341805d9e7f27ab11` on branch `work/exe-release-status-polling` to configured remote `https://github.com/CorniiDog/steamos-nvidia-image-builder.git` (redirected by GitHub to OPEMOS.EXE) because PR review and remote CI are required; PR https://github.com/CorniiDog/OPEMOS.EXE/pull/43 is open. Squash evidence follows.
+  documentation, hygiene, and boundary integrity. EXE lead pushed source commit `e0d287a644b9690266d35d2341805d9e7f27ab11` on branch `work/exe-release-status-polling` to configured remote `https://github.com/CorniiDog/steamos-nvidia-image-builder.git` (redirected by GitHub to OPEMOS.EXE) because PR review and remote CI are required; PR https://github.com/CorniiDog/OPEMOS.EXE/pull/43 passed all duplicated checks and squash-merged as `7e6ef197292e066f0a4a363f75b2091cb1110114`; preserved branch head `e265713a7149d5ffa60d03690948223218e106ad`.
+
+
+- [x] Add a closed non-production maintainer UI fixture for the exact release
+  session lifecycle. It exercises explicit authorization, start, immediate
+  durable observation, a missing-only retry, final verification, and
+  cancellation through the injected Core command boundary while retaining one
+  immutable operation and ordered asset identity. Starting, retrying, or
+  cancelling invalidates the prior polling owner before transferring lifecycle
+  ownership, so a scheduled stale observation cannot overwrite the new command.
+  Cancellation remains terminal and cannot claim success. No authenticated
+  runtime adapter, publisher, signer, credentials, network transport,
+  production activation, KVM, or hardware path is connected. Focused validation passes 15/15 and all 209 frontend tests pass with
+  documentation, hygiene, and boundary integrity. EXE lead pushed source commit
+  `bb58ad9` on branch `work/exe-release-session-ui-fixture` to configured remote
+  `https://github.com/CorniiDog/steamos-nvidia-image-builder.git` (redirected by
+  GitHub to OPEMOS.EXE) because PR review and remote CI are required; PR
+  https://github.com/CorniiDog/OPEMOS.EXE/pull/44 is open. Squash evidence
+  follows.
 
 ### 1. Complete the OPEMOS Core migration
 
