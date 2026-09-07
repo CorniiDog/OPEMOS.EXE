@@ -792,6 +792,27 @@ already Core contracts and are not open-ended product choices.
   `a7011dca932f5a89426a07005bc52418651b94b5`, targeting exact EXE mirror commit
   `064d1d54c7ef2eda3d56e80c67e9f8e78a554725`. Both repositories' default and
   local focused boundary validation passes.
+- [ ] Mirror the explicitly authorized cross-repository pull-request governance
+  from canonical Core squash commit
+  `73e8d15c07671f3174f1a948d525e18db1084e5a` without rewording the authority.
+  Canonical Git blob `2f8424a1df29fce2859126f7c42fd1885db8a425` and SHA-256
+  `8c882b9a25e3d53fc200d82fff0807a8746dc826410271563d37342542c01df0`
+  were fetched from authenticated GitHub and verified before mirroring. EXE
+  integrity now pins that immutable Core squash and asserts owning-primary,
+  exact-identity approval, same-author authenticated fallback, invalidation,
+  and exact merged-topic deletion limits. The staged decision record is
+  `docs/decisions/2026-09-06-cross-lead-merge-governance.md`. Core review of the
+  exact final EXE base, head, scope, and required-check set remains required
+  before squash merge; the final Core counterpart repin follows the verified
+  EXE squash commit. Focused boundary integrity, repository hygiene, Python
+  compilation, canonical SHA-256/Git-blob, and diff checks pass locally.
+  Pre-squash implementation commit
+  `c4662ae085667dd6c1b340bb548ee30fa9dd9924` was necessarily pushed to
+  `https://github.com/CorniiDog/OPEMOS.EXE.git` on branch
+  `work/exe-cross-lead-governance` for PR
+  https://github.com/CorniiDog/OPEMOS.EXE/pull/53, remote CI, and exact Core
+  review. On that head, Pages build and both copies of frontend/docs, Rust,
+  Linux integration, and Debian package checks passed; Pages deploy skipped.
 - [ ] Before production wiring, replace final name-based cleanup with a durable
   quarantine/retirement protocol: fsync intent, same-parent create-only rename,
   fsync parent, recheck the receipt, then delete. Preserve mismatches and test

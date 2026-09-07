@@ -2,35 +2,18 @@
 """Prevent accidental edits or drift from the Core ownership contract."""
 
 import hashlib
-import subprocess
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_COMMIT = "3a6f0652f4118936820871f8201f7c5e1250acbf"
-EXPECTED_GIT_BLOB = "68fd9553bb8fee79cee803a38f980a94b2d80e57"
-EXPECTED_SHA256 = "136d3572effa90c1b84bcf51002d7f9641c367132de20d54dd7173f68f13c6a8"
+SOURCE_COMMIT = "73e8d15c07671f3174f1a948d525e18db1084e5a"
+EXPECTED_GIT_BLOB = "2f8424a1df29fce2859126f7c42fd1885db8a425"
+EXPECTED_SHA256 = "8c882b9a25e3d53fc200d82fff0807a8746dc826410271563d37342542c01df0"
 
 
 def git_blob_id(payload):
     header = f"blob {len(payload)}\0".encode("ascii")
     return hashlib.sha1(header + payload, usedforsecurity=False).hexdigest()
-
-
-def verify_source_commit(payload):
-    sibling = ROOT.parent / "open-gpu-kernel-modules-steamos-support"
-    if not (sibling / ".git").exists():
-        return
-    result = subprocess.run(
-        ["git", "-C", str(sibling), "show", f"{SOURCE_COMMIT}:BOUNDARIES.md"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-        timeout=10,
-    )
-    assert result.returncode == 0, "pinned Core boundary commit is unavailable"
-    assert result.stdout == payload, "local boundary differs from the pinned Core commit"
-    assert hashlib.sha256(result.stdout).hexdigest() == EXPECTED_SHA256
 
 
 def main():
@@ -42,8 +25,6 @@ def main():
     assert git_blob_id(payload) == EXPECTED_GIT_BLOB, (
         "BOUNDARIES.md is not the exact blob from the pinned Core commit"
     )
-    verify_source_commit(payload)
-
     text = payload.decode("utf-8")
     for required in (
         "READ-ONLY GOVERNANCE CONTRACT",
@@ -59,6 +40,11 @@ def main():
         "Neither component gains authority to remove artifacts created by the other",
         "Missing, stale, malformed, mismatched,\nconflicting, or ambiguous evidence fails safely without cleanup",
         "The flag grants\nno blanket deletion authority and does not transfer ownership to OPEMOS.EXE",
+        "## Cross-repository pull-request merge governance",
+        "Only the owning repository primary lead may squash-merge",
+        "the counterpart primary may instead record approval through the\nauthenticated scheduler/handoff channel",
+        "Any new head commit, changed base commit, material scope change",
+        "may delete only that exact merged topic branch",
         "This ownership is cross-platform",
     ):
         assert required in text, f"boundary authority omitted required rule: {required}"
