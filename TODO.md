@@ -806,6 +806,13 @@ already Core contracts and are not open-ended product choices.
   before squash merge; the final Core counterpart repin follows the verified
   EXE squash commit. Focused boundary integrity, repository hygiene, Python
   compilation, canonical SHA-256/Git-blob, and diff checks pass locally.
+  Pre-squash implementation commit
+  `c4662ae085667dd6c1b340bb548ee30fa9dd9924` was necessarily pushed to
+  `https://github.com/CorniiDog/OPEMOS.EXE.git` on branch
+  `work/exe-cross-lead-governance` for PR
+  https://github.com/CorniiDog/OPEMOS.EXE/pull/53, remote CI, and exact Core
+  review. On that head, Pages build and both copies of frontend/docs, Rust,
+  Linux integration, and Debian package checks passed; Pages deploy skipped.
 - [ ] Before production wiring, replace final name-based cleanup with a durable
   quarantine/retirement protocol: fsync intent, same-parent create-only rename,
   fsync parent, recheck the receipt, then delete. Preserve mismatches and test
