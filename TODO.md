@@ -1007,7 +1007,14 @@ already Core contracts and are not open-ended product choices.
     repository hygiene, boundary integrity, and diff checks pass. PR, exact Core
     review, and squash evidence follow. No VM launch, network access, release,
     signing/trust, production,
-    physical hardware, boundary, or sibling-repository change is included.
+    physical hardware, boundary, or sibling-repository change is included. The
+    lead verified configured remote
+    `https://github.com/CorniiDog/steamos-nvidia-image-builder.git` redirects to
+    canonical `CorniiDog/OPEMOS.EXE`, then normally fast-forward pushed branch
+    `work/exe-windows-vm-installer` at pre-review commit `a422afc`. PR
+    https://github.com/CorniiDog/OPEMOS.EXE/pull/56 targets exact base
+    `0a06f9598bcbc795526a47cf2bb018c1ff0a1486`; remote checks, exact Core
+    review, final pre-squash history, and squash evidence follow.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
