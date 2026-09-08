@@ -109,6 +109,15 @@ checks their ownership, mode, size, reviewed markers, and resolved placeholders,
 then invokes `genisoimage` with fixed Joliet and Rock Ridge graft names. Output
 is create-only and removed if creation or post-validation fails.
 
+Generation embeds the lowercase SHA-256 of the generated provisioning script in
+the private answer file. At first logon, Windows requires exactly one mounted
+volume labeled `OPEMOS_ANSWER`, constructs the script path only beneath that
+volume, requires a regular file at that path, and verifies its SHA-256 before
+elevated execution. Missing, duplicate, unlabeled, or digest-mismatched media
+fails closed. Regenerate both unattended files and the answer ISO together after
+any provisioning-script change; an older answer file cannot authorize new script
+bytes.
+
 The first local answer media is 374784 bytes with SHA-256
 `7c4feeccb81b890fa50b999e2af60af63e37f5b43100d0fc5dd945ad103543ae`.
 Both Joliet and Rock Ridge inventories contain exactly `autounattend.xml` and
