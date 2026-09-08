@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, open, readFile, rm } from "node:fs/promises";
+import { chmod, lstat, open, readFile, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,7 @@ import { inspectWindowsVmRoot } from "./windows-vm.mjs";
 function fail(message) { throw new Error(message); }
 async function privateFile(file, label, max) { const i=await lstat(file,{bigint:true}); if(i.isSymbolicLink()||!i.isFile()||i.uid!==BigInt(process.getuid())||Number(i.mode&0o777n)!==0o600||i.size<1n||i.size>BigInt(max)) fail(`${label} must be a bounded current-user-owned mode-0600 regular file.`); return i; }
 async function hash(file) { const h=createHash("sha256"); await new Promise((ok,no)=>createReadStream(file).on("data",c=>h.update(c)).on("error",no).on("end",ok)); return h.digest("hex"); }
-export async function createWindowsAnswerMedia(root, runner = spawn) {
+export async function createWindowsAnswerMedia(root, runner = spawn, setMode = chmod) {
   await inspectWindowsVmRoot(root);
   const generated=path.join(root,"generated"), answer=path.join(generated,"autounattend.xml"), provision=path.join(generated,"provision.ps1"), output=path.join(generated,"opemos-windows-answer.iso");
   await privateFile(answer,"Windows answer file",256*1024); await privateFile(provision,"Windows provisioning script",256*1024);
@@ -22,6 +22,7 @@ export async function createWindowsAnswerMedia(root, runner = spawn) {
   const args=["-quiet","-J","-R","-V","OPEMOS_ANSWER","-o",output,"-graft-points",`autounattend.xml=${answer}`,`opemos-provision.ps1=${provision}`];
   try { await new Promise((resolve,reject)=>{const child=runner("genisoimage",args,{stdio:["ignore","ignore","pipe"]}); let error=""; child.stderr?.on("data",c=>{if(error.length<4096)error+=c}); child.on("error",reject); child.on("close",c=>c===0?resolve(c):reject(new Error(`genisoimage failed (${c}): ${error.slice(0,4096)}`)));}); }
   catch (error) { await rm(output,{force:true}); throw error; }
+  try { await setMode(output,0o600); } catch(e) { await rm(output,{force:true}); throw e; }
   try { await privateFile(output,"Windows answer media",4*1024*1024); } catch(e) { await rm(output,{force:true}); throw e; }
   return {schemaVersion:1,status:"created",filename:path.basename(output),size:Number((await lstat(output,{bigint:true})).size),sha256:await hash(output),inputs:{answerSha256:await hash(answer),provisionSha256}};
 }
