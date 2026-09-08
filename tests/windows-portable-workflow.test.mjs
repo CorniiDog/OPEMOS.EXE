@@ -12,6 +12,10 @@ test("Windows portable workflow preserves immutable inputs and unsigned artifact
   assert.equal(validateWindowsPortableWorkflow(workflow), true);
 });
 
+test("Windows portable workflow accepts CRLF checkout line endings", () => {
+  assert.equal(validateWindowsPortableWorkflow(workflow.replaceAll("\n", "\r\n")), true);
+});
+
 for (const [name, mutate, expected] of [
   ["mutable Core checkout", text => text.replace("ref: 3e49323fce266af8686039fb6487918ef5a64fd9", "ref: main"), /Core checkout pin/],
   ["tagged action", text => text.replace("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", "actions/setup-node@v4"), /setup-node action/],

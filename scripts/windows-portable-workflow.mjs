@@ -14,6 +14,7 @@ function requireText(text, value, label) {
 }
 
 export function validateWindowsPortableWorkflow(text) {
+  text = text.replace(/\r\n/g, "\n");
   requireText(text, "runs-on: windows-latest", "the Windows runner");
   requireText(text, "permissions:\n  contents: read", "read-only permissions");
   if ((text.match(new RegExp(CHECKOUT, "g")) || []).length !== 2) throw new Error("Windows workflow must use the exact checkout action twice.");
