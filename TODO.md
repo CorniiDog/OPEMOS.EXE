@@ -1019,18 +1019,38 @@ already Core contracts and are not open-ended product choices.
     scope after all duplicated checks passed. PR #56 squash-merged to protected
     `main` as `ca787ce4c3f90e1116928892fff6368183a63721`; its remote topic
     ref was absent and only the verified clean local topic was removed.
-  - [ ] Build and test one unsigned portable Windows executable on GitHub's
+  - [x] Build and test one unsigned portable Windows executable on GitHub's
     `windows-latest` runner because local KVM is unavailable. The workflow pins
     every action to an immutable commit, Rust `1.98.1`, Node `22.23.2`, locked
     JavaScript and Rust dependencies, and authenticated Core contracts at exact
     commit `3e49323fce266af8686039fb6487918ef5a64fd9`, which it verifies after
-    checkout. It runs JavaScript and Rust tests, builds the release executable,
-    rejects any Authenticode-signed output, and records its source/Core/toolchain
-    provenance, byte size, and SHA-256. Only a one-day GitHub workflow artifact
-    is uploaded; no release, signing/trust, production activation, local VM
-    deletion, physical hardware, boundary, or sibling-repository change is
-    included. PR, exact Core review, workflow run, checksum, source history, and
-    squash evidence follow.
+    checkout. It compiles the complete Rust test binary, runs Windows-specific
+    cases, builds the release executable, rejects any Authenticode-signed output,
+    and records exact source/Core/toolchain provenance, byte size, and SHA-256.
+    Pull-request builds check out and verify the exact head rather than GitHub's
+    temporary merge ref. Only a private one-day GitHub workflow artifact is
+    uploaded; no release, signing/trust, production activation, local VM deletion,
+    physical hardware, boundary, or sibling-repository change is included.
+
+    PR https://github.com/CorniiDog/OPEMOS.EXE/pull/57 preserved pre-squash
+    commits `2c93c0d5bfbbd826da50519b86b1def6714a0f40`,
+    `663f29e10d88b06d2eb9c85d0d024dd1bb7d7df5`,
+    `223860919d1b510f4c515bc656d0aa5f2c12945f`,
+    `17f0e697d742b7f3b4f74eee3bf8c25ef2caef2e`,
+    `266aad7f88ff6bf8d6b3c29d92615fe6e9db1f0f`,
+    `0bf90abe829254cbe8580762b721ebf00132dd21`, and
+    `5ddbf28b115115e7cef1f86ede32c6d204c858b5`. Core approved exact base
+    `ca787ce4c3f90e1116928892fff6368183a63721`, final head
+    `5ddbf28b115115e7cef1f86ede32c6d204c858b5`, eight-file scope, and all
+    nine passing checks. Workflow run `34284706417` produced private artifact
+    `10079324601`, bound to that EXE head and the pinned Core commit. The
+    unsigned portable executable is 15,904,256 bytes with SHA-256
+    `cb96feeba744d1b6ef420aad80f7b1e75ffce063a353d9ea386c29d9470e80d8`;
+    independently downloaded bytes matched both `SHA256SUMS.txt` and
+    `provenance.txt`. The PR squash-merged through protected `main` as
+    `ac37cfc601b3031f96686b3363ca2fafa645714f`. GitHub removed the remote
+    topic ref, and the lead removed only its verified clean local worktree and
+    exact merged topic branch.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
