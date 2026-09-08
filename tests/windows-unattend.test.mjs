@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +19,8 @@ test("unattend generation injects local secret and public key only into ignored 
     const provision = await readFile(path.join(f.root, "generated", "provision.ps1"), "utf8");
     assert.match(answer, /<LogonCount>1<\/LogonCount>/); assert.equal((answer.match(/local-onetime-A9!/g) || []).length, 2);
     assert.doesNotMatch(provision, /local-onetime-A9!/); assert.match(provision, /PasswordAuthentication no/);
+    const provisionSha256 = createHash("sha256").update(provision, "utf8").digest("hex");
+    assert.match(answer, new RegExp(provisionSha256)); assert.doesNotMatch(answer, /__PROVISION_SHA256__/);
     assert.match(provision, new RegExp(Buffer.from(valid.sshPublicKey).toString("base64")));
     assert.doesNotMatch(await readFile(path.join(templates, "autounattend.xml.template"), "utf8"), /local-onetime-A9!/);
   } finally { await rm(f.parent, { recursive: true, force: true }); }

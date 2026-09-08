@@ -969,6 +969,19 @@ already Core contracts and are not open-ended product choices.
     is `7093252096` bytes. No system disk or VM was created/launched, and no
     production trust/activation, KVM, or hardware path was enabled. PR and
     squash evidence follow.
+  - [ ] Remediate the post-PR-#52 elevated provisioning lookup so the answer
+    file selects exactly one `OPEMOS_ANSWER` volume, constructs only its rooted
+    `opemos-provision.ps1` path, and verifies the generated script's embedded
+    lowercase SHA-256 before execution. Missing labels, duplicate labeled media,
+    missing scripts, and digest mismatches fail closed; no first-match filesystem
+    search remains. The confined builder rejects a changed script/answer pair
+    before launching and tests the exact `genisoimage` command, ordered flags,
+    output, graft names, inputs, and stdio. Focused Windows tests pass 8/8; the
+    complete JavaScript suite passes 223/224 with only the intentionally skipped
+    absent-Core fixture, plus documentation, repository hygiene, boundary, and
+    diff checks. No secret, private media, VM launch, production activation,
+    trust change, KVM, or hardware action is included. PR, remote checks, exact
+    Core review, and squash evidence follow.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,

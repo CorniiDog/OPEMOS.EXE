@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { link, lstat, open, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,9 +31,10 @@ export async function generateWindowsUnattend(root, inputFile, templatesRoot) {
   if (typeof input.sshPublicKey !== "string" || !KEY.test(input.sshPublicKey)) fail("Windows SSH public key is invalid.");
   const xmlTemplate = await readFile(path.join(templatesRoot, "autounattend.xml.template"), "utf8");
   const psTemplate = await readFile(path.join(templatesRoot, "provision.ps1.template"), "utf8");
-  if ((xmlTemplate.match(/__ACCOUNT_XML__/g) || []).length !== 2 || (xmlTemplate.match(/__PASSWORD_XML__/g) || []).length !== 2 || (psTemplate.match(/__SSH_PUBLIC_KEY_BASE64__/g) || []).length !== 1) fail("Windows unattended templates do not have the reviewed placeholder shape.");
-  const answer = xmlTemplate.replaceAll("__ACCOUNT_XML__", xml(input.account)).replaceAll("__PASSWORD_XML__", xml(input.password));
+  if ((xmlTemplate.match(/__ACCOUNT_XML__/g) || []).length !== 2 || (xmlTemplate.match(/__PASSWORD_XML__/g) || []).length !== 2 || (xmlTemplate.match(/__PROVISION_SHA256__/g) || []).length !== 1 || (psTemplate.match(/__SSH_PUBLIC_KEY_BASE64__/g) || []).length !== 1) fail("Windows unattended templates do not have the reviewed placeholder shape.");
   const provision = psTemplate.replace("__SSH_PUBLIC_KEY_BASE64__", Buffer.from(input.sshPublicKey, "utf8").toString("base64"));
+  const provisionSha256 = createHash("sha256").update(provision, "utf8").digest("hex");
+  const answer = xmlTemplate.replaceAll("__ACCOUNT_XML__", xml(input.account)).replaceAll("__PASSWORD_XML__", xml(input.password)).replace("__PROVISION_SHA256__", provisionSha256);
   const generated = path.join(root, "generated");
   await exclusive(path.join(generated, "autounattend.xml"), answer);
   try { await exclusive(path.join(generated, "provision.ps1"), provision); } catch (error) { await rm(path.join(generated, "autounattend.xml"), { force: true }); throw error; }
