@@ -995,7 +995,7 @@ already Core contracts and are not open-ended product choices.
     `main` as `0a3a76bb247ea824a7e9cd393a2b36e79369df5e` on 2026-09-08. The remote topic
     ref was absent after merge, and the lead removed only its clean local topic
     worktree and branch after verifying the squash.
-  - [ ] Make private answer-media permissions deterministic before contained VM
+  - [x] Make private answer-media permissions deterministic before contained VM
     installation. A normal `022` caller umask caused `genisoimage` to create the
     otherwise valid remediated ISO as mode `0644`; the fail-closed post-check
     correctly removed it, but creation then required an undocumented private
@@ -1014,7 +1014,23 @@ already Core contracts and are not open-ended product choices.
     `work/exe-windows-vm-installer` at pre-review commit `a422afc`. PR
     https://github.com/CorniiDog/OPEMOS.EXE/pull/56 targets exact base
     `0a06f9598bcbc795526a47cf2bb018c1ff0a1486`; remote checks, exact Core
-    review, final pre-squash history, and squash evidence follow.
+    review, final pre-squash history, and squash evidence follow. Core approved
+    exact head `09e47daa7233939bf5ac96224eaea67818eda5de` and its four-file
+    scope after all duplicated checks passed. PR #56 squash-merged to protected
+    `main` as `ca787ce4c3f90e1116928892fff6368183a63721`; its remote topic
+    ref was absent and only the verified clean local topic was removed.
+  - [ ] Build and test one unsigned portable Windows executable on GitHub's
+    `windows-latest` runner because local KVM is unavailable. The workflow pins
+    every action to an immutable commit, Rust `1.98.1`, Node `22.23.2`, locked
+    JavaScript and Rust dependencies, and authenticated Core contracts at exact
+    commit `3e49323fce266af8686039fb6487918ef5a64fd9`, which it verifies after
+    checkout. It runs JavaScript and Rust tests, builds the release executable,
+    rejects any Authenticode-signed output, and records its source/Core/toolchain
+    provenance, byte size, and SHA-256. Only a one-day GitHub workflow artifact
+    is uploaded; no release, signing/trust, production activation, local VM
+    deletion, physical hardware, boundary, or sibling-repository change is
+    included. PR, exact Core review, workflow run, checksum, source history, and
+    squash evidence follow.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
