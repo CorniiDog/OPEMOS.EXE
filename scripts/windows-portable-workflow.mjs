@@ -17,12 +17,15 @@ export function validateWindowsPortableWorkflow(text) {
   text = text.replace(/\r\n/g, "\n");
   requireText(text, "runs-on: windows-latest", "the Windows runner");
   requireText(text, "permissions:\n  contents: read", "read-only permissions");
+  requireText(text, "OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}", "the exact EXE source identity");
   if ((text.match(new RegExp(CHECKOUT, "g")) || []).length !== 2) throw new Error("Windows workflow must use the exact checkout action twice.");
   requireText(text, SETUP_NODE, "the immutable setup-node action");
   requireText(text, RUST, "the immutable Rust action");
   requireText(text, UPLOAD, "the immutable artifact action");
   requireText(text, `OPEMOS_CORE_COMMIT: ${CORE}`, "the Core environment pin");
   requireText(text, `ref: ${CORE}`, "the Core checkout pin");
+  requireText(text, "ref: ${{ env.OPEMOS_EXE_COMMIT }}", "the EXE checkout pin");
+  requireText(text, "git rev-parse HEAD", "runtime EXE commit verification");
   requireText(text, "git -C opemos-core-contracts rev-parse HEAD", "runtime Core commit verification");
   requireText(text, "node-version: 22.23.2", "Node 22.23.2");
   requireText(text, "toolchain: 1.98.1", "Rust 1.98.1");
@@ -33,6 +36,8 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "Get-AuthenticodeSignature -LiteralPath $source", "Authenticode inspection");
   requireText(text, "SignatureStatus]::NotSigned", "the unsigned-only gate");
   requireText(text, "Get-FileHash -LiteralPath $destination -Algorithm SHA256", "SHA-256 provenance");
+  requireText(text, `"source_commit=$env:OPEMOS_EXE_COMMIT"`, "exact-head provenance");
+  requireText(text, "unsigned-${{ env.OPEMOS_EXE_COMMIT }}", "exact-head artifact identity");
   requireText(text, "retention-days: 1", "one-day artifact retention");
   requireText(text, "if-no-files-found: error", "missing-artifact failure");
   if (/uses:\s*[^\s@]+@(v\d+|main|master|stable)\b/i.test(text)) throw new Error("Windows workflow actions must use immutable commits.");
