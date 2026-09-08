@@ -898,6 +898,8 @@ pub(crate) fn validate_output_destination(
         if metadata.file_type().is_block_device() || metadata.file_type().is_char_device() {
             return Err("The output path resolves to a device node.".into());
         }
+        #[cfg(not(unix))]
+        let _ = metadata;
         return Err(format!(
             "The output path already exists: {}",
             resolved_output.display()
