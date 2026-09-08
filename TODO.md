@@ -995,6 +995,19 @@ already Core contracts and are not open-ended product choices.
     `main` as `0a3a76bb247ea824a7e9cd393a2b36e79369df5e` on 2026-09-08. The remote topic
     ref was absent after merge, and the lead removed only its clean local topic
     worktree and branch after verifying the squash.
+  - [ ] Make private answer-media permissions deterministic before contained VM
+    installation. A normal `022` caller umask caused `genisoimage` to create the
+    otherwise valid remediated ISO as mode `0644`; the fail-closed post-check
+    correctly removed it, but creation then required an undocumented private
+    umask. The builder now forces its tool-created output to mode `0600` before
+    validation and removes it if permission hardening fails. A regression models
+    mode-`0644` tool output and requires the published file to be mode `0600`.
+    Focused Windows tests pass 10/10 and the complete JavaScript suite passes
+    225/226 with only the intentionally skipped absent-Core fixture; documentation,
+    repository hygiene, boundary integrity, and diff checks pass. PR, exact Core
+    review, and squash evidence follow. No VM launch, network access, release,
+    signing/trust, production,
+    physical hardware, boundary, or sibling-repository change is included.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,

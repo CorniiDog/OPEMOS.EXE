@@ -107,7 +107,8 @@ The official Windows ISO stays unchanged. `windows-installer-media.mjs create`
 builds a separate small answer ISO from only the generated private pair. It
 checks their ownership, mode, size, reviewed markers, and resolved placeholders,
 then invokes `genisoimage` with fixed Joliet and Rock Ridge graft names. Output
-is create-only and removed if creation or post-validation fails.
+is create-only, forced to mode `0600` independent of the caller's umask, and
+removed if creation, permission hardening, or post-validation fails.
 
 Generation embeds the lowercase SHA-256 of the generated provisioning script in
 the private answer file. At first logon, Windows requires exactly one mounted
