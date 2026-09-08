@@ -61,8 +61,8 @@ jobs:
       - name: Run Windows workflow policy tests
         run: node --test tests/windows-portable-workflow.test.mjs
 
-      - name: Run locked Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Compile locked Rust tests and run Windows cases
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked windows_
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
           OPEMOS_CORE_EXPECTED_COMMIT: 3e49323fce266af8686039fb6487918ef5a64fd9
