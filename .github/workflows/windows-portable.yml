@@ -58,8 +58,8 @@ jobs:
       - name: Validate this workflow policy
         run: node scripts/windows-portable-workflow.mjs
 
-      - name: Run JavaScript tests
-        run: npm run test:logs
+      - name: Run Windows workflow policy tests
+        run: node --test tests/windows-portable-workflow.test.mjs
 
       - name: Run locked Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked

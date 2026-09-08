@@ -27,6 +27,7 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "node-version: 22.23.2", "Node 22.23.2");
   requireText(text, "toolchain: 1.98.1", "Rust 1.98.1");
   requireText(text, "run: npm ci", "locked JavaScript installation");
+  requireText(text, "run: node --test tests/windows-portable-workflow.test.mjs", "focused cross-platform JavaScript tests");
   requireText(text, "cargo test --manifest-path src-tauri/Cargo.toml --locked", "locked Rust tests");
   requireText(text, "cargo build --manifest-path src-tauri/Cargo.toml --release --locked", "locked release build");
   requireText(text, "Get-AuthenticodeSignature -LiteralPath $source", "Authenticode inspection");
