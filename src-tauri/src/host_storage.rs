@@ -1,11 +1,12 @@
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
 #[cfg(target_os = "macos")]
 use std::process::Command;
+use std::{collections::BTreeMap, fs, path::Path};
+#[cfg(unix)]
 use std::{
-    collections::BTreeMap,
     ffi::CString,
-    fs,
     os::unix::{ffi::OsStrExt, fs::MetadataExt},
-    path::Path,
 };
 
 pub(crate) const STORAGE_NO_SPACE_CODE: &str = "storage-admission-no-space";
@@ -44,6 +45,7 @@ struct VolumeBudget<'a> {
     purposes: Vec<&'a str>,
 }
 
+#[cfg(unix)]
 // libc field widths differ between macOS and Linux; retain the portable cast.
 #[allow(clippy::unnecessary_cast)]
 pub(crate) fn host_volume_space(path: &Path) -> Result<HostVolumeSpace, String> {
@@ -69,6 +71,50 @@ pub(crate) fn host_volume_space(path: &Path) -> Result<HostVolumeSpace, String> 
         volume_id: host_allocation_pool_id(&resolved, metadata.dev())?,
         available_bytes,
         available_inodes,
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn host_volume_space(path: &Path) -> Result<HostVolumeSpace, String> {
+    let resolved = fs::canonicalize(path)
+        .map_err(|error| format!("Could not resolve host storage path: {error}"))?;
+    let mut wide = resolved.as_os_str().encode_wide().collect::<Vec<_>>();
+    if wide.contains(&0) {
+        return Err("Host storage path contains an embedded NUL byte.".into());
+    }
+    wide.push(0);
+    let mut available_bytes = 0_u64;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetDiskFreeSpaceExW(
+            directory: *const u16,
+            available: *mut u64,
+            total: *mut u64,
+            free: *mut u64,
+        ) -> i32;
+    }
+    if unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available_bytes,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err(format!(
+            "Could not measure host filesystem space: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let volume = resolved
+        .components()
+        .next()
+        .ok_or("Could not identify host storage volume.")?;
+    Ok(HostVolumeSpace {
+        volume_id: format!("windows-volume:{volume:?}").to_ascii_lowercase(),
+        available_bytes,
+        available_inodes: None,
     })
 }
 
@@ -163,7 +209,7 @@ fn plist_string<'a>(document: &'a str, key: &str) -> Option<&'a str> {
     value.split_once("</string>").map(|(value, _)| value.trim())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 fn host_allocation_pool_id(_path: &Path, device: u64) -> Result<String, String> {
     Ok(format!("device-number:{device}"))
 }
@@ -218,13 +264,23 @@ pub(crate) fn preflight_normalization_and_build(
 }
 
 pub(crate) fn storage_io_error(context: &str, error: std::io::Error) -> String {
-    if matches!(error.raw_os_error(), Some(libc::ENOSPC | libc::EDQUOT))
+    if is_storage_full_os_error(error.raw_os_error())
         || error.kind() == std::io::ErrorKind::StorageFull
     {
         format!("{context}: {STORAGE_NO_SPACE_CODE}: {error}")
     } else {
         format!("{context}: {error}")
     }
+}
+
+#[cfg(unix)]
+fn is_storage_full_os_error(code: Option<i32>) -> bool {
+    matches!(code, Some(libc::ENOSPC | libc::EDQUOT))
+}
+
+#[cfg(windows)]
+fn is_storage_full_os_error(code: Option<i32>) -> bool {
+    matches!(code, Some(112 | 1816))
 }
 
 pub(crate) fn storage_process_error(context: &str, detail: &str) -> String {
@@ -385,6 +441,30 @@ mod tests {
             ),
         ])
         .is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_volume_measurement_is_stable_and_uses_byte_capacity() {
+        let child = std::env::temp_dir();
+        let parent = child
+            .parent()
+            .expect("temporary directory has a volume parent");
+        let child_space = host_volume_space(&child).expect("Windows volume is measurable");
+        let parent_space = host_volume_space(parent).expect("Windows parent volume is measurable");
+        assert_eq!(child_space.volume_id, parent_space.volume_id);
+        assert!(child_space.volume_id.starts_with("windows-volume:"));
+        assert!(child_space.available_bytes > 0);
+        assert_eq!(child_space.available_inodes, None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_full_disk_and_quota_codes_are_storage_admission_errors() {
+        for code in [112, 1816] {
+            let error = storage_io_error("write failed", std::io::Error::from_raw_os_error(code));
+            assert!(error.contains(STORAGE_NO_SPACE_CODE));
+        }
     }
 
     #[test]

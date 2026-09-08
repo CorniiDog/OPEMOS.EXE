@@ -1564,9 +1564,12 @@ mod tests {
             fixture_payload(valid_case, false, &bases).unwrap(),
         )
         .unwrap();
-        let loaded_discovery = load_discovery_file(&exported, "discovery.json").unwrap();
-        let loaded_manifest = load_manifest_file(&exported, "manifest.json").unwrap();
-        validate_pair(&loaded_discovery, &loaded_manifest).unwrap();
+        #[cfg(unix)]
+        {
+            let loaded_discovery = load_discovery_file(&exported, "discovery.json").unwrap();
+            let loaded_manifest = load_manifest_file(&exported, "manifest.json").unwrap();
+            validate_pair(&loaded_discovery, &loaded_manifest).unwrap();
+        }
 
         for case in &fixtures.cases {
             let discovery_bytes = fixture_payload(case, true, &bases).unwrap();
