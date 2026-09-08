@@ -969,7 +969,7 @@ already Core contracts and are not open-ended product choices.
     is `7093252096` bytes. No system disk or VM was created/launched, and no
     production trust/activation, KVM, or hardware path was enabled. PR and
     squash evidence follow.
-  - [ ] Remediate the post-PR-#52 elevated provisioning lookup so the answer
+  - [x] Remediate the post-PR-#52 elevated provisioning lookup so the answer
     file selects exactly one `OPEMOS_ANSWER` volume, constructs only its rooted
     `opemos-provision.ps1` path, and verifies the generated script's embedded
     lowercase SHA-256 before execution. Missing labels, duplicate labeled media,
@@ -986,8 +986,15 @@ already Core contracts and are not open-ended product choices.
     `work/exe-windows-answer-binding` at pre-review commit
     `63d8d04b86cd77b420c3eec32b2d60b9f5379ae1`. PR
     https://github.com/CorniiDog/OPEMOS.EXE/pull/54 has exact base
-    `507e23cf848cde3c74390f7e6c41ba09f9084a15`; remote checks, exact Core review,
-    final pre-squash history, and squash evidence follow.
+    `507e23cf848cde3c74390f7e6c41ba09f9084a15`. All duplicated remote checks
+    passed, with deploy skipped as designed. Core approved exact final head
+    `82b716cd9f25a8e2358f94f67e24f550eeedf961` and its unchanged scope/check set
+    through the authenticated handoff. The PR preserves pre-squash commits
+    `63d8d04b86cd77b420c3eec32b2d60b9f5379ae1` and
+    `82b716cd9f25a8e2358f94f67e24f550eeedf961`; it squash-merged to protected
+    `main` as `0a3a76bb247ea824a7e9cd393a2b36e79369df5e` on 2026-09-08. The remote topic
+    ref was absent after merge, and the lead removed only its clean local topic
+    worktree and branch after verifying the squash.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
