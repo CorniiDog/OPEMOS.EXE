@@ -168,10 +168,18 @@ installation targets, production activation, or hardware certification.
   qcow2 structure. A one-vCPU TCG boot entered emergency mode after its 45-second
   guest device deadlines expired before slow udev coldplug exposed the image UUIDs;
   extending the host handshake wait to ten minutes did not change that result and
-  was reverted. QEMU/runtime cleanup and base-image immutability passed. Managed
-  boot and image equivalence remain blocked on an approved accelerated/hardware
-  path or a separately justified guest-device-timeout change. Debian, macOS runtime,
-  and SteamOS hardware remain unvalidated.
+  was reverted. The separately authorized guest-only remediation in commit bddb0b8
+  passes two exact systemd unit drop-ins through QEMU credentials only for the pinned
+  root and EFI UUIDs under TCG, fixes the value at a bounded five minutes, leaves the
+  host handshake unchanged, and refuses unexpected or missing in-guest values before
+  reporting ready. The systemd-boot SMBIOS command-line prototype was rejected by
+  live evidence because Fedora GRUB did not propagate it. Focused bound, scope,
+  missing-device, wrong-timeout, extra-data, slow-SSH, cancellation, and cleanup
+  tests pass. The final one-vCPU TCG lifecycle passed in 534.94 seconds, including
+  exact in-guest timeout verification, health, clean shutdown, runtime removal, log
+  archival, and authenticated base-image SHA-256 immutability. Managed boot now
+  passes; broader image equivalence, Debian, macOS runtime, and SteamOS hardware
+  remain unvalidated.
 - [x] Provide exact Ubuntu/Debian setup and experimental launch/package commands
   with tested-version limits. Add `dev:linux-test`, debug-only `build:linux-test`,
   and `test:package-linux`, a separate opaque Linux main-window configuration,
