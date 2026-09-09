@@ -5838,4 +5838,242 @@ trap - EXIT"#,
         fs::remove_file(path).unwrap();
     }
 
+
+    #[cfg(target_os = "linux")]
+    fn live_recovery_input(path: &Path) -> Result<PathBuf, String> {
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|error| format!("Could not inspect live recovery input: {error}"))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err("Live recovery input must be a non-symlink regular file.".into());
+        }
+        fs::canonicalize(path)
+            .map_err(|error| format!("Could not canonicalize live recovery input: {error}"))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn prepare_live_output_root(repository: &Path, candidate: &Path) -> Result<PathBuf, String> {
+        let expected = repository.join("tests/virtual-usb/work");
+        if candidate != expected {
+            return Err("Retained live output path drifted from the harness-owned root.".into());
+        }
+        fs::create_dir_all(&expected)
+            .map_err(|error| format!("Could not create retained output root: {error}"))?;
+        let metadata = fs::symlink_metadata(&expected)
+            .map_err(|error| format!("Could not inspect retained output root: {error}"))?;
+        let canonical = fs::canonicalize(&expected)
+            .map_err(|error| format!("Could not canonicalize retained output root: {error}"))?;
+        if metadata.file_type().is_symlink() || canonical != expected {
+            return Err("Retained live output root is linked or non-canonical.".into());
+        }
+        Ok(canonical)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn live_harness_rejects_linked_missing_and_nonregular_inputs() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-live-input-boundary-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let input = root.join("recovery.img");
+        fs::write(&input, b"fixture").unwrap();
+        assert_eq!(live_recovery_input(&input).unwrap(), input);
+        assert!(live_recovery_input(&root.join("missing.img")).is_err());
+        assert!(live_recovery_input(&root).is_err());
+        #[cfg(unix)]
+        {
+            let linked = root.join("linked.img");
+            std::os::unix::fs::symlink(&input, &linked).unwrap();
+            assert!(live_recovery_input(&linked).is_err());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn live_harness_rejects_output_path_drift_and_symlinked_root() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-live-output-boundary-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(root.join("tests/virtual-usb")).unwrap();
+        let expected = root.join("tests/virtual-usb/work");
+        assert!(prepare_live_output_root(&root, &root.join("elsewhere")).is_err());
+        assert_eq!(
+            prepare_live_output_root(&root, &expected).unwrap(),
+            expected
+        );
+        fs::remove_dir(&expected).unwrap();
+        #[cfg(unix)]
+        {
+            let target = root.join("target");
+            fs::create_dir(&target).unwrap();
+            std::os::unix::fs::symlink(&target, &expected).unwrap();
+            assert!(prepare_live_output_root(&root, &expected).is_err());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn wait_for_live_image_appliance(app: &tauri::AppHandle) {
+        let deadline = Instant::now() + Duration::from_secs(FEDORA_TCG_DEVICE_TIMEOUT_SECS + 60);
+        loop {
+            let status = get_appliance_status_blocking(app.clone())
+                .expect("read live image-appliance status");
+            match status.state.as_str() {
+                "ready" => return,
+                "failed" | "timedOut" => panic!("image appliance failed: {}", status.message),
+                _ if Instant::now() >= deadline => {
+                    panic!("image appliance exceeded the bounded readiness deadline")
+                }
+                _ => thread::sleep(Duration::from_millis(750)),
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn wait_for_live_nvidia_appliance(app: &tauri::AppHandle) {
+        let deadline = Instant::now() + NVIDIA_BUILD_BOOT_TIMEOUT + Duration::from_secs(60);
+        loop {
+            let status = tauri::async_runtime::block_on(
+                get_nvidia_build_appliance_status(app.clone()),
+            )
+            .expect("read live NVIDIA-appliance status");
+            match status.state.as_str() {
+                "ready" => return,
+                "failed" | "timedOut" => panic!("NVIDIA appliance failed: {}", status.message),
+                _ if Instant::now() >= deadline => {
+                    panic!("NVIDIA appliance exceeded the bounded readiness deadline")
+                }
+                _ => thread::sleep(Duration::from_millis(750)),
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires STEAMOS_RECOVERY_IMAGE and performs the authenticated retained NVIDIA image lifecycle"]
+    fn live_authenticated_nvidia_image_is_retained_for_virtual_usb() {
+        let input = std::env::var_os("STEAMOS_RECOVERY_IMAGE")
+            .map(PathBuf::from)
+            .expect("set STEAMOS_RECOVERY_IMAGE to the official Valve recovery image");
+        let input = live_recovery_input(&input)
+            .expect("validate the non-symlink Valve recovery image");
+        let input_hash_before = sha256_file(&input).expect("hash the source image before the lifecycle");
+
+        let repository = repository_root();
+        let output_root = repository.join("tests/virtual-usb/work");
+        let output_root = prepare_live_output_root(&repository, &output_root)
+            .expect("validate the exact retained virtual-USB output root");
+
+        let app = tauri::Builder::default()
+            .any_thread()
+            .manage(Mutex::new(ApplianceManager::default()))
+            .manage(Mutex::new(NvidiaBuildManager::default()))
+            .build(tauri::generate_context!())
+            .expect("build the headless lifecycle application handle");
+        let app = app.handle().clone();
+
+        start_appliance_blocking(
+            input.to_string_lossy().into_owned(),
+            Some(output_root.to_string_lossy().into_owned()),
+            app.clone(),
+        )
+        .expect("start the image appliance");
+        wait_for_live_image_appliance(&app);
+
+        let inspection =
+            inspect_selected_image_blocking(app.clone()).expect("inspect the recovery image");
+        assert!(inspection.layout.recognized, "the Valve layout must be recognized");
+        tauri::async_runtime::block_on(verify_working_image(app.clone()))
+            .expect("verify the disposable working image");
+        let mutation = tauri::async_runtime::block_on(mutate_selected_marker(app.clone()))
+            .expect("record the exact target from the disposable overlay");
+        assert!(mutation.input_unchanged);
+        let target = tauri::async_runtime::block_on(assess_nvidia_target(app.clone()))
+            .expect("assess the exact NVIDIA target");
+        assert!(target.ready, "{}", target.message);
+
+        let mut resolution = tauri::async_runtime::block_on(resolve_published_nvidia(
+            app.clone(),
+            Some("automatic".into()),
+            Some(false),
+        ))
+        .expect("resolve authenticated NVIDIA support");
+        let mut nvidia_appliance_ready = false;
+        if resolution.status == "build_required" {
+            start_nvidia_install_appliance_blocking(app.clone())
+                .expect("start the exact-target NVIDIA build appliance");
+            wait_for_live_nvidia_appliance(&app);
+            nvidia_appliance_ready = true;
+            resolution = tauri::async_runtime::block_on(build_nvidia_target_on_demand(
+                app.clone(),
+            ))
+            .expect("build and validate exact-target NVIDIA support");
+        }
+        assert_eq!(resolution.status, "compatible");
+
+        tauri::async_runtime::block_on(prepare_nvidia_userspace(app.clone()))
+            .expect("stage reviewed signed NVIDIA userspace");
+        tauri::async_runtime::block_on(prepare_nvidia_installer_bundle(app.clone()))
+            .expect("stage the pinned Core installer bundle");
+        if !nvidia_appliance_ready {
+            start_nvidia_install_appliance_blocking(app.clone())
+                .expect("start the NVIDIA installer appliance");
+            wait_for_live_nvidia_appliance(&app);
+        }
+
+        let validation = validate_nvidia_install_handoff_blocking(app.clone())
+            .expect("validate the offline install handoff");
+        assert_eq!(validation.status, "validated");
+        assert!(validation.mounts_released);
+        let installed = install_nvidia_to_working_image_blocking(app.clone())
+            .expect("install NVIDIA into the disposable working image");
+        assert_eq!(installed.status, "installed");
+        assert!(installed.mounts_released);
+
+        let exported = export_marker_image_blocking(app, false)
+            .expect("independently validate and retain the NVIDIA image");
+        assert_eq!(exported.source_sha256, input_hash_before);
+        assert!(Path::new(&exported.path).starts_with(&output_root));
+        assert!(Path::new(&exported.manifest_path).starts_with(&output_root));
+        let completed = completed_nvidia_image_from_path(&exported.path)
+            .expect("reinspect retained NVIDIA image")
+            .expect("retained image must have an authenticated adjacent manifest");
+        assert_eq!(completed.output.sha256, exported.sha256);
+        assert_eq!(completed.output.manifest_path, exported.manifest_path);
+        assert_eq!(
+            sha256_file(&input).expect("hash source image after retained export"),
+            input_hash_before
+        );
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&completed)
+                .expect("serialize retained NVIDIA image evidence")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "constructs the concrete Tauri runtime for the retained live-image harness"]
+    fn live_image_harness_app_handle_reaches_managed_state() {
+        let app = tauri::Builder::default()
+            .any_thread()
+            .manage(Mutex::new(ApplianceManager::default()))
+            .manage(Mutex::new(NvidiaBuildManager::default()))
+            .build(tauri::generate_context!())
+            .expect("build the headless lifecycle application handle");
+        assert!(app
+            .handle()
+            .try_state::<Mutex<ApplianceManager>>()
+            .is_some());
+        assert!(app
+            .handle()
+            .try_state::<Mutex<NvidiaBuildManager>>()
+            .is_some());
+    }
+
 }
