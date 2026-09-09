@@ -2586,9 +2586,128 @@ fn revalidate_usb_target(identifier: &str, image_bytes: u64) -> Result<UsbTarget
     })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "windows", test))]
+fn usb_candidates_from_windows_json(
+    bytes: &[u8],
+    image_bytes: u64,
+) -> Result<Vec<UsbTargetCandidate>, String> {
+    if bytes.len() > 4 * 1024 * 1024 {
+        return Err("Windows returned more than 4 MiB of disk metadata.".into());
+    }
+    let value: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("Windows returned malformed disk metadata: {error}"))?;
+    let disks = match value {
+        serde_json::Value::Array(v) => v,
+        serde_json::Value::Object(_) => vec![value],
+        serde_json::Value::Null => Vec::new(),
+        _ => return Err("Windows returned an invalid disk inventory.".into()),
+    };
+    if disks.len() > 64 {
+        return Err("Windows returned too many disks to inspect safely.".into());
+    }
+    let mut targets = Vec::new();
+    for disk in disks {
+        let Some(object) = disk.as_object() else {
+            continue;
+        };
+        if !object
+            .get("InterfaceType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .eq_ignore_ascii_case("USB")
+        {
+            continue;
+        }
+        let Some(index) = object.get("Index").and_then(|v| v.as_u64()) else {
+            continue;
+        };
+        if index > 1024 {
+            continue;
+        }
+        let Some(bytes) = object.get("Size").and_then(|v| v.as_u64()) else {
+            continue;
+        };
+        if bytes < image_bytes || bytes > 2 * 1024 * 1024 * 1024 * 1024 {
+            continue;
+        }
+        let Some(block_size) = object.get("BytesPerSector").and_then(|v| v.as_u64()) else {
+            continue;
+        };
+        if !matches!(block_size, 512 | 1024 | 2048 | 4096)
+            || !image_bytes.is_multiple_of(block_size)
+        {
+            continue;
+        }
+        let device_node = format!(r"\\.\PHYSICALDRIVE{index}");
+        if object.get("DeviceID").and_then(|v| v.as_str()) != Some(device_node.as_str()) {
+            continue;
+        }
+        let Some(pnp) = object
+            .get("PNPDeviceID")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+        else {
+            continue;
+        };
+        let media_name: String = object
+            .get("Model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("USB removable media")
+            .chars()
+            .take(120)
+            .collect();
+        let identity =
+            format!("{index}\0{device_node}\0{bytes}\0{block_size}\0{media_name}\0{pnp}");
+        targets.push(UsbTargetCandidate {
+            device_identifier: format!("PhysicalDrive{index}"),
+            device_node,
+            media_name,
+            bus_protocol: "USB".into(),
+            bytes,
+            block_size,
+            identity_token: format!("{:x}", Sha256::digest(identity.as_bytes())),
+        });
+    }
+    targets.sort_by(|a, b| a.device_identifier.cmp(&b.device_identifier));
+    Ok(targets)
+}
+
+#[cfg(target_os = "windows")]
+fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
+    let script = "Get-CimInstance Win32_DiskDrive | Select-Object DeviceID,Model,InterfaceType,MediaType,Size,BytesPerSector,PNPDeviceID,Index | ConvertTo-Json -Compress";
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ])
+        .output()
+        .map_err(|error| format!("Could not start Windows removable-drive inspection: {error}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr)
+            .chars()
+            .take(500)
+            .collect::<String>();
+        return Err(format!(
+            "Windows removable-drive inspection failed{}.",
+            if detail.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", detail.trim())
+            }
+        ));
+    }
+    usb_candidates_from_windows_json(&output.stdout, image_bytes)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn discover_usb_targets(_image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
-    Err("Read-only USB target discovery is currently implemented only for macOS.".into())
+    Err(
+        "Read-only USB target discovery is currently implemented only for macOS and Windows."
+            .into(),
+    )
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -2878,6 +2997,7 @@ pub(crate) async fn inspect_usb_targets(image_path: String) -> Result<UsbTargetP
         let (image, image_bytes, image_sha256, _) =
             inspect_usb_image_manifest_identity(&image_path)?;
         let targets = discover_usb_targets(image_bytes)?;
+        let targets_empty = targets.is_empty();
         let writes_allowed = physical_usb_writes_allowed();
         Ok(UsbTargetPreflight {
             image_path: image.to_string_lossy().into_owned(),
@@ -2885,10 +3005,12 @@ pub(crate) async fn inspect_usb_targets(image_path: String) -> Result<UsbTargetP
             image_sha256,
             targets,
             writes_allowed,
-            message: if writes_allowed {
+            message: if targets_empty {
+                "No eligible removable USB drives were found. Connect or replug a drive, then refresh."
+            } else if writes_allowed {
                 "Eligible removable drives are shown. The image and exact device will be revalidated before macOS requests permission to open it."
             } else {
-                "Read-only discovery complete. Physical USB writing is not available on this platform yet."
+                "Eligible removable drives are shown read-only. Physical USB writing is not available on this platform yet."
             }
             .into(),
         })
@@ -2916,13 +3038,16 @@ pub(crate) async fn inspect_usb_targets_for_build(
             0
         };
         let targets = discover_usb_targets(minimum_bytes)?;
+        let targets_empty = targets.is_empty();
         Ok(UsbTargetPreflight {
             image_path: input.to_string_lossy().into_owned(),
             image_bytes: minimum_bytes,
             image_sha256: String::new(),
             targets,
             writes_allowed: false,
-            message: if format == InputFormat::Raw {
+            message: if targets_empty {
+                "No eligible removable USB drives were found. Connect or replug a drive, then refresh."
+            } else if format == InputFormat::Raw {
                 "Eligible removable drives are shown. Exact image identity and capacity will be checked again after the build."
             } else {
                 "Eligible removable drives are shown. The compressed input's final raw size will be checked after export before writing."
@@ -3453,4 +3578,45 @@ pub(crate) async fn write_image_to_usb(
         manager.finish_write(&session_token);
     }
     worker.map_err(|error| format!("USB writer worker failed: {error}"))?
+}
+
+#[cfg(test)]
+mod windows_usb_inventory_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_only_exact_capacity_eligible_usb_physical_drives() {
+        // PowerShell ConvertTo-Json escapes each backslash in the canonical
+        // Win32_DiskDrive DeviceID. Keep this as wire-format JSON so the test
+        // covers decoding as well as the exact identity comparison.
+        let json = br#"[{"DeviceID":"\\\\.\\PHYSICALDRIVE3","Model":"USB Drive","InterfaceType":"USB","Size":16000000000,"BytesPerSector":512,"PNPDeviceID":"USBSTOR\\DISK&VEN_TEST","Index":3},{"DeviceID":"\\\\.\\PHYSICALDRIVE0","Model":"Internal","InterfaceType":"NVMe","Size":1000000000000,"BytesPerSector":512,"PNPDeviceID":"PCI\\INTERNAL","Index":0},{"DeviceID":"\\\\.\\PHYSICALDRIVE4","Model":"Too small","InterfaceType":"USB","Size":1024,"BytesPerSector":512,"PNPDeviceID":"USBSTOR\\SMALL","Index":4}]"#;
+        let targets = usb_candidates_from_windows_json(json, 8 * 1024 * 1024).unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].device_identifier, "PhysicalDrive3");
+        assert_eq!(targets[0].device_node, r"\\.\PHYSICALDRIVE3");
+        assert_eq!(&targets[0].device_node.as_bytes()[..4], b"\\\\.\\");
+        assert_eq!(targets[0].bus_protocol, "USB");
+        assert_eq!(targets[0].identity_token.len(), 64);
+    }
+
+    #[test]
+    fn empty_replug_and_hostile_windows_inventories_fail_safely() {
+        assert!(usb_candidates_from_windows_json(b"null", 512)
+            .unwrap()
+            .is_empty());
+        assert!(usb_candidates_from_windows_json(b"[]", 512)
+            .unwrap()
+            .is_empty());
+        assert!(usb_candidates_from_windows_json(b"not-json", 512)
+            .unwrap_err()
+            .contains("malformed"));
+        let mismatch = br#"{"DeviceID":"\\\\.\\PHYSICALDRIVE9","Model":"Mismatch","InterfaceType":"USB","Size":4096,"BytesPerSector":512,"PNPDeviceID":"USBSTOR\\ONE","Index":8}"#;
+        assert!(usb_candidates_from_windows_json(mismatch, 512)
+            .unwrap()
+            .is_empty());
+        let missing_identity = br#"{"DeviceID":"\\\\.\\PHYSICALDRIVE2","Model":"No identity","InterfaceType":"USB","Size":4096,"BytesPerSector":512,"PNPDeviceID":"","Index":2}"#;
+        assert!(usb_candidates_from_windows_json(missing_identity, 512)
+            .unwrap()
+            .is_empty());
+    }
 }

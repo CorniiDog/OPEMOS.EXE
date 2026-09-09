@@ -1075,6 +1075,15 @@ already Core contracts and are not open-ended product choices.
   remote topic and EXE removed only its verified clean local topic/worktree.
   No release publication, signing/trust, production activation, physical USB
   write, boundary change, or sibling-repository mutation occurred.
+- [ ] Fix the Windows live-test follow-up on a fresh EXE PR: apply settings
+  checkbox intent immediately without a WebView restart; enumerate eligible USB
+  physical drives read-only with explicit empty, error, refresh, and replug
+  behavior while keeping Windows writes disabled; hide verbatim `\\?\` path
+  prefixes only in displayed text; and group NVIDIA source and output controls
+  in accessible workflow order. Focused parser, path, state, layout, Windows
+  build, and exact executable startup-smoke evidence follows. No USB write,
+  release, signing/trust, production, Core, boundary, or hardware action is
+  authorized by this item.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
