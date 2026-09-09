@@ -2152,6 +2152,8 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
 
 ### USB safety
 
+- [ ] Complete the authorized contained virtual-USB lifecycle. The host boundary now creates only an exact 32 GiB sparse regular file beneath the ignored `tests/virtual-usb/work/` root, refuses symlinks, path drift, wrong sizes, and stale creation, preserves source identity across write and SHA-256 read-back, and resets only exact harness-owned files. The remaining live phase must consume a real authenticated NVIDIA-built image, retain the verified medium through install and reinstall into disposable targets, and prove both boots before completion. Core rejected initial PR #65 head `316edfc5ca17522df944bd4f28623d591ca3b1ce`: it accepted outside-root regular sources and did not reject a pre-existing predictable state-temp symlink. The remediation requires a canonical root descendant, preserves rejected outside inputs, rejects the temp symlink before a noclobber create, and passes eight focused heavy-wrapper tests.
+
 - [ ] Test sacrificial removable media covering unformatted disks, multiple
   partitions, busy volumes, identical devices, device renumbering, unplug and
   replug, sleep/wake, cancellation, short writes, verification errors, eject
