@@ -168,8 +168,13 @@ installation targets, production activation, or hardware certification.
   qcow2 structure. A one-vCPU TCG boot entered emergency mode after its 45-second
   guest device deadlines expired before slow udev coldplug exposed the image UUIDs;
   extending the host handshake wait to ten minutes did not change that result and
-  was reverted. The separately authorized guest-only remediation in commit bddb0b8
-  passes two exact systemd unit drop-ins through QEMU credentials only for the pinned
+  was reverted. The separately authorized guest-only remediation preserved as source
+  commits bddb0b80dcaf1e659cf25a227bcd2d37de01a9ed and
+  827f15fe0121b6eed274715f06ba1b645d9f246a in PR
+  https://github.com/CorniiDog/OPEMOS.EXE/pull/63 and squash-merged as
+  da945cae6d6c9ea6e4c1fa1b5bfdc0d59f0c4a93 after exact Core approval and all
+  nine non-deploy checks passed. It passes two exact systemd unit drop-ins through
+  QEMU credentials only for the pinned
   root and EFI UUIDs under TCG, fixes the value at a bounded five minutes, leaves the
   host handshake unchanged, and refuses unexpected or missing in-guest values before
   reporting ready. The systemd-boot SMBIOS command-line prototype was rejected by
