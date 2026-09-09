@@ -2,11 +2,12 @@
 export function presentHostEnvironment(environment) {
   const linux = environment.host_os === "linux";
   const experimental = linux && environment.experimental === true;
-  const supported = environment.host_os === "macos" || experimental;
+  const windows = environment.host_os === "windows" && environment.host_arch === "x86_64";
+  const supported = environment.host_os === "macos" || windows || experimental;
   const ready = supported && environment.ready === true;
   return {
     ready,
-    title: experimental ? (ready ? "Experimental Linux host ready" : "Experimental Linux host unavailable") : (ready ? "Ready to build" : "Builder unavailable"),
+    title: experimental ? (ready ? "Experimental Linux host ready" : "Experimental Linux host unavailable") : windows ? (ready ? "Windows host ready" : "Windows host unavailable") : (ready ? "Ready to build" : "Builder unavailable"),
     message: ready
       ? (experimental ? "Experimental appliance testing is enabled. Physical USB writing is unavailable." : "The isolated builder will start automatically when you begin.")
       : String(environment.message || "Host capabilities could not be verified."),

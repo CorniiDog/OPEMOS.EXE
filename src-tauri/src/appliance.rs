@@ -160,6 +160,8 @@ pub(crate) fn plan_guest_resources(
 pub(crate) fn detect_guest_resources(build_worker: bool) -> Result<GuestResourcePlan, String> {
     let host_memory_bytes = if cfg!(target_os = "linux") {
         linux_effective_memory_bytes()?
+    } else if cfg!(target_os = "windows") {
+        windows_physical_memory_bytes()?
     } else {
         let output = Command::new("sysctl")
             .args(["-n", "hw.memsize"])
@@ -178,6 +180,37 @@ pub(crate) fn detect_guest_resources(build_worker: bool) -> Result<GuestResource
         .map(|count| count.get())
         .map_err(|error| format!("Could not detect host CPU count: {error}"))?;
     plan_guest_resources(host_memory_bytes, host_logical_cpus, build_worker)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn windows_physical_memory_bytes() -> Result<u64, String> {
+    Err("Windows host RAM detection is unavailable on this platform.".into())
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn windows_physical_memory_bytes() -> Result<u64, String> {
+    #[repr(C)]
+    struct MemoryStatusEx {
+        length: u32,
+        memory_load: u32,
+        total_phys: u64,
+        avail_phys: u64,
+        total_page_file: u64,
+        avail_page_file: u64,
+        total_virtual: u64,
+        avail_virtual: u64,
+        avail_extended_virtual: u64,
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GlobalMemoryStatusEx(status: *mut MemoryStatusEx) -> i32;
+    }
+    let mut status: MemoryStatusEx = unsafe { std::mem::zeroed() };
+    status.length = std::mem::size_of::<MemoryStatusEx>() as u32;
+    if unsafe { GlobalMemoryStatusEx(&mut status) } == 0 || status.total_phys == 0 {
+        return Err("Windows host RAM could not be determined.".into());
+    }
+    Ok(status.total_phys)
 }
 
 pub(crate) type ProgressCallback<'a> = dyn Fn(&str, u64, u64) + 'a;
@@ -499,11 +532,40 @@ pub(crate) fn nvidia_build_qemu_spec(
 }
 
 pub(crate) fn process_is_alive(pid: u32) -> bool {
-    Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    #[cfg(windows)]
+    {
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+        const STILL_ACTIVE: u32 = 259;
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
+            fn GetExitCodeProcess(process: *mut std::ffi::c_void, code: *mut u32) -> i32;
+            fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+        }
+        if pid == 0 {
+            return false;
+        }
+        let handle =
+            unsafe { OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            return false;
+        }
+        let mut code = 0;
+        let alive = unsafe { GetExitCodeProcess(handle, &mut code) } != 0 && code == STILL_ACTIVE;
+        unsafe {
+            CloseHandle(handle);
+        }
+        alive
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
 }
 
 pub(crate) fn archive_and_remove_runtime(runtime_dir: &Path) -> Result<Option<PathBuf>, String> {
@@ -685,7 +747,49 @@ pub(crate) fn qemu_binary_name() -> Result<&'static str, String> {
     }
 }
 
+pub(crate) fn find_binary_in_paths(
+    binary: &str,
+    paths: impl IntoIterator<Item = PathBuf>,
+    extensions: &[&str],
+) -> Option<PathBuf> {
+    if binary.is_empty() || Path::new(binary).components().count() != 1 {
+        return None;
+    }
+    for directory in paths {
+        let plain = directory.join(binary);
+        if plain.is_file() {
+            return Some(plain);
+        }
+        for extension in extensions {
+            let candidate = directory.join(format!("{binary}{extension}"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 pub(crate) fn find_binary(binary: &str) -> Option<PathBuf> {
+    let extensions: Vec<String> = if cfg!(windows) {
+        std::env::var("PATHEXT")
+            .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
+            .split(';')
+            .filter(|v| !v.is_empty())
+            .map(|v| v.to_ascii_lowercase())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
+    if let Some(found) = std::env::var_os("PATH")
+        .and_then(|path| find_binary_in_paths(binary, std::env::split_paths(&path), &refs))
+    {
+        return Some(found);
+    }
+    if cfg!(windows) {
+        return None;
+    }
     let from_path = Command::new("which")
         .arg(binary)
         .output()
@@ -799,7 +903,7 @@ pub(crate) fn collect_build_runtime_provenance(
 }
 
 pub(crate) fn smoke_test_qemu(path: &Path) -> Result<(), String> {
-    let spec = if cfg!(target_os = "linux") {
+    let spec = if cfg!(target_os = "linux") || cfg!(target_os = "windows") {
         Some(current_host_qemu(std::env::consts::ARCH, "x86_64")?)
     } else {
         None
@@ -2698,6 +2802,11 @@ pub(crate) fn check_builder_environment_blocking() -> BuilderEnvironment {
             linux_host_prerequisites()?;
             detect_guest_resources(false)
                 .map_err(|error| format!("Experimental Linux effective memory budget: {error}"))?;
+        }
+        if host_os == "windows" {
+            windows_host_prerequisites()?;
+            detect_guest_resources(false)
+                .map_err(|error| format!("Windows host resource budget: {error}"))?;
         }
         Ok(spec)
     });

@@ -69,7 +69,7 @@ progress window, and permission-gated maintainer workspace.
 | --- | --- |
 | Apple Silicon macOS | Primary development and tested host |
 | Intel macOS | Supported architecture path; needs broader hardware testing |
-| Windows | Planned; signed least-privilege USB helper not yet implemented |
+| Windows x86_64 | Builder host path uses QEMU/WHPX when all prerequisites and the managed appliance are present; physical USB writing remains unavailable |
 | Linux | Not yet a supported desktop host |
 
 The first reviewed target is SteamOS 3.8.14, kernel
