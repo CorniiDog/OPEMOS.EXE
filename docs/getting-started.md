@@ -12,7 +12,7 @@ coverage. Windows requires hardware virtualization with WHPX, QEMU (including
 its `share` firmware directory), cdrtools `mkisofs`, OpenSSH `ssh` and
 `ssh-keygen`, Python, and the managed Fedora appliance. The app reports the
 specific missing prerequisite and keeps build controls disabled until its QEMU
-WHPX launch probe succeeds. Physical USB writing remains unavailable on Windows.
+WHPX launch probe succeeds. Windows can refresh a read-only list of eligible USB physical drives; physical USB writing remains unavailable.
 
 You need enough free space for the source image, disposable overlay, final raw
 image, and runtime reserve; QEMU and the managed Fedora appliance; an official

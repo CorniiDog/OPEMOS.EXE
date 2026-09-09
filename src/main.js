@@ -36,6 +36,7 @@ import {
 import { installWindowDrag } from "./window-drag.js";
 import { installPageZoom } from "./zoom.js";
 import { installLocale } from "./locale.js";
+import { displayPath } from "./display-path.js";
 import {
   installKeyboardBindings,
   keepKeyboardFocusInside,
@@ -309,8 +310,8 @@ function applyCompletedOutput(output, imported = false) {
   elements.exportImage.disabled = true;
   elements.chooseOutputFolder.disabled = true;
   elements.resetOutputFolder.disabled = true;
-  elements.summaryOutput.textContent = output.path;
-  elements.summaryOutput.title = output.path;
+  elements.summaryOutput.textContent = displayPath(output.path);
+  elements.summaryOutput.title = displayPath(output.path);
   elements.selectionStatus.textContent = output.nvidiaVersion
     ? `NVIDIA ${output.nvidiaVersion}`
     : (imported ? "Verified output" : "Complete");
@@ -416,9 +417,8 @@ async function loadSettings() {
   renderSettings();
 }
 
-async function saveSettings(next) {
+async function saveSettings(next, previous = builderSettings) {
   const generation = settingsGate.begin();
-  const previous = builderSettings;
   const requested = { ...builderSettings, ...next, schemaVersion: 4 };
   builderSettings = requested;
   settingsSavePending = true;
@@ -432,11 +432,13 @@ async function saveSettings(next) {
     builderSettings = settings;
     elements.settingsMessage.textContent = "Settings saved.";
     elements.settingsMessage.className = "settings-message";
+    return true;
   } catch (error) {
     if (!settingsGate.isCurrent(generation)) return;
     builderSettings = previous;
     elements.settingsMessage.textContent = String(error);
     elements.settingsMessage.className = "settings-message error";
+    return false;
   } finally {
     if (!settingsGate.isCurrent(generation)) return;
     settingsSavePending = false;
@@ -590,8 +592,8 @@ async function selectImage(path) {
   elements.allowUpstreamBuild.disabled = true;
   elements.selectedName.textContent = path.split(/[\\/]/).pop();
   elements.selectedName.title = elements.selectedName.textContent;
-  elements.selectedPath.textContent = path;
-  elements.selectedPath.title = path;
+  elements.selectedPath.textContent = displayPath(path);
+  elements.selectedPath.title = displayPath(path);
   elements.selectionStatus.textContent = "Checking…";
   elements.selectionStatus.className = "status pending";
   elements.selectionCard.classList.remove("hidden");
@@ -625,12 +627,12 @@ async function selectImage(path) {
     plannedOutput = preview.output_path;
     elements.selectedName.textContent = info.name;
     elements.selectedName.title = info.name;
-    elements.selectedPath.textContent = info.path;
-    elements.selectedPath.title = info.path;
-    elements.summaryInput.textContent = preview.input_path;
-    elements.summaryInput.title = preview.input_path;
-    elements.summaryOutput.textContent = preview.output_path;
-    elements.summaryOutput.title = preview.output_path;
+    elements.selectedPath.textContent = displayPath(info.path);
+    elements.selectedPath.title = displayPath(info.path);
+    elements.summaryInput.textContent = displayPath(preview.input_path);
+    elements.summaryInput.title = displayPath(preview.input_path);
+    elements.summaryOutput.textContent = displayPath(preview.output_path);
+    elements.summaryOutput.title = displayPath(preview.output_path);
     elements.selectionStatus.textContent = "Ready";
     elements.selectionStatus.className = "status";
     elements.buildCard.classList.remove("hidden");
@@ -644,8 +646,8 @@ async function selectImage(path) {
     plannedOutput = null;
     elements.selectedName.textContent = path.split(/[\\/]/).pop();
     elements.selectedName.title = elements.selectedName.textContent;
-    elements.selectedPath.textContent = path;
-    elements.selectedPath.title = path;
+    elements.selectedPath.textContent = displayPath(path);
+    elements.selectedPath.title = displayPath(path);
     elements.selectionStatus.textContent = "Unsupported";
     elements.selectionStatus.className = "status failed";
     elements.selectionCard.classList.remove("hidden");
@@ -690,14 +692,21 @@ elements.openValve.addEventListener("click", () => openUrl("https://store.steamp
 elements.settingsButton.addEventListener("click", () => setSettingsOpen(true));
 elements.settingsClose.addEventListener("click", () => setSettingsOpen(false));
 elements.settingsScrim.addEventListener("click", () => setSettingsOpen(false));
-elements.trackDriverUpdates.addEventListener("change", () => saveSettings({
-  trackSteamosDriverUpdates: elements.trackDriverUpdates.checked,
-}));
+elements.trackDriverUpdates.addEventListener("change", () => {
+  const checked = elements.trackDriverUpdates.checked;
+  const previous = builderSettings;
+  builderSettings = { ...builderSettings, trackSteamosDriverUpdates: checked };
+  renderSettings();
+  void saveSettings({ trackSteamosDriverUpdates: checked }, previous);
+});
 elements.includeUpstreamNvidia.addEventListener("change", async () => {
-  await saveSettings({
-    includeUpstreamNvidiaReleases: elements.includeUpstreamNvidia.checked,
-  });
-  await loadNvidiaSourceBranches();
+  const checked = elements.includeUpstreamNvidia.checked;
+  const previous = builderSettings;
+  builderSettings = { ...builderSettings, includeUpstreamNvidiaReleases: checked };
+  renderSettings();
+  if (await saveSettings({ includeUpstreamNvidiaReleases: checked }, previous)) {
+    await loadNvidiaSourceBranches();
+  }
 });
 elements.nvidiaSource.addEventListener("change", () => {
   const proposedSnapshot = currentBuildSnapshot();
@@ -819,10 +828,10 @@ async function selectOutputDirectory(directory) {
     if (revision !== outputSelectionGeneration || !currentImage) return;
     outputDirectory = directory;
     plannedOutput = preview.output_path;
-    elements.summaryOutput.textContent = plannedOutput;
-    elements.summaryOutput.title = plannedOutput;
-    elements.outputFolderLabel.textContent = directory || "Alongside the source image";
-    elements.outputFolderLabel.title = directory || "";
+    elements.summaryOutput.textContent = displayPath(plannedOutput);
+    elements.summaryOutput.title = displayPath(plannedOutput);
+    elements.outputFolderLabel.textContent = displayPath(directory) || "Alongside the source image";
+    elements.outputFolderLabel.title = displayPath(directory) || "";
     elements.resetOutputFolder.classList.toggle("hidden", !directory);
   } catch (error) {
     if (revision !== outputSelectionGeneration) return;
@@ -893,8 +902,8 @@ elements.buildButton.addEventListener("click", async () => {
       outputDirectory: buildContext.outputDirectory,
     });
     plannedOutput = preview.output_path;
-    elements.summaryOutput.textContent = plannedOutput;
-    elements.summaryOutput.title = plannedOutput;
+    elements.summaryOutput.textContent = displayPath(plannedOutput);
+    elements.summaryOutput.title = displayPath(plannedOutput);
     await invoke("open_progress_window");
     setCompanionMode("build-progress");
     const windows = await getAllWebviewWindows();

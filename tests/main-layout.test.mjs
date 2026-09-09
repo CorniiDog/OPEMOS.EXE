@@ -273,8 +273,8 @@ test("long selected-image names and paths remain inside the readiness card", () 
 test("settings reads and writes reject stale completions and freeze request payloads", () => {
   assert.match(script, /const settingsGate = createLatestRequestGate\(\)/);
   assert.match(script, /async function loadSettings\(\)[\s\S]*const generation = settingsGate\.begin\(\)[\s\S]*const settings = await invoke\("get_builder_settings"\)[\s\S]*if \(!settingsGate\.isCurrent\(generation\)\) return;[\s\S]*builderSettings = settings/);
-  assert.match(script, /async function saveSettings\(next\)[\s\S]*const generation = settingsGate\.begin\(\)[\s\S]*const requested = \{ \.\.\.builderSettings, \.\.\.next, schemaVersion: 4 \};[\s\S]*update_builder_settings", \{ settings: requested \}[\s\S]*if \(!settingsGate\.isCurrent\(generation\)\) return;[\s\S]*builderSettings = settings/);
-  assert.match(script, /async function saveSettings\(next\)[\s\S]*catch \(error\) \{[\s\S]*if \(!settingsGate\.isCurrent\(generation\)\) return;[\s\S]*builderSettings = previous;[\s\S]*finally \{[\s\S]*if \(!settingsGate\.isCurrent\(generation\)\) return;[\s\S]*settingsSavePending = false/);
+  assert.match(script, /async function saveSettings\(next, previous = builderSettings\)[\s\S]*const generation = settingsGate\.begin\(\)[\s\S]*const requested = \{ \.\.\.builderSettings, \.\.\.next, schemaVersion: 4 \};[\s\S]*update_builder_settings", \{ settings: requested \}[\s\S]*if \(!settingsGate\.isCurrent\(generation\)\) return;[\s\S]*builderSettings = settings/);
+  assert.match(script, /async function saveSettings\(next, previous = builderSettings\)[\s\S]*catch \(error\) \{[\s\S]*if \(!settingsGate\.isCurrent\(generation\)\) return;[\s\S]*builderSettings = previous;[\s\S]*finally \{[\s\S]*if \(!settingsGate\.isCurrent\(generation\)\) return;[\s\S]*settingsSavePending = false/);
   assert.match(script, /autoReleaseNvidia\.addEventListener\("change"[\s\S]*const generation = settingsGate\.begin\(\)[\s\S]*const requested = \{ \.\.\.builderSettings, autoReleaseVerifiedNvidia: enabled, schemaVersion: 4 \};[\s\S]*update_builder_settings", \{ settings: requested \}[\s\S]*if \(!settingsGate\.isCurrent\(generation\)\) return;/);
 });
 
@@ -302,4 +302,14 @@ test("compact main window height agrees between web content and Tauri", () => {
   assert.equal(mainWindow.height, 800);
   assert.equal(mainWindow.minHeight, 800);
   assert.match(css, /body\s*\{[\s\S]*min-height:\s*800px;/);
+});
+
+test("Windows live-test controls update immediately and form accessible workflow groups", () => {
+  assert.match(html, /role="group" aria-labelledby="output-options-title"[\s\S]*id="output-options-title"[\s\S]*id="export-image"[\s\S]*id="usb-target"[\s\S]*id="output-folder-label"/);
+  assert.match(html, /role="group" aria-labelledby="nvidia-options-title"[\s\S]*id="nvidia-options-title"[\s\S]*id="nvidia-source"/);
+  assert.match(html, /id="usb-picker-message"[^>]*aria-live="polite"/);
+  assert.match(html, /id="settings-message"[^>]*aria-live="polite"/);
+  assert.match(script, /trackDriverUpdates\.addEventListener\("change"[\s\S]*builderSettings = \{ \.\.\.builderSettings, trackSteamosDriverUpdates: checked \};[\s\S]*renderSettings\(\);[\s\S]*saveSettings\(\{ trackSteamosDriverUpdates: checked \}, previous\)/);
+  assert.match(script, /includeUpstreamNvidia\.addEventListener\("change"[\s\S]*builderSettings = \{ \.\.\.builderSettings, includeUpstreamNvidiaReleases: checked \};[\s\S]*renderSettings\(\);[\s\S]*if \(await saveSettings\(\{ includeUpstreamNvidiaReleases: checked \}, previous\)\)/);
+  assert.match(script, /displayPath\(info\.path\)[\s\S]*displayPath\(preview\.input_path\)[\s\S]*displayPath\(preview\.output_path\)/);
 });
