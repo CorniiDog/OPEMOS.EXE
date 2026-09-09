@@ -2638,7 +2638,7 @@ fn usb_candidates_from_windows_json(
         {
             continue;
         }
-        let device_node = format!(r"\.\PHYSICALDRIVE{index}");
+        let device_node = format!(r"\\.\PHYSICALDRIVE{index}");
         if object.get("DeviceID").and_then(|v| v.as_str()) != Some(device_node.as_str()) {
             continue;
         }
@@ -3586,15 +3586,18 @@ mod windows_usb_inventory_tests {
 
     #[test]
     fn accepts_only_exact_capacity_eligible_usb_physical_drives() {
-        let json = serde_json::to_vec(&serde_json::json!([
-            {"DeviceID": r"\.\PHYSICALDRIVE3", "Model": "USB Drive", "InterfaceType": "USB", "Size": 16_000_000_000_u64, "BytesPerSector": 512, "PNPDeviceID": r"USBSTOR\DISK&VEN_TEST", "Index": 3},
-            {"DeviceID": r"\.\PHYSICALDRIVE0", "Model": "Internal", "InterfaceType": "NVMe", "Size": 1_000_000_000_000_u64, "BytesPerSector": 512, "PNPDeviceID": r"PCI\INTERNAL", "Index": 0},
-            {"DeviceID": r"\.\PHYSICALDRIVE4", "Model": "Too small", "InterfaceType": "USB", "Size": 1024, "BytesPerSector": 512, "PNPDeviceID": r"USBSTOR\SMALL", "Index": 4}
-        ])).unwrap();
-        let targets = usb_candidates_from_windows_json(&json, 8 * 1024 * 1024).unwrap();
+        // PowerShell ConvertTo-Json escapes each backslash in the canonical
+        // Win32_DiskDrive DeviceID. Keep this as wire-format JSON so the test
+        // covers decoding as well as the exact identity comparison.
+        let json = br#"[{"DeviceID":"\\\\.\\PHYSICALDRIVE3","Model":"USB Drive","InterfaceType":"USB","Size":16000000000,"BytesPerSector":512,"PNPDeviceID":"USBSTOR\\DISK&VEN_TEST","Index":3},{"DeviceID":"\\\\.\\PHYSICALDRIVE0","Model":"Internal","InterfaceType":"NVMe","Size":1000000000000,"BytesPerSector":512,"PNPDeviceID":"PCI\\INTERNAL","Index":0},{"DeviceID":"\\\\.\\PHYSICALDRIVE4","Model":"Too small","InterfaceType":"USB","Size":1024,"BytesPerSector":512,"PNPDeviceID":"USBSTOR\\SMALL","Index":4}]"#;
+        let targets = usb_candidates_from_windows_json(json, 8 * 1024 * 1024).unwrap();
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].device_identifier, "PhysicalDrive3");
-        assert_eq!(targets[0].device_node, r"\.\PHYSICALDRIVE3");
+        assert_eq!(targets[0].device_node, r"\\.\PHYSICALDRIVE3");
+        assert_eq!(
+            &targets[0].device_node.as_bytes()[..4],
+            &[b'\\', b'\\', b'.', b'\\']
+        );
         assert_eq!(targets[0].bus_protocol, "USB");
         assert_eq!(targets[0].identity_token.len(), 64);
     }
