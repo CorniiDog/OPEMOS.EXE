@@ -1075,7 +1075,7 @@ already Core contracts and are not open-ended product choices.
   remote topic and EXE removed only its verified clean local topic/worktree.
   No release publication, signing/trust, production activation, physical USB
   write, boundary change, or sibling-repository mutation occurred.
-- [ ] Fix the Windows live-test follow-up on a fresh EXE PR: apply settings
+- [x] Fix the Windows live-test follow-up on a fresh EXE PR: apply settings
   checkbox intent immediately without a WebView restart; enumerate eligible USB
   physical drives read-only with explicit empty, error, refresh, and replug
   behavior while keeping Windows writes disabled; hide verbatim `\\?\` path
@@ -1083,7 +1083,29 @@ already Core contracts and are not open-ended product choices.
   in accessible workflow order. Focused parser, path, state, layout, Windows
   build, and exact executable startup-smoke evidence follows. No USB write,
   release, signing/trust, production, Core, boundary, or hardware action is
-  authorized by this item.
+  authorized by this item. PR #61 preserves pre-squash commits
+  `aac932b96e5ca5cb50ed82e2a6bcb53e8baefdb3`,
+  `31cd21245bd36d9a2f7fad826f7a0577ab52eed1`, and
+  `70fd2554e876509a551da93953304c355e30ec09`. Core rejected the first head
+  because it compared a one-leading-backslash physical-drive path, then
+  approved exact base `2205afc7993eba328a277c1d253a3fae3a5af6c3` and final
+  head `70fd2554e876509a551da93953304c355e30ec09` after the candidate changed
+  to canonical `\\.\PHYSICALDRIVE<N>` and a literal PowerShell
+  `ConvertTo-Json` wire fixture covered decoding, the exact four-byte prefix,
+  and mismatch rejection. Local focused Windows inventory tests pass 2/2;
+  formatting and full warnings-as-errors Clippy pass. All ten non-deploy PR
+  checks pass, including both Rust, Linux integration, Debian 12 package, and
+  frontend/documentation jobs plus the Windows build. Private artifact
+  `10089283135` from run `34312989388` independently verifies as an unsigned
+  portable executable of 16,225,280 bytes with SHA-256
+  `151f13abffc7244633d67fa115a150c83a0028596f732dd730fcb36f7dcb4c7e`;
+  its manifest binds the exact final EXE head, immutable Core commit
+  `3e49323fce266af8686039fb6487918ef5a64fd9`, Rust `1.98.1`, Node
+  `22.23.2`, and runner `win25-vs2026` version `20260824.214.3`, and the
+  workflow startup smoke passed. PR #61 squash-merged through protected
+  `main` as `8a04649d75dc9808340e927c1e61e7ba1a6f389c`; GitHub removed the remote
+  topic. No USB write, release publication, signing/trust, production
+  activation, Core or boundary change, or hardware action occurred.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
