@@ -3594,10 +3594,7 @@ mod windows_usb_inventory_tests {
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].device_identifier, "PhysicalDrive3");
         assert_eq!(targets[0].device_node, r"\\.\PHYSICALDRIVE3");
-        assert_eq!(
-            &targets[0].device_node.as_bytes()[..4],
-            &[b'\\', b'\\', b'.', b'\\']
-        );
+        assert_eq!(&targets[0].device_node.as_bytes()[..4], b"\\\\.\\");
         assert_eq!(targets[0].bus_protocol, "USB");
         assert_eq!(targets[0].identity_token.len(), 64);
     }
