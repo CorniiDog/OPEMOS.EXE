@@ -517,6 +517,16 @@ pub(crate) fn nvidia_build_appliance_path() -> PathBuf {
     appliance_dir().join("fedora-builder-x86_64.qcow2")
 }
 
+pub(crate) fn appliance_root_qemu_arguments(runtime_disk: &Path) -> [String; 4] {
+    let path = runtime_disk.to_string_lossy().replace(',', ",,");
+    [
+        "-drive".into(),
+        format!("file={path},if=none,format=qcow2,id=appliance-root"),
+        "-device".into(),
+        "virtio-blk-pci,drive=appliance-root,serial=opemos-appliance-root,id=appliance-root-device,bootindex=1".into(),
+    ]
+}
+
 pub(crate) const FEDORA_TCG_DEVICE_TIMEOUT_SECS: u64 = 300;
 pub(crate) const FEDORA_TCG_DEVICE_TIMEOUT_MIN_SECS: u64 = 120;
 pub(crate) const FEDORA_TCG_DEVICE_TIMEOUT_MAX_SECS: u64 = 600;
@@ -1772,11 +1782,7 @@ pub(crate) fn prepare_session_with_output(
             "file={},if=pflash,format=raw",
             vars_image.display()
         ))
-        .arg("-drive")
-        .arg(format!(
-            "file={},if=virtio,format=qcow2",
-            runtime_disk.display()
-        ))
+        .args(appliance_root_qemu_arguments(&runtime_disk))
         .arg("-drive")
         .arg(format!(
             "file={},if=virtio,format=raw,readonly=on",
