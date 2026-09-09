@@ -5,7 +5,7 @@ MEDIA="$ROOT/virtual-usb-32g.raw"
 STATE="$ROOT/virtual-usb-32g.state"
 BYTES=34359738368
 regular_exact() { [[ "$1" == "$ROOT"/* && ! -L "$1" && -f "$1" && "$(readlink -f -- "$1")" == "$1" ]]; }
-regular_source() { [[ ! -L "$1" && -f "$1" && "$(readlink -f -- "$1")" == "$1" ]]; }
+regular_source() { [[ "$1" == "$ROOT"/* && ! -L "$1" && -f "$1" && "$(readlink -f -- "$1")" == "$1" ]]; }
 source_identity() { stat -c '%d:%i:%s' -- "$1"; }
 create() {
   [[ -d "$ROOT" && ! -L "$ROOT" ]] || { echo 'unsafe or missing harness-owned root' >&2; exit 2; }
@@ -25,7 +25,8 @@ write_verify() {
   dd if="$source" of="$MEDIA" bs=8M conv=notrunc,fsync status=none
   readback="$(head -c "${before##*:}" "$MEDIA" | sha256sum | awk '{print $1}')"
   [[ "$readback" = "$source_hash" && "$(source_identity "$source")" = "$before" ]] || { echo 'read-back or source identity verification failed' >&2; exit 1; }
-  ( umask 077; printf 'schema=1\nmediaBytes=%s\nsource=%s\nsourceIdentity=%s\nsourceSha256=%s\n' "$BYTES" "$source" "$before" "$source_hash" > "$STATE.tmp" )
+  [[ ! -e "$STATE.tmp" && ! -L "$STATE.tmp" ]] || { echo 'stale or linked state temporary exists' >&2; exit 2; }
+  ( set -o noclobber; umask 077; printf 'schema=1\nmediaBytes=%s\nsource=%s\nsourceIdentity=%s\nsourceSha256=%s\n' "$BYTES" "$source" "$before" "$source_hash" > "$STATE.tmp" )
   mv -f -- "$STATE.tmp" "$STATE"
 }
 reset() {
