@@ -517,6 +517,79 @@ pub(crate) fn nvidia_build_appliance_path() -> PathBuf {
     appliance_dir().join("fedora-builder-x86_64.qcow2")
 }
 
+pub(crate) const FEDORA_TCG_DEVICE_TIMEOUT_SECS: u64 = 300;
+pub(crate) const FEDORA_TCG_DEVICE_TIMEOUT_MIN_SECS: u64 = 120;
+pub(crate) const FEDORA_TCG_DEVICE_TIMEOUT_MAX_SECS: u64 = 600;
+pub(crate) const FEDORA_ROOT_DEVICE_UNIT: &str =
+    r"dev-disk-by\x2duuid-15c26993\x2dac30\x2d424a\x2d9c4b\x2dfaec4434d234.device";
+pub(crate) const FEDORA_EFI_DEVICE_UNIT: &str = r"dev-disk-by\x2duuid-5BCC\x2d12A9.device";
+pub(crate) const FEDORA_TCG_DEVICE_TIMEOUT_CREDENTIAL: &str =
+    "W1VuaXRdCkpvYlJ1bm5pbmdUaW1lb3V0U2VjPTMwMHMK";
+
+pub(crate) fn nvidia_guest_device_timeout_args(
+    acceleration: &str,
+    timeout_secs: u64,
+) -> Result<Vec<String>, String> {
+    if acceleration != "tcg" {
+        return Ok(Vec::new());
+    }
+    if !(FEDORA_TCG_DEVICE_TIMEOUT_MIN_SECS..=FEDORA_TCG_DEVICE_TIMEOUT_MAX_SECS)
+        .contains(&timeout_secs)
+        || timeout_secs != FEDORA_TCG_DEVICE_TIMEOUT_SECS
+    {
+        return Err(format!(
+            "Fedora guest device timeout must be the reviewed bounded value of {FEDORA_TCG_DEVICE_TIMEOUT_SECS} seconds."
+        ));
+    }
+    Ok([FEDORA_ROOT_DEVICE_UNIT, FEDORA_EFI_DEVICE_UNIT]
+        .into_iter()
+        .flat_map(|unit| {
+            [
+                "-smbios".to_string(),
+                format!(
+                    "type=11,value=io.systemd.credential.binary:systemd.unit-dropin.{unit}={FEDORA_TCG_DEVICE_TIMEOUT_CREDENTIAL}"
+                ),
+            ]
+        })
+        .collect())
+}
+
+pub(crate) fn validate_nvidia_guest_device_timeout_report(report: &str) -> Result<(), String> {
+    let expected = format!("{}min", FEDORA_TCG_DEVICE_TIMEOUT_SECS / 60);
+    let mut lines = report.lines();
+    for label in ["ROOT", "EFI"] {
+        let Some(line) = lines.next() else {
+            return Err(format!("Fedora guest omitted the {label} device timeout."));
+        };
+        if line != format!("{label}={expected}") {
+            return Err(format!(
+                "Fedora guest reported an unexpected {label} device timeout: {line}."
+            ));
+        }
+    }
+    if lines.next().is_some() {
+        return Err("Fedora guest returned unexpected device-timeout data.".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn transient_guest_connection_error(error: &str) -> bool {
+    error.contains("exit status: 255")
+}
+
+pub(crate) fn verify_nvidia_guest_device_timeout(
+    session: &NvidiaBuildSession,
+) -> Result<(), String> {
+    if session.acceleration != "tcg" {
+        return Ok(());
+    }
+    let command = format!(
+        "set -eu; printf 'ROOT=%s\\n' \"$(systemctl show --property=JobRunningTimeoutUSec --value '{}')\"; printf 'EFI=%s\\n' \"$(systemctl show --property=JobRunningTimeoutUSec --value '{}')\"",
+        FEDORA_ROOT_DEVICE_UNIT, FEDORA_EFI_DEVICE_UNIT
+    );
+    validate_nvidia_guest_device_timeout_report(&run_guest_command(session, &command)?)
+}
+
 pub(crate) fn runtime_root() -> PathBuf {
     appliance_dir().join("runtime")
 }
@@ -1979,6 +2052,10 @@ pub(crate) fn prepare_nvidia_build_session(
             "file={},if=virtio,format=raw,readonly=on",
             seed_image.display()
         ));
+    qemu_command.args(nvidia_guest_device_timeout_args(
+        acceleration,
+        FEDORA_TCG_DEVICE_TIMEOUT_SECS,
+    )?);
     isolate_process_group(&mut qemu_command);
     let mut child = qemu_command
         .args([
@@ -2592,6 +2669,18 @@ pub(crate) async fn get_nvidia_build_appliance_status(
         match handshake(session) {
             Ok(output) if output == READY_MARKER => match collect_guest_health(session) {
                 Ok(health) if health.architecture == "x86_64" => {
+                    if let Err(error) = verify_nvidia_guest_device_timeout(session) {
+                        if transient_guest_connection_error(&error)
+                            && session.started_at.elapsed() < NVIDIA_BUILD_BOOT_TIMEOUT
+                        {
+                            return Ok(nvidia_build_status(session));
+                        }
+                        session.state = "failed".into();
+                        session.message = format!(
+                            "Fedora booted without the required bounded guest device timeout: {error}"
+                        );
+                        return Ok(nvidia_build_status(session));
+                    }
                     match qmp_attach_nvidia_target(session) {
                         Ok(()) => {
                             session.state = "ready".into();
@@ -2616,6 +2705,9 @@ pub(crate) async fn get_nvidia_build_appliance_status(
                         health.architecture
                     );
                 }
+                Err(error)
+                    if transient_guest_connection_error(&error)
+                        && session.started_at.elapsed() < NVIDIA_BUILD_BOOT_TIMEOUT => {}
                 Err(error) => {
                     session.state = "failed".into();
                     session.message = format!("Build-appliance health check failed: {error}");

@@ -1980,6 +1980,79 @@ esac
     }
 
     #[test]
+    fn tcg_guest_device_timeout_is_bounded_scoped_and_fail_closed() {
+        assert!(nvidia_guest_device_timeout_args("kvm", FEDORA_TCG_DEVICE_TIMEOUT_SECS)
+            .unwrap()
+            .is_empty());
+        let args = nvidia_guest_device_timeout_args("tcg", FEDORA_TCG_DEVICE_TIMEOUT_SECS)
+            .expect("reviewed TCG deadline");
+        assert_eq!(args.len(), 4);
+        assert_eq!(args[0], "-smbios");
+        assert_eq!(args[2], "-smbios");
+        assert!(args[1].contains(FEDORA_ROOT_DEVICE_UNIT));
+        assert!(args[3].contains(FEDORA_EFI_DEVICE_UNIT));
+        assert!(args[1].ends_with(FEDORA_TCG_DEVICE_TIMEOUT_CREDENTIAL));
+        assert!(args[3].ends_with(FEDORA_TCG_DEVICE_TIMEOUT_CREDENTIAL));
+        assert!(!args.join(" ").contains("ttyS0"));
+        assert!(!args.join(" ").contains("zram"));
+        assert!(nvidia_guest_device_timeout_args(
+            "tcg",
+            FEDORA_TCG_DEVICE_TIMEOUT_MIN_SECS - 1
+        )
+        .is_err());
+        assert!(nvidia_guest_device_timeout_args(
+            "tcg",
+            FEDORA_TCG_DEVICE_TIMEOUT_MAX_SECS + 1
+        )
+        .is_err());
+        assert!(nvidia_guest_device_timeout_args("tcg", 301).is_err());
+    }
+
+    #[test]
+    fn tcg_guest_device_timeout_report_requires_both_exact_devices() {
+        validate_nvidia_guest_device_timeout_report("ROOT=5min\nEFI=5min")
+            .expect("slow-device deadline report");
+        assert!(validate_nvidia_guest_device_timeout_report("ROOT=5min").is_err());
+        assert!(validate_nvidia_guest_device_timeout_report("ROOT=5min\nEFI=").is_err());
+        assert!(validate_nvidia_guest_device_timeout_report("ROOT=1min 30s\nEFI=5min").is_err());
+        assert!(validate_nvidia_guest_device_timeout_report("ROOT=5min\nEFI=5min\nEXTRA=5min").is_err());
+    }
+
+    #[test]
+    fn slow_guest_retries_only_transport_failures() {
+        assert!(transient_guest_connection_error(
+            "Guest command exited with exit status: 255: Connection timed out during banner exchange"
+        ));
+        assert!(!transient_guest_connection_error(
+            "Could not run the structured guest command: ssh is unavailable"
+        ));
+        assert!(!transient_guest_connection_error(
+            "Builder appliance is missing required tools: btrfs."
+        ));
+        assert!(!transient_guest_connection_error(
+            "Fedora guest reported an unexpected ROOT device timeout: ROOT=1min 30s."
+        ));
+    }
+
+    #[test]
+    fn cancelled_nvidia_runtime_guard_removes_disposable_overlay_state() {
+        let root = std::env::temp_dir().join(format!(
+            "steamos-builder-cancelled-timeout-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create disposable runtime");
+        fs::write(root.join("session.qcow2"), b"overlay").expect("write overlay marker");
+        {
+            let _guard = NvidiaBuildRuntimeGuard {
+                path: root.clone(),
+                armed: true,
+            };
+        }
+        assert!(!root.exists(), "cancelled preparation must remove its overlay runtime");
+    }
+
+    #[test]
     #[ignore = "launches x86_64 Fedora and checks pinned upstream/support repositories over the network"]
     fn live_upstream_nvidia_source_contract_in_x86_appliance() {
         let client = nvidia_http_client().expect("create HTTPS client");
@@ -5396,7 +5469,30 @@ esac
             );
             thread::sleep(Duration::from_secs(1));
         }
-        let health = collect_guest_health(&session).expect("x86 guest health should pass");
+        let health = loop {
+            match collect_guest_health(&session) {
+                Ok(health) => break health,
+                Err(error)
+                    if transient_guest_connection_error(&error) && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_secs(1));
+                }
+                Err(error) => panic!("x86 guest health should pass: {error}"),
+            }
+        };
+        loop {
+            match verify_nvidia_guest_device_timeout(&session) {
+                Ok(()) => break,
+                Err(error)
+                    if transient_guest_connection_error(&error) && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_secs(1));
+                }
+                Err(error) => panic!(
+                    "TCG guest should report both exact bounded device deadlines: {error}"
+                ),
+            }
+        }
         assert_eq!(health.protocol_version, "1");
         assert_eq!(health.architecture, "x86_64");
         assert!(!health.required_tools.is_empty());
