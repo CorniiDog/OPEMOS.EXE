@@ -5839,6 +5839,21 @@ trap - EXIT"#,
     }
 
 
+    #[test]
+    fn appliance_root_has_explicit_first_boot_priority_and_escaped_path() {
+        let arguments = appliance_root_qemu_arguments(Path::new("/tmp/appliance,root.qcow2"));
+        assert_eq!(arguments[0], "-drive");
+        assert_eq!(
+            arguments[1],
+            "file=/tmp/appliance,,root.qcow2,if=none,format=qcow2,id=appliance-root"
+        );
+        assert_eq!(arguments[2], "-device");
+        assert_eq!(
+            arguments[3],
+            "virtio-blk-pci,drive=appliance-root,serial=opemos-appliance-root,id=appliance-root-device,bootindex=1"
+        );
+    }
+
     #[cfg(target_os = "linux")]
     fn live_recovery_input(path: &Path) -> Result<PathBuf, String> {
         let metadata = fs::symlink_metadata(path)
