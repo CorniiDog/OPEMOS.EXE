@@ -5839,6 +5839,7 @@ trap - EXIT"#,
     }
 
 
+    #[cfg(target_os = "linux")]
     fn live_recovery_input(path: &Path) -> Result<PathBuf, String> {
         let metadata = fs::symlink_metadata(path)
             .map_err(|error| format!("Could not inspect live recovery input: {error}"))?;
@@ -5849,6 +5850,7 @@ trap - EXIT"#,
             .map_err(|error| format!("Could not canonicalize live recovery input: {error}"))
     }
 
+    #[cfg(target_os = "linux")]
     fn prepare_live_output_root(repository: &Path, candidate: &Path) -> Result<PathBuf, String> {
         let expected = repository.join("tests/virtual-usb/work");
         if candidate != expected {
@@ -5866,6 +5868,7 @@ trap - EXIT"#,
         Ok(canonical)
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn live_harness_rejects_linked_missing_and_nonregular_inputs() {
         let root = std::env::temp_dir().join(format!(
@@ -5888,6 +5891,7 @@ trap - EXIT"#,
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn live_harness_rejects_output_path_drift_and_symlinked_root() {
         let root = std::env::temp_dir().join(format!(
@@ -5913,6 +5917,7 @@ trap - EXIT"#,
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     fn wait_for_live_image_appliance(app: &tauri::AppHandle) {
         let deadline = Instant::now() + Duration::from_secs(FEDORA_TCG_DEVICE_TIMEOUT_SECS + 60);
         loop {
@@ -5929,6 +5934,7 @@ trap - EXIT"#,
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn wait_for_live_nvidia_appliance(app: &tauri::AppHandle) {
         let deadline = Instant::now() + NVIDIA_BUILD_BOOT_TIMEOUT + Duration::from_secs(60);
         loop {
@@ -5947,6 +5953,7 @@ trap - EXIT"#,
         }
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     #[ignore = "requires STEAMOS_RECOVERY_IMAGE and performs the authenticated retained NVIDIA image lifecycle"]
     fn live_authenticated_nvidia_image_is_retained_for_virtual_usb() {
@@ -6049,6 +6056,7 @@ trap - EXIT"#,
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     #[ignore = "constructs the concrete Tauri runtime for the retained live-image harness"]
     fn live_image_harness_app_handle_reaches_managed_state() {
