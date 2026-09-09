@@ -1051,19 +1051,30 @@ already Core contracts and are not open-ended product choices.
     `ac37cfc601b3031f96686b3363ca2fafa645714f`. GitHub removed the remote
     topic ref, and the lead removed only its verified clean local worktree and
     exact merged topic branch.
-- [ ] Replace the first portable Windows artifact after a user-reported release
-  blocker: its backend rejects Windows as an unsupported host and the UI reports
-  `Builder unavailable`. The successor adds an x86_64 WHPX plan with no software
-  fallback, Windows PATH/PATHEXT executable discovery that preserves paths with
-  spaces, native RAM and process-liveness detection, QEMU-distribution firmware,
-  cdrtools seed creation, complete prerequisite gating, and Windows-specific host
-  status. It must remain unavailable when a tool, appliance, firmware, memory
-  budget, or WHPX launch probe fails. The private artifact workflow must compile
-  and run Windows edge cases, launch-smoke-test the exact unsigned executable,
-  record checksum/provenance, and retain it for one day. PR, exact Core review,
-  checks, artifact identity, squash, and cleanup evidence remain pending. No
-  release publication, signing/trust, production activation, physical USB write,
-  boundary change, or sibling-repository mutation is authorized.
+- [x] Replace the first portable Windows artifact after a user-reported release
+  blocker: its backend rejected Windows as an unsupported host and the UI reported
+  `Builder unavailable`. PR https://github.com/CorniiDog/OPEMOS.EXE/pull/59
+  preserved source commit `bd44cf126060d30ee777f89731d41eadb36efcd7`
+  and added the x86_64 WHPX plan with no software fallback, Windows
+  PATH/PATHEXT executable discovery that preserves paths with spaces, native RAM
+  and process-liveness detection, QEMU-distribution firmware, cdrtools seed
+  creation, complete prerequisite gating, Windows-specific host status, and an
+  exact release-executable startup smoke test. All ten non-deploy checks passed.
+  Core approved exact base `ba7c9ace36003a13a8cad3f55280afff824e5d84`,
+  unchanged head `bd44cf126060d30ee777f89731d41eadb36efcd7`, ten-file
+  scope, clean merge state, check set, and private artifact evidence through the
+  authenticated same-account-review fallback. Windows workflow run `34306251759`
+  produced private one-day artifact `10086975917`; the unsigned portable EXE is
+  16,253,440 bytes with SHA-256
+  `6e72f87dbe7ed5f0cefa4f2110f6af969533101dbf7ca876360eed2e5745c728`,
+  and its manifests bind that EXE head, Core
+  `3e49323fce266af8686039fb6487918ef5a64fd9`, Rust `1.98.1`, Node
+  `22.23.2`, and runner image `win25-vs2026` version `20260824.214.3`.
+  PR #59 squash-merged through protected `main` as
+  `fbb9bf6e6ee4c146ff3f3ec2f8557a815f9590e4`; GitHub removed the
+  remote topic and EXE removed only its verified clean local topic/worktree.
+  No release publication, signing/trust, production activation, physical USB
+  write, boundary change, or sibling-repository mutation occurred.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,
