@@ -6,9 +6,13 @@ description: Prepare macOS, choose an official Valve image, build, and understan
 
 ## Before you begin
 
-OPEMOS.EXE currently targets macOS. Apple Silicon is the primary development
-host; Intel macOS follows the native x86_64 appliance path but has less physical
-coverage.
+OPEMOS.EXE supports macOS and a Windows x86_64 builder path. Apple Silicon is
+the primary development host; Intel macOS and Windows have less physical
+coverage. Windows requires hardware virtualization with WHPX, QEMU (including
+its `share` firmware directory), cdrtools `mkisofs`, OpenSSH `ssh` and
+`ssh-keygen`, Python, and the managed Fedora appliance. The app reports the
+specific missing prerequisite and keeps build controls disabled until its QEMU
+WHPX launch probe succeeds. Physical USB writing remains unavailable on Windows.
 
 You need enough free space for the source image, disposable overlay, final raw
 image, and runtime reserve; QEMU and the managed Fedora appliance; an official

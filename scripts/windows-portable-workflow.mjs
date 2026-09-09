@@ -33,6 +33,8 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "run: node --test tests/windows-portable-workflow.test.mjs", "focused cross-platform JavaScript tests");
   requireText(text, "cargo test --manifest-path src-tauri/Cargo.toml --locked windows_", "locked Windows Rust tests");
   requireText(text, "cargo build --manifest-path src-tauri/Cargo.toml --release --locked", "locked release build");
+  requireText(text, "Start-Process -FilePath $source -PassThru", "portable executable startup smoke test");
+  requireText(text, "Stop-Process -Id $process.Id", "bounded smoke-test process cleanup");
   requireText(text, "Get-AuthenticodeSignature -LiteralPath $source", "Authenticode inspection");
   requireText(text, "SignatureStatus]::NotSigned", "the unsigned-only gate");
   requireText(text, "Get-FileHash -LiteralPath $destination -Algorithm SHA256", "SHA-256 provenance");

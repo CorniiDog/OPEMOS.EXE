@@ -1051,6 +1051,19 @@ already Core contracts and are not open-ended product choices.
     `ac37cfc601b3031f96686b3363ca2fafa645714f`. GitHub removed the remote
     topic ref, and the lead removed only its verified clean local worktree and
     exact merged topic branch.
+- [ ] Replace the first portable Windows artifact after a user-reported release
+  blocker: its backend rejects Windows as an unsupported host and the UI reports
+  `Builder unavailable`. The successor adds an x86_64 WHPX plan with no software
+  fallback, Windows PATH/PATHEXT executable discovery that preserves paths with
+  spaces, native RAM and process-liveness detection, QEMU-distribution firmware,
+  cdrtools seed creation, complete prerequisite gating, and Windows-specific host
+  status. It must remain unavailable when a tool, appliance, firmware, memory
+  budget, or WHPX launch probe fails. The private artifact workflow must compile
+  and run Windows edge cases, launch-smoke-test the exact unsigned executable,
+  record checksum/provenance, and retain it for one day. PR, exact Core review,
+  checks, artifact identity, squash, and cleanup evidence remain pending. No
+  release publication, signing/trust, production activation, physical USB write,
+  boundary change, or sibling-repository mutation is authorized.
 - [x] Run the published Core compatibility baseline in CI from immutable commit
   `8224169`; never test against mutable Core `main`.
 - [x] After Core published `1fde359025031a99055763dca76e0d709486ffac`,

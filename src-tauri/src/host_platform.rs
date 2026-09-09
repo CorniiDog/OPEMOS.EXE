@@ -20,6 +20,7 @@ pub(crate) fn plan_host_qemu(
         ("macos", "aarch64", "aarch64") => Ok(("hvf", "virt,accel=hvf", "host")),
         ("macos", "x86_64", "x86_64") => Ok(("hvf", "q35,accel=hvf", "host")),
         ("macos", "aarch64", "x86_64") => Ok(("tcg", "q35,accel=tcg", "max")),
+        ("windows", "x86_64", "x86_64") => Ok(("whpx", "q35,accel=whpx", "max")),
         ("linux", "x86_64", "x86_64") => {
             if !enabled {
                 return Err("Experimental Linux testing is disabled. Set OPEMOS_EXPERIMENTAL_LINUX=1 to opt in.".into());
@@ -161,7 +162,14 @@ pub(crate) fn host_firmware(guest: &str) -> Result<(PathBuf, PathBuf), String> {
         }
         return linux_firmware_pair(Path::new("/usr/share/OVMF"));
     }
-    let share = crate::appliance::homebrew_qemu_share()?;
+    let share = if std::env::consts::OS == "windows" {
+        let qemu = crate::appliance::find_qemu().ok_or("qemu-system-x86_64.exe is required.")?;
+        qemu.parent()
+            .ok_or("The Windows QEMU installation path is invalid.")?
+            .join("share")
+    } else {
+        crate::appliance::homebrew_qemu_share()?
+    };
     let (code, vars) = match guest {
         "aarch64" => ("edk2-aarch64-code.fd", "edk2-arm-vars.fd"),
         "x86_64" => ("edk2-x86_64-code.fd", "edk2-i386-vars.fd"),
@@ -196,7 +204,7 @@ pub(crate) fn seed_iso_command(
                 "-o",
             ]);
         }
-        "linux" => {
+        "linux" | "windows" => {
             command.args([
                 "-quiet",
                 "-iso-level",
@@ -216,7 +224,9 @@ pub(crate) fn seed_iso_command(
 
 pub(crate) fn create_host_seed(source: &Path, destination: &Path) -> Result<(), String> {
     let os = std::env::consts::OS;
-    let name = if os == "linux" {
+    let name = if os == "windows" {
+        "mkisofs"
+    } else if os == "linux" {
         "genisoimage"
     } else {
         "hdiutil"
@@ -323,6 +333,16 @@ pub(crate) fn linux_host_prerequisites() -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn windows_host_prerequisites() -> Result<(), String> {
+    for name in ["qemu-img", "mkisofs", "ssh", "ssh-keygen", "python"] {
+        if !crate::appliance::find_binary(name).is_some_and(|path| usable_host_executable(&path)) {
+            return Err(format!("Windows host prerequisite is missing: {name}."));
+        }
+    }
+    host_firmware("x86_64")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,7 +410,6 @@ mod tests {
             assert!(plan_host_qemu("linux", "x86_64", "x86_64", true, mode, true).is_err());
         }
         for (os, host, guest) in [
-            ("windows", "x86_64", "x86_64"),
             ("linux", "aarch64", "x86_64"),
             ("linux", "x86_64", "aarch64"),
         ] {
@@ -408,6 +427,34 @@ mod tests {
             plan_host_qemu("macos", "x86_64", "x86_64", false, "", false).unwrap(),
             ("hvf", "q35,accel=hvf", "host")
         );
+    }
+    #[test]
+    fn windows_binary_search_preserves_spaces_and_fails_closed() {
+        let root =
+            std::env::temp_dir().join(format!("opemos windows tools {}", std::process::id()));
+        let bin = root.join("Program Files").join("QEMU");
+        fs::create_dir_all(&bin).unwrap();
+        let qemu = bin.join("qemu-system-x86_64.exe");
+        fs::write(&qemu, b"tool").unwrap();
+        assert_eq!(
+            crate::appliance::find_binary_in_paths("qemu-system-x86_64", [bin.clone()], &[".exe"]),
+            Some(qemu)
+        );
+        assert!(
+            crate::appliance::find_binary_in_paths("missing", [bin.clone()], &[".exe"]).is_none()
+        );
+        assert!(crate::appliance::find_binary_in_paths("../qemu", [bin], &[".exe"]).is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn windows_x86_64_plan_requires_whpx_without_software_fallback() {
+        assert_eq!(
+            plan_host_qemu("windows", "x86_64", "x86_64", false, "", false).unwrap(),
+            ("whpx", "q35,accel=whpx", "max")
+        );
+        for (host, guest) in [("aarch64", "x86_64"), ("x86_64", "aarch64")] {
+            assert!(plan_host_qemu("windows", host, guest, false, "", false).is_err());
+        }
     }
     #[test]
     fn distribution_and_memory_reports_are_bounded_and_fail_closed() {
@@ -437,14 +484,14 @@ mod tests {
     fn seed_arguments_preserve_paths_without_shell_interpretation() {
         let source = Path::new("/tmp/cloud init;literal");
         let output = Path::new("/tmp/seed image.iso");
-        for os in ["macos", "linux"] {
+        for os in ["macos", "linux", "windows"] {
             let command =
                 seed_iso_command(os, Path::new("/bin/seed-tool"), source, output).unwrap();
             let args: Vec<_> = command.get_args().collect();
             assert_eq!(args[args.len() - 2], output.as_os_str());
             assert_eq!(args[args.len() - 1], source.as_os_str());
         }
-        assert!(seed_iso_command("windows", Path::new("seed"), source, output).is_err());
+        assert!(seed_iso_command("freebsd", Path::new("seed"), source, output).is_err());
     }
     #[test]
     fn firmware_never_mixes_pair_variants_and_host_reads_are_bounded() {

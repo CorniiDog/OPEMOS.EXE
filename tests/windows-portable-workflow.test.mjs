@@ -23,6 +23,7 @@ for (const [name, mutate, expected] of [
   ["missing unsigned gate", text => text.replace("SignatureStatus]::NotSigned", "SignatureStatus]::Valid"), /unsigned-only gate/],
   ["long artifact retention", text => text.replace("retention-days: 1", "retention-days: 90"), /one-day artifact retention/],
   ["unlocked Rust build", text => text.replace("--release --locked", "--release"), /locked release build/],
+  ["missing executable smoke test", text => text.replace("Start-Process -FilePath $source -PassThru", "Write-Host skipped"), /startup smoke test/],
   ["secret signing input", text => text + "\n# secrets.WINDOWS_CERT signtool", /must not use secrets/],
 ]) {
   test(`Windows portable workflow rejects ${name}`, () => {

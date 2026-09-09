@@ -82,6 +82,18 @@ jobs:
       - name: Build unsigned portable executable
         run: cargo build --manifest-path src-tauri/Cargo.toml --release --locked
 
+      - name: Smoke-test portable executable startup
+        shell: pwsh
+        run: |
+          $source = "src-tauri/target/release/steamos-nvidia-image-builder.exe"
+          $process = Start-Process -FilePath $source -PassThru
+          Start-Sleep -Seconds 8
+          if ($process.HasExited) {
+            throw "Portable executable exited during startup with code $($process.ExitCode)."
+          }
+          Stop-Process -Id $process.Id
+          $process.WaitForExit()
+
       - name: Verify executable and record provenance
         shell: pwsh
         run: |
