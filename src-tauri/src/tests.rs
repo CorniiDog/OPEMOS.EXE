@@ -2019,6 +2019,30 @@ esac
     }
 
     #[test]
+    fn appliance_readiness_deadline_defaults_and_exact_tcg_override_fail_closed() {
+        let started_at = Instant::now();
+        let (default_deadline, default_secs) = appliance_readiness_deadline(started_at, None).unwrap();
+        assert_eq!(default_secs, 120);
+        assert_eq!(default_deadline.duration_since(started_at), BOOT_TIMEOUT);
+        let (harness_deadline, harness_secs) = appliance_readiness_deadline(started_at, Some(TCG_HARNESS_BOOT_TIMEOUT_SECS)).unwrap();
+        assert_eq!(harness_secs, TCG_HARNESS_BOOT_TIMEOUT_SECS);
+        assert_eq!(harness_deadline.duration_since(started_at), Duration::from_secs(600));
+        assert_eq!(appliance_readiness_deadline(started_at, Some(TCG_HARNESS_BOOT_TIMEOUT_SECS)).unwrap().0, harness_deadline, "polling must not reset the absolute deadline");
+        for malformed in [0, 119, 120, 599, 601, u64::MAX] {
+            assert!(appliance_readiness_deadline(started_at, Some(malformed)).is_err());
+        }
+    }
+
+    #[test]
+    fn appliance_readiness_expiry_refuses_late_ready_marker() {
+        let started_at = Instant::now();
+        let (deadline, _) = appliance_readiness_deadline(started_at, Some(600)).unwrap();
+        assert_eq!(appliance_readiness_outcome(deadline - Duration::from_nanos(1), deadline, &Ok(READY_MARKER.into())), ApplianceReadinessOutcome::Ready);
+        assert_eq!(appliance_readiness_outcome(deadline, deadline, &Ok(READY_MARKER.into())), ApplianceReadinessOutcome::TimedOut);
+        assert_eq!(appliance_readiness_outcome(deadline, deadline, &Err("not ready".into())), ApplianceReadinessOutcome::TimedOut);
+    }
+
+    #[test]
     fn slow_guest_retries_only_transport_failures() {
         assert!(transient_guest_connection_error(
             "Guest command exited with exit status: 255: Connection timed out during banner exchange"
@@ -5992,9 +6016,12 @@ trap - EXIT"#,
             .expect("build the headless lifecycle application handle");
         let app = app.handle().clone();
 
-        start_appliance_blocking(
+        let appliance = appliance_path();
+        let appliance_hash_before = sha256_file(&appliance).expect("hash authenticated appliance before the lifecycle");
+        start_appliance_tcg_harness_blocking(
             input.to_string_lossy().into_owned(),
             Some(output_root.to_string_lossy().into_owned()),
+            TCG_HARNESS_BOOT_TIMEOUT_SECS,
             app.clone(),
         )
         .expect("start the image appliance");
@@ -6050,7 +6077,7 @@ trap - EXIT"#,
         assert_eq!(installed.status, "installed");
         assert!(installed.mounts_released);
 
-        let exported = export_marker_image_blocking(app, false)
+        let exported = export_marker_image_blocking(app.clone(), false)
             .expect("independently validate and retain the NVIDIA image");
         assert_eq!(exported.source_sha256, input_hash_before);
         assert!(Path::new(&exported.path).starts_with(&output_root));
@@ -6064,6 +6091,9 @@ trap - EXIT"#,
             sha256_file(&input).expect("hash source image after retained export"),
             input_hash_before
         );
+        let stopped = stop_appliance_blocking(app.clone()).expect("stop the image appliance and clean its runtime");
+        assert_eq!(stopped.state, "stopped");
+        assert_eq!(sha256_file(&appliance).expect("hash authenticated appliance after the lifecycle"), appliance_hash_before, "the authenticated base appliance must remain immutable");
         println!(
             "{}",
             serde_json::to_string_pretty(&completed)
