@@ -666,11 +666,7 @@ test "$MOUNTED" = 0"#;
         .stdout
         .take()
         .ok_or("Could not capture the mutation guest command output.")?;
-    let readiness = read_guest_command_ready_line(
-        &mut mutation,
-        stdout,
-        Duration::from_secs(30),
-    );
+    let readiness = read_guest_command_ready_line(&mut mutation, stdout, Duration::from_secs(30));
     let (stdout, channel_ready) = match readiness {
         Ok(readiness) => readiness,
         Err(error) => {
@@ -688,12 +684,7 @@ test "$MOUNTED" = 0"#;
         let _ = stderr_drain.join();
         return Err(error);
     }
-    let output = finish_guest_command_with_stdout(
-        mutation,
-        stdout,
-        String::new(),
-        stderr_drain,
-    )?;
+    let output = finish_guest_command_with_stdout(mutation, stdout, String::new(), stderr_drain)?;
     let mut values = std::collections::HashMap::new();
     let mut kernel_versions = Vec::new();
     for line in output.lines() {
