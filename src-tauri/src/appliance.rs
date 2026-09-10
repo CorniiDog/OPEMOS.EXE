@@ -377,7 +377,8 @@ pub(crate) fn spawn_qemu_watchdog(qemu_pid: u32) -> Result<QemuWatchdog, String>
     let (reader, writer) = UnixStream::pair()
         .map_err(|error| format!("Could not create the QEMU lifecycle watchdog: {error}"))?;
     let reader: OwnedFd = reader.into();
-    let child = Command::new("/bin/sh")
+    let mut command = Command::new("/bin/sh");
+    command
         .args([
             "-c",
             &script,
@@ -386,7 +387,9 @@ pub(crate) fn spawn_qemu_watchdog(qemu_pid: u32) -> Result<QemuWatchdog, String>
         ])
         .stdin(Stdio::from(reader))
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    isolate_process_group(&mut command);
+    let child = command
         .spawn()
         .map_err(|error| format!("Could not start the QEMU lifecycle watchdog: {error}"))?;
     Ok(QemuWatchdog {
@@ -2309,6 +2312,40 @@ pub(crate) fn read_qmp_response(
     }
 }
 
+pub(crate) fn qmp_quit(qmp_port: u16) -> Result<(), String> {
+    let mut stream = TcpStream::connect(("127.0.0.1", qmp_port))
+        .map_err(|e| format!("Could not connect to the QEMU monitor for shutdown: {e}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .map_err(|e| format!("Could not configure the QEMU shutdown monitor: {e}"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(3)))
+        .map_err(|e| format!("Could not configure the QEMU shutdown monitor: {e}"))?;
+    let reader_stream = stream
+        .try_clone()
+        .map_err(|e| format!("Could not prepare the QEMU shutdown monitor reader: {e}"))?;
+    let mut reader = BufReader::new(reader_stream);
+    let mut greeting = String::new();
+    reader
+        .read_line(&mut greeting)
+        .map_err(|e| format!("Could not read the QEMU shutdown monitor greeting: {e}"))?;
+    let greeting: serde_json::Value = serde_json::from_str(&greeting)
+        .map_err(|e| format!("QEMU returned an invalid shutdown monitor greeting: {e}"))?;
+    if greeting.get("QMP").is_none() {
+        return Err("QEMU shutdown monitor did not provide a QMP greeting.".into());
+    }
+    stream
+        .write_all(b"{\"execute\":\"qmp_capabilities\"}\n")
+        .and_then(|_| stream.flush())
+        .map_err(|e| format!("Could not enable QEMU shutdown monitor capabilities: {e}"))?;
+    read_qmp_response(&mut reader)?;
+    stream
+        .write_all(b"{\"execute\":\"quit\"}\n")
+        .and_then(|_| stream.flush())
+        .map_err(|e| format!("Could not request QEMU monitor shutdown: {e}"))?;
+    Ok(())
+}
+
 pub(crate) fn qmp_remove_user_input(session: &ImageInspectionSession) -> Result<(), String> {
     let mut stream = TcpStream::connect(("127.0.0.1", session.qmp_port))
         .map_err(|e| format!("Could not connect to the QEMU monitor: {e}"))?;
@@ -3875,6 +3912,7 @@ pub(crate) fn stop_session_process(session: &mut ApplianceSession) -> Result<(),
         .map_err(|e| format!("Could not inspect the appliance: {e}"))?
         .is_none()
     {
+        let _ = qmp_quit(session.qmp_port);
         if let Some(ssh) = find_binary("ssh") {
             let _ = Command::new(ssh)
                 .arg("-p")

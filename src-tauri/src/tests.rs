@@ -330,6 +330,102 @@ mod tests {
         assert!(exit.is_some(), "watchdog left its target running");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn qemu_watchdog_survives_parent_group_death_and_stops_exact_target() {
+        const CHILD_MODE: &str = "OPEMOS_WATCHDOG_PARENT_EXIT_CHILD";
+        const PID_PATH: &str = "OPEMOS_WATCHDOG_TARGET_PID_PATH";
+        if std::env::var_os(CHILD_MODE).is_some() {
+            let pid_path = PathBuf::from(std::env::var_os(PID_PATH).expect("target PID path"));
+            let mut target = Command::new("/bin/sh");
+            target
+                .args(["-c", "exec sleep 30"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            isolate_process_group(&mut target);
+            let target = target.spawn().expect("start watchdog target");
+            let watchdog = spawn_qemu_watchdog(target.id()).expect("start lifecycle watchdog");
+            fs::write(pid_path, target.id().to_string()).expect("record target PID");
+            std::mem::forget(watchdog);
+            loop {
+                thread::sleep(Duration::from_secs(1));
+            }
+        }
+
+        let pid_path = std::env::temp_dir().join(format!(
+            "opemos-watchdog-parent-exit-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let mut parent = Command::new(std::env::current_exe().expect("current test executable"));
+        parent
+            .args([
+                "--exact",
+                "tests::qemu_watchdog_survives_parent_group_death_and_stops_exact_target",
+                "--nocapture",
+            ])
+            .env(CHILD_MODE, "1")
+            .env(PID_PATH, &pid_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        isolate_process_group(&mut parent);
+        let mut parent = parent.spawn().expect("start watchdog parent");
+        let target_pid = (0..100)
+            .find_map(|_| {
+                let target_pid = fs::read_to_string(&pid_path)
+                    .ok()
+                    .and_then(|value| value.trim().parse::<u32>().ok());
+                if target_pid.is_none() {
+                    thread::sleep(Duration::from_millis(25));
+                }
+                target_pid
+            })
+            .unwrap_or_else(|| {
+                kill_owned_process_group(&parent);
+                let _ = parent.wait();
+                panic!("watchdog parent did not publish its target PID")
+            });
+        kill_owned_process_group(&parent);
+        let _ = parent.wait();
+        let stopped = (0..50).any(|_| {
+            if !process_is_alive(target_pid) {
+                true
+            } else {
+                thread::sleep(Duration::from_millis(100));
+                false
+            }
+        });
+        if !stopped {
+            unsafe { libc::kill(-(target_pid as i32), libc::SIGKILL) };
+        }
+        let _ = fs::remove_file(pid_path);
+        assert!(stopped, "watchdog left its target running after parent group death");
+    }
+
+    #[test]
+    fn qmp_quit_uses_private_capability_handshake_and_exact_command() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind QMP fixture");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept QMP client");
+            stream
+                .write_all(b"{\"QMP\":{\"version\":{}}}\n")
+                .expect("write QMP greeting");
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut capabilities = String::new();
+            reader.read_line(&mut capabilities).expect("read capabilities");
+            assert_eq!(capabilities, "{\"execute\":\"qmp_capabilities\"}\n");
+            stream.write_all(b"{\"return\":{}}\n").expect("accept capabilities");
+            let mut quit = String::new();
+            reader.read_line(&mut quit).expect("read quit");
+            assert_eq!(quit, "{\"execute\":\"quit\"}\n");
+        });
+        qmp_quit(port).expect("request private QMP shutdown");
+        server.join().expect("finish QMP fixture");
+    }
+
     #[test]
     #[ignore = "launches a local QEMU smoke process and verifies watchdog cleanup"]
     fn live_qemu_smoke_watchdog_exits_cleanly() {
