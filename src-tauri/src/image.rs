@@ -507,7 +507,6 @@ pub(crate) fn mutate_user_marker_after_preflight(
     const MARKER_PATH: &str = "/etc/steamos-nvidia-image-builder-test";
     const MARKER_CONTENT: &str =
         "SteamOS NVIDIA Image Builder marker\nprotocol=1\nmilestone=marker-only\n";
-    qmp_remove_user_input(session)?;
     const MUTATE_COMMAND: &str = r#"set -eu
 SOURCE=/dev/disk/by-id/virtio-steamos-user-input
 WORK=/dev/disk/by-id/virtio-steamos-user-working
@@ -660,7 +659,13 @@ printf '%s\n' "$KERNELS" | while IFS= read -r KERNEL; do
 done
 test "$(sudo blockdev --getro "$WORK")" = 1
 test "$MOUNTED" = 0"#;
-    let output = run_guest_command(session, MUTATE_COMMAND)?;
+    let mut mutation = start_guest_command(session, MUTATE_COMMAND)?;
+    if let Err(error) = qmp_remove_user_input(session) {
+        let _ = mutation.kill();
+        let _ = mutation.wait();
+        return Err(error);
+    }
+    let output = finish_guest_command(mutation)?;
     let mut values = std::collections::HashMap::new();
     let mut kernel_versions = Vec::new();
     for line in output.lines() {

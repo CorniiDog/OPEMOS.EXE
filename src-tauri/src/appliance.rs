@@ -2268,14 +2268,20 @@ pub(crate) fn ssh_command(session: &impl GuestConnection) -> Result<Command, Str
     Ok(command)
 }
 
-pub(crate) fn run_guest_command(
+pub(crate) fn start_guest_command(
     session: &impl GuestConnection,
     command: &str,
-) -> Result<String, String> {
-    let output = ssh_command(session)?
+) -> Result<Child, String> {
+    ssh_command(session)?
         .arg(command)
-        .output()
-        .map_err(|e| format!("Could not run the structured guest command: {e}"))?;
+        .spawn()
+        .map_err(|e| format!("Could not start the structured guest command: {e}"))
+}
+
+pub(crate) fn finish_guest_command(child: Child) -> Result<String, String> {
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Could not wait for the structured guest command: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -2287,6 +2293,13 @@ pub(crate) fn run_guest_command(
         });
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+pub(crate) fn run_guest_command(
+    session: &impl GuestConnection,
+    command: &str,
+) -> Result<String, String> {
+    finish_guest_command(start_guest_command(session, command)?)
 }
 
 pub(crate) fn read_qmp_response(
