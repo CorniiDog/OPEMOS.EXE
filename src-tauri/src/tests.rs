@@ -2259,11 +2259,14 @@ esac
         assert_eq!(default_deadline.duration_since(started_at), BOOT_TIMEOUT);
         let (harness_deadline, harness_secs) = appliance_readiness_deadline(started_at, Some(TCG_HARNESS_BOOT_TIMEOUT_SECS)).unwrap();
         assert_eq!(harness_secs, TCG_HARNESS_BOOT_TIMEOUT_SECS);
-        assert_eq!(TCG_HARNESS_OUTER_TIMEOUT_SECS, 660);
-        assert_eq!(
-            TCG_HARNESS_OUTER_TIMEOUT_SECS - TCG_HARNESS_BOOT_TIMEOUT_SECS,
-            60
-        );
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(TCG_HARNESS_OUTER_TIMEOUT_SECS, 660);
+            assert_eq!(
+                TCG_HARNESS_OUTER_TIMEOUT_SECS - TCG_HARNESS_BOOT_TIMEOUT_SECS,
+                60
+            );
+        }
         assert_eq!(harness_deadline.duration_since(started_at), Duration::from_secs(600));
         assert_eq!(appliance_readiness_deadline(started_at, Some(TCG_HARNESS_BOOT_TIMEOUT_SECS)).unwrap().0, harness_deadline, "polling must not reset the absolute deadline");
         for malformed in [0, 119, 120, 599, 601, u64::MAX] {
@@ -6214,6 +6217,7 @@ trap - EXIT"#,
             )
     }
 
+    #[cfg(target_os = "linux")]
     fn retry_live_tcg_transport<T>(
         deadline: Instant,
         mut operation: impl FnMut() -> Result<T, String>,
@@ -6228,6 +6232,7 @@ trap - EXIT"#,
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn run_live_marker_sequence<T>(
         deadline: Instant,
         preflight: impl FnMut() -> Result<(), String>,
