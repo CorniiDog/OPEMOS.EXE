@@ -3446,6 +3446,31 @@ pub(crate) async fn mutate_test_marker(app: tauri::AppHandle) -> Result<MarkerMu
     .map_err(|error| format!("Synthetic mutation worker failed: {error}"))?
 }
 
+#[cfg(test)]
+pub(crate) fn preflight_selected_marker_blocking(app: tauri::AppHandle) -> Result<(), String> {
+    let session = ready_session_snapshot(&app, "selected-image marker preflight")?;
+    preflight_user_marker(&session)
+}
+
+#[cfg(test)]
+pub(crate) fn mutate_selected_marker_after_preflight_blocking(
+    app: tauri::AppHandle,
+) -> Result<UserMarkerMutation, String> {
+    let session = ready_session_snapshot(&app, "selected-image marker mutation")?;
+    let mutation = mutate_user_marker_after_preflight(&session)?;
+    let manager_state = app.state::<Mutex<ApplianceManager>>();
+    let mut manager = manager_state
+        .lock()
+        .map_err(|_| "Appliance state lock is unavailable.")?;
+    let active = manager
+        .session
+        .as_mut()
+        .filter(|active| active.ssh_port == session.ssh_port)
+        .ok_or("Builder session ended before target metadata could be recorded.")?;
+    active.target_system = Some(mutation.system.clone());
+    Ok(mutation)
+}
+
 #[tauri::command]
 pub(crate) async fn mutate_selected_marker(
     app: tauri::AppHandle,

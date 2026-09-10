@@ -483,12 +483,7 @@ pub(crate) fn normalize_os_release_field(value: &str) -> Option<String> {
     (!unquoted.is_empty()).then(|| unquoted.to_string())
 }
 
-pub(crate) fn mutate_user_marker(
-    session: &ImageInspectionSession,
-) -> Result<UserMarkerMutation, String> {
-    const MARKER_PATH: &str = "/etc/steamos-nvidia-image-builder-test";
-    const MARKER_CONTENT: &str =
-        "SteamOS NVIDIA Image Builder marker\nprotocol=1\nmilestone=marker-only\n";
+pub(crate) fn preflight_user_marker(session: &ImageInspectionSession) -> Result<(), String> {
     const PREFLIGHT_COMMAND: &str = r#"set -eu
 SOURCE=/dev/disk/by-id/virtio-steamos-user-input
 WORK=/dev/disk/by-id/virtio-steamos-user-working
@@ -503,7 +498,15 @@ test "$(sudo blockdev --getro "$WORK")" = 0 || fail_preflight 'working device is
 if lsblk -nr -o MOUNTPOINTS "$SOURCE" | grep -q '[^[:space:]]' || lsblk -nr -o MOUNTPOINTS "$WORK" | grep -q '[^[:space:]]'; then
   fail_preflight 'a selected-image device is unexpectedly mounted'
 fi"#;
-    run_guest_command(session, PREFLIGHT_COMMAND)?;
+    run_guest_command(session, PREFLIGHT_COMMAND).map(|_| ())
+}
+
+pub(crate) fn mutate_user_marker_after_preflight(
+    session: &ImageInspectionSession,
+) -> Result<UserMarkerMutation, String> {
+    const MARKER_PATH: &str = "/etc/steamos-nvidia-image-builder-test";
+    const MARKER_CONTENT: &str =
+        "SteamOS NVIDIA Image Builder marker\nprotocol=1\nmilestone=marker-only\n";
     qmp_remove_user_input(session)?;
     const MUTATE_COMMAND: &str = r#"set -eu
 SOURCE=/dev/disk/by-id/virtio-steamos-user-input
@@ -718,6 +721,13 @@ test "$MOUNTED" = 0"#;
         mounted: required("MOUNTED")? == "1",
         system,
     })
+}
+
+pub(crate) fn mutate_user_marker(
+    session: &ImageInspectionSession,
+) -> Result<UserMarkerMutation, String> {
+    preflight_user_marker(session)?;
+    mutate_user_marker_after_preflight(session)
 }
 
 #[cfg(test)]

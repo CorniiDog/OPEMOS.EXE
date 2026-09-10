@@ -441,6 +441,23 @@ mod tests {
         .is_err());
         assert_eq!(wrong_device_attempts, 1);
 
+        let mut preflight_attempts = 0;
+        let mut mutation_attempts = 0;
+        let post_detach = run_live_marker_sequence(
+            Instant::now() + Duration::from_secs(1),
+            || {
+                preflight_attempts += 1;
+                Ok(())
+            },
+            || {
+                mutation_attempts += 1;
+                Err::<(), _>("Guest command exited with exit status: 255: post-detach timeout".into())
+            },
+        );
+        assert!(post_detach.is_err());
+        assert_eq!(preflight_attempts, 1);
+        assert_eq!(mutation_attempts, 1, "post-detach mutation must never retry");
+
         let mut refused_attempts = 0;
         assert!(retry_live_tcg_transport(Instant::now() + Duration::from_secs(1), || {
             refused_attempts += 1;
@@ -6165,6 +6182,15 @@ trap - EXIT"#,
         }
     }
 
+    fn run_live_marker_sequence<T>(
+        deadline: Instant,
+        preflight: impl FnMut() -> Result<(), String>,
+        mutation: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        retry_live_tcg_transport(deadline, preflight)?;
+        mutation()
+    }
+
     #[cfg(target_os = "linux")]
     fn wait_for_live_image_appliance(app: &tauri::AppHandle) {
         let deadline =
@@ -6247,9 +6273,11 @@ trap - EXIT"#,
         tauri::async_runtime::block_on(verify_working_image(app.clone()))
             .expect("verify the disposable working image");
         let mutation_deadline = Instant::now() + Duration::from_secs(60);
-        let mutation = retry_live_tcg_transport(mutation_deadline, || {
-            tauri::async_runtime::block_on(mutate_selected_marker(app.clone()))
-        })
+        let mutation = run_live_marker_sequence(
+            mutation_deadline,
+            || preflight_selected_marker_blocking(app.clone()),
+            || mutate_selected_marker_after_preflight_blocking(app.clone()),
+        )
         .expect("record the exact target from the disposable overlay");
         assert!(mutation.input_unchanged);
         let target = tauri::async_runtime::block_on(assess_nvidia_target(app.clone()))
