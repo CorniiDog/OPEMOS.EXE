@@ -492,13 +492,16 @@ pub(crate) fn mutate_user_marker(
     const PREFLIGHT_COMMAND: &str = r#"set -eu
 SOURCE=/dev/disk/by-id/virtio-steamos-user-input
 WORK=/dev/disk/by-id/virtio-steamos-user-working
-test -b "$SOURCE"
-test -b "$WORK"
-test "$(sudo blockdev --getro "$SOURCE")" = 1
-test "$(sudo blockdev --getro "$WORK")" = 0
-if lsblk -nr -o MOUNTPOINTS "$SOURCE" | grep -q '[^[:space:]]' || lsblk -nr -o MOUNTPOINTS "$WORK" | grep -q '[^[:space:]]'; then
-  echo 'A selected-image device was unexpectedly mounted before mutation.' >&2
+fail_preflight() {
+  printf 'Selected-image mutation preflight failed: %s\n' "$1" >&2
   exit 1
+}
+test -b "$SOURCE" || fail_preflight 'read-only source device is unavailable'
+test -b "$WORK" || fail_preflight 'disposable working device is unavailable'
+test "$(sudo blockdev --getro "$SOURCE")" = 1 || fail_preflight 'source device is not read-only'
+test "$(sudo blockdev --getro "$WORK")" = 0 || fail_preflight 'working device is not writable'
+if lsblk -nr -o MOUNTPOINTS "$SOURCE" | grep -q '[^[:space:]]' || lsblk -nr -o MOUNTPOINTS "$WORK" | grep -q '[^[:space:]]'; then
+  fail_preflight 'a selected-image device is unexpectedly mounted'
 fi"#;
     run_guest_command(session, PREFLIGHT_COMMAND)?;
     qmp_remove_user_input(session)?;
