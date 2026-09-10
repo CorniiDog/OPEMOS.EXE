@@ -420,6 +420,27 @@ mod tests {
         assert_eq!(value, "ready");
         assert_eq!(attempts, 2);
 
+        let mut device_attempts = 0;
+        let device = retry_live_tcg_transport(Instant::now() + Duration::from_secs(1), || {
+            device_attempts += 1;
+            if device_attempts == 1 {
+                Err("Guest command exited with exit status: 1: Selected-image mutation preflight failed: read-only source device is unavailable".into())
+            } else {
+                Ok("attached")
+            }
+        })
+        .expect("retry one exact pre-mutation device disappearance");
+        assert_eq!(device, "attached");
+        assert_eq!(device_attempts, 2);
+
+        let mut wrong_device_attempts = 0;
+        assert!(retry_live_tcg_transport(Instant::now() + Duration::from_secs(1), || {
+            wrong_device_attempts += 1;
+            Err::<(), _>("Guest command exited with exit status: 1: Selected-image mutation preflight failed: disposable working device is unavailable".into())
+        })
+        .is_err());
+        assert_eq!(wrong_device_attempts, 1);
+
         let mut refused_attempts = 0;
         assert!(retry_live_tcg_transport(Instant::now() + Duration::from_secs(1), || {
             refused_attempts += 1;
@@ -6123,15 +6144,20 @@ trap - EXIT"#,
     }
 
     #[cfg(target_os = "linux")]
+    fn retryable_live_tcg_error(error: &str) -> bool {
+        transient_guest_connection_error(error)
+            || error.contains(
+                "Selected-image mutation preflight failed: read-only source device is unavailable",
+            )
+    }
+
     fn retry_live_tcg_transport<T>(
         deadline: Instant,
         mut operation: impl FnMut() -> Result<T, String>,
     ) -> Result<T, String> {
         loop {
             match operation() {
-                Err(error)
-                    if transient_guest_connection_error(&error) && Instant::now() < deadline =>
-                {
+                Err(error) if retryable_live_tcg_error(&error) && Instant::now() < deadline => {
                     thread::sleep(Duration::from_millis(250));
                 }
                 result => return result,
