@@ -2305,6 +2305,30 @@ pub(crate) fn run_guest_command(
     finish_guest_command(start_guest_command(session, command)?)
 }
 
+pub(crate) fn finish_guest_command_with_stdout(
+    child: Child,
+    mut stdout: BufReader<ChildStdout>,
+    mut captured_stdout: String,
+) -> Result<String, String> {
+    stdout
+        .read_to_string(&mut captured_stdout)
+        .map_err(|e| format!("Could not read the structured guest command: {e}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Could not wait for the structured guest command: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = captured_stdout.trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(if detail.is_empty() {
+            format!("Guest command exited with {}.", output.status)
+        } else {
+            format!("Guest command exited with {}: {detail}", output.status)
+        });
+    }
+    Ok(captured_stdout.trim().to_string())
+}
+
 pub(crate) fn read_qmp_response(
     reader: &mut BufReader<TcpStream>,
 ) -> Result<serde_json::Value, String> {

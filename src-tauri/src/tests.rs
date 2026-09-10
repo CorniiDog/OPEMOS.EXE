@@ -29,6 +29,23 @@ mod tests {
         assert!(error.contains("exit status: 7"));
         assert!(error.ends_with("exact-error"));
         assert!(!error.contains("fallback"));
+
+        let mut channel = Command::new("/bin/sh");
+        channel
+            .args(["-c", "printf 'OPEMOS_MUTATION_CHANNEL_READY\nTARGET=ready\n'"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut channel = channel.spawn().expect("start channel fixture");
+        let mut stdout = BufReader::new(channel.stdout.take().expect("capture channel stdout"));
+        let mut ready = String::new();
+        stdout.read_line(&mut ready).expect("read channel marker");
+        assert_eq!(ready.trim(), "OPEMOS_MUTATION_CHANNEL_READY");
+        assert_eq!(
+            finish_guest_command_with_stdout(channel, stdout, String::new())
+                .expect("capture output after channel marker"),
+            "TARGET=ready"
+        );
     }
 
     #[test]

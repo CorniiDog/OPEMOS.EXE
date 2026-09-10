@@ -512,6 +512,7 @@ SOURCE=/dev/disk/by-id/virtio-steamos-user-input
 WORK=/dev/disk/by-id/virtio-steamos-user-working
 MOUNT_DIR=/mnt/steamos-user-marker
 EXPECTED=$(printf 'SteamOS NVIDIA Image Builder marker\nprotocol=1\nmilestone=marker-only')
+printf 'OPEMOS_MUTATION_CHANNEL_READY\n'
 for attempt in $(seq 1 150); do
   test ! -b "$SOURCE" && break
   sleep 0.1
@@ -660,12 +661,27 @@ done
 test "$(sudo blockdev --getro "$WORK")" = 1
 test "$MOUNTED" = 0"#;
     let mut mutation = start_guest_command(session, MUTATE_COMMAND)?;
+    let stdout = mutation
+        .stdout
+        .take()
+        .ok_or("Could not capture the mutation guest command output.")?;
+    let mut stdout = BufReader::new(stdout);
+    let mut channel_ready = String::new();
+    stdout
+        .read_line(&mut channel_ready)
+        .map_err(|e| format!("Could not read the mutation channel readiness marker: {e}"))?;
+    if channel_ready.trim() != "OPEMOS_MUTATION_CHANNEL_READY" {
+        return match finish_guest_command_with_stdout(mutation, stdout, channel_ready) {
+            Err(error) => Err(error),
+            Ok(_) => Err("Mutation guest command omitted the channel readiness marker.".into()),
+        };
+    }
     if let Err(error) = qmp_remove_user_input(session) {
         let _ = mutation.kill();
         let _ = mutation.wait();
         return Err(error);
     }
-    let output = finish_guest_command(mutation)?;
+    let output = finish_guest_command_with_stdout(mutation, stdout, String::new())?;
     let mut values = std::collections::HashMap::new();
     let mut kernel_versions = Vec::new();
     for line in output.lines() {
