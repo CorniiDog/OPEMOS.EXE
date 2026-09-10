@@ -404,6 +404,39 @@ mod tests {
         assert!(stopped, "watchdog left its target running after parent group death");
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn live_tcg_transport_retry_is_bounded_and_refuses_non_transport_failures() {
+        let mut attempts = 0;
+        let value = retry_live_tcg_transport(Instant::now() + Duration::from_secs(1), || {
+            attempts += 1;
+            if attempts == 1 {
+                Err("Guest command exited with exit status: 255: banner timeout".into())
+            } else {
+                Ok("ready")
+            }
+        })
+        .expect("retry one transport failure");
+        assert_eq!(value, "ready");
+        assert_eq!(attempts, 2);
+
+        let mut refused_attempts = 0;
+        assert!(retry_live_tcg_transport(Instant::now() + Duration::from_secs(1), || {
+            refused_attempts += 1;
+            Err::<(), _>("guest validation failed".into())
+        })
+        .is_err());
+        assert_eq!(refused_attempts, 1);
+
+        let mut expired_attempts = 0;
+        assert!(retry_live_tcg_transport(Instant::now(), || {
+            expired_attempts += 1;
+            Err::<(), _>("Guest command exited with exit status: 255: banner timeout".into())
+        })
+        .is_err());
+        assert_eq!(expired_attempts, 1);
+    }
+
     #[test]
     fn qmp_quit_uses_private_capability_handshake_and_exact_command() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind QMP fixture");
@@ -6090,6 +6123,23 @@ trap - EXIT"#,
     }
 
     #[cfg(target_os = "linux")]
+    fn retry_live_tcg_transport<T>(
+        deadline: Instant,
+        mut operation: impl FnMut() -> Result<T, String>,
+    ) -> Result<T, String> {
+        loop {
+            match operation() {
+                Err(error)
+                    if transient_guest_connection_error(&error) && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(250));
+                }
+                result => return result,
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
     fn wait_for_live_image_appliance(app: &tauri::AppHandle) {
         let deadline =
             Instant::now() + Duration::from_secs(TCG_HARNESS_OUTER_TIMEOUT_SECS);
@@ -6167,8 +6217,11 @@ trap - EXIT"#,
         assert!(inspection.layout.recognized, "the Valve layout must be recognized");
         tauri::async_runtime::block_on(verify_working_image(app.clone()))
             .expect("verify the disposable working image");
-        let mutation = tauri::async_runtime::block_on(mutate_selected_marker(app.clone()))
-            .expect("record the exact target from the disposable overlay");
+        let mutation_deadline = Instant::now() + Duration::from_secs(60);
+        let mutation = retry_live_tcg_transport(mutation_deadline, || {
+            tauri::async_runtime::block_on(mutate_selected_marker(app.clone()))
+        })
+        .expect("record the exact target from the disposable overlay");
         assert!(mutation.input_unchanged);
         let target = tauri::async_runtime::block_on(assess_nvidia_target(app.clone()))
             .expect("assess the exact NVIDIA target");
