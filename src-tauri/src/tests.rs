@@ -6212,8 +6212,11 @@ trap - EXIT"#,
         .expect("start the image appliance");
         wait_for_live_image_appliance(&app);
 
-        let inspection =
-            inspect_selected_image_blocking(app.clone()).expect("inspect the recovery image");
+        let inspection_deadline = Instant::now() + Duration::from_secs(60);
+        let inspection = retry_live_tcg_transport(inspection_deadline, || {
+            inspect_selected_image_blocking(app.clone())
+        })
+        .expect("inspect the recovery image");
         assert!(inspection.layout.recognized, "the Valve layout must be recognized");
         tauri::async_runtime::block_on(verify_working_image(app.clone()))
             .expect("verify the disposable working image");
