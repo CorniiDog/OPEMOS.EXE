@@ -151,6 +151,7 @@ pub fn run_core_driver_resolver(arguments: &[String]) -> Result<Option<String>, 
 
 const READY_MARKER: &str = "SteamOS NVIDIA Image Builder appliance\nREADY";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
+const TCG_HARNESS_BOOT_TIMEOUT_SECS: u64 = 600;
 const NVIDIA_BUILD_BOOT_TIMEOUT: Duration = Duration::from_secs(600);
 const NVIDIA_RELEASES_API: &str =
     "https://api.github.com/repos/CorniiDog/OPEMOS/releases?per_page=100";

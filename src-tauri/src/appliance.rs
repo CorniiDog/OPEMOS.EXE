@@ -8,6 +8,8 @@ pub(crate) struct ApplianceSession {
     pub(crate) ssh_port: u16,
     pub(crate) qmp_port: u16,
     pub(crate) started_at: Instant,
+    pub(crate) readiness_deadline: Instant,
+    pub(crate) readiness_timeout_secs: u64,
     pub(crate) state: String,
     pub(crate) message: String,
     pub(crate) input_image: PathBuf,
@@ -530,6 +532,46 @@ pub(crate) fn appliance_root_qemu_arguments(runtime_disk: &Path) -> [String; 4] 
 pub(crate) const FEDORA_TCG_DEVICE_TIMEOUT_SECS: u64 = 300;
 pub(crate) const FEDORA_TCG_DEVICE_TIMEOUT_MIN_SECS: u64 = 120;
 pub(crate) const FEDORA_TCG_DEVICE_TIMEOUT_MAX_SECS: u64 = 600;
+
+pub(crate) fn appliance_readiness_deadline(
+    started_at: Instant,
+    tcg_harness_timeout_secs: Option<u64>,
+) -> Result<(Instant, u64), String> {
+    let timeout_secs = match tcg_harness_timeout_secs {
+        None => BOOT_TIMEOUT.as_secs(),
+        Some(TCG_HARNESS_BOOT_TIMEOUT_SECS) => TCG_HARNESS_BOOT_TIMEOUT_SECS,
+        Some(_) => return Err(format!(
+            "The contained one-vCPU TCG harness readiness deadline must be exactly {TCG_HARNESS_BOOT_TIMEOUT_SECS} seconds."
+        )),
+    };
+    let deadline = started_at
+        .checked_add(Duration::from_secs(timeout_secs))
+        .ok_or("The appliance readiness deadline overflowed.")?;
+    Ok((deadline, timeout_secs))
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum ApplianceReadinessOutcome {
+    Ready,
+    Failed,
+    TimedOut,
+    Pending,
+}
+
+pub(crate) fn appliance_readiness_outcome(
+    now: Instant,
+    deadline: Instant,
+    handshake_result: &Result<String, String>,
+) -> ApplianceReadinessOutcome {
+    if now >= deadline {
+        return ApplianceReadinessOutcome::TimedOut;
+    }
+    match handshake_result {
+        Ok(output) if output == READY_MARKER => ApplianceReadinessOutcome::Ready,
+        Ok(_) => ApplianceReadinessOutcome::Failed,
+        Err(_) => ApplianceReadinessOutcome::Pending,
+    }
+}
 pub(crate) const FEDORA_ROOT_DEVICE_UNIT: &str =
     r"dev-disk-by\x2duuid-15c26993\x2dac30\x2d424a\x2d9c4b\x2dfaec4434d234.device";
 pub(crate) const FEDORA_EFI_DEVICE_UNIT: &str = r"dev-disk-by\x2duuid-5BCC\x2d12A9.device";
@@ -1858,6 +1900,9 @@ pub(crate) fn prepare_session_with_output(
     };
 
     runtime_guard.armed = false;
+    let started_at = Instant::now();
+    let (readiness_deadline, readiness_timeout_secs) =
+        appliance_readiness_deadline(started_at, None)?;
     Ok(ApplianceSession {
         child,
         watchdog,
@@ -1865,7 +1910,9 @@ pub(crate) fn prepare_session_with_output(
         ssh_key,
         ssh_port,
         qmp_port,
-        started_at: Instant::now(),
+        started_at,
+        readiness_deadline,
+        readiness_timeout_secs,
         state: "booting".into(),
         message: "Fedora builder appliance is booting.".into(),
         input_image,
@@ -3037,6 +3084,28 @@ pub(crate) fn start_appliance_blocking(
     output_directory: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<ApplianceStatus, String> {
+    start_appliance_blocking_with_timeout(path, output_directory, None, app)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn start_appliance_tcg_harness_blocking(
+    path: String,
+    output_directory: Option<String>,
+    timeout_secs: u64,
+    app: tauri::AppHandle,
+) -> Result<ApplianceStatus, String> {
+    start_appliance_blocking_with_timeout(path, output_directory, Some(timeout_secs), app)
+}
+
+fn start_appliance_blocking_with_timeout(
+    path: String,
+    output_directory: Option<String>,
+    tcg_harness_timeout_secs: Option<u64>,
+    app: tauri::AppHandle,
+) -> Result<ApplianceStatus, String> {
+    if tcg_harness_timeout_secs.is_some() {
+        appliance_readiness_deadline(Instant::now(), tcg_harness_timeout_secs)?;
+    }
     let input = fs::canonicalize(PathBuf::from(path))
         .map_err(|e| format!("Could not resolve the selected image: {e}"))?;
     if !input.is_file() {
@@ -3097,7 +3166,9 @@ pub(crate) fn start_appliance_blocking(
         drop(prepared);
         return Err("Image preparation cancelled.".into());
     }
-    let session = prepared?;
+    let mut session = prepared?;
+    (session.readiness_deadline, session.readiness_timeout_secs) =
+        appliance_readiness_deadline(session.started_at, tcg_harness_timeout_secs)?;
     let status = session_status(&session);
     manager.session = Some(session);
     Ok(status)
@@ -3114,7 +3185,7 @@ pub(crate) fn get_appliance_status_blocking(
     app: tauri::AppHandle,
 ) -> Result<ApplianceStatus, String> {
     let manager_state = app.state::<Mutex<ApplianceManager>>();
-    let (snapshot, session_port, started_at) = {
+    let (snapshot, session_port, readiness_deadline, readiness_timeout_secs) = {
         let mut manager = manager_state
             .lock()
             .map_err(|_| "Appliance state lock is unavailable.")?;
@@ -3153,7 +3224,8 @@ pub(crate) fn get_appliance_status_blocking(
         (
             ImageInspectionSession::from(&*session),
             session.ssh_port,
-            session.started_at,
+            session.readiness_deadline,
+            session.readiness_timeout_secs,
         )
     };
 
@@ -3173,20 +3245,22 @@ pub(crate) fn get_appliance_status_blocking(
     if session.ssh_port != session_port || session.state != "booting" {
         return Ok(session_status(session));
     }
-    match handshake_result {
-        Ok(output) if output == READY_MARKER => {
+    match appliance_readiness_outcome(Instant::now(), readiness_deadline, &handshake_result) {
+        ApplianceReadinessOutcome::Ready => {
             session.state = "ready".into();
             session.message = "Builder appliance is ready.".into();
         }
-        Ok(_) => {
+        ApplianceReadinessOutcome::Failed => {
             session.state = "failed".into();
             session.message = "Builder handshake returned an unexpected marker.".into();
         }
-        Err(_) if started_at.elapsed() >= BOOT_TIMEOUT => {
+        ApplianceReadinessOutcome::TimedOut => {
             session.state = "timedOut".into();
-            session.message = "Builder appliance did not become ready within 120 seconds.".into();
+            session.message = format!(
+                "Builder appliance did not become ready within {readiness_timeout_secs} seconds."
+            );
         }
-        Err(_) => {}
+        ApplianceReadinessOutcome::Pending => {}
     }
     Ok(session_status(session))
 }
