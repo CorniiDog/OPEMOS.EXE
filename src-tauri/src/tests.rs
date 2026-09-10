@@ -3497,9 +3497,9 @@ esac
                 bytes: 1,
                 executable: true,
             }],
-            archive: "/modules.tar.gz".into(),
-            checksum: "/modules.tar.gz.sha256".into(),
-            provenance: "/modules.provenance.json".into(),
+            archive: "/builder-output/nvidia-575.64.05-kernel-6.16.12.tar.gz".into(),
+            checksum: "/builder-output/nvidia-575.64.05-kernel-6.16.12.tar.gz.sha256".into(),
+            provenance: "/builder-output/nvidia-575.64.05-kernel-6.16.12.provenance.json".into(),
             archive_sha256: digest('a'),
             archive_bytes: 700 * 1024 * 1024,
             expanded_bytes: 900 * 1024 * 1024,
@@ -3517,8 +3517,8 @@ esac
             userspace_lock,
         };
         let result_inputs = SupportInstallInputNames {
-            archive: Some("modules.tar.gz".into()),
-            provenance: Some("modules.provenance.json".into()),
+            archive: Some("nvidia-modules.tar.gz".into()),
+            provenance: Some("nvidia-modules.provenance.json".into()),
             nvidia_utils: Some("nvidia-utils-575.64.05-2-x86_64.pkg.tar.zst".into()),
             lib32_nvidia_utils: Some(
                 "lib32-nvidia-utils-575.64.05-1-x86_64.pkg.tar.zst".into(),

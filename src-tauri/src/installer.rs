@@ -2449,13 +2449,6 @@ pub(crate) fn validate_nvidia_install_result(
     {
         return Err(support_install_failure_message(&document));
     }
-    let input_name = |path: &Path, description: &str| {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.is_empty())
-            .map(str::to_owned)
-            .ok_or_else(|| format!("The staged {description} has no safe filename."))
-    };
     let package_name = |name: &str| {
         let matches = inputs
             .packages
@@ -2470,8 +2463,8 @@ pub(crate) fn validate_nvidia_install_result(
         guest_userspace_filenames(matches[0]).map(|(filename, _)| filename)
     };
     let expected_inputs = SupportInstallInputNames {
-        archive: Some(input_name(&inputs.archive, "NVIDIA module archive")?),
-        provenance: Some(input_name(&inputs.provenance, "NVIDIA provenance")?),
+        archive: Some("nvidia-modules.tar.gz".into()),
+        provenance: Some("nvidia-modules.provenance.json".into()),
         nvidia_utils: Some(package_name("nvidia-utils")?),
         lib32_nvidia_utils: Some(package_name("lib32-nvidia-utils")?),
     };
