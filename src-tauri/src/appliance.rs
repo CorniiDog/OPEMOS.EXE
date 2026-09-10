@@ -2272,13 +2272,20 @@ pub(crate) fn start_guest_command(
     session: &impl GuestConnection,
     command: &str,
 ) -> Result<Child, String> {
-    ssh_command(session)?
-        .arg(command)
+    let mut ssh = ssh_command(session)?;
+    ssh.arg(command)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+    isolate_process_group(&mut ssh);
+    ssh.spawn()
         .map_err(|e| format!("Could not start the structured guest command: {e}"))
+}
+
+pub(crate) fn stop_guest_command_group(child: &mut Child) {
+    kill_owned_process_group(child);
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 pub(crate) fn finish_guest_command(child: Child) -> Result<String, String> {
@@ -2305,25 +2312,95 @@ pub(crate) fn run_guest_command(
     finish_guest_command(start_guest_command(session, command)?)
 }
 
+pub(crate) fn read_guest_command_ready_line(
+    child: &mut Child,
+    stdout: ChildStdout,
+    timeout: Duration,
+) -> Result<(BufReader<ChildStdout>, String), String> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let reader = thread::spawn(move || {
+        let mut stdout = BufReader::new(stdout);
+        let mut line = String::new();
+        let result = (&mut stdout).take(65).read_line(&mut line);
+        let _ = sender.send((stdout, line, result));
+    });
+    match receiver.recv_timeout(timeout) {
+        Ok((stdout, line, result)) => {
+            if reader.join().is_err() {
+                stop_guest_command_group(child);
+                return Err("Guest command readiness reader panicked.".into());
+            }
+            if let Err(error) = result {
+                stop_guest_command_group(child);
+                return Err(format!(
+                    "Could not read the guest command readiness marker: {error}"
+                ));
+            }
+            if line.len() > 64 || !line.ends_with('\n') {
+                stop_guest_command_group(child);
+                return Err("Guest command readiness marker is missing or excessive.".into());
+            }
+            Ok((stdout, line))
+        }
+        Err(error) => {
+            stop_guest_command_group(child);
+            let _ = reader.join();
+            Err(match error {
+                mpsc::RecvTimeoutError::Timeout => {
+                    "Guest command readiness marker timed out.".into()
+                }
+                mpsc::RecvTimeoutError::Disconnected => {
+                    "Guest command readiness reader stopped unexpectedly.".into()
+                }
+            })
+        }
+    }
+}
+
+pub(crate) fn start_guest_stderr_drain(
+    child: &mut Child,
+) -> Result<thread::JoinHandle<Result<Vec<u8>, String>>, String> {
+    let mut stderr = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            stop_guest_command_group(child);
+            return Err("Could not capture the structured guest command diagnostics.".into());
+        }
+    };
+    Ok(thread::spawn(move || {
+        let mut captured = Vec::new();
+        stderr
+            .read_to_end(&mut captured)
+            .map_err(|e| format!("Could not read the structured guest command diagnostics: {e}"))?;
+        Ok(captured)
+    }))
+}
+
 pub(crate) fn finish_guest_command_with_stdout(
-    child: Child,
+    mut child: Child,
     mut stdout: BufReader<ChildStdout>,
     mut captured_stdout: String,
+    stderr_drain: thread::JoinHandle<Result<Vec<u8>, String>>,
 ) -> Result<String, String> {
-    stdout
+    let stdout_result = stdout
         .read_to_string(&mut captured_stdout)
-        .map_err(|e| format!("Could not read the structured guest command: {e}"))?;
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("Could not wait for the structured guest command: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        .map_err(|e| format!("Could not read the structured guest command: {e}"));
+    let status_result = child
+        .wait()
+        .map_err(|e| format!("Could not wait for the structured guest command: {e}"));
+    let stderr = stderr_drain
+        .join()
+        .map_err(|_| "Structured guest diagnostic drain panicked.".to_string())??;
+    stdout_result?;
+    let status = status_result?;
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
         let stdout = captured_stdout.trim().to_string();
         let detail = if stderr.is_empty() { stdout } else { stderr };
         return Err(if detail.is_empty() {
-            format!("Guest command exited with {}.", output.status)
+            format!("Guest command exited with {status}.")
         } else {
-            format!("Guest command exited with {}: {detail}", output.status)
+            format!("Guest command exited with {status}: {detail}")
         });
     }
     Ok(captured_stdout.trim().to_string())

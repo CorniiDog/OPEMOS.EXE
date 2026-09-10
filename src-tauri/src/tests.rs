@@ -36,16 +36,91 @@ mod tests {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        isolate_process_group(&mut channel);
         let mut channel = channel.spawn().expect("start channel fixture");
-        let mut stdout = BufReader::new(channel.stdout.take().expect("capture channel stdout"));
-        let mut ready = String::new();
-        stdout.read_line(&mut ready).expect("read channel marker");
+        let stderr_drain = start_guest_stderr_drain(&mut channel).expect("drain channel stderr");
+        let channel_stdout = channel.stdout.take().expect("capture channel stdout");
+        let (stdout, ready) = read_guest_command_ready_line(
+            &mut channel,
+            channel_stdout,
+            Duration::from_secs(1),
+        )
+        .expect("read bounded channel marker");
         assert_eq!(ready.trim(), "OPEMOS_MUTATION_CHANNEL_READY");
         assert_eq!(
-            finish_guest_command_with_stdout(channel, stdout, String::new())
+            finish_guest_command_with_stdout(channel, stdout, String::new(), stderr_drain)
                 .expect("capture output after channel marker"),
             "TARGET=ready"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn guest_channel_readiness_is_bounded_and_drains_stderr_concurrently() {
+        let mut noisy = Command::new("/bin/sh");
+        noisy
+            .args(["-c", "head -c 1048576 /dev/zero >&2; printf 'OPEMOS_MUTATION_CHANNEL_READY\nTARGET=ready\n'"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut noisy);
+        let mut noisy = noisy.spawn().expect("start noisy channel fixture");
+        let stderr_drain = start_guest_stderr_drain(&mut noisy).expect("drain noisy stderr");
+        let noisy_stdout = noisy.stdout.take().expect("capture noisy stdout");
+        let (stdout, ready) = read_guest_command_ready_line(
+            &mut noisy,
+            noisy_stdout,
+            Duration::from_secs(2),
+        )
+        .expect("large stderr must not block readiness");
+        assert_eq!(ready, "OPEMOS_MUTATION_CHANNEL_READY\n");
+        assert_eq!(
+            finish_guest_command_with_stdout(noisy, stdout, String::new(), stderr_drain)
+                .expect("finish noisy channel"),
+            "TARGET=ready"
+        );
+
+        let mut stalled = Command::new("/bin/sh");
+        stalled
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut stalled);
+        let mut stalled = stalled.spawn().expect("start stalled channel fixture");
+        let stderr_drain = start_guest_stderr_drain(&mut stalled).expect("drain stalled stderr");
+        let stalled_stdout = stalled.stdout.take().expect("capture stalled stdout");
+        let started = Instant::now();
+        let error = read_guest_command_ready_line(
+            &mut stalled,
+            stalled_stdout,
+            Duration::from_millis(50),
+        )
+        .expect_err("missing readiness must expire");
+        assert!(error.contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(stalled.try_wait().expect("inspect stalled child").is_some());
+        assert!(stderr_drain.join().expect("join stderr drain").is_ok());
+
+        let mut excessive = Command::new("/bin/sh");
+        excessive
+            .args(["-c", "printf '%065d' 0; sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut excessive);
+        let mut excessive = excessive.spawn().expect("start excessive marker fixture");
+        let stderr_drain = start_guest_stderr_drain(&mut excessive).expect("drain excessive stderr");
+        let excessive_stdout = excessive.stdout.take().expect("capture excessive stdout");
+        let error = read_guest_command_ready_line(
+            &mut excessive,
+            excessive_stdout,
+            Duration::from_secs(1),
+        )
+        .expect_err("oversized marker must fail");
+        assert!(error.contains("excessive"));
+        assert!(excessive.try_wait().expect("inspect excessive child").is_some());
+        assert!(stderr_drain.join().expect("join stderr drain").is_ok());
     }
 
     #[test]

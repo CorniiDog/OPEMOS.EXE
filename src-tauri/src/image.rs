@@ -661,27 +661,39 @@ done
 test "$(sudo blockdev --getro "$WORK")" = 1
 test "$MOUNTED" = 0"#;
     let mut mutation = start_guest_command(session, MUTATE_COMMAND)?;
+    let stderr_drain = start_guest_stderr_drain(&mut mutation)?;
     let stdout = mutation
         .stdout
         .take()
         .ok_or("Could not capture the mutation guest command output.")?;
-    let mut stdout = BufReader::new(stdout);
-    let mut channel_ready = String::new();
-    stdout
-        .read_line(&mut channel_ready)
-        .map_err(|e| format!("Could not read the mutation channel readiness marker: {e}"))?;
+    let readiness = read_guest_command_ready_line(
+        &mut mutation,
+        stdout,
+        Duration::from_secs(30),
+    );
+    let (stdout, channel_ready) = match readiness {
+        Ok(readiness) => readiness,
+        Err(error) => {
+            let _ = stderr_drain.join();
+            return Err(format!("Could not establish the mutation channel: {error}"));
+        }
+    };
     if channel_ready.trim() != "OPEMOS_MUTATION_CHANNEL_READY" {
-        return match finish_guest_command_with_stdout(mutation, stdout, channel_ready) {
-            Err(error) => Err(error),
-            Ok(_) => Err("Mutation guest command omitted the channel readiness marker.".into()),
-        };
+        stop_guest_command_group(&mut mutation);
+        let _ = stderr_drain.join();
+        return Err("Mutation guest command omitted the channel readiness marker.".into());
     }
     if let Err(error) = qmp_remove_user_input(session) {
-        let _ = mutation.kill();
-        let _ = mutation.wait();
+        stop_guest_command_group(&mut mutation);
+        let _ = stderr_drain.join();
         return Err(error);
     }
-    let output = finish_guest_command_with_stdout(mutation, stdout, String::new())?;
+    let output = finish_guest_command_with_stdout(
+        mutation,
+        stdout,
+        String::new(),
+        stderr_drain,
+    )?;
     let mut values = std::collections::HashMap::new();
     let mut kernel_versions = Vec::new();
     for line in output.lines() {
