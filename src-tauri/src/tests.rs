@@ -377,6 +377,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[allow(clippy::zombie_processes)] // The child-mode parent is deliberately killed to exercise watchdog cleanup.
     fn qemu_watchdog_survives_parent_group_death_and_stops_exact_target() {
         const CHILD_MODE: &str = "OPEMOS_WATCHDOG_PARENT_EXIT_CHILD";
         const PID_PATH: &str = "OPEMOS_WATCHDOG_TARGET_PID_PATH";
