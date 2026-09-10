@@ -3,6 +3,126 @@
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn finished_guest_command_captures_stdout_and_stderr() {
+        let mut success = Command::new("/bin/sh");
+        success
+            .args(["-c", "printf READY; printf ignored >&2"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        assert_eq!(
+            finish_guest_command(success.spawn().expect("start success fixture"))
+                .expect("capture successful output"),
+            "READY"
+        );
+
+        let mut failure = Command::new("/bin/sh");
+        failure
+            .args(["-c", "printf fallback; printf exact-error >&2; exit 7"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let error = finish_guest_command(failure.spawn().expect("start failure fixture"))
+            .expect_err("preserve failing stderr");
+        assert!(error.contains("exit status: 7"));
+        assert!(error.ends_with("exact-error"));
+        assert!(!error.contains("fallback"));
+
+        let mut channel = Command::new("/bin/sh");
+        channel
+            .args(["-c", "printf 'OPEMOS_MUTATION_CHANNEL_READY\nTARGET=ready\n'"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut channel);
+        let mut channel = channel.spawn().expect("start channel fixture");
+        let stderr_drain = start_guest_stderr_drain(&mut channel).expect("drain channel stderr");
+        let channel_stdout = channel.stdout.take().expect("capture channel stdout");
+        let (stdout, ready) = read_guest_command_ready_line(
+            &mut channel,
+            channel_stdout,
+            Duration::from_secs(1),
+        )
+        .expect("read bounded channel marker");
+        assert_eq!(ready.trim(), "OPEMOS_MUTATION_CHANNEL_READY");
+        assert_eq!(
+            finish_guest_command_with_stdout(channel, stdout, String::new(), stderr_drain)
+                .expect("capture output after channel marker"),
+            "TARGET=ready"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn guest_channel_readiness_is_bounded_and_drains_stderr_concurrently() {
+        let mut noisy = Command::new("/bin/sh");
+        noisy
+            .args(["-c", "head -c 1048576 /dev/zero >&2; printf 'OPEMOS_MUTATION_CHANNEL_READY\nTARGET=ready\n'"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut noisy);
+        let mut noisy = noisy.spawn().expect("start noisy channel fixture");
+        let stderr_drain = start_guest_stderr_drain(&mut noisy).expect("drain noisy stderr");
+        let noisy_stdout = noisy.stdout.take().expect("capture noisy stdout");
+        let (stdout, ready) = read_guest_command_ready_line(
+            &mut noisy,
+            noisy_stdout,
+            Duration::from_secs(2),
+        )
+        .expect("large stderr must not block readiness");
+        assert_eq!(ready, "OPEMOS_MUTATION_CHANNEL_READY\n");
+        assert_eq!(
+            finish_guest_command_with_stdout(noisy, stdout, String::new(), stderr_drain)
+                .expect("finish noisy channel"),
+            "TARGET=ready"
+        );
+
+        let mut stalled = Command::new("/bin/sh");
+        stalled
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut stalled);
+        let mut stalled = stalled.spawn().expect("start stalled channel fixture");
+        let stderr_drain = start_guest_stderr_drain(&mut stalled).expect("drain stalled stderr");
+        let stalled_stdout = stalled.stdout.take().expect("capture stalled stdout");
+        let started = Instant::now();
+        let error = read_guest_command_ready_line(
+            &mut stalled,
+            stalled_stdout,
+            Duration::from_millis(50),
+        )
+        .expect_err("missing readiness must expire");
+        assert!(error.contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(stalled.try_wait().expect("inspect stalled child").is_some());
+        assert!(stderr_drain.join().expect("join stderr drain").is_ok());
+
+        let mut excessive = Command::new("/bin/sh");
+        excessive
+            .args(["-c", "printf '%065d' 0; sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut excessive);
+        let mut excessive = excessive.spawn().expect("start excessive marker fixture");
+        let stderr_drain = start_guest_stderr_drain(&mut excessive).expect("drain excessive stderr");
+        let excessive_stdout = excessive.stdout.take().expect("capture excessive stdout");
+        let error = read_guest_command_ready_line(
+            &mut excessive,
+            excessive_stdout,
+            Duration::from_secs(1),
+        )
+        .expect_err("oversized marker must fail");
+        assert!(error.contains("excessive"));
+        assert!(excessive.try_wait().expect("inspect excessive child").is_some());
+        assert!(stderr_drain.join().expect("join stderr drain").is_ok());
+    }
+
     #[test]
     fn guest_failure_details_drop_progress_noise_and_remain_bounded() {
         let progress = "STEAMOS_NVIDIA_PROGRESS {\"schemaVersion\":1,\"attempt\":2,\"phase\":\"hashing\",\"indeterminate\":false,\"completed\":4,\"total\":8,\"unit\":\"bytes\"}";
@@ -328,6 +448,174 @@ mod tests {
             let _ = target.wait();
         }
         assert!(exit.is_some(), "watchdog left its target running");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[allow(clippy::zombie_processes)] // The child-mode parent is deliberately killed to exercise watchdog cleanup.
+    fn qemu_watchdog_survives_parent_group_death_and_stops_exact_target() {
+        const CHILD_MODE: &str = "OPEMOS_WATCHDOG_PARENT_EXIT_CHILD";
+        const PID_PATH: &str = "OPEMOS_WATCHDOG_TARGET_PID_PATH";
+        if std::env::var_os(CHILD_MODE).is_some() {
+            let pid_path = PathBuf::from(std::env::var_os(PID_PATH).expect("target PID path"));
+            let mut target = Command::new("/bin/sh");
+            target
+                .args(["-c", "exec sleep 30"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            isolate_process_group(&mut target);
+            let target = target.spawn().expect("start watchdog target");
+            let watchdog = spawn_qemu_watchdog(target.id()).expect("start lifecycle watchdog");
+            fs::write(pid_path, target.id().to_string()).expect("record target PID");
+            std::mem::forget(watchdog);
+            loop {
+                thread::sleep(Duration::from_secs(1));
+            }
+        }
+
+        let pid_path = std::env::temp_dir().join(format!(
+            "opemos-watchdog-parent-exit-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let mut parent = Command::new(std::env::current_exe().expect("current test executable"));
+        parent
+            .args([
+                "--exact",
+                "tests::qemu_watchdog_survives_parent_group_death_and_stops_exact_target",
+                "--nocapture",
+            ])
+            .env(CHILD_MODE, "1")
+            .env(PID_PATH, &pid_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        isolate_process_group(&mut parent);
+        let mut parent = parent.spawn().expect("start watchdog parent");
+        let target_pid = (0..100)
+            .find_map(|_| {
+                let target_pid = fs::read_to_string(&pid_path)
+                    .ok()
+                    .and_then(|value| value.trim().parse::<u32>().ok());
+                if target_pid.is_none() {
+                    thread::sleep(Duration::from_millis(25));
+                }
+                target_pid
+            })
+            .unwrap_or_else(|| {
+                kill_owned_process_group(&parent);
+                let _ = parent.wait();
+                panic!("watchdog parent did not publish its target PID")
+            });
+        kill_owned_process_group(&parent);
+        let _ = parent.wait();
+        let stopped = (0..50).any(|_| {
+            if !process_is_alive(target_pid) {
+                true
+            } else {
+                thread::sleep(Duration::from_millis(100));
+                false
+            }
+        });
+        if !stopped {
+            unsafe { libc::kill(-(target_pid as i32), libc::SIGKILL) };
+        }
+        let _ = fs::remove_file(pid_path);
+        assert!(stopped, "watchdog left its target running after parent group death");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn live_tcg_transport_retry_is_bounded_and_refuses_non_transport_failures() {
+        let mut attempts = 0;
+        let value = retry_live_tcg_transport(Instant::now() + Duration::from_secs(1), || {
+            attempts += 1;
+            if attempts == 1 {
+                Err("Guest command exited with exit status: 255: banner timeout".into())
+            } else {
+                Ok("ready")
+            }
+        })
+        .expect("retry one transport failure");
+        assert_eq!(value, "ready");
+        assert_eq!(attempts, 2);
+
+        let mut device_attempts = 0;
+        let device = retry_live_tcg_transport(Instant::now() + Duration::from_secs(1), || {
+            device_attempts += 1;
+            if device_attempts == 1 {
+                Err("Guest command exited with exit status: 1: Selected-image mutation preflight failed: read-only source device is unavailable".into())
+            } else {
+                Ok("attached")
+            }
+        })
+        .expect("retry one exact pre-mutation device disappearance");
+        assert_eq!(device, "attached");
+        assert_eq!(device_attempts, 2);
+
+        let mut wrong_device_attempts = 0;
+        assert!(retry_live_tcg_transport(Instant::now() + Duration::from_secs(1), || {
+            wrong_device_attempts += 1;
+            Err::<(), _>("Guest command exited with exit status: 1: Selected-image mutation preflight failed: disposable working device is unavailable".into())
+        })
+        .is_err());
+        assert_eq!(wrong_device_attempts, 1);
+
+        let mut preflight_attempts = 0;
+        let mut mutation_attempts = 0;
+        let post_detach = run_live_marker_sequence(
+            Instant::now() + Duration::from_secs(1),
+            || {
+                preflight_attempts += 1;
+                Ok(())
+            },
+            || {
+                mutation_attempts += 1;
+                Err::<(), _>("Guest command exited with exit status: 255: post-detach timeout".into())
+            },
+        );
+        assert!(post_detach.is_err());
+        assert_eq!(preflight_attempts, 1);
+        assert_eq!(mutation_attempts, 1, "post-detach mutation must never retry");
+
+        let mut refused_attempts = 0;
+        assert!(retry_live_tcg_transport(Instant::now() + Duration::from_secs(1), || {
+            refused_attempts += 1;
+            Err::<(), _>("guest validation failed".into())
+        })
+        .is_err());
+        assert_eq!(refused_attempts, 1);
+
+        let mut expired_attempts = 0;
+        assert!(retry_live_tcg_transport(Instant::now(), || {
+            expired_attempts += 1;
+            Err::<(), _>("Guest command exited with exit status: 255: banner timeout".into())
+        })
+        .is_err());
+        assert_eq!(expired_attempts, 1);
+    }
+
+    #[test]
+    fn qmp_quit_uses_private_capability_handshake_and_exact_command() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind QMP fixture");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept QMP client");
+            stream
+                .write_all(b"{\"QMP\":{\"version\":{}}}\n")
+                .expect("write QMP greeting");
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut capabilities = String::new();
+            reader.read_line(&mut capabilities).expect("read capabilities");
+            assert_eq!(capabilities, "{\"execute\":\"qmp_capabilities\"}\n");
+            stream.write_all(b"{\"return\":{}}\n").expect("accept capabilities");
+            let mut quit = String::new();
+            reader.read_line(&mut quit).expect("read quit");
+            assert_eq!(quit, "{\"execute\":\"quit\"}\n");
+        });
+        qmp_quit(port).expect("request private QMP shutdown");
+        server.join().expect("finish QMP fixture");
     }
 
     #[test]
@@ -2009,6 +2297,26 @@ esac
     }
 
     #[test]
+    fn native_appliance_uses_exact_tcg_device_credentials_only() {
+        let runtime_disk = Path::new("/tmp/native appliance,root.qcow2");
+        let kvm = native_appliance_qemu_arguments("kvm", runtime_disk)
+            .expect("KVM native appliance arguments");
+        assert_eq!(kvm, appliance_root_qemu_arguments(runtime_disk));
+
+        let tcg = native_appliance_qemu_arguments("tcg", runtime_disk)
+            .expect("TCG native appliance arguments");
+        assert_eq!(&tcg[..4], &appliance_root_qemu_arguments(runtime_disk));
+        assert_eq!(tcg.len(), 8);
+        assert_eq!(tcg[4], "-smbios");
+        assert_eq!(tcg[6], "-smbios");
+        assert!(tcg[5].contains(FEDORA_ROOT_DEVICE_UNIT));
+        assert!(tcg[7].contains(FEDORA_EFI_DEVICE_UNIT));
+        assert!(tcg[5].ends_with(FEDORA_TCG_DEVICE_TIMEOUT_CREDENTIAL));
+        assert!(tcg[7].ends_with(FEDORA_TCG_DEVICE_TIMEOUT_CREDENTIAL));
+        assert!(tcg[1].contains("native appliance,,root.qcow2"));
+    }
+
+    #[test]
     fn tcg_guest_device_timeout_report_requires_both_exact_devices() {
         validate_nvidia_guest_device_timeout_report("ROOT=5min\nEFI=5min")
             .expect("slow-device deadline report");
@@ -2026,6 +2334,14 @@ esac
         assert_eq!(default_deadline.duration_since(started_at), BOOT_TIMEOUT);
         let (harness_deadline, harness_secs) = appliance_readiness_deadline(started_at, Some(TCG_HARNESS_BOOT_TIMEOUT_SECS)).unwrap();
         assert_eq!(harness_secs, TCG_HARNESS_BOOT_TIMEOUT_SECS);
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(TCG_HARNESS_OUTER_TIMEOUT_SECS, 660);
+            assert_eq!(
+                TCG_HARNESS_OUTER_TIMEOUT_SECS - TCG_HARNESS_BOOT_TIMEOUT_SECS,
+                60
+            );
+        }
         assert_eq!(harness_deadline.duration_since(started_at), Duration::from_secs(600));
         assert_eq!(appliance_readiness_deadline(started_at, Some(TCG_HARNESS_BOOT_TIMEOUT_SECS)).unwrap().0, harness_deadline, "polling must not reset the absolute deadline");
         for malformed in [0, 119, 120, 599, 601, u64::MAX] {
@@ -3260,9 +3576,9 @@ esac
                 bytes: 1,
                 executable: true,
             }],
-            archive: "/modules.tar.gz".into(),
-            checksum: "/modules.tar.gz.sha256".into(),
-            provenance: "/modules.provenance.json".into(),
+            archive: "/builder-output/nvidia-575.64.05-kernel-6.16.12.tar.gz".into(),
+            checksum: "/builder-output/nvidia-575.64.05-kernel-6.16.12.tar.gz.sha256".into(),
+            provenance: "/builder-output/nvidia-575.64.05-kernel-6.16.12.provenance.json".into(),
             archive_sha256: digest('a'),
             archive_bytes: 700 * 1024 * 1024,
             expanded_bytes: 900 * 1024 * 1024,
@@ -3280,8 +3596,8 @@ esac
             userspace_lock,
         };
         let result_inputs = SupportInstallInputNames {
-            archive: Some("modules.tar.gz".into()),
-            provenance: Some("modules.provenance.json".into()),
+            archive: Some("nvidia-modules.tar.gz".into()),
+            provenance: Some("nvidia-modules.provenance.json".into()),
             nvidia_utils: Some("nvidia-utils-575.64.05-2-x86_64.pkg.tar.zst".into()),
             lib32_nvidia_utils: Some(
                 "lib32-nvidia-utils-575.64.05-1-x86_64.pkg.tar.zst".into(),
@@ -5969,9 +6285,42 @@ trap - EXIT"#,
     }
 
     #[cfg(target_os = "linux")]
+    fn retryable_live_tcg_error(error: &str) -> bool {
+        transient_guest_connection_error(error)
+            || error.contains(
+                "Selected-image mutation preflight failed: read-only source device is unavailable",
+            )
+    }
+
+    #[cfg(target_os = "linux")]
+    fn retry_live_tcg_transport<T>(
+        deadline: Instant,
+        mut operation: impl FnMut() -> Result<T, String>,
+    ) -> Result<T, String> {
+        loop {
+            match operation() {
+                Err(error) if retryable_live_tcg_error(&error) && Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(250));
+                }
+                result => return result,
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn run_live_marker_sequence<T>(
+        deadline: Instant,
+        preflight: impl FnMut() -> Result<(), String>,
+        mutation: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        retry_live_tcg_transport(deadline, preflight)?;
+        mutation()
+    }
+
+    #[cfg(target_os = "linux")]
     fn wait_for_live_image_appliance(app: &tauri::AppHandle) {
         let deadline =
-            Instant::now() + Duration::from_secs(TCG_HARNESS_BOOT_TIMEOUT_SECS + 60);
+            Instant::now() + Duration::from_secs(TCG_HARNESS_OUTER_TIMEOUT_SECS);
         loop {
             let status = get_appliance_status_blocking(app.clone())
                 .expect("read live image-appliance status");
@@ -6041,13 +6390,21 @@ trap - EXIT"#,
         .expect("start the image appliance");
         wait_for_live_image_appliance(&app);
 
-        let inspection =
-            inspect_selected_image_blocking(app.clone()).expect("inspect the recovery image");
+        let inspection_deadline = Instant::now() + Duration::from_secs(60);
+        let inspection = retry_live_tcg_transport(inspection_deadline, || {
+            inspect_selected_image_blocking(app.clone())
+        })
+        .expect("inspect the recovery image");
         assert!(inspection.layout.recognized, "the Valve layout must be recognized");
         tauri::async_runtime::block_on(verify_working_image(app.clone()))
             .expect("verify the disposable working image");
-        let mutation = tauri::async_runtime::block_on(mutate_selected_marker(app.clone()))
-            .expect("record the exact target from the disposable overlay");
+        let mutation_deadline = Instant::now() + Duration::from_secs(60);
+        let mutation = run_live_marker_sequence(
+            mutation_deadline,
+            || preflight_selected_marker_blocking(app.clone()),
+            || mutate_selected_marker_after_preflight_blocking(app.clone()),
+        )
+        .expect("record the exact target from the disposable overlay");
         assert!(mutation.input_unchanged);
         let target = tauri::async_runtime::block_on(assess_nvidia_target(app.clone()))
             .expect("assess the exact NVIDIA target");

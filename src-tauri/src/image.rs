@@ -483,30 +483,36 @@ pub(crate) fn normalize_os_release_field(value: &str) -> Option<String> {
     (!unquoted.is_empty()).then(|| unquoted.to_string())
 }
 
-pub(crate) fn mutate_user_marker(
+pub(crate) fn preflight_user_marker(session: &ImageInspectionSession) -> Result<(), String> {
+    const PREFLIGHT_COMMAND: &str = r#"set -eu
+SOURCE=/dev/disk/by-id/virtio-steamos-user-input
+WORK=/dev/disk/by-id/virtio-steamos-user-working
+fail_preflight() {
+  printf 'Selected-image mutation preflight failed: %s\n' "$1" >&2
+  exit 1
+}
+test -b "$SOURCE" || fail_preflight 'read-only source device is unavailable'
+test -b "$WORK" || fail_preflight 'disposable working device is unavailable'
+test "$(sudo blockdev --getro "$SOURCE")" = 1 || fail_preflight 'source device is not read-only'
+test "$(sudo blockdev --getro "$WORK")" = 0 || fail_preflight 'working device is not writable'
+if lsblk -nr -o MOUNTPOINTS "$SOURCE" | grep -q '[^[:space:]]' || lsblk -nr -o MOUNTPOINTS "$WORK" | grep -q '[^[:space:]]'; then
+  fail_preflight 'a selected-image device is unexpectedly mounted'
+fi"#;
+    run_guest_command(session, PREFLIGHT_COMMAND).map(|_| ())
+}
+
+pub(crate) fn mutate_user_marker_after_preflight(
     session: &ImageInspectionSession,
 ) -> Result<UserMarkerMutation, String> {
     const MARKER_PATH: &str = "/etc/steamos-nvidia-image-builder-test";
     const MARKER_CONTENT: &str =
         "SteamOS NVIDIA Image Builder marker\nprotocol=1\nmilestone=marker-only\n";
-    const PREFLIGHT_COMMAND: &str = r#"set -eu
-SOURCE=/dev/disk/by-id/virtio-steamos-user-input
-WORK=/dev/disk/by-id/virtio-steamos-user-working
-test -b "$SOURCE"
-test -b "$WORK"
-test "$(sudo blockdev --getro "$SOURCE")" = 1
-test "$(sudo blockdev --getro "$WORK")" = 0
-if lsblk -nr -o MOUNTPOINTS "$SOURCE" | grep -q '[^[:space:]]' || lsblk -nr -o MOUNTPOINTS "$WORK" | grep -q '[^[:space:]]'; then
-  echo 'A selected-image device was unexpectedly mounted before mutation.' >&2
-  exit 1
-fi"#;
-    run_guest_command(session, PREFLIGHT_COMMAND)?;
-    qmp_remove_user_input(session)?;
     const MUTATE_COMMAND: &str = r#"set -eu
 SOURCE=/dev/disk/by-id/virtio-steamos-user-input
 WORK=/dev/disk/by-id/virtio-steamos-user-working
 MOUNT_DIR=/mnt/steamos-user-marker
 EXPECTED=$(printf 'SteamOS NVIDIA Image Builder marker\nprotocol=1\nmilestone=marker-only')
+printf 'OPEMOS_MUTATION_CHANNEL_READY\n'
 for attempt in $(seq 1 150); do
   test ! -b "$SOURCE" && break
   sleep 0.1
@@ -654,7 +660,31 @@ printf '%s\n' "$KERNELS" | while IFS= read -r KERNEL; do
 done
 test "$(sudo blockdev --getro "$WORK")" = 1
 test "$MOUNTED" = 0"#;
-    let output = run_guest_command(session, MUTATE_COMMAND)?;
+    let mut mutation = start_guest_command(session, MUTATE_COMMAND)?;
+    let stderr_drain = start_guest_stderr_drain(&mut mutation)?;
+    let stdout = mutation
+        .stdout
+        .take()
+        .ok_or("Could not capture the mutation guest command output.")?;
+    let readiness = read_guest_command_ready_line(&mut mutation, stdout, Duration::from_secs(30));
+    let (stdout, channel_ready) = match readiness {
+        Ok(readiness) => readiness,
+        Err(error) => {
+            let _ = stderr_drain.join();
+            return Err(format!("Could not establish the mutation channel: {error}"));
+        }
+    };
+    if channel_ready.trim() != "OPEMOS_MUTATION_CHANNEL_READY" {
+        stop_guest_command_group(&mut mutation);
+        let _ = stderr_drain.join();
+        return Err("Mutation guest command omitted the channel readiness marker.".into());
+    }
+    if let Err(error) = qmp_remove_user_input(session) {
+        stop_guest_command_group(&mut mutation);
+        let _ = stderr_drain.join();
+        return Err(error);
+    }
+    let output = finish_guest_command_with_stdout(mutation, stdout, String::new(), stderr_drain)?;
     let mut values = std::collections::HashMap::new();
     let mut kernel_versions = Vec::new();
     for line in output.lines() {
@@ -715,6 +745,13 @@ test "$MOUNTED" = 0"#;
         mounted: required("MOUNTED")? == "1",
         system,
     })
+}
+
+pub(crate) fn mutate_user_marker(
+    session: &ImageInspectionSession,
+) -> Result<UserMarkerMutation, String> {
+    preflight_user_marker(session)?;
+    mutate_user_marker_after_preflight(session)
 }
 
 #[cfg(test)]

@@ -16,7 +16,7 @@ use std::{
     io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, ChildStdout, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc, Mutex,
@@ -152,6 +152,8 @@ pub fn run_core_driver_resolver(arguments: &[String]) -> Result<Option<String>, 
 const READY_MARKER: &str = "SteamOS NVIDIA Image Builder appliance\nREADY";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
 const TCG_HARNESS_BOOT_TIMEOUT_SECS: u64 = 600;
+#[cfg(all(test, target_os = "linux"))]
+const TCG_HARNESS_OUTER_TIMEOUT_SECS: u64 = 660;
 const NVIDIA_BUILD_BOOT_TIMEOUT: Duration = Duration::from_secs(600);
 const NVIDIA_RELEASES_API: &str =
     "https://api.github.com/repos/CorniiDog/OPEMOS/releases?per_page=100";

@@ -377,7 +377,8 @@ pub(crate) fn spawn_qemu_watchdog(qemu_pid: u32) -> Result<QemuWatchdog, String>
     let (reader, writer) = UnixStream::pair()
         .map_err(|error| format!("Could not create the QEMU lifecycle watchdog: {error}"))?;
     let reader: OwnedFd = reader.into();
-    let child = Command::new("/bin/sh")
+    let mut command = Command::new("/bin/sh");
+    command
         .args([
             "-c",
             &script,
@@ -386,7 +387,9 @@ pub(crate) fn spawn_qemu_watchdog(qemu_pid: u32) -> Result<QemuWatchdog, String>
         ])
         .stdin(Stdio::from(reader))
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    isolate_process_group(&mut command);
+    let child = command
         .spawn()
         .map_err(|error| format!("Could not start the QEMU lifecycle watchdog: {error}"))?;
     Ok(QemuWatchdog {
@@ -527,6 +530,18 @@ pub(crate) fn appliance_root_qemu_arguments(runtime_disk: &Path) -> [String; 4] 
         "-device".into(),
         "virtio-blk-pci,drive=appliance-root,serial=opemos-appliance-root,id=appliance-root-device,bootindex=1".into(),
     ]
+}
+
+pub(crate) fn native_appliance_qemu_arguments(
+    acceleration: &str,
+    runtime_disk: &Path,
+) -> Result<Vec<String>, String> {
+    let mut arguments = appliance_root_qemu_arguments(runtime_disk).to_vec();
+    arguments.extend(nvidia_guest_device_timeout_args(
+        acceleration,
+        FEDORA_TCG_DEVICE_TIMEOUT_SECS,
+    )?);
+    Ok(arguments)
 }
 
 pub(crate) const FEDORA_TCG_DEVICE_TIMEOUT_SECS: u64 = 300;
@@ -1771,7 +1786,7 @@ pub(crate) fn prepare_session_with_output(
         return Err("Cloud-init seed image was not created.".into());
     }
 
-    let (_, machine, cpu_model) =
+    let (acceleration, machine, cpu_model) =
         current_host_qemu(std::env::consts::ARCH, std::env::consts::ARCH)?;
     let (uefi_code, vars_template) = host_firmware(std::env::consts::ARCH)?;
     let vars_image = runtime_dir.join("uefi-vars.fd");
@@ -1824,7 +1839,7 @@ pub(crate) fn prepare_session_with_output(
             "file={},if=pflash,format=raw",
             vars_image.display()
         ))
-        .args(appliance_root_qemu_arguments(&runtime_disk))
+        .args(native_appliance_qemu_arguments(acceleration, &runtime_disk)?)
         .arg("-drive")
         .arg(format!(
             "file={},if=virtio,format=raw,readonly=on",
@@ -2253,14 +2268,30 @@ pub(crate) fn ssh_command(session: &impl GuestConnection) -> Result<Command, Str
     Ok(command)
 }
 
-pub(crate) fn run_guest_command(
+pub(crate) fn start_guest_command(
     session: &impl GuestConnection,
     command: &str,
-) -> Result<String, String> {
-    let output = ssh_command(session)?
-        .arg(command)
-        .output()
-        .map_err(|e| format!("Could not run the structured guest command: {e}"))?;
+) -> Result<Child, String> {
+    let mut ssh = ssh_command(session)?;
+    ssh.arg(command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    isolate_process_group(&mut ssh);
+    ssh.spawn()
+        .map_err(|e| format!("Could not start the structured guest command: {e}"))
+}
+
+pub(crate) fn stop_guest_command_group(child: &mut Child) {
+    kill_owned_process_group(child);
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+pub(crate) fn finish_guest_command(child: Child) -> Result<String, String> {
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Could not wait for the structured guest command: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -2272,6 +2303,107 @@ pub(crate) fn run_guest_command(
         });
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+pub(crate) fn run_guest_command(
+    session: &impl GuestConnection,
+    command: &str,
+) -> Result<String, String> {
+    finish_guest_command(start_guest_command(session, command)?)
+}
+
+pub(crate) fn read_guest_command_ready_line(
+    child: &mut Child,
+    stdout: ChildStdout,
+    timeout: Duration,
+) -> Result<(BufReader<ChildStdout>, String), String> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let reader = thread::spawn(move || {
+        let mut stdout = BufReader::new(stdout);
+        let mut line = String::new();
+        let result = (&mut stdout).take(65).read_line(&mut line);
+        let _ = sender.send((stdout, line, result));
+    });
+    match receiver.recv_timeout(timeout) {
+        Ok((stdout, line, result)) => {
+            if reader.join().is_err() {
+                stop_guest_command_group(child);
+                return Err("Guest command readiness reader panicked.".into());
+            }
+            if let Err(error) = result {
+                stop_guest_command_group(child);
+                return Err(format!(
+                    "Could not read the guest command readiness marker: {error}"
+                ));
+            }
+            if line.len() > 64 || !line.ends_with('\n') {
+                stop_guest_command_group(child);
+                return Err("Guest command readiness marker is missing or excessive.".into());
+            }
+            Ok((stdout, line))
+        }
+        Err(error) => {
+            stop_guest_command_group(child);
+            let _ = reader.join();
+            Err(match error {
+                mpsc::RecvTimeoutError::Timeout => {
+                    "Guest command readiness marker timed out.".into()
+                }
+                mpsc::RecvTimeoutError::Disconnected => {
+                    "Guest command readiness reader stopped unexpectedly.".into()
+                }
+            })
+        }
+    }
+}
+
+pub(crate) fn start_guest_stderr_drain(
+    child: &mut Child,
+) -> Result<thread::JoinHandle<Result<Vec<u8>, String>>, String> {
+    let mut stderr = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            stop_guest_command_group(child);
+            return Err("Could not capture the structured guest command diagnostics.".into());
+        }
+    };
+    Ok(thread::spawn(move || {
+        let mut captured = Vec::new();
+        stderr
+            .read_to_end(&mut captured)
+            .map_err(|e| format!("Could not read the structured guest command diagnostics: {e}"))?;
+        Ok(captured)
+    }))
+}
+
+pub(crate) fn finish_guest_command_with_stdout(
+    mut child: Child,
+    mut stdout: BufReader<ChildStdout>,
+    mut captured_stdout: String,
+    stderr_drain: thread::JoinHandle<Result<Vec<u8>, String>>,
+) -> Result<String, String> {
+    let stdout_result = stdout
+        .read_to_string(&mut captured_stdout)
+        .map_err(|e| format!("Could not read the structured guest command: {e}"));
+    let status_result = child
+        .wait()
+        .map_err(|e| format!("Could not wait for the structured guest command: {e}"));
+    let stderr = stderr_drain
+        .join()
+        .map_err(|_| "Structured guest diagnostic drain panicked.".to_string())??;
+    stdout_result?;
+    let status = status_result?;
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+        let stdout = captured_stdout.trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(if detail.is_empty() {
+            format!("Guest command exited with {status}.")
+        } else {
+            format!("Guest command exited with {status}: {detail}")
+        });
+    }
+    Ok(captured_stdout.trim().to_string())
 }
 
 pub(crate) fn read_qmp_response(
@@ -2295,6 +2427,40 @@ pub(crate) fn read_qmp_response(
             return Ok(value);
         }
     }
+}
+
+pub(crate) fn qmp_quit(qmp_port: u16) -> Result<(), String> {
+    let mut stream = TcpStream::connect(("127.0.0.1", qmp_port))
+        .map_err(|e| format!("Could not connect to the QEMU monitor for shutdown: {e}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .map_err(|e| format!("Could not configure the QEMU shutdown monitor: {e}"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(3)))
+        .map_err(|e| format!("Could not configure the QEMU shutdown monitor: {e}"))?;
+    let reader_stream = stream
+        .try_clone()
+        .map_err(|e| format!("Could not prepare the QEMU shutdown monitor reader: {e}"))?;
+    let mut reader = BufReader::new(reader_stream);
+    let mut greeting = String::new();
+    reader
+        .read_line(&mut greeting)
+        .map_err(|e| format!("Could not read the QEMU shutdown monitor greeting: {e}"))?;
+    let greeting: serde_json::Value = serde_json::from_str(&greeting)
+        .map_err(|e| format!("QEMU returned an invalid shutdown monitor greeting: {e}"))?;
+    if greeting.get("QMP").is_none() {
+        return Err("QEMU shutdown monitor did not provide a QMP greeting.".into());
+    }
+    stream
+        .write_all(b"{\"execute\":\"qmp_capabilities\"}\n")
+        .and_then(|_| stream.flush())
+        .map_err(|e| format!("Could not enable QEMU shutdown monitor capabilities: {e}"))?;
+    read_qmp_response(&mut reader)?;
+    stream
+        .write_all(b"{\"execute\":\"quit\"}\n")
+        .and_then(|_| stream.flush())
+        .map_err(|e| format!("Could not request QEMU monitor shutdown: {e}"))?;
+    Ok(())
 }
 
 pub(crate) fn qmp_remove_user_input(session: &ImageInspectionSession) -> Result<(), String> {
@@ -3397,6 +3563,31 @@ pub(crate) async fn mutate_test_marker(app: tauri::AppHandle) -> Result<MarkerMu
     .map_err(|error| format!("Synthetic mutation worker failed: {error}"))?
 }
 
+#[cfg(test)]
+pub(crate) fn preflight_selected_marker_blocking(app: tauri::AppHandle) -> Result<(), String> {
+    let session = ready_session_snapshot(&app, "selected-image marker preflight")?;
+    preflight_user_marker(&session)
+}
+
+#[cfg(test)]
+pub(crate) fn mutate_selected_marker_after_preflight_blocking(
+    app: tauri::AppHandle,
+) -> Result<UserMarkerMutation, String> {
+    let session = ready_session_snapshot(&app, "selected-image marker mutation")?;
+    let mutation = mutate_user_marker_after_preflight(&session)?;
+    let manager_state = app.state::<Mutex<ApplianceManager>>();
+    let mut manager = manager_state
+        .lock()
+        .map_err(|_| "Appliance state lock is unavailable.")?;
+    let active = manager
+        .session
+        .as_mut()
+        .filter(|active| active.ssh_port == session.ssh_port)
+        .ok_or("Builder session ended before target metadata could be recorded.")?;
+    active.target_system = Some(mutation.system.clone());
+    Ok(mutation)
+}
+
 #[tauri::command]
 pub(crate) async fn mutate_selected_marker(
     app: tauri::AppHandle,
@@ -3863,6 +4054,7 @@ pub(crate) fn stop_session_process(session: &mut ApplianceSession) -> Result<(),
         .map_err(|e| format!("Could not inspect the appliance: {e}"))?
         .is_none()
     {
+        let _ = qmp_quit(session.qmp_port);
         if let Some(ssh) = find_binary("ssh") {
             let _ = Command::new(ssh)
                 .arg("-p")
