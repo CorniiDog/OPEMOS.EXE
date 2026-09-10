@@ -529,6 +529,18 @@ pub(crate) fn appliance_root_qemu_arguments(runtime_disk: &Path) -> [String; 4] 
     ]
 }
 
+pub(crate) fn native_appliance_qemu_arguments(
+    acceleration: &str,
+    runtime_disk: &Path,
+) -> Result<Vec<String>, String> {
+    let mut arguments = appliance_root_qemu_arguments(runtime_disk).to_vec();
+    arguments.extend(nvidia_guest_device_timeout_args(
+        acceleration,
+        FEDORA_TCG_DEVICE_TIMEOUT_SECS,
+    )?);
+    Ok(arguments)
+}
+
 pub(crate) const FEDORA_TCG_DEVICE_TIMEOUT_SECS: u64 = 300;
 pub(crate) const FEDORA_TCG_DEVICE_TIMEOUT_MIN_SECS: u64 = 120;
 pub(crate) const FEDORA_TCG_DEVICE_TIMEOUT_MAX_SECS: u64 = 600;
@@ -1771,7 +1783,7 @@ pub(crate) fn prepare_session_with_output(
         return Err("Cloud-init seed image was not created.".into());
     }
 
-    let (_, machine, cpu_model) =
+    let (acceleration, machine, cpu_model) =
         current_host_qemu(std::env::consts::ARCH, std::env::consts::ARCH)?;
     let (uefi_code, vars_template) = host_firmware(std::env::consts::ARCH)?;
     let vars_image = runtime_dir.join("uefi-vars.fd");
@@ -1824,7 +1836,7 @@ pub(crate) fn prepare_session_with_output(
             "file={},if=pflash,format=raw",
             vars_image.display()
         ))
-        .args(appliance_root_qemu_arguments(&runtime_disk))
+        .args(native_appliance_qemu_arguments(acceleration, &runtime_disk)?)
         .arg("-drive")
         .arg(format!(
             "file={},if=virtio,format=raw,readonly=on",

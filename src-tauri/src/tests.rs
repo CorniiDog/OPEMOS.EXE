@@ -2009,6 +2009,26 @@ esac
     }
 
     #[test]
+    fn native_appliance_uses_exact_tcg_device_credentials_only() {
+        let runtime_disk = Path::new("/tmp/native appliance,root.qcow2");
+        let kvm = native_appliance_qemu_arguments("kvm", runtime_disk)
+            .expect("KVM native appliance arguments");
+        assert_eq!(kvm, appliance_root_qemu_arguments(runtime_disk));
+
+        let tcg = native_appliance_qemu_arguments("tcg", runtime_disk)
+            .expect("TCG native appliance arguments");
+        assert_eq!(&tcg[..4], &appliance_root_qemu_arguments(runtime_disk));
+        assert_eq!(tcg.len(), 8);
+        assert_eq!(tcg[4], "-smbios");
+        assert_eq!(tcg[6], "-smbios");
+        assert!(tcg[5].contains(FEDORA_ROOT_DEVICE_UNIT));
+        assert!(tcg[7].contains(FEDORA_EFI_DEVICE_UNIT));
+        assert!(tcg[5].ends_with(FEDORA_TCG_DEVICE_TIMEOUT_CREDENTIAL));
+        assert!(tcg[7].ends_with(FEDORA_TCG_DEVICE_TIMEOUT_CREDENTIAL));
+        assert!(tcg[1].contains("native appliance,,root.qcow2"));
+    }
+
+    #[test]
     fn tcg_guest_device_timeout_report_requires_both_exact_devices() {
         validate_nvidia_guest_device_timeout_report("ROOT=5min\nEFI=5min")
             .expect("slow-device deadline report");
@@ -2026,6 +2046,11 @@ esac
         assert_eq!(default_deadline.duration_since(started_at), BOOT_TIMEOUT);
         let (harness_deadline, harness_secs) = appliance_readiness_deadline(started_at, Some(TCG_HARNESS_BOOT_TIMEOUT_SECS)).unwrap();
         assert_eq!(harness_secs, TCG_HARNESS_BOOT_TIMEOUT_SECS);
+        assert_eq!(TCG_HARNESS_OUTER_TIMEOUT_SECS, 660);
+        assert_eq!(
+            TCG_HARNESS_OUTER_TIMEOUT_SECS - TCG_HARNESS_BOOT_TIMEOUT_SECS,
+            60
+        );
         assert_eq!(harness_deadline.duration_since(started_at), Duration::from_secs(600));
         assert_eq!(appliance_readiness_deadline(started_at, Some(TCG_HARNESS_BOOT_TIMEOUT_SECS)).unwrap().0, harness_deadline, "polling must not reset the absolute deadline");
         for malformed in [0, 119, 120, 599, 601, u64::MAX] {
@@ -5971,7 +5996,7 @@ trap - EXIT"#,
     #[cfg(target_os = "linux")]
     fn wait_for_live_image_appliance(app: &tauri::AppHandle) {
         let deadline =
-            Instant::now() + Duration::from_secs(TCG_HARNESS_BOOT_TIMEOUT_SECS + 60);
+            Instant::now() + Duration::from_secs(TCG_HARNESS_OUTER_TIMEOUT_SECS);
         loop {
             let status = get_appliance_status_blocking(app.clone())
                 .expect("read live image-appliance status");
