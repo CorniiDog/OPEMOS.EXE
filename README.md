@@ -27,11 +27,12 @@ slots so delayed-network repair remains available after the USB is removed.
 The original recovery image is opened read-only and is never redistributed by
 this project.
 
-Preview the installation-media welcome flow safely on macOS or Linux with:
+Preview the installation-media welcome flow safely on macOS, Linux, or Windows with:
 
 ```bash
 ./test_welcome_macos.sh
 ./test_welcome_linux.sh
+pwsh -File .\test_welcome_windows.ps1
 ```
 
 The preview uses synthetic disks and mocked progress only. It never requests
@@ -65,12 +66,13 @@ progress window, and permission-gated maintainer workspace.
 
 ## Current host support
 
-| Host | Status |
+| Host | Development and validation status |
 | --- | --- |
-| Apple Silicon macOS | Primary development and tested host |
-| Intel macOS | Supported architecture path; needs broader hardware testing |
-| Windows x86_64 | Builder host path uses QEMU/WHPX when all prerequisites and the managed appliance are present; read-only USB discovery is available, while physical USB writing remains unavailable |
-| Linux | Not yet a supported desktop host |
+| Apple Silicon macOS | Primary development and tested host; signed distribution remains a separate release gate |
+| Intel macOS | Supported architecture path; broader hardware testing remains pending |
+| x86_64 Ubuntu/Linux | Experimental desktop host with explicit KVM or TCG selection; debug unsigned DEB/AppImage output only |
+| Debian 12 x86_64 | Experimental pinned packaging target; debug unsigned package validation only |
+| Windows x86_64 | Native development and unsigned portable builds are supported; physical USB writes remain unavailable outside the contained owned-virtual-USB harness |
 
 The first reviewed target is SteamOS 3.8.14, kernel
 `6.16.12-valve24.4-1-neptune-616-gfe145653a794`, and NVIDIA `575.64.05`.
@@ -82,25 +84,62 @@ No closest-kernel substitution is permitted.
 git clone https://github.com/CorniiDog/OPEMOS.EXE.git
 cd OPEMOS.EXE
 ./cargodev_init_macos.sh
-```
-
-The bootstrap checks or installs the required Homebrew tools and launches Tauri
-development mode. Prepare the managed x86_64 worker on Apple Silicon with:
-
-```bash
-./builder/appliance/build_macos.sh --architecture x86_64
-```
-
-Run the local validation suite:
-
-```bash
 npm ci
 npm run test:all
+./test_welcome_macos.sh
 ```
 
-Live appliance, network, packaging, and raw-device tests remain explicitly
-ignored or separately named because they require local images, downloads,
-virtual media, or macOS authorization.
+The bootstrap checks or installs Homebrew dependencies and launches Tauri.
+Prepare the managed x86_64 worker on Apple Silicon with
+`./builder/appliance/build_macos.sh --architecture x86_64`. Live appliance,
+network, packaging, and raw-device tests remain separately gated.
+
+## Develop and test on Linux
+
+Use an x86_64 Ubuntu or Debian graphical host with Node.js/npm, Rust/Cargo,
+Python 3, Git, curl, OpenSSH, QEMU (`qemu-system-x86_64` and `qemu-img`), GnuPG,
+7-Zip, and the distribution's Tauri/WebKitGTK build packages.
+
+```bash
+./cargodev_init_linux.sh --check
+./cargodev_init_linux.sh --print-only
+npm ci
+OPEMOS_EXPERIMENTAL_LINUX=1 OPEMOS_LINUX_ACCEL=kvm npm run dev:linux-test
+OPEMOS_EXPERIMENTAL_LINUX=1 OPEMOS_LINUX_ACCEL=tcg npm run build:linux-test
+OPEMOS_EXPERIMENTAL_LINUX=1 OPEMOS_LINUX_ACCEL=tcg npm run build:debian12-test
+npm run test:package-linux
+./test_welcome_linux.sh
+```
+
+Linux bundles are unsigned debug artifacts under
+`src-tauri/target/debug/bundle/deb/` and
+`src-tauri/target/debug/bundle/appimage/`. KVM and TCG must be selected
+explicitly; there is no automatic fallback. This path remains experimental,
+and real networking, appliance lifecycle, removable-media writes, installer
+propagation, and physical NVIDIA boot require their separately named gates.
+
+## Develop and build on Windows
+
+Use x86_64 Windows with PowerShell 7, Node.js 22.23.2, Rust 1.98.1, Git, Python, QEMU, GnuPG,
+WebView2 Runtime, and Visual Studio C++ Build Tools. These commands match the
+locked checks and release build in `.github/workflows/windows-portable.yml`:
+
+```powershell
+pwsh -File .\cargodev_init_windows.ps1 -CheckOnly
+pwsh -File .\cargodev_init_windows.ps1 -PrintOnly
+npm ci
+cargo test --manifest-path src-tauri/Cargo.toml --locked windows_
+cargo build --manifest-path src-tauri/Cargo.toml --release --locked
+pwsh -File .\test_welcome_windows.ps1
+```
+
+The unsigned portable executable is
+`src-tauri/target/release/steamos-nvidia-image-builder.exe`. Contained Windows
+validation installs and seals Windows once, preserves that immutable base, and
+uses a disposable overlay for every normal build or test run. The executable
+is currently unsigned. Physical USB writing remains unavailable; only an
+exactly owned 32 GiB virtual USB may be used by the separately gated harness,
+and short tests are never end-to-end evidence.
 
 ## Repository boundaries
 
