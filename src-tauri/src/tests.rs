@@ -5957,8 +5957,21 @@ trap - EXIT"#,
     }
 
     #[cfg(target_os = "linux")]
+    struct LiveImageApplianceCleanup(Option<tauri::AppHandle>);
+
+    #[cfg(target_os = "linux")]
+    impl Drop for LiveImageApplianceCleanup {
+        fn drop(&mut self) {
+            if let Some(app) = self.0.take() {
+                let _ = stop_appliance_blocking(app);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
     fn wait_for_live_image_appliance(app: &tauri::AppHandle) {
-        let deadline = Instant::now() + Duration::from_secs(FEDORA_TCG_DEVICE_TIMEOUT_SECS + 60);
+        let deadline =
+            Instant::now() + Duration::from_secs(TCG_HARNESS_BOOT_TIMEOUT_SECS + 60);
         loop {
             let status = get_appliance_status_blocking(app.clone())
                 .expect("read live image-appliance status");
@@ -6015,6 +6028,7 @@ trap - EXIT"#,
             .build(tauri::generate_context!())
             .expect("build the headless lifecycle application handle");
         let app = app.handle().clone();
+        let mut cleanup = LiveImageApplianceCleanup(Some(app.clone()));
 
         let appliance = appliance_path();
         let appliance_hash_before = sha256_file(&appliance).expect("hash authenticated appliance before the lifecycle");
@@ -6093,6 +6107,7 @@ trap - EXIT"#,
         );
         let stopped = stop_appliance_blocking(app.clone()).expect("stop the image appliance and clean its runtime");
         assert_eq!(stopped.state, "stopped");
+        cleanup.0 = None;
         assert_eq!(sha256_file(&appliance).expect("hash authenticated appliance after the lifecycle"), appliance_hash_before, "the authenticated base appliance must remain immutable");
         println!(
             "{}",
