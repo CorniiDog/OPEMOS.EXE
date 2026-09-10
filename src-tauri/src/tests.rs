@@ -3,6 +3,34 @@
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn finished_guest_command_captures_stdout_and_stderr() {
+        let mut success = Command::new("/bin/sh");
+        success
+            .args(["-c", "printf READY; printf ignored >&2"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        assert_eq!(
+            finish_guest_command(success.spawn().expect("start success fixture"))
+                .expect("capture successful output"),
+            "READY"
+        );
+
+        let mut failure = Command::new("/bin/sh");
+        failure
+            .args(["-c", "printf fallback; printf exact-error >&2; exit 7"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let error = finish_guest_command(failure.spawn().expect("start failure fixture"))
+            .expect_err("preserve failing stderr");
+        assert!(error.contains("exit status: 7"));
+        assert!(error.ends_with("exact-error"));
+        assert!(!error.contains("fallback"));
+    }
+
     #[test]
     fn guest_failure_details_drop_progress_noise_and_remain_bounded() {
         let progress = "STEAMOS_NVIDIA_PROGRESS {\"schemaVersion\":1,\"attempt\":2,\"phase\":\"hashing\",\"indeterminate\":false,\"completed\":4,\"total\":8,\"unit\":\"bytes\"}";
