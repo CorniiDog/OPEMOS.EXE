@@ -128,3 +128,16 @@ documentation changes on `main` deploy automatically.
 
 Screenshot capture instructions live in the
 [screenshot asset guide](assets/screenshots/README.md).
+
+## Windows imaging validation modes
+
+Windows imaging validation selects exactly one machine-readable mode: `short`,
+`partial`, or `full`. `short` is bounded feedback and never end-to-end evidence.
+`partial` authenticates official SteamOS and an immutable compiled-driver-only
+Core Release bundle, constructs and exports the image, and proves complete
+write, flush, and hash readback on the owned 32 GiB virtual USB. `full` adds
+bundle source evidence plus boot, install, reinstall, retained-media, and
+no-orphan proof; it gates later publication of the exact tested executable
+bytes but does not authorize publication. Every mode uses the immutable sealed
+Windows base through a disposable overlay. A shorter mode cannot substitute,
+and a combined NVIDIA-plus-SteamOS Release asset is forbidden.
