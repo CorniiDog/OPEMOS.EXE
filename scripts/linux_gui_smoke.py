@@ -524,7 +524,8 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
                            process_poll=None,
                            expect_host_unavailable=False,
                            expect_build_progress_companion=False,
-                           expect_maintainer_companion=False):
+                           expect_maintainer_companion=False,
+                           expect_keyboard_traversal=False):
     wait = lambda find, description: wait_for(
         find, deadline, description, process_poll=process_poll
     )
@@ -563,15 +564,16 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     dialog = wait(lambda: exactly_one_role(app, "Core compatibility inspector", "dialog"),
                   "the compatibility inspector")
     validate_dialog_focus(dialog, focusable_state, focused_state)
-    exercise_dialog_keyboard_cycle(
-        dialog,
-        focused_state,
-        synthesize_tab_key,
-        lambda expected: wait(
-            lambda: exactly_one_focused_control(dialog, expected[0], expected[1], focused_state),
-            f"keyboard focus on {expected[0]}",
-        ),
-    )
+    if expect_keyboard_traversal:
+        exercise_dialog_keyboard_cycle(
+            dialog,
+            focused_state,
+            synthesize_tab_key,
+            lambda expected: wait(
+                lambda: exactly_one_focused_control(dialog, expected[0], expected[1], focused_state),
+                f"keyboard focus on {expected[0]}",
+            ),
+        )
     validate_compatibility_safety_text(dialog, accessible_text)
     validate_empty_result(dialog)
     invoke(exactly_one_action(dialog, "Open a local resolver JSON file (up to 1 MiB)"))
@@ -749,6 +751,7 @@ def main(argv=None):
     parser.add_argument("--expect-host-unavailable", action="store_true")
     parser.add_argument("--expect-build-progress-companion", action="store_true")
     parser.add_argument("--expect-maintainer-companion", action="store_true")
+    parser.add_argument("--expect-keyboard-traversal", action="store_true")
     args = parser.parse_args(argv)
     executable = validate_launch(args.executable, args.timeout, os.environ)
     try:
@@ -778,7 +781,8 @@ def main(argv=None):
                                process_poll=process.poll,
                                expect_host_unavailable=args.expect_host_unavailable,
                                expect_build_progress_companion=args.expect_build_progress_companion,
-                               expect_maintainer_companion=args.expect_maintainer_companion)
+                               expect_maintainer_companion=args.expect_maintainer_companion,
+                               expect_keyboard_traversal=args.expect_keyboard_traversal)
     finally:
         stop_process_group(process)
     new_qemu = qemu_processes() - qemu_before

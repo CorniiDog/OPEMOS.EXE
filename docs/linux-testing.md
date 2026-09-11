@@ -420,8 +420,15 @@ closing invalidates pending preview responses; closing also clears pasted text. 
 the current preview. Selecting the same file again performs a fresh read.
 Long fields are explicitly truncated for display. Keyboard focus stays within
 the native dialog, and main-window file drops are ignored while it is open.
-Frontend behavior and Rust adapter tests are automated; visual rendering and
-native keyboard/focus behavior still require a graphical desktop validation.
+Frontend behavior and Rust adapter tests are automated. On a real graphical
+Linux desktop with an active input route, add `--expect-keyboard-traversal` to
+the bounded `scripts/linux_gui_smoke.py --executable /absolute/path/to/app`
+invocation. The option synthesizes exactly seven Tab events, requires every
+inspector control in order, and requires focus to wrap to Close. Do not enable
+it under bare Xvfb: duplicate disposable Debian runs showed that AT-SPI accepts
+both symbolic and hardware Tab synthesis there without delivering either event
+to the webview. Visual rendering and real monitor scaling remain separate
+graphical desktop validations.
 
 ## Page zoom
 
