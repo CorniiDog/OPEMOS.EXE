@@ -33,9 +33,12 @@ def run_graphical_smoke(repo: Path, installed_binary: Path, environ: dict[str, s
     if environ.get("OPEMOS_DEBIAN_GUI_SMOKE") != "1": return
     result = run(
         (sys.executable, str(repo / "scripts/linux_gui_smoke.py"),
-         "--executable", str(installed_binary), "--expect-host-unavailable"),
+         "--executable", str(installed_binary), "--expect-host-unavailable",
+         "--expect-build-progress-companion"),
         text=True, capture_output=True, timeout=60, check=False,
-        env={**environ, "OPEMOS_EXPERIMENTAL_LINUX": "1"},
+        env={**environ, "OPEMOS_EXPERIMENTAL_LINUX": "1",
+             "OPEMOS_LINUX_GUI_SMOKE": "1",
+             "OPEMOS_LINUX_GUI_SMOKE_COMPANION": "build-progress"},
     )
     if result.returncode:
         detail = (result.stderr or result.stdout).strip()

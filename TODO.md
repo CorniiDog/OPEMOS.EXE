@@ -337,8 +337,12 @@ installation targets, production activation, or hardware certification.
   subreaper handles WebKit descendants without weakening the cleanup assertion;
   locale options remain exact within their owning Settings landmark while an
   external native popup mirror is allowed. Thirty-eight focused lifecycle and
-  accessibility tests and 171 frontend tests pass. Physical Debian graphics and
-  Debian companion-window coverage remain open. Managed-appliance lifecycle and
+  accessibility tests and 171 frontend tests pass. Physical Debian graphics
+  remain open. The staged independent Debian follow-up enables the existing
+  debug-only idle build-progress companion in the installed-package virtual-X11
+  smoke and requires its exact harness argument plus all three opt-in environment
+  values; remote package execution and review remain pending. Managed-appliance
+  lifecycle and
   image equivalence remain separately blocked by the unchanged resource minimum
   above. The Ubuntu glibc-2.39 package is not a validated Debian 12 artifact.
 - [x] Add Settings → Inspect Core compatibility: a read-only host dialog for
