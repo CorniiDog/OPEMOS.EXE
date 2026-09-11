@@ -341,6 +341,75 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "initial focus changed"):
             smoke.validate_reopened_dialog(dialog, focusable, focused)
 
+    def test_tab_synthesis_uses_xvfb_hardware_press_and_release(self):
+        calls = []
+        class Synth:
+            class KeySynthType:
+                PRESSRELEASE = "press-release"
+            @staticmethod
+            def generate_keyboard_event(*args):
+                calls.append(args)
+                return True
+        self.assertTrue(smoke.synthesize_tab_key(Synth))
+        self.assertEqual(calls, [(23, None, "press-release")])
+
+    def test_dialog_keyboard_cycle_requires_every_control_and_wraps(self):
+        focused = "focused"
+        controls = [FakeNode(name, role=role, states=set()) for name, role in smoke.EXPECTED_FOCUS_ORDER]
+        controls[0].states = {focused}
+        dialog = FakeNode(children=controls)
+        index = 0
+        observed = []
+        def tab():
+            nonlocal index
+            controls[index].states.clear()
+            index = (index + 1) % len(controls)
+            controls[index].states.add(focused)
+            return True
+        def wait(expected):
+            observed.append(expected)
+            smoke.validate_exclusive_keyboard_focus(dialog, expected, focused)
+        smoke.exercise_dialog_keyboard_cycle(dialog, focused, tab, wait)
+        self.assertEqual(observed, smoke.EXPECTED_FOCUS_ORDER[1:] + smoke.EXPECTED_FOCUS_ORDER[:1])
+
+        controls[0].states.clear()
+        controls[2].states.add(focused)
+        with self.assertRaisesRegex(RuntimeError, "initial focus changed"):
+            smoke.exercise_dialog_keyboard_cycle(dialog, focused, tab, wait)
+        controls[2].states.clear()
+        controls[0].states.add(focused)
+        with self.assertRaisesRegex(RuntimeError, "refused to synthesize"):
+            smoke.exercise_dialog_keyboard_cycle(dialog, focused, lambda: False, wait)
+
+    def test_dialog_keyboard_cycle_rejects_duplicate_focused_controls(self):
+        focused = "focused"
+        controls = [FakeNode(name, role=role, states=set()) for name, role in smoke.EXPECTED_FOCUS_ORDER]
+        controls[0].states = {focused}
+        dialog = FakeNode(children=controls)
+        def duplicate():
+            controls[1].states.add(focused)
+            return True
+        with self.assertRaisesRegex(RuntimeError, "expected.*found"):
+            smoke.exercise_dialog_keyboard_cycle(
+                dialog, focused, duplicate,
+                lambda expected: smoke.validate_exclusive_keyboard_focus(dialog, expected, focused),
+            )
+
+    def test_dialog_keyboard_cycle_rejects_skipped_focus(self):
+        focused = "focused"
+        controls = [FakeNode(name, role=role, states=set()) for name, role in smoke.EXPECTED_FOCUS_ORDER]
+        controls[0].states = {focused}
+        dialog = FakeNode(children=controls)
+        def skip():
+            controls[0].states.clear()
+            controls[2].states.add(focused)
+            return True
+        with self.assertRaisesRegex(RuntimeError, "expected.*found"):
+            smoke.exercise_dialog_keyboard_cycle(
+                dialog, focused, skip,
+                lambda expected: smoke.validate_exclusive_keyboard_focus(dialog, expected, focused),
+            )
+
     def test_compatibility_safety_text_requires_exact_nonproduction_warnings(self):
         paragraphs = [FakeNode(value, role="paragraph") for value in smoke.EXPECTED_COMPATIBILITY_SAFETY_TEXT]
         dialog = FakeNode(children=paragraphs)
