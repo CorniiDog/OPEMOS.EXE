@@ -341,6 +341,18 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "initial focus changed"):
             smoke.validate_reopened_dialog(dialog, focusable, focused)
 
+    def test_tab_synthesis_uses_xvfb_hardware_press_and_release(self):
+        calls = []
+        class Synth:
+            class KeySynthType:
+                PRESSRELEASE = "press-release"
+            @staticmethod
+            def generate_keyboard_event(*args):
+                calls.append(args)
+                return True
+        self.assertTrue(smoke.synthesize_tab_key(Synth))
+        self.assertEqual(calls, [(23, None, "press-release")])
+
     def test_dialog_keyboard_cycle_requires_every_control_and_wraps(self):
         focused = "focused"
         controls = [FakeNode(name, role=role, states=set()) for name, role in smoke.EXPECTED_FOCUS_ORDER]

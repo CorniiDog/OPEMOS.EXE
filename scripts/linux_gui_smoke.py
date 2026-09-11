@@ -368,9 +368,11 @@ def exercise_dialog_keyboard_cycle(dialog, focused_state, synthesize_tab, wait_f
         wait_focus(expected)
 
 
-def synthesize_tab_key():
-    from gi.repository import Atspi
-    return Atspi.generate_keyboard_event(0xFF09, None, Atspi.KeySynthType.SYM)
+def synthesize_tab_key(atspi=None):
+    if atspi is None:
+        from gi.repository import Atspi as atspi
+    # xvfb-run uses the standard X11 core-keyboard mapping where keycode 23 is Tab.
+    return atspi.generate_keyboard_event(23, None, atspi.KeySynthType.PRESSRELEASE)
 
 
 def validate_compatibility_safety_text(dialog, text_reader):

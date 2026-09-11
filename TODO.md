@@ -2132,7 +2132,7 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     smoke now also synthesizes a bounded seven-Tab keyboard cycle from the initially
     focused Close control through every declared inspector control and back to Close;
     skipped, reordered, duplicate, non-wrapping, or refused focus transitions fail.
-    Thirty-two focused smoke-harness cases pass locally; packaged execution, full
+    Thirty-three focused smoke-harness cases pass locally; packaged execution, full
     validation, and PR evidence remain pending on this branch.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
   heartbeats or free-form log text. Unknown structured phases now retain only
