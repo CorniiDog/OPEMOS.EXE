@@ -241,6 +241,15 @@ def exactly_one_focused_action(root, label: str, focused_state):
         raise RuntimeError(f"Expected one focused action {label!r}, found {len(matches)}.")
     return matches[0]
 
+def exactly_one_focused_control(root, label: str, role: str, focused_state):
+    matches = [node for node in named(root, label)
+               if node.get_role_name() == role
+               and node.get_state_set().contains(focused_state)]
+    if len(matches) != 1:
+        raise RuntimeError(f"Expected one focused {role} {label!r}, found {len(matches)}.")
+    return matches[0]
+
+
 def exactly_one_enabled_action(root, label: str, enabled_state):
     node = exactly_one_action(root, label)
     if not node.get_state_set().contains(enabled_state):
@@ -347,6 +356,21 @@ def validate_dialog_focus(dialog, focusable_state, focused_state):
     focused = controls_with_state(dialog, focused_state)
     if focused != [("Close", "push button")]:
         raise RuntimeError(f"Compatibility dialog initial focus changed: {focused!r}.")
+
+
+def exercise_dialog_keyboard_cycle(dialog, focused_state, synthesize_tab, wait_focus):
+    focused = controls_with_state(dialog, focused_state)
+    if focused != [EXPECTED_FOCUS_ORDER[0]]:
+        raise RuntimeError(f"Compatibility keyboard traversal initial focus changed: {focused!r}.")
+    for expected in EXPECTED_FOCUS_ORDER[1:] + EXPECTED_FOCUS_ORDER[:1]:
+        if synthesize_tab() is not True:
+            raise RuntimeError("AT-SPI refused to synthesize the compatibility Tab key.")
+        wait_focus(expected)
+
+
+def synthesize_tab_key():
+    from gi.repository import Atspi
+    return Atspi.generate_keyboard_event(0xFF09, None, Atspi.KeySynthType.SYM)
 
 
 def validate_compatibility_safety_text(dialog, text_reader):
@@ -537,6 +561,15 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     dialog = wait(lambda: exactly_one_role(app, "Core compatibility inspector", "dialog"),
                   "the compatibility inspector")
     validate_dialog_focus(dialog, focusable_state, focused_state)
+    exercise_dialog_keyboard_cycle(
+        dialog,
+        focused_state,
+        synthesize_tab_key,
+        lambda expected: wait(
+            lambda: exactly_one_focused_control(dialog, expected[0], expected[1], focused_state),
+            f"keyboard focus on {expected[0]}",
+        ),
+    )
     validate_compatibility_safety_text(dialog, accessible_text)
     validate_empty_result(dialog)
     invoke(exactly_one_action(dialog, "Open a local resolver JSON file (up to 1 MiB)"))

@@ -2128,9 +2128,12 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     423.1/334.9/290.1), `ja-JP` at 453x440 (441.7/348.3/298.0), and RTL `ar` at
     453x473 (432.1/491.8/500.6); all were non-flat with broad channel extrema.
     Frame and crop bytes were discarded in memory, the exact test lease was
-    released, application processes stopped, and no new QEMU remained. The focused
-    30-case smoke-harness suite and packaged live accessibility smoke pass; full
-    validation and PR evidence follow on this branch.
+    released, application processes stopped, and no new QEMU remained. The packaged
+    smoke now also synthesizes a bounded seven-Tab keyboard cycle from the initially
+    focused Close control through every declared inspector control and back to Close;
+    skipped, reordered, duplicate, non-wrapping, or refused focus transitions fail.
+    Thirty-two focused smoke-harness cases pass locally; packaged execution, full
+    validation, and PR evidence remain pending on this branch.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
   heartbeats or free-form log text. Unknown structured phases now retain only
   their bounded label and current validation/installation context: even a
