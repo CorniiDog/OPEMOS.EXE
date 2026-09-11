@@ -73,6 +73,8 @@ unknown fields, permissive input files, template drift, and existing outputs.
 If the second output cannot be published, it removes only the answer file it
 created and preserves the conflicting file.
 
+The answer file automates Windows Setup only for contained disk 0: it creates one 100 MiB EFI partition, one 16 MiB MSR partition, and one NTFS Windows partition using the remaining space. Setup shows its UI on error and does not target any second disk.
+
 The answer file limits autologon to one setup login. The reviewed provisioning
 script installs the Microsoft OpenSSH Server capability, enables its existing
 firewall rule, installs only the supplied public key with restricted ACLs,
