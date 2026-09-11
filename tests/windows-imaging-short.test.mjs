@@ -1,76 +1,99 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import test from "node:test";
 import { runWindowsImagingShort } from "../scripts/windows-imaging-short.mjs";
 
 const commit = "b".repeat(40);
 const sha = "a".repeat(64);
-const names = ["unitContractsUi", "usbEnumeration", "physicalDiskRefusal", "driverBundleManifest", "smallWriterFixture", "cancellationCleanup"];
+const names = ["unitContractsUi", "usbEnumeration", "physicalDiskRefusal", "driverBundleManifest", "smallWriterFixture"];
+const pins = { exeCommit: commit, exeSha256: sha, expectedExeCommit: commit, expectedExeSha256: sha };
 
+function settled(value = true) {
+  return { completion: Promise.resolve(value), cancelAndWait: async () => true };
+}
 function actions(log = []) {
-  return Object.fromEntries(names.map(name => [name, async context => {
-    assert.equal(context.mode, "short");
-    log.push(name);
-    return true;
-  }]));
+  return {
+    ...Object.fromEntries(names.map(name => [name, () => { log.push(name); return settled(); }])),
+    cancellationCleanup: async () => { log.push("cancellationCleanup"); return true; },
+  };
 }
 
 test("short runner emits only a validated bounded-feedback result", async () => {
   const log = [];
-  const result = await runWindowsImagingShort({ exeCommit: commit, exeSha256: sha, actions: actions(log) });
+  const result = await runWindowsImagingShort({ ...pins, actions: actions(log) });
   assert.equal(result.mode, "short");
   assert.equal(result.claim, "bounded-feedback");
   assert.equal(result.published, false);
   assert.equal(result.steamOsInstalled, false);
-  assert.deepEqual(log, names);
-  assert.deepEqual(Object.keys(result.evidence).sort(), [...names].sort());
+  assert.deepEqual(log, [...names, "cancellationCleanup"]);
 });
 
-test("short runner rejects missing and non-success actions", async () => {
-  const missing = actions();
-  delete missing.physicalDiskRefusal;
-  await assert.rejects(runWindowsImagingShort({ exeCommit: commit, exeSha256: sha, actions: missing }), /missing: physicalDiskRefusal/);
-  for (const value of [false, undefined, "true"]) {
-    const changed = actions();
-    changed.usbEnumeration = async () => value;
-    await assert.rejects(runWindowsImagingShort({ exeCommit: commit, exeSha256: sha, actions: changed }), /did not prove success/);
-  }
-});
-
-test("failure and cancellation still run cleanup exactly once", async () => {
-  for (const setup of [
-    value => { value.unitContractsUi = async () => { throw new Error("check failed"); }; },
-    (value, controller) => { controller.abort(); },
-  ]) {
-    const log = [];
-    const controller = new AbortController();
-    const value = actions(log);
-    setup(value, controller);
-    await assert.rejects(runWindowsImagingShort({ exeCommit: commit, exeSha256: sha, actions: value, signal: controller.signal }), /failed|cancelled/);
-    assert.deepEqual(log, ["cancellationCleanup"]);
-  }
-});
-
-test("absolute timeout is bounded and cleanup follows the timed-out action", async () => {
+test("candidate identity must match independent pins before actions", async () => {
   const log = [];
-  const value = actions(log);
-  value.unitContractsUi = () => new Promise(() => {});
-  await assert.rejects(runWindowsImagingShort({ exeCommit: commit, exeSha256: sha, actions: value, timeoutMs: 20 }), /timed out/);
-  assert.deepEqual(log, ["cancellationCleanup"]);
+  await assert.rejects(runWindowsImagingShort({ ...pins, expectedExeCommit: "c".repeat(40), actions: actions(log) }), /independent pins/);
+  assert.deepEqual(log, []);
 });
 
-test("cleanup failure is terminal and preserves a primary failure", async () => {
+test("missing, unowned, and non-success actions fail closed", async () => {
+  const missing = actions(); delete missing.physicalDiskRefusal;
+  await assert.rejects(runWindowsImagingShort({ ...pins, actions: missing }), /missing: physicalDiskRefusal/);
+  const unowned = actions(); unowned.usbEnumeration = () => Promise.resolve(true);
+  await assert.rejects(runWindowsImagingShort({ ...pins, actions: unowned }), /owned operation/);
+  for (const value of [false, undefined, "true"]) {
+    const changed = actions(); changed.usbEnumeration = () => settled(value);
+    await assert.rejects(runWindowsImagingShort({ ...pins, actions: changed }), /did not prove success/);
+  }
+});
+
+test("mid-action cancellation settles owned work before cleanup", async () => {
+  const order = [];
+  const controller = new AbortController();
+  const value = actions(order);
+  let release;
+  value.unitContractsUi = context => ({
+    completion: new Promise(resolve => { release = resolve; }),
+    cancelAndWait: async () => { order.push("settled"); release(false); return true; },
+  });
+  setTimeout(() => controller.abort(), 10);
+  await assert.rejects(runWindowsImagingShort({ ...pins, actions: value, signal: controller.signal, timeoutMs: 100 }), /cancelled/);
+  assert.deepEqual(order, ["settled", "cancellationCleanup"]);
+});
+
+test("timeout kills and waits for a real child before cleanup", async () => {
+  const order = [];
+  const value = actions(order);
+  let child;
+  value.unitContractsUi = () => {
+    child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    const completion = new Promise(resolve => child.once("exit", () => resolve(false)));
+    return {
+      completion,
+      cancelAndWait: async () => {
+        child.kill();
+        await completion;
+        order.push("child-exited");
+        return child.exitCode !== null || child.signalCode !== null;
+      },
+    };
+  };
+  await assert.rejects(runWindowsImagingShort({ ...pins, actions: value, timeoutMs: 200 }), /timed out/);
+  assert.deepEqual(order, ["child-exited", "cancellationCleanup"]);
+  assert.equal(child.exitCode !== null || child.signalCode !== null, true);
+});
+
+test("cleanup failure is terminal and preserves the primary error", async () => {
   const value = actions();
-  value.unitContractsUi = async () => { throw new Error("primary"); };
+  value.unitContractsUi = () => ({ completion: Promise.reject(new Error("primary")), cancelAndWait: async () => true });
   value.cancellationCleanup = async () => { throw new Error("cleanup"); };
-  await assert.rejects(runWindowsImagingShort({ exeCommit: commit, exeSha256: sha, actions: value }), error => {
+  await assert.rejects(runWindowsImagingShort({ ...pins, actions: value }), error => {
     assert.equal(error instanceof AggregateError, true);
     assert.equal(error.errors.length, 2);
     return true;
   });
 });
 
-test("invalid candidate identity is rejected before any action runs", async () => {
-  const log = [];
-  await assert.rejects(runWindowsImagingShort({ exeCommit: "not-a-commit", exeSha256: sha, actions: actions(log) }), /Candidate executable identity/);
-  assert.deepEqual(log, []);
+test("one total deadline also bounds cleanup", async () => {
+  const value = actions();
+  value.cancellationCleanup = () => new Promise(() => {});
+  await assert.rejects(runWindowsImagingShort({ ...pins, actions: value, timeoutMs: 30 }), /cleanup exceeded the total deadline/);
 });
