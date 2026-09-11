@@ -40,7 +40,8 @@ test("missing, unowned, and non-success actions fail closed", async () => {
   const unowned = actions(); unowned.usbEnumeration = () => Promise.resolve(true);
   await assert.rejects(runWindowsImagingShort({ ...pins, actions: unowned }), /owned operation/);
   for (const value of [false, undefined, "true"]) {
-    const changed = actions(); changed.usbEnumeration = () => settled(value);
+    const changed = actions();
+    changed.usbEnumeration = () => ({ completion: Promise.resolve(value), cancelAndWait: async () => true });
     await assert.rejects(runWindowsImagingShort({ ...pins, actions: changed }), /did not prove success/);
   }
 });
