@@ -132,12 +132,21 @@ Screenshot capture instructions live in the
 ## Windows imaging validation modes
 
 Windows imaging validation selects exactly one machine-readable mode: `short`,
-`partial`, or `full`. `short` is bounded feedback and never end-to-end evidence.
-`partial` authenticates official SteamOS and an immutable compiled-driver-only
-Core Release bundle, constructs and exports the image, and proves complete
-write, flush, and hash readback on the owned 32 GiB virtual USB. `full` adds
-bundle source evidence plus boot, install, reinstall, retained-media, and
-no-orphan proof; it gates later publication of the exact tested executable
-bytes but does not authorize publication. Every mode uses the immutable sealed
-Windows base through a disposable overlay. A shorter mode cannot substitute,
-and a combined NVIDIA-plus-SteamOS Release asset is forbidden.
+`partial`, or `full`. The caller must also supply its independent required
+mode; the result cannot choose its own requirement. `short` is bounded feedback
+and never end-to-end evidence. `partial` authenticates official SteamOS and an
+immutable compiled-driver-only Core Release bundle, constructs and exports the
+image, and proves complete write, flush, and hash readback on the owned 32 GiB
+virtual USB. `full` adds bundle source evidence plus boot, install, reinstall,
+retained-media, and no-orphan proof; it gates later publication of the exact
+tested executable bytes but does not authorize publication.
+
+Every result explicitly declares sealed-base reuse, a disposable overlay, no
+Windows reinstall, no combined NVIDIA-plus-SteamOS asset, and no publication.
+Short and partial results must explicitly deny boot, install, and reinstall
+claims. Partial and full validation also requires an independently supplied
+immutable bundle requirement; the reported bundle must match it exactly. These results bind the canonical Core bundle schemas, pinned
+manifest, Release repository and tag, ordered asset names, byte sizes and
+SHA-256 hashes, Core and driver-source commits, exact target and compatibility,
+and provenance and build-source evidence. Missing or contradictory fields fail
+closed.
