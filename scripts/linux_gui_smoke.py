@@ -358,6 +358,14 @@ def validate_dialog_focus(dialog, focusable_state, focused_state):
         raise RuntimeError(f"Compatibility dialog initial focus changed: {focused!r}.")
 
 
+def validate_exclusive_keyboard_focus(dialog, expected, focused_state):
+    focused = controls_with_state(dialog, focused_state)
+    if focused != [expected]:
+        raise RuntimeError(
+            f"Compatibility keyboard focus changed: expected {[expected]!r}, found {focused!r}."
+        )
+
+
 def exercise_dialog_keyboard_cycle(dialog, focused_state, synthesize_tab, wait_focus):
     focused = controls_with_state(dialog, focused_state)
     if focused != [EXPECTED_FOCUS_ORDER[0]]:
@@ -570,7 +578,7 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
             focused_state,
             synthesize_tab_key,
             lambda expected: wait(
-                lambda: exactly_one_focused_control(dialog, expected[0], expected[1], focused_state),
+                lambda: validate_exclusive_keyboard_focus(dialog, expected, focused_state),
                 f"keyboard focus on {expected[0]}",
             ),
         )

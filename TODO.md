@@ -2131,11 +2131,12 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     released, application processes stopped, and no new QEMU remained. An explicit
     desktop-only smoke option now synthesizes a bounded seven-Tab keyboard cycle from
     the initially focused Close control through every declared inspector control and
-    back to Close; skipped, reordered, duplicate, non-wrapping, or refused focus
+    back to Close; every step requires the expected control to be the only focused
+    control, so skipped, reordered, duplicate/stale, non-wrapping, or refused focus
     transitions fail. Two disposable Debian Xvfb runs proved that neither symbolic nor
     hardware AT-SPI Tab synthesis reaches the webview without an active desktop input
     route, so headless CI retains exact structural focus-order checks without claiming
-    live keyboard traversal. Thirty-three focused smoke-harness cases pass locally;
+    live keyboard traversal. Thirty-four focused smoke-harness cases pass locally;
     real-desktop execution and PR evidence remain pending on this branch.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
   heartbeats or free-form log text. Unknown structured phases now retain only

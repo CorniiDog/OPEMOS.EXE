@@ -368,7 +368,7 @@ class GuiSmokeTests(unittest.TestCase):
             return True
         def wait(expected):
             observed.append(expected)
-            smoke.exactly_one_focused_control(dialog, expected[0], expected[1], focused)
+            smoke.validate_exclusive_keyboard_focus(dialog, expected, focused)
         smoke.exercise_dialog_keyboard_cycle(dialog, focused, tab, wait)
         self.assertEqual(observed, smoke.EXPECTED_FOCUS_ORDER[1:] + smoke.EXPECTED_FOCUS_ORDER[:1])
 
@@ -381,6 +381,20 @@ class GuiSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "refused to synthesize"):
             smoke.exercise_dialog_keyboard_cycle(dialog, focused, lambda: False, wait)
 
+    def test_dialog_keyboard_cycle_rejects_duplicate_focused_controls(self):
+        focused = "focused"
+        controls = [FakeNode(name, role=role, states=set()) for name, role in smoke.EXPECTED_FOCUS_ORDER]
+        controls[0].states = {focused}
+        dialog = FakeNode(children=controls)
+        def duplicate():
+            controls[1].states.add(focused)
+            return True
+        with self.assertRaisesRegex(RuntimeError, "expected.*found"):
+            smoke.exercise_dialog_keyboard_cycle(
+                dialog, focused, duplicate,
+                lambda expected: smoke.validate_exclusive_keyboard_focus(dialog, expected, focused),
+            )
+
     def test_dialog_keyboard_cycle_rejects_skipped_focus(self):
         focused = "focused"
         controls = [FakeNode(name, role=role, states=set()) for name, role in smoke.EXPECTED_FOCUS_ORDER]
@@ -390,10 +404,10 @@ class GuiSmokeTests(unittest.TestCase):
             controls[0].states.clear()
             controls[2].states.add(focused)
             return True
-        with self.assertRaisesRegex(RuntimeError, "Expected one focused"):
+        with self.assertRaisesRegex(RuntimeError, "expected.*found"):
             smoke.exercise_dialog_keyboard_cycle(
                 dialog, focused, skip,
-                lambda expected: smoke.exactly_one_focused_control(dialog, expected[0], expected[1], focused),
+                lambda expected: smoke.validate_exclusive_keyboard_focus(dialog, expected, focused),
             )
 
     def test_compatibility_safety_text_requires_exact_nonproduction_warnings(self):
