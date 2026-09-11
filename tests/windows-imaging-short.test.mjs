@@ -96,9 +96,10 @@ test("cleanup failure is terminal and preserves the primary error", async () => 
 test("one total deadline also bounds and settles cleanup", async () => {
   const value = actions();
   let settledCleanup = false;
+  let release;
   value.cancellationCleanup = () => ({
-    completion: new Promise(() => {}),
-    cancelAndWait: async () => { settledCleanup = true; return true; },
+    completion: new Promise(resolve => { release = resolve; }),
+    cancelAndWait: async () => { settledCleanup = true; release(false); return true; },
   });
   await assert.rejects(runWindowsImagingShort({ ...pins, actions: value, timeoutMs: 30 }), /timed out during cancellationCleanup/);
   assert.equal(settledCleanup, true);
