@@ -338,10 +338,17 @@ installation targets, production activation, or hardware certification.
   locale options remain exact within their owning Settings landmark while an
   external native popup mirror is allowed. Thirty-eight focused lifecycle and
   accessibility tests and 171 frontend tests pass. Physical Debian graphics
-  remain open. The staged independent Debian follow-up enables the existing
-  debug-only idle build-progress companion in the installed-package virtual-X11
-  smoke and requires its exact harness argument plus all three opt-in environment
-  values; remote package execution and review remain pending. Managed-appliance
+  remain open. The independent Debian follow-up enables the existing debug-only
+  idle build-progress companion in the installed-package virtual-X11 smoke and
+  requires its exact harness argument plus all three opt-in environment values.
+  Thirty-eight focused lifecycle/smoke tests passed locally; all nine non-deploy
+  checks passed, including both installed Debian 12 package smokes. Core approved
+  exact base `15b68924ccea08094e07001a6d8c3e5e94d4f5d8`, unchanged head
+  `4337d9928f1eebff36474a5e169fd024ac8dc362`, three-file scope, and required-check
+  set through the authenticated same-author fallback. PR
+  https://github.com/CorniiDog/OPEMOS.EXE/pull/82 squash-merged as
+  `f373cad797b95101a5d0ba397f9d93cc0ce1a5f5`; protected `main` resolved to that
+  commit and only the merged topic branch was deleted. Managed-appliance
   lifecycle and
   image equivalence remain separately blocked by the unchanged resource minimum
   above. The Ubuntu glibc-2.39 package is not a validated Debian 12 artifact.
