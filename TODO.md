@@ -2136,8 +2136,16 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
     transitions fail. Two disposable Debian Xvfb runs proved that neither symbolic nor
     hardware AT-SPI Tab synthesis reaches the webview without an active desktop input
     route, so headless CI retains exact structural focus-order checks without claiming
-    live keyboard traversal. Thirty-four focused smoke-harness cases pass locally;
-    real-desktop execution and PR evidence remain pending on this branch.
+    live keyboard traversal. Thirty-four focused smoke-harness cases pass locally.
+    All ten applicable checks passed on exact head
+    `b69ed3ebac3925a107c55c13fefe9d1dec2baf5d` (two frontend-and-docs, two
+    build, two Rust, two Linux integration, and two Debian package checks); the
+    deploy check was intentionally skipped. Core approved that exact base, head,
+    four-file scope, and check set. Source PR
+    [#84](https://github.com/CorniiDog/OPEMOS.EXE/pull/84) squash-merged to
+    protected main as `ead6703f85d7b3cd0bfc22e60f3c99e49a537c23`, and GitHub
+    deleted only the merged topic branch while retaining detailed pre-squash
+    history. Real-desktop keyboard execution remains pending.
 - [x] Keep unknown Core phases indeterminate; never infer percentages from
   heartbeats or free-form log text. Unknown structured phases now retain only
   their bounded label and current validation/installation context: even a
