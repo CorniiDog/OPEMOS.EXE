@@ -14,7 +14,7 @@ function settled(value = true) {
 function actions(log = []) {
   return {
     ...Object.fromEntries(names.map(name => [name, () => { log.push(name); return settled(); }])),
-    cancellationCleanup: async () => { log.push("cancellationCleanup"); return true; },
+    cancellationCleanup: () => { log.push("cancellationCleanup"); return settled(); },
   };
 }
 
@@ -85,7 +85,7 @@ test("timeout kills and waits for a real child before cleanup", async () => {
 test("cleanup failure is terminal and preserves the primary error", async () => {
   const value = actions();
   value.unitContractsUi = () => ({ completion: Promise.reject(new Error("primary")), cancelAndWait: async () => true });
-  value.cancellationCleanup = async () => { throw new Error("cleanup"); };
+  value.cancellationCleanup = () => ({ completion: Promise.reject(new Error("cleanup")), cancelAndWait: async () => true });
   await assert.rejects(runWindowsImagingShort({ ...pins, actions: value }), error => {
     assert.equal(error instanceof AggregateError, true);
     assert.equal(error.errors.length, 2);
@@ -93,8 +93,44 @@ test("cleanup failure is terminal and preserves the primary error", async () => 
   });
 });
 
-test("one total deadline also bounds cleanup", async () => {
+test("one total deadline also bounds and settles cleanup", async () => {
   const value = actions();
-  value.cancellationCleanup = () => new Promise(() => {});
-  await assert.rejects(runWindowsImagingShort({ ...pins, actions: value, timeoutMs: 30 }), /cleanup exceeded the total deadline/);
+  let settledCleanup = false;
+  value.cancellationCleanup = () => ({
+    completion: new Promise(() => {}),
+    cancelAndWait: async () => { settledCleanup = true; return true; },
+  });
+  await assert.rejects(runWindowsImagingShort({ ...pins, actions: value, timeoutMs: 30 }), /timed out during cancellationCleanup/);
+  assert.equal(settledCleanup, true);
+});
+
+test("mid-cleanup cancellation is observed and settled", async () => {
+  const controller = new AbortController();
+  const value = actions();
+  let release;
+  let settledCleanup = false;
+  value.cancellationCleanup = () => ({
+    completion: new Promise(resolve => { release = resolve; }),
+    cancelAndWait: async () => { settledCleanup = true; release(false); return true; },
+  });
+  setTimeout(() => controller.abort(), 10);
+  await assert.rejects(runWindowsImagingShort({ ...pins, actions: value, signal: controller.signal, timeoutMs: 100 }), /cancelled during cancellationCleanup/);
+  assert.equal(settledCleanup, true);
+});
+
+test("cleanup timeout kills and waits for its real child", async () => {
+  const value = actions();
+  let child;
+  let observedExit = false;
+  value.cancellationCleanup = () => {
+    child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    const completion = new Promise(resolve => child.once("exit", () => { observedExit = true; resolve(false); }));
+    return {
+      completion,
+      cancelAndWait: async () => { child.kill(); await completion; return observedExit; },
+    };
+  };
+  await assert.rejects(runWindowsImagingShort({ ...pins, actions: value, timeoutMs: 100 }), /timed out during cancellationCleanup/);
+  assert.equal(observedExit, true);
+  assert.equal(child.exitCode !== null || child.signalCode !== null, true);
 });

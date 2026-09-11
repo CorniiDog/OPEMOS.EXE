@@ -97,17 +97,18 @@ export async function runWindowsImagingShort({
     }
   } catch (error) {
     primaryError = error;
-  } finally {
-    signal?.removeEventListener("abort", relay);
   }
 
   try {
-    const cleaned = await beforeDeadline(actions[CLEANUP](context), totalDeadline, "Windows short-mode cleanup exceeded the total deadline.");
-    if (cleaned !== true) fail("Windows short-mode cleanup did not prove success.");
+    const cleanupStartedWith = remaining(totalDeadline);
+    const cleanupDeadline = Date.now() + Math.max(1, Math.floor(cleanupStartedWith / 2));
+    await runOwnedAction(actions[CLEANUP], context, cleanupDeadline, totalDeadline, CLEANUP);
     evidence[CLEANUP] = true;
   } catch (cleanupError) {
     if (primaryError) throw new AggregateError([primaryError, cleanupError], "Windows short mode failed and cleanup did not complete.");
     throw cleanupError;
+  } finally {
+    signal?.removeEventListener("abort", relay);
   }
   if (primaryError) throw primaryError;
   if (controller.signal.aborted) fail("Windows short mode was cancelled.");
