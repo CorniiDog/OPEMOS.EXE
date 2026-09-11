@@ -45,10 +45,17 @@ class DebianInstallSmokeTests(unittest.TestCase):
     def test_success_installs_verifies_and_purges(self):
         runner=FakeRunner(self.root,self.staged); self.run_it(runner); self.assertFalse((self.root/install.BINARY).exists()); self.assertIn(("dpkg","--purge",install.PACKAGE_ID),runner.calls)
     def test_opt_in_graphical_smoke_runs_installed_binary_before_purge(self):
-        runner=FakeRunner(self.root,self.staged); self.env["OPEMOS_DEBIAN_GUI_SMOKE"]="1"; self.run_it(runner)
+        runner=FakeRunner(self.root,self.staged); self.env.update({
+            "OPEMOS_DEBIAN_GUI_SMOKE": "1",
+            "OPEMOS_LINUX_GUI_SMOKE": "0",
+            "OPEMOS_LINUX_GUI_SMOKE_COMPANION": "maintainer-workspace",
+        }); self.run_it(runner)
         gui=[call for call in runner.calls if len(call)>1 and call[1].endswith("linux_gui_smoke.py")]
         self.assertEqual(len(gui),1); self.assertIn(str(self.root/install.BINARY),gui[0]); self.assertIn("--expect-host-unavailable",gui[0])
+        self.assertIn("--expect-build-progress-companion", gui[0])
         self.assertEqual(runner.gui_env["OPEMOS_EXPERIMENTAL_LINUX"],"1")
+        self.assertEqual(runner.gui_env["OPEMOS_LINUX_GUI_SMOKE"], "1")
+        self.assertEqual(runner.gui_env["OPEMOS_LINUX_GUI_SMOKE_COMPANION"], "build-progress")
         self.assertLess(runner.calls.index(gui[0]),runner.calls.index(("dpkg","--purge",install.PACKAGE_ID)))
     def test_graphical_failure_is_reported_and_package_is_purged(self):
         runner=FakeRunner(self.root,self.staged,fail_gui=True); self.env["OPEMOS_DEBIAN_GUI_SMOKE"]="1"
