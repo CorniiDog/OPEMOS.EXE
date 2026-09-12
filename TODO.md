@@ -1111,8 +1111,12 @@ already Core contracts and are not open-ended product choices.
   consumer rejects target, phase, ordering, remote-mutation, combined-image,
   and additive drift. Linux and Windows CI fetch the canonical GitHub Core
   commit and compare the bundled plan with the Core generator before building.
-  The authenticated GitHub archive SHA-256 is
-  `8de9981ea2e63c3395f259ca928a0e1f3ab34d0c92834a4ddcf3cecb84e94696`;
+  The authenticated GitHub tar archive for canonical squash-merged Core main
+  `https://api.github.com/repos/CorniiDog/OPEMOS/tarball/b02ff79265e20bd7ef4fa4e16835c3c343afdee2`
+  has SHA-256 `8de9981ea2e63c3395f259ca928a0e1f3ab34d0c92834a4ddcf3cecb84e94696`.
+  This is distinct from the authenticated review archive for pre-squash Core PR
+  #37 head `https://api.github.com/repos/CorniiDog/OPEMOS/tarball/b4496b2b5234a69948cc48f85d89f8955cee145a`,
+  whose SHA-256 is `1ba85212a526fd0161178bcd1eff8f43ac728700856417f3f52a69dbcdb89f51`;
   the exact parity check, 22 focused cases, all 284 applicable JavaScript cases,
   documentation, and repository hygiene pass through `heavy.sh`. This exposes
   a usable preparation plan and does not execute builds or authorize
