@@ -150,16 +150,30 @@ no blanket deletion authority and does not transfer ownership to OPEMOS.EXE.
 
 Only the owning repository primary lead may squash-merge that repository's
 bounded pull request. Helpers and Resolver may prepare evidence, but they cannot
-approve or merge. Before merge, the other repository's primary lead must
-explicitly approve the exact repository, pull-request number, base branch and
-base commit, unchanged head commit, material scope, and required-check set after
-reviewing the change. Every required check must pass and branch protection must
-remain enforced. Approval is normally a GitHub approving review. When GitHub
-refuses that review solely because both primary leads authenticate as the pull-
-request author, the counterpart primary may instead record approval through the
-authenticated scheduler/handoff channel. That record must name the same exact
-identity and the provider refusal; a user instruction, nudge, helper, or Resolver
-record cannot substitute for counterpart-primary approval.
+approve or merge. Every tier-appropriate required check must pass and branch
+protection must remain enforced.
+
+Routine pull requests may merge without counterpart-primary approval only when
+their material scope is limited to documentation, isolated UI, developer tooling,
+test-harness-only code, or other non-destructive changes that cannot reach disks,
+images, VM or process lifecycle, production trust, release publication, physical
+hardware, or cross-repository contracts. The owning primary must record that
+classification and the passing required checks in the pull request before merge.
+
+Imaging-sensitive pull requests still require the other repository's primary
+lead to explicitly approve the exact repository, pull-request number, base branch
+and base commit, unchanged head commit, material scope, and required-check set
+after reviewing the change. This gate includes image construction or export,
+device enumeration or selection, partitioning or writing, VM or process lifecycle,
+Core bundle consumption, compatibility decisions, and cross-repository contracts.
+Release, signing or trust, production activation, physical-media, and hardware-
+certification work retains every imaging-sensitive gate plus any explicit user
+authority otherwise required. Approval is normally a GitHub approving review.
+When GitHub refuses that review solely because both primary leads authenticate as
+the pull-request author, the counterpart primary may instead record approval
+through the authenticated scheduler/handoff channel. That record must name the
+same exact identity and the provider refusal; a user instruction, nudge, helper,
+or Resolver record cannot substitute for required counterpart-primary approval.
 
 Any new head commit, changed base commit, material scope change, or required-
 check change invalidates that approval. The counterpart lead must review and
@@ -167,6 +181,12 @@ approve the new exact identity before the owning lead may merge. Approval of one
 pull request never transfers ownership or authorizes another pull request,
 release, tag, trust or signing decision, production activation, boundary change,
 or hardware action.
+
+Do not open a standalone evidence-only pull request merely to restate a completed
+merge's URL, checks, squash commit, or branch deletion. Preserve reviewable
+evidence in the implementation pull request and authenticated handoff. If a TODO
+needs the final squash identity, carry it in the next material pull request or a
+release-evidence batch; its absence never blocks product development.
 
 After verifying the squash merge commit on the protected main branch, the owning
 lead may delete only that exact merged topic branch. No helper or Resolver may
