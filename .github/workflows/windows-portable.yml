@@ -87,12 +87,28 @@ jobs:
         run: |
           $source = "src-tauri/target/release/steamos-nvidia-image-builder.exe"
           $process = Start-Process -FilePath $source -PassThru
-          Start-Sleep -Seconds 8
-          if ($process.HasExited) {
-            throw "Portable executable exited during startup with code $($process.ExitCode)."
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(30)
+            do {
+              Start-Sleep -Milliseconds 250
+              $process.Refresh()
+              if ($process.HasExited) {
+                throw "Portable executable exited during startup with code $($process.ExitCode)."
+              }
+            } while (($process.MainWindowHandle -eq 0 -or $process.MainWindowTitle -cne "SteamOS NVIDIA Builder") -and [DateTime]::UtcNow -lt $deadline)
+            if ($process.MainWindowHandle -eq 0) {
+              throw "Portable executable did not show a native main window within 30 seconds."
+            }
+            if ($process.MainWindowTitle -cne "SteamOS NVIDIA Builder") {
+              throw "Portable executable showed an unexpected window title: $($process.MainWindowTitle)"
+            }
           }
-          Stop-Process -Id $process.Id
-          $process.WaitForExit()
+          finally {
+            if (-not $process.HasExited) {
+              Stop-Process -Id $process.Id
+              $process.WaitForExit()
+            }
+          }
 
       - name: Verify executable and record provenance
         shell: pwsh

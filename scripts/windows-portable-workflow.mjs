@@ -34,6 +34,10 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "cargo test --manifest-path src-tauri/Cargo.toml --locked windows_", "locked Windows Rust tests");
   requireText(text, "cargo build --manifest-path src-tauri/Cargo.toml --release --locked", "locked release build");
   requireText(text, "Start-Process -FilePath $source -PassThru", "portable executable startup smoke test");
+  requireText(text, "} while (($process.MainWindowHandle -eq 0 -or $process.MainWindowTitle -cne \"SteamOS NVIDIA Builder\") -and [DateTime]::UtcNow -lt $deadline)", "bounded native UI readiness polling");
+  requireText(text, "if ($process.MainWindowHandle -eq 0) {", "a visible native main-window gate");
+  requireText(text, "if ($process.MainWindowTitle -cne \"SteamOS NVIDIA Builder\") {", "the expected Windows UI title");
+  requireText(text, "finally {", "unconditional smoke-test cleanup");
   requireText(text, "Stop-Process -Id $process.Id", "bounded smoke-test process cleanup");
   requireText(text, "Get-AuthenticodeSignature -LiteralPath $source", "Authenticode inspection");
   requireText(text, "SignatureStatus]::NotSigned", "the unsigned-only gate");
