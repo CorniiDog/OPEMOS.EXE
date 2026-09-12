@@ -841,6 +841,16 @@ already Core contracts and are not open-ended product choices.
   https://github.com/CorniiDog/OPEMOS.EXE/pull/53, remote CI, and exact Core
   review. On that head, Pages build and both copies of frontend/docs, Rust,
   Linux integration, and Debian package checks passed; Pages deploy skipped.
+- [x] Mirror the explicitly authorized product-first review tiers from canonical
+  Core squash commit `e36e9052b982893b5fc89f6df0fa1c8671b7cad1` without
+  rewording the authority. Authenticated GitHub bytes match Git blob
+  `9b379788b1deadbb2088887eb10be325008254ac` and SHA-256
+  `c44a987b4931f413ee72cc6d94ff3797f746bbdba4bcf51c7d7aed9406ffd9f2`.
+  EXE integrity enforcement now distinguishes routine non-destructive work from
+  imaging-sensitive and release work, retains exact counterpart review for the
+  stronger tiers, and rejects standalone evidence-only PR practice. The staged
+  decision record is `docs/decisions/2026-09-11-product-first-review-tiers.md`;
+  Core's final counterpart repin follows the verified EXE squash identity.
 - [ ] Before production wiring, replace final name-based cleanup with a durable
   quarantine/retirement protocol: fsync intent, same-parent create-only rename,
   fsync parent, recheck the receipt, then delete. Preserve mismatches and test

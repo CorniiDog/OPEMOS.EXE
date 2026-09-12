@@ -6,9 +6,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_COMMIT = "73e8d15c07671f3174f1a948d525e18db1084e5a"
-EXPECTED_GIT_BLOB = "2f8424a1df29fce2859126f7c42fd1885db8a425"
-EXPECTED_SHA256 = "8c882b9a25e3d53fc200d82fff0807a8746dc826410271563d37342542c01df0"
+SOURCE_COMMIT = "e36e9052b982893b5fc89f6df0fa1c8671b7cad1"
+EXPECTED_GIT_BLOB = "9b379788b1deadbb2088887eb10be325008254ac"
+EXPECTED_SHA256 = "c44a987b4931f413ee72cc6d94ff3797f746bbdba4bcf51c7d7aed9406ffd9f2"
 
 
 def git_blob_id(payload):
@@ -42,8 +42,13 @@ def main():
         "The flag grants\nno blanket deletion authority and does not transfer ownership to OPEMOS.EXE",
         "## Cross-repository pull-request merge governance",
         "Only the owning repository primary lead may squash-merge",
-        "the counterpart primary may instead record approval through the\nauthenticated scheduler/handoff channel",
+        "Routine pull requests may merge without counterpart-primary approval",
+        "cannot reach disks,\nimages, VM or process lifecycle, production trust, release publication, physical\nhardware, or cross-repository contracts",
+        "Imaging-sensitive pull requests still require the other repository's primary\nlead to explicitly approve",
+        "the counterpart primary may instead record approval\nthrough the authenticated scheduler/handoff channel",
         "Any new head commit, changed base commit, material scope change",
+        "Do not open a standalone evidence-only pull request",
+        "its absence never blocks product development",
         "may delete only that exact merged topic branch",
         "This ownership is cross-platform",
     ):
