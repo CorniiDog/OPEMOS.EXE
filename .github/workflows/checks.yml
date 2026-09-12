@@ -184,3 +184,14 @@ jobs:
         env:
           OPEMOS_DEBIAN_GUI_SMOKE: '1'
           OPEMOS_DISPOSABLE_DEBIAN_CONTAINER: '1'
+
+      - name: Stage current-source Linux packages with checksums and provenance
+        run: python3 scripts/stage_linux_packages.py --source-commit "${GITHUB_SHA}"
+
+      - name: Retain the validated Linux packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: opemos-exe-linux-x86_64-${{ github.sha }}
+          path: linux-package-artifact
+          if-no-files-found: error
+          compression-level: 0
