@@ -36,6 +36,10 @@ jobs:
             throw "EXE checkout mismatch: $actual"
           }
 
+      - name: Preserve canonical Core bytes
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
       - name: Check out immutable OPEMOS Core contracts
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:

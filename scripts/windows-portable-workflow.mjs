@@ -27,6 +27,7 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "ref: ${{ env.OPEMOS_EXE_COMMIT }}", "the EXE checkout pin");
   requireText(text, "git rev-parse HEAD", "runtime EXE commit verification");
   requireText(text, "git -C opemos-core-contracts rev-parse HEAD", "runtime Core commit verification");
+  requireText(text, "git config --global core.autocrlf false", "canonical Core byte preservation");
   requireText(text, "node-version: 22.23.2", "Node 22.23.2");
   requireText(text, "toolchain: 1.98.1", "Rust 1.98.1");
   requireText(text, "run: npm ci", "locked JavaScript installation");
