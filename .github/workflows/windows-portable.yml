@@ -95,7 +95,7 @@ jobs:
               if ($process.HasExited) {
                 throw "Portable executable exited during startup with code $($process.ExitCode)."
               }
-            } while ($process.MainWindowHandle -eq 0 -and [DateTime]::UtcNow -lt $deadline)
+            } while (($process.MainWindowHandle -eq 0 -or $process.MainWindowTitle -cne "SteamOS NVIDIA Builder") -and [DateTime]::UtcNow -lt $deadline)
             if ($process.MainWindowHandle -eq 0) {
               throw "Portable executable did not show a native main window within 30 seconds."
             }

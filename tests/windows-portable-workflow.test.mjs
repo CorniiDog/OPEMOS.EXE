@@ -24,8 +24,9 @@ for (const [name, mutate, expected] of [
   ["long artifact retention", text => text.replace("retention-days: 1", "retention-days: 90"), /one-day artifact retention/],
   ["unlocked Rust build", text => text.replace("--release --locked", "--release"), /locked release build/],
   ["missing executable smoke test", text => text.replace("Start-Process -FilePath $source -PassThru", "Write-Host skipped"), /startup smoke test/],
+  ["missing UI readiness polling", text => text.replace("} while (($process.MainWindowHandle -eq 0 -or $process.MainWindowTitle -cne \"SteamOS NVIDIA Builder\") -and [DateTime]::UtcNow -lt $deadline)", "} while ($false)"), /native UI readiness polling/],
   ["missing visible-window gate", text => text.replace("if ($process.MainWindowHandle -eq 0) {", "if ($false) {"), /native main-window gate/],
-  ["wrong UI title", text => text.replace("$process.MainWindowTitle -cne \"SteamOS NVIDIA Builder\"", "$false"), /expected Windows UI title/],
+  ["wrong UI title", text => text.replace("if ($process.MainWindowTitle -cne \"SteamOS NVIDIA Builder\") {", "if ($false) {"), /expected Windows UI title/],
   ["missing unconditional cleanup", text => text.replace("finally {", "if ($true) {"), /unconditional smoke-test cleanup/],
   ["secret signing input", text => text + "\n# secrets.WINDOWS_CERT signtool", /must not use secrets/],
 ]) {

@@ -1097,8 +1097,10 @@ already Core contracts and are not open-ended product choices.
   appears or if its title is not exactly `SteamOS NVIDIA Builder`, and always
   terminates and waits for the owned process. Thirteen focused workflow-policy
   tests pass through `heavy.sh`, including removal of the visible-window, title,
-  and unconditional-cleanup gates. Native Windows execution, PR checks, and
-  squash evidence follow; this changes no imaging, Core, trust, publication,
+  and unconditional-cleanup gates. The first native run reached a nonzero window
+  handle before Windows had populated its title, so it failed with an empty title;
+  the corrected poll now waits for both the handle and exact title within the same
+  deadline. Corrected-head native Windows execution, PR checks, and squash evidence follow; this changes no imaging, Core, trust, publication,
   production, hardware, boundary, or governance behavior.
 - [x] Replace the first portable Windows artifact after a user-reported release
   blocker: its backend rejected Windows as an unsupported host and the UI reported
