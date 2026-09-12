@@ -617,6 +617,7 @@ pub(crate) fn parse_core_installer_result_compatibility_fixtures(
         "mutation-success",
         "failed-module-diagnostic",
         "failed-userspace-diagnostic",
+        "cancelled-terminal",
         "safe-additive-fields",
         "missing-module-verification",
         "missing-userspace-verification",
@@ -649,6 +650,7 @@ pub(crate) fn parse_core_installer_result_compatibility_fixtures(
             "failed-module-diagnostic" | "failed-userspace-diagnostic" => {
                 (true, Some("failed"), false)
             }
+            "cancelled-terminal" => (true, Some("cancelled"), false),
             "malformed-json" | "duplicate-json-key" => (false, None, true),
             _ => (false, None, false),
         };
@@ -668,8 +670,10 @@ pub(crate) fn parse_core_installer_result_compatibility_fixtures(
                 raw.is_empty() || raw.len() > CORE_INSTALLER_RESULT_FIXTURE_LIMIT
             })
             || (case.expected.accepted
-                && (!matches!(expected_status, Some("validated" | "success" | "failed"))
-                    || document_status != expected_status
+                && (!matches!(
+                    expected_status,
+                    Some("validated" | "success" | "failed" | "cancelled")
+                ) || document_status != expected_status
                     || !has_document))
             || (!case.expected.accepted && expected_status.is_some())
         {
@@ -3852,6 +3856,18 @@ mod tests {
                     Some(SupportInstallValidationDocument::Verified(_))
                 ));
                 assert!(result.initramfs_workspace.is_some());
+                assert!(result.module_verification.is_none());
+                assert!(result.userspace_verification.is_none());
+                assert!(result.initramfs_verification.is_none());
+                assert!(result.payload_receipt.is_none());
+            } else if result.status == "cancelled" {
+                assert_eq!(case.name, "cancelled-terminal");
+                assert_eq!(result.phase, "cancelled");
+                assert_eq!(result.reason, "cancelled");
+                assert!(result.cleanup.mounts_released);
+                assert!(result.cleanup.compression_policy_restored);
+                assert!(result.validation.is_none());
+                assert!(result.initramfs_workspace.is_none());
                 assert!(result.module_verification.is_none());
                 assert!(result.userspace_verification.is_none());
                 assert!(result.initramfs_verification.is_none());

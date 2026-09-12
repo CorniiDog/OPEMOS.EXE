@@ -1116,7 +1116,10 @@ already Core contracts and are not open-ended product choices.
   the exact parity check, 22 focused cases, all 284 applicable JavaScript cases,
   documentation, and repository hygiene pass through `heavy.sh`. This exposes
   a usable preparation plan and does not execute builds or authorize
-  publication.
+  publication. The first repinned Rust CI run then exposed Core's added
+  `cancelled-terminal` fixture; EXE now accepts only that exact terminal status
+  and verifies its cancelled phase/reason, completed cleanup, and absence of
+  validation or mutation evidence. The exact focused Core fixture consumer passes.
 - [x] Replace the first portable Windows artifact after a user-reported release
   blocker: its backend rejected Windows as an unsupported host and the UI reported
   `Builder unavailable`. PR https://github.com/CorniiDog/OPEMOS.EXE/pull/59
