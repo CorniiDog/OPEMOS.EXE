@@ -8,6 +8,18 @@ const USER = /^[A-Za-z][A-Za-z0-9_-]{0,19}$/;
 const KEY = /^ssh-(ed25519|rsa) [A-Za-z0-9+/=]{32,8192}(?: [^\r\n]{1,128})?$/;
 function fail(message) { throw new Error(message); }
 function xml(value) { return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;"); }
+function count(source, pattern) { return (source.match(pattern) || []).length; }
+function validateDiskLayout(template) {
+  const compact = template.replace(/>\s+</g, "><");
+  if (count(compact, /<Disk(?:\s|>)/g) !== 1 || count(compact, /<\/Disk>/g) !== 1) fail("Windows unattended template must contain exactly one disk.");
+  if (count(compact, /<CreatePartition(?:\s|>)/g) !== 3 || count(compact, /<\/CreatePartition>/g) !== 3) fail("Windows unattended template must contain exactly three create-partition entries.");
+  if (count(compact, /<ModifyPartition(?:\s|>)/g) !== 2 || count(compact, /<\/ModifyPartition>/g) !== 2) fail("Windows unattended template must contain exactly two modify-partition entries.");
+  const disk = compact.match(/<Disk wcm:action="add">.*?<\/Disk>/s)?.[0];
+  const expected = /^<Disk wcm:action="add"><DiskID>0<\/DiskID><WillWipeDisk>true<\/WillWipeDisk><CreatePartitions><CreatePartition wcm:action="add"><Order>1<\/Order><Type>EFI<\/Type><Size>100<\/Size><\/CreatePartition><CreatePartition wcm:action="add"><Order>2<\/Order><Type>MSR<\/Type><Size>16<\/Size><\/CreatePartition><CreatePartition wcm:action="add"><Order>3<\/Order><Type>Primary<\/Type><Extend>true<\/Extend><\/CreatePartition><\/CreatePartitions><ModifyPartitions><ModifyPartition wcm:action="add"><Order>1<\/Order><PartitionID>1<\/PartitionID><Format>FAT32<\/Format><Label>System<\/Label><\/ModifyPartition><ModifyPartition wcm:action="add"><Order>2<\/Order><PartitionID>3<\/PartitionID><Format>NTFS<\/Format><Label>Windows<\/Label><Letter>C<\/Letter><\/ModifyPartition><\/ModifyPartitions><\/Disk>$/;
+  if (!disk || !expected.test(disk)) fail("Windows unattended template disk layout does not match the reviewed disk 0 partition structure.");
+  const install = "<InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>";
+  if (count(compact, /<InstallTo(?:\s|>)/g) !== 1 || count(compact, /<\/InstallTo>/g) !== 1 || !compact.includes(install)) fail("Windows unattended template must install exactly to disk 0 partition 3.");
+}
 async function privateRegular(file, label) {
   const info = await lstat(file, { bigint: true });
   if (info.isSymbolicLink() || !info.isFile() || info.uid !== BigInt(process.getuid()) || Number(info.mode & 0o777n) !== 0o600) fail(`${label} must be a current-user-owned regular file with mode 0600.`);
@@ -32,6 +44,7 @@ export async function generateWindowsUnattend(root, inputFile, templatesRoot) {
   const xmlTemplate = await readFile(path.join(templatesRoot, "autounattend.xml.template"), "utf8");
   const psTemplate = await readFile(path.join(templatesRoot, "provision.ps1.template"), "utf8");
   if ((xmlTemplate.match(/__ACCOUNT_XML__/g) || []).length !== 2 || (xmlTemplate.match(/__PASSWORD_XML__/g) || []).length !== 2 || (xmlTemplate.match(/__PROVISION_SHA256__/g) || []).length !== 1 || (psTemplate.match(/__SSH_PUBLIC_KEY_BASE64__/g) || []).length !== 1) fail("Windows unattended templates do not have the reviewed placeholder shape.");
+  validateDiskLayout(xmlTemplate);
   const provision = psTemplate.replace("__SSH_PUBLIC_KEY_BASE64__", Buffer.from(input.sshPublicKey, "utf8").toString("base64"));
   const provisionSha256 = createHash("sha256").update(provision, "utf8").digest("hex");
   const answer = xmlTemplate.replaceAll("__ACCOUNT_XML__", xml(input.account)).replaceAll("__PASSWORD_XML__", xml(input.password)).replace("__PROVISION_SHA256__", provisionSha256);

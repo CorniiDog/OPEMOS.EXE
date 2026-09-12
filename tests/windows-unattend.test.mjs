@@ -11,6 +11,13 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const templates = path.join(repo, "templates", "windows");
 const valid = { account: "opemostest", password: "local-onetime-A9!", sshPublicKey: `ssh-ed25519 ${Buffer.alloc(32, 7).toString("base64")} opemos-test` };
 async function fixture() { const parent = await mkdtemp(path.join(os.tmpdir(), "opemos-unattend-")); const root = path.join(parent, "windows-vm"); await initializeWindowsVmRoot(root); const input = path.join(root, "runtime", "provision-input.json"); await writeFile(input, JSON.stringify(valid), { mode: 0o600 }); return { parent, root, input }; }
+async function mutatedTemplates(parent, mutate) {
+  const root = path.join(parent, "templates"); await mkdir(root);
+  const answer = await readFile(path.join(templates, "autounattend.xml.template"), "utf8");
+  await writeFile(path.join(root, "autounattend.xml.template"), mutate(answer));
+  await writeFile(path.join(root, "provision.ps1.template"), await readFile(path.join(templates, "provision.ps1.template")));
+  return root;
+}
 test("unattend generation injects local secret and public key only into ignored private output", async () => {
   const f = await fixture();
   try {
@@ -18,6 +25,17 @@ test("unattend generation injects local secret and public key only into ignored 
     const answer = await readFile(path.join(f.root, "generated", "autounattend.xml"), "utf8");
     const provision = await readFile(path.join(f.root, "generated", "provision.ps1"), "utf8");
     assert.match(answer, /<LogonCount>1<\/LogonCount>/); assert.equal((answer.match(/local-onetime-A9!/g) || []).length, 2);
+    assert.match(answer, /<settings pass="windowsPE">/);
+    assert.match(answer, /<DiskID>0<\/DiskID><WillWipeDisk>true<\/WillWipeDisk>/);
+    assert.match(answer, /<Type>EFI<\/Type><Size>100<\/Size>/);
+    assert.match(answer, /<Type>MSR<\/Type><Size>16<\/Size>/);
+    assert.match(answer, /<Type>Primary<\/Type><Extend>true<\/Extend>/);
+    assert.match(answer, /<PartitionID>1<\/PartitionID><Format>FAT32<\/Format>/);
+    assert.match(answer, /<PartitionID>3<\/PartitionID><Format>NTFS<\/Format>/);
+    assert.match(answer, /<InstallTo><DiskID>0<\/DiskID><PartitionID>3<\/PartitionID><\/InstallTo>/);
+    assert.equal((answer.match(/<DiskID>0<\/DiskID>/g) || []).length, 2);
+    assert.equal((answer.match(/<WillWipeDisk>true<\/WillWipeDisk>/g) || []).length, 1);
+    assert.doesNotMatch(answer, /<DiskID>[1-9]/);
     assert.doesNotMatch(provision, /local-onetime-A9!/); assert.match(provision, /PasswordAuthentication no/);
     const provisionSha256 = createHash("sha256").update(provision, "utf8").digest("hex");
     assert.match(answer, new RegExp(provisionSha256)); assert.doesNotMatch(answer, /__PROVISION_SHA256__/);
@@ -30,6 +48,24 @@ test("unattend generation rejects unsafe inputs before output", async () => {
     const f = await fixture();
     try { await writeFile(f.input, JSON.stringify({ ...valid, ...patch }), { mode: 0o600 }); await assert.rejects(generateWindowsUnattend(f.root, f.input, templates)); await assert.rejects(readFile(path.join(f.root, "generated", "autounattend.xml"))); }
     finally { await rm(f.parent, { recursive: true, force: true }); }
+  }
+});
+test("unattend generation rejects non-closed-world disk layouts before output", async () => {
+  const mutations = [
+    ["extra disk", (s) => s.replace("</DiskConfiguration>", '<Disk wcm:action="add"><DiskID>1</DiskID><WillWipeDisk>true</WillWipeDisk></Disk></DiskConfiguration>')],
+    ["duplicate create", (s) => s.replace("</CreatePartitions>", '<CreatePartition wcm:action="add"><Order>4</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition></CreatePartitions>')],
+    ["duplicate modify", (s) => s.replace("</ModifyPartitions>", '<ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>2</PartitionID></ModifyPartition></ModifyPartitions>')],
+    ["reordered create", (s) => s.replace("<Order>1</Order><Type>EFI</Type><Size>100</Size>", "<Order>2</Order><Type>EFI</Type><Size>100</Size>")],
+    ["mismatched modify", (s) => s.replace("<Order>2</Order><PartitionID>3</PartitionID><Format>NTFS</Format>", "<Order>2</Order><PartitionID>2</PartitionID><Format>NTFS</Format>")],
+    ["wrong install target", (s) => s.replace("<InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>", "<InstallTo><DiskID>0</DiskID><PartitionID>2</PartitionID></InstallTo>")],
+  ];
+  for (const [name, mutate] of mutations) {
+    const f = await fixture();
+    try {
+      const changed = await mutatedTemplates(f.parent, mutate);
+      await assert.rejects(generateWindowsUnattend(f.root, f.input, changed), /Windows unattended template/, name);
+      await assert.rejects(readFile(path.join(f.root, "generated", "autounattend.xml")));
+    } finally { await rm(f.parent, { recursive: true, force: true }); }
   }
 });
 test("unattend generation is create-only and cleans its own partial pair", async () => {
