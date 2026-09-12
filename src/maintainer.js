@@ -6,11 +6,13 @@ import { installPageZoom } from "./zoom.js";
 import { installLocale } from "./locale.js";
 import { installKeyboardBindings, runKeyboardDefaultAction } from "./keyboard.js";
 import { installReleasePlanReview } from "./release-plan-review.js";
+import { installMaintainerReleaseWorkflow } from "./maintainer-release-workflow.js";
 
 const { invoke } = window.__TAURI__.core;
 installLocale();
 installPageZoom();
 installReleasePlanReview(document);
+installMaintainerReleaseWorkflow(document);
 const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 const openFolder = (options) => invoke("plugin:dialog|open", { options });
 const $ = (selector) => document.querySelector(selector);

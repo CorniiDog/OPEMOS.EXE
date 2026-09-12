@@ -1102,6 +1102,28 @@ already Core contracts and are not open-ended product choices.
   the corrected poll now waits for both the handle and exact title within the same
   deadline. Corrected-head native Windows execution, PR checks, and squash evidence follow; this changes no imaging, Core, trust, publication,
   production, hardware, boundary, or governance behavior.
+- [x] Consume the Core-owned exact-target maintainer workflow at canonical Core
+  commit `b02ff79265e20bd7ef4fa4e16835c3c343afdee2`. The Windows maintainer
+  menu now shows the exact SteamOS 3.8.14, kernel
+  6.16.12-valve24.4-1-neptune-616-gfe145653a794, NVIDIA 575.64.05 target,
+  immutable driver source, six ordered plan/build/package/bundle/validate/
+  release-dry-run phases, and the dry-run-only publication boundary. A closed
+  consumer rejects target, phase, ordering, remote-mutation, combined-image,
+  and additive drift. Linux and Windows CI fetch the canonical GitHub Core
+  commit and compare the bundled plan with the Core generator before building.
+  The authenticated GitHub tar archive for canonical squash-merged Core main
+  `https://api.github.com/repos/CorniiDog/OPEMOS/tarball/b02ff79265e20bd7ef4fa4e16835c3c343afdee2`
+  has SHA-256 `8de9981ea2e63c3395f259ca928a0e1f3ab34d0c92834a4ddcf3cecb84e94696`.
+  This is distinct from the authenticated review archive for pre-squash Core PR
+  #37 head `https://api.github.com/repos/CorniiDog/OPEMOS/tarball/b4496b2b5234a69948cc48f85d89f8955cee145a`,
+  whose SHA-256 is `1ba85212a526fd0161178bcd1eff8f43ac728700856417f3f52a69dbcdb89f51`;
+  the exact parity check, 22 focused cases, all 284 applicable JavaScript cases,
+  documentation, and repository hygiene pass through `heavy.sh`. This exposes
+  a usable preparation plan and does not execute builds or authorize
+  publication. The first repinned Rust CI run then exposed Core's added
+  `cancelled-terminal` fixture; EXE now accepts only that exact terminal status
+  and verifies its cancelled phase/reason, completed cleanup, and absence of
+  validation or mutation evidence. The exact focused Core fixture consumer passes.
 - [x] Replace the first portable Windows artifact after a user-reported release
   blocker: its backend rejected Windows as an unsupported host and the UI reported
   `Builder unavailable`. PR https://github.com/CorniiDog/OPEMOS.EXE/pull/59

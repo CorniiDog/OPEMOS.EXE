@@ -45,11 +45,16 @@ jobs:
       - name: Check out immutable OPEMOS Core contract fixtures
         uses: actions/checkout@v4
         with:
-          repository: CorniiDog/open-gpu-kernel-modules-steamos-support
-          ref: 3e49323fce266af8686039fb6487918ef5a64fd9
+          repository: CorniiDog/OPEMOS
+          ref: b02ff79265e20bd7ef4fa4e16835c3c343afdee2
           path: opemos-core-contracts
-          fetch-depth: 46
+          fetch-depth: 164
           persist-credentials: false
+
+      - name: Verify bundled maintainer workflow against exact Core output
+        run: node scripts/check_core_maintainer_workflow.mjs
+        env:
+          OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
 
       - name: Install Tauri Linux dependencies
         run: >-
@@ -74,7 +79,7 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
-          OPEMOS_CORE_EXPECTED_COMMIT: 3e49323fce266af8686039fb6487918ef5a64fd9
+          OPEMOS_CORE_EXPECTED_COMMIT: b02ff79265e20bd7ef4fa4e16835c3c343afdee2
 
   linux-integration:
     runs-on: ubuntu-24.04

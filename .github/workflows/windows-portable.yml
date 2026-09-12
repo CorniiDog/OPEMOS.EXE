@@ -13,7 +13,7 @@ concurrency:
 
 env:
   OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-  OPEMOS_CORE_COMMIT: 3e49323fce266af8686039fb6487918ef5a64fd9
+  OPEMOS_CORE_COMMIT: b02ff79265e20bd7ef4fa4e16835c3c343afdee2
   RUST_TOOLCHAIN: 1.98.1
   NODE_VERSION: 22.23.2
 
@@ -36,11 +36,15 @@ jobs:
             throw "EXE checkout mismatch: $actual"
           }
 
+      - name: Preserve canonical Core bytes
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
       - name: Check out immutable OPEMOS Core contracts
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          repository: CorniiDog/open-gpu-kernel-modules-steamos-support
-          ref: 3e49323fce266af8686039fb6487918ef5a64fd9
+          repository: CorniiDog/OPEMOS
+          ref: b02ff79265e20bd7ef4fa4e16835c3c343afdee2
           path: opemos-core-contracts
           fetch-depth: 1
           persist-credentials: false
@@ -73,11 +77,16 @@ jobs:
       - name: Run Windows workflow policy tests
         run: node --test tests/windows-portable-workflow.test.mjs
 
+      - name: Verify bundled maintainer workflow against exact Core output
+        run: node scripts/check_core_maintainer_workflow.mjs
+        env:
+          OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
+
       - name: Compile locked Rust tests and run Windows cases
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked windows_
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
-          OPEMOS_CORE_EXPECTED_COMMIT: 3e49323fce266af8686039fb6487918ef5a64fd9
+          OPEMOS_CORE_EXPECTED_COMMIT: b02ff79265e20bd7ef4fa4e16835c3c343afdee2
 
       - name: Build unsigned portable executable
         run: cargo build --manifest-path src-tauri/Cargo.toml --release --locked

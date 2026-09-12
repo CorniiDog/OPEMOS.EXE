@@ -7,7 +7,7 @@ const CHECKOUT = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262";
 const SETUP_NODE = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020";
 const RUST = "dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87";
 const UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02";
-const CORE = "3e49323fce266af8686039fb6487918ef5a64fd9";
+const CORE = "b02ff79265e20bd7ef4fa4e16835c3c343afdee2";
 
 function requireText(text, value, label) {
   if (!text.includes(value)) throw new Error(`Windows workflow must preserve ${label}.`);
@@ -27,10 +27,12 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "ref: ${{ env.OPEMOS_EXE_COMMIT }}", "the EXE checkout pin");
   requireText(text, "git rev-parse HEAD", "runtime EXE commit verification");
   requireText(text, "git -C opemos-core-contracts rev-parse HEAD", "runtime Core commit verification");
+  requireText(text, "git config --global core.autocrlf false", "canonical Core byte preservation");
   requireText(text, "node-version: 22.23.2", "Node 22.23.2");
   requireText(text, "toolchain: 1.98.1", "Rust 1.98.1");
   requireText(text, "run: npm ci", "locked JavaScript installation");
   requireText(text, "run: node --test tests/windows-portable-workflow.test.mjs", "focused cross-platform JavaScript tests");
+  requireText(text, "run: node scripts/check_core_maintainer_workflow.mjs", "exact Core maintainer workflow parity check");
   requireText(text, "cargo test --manifest-path src-tauri/Cargo.toml --locked windows_", "locked Windows Rust tests");
   requireText(text, "cargo build --manifest-path src-tauri/Cargo.toml --release --locked", "locked release build");
   requireText(text, "Start-Process -FilePath $source -PassThru", "portable executable startup smoke test");
