@@ -2219,6 +2219,19 @@ esac
         let executable_payload = vec![0x3c_u8; 512];
         let executable_expected = format!("{:x}", Sha256::digest(&executable_payload));
         fs::write(&source, &executable_payload).expect("restore aligned executable harness fixture");
+        fs::write(
+            manifest_path_for_output(&source),
+            serde_json::to_vec(&serde_json::json!({
+                "output": {
+                    "filename": "source.img",
+                    "format": "raw",
+                    "bytes": executable_payload.len(),
+                    "sha256": executable_expected.clone()
+                }
+            }))
+            .expect("serialize executable harness manifest"),
+        )
+        .expect("write executable harness manifest");
         let output = run_windows_virtual_usb_harness(&[
             "contained-virtual-usb".into(),
             "--root".into(),
