@@ -146,6 +146,25 @@ identity and applicable provenance. Missing, stale, malformed, mismatched,
 conflicting, or ambiguous evidence fails safely without cleanup. The flag grants
 no blanket deletion authority and does not transfer ownership to OPEMOS.EXE.
 
+## Blocked-lead Resolver escalation
+
+Whenever either primary lead cannot continue and reports scheduler state
+`blocked`, `resource`, or `approval`, it must report the exact failing
+condition, concrete evidence, and smallest missing dependency through the
+shared scheduler. That report must immediately summon the existing Resolver;
+the lead must not silently wait for the periodic review. If the reporting turn
+is still active when Resolver first checks, the scheduler may retry only the
+same Resolver dispatch after the lead becomes idle. The periodic Resolver scan
+remains a fallback.
+
+This escalation changes coordination timing, not authority. Resolver may fix
+authorized operational blockers and return demonstrably unblocked work to its
+owning lead, but it cannot approve or merge pull requests, substitute for a
+required counterpart-primary review, or grant release, signing, trust,
+production, destructive, physical-media, hardware, boundary, or governance
+authority. Existing busy, queued-input, helper, pause, ownership, and branch-
+protection guards remain in force.
+
 ## Cross-repository pull-request merge governance
 
 Only the owning repository primary lead may squash-merge that repository's
