@@ -41,6 +41,10 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "if ($process.MainWindowTitle -cne \"SteamOS NVIDIA Builder\") {", "the expected Windows UI title");
   requireText(text, "finally {", "unconditional smoke-test cleanup");
   requireText(text, "Stop-Process -Id $process.Id", "bounded smoke-test process cleanup");
+  requireText(text, '$qemuBefore = @(Get-Process -Name "qemu-system-*"', "the pre-start QEMU identity inventory");
+  requireText(text, '$qemuDeadline = [DateTime]::UtcNow.AddSeconds(5)', "the bounded post-close QEMU check");
+  requireText(text, 'Where-Object { $_ -notin $qemuBefore }', "new-QEMU identity comparison");
+  requireText(text, 'if ($qemuAfter.Count -ne 0) {', "the no-orphan QEMU gate");
   requireText(text, "Get-AuthenticodeSignature -LiteralPath $source", "Authenticode inspection");
   requireText(text, "SignatureStatus]::NotSigned", "the unsigned-only gate");
   requireText(text, "Get-FileHash -LiteralPath $destination -Algorithm SHA256", "SHA-256 provenance");
