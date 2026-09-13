@@ -6381,7 +6381,7 @@ trap - EXIT"#,
         );
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn live_recovery_input(path: &Path) -> Result<PathBuf, String> {
         let metadata = fs::symlink_metadata(path)
             .map_err(|error| format!("Could not inspect live recovery input: {error}"))?;
@@ -6392,7 +6392,7 @@ trap - EXIT"#,
             .map_err(|error| format!("Could not canonicalize live recovery input: {error}"))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn prepare_live_output_root(repository: &Path, candidate: &Path) -> Result<PathBuf, String> {
         let expected = repository.join("tests/virtual-usb/work");
         if candidate != expected {
@@ -6410,7 +6410,7 @@ trap - EXIT"#,
         Ok(canonical)
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     fn live_harness_rejects_linked_missing_and_nonregular_inputs() {
         let root = std::env::temp_dir().join(format!(
@@ -6433,7 +6433,7 @@ trap - EXIT"#,
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     fn live_harness_rejects_output_path_drift_and_symlinked_root() {
         let root = std::env::temp_dir().join(format!(
@@ -6459,10 +6459,10 @@ trap - EXIT"#,
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     struct LiveImageApplianceCleanup(Option<tauri::AppHandle>);
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     impl Drop for LiveImageApplianceCleanup {
         fn drop(&mut self) {
             if let Some(app) = self.0.take() {
@@ -6471,16 +6471,16 @@ trap - EXIT"#,
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     const LIVE_INSPECTION_QUIESCENCE_SECS: u64 = 30;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     const LIVE_INSPECTION_RETRY_TIMEOUT_SECS: u64 = 180;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     const LIVE_INSPECTION_RETRY_INTERVAL_SECS: u64 = 5;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     const LIVE_MUTATION_RETRY_TIMEOUT_SECS: u64 = 60;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn retryable_live_tcg_error(error: &str) -> bool {
         transient_guest_connection_error(error)
             || error.contains(
@@ -6488,7 +6488,7 @@ trap - EXIT"#,
             )
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn retry_live_tcg_transport<T>(
         deadline: Instant,
         mut operation: impl FnMut() -> Result<T, String>,
@@ -6503,7 +6503,7 @@ trap - EXIT"#,
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn retry_live_tcg_inspection_with_waits<T>(
         retry_timeout: Duration,
         mut wait: impl FnMut(Duration),
@@ -6523,7 +6523,7 @@ trap - EXIT"#,
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn run_live_marker_sequence<T>(
         deadline: Instant,
         preflight: impl FnMut() -> Result<(), String>,
@@ -6533,10 +6533,13 @@ trap - EXIT"#,
         mutation()
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn wait_for_live_image_appliance(app: &tauri::AppHandle) {
+        #[cfg(target_os = "linux")]
         let deadline =
             Instant::now() + Duration::from_secs(TCG_HARNESS_OUTER_TIMEOUT_SECS);
+        #[cfg(target_os = "windows")]
+        let deadline = Instant::now() + BOOT_TIMEOUT + Duration::from_secs(60);
         loop {
             let status = get_appliance_status_blocking(app.clone())
                 .expect("read live image-appliance status");
@@ -6551,7 +6554,7 @@ trap - EXIT"#,
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn wait_for_live_nvidia_appliance(app: &tauri::AppHandle) {
         let deadline = Instant::now() + NVIDIA_BUILD_BOOT_TIMEOUT + Duration::from_secs(60);
         loop {
@@ -6570,7 +6573,7 @@ trap - EXIT"#,
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     #[ignore = "requires STEAMOS_RECOVERY_IMAGE and performs the authenticated retained NVIDIA image lifecycle"]
     fn live_authenticated_nvidia_image_is_retained_for_virtual_usb() {
@@ -6597,6 +6600,7 @@ trap - EXIT"#,
 
         let appliance = appliance_path();
         let appliance_hash_before = sha256_file(&appliance).expect("hash authenticated appliance before the lifecycle");
+        #[cfg(target_os = "linux")]
         start_appliance_tcg_harness_blocking(
             input.to_string_lossy().into_owned(),
             Some(output_root.to_string_lossy().into_owned()),
@@ -6604,11 +6608,25 @@ trap - EXIT"#,
             app.clone(),
         )
         .expect("start the image appliance");
+        #[cfg(target_os = "windows")]
+        start_appliance_blocking(
+            input.to_string_lossy().into_owned(),
+            Some(output_root.to_string_lossy().into_owned()),
+            app.clone(),
+        )
+        .expect("start the image appliance");
         wait_for_live_image_appliance(&app);
 
+        #[cfg(target_os = "linux")]
         let inspection = retry_live_tcg_inspection_with_waits(
             Duration::from_secs(LIVE_INSPECTION_RETRY_TIMEOUT_SECS),
             thread::sleep,
+            || inspect_selected_image_blocking(app.clone()),
+        )
+        .expect("inspect the recovery image");
+        #[cfg(target_os = "windows")]
+        let inspection = retry_live_tcg_transport(
+            Instant::now() + Duration::from_secs(LIVE_MUTATION_RETRY_TIMEOUT_SECS),
             || inspect_selected_image_blocking(app.clone()),
         )
         .expect("inspect the recovery image");
@@ -6691,7 +6709,7 @@ trap - EXIT"#,
         );
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     #[ignore = "constructs the concrete Tauri runtime for the retained live-image harness"]
     fn live_image_harness_app_handle_reaches_managed_state() {
