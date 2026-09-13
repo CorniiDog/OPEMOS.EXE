@@ -2189,6 +2189,32 @@ esac
         assert!(!target.exists());
         assert!(source.exists());
         assert!(cleanup_windows_virtual_usb(&root_path, &source).is_err());
+
+        let cancelled_payload = vec![0x5a_u8; 5 * 1024 * 1024 + 17];
+        fs::write(&source, &cancelled_payload).expect("write cancellation fixture");
+        let cancelled_sha = format!("{:x}", Sha256::digest(&cancelled_payload));
+        let mut media = create_windows_virtual_usb(&root_path, &target)
+            .expect("recreate virtual USB for cancellation");
+        let cancel = AtomicBool::new(false);
+        let result = copy_and_verify_usb_image(
+            &source,
+            &mut media,
+            cancelled_payload.len() as u64,
+            &cancelled_sha,
+            &cancel,
+            |progress| {
+                if progress.phase == "writing" && progress.bytes_completed > 0 {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        assert!(result.expect_err("cancel exact virtual-USB write").contains("cancelled"));
+        assert_eq!(media.metadata().unwrap().len(), WINDOWS_VIRTUAL_USB_BYTES);
+        drop(media);
+        cleanup_windows_virtual_usb(&root_path, &target)
+            .expect("clean cancelled exact owned virtual USB");
+        assert!(!target.exists());
+        assert_eq!(fs::read(&source).unwrap(), cancelled_payload);
     }
 
     #[cfg(target_os = "macos")]
