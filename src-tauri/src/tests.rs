@@ -2458,15 +2458,15 @@ esac
         assert_eq!(harness_secs, TCG_HARNESS_BOOT_TIMEOUT_SECS);
         #[cfg(target_os = "linux")]
         {
-            assert_eq!(TCG_HARNESS_OUTER_TIMEOUT_SECS, 960);
+            assert_eq!(TCG_HARNESS_OUTER_TIMEOUT_SECS, 1260);
             assert_eq!(
                 TCG_HARNESS_OUTER_TIMEOUT_SECS - TCG_HARNESS_BOOT_TIMEOUT_SECS,
                 60
             );
         }
-        assert_eq!(harness_deadline.duration_since(started_at), Duration::from_secs(900));
+        assert_eq!(harness_deadline.duration_since(started_at), Duration::from_secs(1200));
         assert_eq!(appliance_readiness_deadline(started_at, Some(TCG_HARNESS_BOOT_TIMEOUT_SECS)).unwrap().0, harness_deadline, "polling must not reset the absolute deadline");
-        for malformed in [0, 119, 120, 599, 899, 901, u64::MAX] {
+        for malformed in [0, 119, 120, 599, 899, 1199, 1201, u64::MAX] {
             assert!(appliance_readiness_deadline(started_at, Some(malformed)).is_err());
         }
     }
@@ -2474,7 +2474,7 @@ esac
     #[test]
     fn appliance_readiness_expiry_refuses_late_ready_marker() {
         let started_at = Instant::now();
-        let (deadline, _) = appliance_readiness_deadline(started_at, Some(900)).unwrap();
+        let (deadline, _) = appliance_readiness_deadline(started_at, Some(1200)).unwrap();
         assert_eq!(appliance_readiness_outcome(deadline - Duration::from_nanos(1), deadline, &Ok(READY_MARKER.into())), ApplianceReadinessOutcome::Ready);
         assert_eq!(appliance_readiness_outcome(deadline, deadline, &Ok(READY_MARKER.into())), ApplianceReadinessOutcome::TimedOut);
         assert_eq!(appliance_readiness_outcome(deadline, deadline, &Err("not ready".into())), ApplianceReadinessOutcome::TimedOut);

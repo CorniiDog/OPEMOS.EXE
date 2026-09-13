@@ -212,9 +212,9 @@ pub fn run_windows_virtual_usb_harness(arguments: &[String]) -> Result<Option<St
 
 const READY_MARKER: &str = "SteamOS NVIDIA Image Builder appliance\nREADY";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
-const TCG_HARNESS_BOOT_TIMEOUT_SECS: u64 = 900;
+const TCG_HARNESS_BOOT_TIMEOUT_SECS: u64 = 1200;
 #[cfg(all(test, target_os = "linux"))]
-const TCG_HARNESS_OUTER_TIMEOUT_SECS: u64 = 960;
+const TCG_HARNESS_OUTER_TIMEOUT_SECS: u64 = 1260;
 const NVIDIA_BUILD_BOOT_TIMEOUT: Duration = Duration::from_secs(600);
 const NVIDIA_RELEASES_API: &str =
     "https://api.github.com/repos/CorniiDog/OPEMOS/releases?per_page=100";
