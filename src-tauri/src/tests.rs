@@ -6471,11 +6471,11 @@ trap - EXIT"#,
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     const LIVE_INSPECTION_QUIESCENCE_SECS: u64 = 30;
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     const LIVE_INSPECTION_RETRY_TIMEOUT_SECS: u64 = 180;
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     const LIVE_INSPECTION_RETRY_INTERVAL_SECS: u64 = 5;
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     const LIVE_MUTATION_RETRY_TIMEOUT_SECS: u64 = 60;
@@ -6503,7 +6503,7 @@ trap - EXIT"#,
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     fn retry_live_tcg_inspection_with_waits<T>(
         retry_timeout: Duration,
         mut wait: impl FnMut(Duration),
