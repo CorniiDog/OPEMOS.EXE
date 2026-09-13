@@ -249,7 +249,11 @@ pub(crate) fn usable_host_executable(path: &Path) -> bool {
         };
         path.is_file() && unsafe { libc::access(name.as_ptr(), libc::X_OK) == 0 }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        path.is_file()
+    }
+    #[cfg(all(not(unix), not(windows)))]
     {
         let _ = path;
         false
@@ -535,6 +539,19 @@ mod tests {
         for value in ["", "0", "-1", "+2", "1 MB", "18446744073709551616"] {
             assert!(parse_memory_limit(value).is_err());
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_host_executable_requires_an_existing_regular_file() {
+        let root = std::env::temp_dir().join(format!("opemos-windows-tool-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let tool = root.join("mkisofs.exe");
+        fs::write(&tool, b"test fixture").unwrap();
+        assert!(usable_host_executable(&tool));
+        assert!(!usable_host_executable(&root));
+        assert!(!usable_host_executable(&root.join("missing.exe")));
         fs::remove_dir_all(root).unwrap();
     }
 
