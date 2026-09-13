@@ -30,6 +30,7 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "git config --global core.autocrlf false", "canonical Core byte preservation");
   requireText(text, "node-version: 22.23.2", "Node 22.23.2");
   requireText(text, "toolchain: 1.98.1", "Rust 1.98.1");
+  requireText(text, "RUSTFLAGS: -C target-feature=+crt-static", "static MSVC runtime linkage");
   requireText(text, "run: npm ci", "locked JavaScript installation");
   requireText(text, "run: node --test tests/windows-portable-workflow.test.mjs", "focused cross-platform JavaScript tests");
   requireText(text, "run: node scripts/check_core_maintainer_workflow.mjs", "exact Core maintainer workflow parity check");
@@ -45,6 +46,7 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "SignatureStatus]::NotSigned", "the unsigned-only gate");
   requireText(text, "Get-FileHash -LiteralPath $destination -Algorithm SHA256", "SHA-256 provenance");
   requireText(text, `"source_commit=$env:OPEMOS_EXE_COMMIT"`, "exact-head provenance");
+  requireText(text, `"crt_static=true"`, "static-runtime provenance");
   requireText(text, "unsigned-${{ env.OPEMOS_EXE_COMMIT }}", "exact-head artifact identity");
   requireText(text, "retention-days: 1", "one-day artifact retention");
   requireText(text, "if-no-files-found: error", "missing-artifact failure");

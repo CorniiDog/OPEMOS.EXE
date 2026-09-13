@@ -16,6 +16,7 @@ env:
   OPEMOS_CORE_COMMIT: b02ff79265e20bd7ef4fa4e16835c3c343afdee2
   RUST_TOOLCHAIN: 1.98.1
   NODE_VERSION: 22.23.2
+  RUSTFLAGS: -C target-feature=+crt-static
 
 jobs:
   build:
@@ -144,6 +145,7 @@ jobs:
             "core_commit=$env:OPEMOS_CORE_COMMIT"
             "rust_toolchain=$env:RUST_TOOLCHAIN"
             "node_version=$env:NODE_VERSION"
+            "crt_static=true"
             "runner_image=$env:ImageOS"
             "runner_image_version=$env:ImageVersion"
             "filename=$name"
