@@ -527,6 +527,14 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn live_tcg_retry_windows_keep_inspection_separate_from_mutation() {
+        assert_eq!(LIVE_INSPECTION_RETRY_TIMEOUT_SECS, 180);
+        assert_eq!(LIVE_MUTATION_RETRY_TIMEOUT_SECS, 60);
+        assert!(LIVE_INSPECTION_RETRY_TIMEOUT_SECS > LIVE_MUTATION_RETRY_TIMEOUT_SECS);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn live_tcg_transport_retry_is_bounded_and_refuses_non_transport_failures() {
         let mut attempts = 0;
         let value = retry_live_tcg_transport(Instant::now() + Duration::from_secs(1), || {
@@ -6399,6 +6407,11 @@ trap - EXIT"#,
     }
 
     #[cfg(target_os = "linux")]
+    const LIVE_INSPECTION_RETRY_TIMEOUT_SECS: u64 = 180;
+    #[cfg(target_os = "linux")]
+    const LIVE_MUTATION_RETRY_TIMEOUT_SECS: u64 = 60;
+
+    #[cfg(target_os = "linux")]
     fn retryable_live_tcg_error(error: &str) -> bool {
         transient_guest_connection_error(error)
             || error.contains(
@@ -6504,7 +6517,8 @@ trap - EXIT"#,
         .expect("start the image appliance");
         wait_for_live_image_appliance(&app);
 
-        let inspection_deadline = Instant::now() + Duration::from_secs(60);
+        let inspection_deadline = Instant::now()
+            + Duration::from_secs(LIVE_INSPECTION_RETRY_TIMEOUT_SECS);
         let inspection = retry_live_tcg_transport(inspection_deadline, || {
             inspect_selected_image_blocking(app.clone())
         })
@@ -6512,7 +6526,8 @@ trap - EXIT"#,
         assert!(inspection.layout.recognized, "the Valve layout must be recognized");
         tauri::async_runtime::block_on(verify_working_image(app.clone()))
             .expect("verify the disposable working image");
-        let mutation_deadline = Instant::now() + Duration::from_secs(60);
+        let mutation_deadline = Instant::now()
+            + Duration::from_secs(LIVE_MUTATION_RETRY_TIMEOUT_SECS);
         let mutation = run_live_marker_sequence(
             mutation_deadline,
             || preflight_selected_marker_blocking(app.clone()),
