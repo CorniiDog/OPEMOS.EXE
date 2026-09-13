@@ -11,6 +11,17 @@ Repository summaries may link to the authority but must not contradict it.
 Never edit OPEMOS Core from this repository's task unless the user separately
 and explicitly authorizes that cross-repository mutation.
 
+## Blocked-lead Resolver escalation
+
+Report scheduler state `blocked`, `resource`, or `approval` with the exact
+failing condition, concrete evidence, and smallest missing dependency. Each
+fresh report must immediately summon the existing Resolver; do not silently
+wait for its periodic scan. Resolver may fix authorized operational blockers,
+but it cannot approve or merge pull requests or grant release, signing, trust,
+production, destructive, physical-media, hardware, boundary, or governance
+authority. Preserve busy, queued-input, helper, pause, ownership, and branch-
+protection guards.
+
 ## Cross-lead pull-request governance
 
 Use a fresh short-lived EXE branch and pull request for each bounded work item.

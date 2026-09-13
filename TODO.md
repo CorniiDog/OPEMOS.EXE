@@ -853,6 +853,21 @@ already Core contracts and are not open-ended product choices.
   stronger tiers, and rejects standalone evidence-only PR practice. The staged
   decision record is `docs/decisions/2026-09-11-product-first-review-tiers.md`;
   Core's final counterpart repin follows the verified EXE squash identity.
+- [ ] Mirror the explicitly authorized blocked-lead Resolver escalation from
+  canonical Core protected-main squash commit
+  `aeec707b8cb3dc6f592cedd7164c58c75a50aa8b` without rewording the authority.
+  Authenticated canonical GitHub bytes match Git blob
+  `b4d4711321590d39756b2850a3b25c26e8117d3e` and SHA-256
+  `80cc89afcc2dfd467d3a52c492c246cfc4e1a03b7fd73219172ed0bbfa9d6dfb`.
+  EXE guidance and integrity enforcement require immediate Resolver dispatch
+  for fresh blocked/resource/approval reports while preserving every authority,
+  review, queue, helper, pause, ownership, and branch-protection guard. The
+  staged decision record is
+  `docs/decisions/2026-09-13-blocked-lead-resolver-escalation.md`. Canonical
+  byte comparison, SHA-256 and Git-blob verification, focused boundary integrity,
+  Python compilation, documentation contracts, repository hygiene, and diff
+  checks pass locally. Core exact-identity review, EXE squash merge, merged-
+  branch deletion, and Core's final counterpart repin remain pending.
 - [ ] Before production wiring, replace final name-based cleanup with a durable
   quarantine/retirement protocol: fsync intent, same-parent create-only rename,
   fsync parent, recheck the receipt, then delete. Preserve mismatches and test
