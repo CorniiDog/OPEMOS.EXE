@@ -6404,7 +6404,10 @@ trap - EXIT"#,
             .map_err(|error| format!("Could not inspect retained output root: {error}"))?;
         let canonical = fs::canonicalize(&expected)
             .map_err(|error| format!("Could not canonicalize retained output root: {error}"))?;
-        if metadata.file_type().is_symlink() || canonical != expected {
+        let canonical_expected = fs::canonicalize(repository)
+            .map_err(|error| format!("Could not canonicalize repository root: {error}"))?
+            .join("tests/virtual-usb/work");
+        if metadata.file_type().is_symlink() || canonical != canonical_expected {
             return Err("Retained live output root is linked or non-canonical.".into());
         }
         Ok(canonical)
