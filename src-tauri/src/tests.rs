@@ -2140,6 +2140,57 @@ esac
         assert!(result.expect_err("cancelled write must fail").contains("cancelled"));
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_file_backed_32_gib_virtual_usb_writes_flushes_reads_back_and_cleans_up() {
+        struct TemporaryHarnessRoot(PathBuf);
+        impl Drop for TemporaryHarnessRoot {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TemporaryHarnessRoot(std::env::temp_dir().join(format!(
+            "opemos-windows-virtual-usb-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        )));
+        fs::create_dir(&root.0).expect("create harness-owned root");
+        let root_path = fs::canonicalize(&root.0).expect("canonicalize harness-owned root");
+        let source = root_path.join("source.img");
+        let target = root_path.join("virtual-usb-32g.raw");
+        let payload = b"authenticated NVIDIA image fixture";
+        fs::write(&source, payload).expect("write source fixture");
+        let expected = format!("{:x}", Sha256::digest(payload));
+
+        let mut media = create_windows_virtual_usb(&root_path, &target)
+            .expect("create exact sparse 32 GiB virtual USB");
+        assert_eq!(media.metadata().unwrap().len(), WINDOWS_VIRTUAL_USB_BYTES);
+        assert!(windows_virtual_usb_is_sparse(&media).unwrap());
+        assert!(create_windows_virtual_usb(&root_path, &target).is_err());
+
+        let cancel = AtomicBool::new(false);
+        let mut phases = Vec::new();
+        let verified = copy_and_verify_usb_image(
+            &source,
+            &mut media,
+            payload.len() as u64,
+            &expected,
+            &cancel,
+            |progress| phases.push(progress.phase),
+        )
+        .expect("write, flush, and read back virtual USB");
+        assert_eq!(verified, expected);
+        assert!(phases.iter().any(|phase| phase == "writing"));
+        assert!(phases.iter().any(|phase| phase == "verifying"));
+        assert_eq!(media.metadata().unwrap().len(), WINDOWS_VIRTUAL_USB_BYTES);
+        drop(media);
+
+        cleanup_windows_virtual_usb(&root_path, &target).expect("clean exact owned virtual USB");
+        assert!(!target.exists());
+        assert!(source.exists());
+        assert!(cleanup_windows_virtual_usb(&root_path, &source).is_err());
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "attaches a small disposable macOS virtual disk and writes its raw device"]

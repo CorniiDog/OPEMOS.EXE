@@ -2201,6 +2201,151 @@ pub(crate) fn validate_usb_helper_exchange(
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) const WINDOWS_VIRTUAL_USB_BYTES: u64 = 32 * 1024 * 1024 * 1024;
+
+#[cfg(target_os = "windows")]
+mod windows_virtual_usb {
+    use super::WINDOWS_VIRTUAL_USB_BYTES;
+    use std::{
+        ffi::c_void,
+        fs::{self, File, OpenOptions},
+        os::windows::io::AsRawHandle,
+        path::{Path, PathBuf},
+        ptr,
+    };
+
+    const FSCTL_SET_SPARSE: u32 = 0x0009_00c4;
+    const FILE_ATTRIBUTE_SPARSE_FILE: u32 = 0x0000_0200;
+
+    #[repr(C)]
+    struct ByHandleFileInformation {
+        file_attributes: u32,
+        creation_time: [u32; 2],
+        last_access_time: [u32; 2],
+        last_write_time: [u32; 2],
+        volume_serial_number: u32,
+        file_size_high: u32,
+        file_size_low: u32,
+        number_of_links: u32,
+        file_index_high: u32,
+        file_index_low: u32,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn DeviceIoControl(
+            device: *mut c_void,
+            control_code: u32,
+            input: *mut c_void,
+            input_bytes: u32,
+            output: *mut c_void,
+            output_bytes: u32,
+            returned_bytes: *mut u32,
+            overlapped: *mut c_void,
+        ) -> i32;
+        fn GetFileInformationByHandle(
+            file: *mut c_void,
+            information: *mut ByHandleFileInformation,
+        ) -> i32;
+    }
+
+    fn exact_owned_path(root: &Path, target: &Path) -> Result<PathBuf, String> {
+        let root = fs::canonicalize(root)
+            .map_err(|error| format!("Could not canonicalize the virtual-USB root: {error}"))?;
+        if target.parent() != Some(root.as_path())
+            || target.file_name().and_then(|name| name.to_str()) != Some("virtual-usb-32g.raw")
+        {
+            return Err("The virtual USB path escaped its harness-owned root.".into());
+        }
+        Ok(target.to_path_buf())
+    }
+
+    fn mark_sparse(file: &File) -> Result<(), String> {
+        let mut returned = 0_u32;
+        let result = unsafe {
+            DeviceIoControl(
+                file.as_raw_handle().cast(),
+                FSCTL_SET_SPARSE,
+                ptr::null_mut(),
+                0,
+                ptr::null_mut(),
+                0,
+                &mut returned,
+                ptr::null_mut(),
+            )
+        };
+        if result == 0 {
+            return Err(format!(
+                "Could not mark the harness-owned virtual USB sparse: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn is_sparse(file: &File) -> Result<bool, String> {
+        let mut information = std::mem::MaybeUninit::<ByHandleFileInformation>::zeroed();
+        let result = unsafe {
+            GetFileInformationByHandle(file.as_raw_handle().cast(), information.as_mut_ptr())
+        };
+        if result == 0 {
+            return Err(format!(
+                "Could not inspect the harness-owned virtual USB: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let information = unsafe { information.assume_init() };
+        Ok(information.file_attributes & FILE_ATTRIBUTE_SPARSE_FILE != 0)
+    }
+
+    pub(crate) fn create(root: &Path, target: &Path) -> Result<File, String> {
+        let target = exact_owned_path(root, target)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&target)
+            .map_err(|error| format!("Could not create the harness-owned virtual USB: {error}"))?;
+        if let Err(error) = mark_sparse(&file).and_then(|()| {
+            file.set_len(WINDOWS_VIRTUAL_USB_BYTES)
+                .map_err(|error| format!("Could not size the harness-owned virtual USB: {error}"))
+        }) {
+            drop(file);
+            let _ = fs::remove_file(&target);
+            return Err(error);
+        }
+        if file.metadata().map_err(|error| error.to_string())?.len() != WINDOWS_VIRTUAL_USB_BYTES
+            || !is_sparse(&file)?
+        {
+            drop(file);
+            let _ = fs::remove_file(&target);
+            return Err("The harness-owned virtual USB is not an exact sparse 32 GiB file.".into());
+        }
+        Ok(file)
+    }
+
+    pub(crate) fn cleanup(root: &Path, target: &Path) -> Result<(), String> {
+        let target = exact_owned_path(root, target)?;
+        let metadata = fs::symlink_metadata(&target)
+            .map_err(|error| format!("Could not inspect the virtual USB for cleanup: {error}"))?;
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || metadata.len() != WINDOWS_VIRTUAL_USB_BYTES
+        {
+            return Err("Refusing to clean a drifted virtual-USB target.".into());
+        }
+        fs::remove_file(target)
+            .map_err(|error| format!("Could not clean the harness-owned virtual USB: {error}"))
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) use windows_virtual_usb::{
+    cleanup as cleanup_windows_virtual_usb, create as create_windows_virtual_usb,
+    is_sparse as windows_virtual_usb_is_sparse,
+};
+
 #[derive(Clone)]
 struct ArmedUsbPreflight {
     session_token: String,
