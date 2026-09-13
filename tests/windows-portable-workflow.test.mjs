@@ -29,6 +29,10 @@ for (const [name, mutate, expected] of [
   ["missing visible-window gate", text => text.replace("if ($process.MainWindowHandle -eq 0) {", "if ($false) {"), /native main-window gate/],
   ["wrong UI title", text => text.replace("if ($process.MainWindowTitle -cne \"SteamOS NVIDIA Builder\") {", "if ($false) {"), /expected Windows UI title/],
   ["missing unconditional cleanup", text => text.replace("finally {", "if ($true) {"), /unconditional smoke-test cleanup/],
+  ["missing pre-start QEMU inventory", text => text.replace('$qemuBefore = @(Get-Process -Name "qemu-system-*"', '$qemuBefore = @($null #'), /pre-start QEMU identity inventory/],
+  ["unbounded post-close QEMU check", text => text.replace('$qemuDeadline = [DateTime]::UtcNow.AddSeconds(5)', '$qemuDeadline = [DateTime]::MaxValue'), /bounded post-close QEMU check/],
+  ["missing new-QEMU identity comparison", text => text.replace('Where-Object { $_ -notin $qemuBefore }', 'Where-Object { $false }'), /new-QEMU identity comparison/],
+  ["missing no-orphan QEMU gate", text => text.replace('if ($qemuAfter.Count -ne 0) {', 'if ($false) {'), /no-orphan QEMU gate/],
   ["secret signing input", text => text + "\n# secrets.WINDOWS_CERT signtool", /must not use secrets/],
 ]) {
   test(`Windows portable workflow rejects ${name}`, () => {

@@ -95,6 +95,7 @@ jobs:
         shell: pwsh
         run: |
           $source = "src-tauri/target/release/steamos-nvidia-image-builder.exe"
+          $qemuBefore = @(Get-Process -Name "qemu-system-*" -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" })
           $process = Start-Process -FilePath $source -PassThru
           try {
             $deadline = [DateTime]::UtcNow.AddSeconds(30)
@@ -117,6 +118,17 @@ jobs:
               Stop-Process -Id $process.Id
               $process.WaitForExit()
             }
+          }
+          $qemuDeadline = [DateTime]::UtcNow.AddSeconds(5)
+          do {
+            $qemuAfter = @(Get-Process -Name "qemu-system-*" -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" } | Where-Object { $_ -notin $qemuBefore })
+            if ($qemuAfter.Count -eq 0) {
+              break
+            }
+            Start-Sleep -Milliseconds 250
+          } while ([DateTime]::UtcNow -lt $qemuDeadline)
+          if ($qemuAfter.Count -ne 0) {
+            throw "Portable executable left new QEMU processes after bounded shutdown: $($qemuAfter -join ', ')"
           }
 
       - name: Verify executable and record provenance

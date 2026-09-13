@@ -2320,8 +2320,11 @@ must be reported; a default-suite pass does not imply hardware certification.
 - [ ] Add bounded release-package smoke tests which start and close the packaged
   application and confirm no orphan QEMU processes remain. The experimental
   Ubuntu debug package now has the equivalent bounded AT-SPI launch/close and
-  before/after QEMU inventory coverage; the signed release-package path remains
-  gated and unclaimed.
+  before/after QEMU inventory coverage. The unsigned Windows portable artifact
+  now snapshots QEMU process identities before startup, closes the exact app,
+  and refuses any newly surviving QEMU identity after a bounded five-second
+  settlement window. Native Windows CI evidence remains pending; the signed
+  release-package path remains gated and unclaimed.
 
 ## Release gates
 
