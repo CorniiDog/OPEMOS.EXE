@@ -2215,6 +2215,28 @@ esac
             .expect("clean cancelled exact owned virtual USB");
         assert!(!target.exists());
         assert_eq!(fs::read(&source).unwrap(), cancelled_payload);
+
+        fs::write(&source, payload).expect("restore executable harness fixture");
+        let output = run_windows_virtual_usb_harness(&[
+            "contained-virtual-usb".into(),
+            "--root".into(),
+            root_path.display().to_string(),
+            "--image".into(),
+            source.display().to_string(),
+        ])
+        .expect("run executable-contained virtual USB")
+        .expect("recognize contained virtual-USB command");
+        let evidence: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(evidence["status"], "passed");
+        assert_eq!(evidence["capacityBytes"], WINDOWS_VIRTUAL_USB_BYTES);
+        assert_eq!(evidence["sourceSha256"], expected);
+        assert_eq!(evidence["verifiedSha256"], expected);
+        assert_eq!(evidence["flushed"], true);
+        assert_eq!(evidence["cleaned"], true);
+        assert_eq!(evidence["sourcePreserved"], true);
+        assert_eq!(evidence["physicalMedia"], false);
+        assert!(!target.exists());
+        assert_eq!(fs::read(&source).unwrap(), payload);
     }
 
     #[cfg(target_os = "macos")]
