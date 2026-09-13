@@ -2216,7 +2216,9 @@ esac
         assert!(!target.exists());
         assert_eq!(fs::read(&source).unwrap(), cancelled_payload);
 
-        fs::write(&source, payload).expect("restore executable harness fixture");
+        let executable_payload = vec![0x3c_u8; 512];
+        let executable_expected = format!("{:x}", Sha256::digest(&executable_payload));
+        fs::write(&source, &executable_payload).expect("restore aligned executable harness fixture");
         let output = run_windows_virtual_usb_harness(&[
             "contained-virtual-usb".into(),
             "--root".into(),
@@ -2229,14 +2231,14 @@ esac
         let evidence: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert_eq!(evidence["status"], "passed");
         assert_eq!(evidence["capacityBytes"], WINDOWS_VIRTUAL_USB_BYTES);
-        assert_eq!(evidence["sourceSha256"], expected);
-        assert_eq!(evidence["verifiedSha256"], expected);
+        assert_eq!(evidence["sourceSha256"], executable_expected);
+        assert_eq!(evidence["verifiedSha256"], executable_expected);
         assert_eq!(evidence["flushed"], true);
         assert_eq!(evidence["cleaned"], true);
         assert_eq!(evidence["sourcePreserved"], true);
         assert_eq!(evidence["physicalMedia"], false);
         assert!(!target.exists());
-        assert_eq!(fs::read(&source).unwrap(), payload);
+        assert_eq!(fs::read(&source).unwrap(), executable_payload);
     }
 
     #[cfg(target_os = "macos")]
