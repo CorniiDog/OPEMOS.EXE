@@ -357,7 +357,16 @@ pub(crate) fn kill_owned_process_group(child: &Child) {
             unsafe { libc::kill(-pid, libc::SIGKILL) };
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(all(not(unix), not(windows)))]
     let _ = child;
 }
 
@@ -2314,6 +2323,78 @@ pub(crate) fn run_guest_command(
     finish_guest_command(start_guest_command(session, command)?)
 }
 
+const READINESS_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
+const READINESS_ATTEMPT_OUTPUT_LIMIT: u64 = 64 * 1024;
+
+fn read_bounded_guest_stream(
+    stream: impl Read + Send + 'static,
+) -> thread::JoinHandle<Result<Vec<u8>, String>> {
+    thread::spawn(move || {
+        let mut captured = Vec::new();
+        stream
+            .take(READINESS_ATTEMPT_OUTPUT_LIMIT + 1)
+            .read_to_end(&mut captured)
+            .map_err(|error| format!("Could not read guest readiness diagnostics: {error}"))?;
+        Ok(captured)
+    })
+}
+
+pub(crate) fn finish_guest_readiness_attempt(
+    mut child: Child,
+    timeout: Duration,
+) -> Result<String, String> {
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("Could not capture guest readiness output.")?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("Could not capture guest readiness diagnostics.")?;
+    let stdout_reader = read_bounded_guest_stream(stdout);
+    let stderr_reader = read_bounded_guest_stream(stderr);
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or("Guest readiness attempt deadline overflowed.")?;
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("Could not inspect guest readiness command: {error}"))?
+        {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            stop_guest_command_group(&mut child);
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err("Guest readiness transport attempt timed out.".into());
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| "Guest readiness output reader panicked.")??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "Guest readiness diagnostics reader panicked.")??;
+    if stdout.len() > READINESS_ATTEMPT_OUTPUT_LIMIT as usize
+        || stderr.len() > READINESS_ATTEMPT_OUTPUT_LIMIT as usize
+    {
+        return Err("Guest readiness output exceeded its bound.".into());
+    }
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(if detail.is_empty() {
+            format!("Guest readiness command exited with {status}.")
+        } else {
+            format!("Guest readiness command exited with {status}: {detail}")
+        });
+    }
+    Ok(String::from_utf8_lossy(&stdout).trim().to_string())
+}
+
 pub(crate) fn read_guest_command_ready_line(
     child: &mut Child,
     stdout: ChildStdout,
@@ -2568,7 +2649,10 @@ pub(crate) fn qmp_attach_nvidia_target(session: &NvidiaBuildSession) -> Result<(
 }
 
 pub(crate) fn handshake(session: &impl GuestConnection) -> Result<String, String> {
-    run_guest_command(session, "cat /etc/steamos-builder-ready")
+    finish_guest_readiness_attempt(
+        start_guest_command(session, "cat /etc/steamos-builder-ready")?,
+        READINESS_ATTEMPT_TIMEOUT,
+    )
 }
 
 pub(crate) fn collect_guest_health(session: &impl GuestConnection) -> Result<GuestHealth, String> {

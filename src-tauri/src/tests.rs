@@ -56,6 +56,60 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn guest_readiness_attempt_is_bounded_reaped_and_output_limited() {
+        let mut stalled = Command::new("/bin/sh");
+        stalled
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut stalled);
+        let stalled = stalled.spawn().expect("start stalled readiness fixture");
+        let stalled_pid = stalled.id();
+        let started = Instant::now();
+        let error = finish_guest_readiness_attempt(stalled, Duration::from_millis(50))
+            .expect_err("stalled readiness must expire");
+        assert_eq!(error, "Guest readiness transport attempt timed out.");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!process_is_alive(stalled_pid));
+
+        let mut excessive = Command::new("/bin/sh");
+        excessive
+            .args(["-c", "head -c 65537 /dev/zero"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut excessive);
+        let error = finish_guest_readiness_attempt(
+            excessive.spawn().expect("start excessive readiness fixture"),
+            Duration::from_secs(1),
+        )
+        .expect_err("excessive readiness output must fail");
+        assert_eq!(error, "Guest readiness output exceeded its bound.");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_guest_readiness_attempt_timeout_reaps_the_child() {
+        let mut stalled = Command::new("cmd.exe");
+        stalled
+            .args(["/d", "/c", "ping -n 31 127.0.0.1 >nul"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut stalled);
+        let stalled = stalled.spawn().expect("start stalled readiness fixture");
+        let stalled_pid = stalled.id();
+        let started = Instant::now();
+        let error = finish_guest_readiness_attempt(stalled, Duration::from_millis(100))
+            .expect_err("stalled readiness must expire");
+        assert_eq!(error, "Guest readiness transport attempt timed out.");
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(!process_is_alive(stalled_pid));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn guest_channel_readiness_is_bounded_and_drains_stderr_concurrently() {
         let mut noisy = Command::new("/bin/sh");
         noisy
