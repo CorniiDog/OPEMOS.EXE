@@ -528,9 +528,74 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn live_tcg_retry_windows_keep_inspection_separate_from_mutation() {
+        assert_eq!(LIVE_INSPECTION_QUIESCENCE_SECS, 30);
         assert_eq!(LIVE_INSPECTION_RETRY_TIMEOUT_SECS, 180);
+        assert_eq!(LIVE_INSPECTION_RETRY_INTERVAL_SECS, 5);
         assert_eq!(LIVE_MUTATION_RETRY_TIMEOUT_SECS, 60);
         assert!(LIVE_INSPECTION_RETRY_TIMEOUT_SECS > LIVE_MUTATION_RETRY_TIMEOUT_SECS);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn live_tcg_inspection_waits_once_then_retries_serially_at_fixed_intervals() {
+        let mut waits = Vec::new();
+        let mut attempts = 0;
+        let value = retry_live_tcg_inspection_with_waits(
+            Duration::from_secs(1),
+            |duration| waits.push(duration),
+            || {
+                attempts += 1;
+                if attempts == 1 {
+                    Err("Guest command exited with exit status: 255: banner timeout".into())
+                } else {
+                    Ok("ready")
+                }
+            },
+        )
+        .expect("retry one inspection transport failure");
+        assert_eq!(value, "ready");
+        assert_eq!(attempts, 2);
+        assert_eq!(
+            waits,
+            [
+                Duration::from_secs(LIVE_INSPECTION_QUIESCENCE_SECS),
+                Duration::from_secs(LIVE_INSPECTION_RETRY_INTERVAL_SECS),
+            ]
+        );
+
+        let mut semantic_waits = Vec::new();
+        let mut semantic_attempts = 0;
+        assert!(retry_live_tcg_inspection_with_waits(
+            Duration::from_secs(1),
+            |duration| semantic_waits.push(duration),
+            || {
+                semantic_attempts += 1;
+                Err::<(), _>("guest validation failed".into())
+            },
+        )
+        .is_err());
+        assert_eq!(semantic_attempts, 1);
+        assert_eq!(
+            semantic_waits,
+            [Duration::from_secs(LIVE_INSPECTION_QUIESCENCE_SECS)]
+        );
+
+        let mut expired_waits = Vec::new();
+        let mut expired_attempts = 0;
+        assert!(retry_live_tcg_inspection_with_waits(
+            Duration::ZERO,
+            |duration| expired_waits.push(duration),
+            || {
+                expired_attempts += 1;
+                Err::<(), _>("Guest command exited with exit status: 255: banner timeout".into())
+            },
+        )
+        .is_err());
+        assert_eq!(expired_attempts, 1);
+        assert_eq!(
+            expired_waits,
+            [Duration::from_secs(LIVE_INSPECTION_QUIESCENCE_SECS)]
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -6407,7 +6472,11 @@ trap - EXIT"#,
     }
 
     #[cfg(target_os = "linux")]
+    const LIVE_INSPECTION_QUIESCENCE_SECS: u64 = 30;
+    #[cfg(target_os = "linux")]
     const LIVE_INSPECTION_RETRY_TIMEOUT_SECS: u64 = 180;
+    #[cfg(target_os = "linux")]
+    const LIVE_INSPECTION_RETRY_INTERVAL_SECS: u64 = 5;
     #[cfg(target_os = "linux")]
     const LIVE_MUTATION_RETRY_TIMEOUT_SECS: u64 = 60;
 
@@ -6428,6 +6497,26 @@ trap - EXIT"#,
             match operation() {
                 Err(error) if retryable_live_tcg_error(&error) && Instant::now() < deadline => {
                     thread::sleep(Duration::from_millis(250));
+                }
+                result => return result,
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn retry_live_tcg_inspection_with_waits<T>(
+        retry_timeout: Duration,
+        mut wait: impl FnMut(Duration),
+        mut operation: impl FnMut() -> Result<T, String>,
+    ) -> Result<T, String> {
+        wait(Duration::from_secs(LIVE_INSPECTION_QUIESCENCE_SECS));
+        let deadline = Instant::now() + retry_timeout;
+        loop {
+            match operation() {
+                Err(error)
+                    if transient_guest_connection_error(&error) && Instant::now() < deadline =>
+                {
+                    wait(Duration::from_secs(LIVE_INSPECTION_RETRY_INTERVAL_SECS));
                 }
                 result => return result,
             }
@@ -6517,11 +6606,11 @@ trap - EXIT"#,
         .expect("start the image appliance");
         wait_for_live_image_appliance(&app);
 
-        let inspection_deadline = Instant::now()
-            + Duration::from_secs(LIVE_INSPECTION_RETRY_TIMEOUT_SECS);
-        let inspection = retry_live_tcg_transport(inspection_deadline, || {
-            inspect_selected_image_blocking(app.clone())
-        })
+        let inspection = retry_live_tcg_inspection_with_waits(
+            Duration::from_secs(LIVE_INSPECTION_RETRY_TIMEOUT_SECS),
+            thread::sleep,
+            || inspect_selected_image_blocking(app.clone()),
+        )
         .expect("inspect the recovery image");
         assert!(inspection.layout.recognized, "the Valve layout must be recognized");
         tauri::async_runtime::block_on(verify_working_image(app.clone()))
