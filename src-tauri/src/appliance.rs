@@ -1174,7 +1174,9 @@ pub(crate) fn sha256_file_with_progress(
         .map_err(|e| format!("Could not open {} for hashing: {e}", path.display()))?;
     let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    // Keep the hashing buffer off the relatively small Windows main-thread stack.
+    // The portable executable invokes this path directly before Tauri starts.
+    let mut buffer = vec![0_u8; 1024 * 1024];
     let total = fs::metadata(path)
         .map_err(|e| format!("Could not inspect {} for hashing: {e}", path.display()))?
         .len();
