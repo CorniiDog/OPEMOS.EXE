@@ -696,7 +696,7 @@ test "$MOUNTED" = 0"#;
             "OPEMOS_MUTATION_CHANNEL_READY",
             Duration::from_secs(30),
             Duration::from_secs(120),
-            READINESS_ATTEMPT_OUTPUT_LIMIT as usize,
+            64 * 1024,
             || qmp_remove_user_input(session),
         )?;
         if output.status != 0 {
