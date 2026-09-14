@@ -76,6 +76,8 @@ pub fn run() {
             list_maintainer_local_branches,
             review_maintainer_checkout,
             execute_maintainer_checkout,
+            review_maintainer_version_change,
+            apply_maintainer_version_change,
             prepare_maintainer_release_operation,
             import_maintainer_release_product,
             run_maintainer_release_operation,

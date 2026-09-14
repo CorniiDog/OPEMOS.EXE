@@ -67,6 +67,9 @@ const elements = {
   loadLocalBranches: $("#load-local-branches"), reviewCheckout: $("#review-checkout"),
   checkoutReview: $("#checkout-review"), executeCheckout: $("#execute-checkout"),
   checkoutStatus: $("#checkout-status"),
+  versionPanel: $("#version-panel"), nextVersion: $("#next-version"),
+  reviewVersion: $("#review-version"), versionPreview: $("#version-preview"),
+  applyVersion: $("#apply-version"), versionStatus: $("#version-status"),
 };
 
 let sources = [];
@@ -76,6 +79,7 @@ let plannedSource = null;
 let localWorktree = null;
 let commitReview = null;
 let branchReview = null;
+let versionReview = null;
 let workspaceGeneration = 0;
 const sourceRefreshGate = createLatestRequestGate();
 const planRequestGate = createLatestRequestGate();
@@ -87,6 +91,8 @@ const worktreeSelectionGate = createLatestRequestGate();
 const vscodeOpenGate = createLatestRequestGate();
 const localCommitGate = createLatestRequestGate();
 const checkoutExecutionGate = createLatestRequestGate();
+const versionReviewGate = createLatestRequestGate();
+const versionApplyGate = createLatestRequestGate();
 let preserveWorktreeSelectionRequest = false;
 
 installKeyboardBindings([
@@ -144,12 +150,15 @@ function resetPlan({ invalidateRequest = true } = {}) {
   vscodeOpenGate.begin();
   localCommitGate.begin();
   checkoutExecutionGate.begin();
+  versionReviewGate.begin();
+  versionApplyGate.begin();
   workspaceGeneration += 1;
   plannedRepository = null;
   plannedSource = null;
   localWorktree = null;
   commitReview = null;
   branchReview = null;
+  versionReview = null;
   elements.planTitle.textContent = "No workspace prepared";
   elements.planStatus.textContent = "Idle";
   elements.planStatus.className = "status";
@@ -161,6 +170,7 @@ function resetPlan({ invalidateRequest = true } = {}) {
   elements.openVscode.disabled = true;
   elements.localCommitPanel.classList.add("hidden");
   elements.checkoutPanel.classList.add("hidden");
+  elements.versionPanel.classList.add("hidden");
 }
 
 function disableSourceControls(disabled) {
@@ -185,6 +195,8 @@ function setWorkspaceMutationPending(pending) {
   elements.loadLocalBranches.disabled = pending;
   elements.localBranch.disabled = pending || !elements.localBranch.value;
   elements.reviewCheckout.disabled = pending || !elements.localBranch.value;
+  elements.nextVersion.disabled = pending;
+  elements.reviewVersion.disabled = pending || !localWorktree || !elements.nextVersion.value.trim();
   renderSelection();
 }
 
@@ -298,11 +310,14 @@ function renderWorktree(worktree) {
   vscodeOpenGate.begin();
   localCommitGate.begin();
   checkoutExecutionGate.begin();
+  versionReviewGate.begin();
+  versionApplyGate.begin();
   if (!preserveWorktreeSelectionRequest) worktreeSelectionGate.begin();
   workspaceGeneration += 1;
   localWorktree = worktree;
   commitReview = null;
   branchReview = null;
+  versionReview = null;
   elements.worktreePath.textContent = worktree?.path || "—";
   elements.worktreePath.title = worktree?.path || "";
   elements.worktreeBranch.textContent = worktree?.branch || (worktree ? "Detached HEAD" : "—");
@@ -312,6 +327,12 @@ function renderWorktree(worktree) {
   elements.openVscode.disabled = !worktree?.vscodeAvailable;
   elements.localCommitPanel.classList.toggle("hidden", !worktree);
   elements.checkoutPanel.classList.toggle("hidden", !worktree);
+  const versionAllowed = Boolean(worktree && plannedSource?.component === "nvidia"
+    && plannedSource?.origin === "project");
+  elements.versionPanel.classList.toggle("hidden", !versionAllowed);
+  elements.reviewVersion.disabled = !versionAllowed || !elements.nextVersion.value.trim();
+  elements.versionPreview.classList.add("hidden");
+  elements.applyVersion.classList.add("hidden");
   elements.reviewStaged.disabled = !worktree || !elements.commitMessage.value.trim();
   elements.stagedReview.classList.add("hidden");
   elements.stagedPatch.classList.add("hidden");
@@ -322,6 +343,91 @@ function renderWorktree(worktree) {
   elements.checkoutReview.classList.add("hidden");
   elements.executeCheckout.classList.add("hidden");
 }
+
+elements.nextVersion.addEventListener("input", () => {
+  versionReviewGate.begin();
+  versionApplyGate.begin();
+  versionReview = null;
+  elements.reviewVersion.disabled = !localWorktree || !elements.nextVersion.value.trim();
+  elements.versionPreview.classList.add("hidden");
+  elements.applyVersion.classList.add("hidden");
+});
+
+elements.reviewVersion.addEventListener("click", async () => {
+  if (!localWorktree || !plannedRepository) return;
+  const requestGeneration = versionReviewGate.begin();
+  versionApplyGate.begin();
+  const context = { generation: workspaceGeneration, path: localWorktree.path, repository: plannedRepository };
+  const afterVersion = elements.nextVersion.value.trim();
+  elements.reviewVersion.disabled = true;
+  elements.versionStatus.textContent = "Revalidating the exact worktree, HEAD, and allowlisted version file…";
+  try {
+    const review = await invoke("review_maintainer_version_change", {
+      path: context.path, repository: context.repository, afterVersion,
+    });
+    if (!versionReviewGate.isCurrent(requestGeneration)
+      || !operationContextMatches(context, {
+        generation: workspaceGeneration, path: localWorktree?.path, repository: plannedRepository,
+      }) || afterVersion !== elements.nextVersion.value.trim()) return;
+    versionReview = review;
+    elements.versionPreview.textContent = review.preview;
+    elements.versionPreview.classList.remove("hidden");
+    elements.applyVersion.classList.remove("hidden");
+    elements.versionStatus.textContent = `Review bound to ${review.branch} at ${review.head.slice(0, 12)} and ${review.beforeSha256.slice(0, 12)} → ${review.afterSha256.slice(0, 12)}. No file changed.`;
+  } catch (error) {
+    if (!versionReviewGate.isCurrent(requestGeneration)) return;
+    versionReview = null;
+    elements.versionStatus.textContent = String(error);
+    elements.versionStatus.className = "message error";
+  } finally {
+    if (versionReviewGate.isCurrent(requestGeneration)) {
+      elements.reviewVersion.disabled = !localWorktree || !elements.nextVersion.value.trim();
+    }
+  }
+});
+
+elements.applyVersion.addEventListener("click", async () => {
+  if (!versionReview || !localWorktree || !plannedRepository) return;
+  const requestGeneration = versionApplyGate.begin();
+  const review = versionReview;
+  const context = { generation: workspaceGeneration, path: localWorktree.path, repository: plannedRepository };
+  elements.applyVersion.disabled = true;
+  setWorkspaceMutationPending(true);
+  elements.versionStatus.textContent = "Revalidating the reviewed identities before the local version-file change…";
+  try {
+    const result = await invoke("apply_maintainer_version_change", {
+      path: context.path,
+      repository: context.repository,
+      afterVersion: review.afterVersion,
+      expectedBranch: review.branch,
+      expectedHead: review.head,
+      expectedBeforeSha256: review.beforeSha256,
+      expectedAfterSha256: review.afterSha256,
+    });
+    if (!versionApplyGate.isCurrent(requestGeneration)
+      || !operationContextMatches(context, {
+        generation: workspaceGeneration, path: localWorktree?.path, repository: plannedRepository,
+      })) return;
+    const refreshed = await invoke("inspect_maintainer_worktree", {
+      path: context.path, repository: context.repository,
+    });
+    if (!versionApplyGate.isCurrent(requestGeneration)) return;
+    setWorkspaceMutationPending(false);
+    renderWorktree(refreshed);
+    elements.versionStatus.textContent = `${result.message} ${result.review.beforeVersion} → ${result.review.afterVersion}.`;
+  } catch (error) {
+    if (!versionApplyGate.isCurrent(requestGeneration)) return;
+    versionReview = null;
+    elements.versionStatus.textContent = String(error);
+    elements.versionStatus.className = "message error";
+    elements.applyVersion.classList.add("hidden");
+  } finally {
+    if (versionApplyGate.isCurrent(requestGeneration)) {
+      setWorkspaceMutationPending(false);
+      elements.applyVersion.disabled = false;
+    }
+  }
+});
 
 function renderWorktreeForSelection(worktree) {
   preserveWorktreeSelectionRequest = true;

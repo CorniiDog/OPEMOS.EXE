@@ -1653,6 +1653,39 @@ mod tests {
     }
 
     #[test]
+    fn maintainer_version_plan_changes_only_the_matching_allowlisted_pair() {
+        let before = b"NVIDIA_VERSION = 575.64.05\r\nNVIDIA_NVID_VERSION = 575.64.05\r\nNVIDIA_NVID_EXTRA = \r\n";
+        let (version, after) = planned_nvidia_version_bytes(before, "580.1.2").unwrap();
+        assert_eq!(version, "575.64.05");
+        assert_eq!(
+            after,
+            b"NVIDIA_VERSION = 580.1.2\r\nNVIDIA_NVID_VERSION = 580.1.2\r\nNVIDIA_NVID_EXTRA = \r\n"
+        );
+        assert_eq!(before.iter().filter(|byte| **byte == b'\n').count(), 3);
+        assert_eq!(after.iter().filter(|byte| **byte == b'\n').count(), 3);
+    }
+
+    #[test]
+    fn maintainer_version_plan_refuses_ambiguous_or_invalid_changes() {
+        let valid = b"NVIDIA_VERSION = 575.64.05\nNVIDIA_NVID_VERSION = 575.64.05\n";
+        assert!(planned_nvidia_version_bytes(valid, "575.64.05").is_err());
+        assert!(planned_nvidia_version_bytes(valid, "v580.1").is_err());
+        assert!(planned_nvidia_version_bytes(valid, "580.1;touch").is_err());
+        assert!(planned_nvidia_version_bytes(
+            b"NVIDIA_VERSION = 575.64.05\nNVIDIA_NVID_VERSION = 580.1.2\n",
+            "580.1.2",
+        )
+        .is_err());
+        assert!(planned_nvidia_version_bytes(
+            b"NVIDIA_VERSION = 575.64.05\nNVIDIA_VERSION = 575.64.05\nNVIDIA_NVID_VERSION = 575.64.05\n",
+            "580.1.2",
+        )
+        .is_err());
+        assert!(planned_nvidia_version_bytes(b"not a version file\n", "580.1.2").is_err());
+        assert!(planned_nvidia_version_bytes(&[0xff, 0xfe], "580.1.2").is_err());
+    }
+
+    #[test]
     fn maintainer_git_output_is_streamed_to_a_hard_limit() {
         struct TemporaryGitDirectory(PathBuf);
         impl Drop for TemporaryGitDirectory {

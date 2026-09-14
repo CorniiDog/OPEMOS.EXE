@@ -174,3 +174,13 @@ test("checkout execution and refresh commit only the latest exact-review request
   assert.match(handler, /catch \(error\) \{\n    if \(!checkoutExecutionGate\.isCurrent\(requestGeneration\)[\s\S]*?!operationContextMatches\(context,/);
   assert.match(handler, /finally \{\n    if \(checkoutExecutionGate\.isCurrent\(requestGeneration\)[\s\S]*?setWorkspaceMutationPending\(false\);/);
 });
+
+test("maintainer version change requires an exact unchanged review", async () => {
+  const script = await readFile(new URL("../src/maintainer.js", import.meta.url), "utf8");
+  const markup = await readFile(new URL("../src/maintainer.html", import.meta.url), "utf8");
+  assert.match(markup, /id="next-version"[\s\S]*?id="review-version"[\s\S]*?id="version-preview"[\s\S]*?id="apply-version"/);
+  assert.match(script, /plannedSource\?\.component === "nvidia"[\s\S]*?plannedSource\?\.origin === "project"/);
+  assert.match(script, /invoke\("review_maintainer_version_change", \{[\s\S]*?path: context\.path, repository: context\.repository, afterVersion/);
+  assert.match(script, /invoke\("apply_maintainer_version_change", \{[\s\S]*?expectedBranch: review\.branch,[\s\S]*?expectedHead: review\.head,[\s\S]*?expectedBeforeSha256: review\.beforeSha256,[\s\S]*?expectedAfterSha256: review\.afterSha256/);
+  assert.match(script, /versionReviewGate\.isCurrent\(requestGeneration\)[\s\S]*?operationContextMatches\(context/);
+});
