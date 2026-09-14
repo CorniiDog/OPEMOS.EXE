@@ -6215,6 +6215,88 @@ esac
         fs::remove_dir_all(input_root).expect("remove live compressed input directory");
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "runs one bounded WHPX transport-only diagnostic"]
+    fn live_windows_whpx_second_session_transport_diagnostic() {
+        let mut session =
+            prepare_nvidia_build_session(None).expect("start verified Fedora appliance");
+        let boot_deadline = Instant::now() + NVIDIA_BUILD_BOOT_TIMEOUT;
+        loop {
+            assert_eq!(
+                session.child.try_wait().expect("diagnostic QEMU status"),
+                None,
+                "diagnostic QEMU exited before readiness"
+            );
+            if handshake(&session).as_deref() == Ok(READY_MARKER) {
+                break;
+            }
+            assert!(
+                Instant::now() < boot_deadline,
+                "diagnostic readiness deadline expired"
+            );
+            thread::sleep(Duration::from_secs(1));
+        }
+        println!("DIAGNOSTIC readiness=ready");
+
+        let tcp_started = Instant::now();
+        TcpStream::connect_timeout(
+            &format!("127.0.0.1:{}", session.ssh_port)
+                .parse()
+                .expect("diagnostic TCP address"),
+            Duration::from_secs(2),
+        )
+        .expect("diagnostic TCP connect");
+        println!(
+            "DIAGNOSTIC tcp=connected elapsedMs={}",
+            tcp_started.elapsed().as_millis()
+        );
+
+        let raw_started = Instant::now();
+        let raw = finish_guest_readiness_attempt(
+            start_guest_command(
+                &session,
+                "printf 'SECOND_OK\nSSH_CONNECTION=%s\n' "$SSH_CONNECTION"; sleep 30",
+            )
+            .expect("start diagnostic second SSH command"),
+            Duration::from_secs(30),
+        );
+        println!(
+            "DIAGNOSTIC rawResult={raw:?} elapsedMs={}",
+            raw_started.elapsed().as_millis()
+        );
+
+        let marker = structured_guest_command_marker().expect("create diagnostic terminal marker");
+        let framed_started = Instant::now();
+        let framed = finish_structured_guest_command(
+            start_structured_guest_command(
+                &session,
+                "printf 'SECOND_OK\nSSH_CONNECTION=%s\n' "$SSH_CONNECTION"",
+                &marker,
+            )
+            .expect("start diagnostic framed SSH command"),
+            Duration::from_secs(30),
+            &marker,
+        );
+        println!(
+            "DIAGNOSTIC framedResult={framed:?} marker={marker} elapsedMs={}",
+            framed_started.elapsed().as_millis()
+        );
+
+        let runtime_dir = session.runtime_dir.clone();
+        let archived_log = stop_nvidia_build_session(&mut session)
+            .expect("stop diagnostic appliance")
+            .expect("retain diagnostic QEMU log");
+        assert!(!runtime_dir.exists(), "diagnostic runtime must be removed");
+        assert!(archived_log.is_file(), "diagnostic QEMU log must remain");
+        assert!(raw
+            .as_deref()
+            .is_ok_and(|output| output.starts_with("SECOND_OK\nSSH_CONNECTION=")));
+        assert!(framed
+            .as_deref()
+            .is_ok_and(|output| output.starts_with("SECOND_OK\nSSH_CONNECTION=")));
+    }
+
     #[test]
     #[ignore = "launches the separately prepared x86_64 Fedora build appliance"]
     fn live_nvidia_build_appliance_reaches_ready_marker() {
