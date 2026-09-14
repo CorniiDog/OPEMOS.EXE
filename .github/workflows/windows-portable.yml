@@ -84,10 +84,11 @@ jobs:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
 
       - name: Compile locked Rust tests and run Windows cases
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked windows_
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib windows_
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
           OPEMOS_CORE_EXPECTED_COMMIT: b02ff79265e20bd7ef4fa4e16835c3c343afdee2
+          RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\scripts\windows-test-v6.manifest
 
       - name: Build unsigned portable executable
         run: cargo build --manifest-path src-tauri/Cargo.toml --release --locked
