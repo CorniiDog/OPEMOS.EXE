@@ -2297,6 +2297,13 @@ fn configure_guest_command_stdin(command: &mut Command) {
     command.stdin(Stdio::null());
 }
 
+fn close_guest_command_stdin(child: &mut Child) {
+    #[cfg(windows)]
+    drop(child.stdin.take());
+    #[cfg(not(windows))]
+    let _ = child;
+}
+
 pub(crate) fn start_guest_command_with_client_log(
     session: &impl GuestConnection,
     command: &str,
@@ -2308,8 +2315,11 @@ pub(crate) fn start_guest_command_with_client_log(
         .stderr(Stdio::piped());
     configure_guest_command_stdin(&mut ssh);
     isolate_process_group(&mut ssh);
-    ssh.spawn()
-        .map_err(|e| format!("Could not start the diagnostic guest command: {e}"))
+    let mut child = ssh
+        .spawn()
+        .map_err(|e| format!("Could not start the diagnostic guest command: {e}"))?;
+    close_guest_command_stdin(&mut child);
+    Ok(child)
 }
 
 pub(crate) fn start_guest_command(
@@ -2322,12 +2332,14 @@ pub(crate) fn start_guest_command(
         .stderr(Stdio::piped());
     configure_guest_command_stdin(&mut ssh);
     isolate_process_group(&mut ssh);
-    ssh.spawn()
-        .map_err(|e| format!("Could not start the structured guest command: {e}"))
+    let mut child = ssh
+        .spawn()
+        .map_err(|e| format!("Could not start the structured guest command: {e}"))?;
+    close_guest_command_stdin(&mut child);
+    Ok(child)
 }
 
 pub(crate) fn stop_guest_command_group(child: &mut Child) {
-    drop(child.stdin.take());
     kill_owned_process_group(child);
     let _ = child.kill();
     let _ = child.wait();
@@ -4416,7 +4428,8 @@ pub(crate) fn stop_nvidia_build_session(
                 .stderr(Stdio::piped());
             configure_guest_command_stdin(&mut command);
             isolate_process_group(&mut command);
-            if let Ok(child) = command.spawn() {
+            if let Ok(mut child) = command.spawn() {
+                close_guest_command_stdin(&mut child);
                 let _ = finish_guest_command_bounded(
                     child,
                     SHUTDOWN_COMMAND_TIMEOUT,

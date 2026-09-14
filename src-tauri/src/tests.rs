@@ -6356,9 +6356,9 @@ esac
 
         let framed_client_log = session.runtime_dir.join("framed-ssh-vvv.log");
         let marker = structured_guest_command_marker().expect("create framed-first marker");
-        let framed_transport = structured_guest_command_transport(
-            "printf 'FRAMED_START\n'",
-            &marker,
+        let framed_transport = format!(
+            "{}; sleep 1",
+            structured_guest_command_transport("printf 'FRAMED_START\n'", &marker)
         );
         let framed_started = Instant::now();
         let framed = finish_structured_guest_command(
