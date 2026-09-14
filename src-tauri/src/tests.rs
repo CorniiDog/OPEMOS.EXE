@@ -7471,7 +7471,7 @@ trap - EXIT"#,
         assert!(validation.mounts_released);
         let installed = install_nvidia_to_working_image_blocking(app.clone())
             .expect("install NVIDIA into the disposable working image");
-        assert_eq!(installed.status, "installed");
+        assert_eq!(installed.status, "success");
         assert!(installed.mounts_released);
 
         let exported = export_marker_image_blocking(app.clone(), false)
