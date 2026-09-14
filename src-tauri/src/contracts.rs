@@ -201,14 +201,14 @@ pub(crate) struct PinnedInstallerFile {
 pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 50] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "4bcb351d99608ff1cc6be3cf891d219e5fe78f0584f716d5a352891dbcf3f222",
-        bytes: 59_191,
+        sha256: "55854918a14facc1924c2aed834759c9f9324115d252c540c389d93a6c5beda2",
+        bytes: 60_578,
         executable: true,
     },
     PinnedInstallerFile {
         path: "bootstrap/install_recovery_guardian_to_root.sh",
-        sha256: "654d48ad8e96195ca32519eba67471248961e5f57cdc4ebae880e551fc7a3f91",
-        bytes: 7_927,
+        sha256: "8fc0fe7f6224418da8f0cbde0e5c7317563b2d0c8e5f5217064a064cadd0bf73",
+        bytes: 8_203,
         executable: true,
     },
     PinnedInstallerFile {
@@ -231,32 +231,32 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 50] = [
     },
     PinnedInstallerFile {
         path: "bootstrap/recoveryctl.sh",
-        sha256: "ff218a0af004e5abd6acfcd1116d3f88bde3692178b363152cc9d6df356c4747",
-        bytes: 14_522,
+        sha256: "88b3df118161ab8c9ad5da39f5503961ea956e2ad326cf879de538f51a257461",
+        bytes: 21_343,
         executable: true,
     },
     PinnedInstallerFile {
         path: "bootstrap/online_install.sh",
-        sha256: "5b1443169eb30a8c1c2f34ccfeddaeed682dd752e6787d00edd4d0f3f4b31833",
-        bytes: 14_160,
+        sha256: "31733b874ab3e936380774b65e56e24466aa001a56d58586e4e463707064932a",
+        bytes: 13_964,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/common.sh",
-        sha256: "72451b4d70230959337de5f933d88c36b60d0ef2147403e1d5ba7285b9a8936f",
-        bytes: 7_110,
+        sha256: "fc0f12e797354741911dd728e78f8c063307a8d8b74ef85b3d1dd6b3268717c2",
+        bytes: 7_188,
         executable: false,
     },
     PinnedInstallerFile {
         path: "lib/recovery_status.py",
-        sha256: "bd5d6c826bd97f6f337f30edda59ce1f93a936fb148841d397ed194b27d6670b",
-        bytes: 7_887,
+        sha256: "752cc19913d35f0ab61143d3ede1227128ceabe4bacb2021e6c56394b729a7c5",
+        bytes: 20_395,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/desktop_update_generations.py",
-        sha256: "2d19fa64824a384ce61c655f39e89276b365447cbcbe670c1e72e3e1a8112588",
-        bytes: 38_358,
+        sha256: "ace04da192dd871d6ca38d47c09398141603a6998181841db9d16954cab5e024",
+        bytes: 38_746,
         executable: true,
     },
     PinnedInstallerFile {
@@ -273,14 +273,14 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 50] = [
     },
     PinnedInstallerFile {
         path: "lib/recovery_transaction.py",
-        sha256: "4caf8dac4296779c1f098c3c2475d70898f633ae81e1f00f7d83c73c7648d3bb",
-        bytes: 4_373,
+        sha256: "10b8a21311aeefd201ea0ff84e340a5ec905fdfece836f9ab9c403f973713e52",
+        bytes: 18_644,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/recovery_release_plan.py",
-        sha256: "c76c50b4b1a3490410e958c7c0c60987cfc7fee16d5e20e63b2f13b4d6aa6f8a",
-        bytes: 3_856,
+        sha256: "6e4d04badb5dc8310731c9ed49e4e49ce5ab02f3230a38d732ebf0b777649677",
+        bytes: 13_124,
         executable: true,
     },
     PinnedInstallerFile {
@@ -321,8 +321,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 50] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_inputs.py",
-        sha256: "c1f62fa2c048f5dc7d0cfb610556c7382eff43f7f67dbda9307c55eb6c307a60",
-        bytes: 94_275,
+        sha256: "c1aef90d445fb70c8fc1e379834451037c91dc09a8dc658cd9ff3c5de3125daa",
+        bytes: 93_877,
         executable: true,
     },
     PinnedInstallerFile {
@@ -339,8 +339,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 50] = [
     },
     PinnedInstallerFile {
         path: "lib/write_install_result.py",
-        sha256: "7152fd316772bb04532fb37ad34f6066518d0e81a60b6c8209e659ff50bc62e8",
-        bytes: 63_307,
+        sha256: "77e01d68267f331f1a8877b6a9d59f5e21bfd3b1271648887f6e251924648e00",
+        bytes: 86_304,
         executable: true,
     },
     PinnedInstallerFile {
@@ -351,8 +351,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 50] = [
     },
     PinnedInstallerFile {
         path: "lib/measure_btrfs_payload.py",
-        sha256: "04c2ad0779257961981609bb4c120760dd79838c000a466cfd9394cb5973eddc",
-        bytes: 24_592,
+        sha256: "e903675faa48921f8055521ca46dddab39abf568f434323e637d96b3fca05c2a",
+        bytes: 24_106,
         executable: true,
     },
     PinnedInstallerFile {
@@ -381,14 +381,14 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 50] = [
     },
     PinnedInstallerFile {
         path: "lib/verify_installed_modules.py",
-        sha256: "d1da199092b285a4bab439c96c784fb3bdc09f059ec309189f5d4091c8396ccb",
-        bytes: 10_895,
+        sha256: "e79893cc21f0b0c8cf9f0605fd0b86b489b64557cbd2946a72f33da035a579e2",
+        bytes: 10_935,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/verify_installed_userspace.py",
-        sha256: "704cb3052bdcbf53acfe8183bedd071d4265e89af4974586a68341e3ccb4a1b7",
-        bytes: 15_534,
+        sha256: "322ea67984187640f069a2b678924c8e63ad041243f1e8c9d821d651d276bb1b",
+        bytes: 17_453,
         executable: true,
     },
     PinnedInstallerFile {
@@ -399,8 +399,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 50] = [
     },
     PinnedInstallerFile {
         path: "lib/run_pacman_transaction.py",
-        sha256: "b8c95f9ceea93f1d22954a2f24c9e5e27c8d3ad676a2b43a1ef46e60a922d2cd",
-        bytes: 2_723,
+        sha256: "9230fe1f2bf432acb395182fc98d4ebd17e6279df7835620b9ae0867f1314c93",
+        bytes: 3_587,
         executable: true,
     },
     PinnedInstallerFile {
@@ -423,14 +423,14 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 50] = [
     },
     PinnedInstallerFile {
         path: "lib/validate_install_contract.py",
-        sha256: "3a0520b0b6d476b2c9c1ae4c2ca7b4b25c8a496fc98374e26d75edd83c40ea65",
-        bytes: 23_592,
+        sha256: "69b670ebd1021684bff4e483ae99f5be7f90cd98391060f244198e1816a83116",
+        bytes: 23_878,
         executable: true,
     },
     PinnedInstallerFile {
         path: "lib/payload_receipt.py",
-        sha256: "8a0f75698ebd27a9f608c316e4bc38360c254af8cc27d8a995eb7fc5a6ef7884",
-        bytes: 11_428,
+        sha256: "c0891503841c1f9ac8cd028f38b0f512aca9df83b04bcb32c1a23d1e8054c6cf",
+        bytes: 18_306,
         executable: false,
     },
     PinnedInstallerFile {
