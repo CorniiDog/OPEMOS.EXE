@@ -6256,7 +6256,7 @@ esac
         let raw = finish_guest_readiness_attempt(
             start_guest_command(
                 &session,
-                "printf 'SECOND_OK\nSSH_CONNECTION=%s\n' "$SSH_CONNECTION"; sleep 30",
+                "printf 'SECOND_OK\nSSH_CONNECTION=%s\n' \"$SSH_CONNECTION\"; sleep 30",
             )
             .expect("start diagnostic second SSH command"),
             Duration::from_secs(30),
@@ -6271,7 +6271,7 @@ esac
         let framed = finish_structured_guest_command(
             start_structured_guest_command(
                 &session,
-                "printf 'SECOND_OK\nSSH_CONNECTION=%s\n' "$SSH_CONNECTION"",
+                "printf 'SECOND_OK\nSSH_CONNECTION=%s\n' \"$SSH_CONNECTION\"",
                 &marker,
             )
             .expect("start diagnostic framed SSH command"),
