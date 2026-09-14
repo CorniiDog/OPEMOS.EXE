@@ -3,7 +3,13 @@ use russh::{
     keys::{load_secret_key, PrivateKeyWithHashAlg, PublicKeyOrCertificate},
     ChannelMsg,
 };
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    fs::File,
+    io::Write,
+    path::Path,
+    sync::{atomic::AtomicBool, atomic::Ordering, Arc},
+    time::Duration,
+};
 
 #[derive(Debug)]
 pub(crate) struct CommandOutput {
@@ -261,5 +267,112 @@ where
         )
         .await
         .map_err(|_| "In-process SSH mutation command timed out.".to_string())?
+    })
+}
+
+async fn run_logged_command_async(
+    port: u16,
+    private_key: &Path,
+    command: &str,
+    log_path: &Path,
+    timeout: Duration,
+    output_limit: usize,
+    cancel: Option<&AtomicBool>,
+) -> Result<i32, String> {
+    let key = load_secret_key(private_key, None)
+        .map_err(|error| format!("Could not read the appliance OpenSSH identity: {error}"))?;
+    let config = Arc::new(client::Config {
+        inactivity_timeout: Some(timeout),
+        ..Default::default()
+    });
+    let mut session = client::connect(config, ("127.0.0.1", port), Client)
+        .await
+        .map_err(|error| format!("Could not connect to the Windows appliance SSH port: {error}"))?;
+    let authentication = session
+        .authenticate_publickey("builder", PrivateKeyWithHashAlg::new(Arc::new(key), None))
+        .await
+        .map_err(|error| format!("Could not authenticate to the appliance: {error}"))?;
+    if !authentication.success() {
+        return Err("The appliance rejected the ephemeral SSH identity.".into());
+    }
+    let mut channel = session
+        .channel_open_session()
+        .await
+        .map_err(|error| format!("Could not open the appliance SSH command channel: {error}"))?;
+    channel
+        .exec(true, command)
+        .await
+        .map_err(|error| format!("Could not start the appliance SSH command: {error}"))?;
+    let mut log = File::create(log_path)
+        .map_err(|error| format!("Could not create the NVIDIA target-build log: {error}"))?;
+    let mut captured = 0_usize;
+    let mut status = None;
+    loop {
+        let message = tokio::select! {
+            message = channel.wait() => message,
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                if cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed)) {
+                    return Err("NVIDIA target build cancelled.".into());
+                }
+                continue;
+            }
+        };
+        let Some(message) = message else { break };
+        match message {
+            ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, ext: 1 } => {
+                captured = captured
+                    .checked_add(data.len())
+                    .filter(|bytes| *bytes <= output_limit)
+                    .ok_or("NVIDIA appliance command output exceeded its bound.")?;
+                log.write_all(&data).map_err(|error| {
+                    format!("Could not write the NVIDIA target-build log: {error}")
+                })?;
+            }
+            ChannelMsg::ExitStatus { exit_status } => {
+                status = Some(
+                    i32::try_from(exit_status)
+                        .map_err(|_| "Appliance SSH exit status exceeded the supported range.")?,
+                );
+            }
+            _ => {}
+        }
+    }
+    log.sync_all()
+        .map_err(|error| format!("Could not finalize the NVIDIA target-build log: {error}"))?;
+    let status = status.ok_or("The appliance SSH command closed without an exit status.")?;
+    let _ = session
+        .disconnect(russh::Disconnect::ByApplication, "", "English")
+        .await;
+    Ok(status)
+}
+
+pub(crate) fn run_logged_command(
+    port: u16,
+    private_key: &Path,
+    command: &str,
+    log_path: &Path,
+    timeout: Duration,
+    output_limit: usize,
+    cancel: Option<&AtomicBool>,
+) -> Result<i32, String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("Could not start the appliance SSH runtime: {error}"))?;
+    runtime.block_on(async {
+        tokio::time::timeout(
+            timeout,
+            run_logged_command_async(
+                port,
+                private_key,
+                command,
+                log_path,
+                timeout,
+                output_limit,
+                cancel,
+            ),
+        )
+        .await
+        .map_err(|_| "NVIDIA appliance command timed out.".to_string())?
     })
 }

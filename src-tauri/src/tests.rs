@@ -6555,6 +6555,100 @@ esac
             "Mutation guest command readiness marker timed out."
         );
 
+        let logged_path = session.runtime_dir.join("windows-russh-logged-command.log");
+        let status = crate::windows_ssh::run_logged_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "printf 'LOGGED_STDOUT\\n'; printf 'LOGGED_STDERR\\n' >&2",
+            &logged_path,
+            Duration::from_secs(10),
+            64 * 1024,
+            None,
+        )
+        .expect("logged command must complete");
+        assert_eq!(status, 0);
+        let logged = fs::read_to_string(&logged_path).unwrap();
+        assert!(logged.contains("LOGGED_STDOUT"));
+        assert!(logged.contains("LOGGED_STDERR"));
+
+        let status = crate::windows_ssh::run_logged_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "printf 'LOGGED_FAILURE\\n' >&2; exit 11",
+            &logged_path,
+            Duration::from_secs(10),
+            64 * 1024,
+            None,
+        )
+        .expect("logged nonzero command must return its status");
+        assert_eq!(status, 11);
+        assert!(fs::read_to_string(&logged_path)
+            .unwrap()
+            .contains("LOGGED_FAILURE"));
+
+        let cancelled = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(250));
+                cancelled.store(true, Ordering::Relaxed);
+            });
+            assert_eq!(
+                crate::windows_ssh::run_logged_command(
+                    session.ssh_port,
+                    &session.ssh_key,
+                    "printf 'LOGGED_BEFORE_CANCEL\n'; sleep 5",
+                    &logged_path,
+                    Duration::from_secs(10),
+                    64 * 1024,
+                    Some(&cancelled),
+                )
+                .expect_err("logged command must observe mid-operation cancellation"),
+                "NVIDIA target build cancelled."
+            );
+        });
+        assert!(fs::read_to_string(&logged_path)
+            .unwrap()
+            .contains("LOGGED_BEFORE_CANCEL"));
+        assert_eq!(
+            crate::windows_ssh::run_logged_command(
+                session.ssh_port,
+                &session.ssh_key,
+                "exit 0",
+                &logged_path,
+                Duration::from_secs(10),
+                64 * 1024,
+                None,
+            )
+            .expect("a command after cancellation must use a clean SSH session"),
+            0
+        );
+        assert_eq!(
+            crate::windows_ssh::run_logged_command(
+                session.ssh_port,
+                &session.ssh_key,
+                "sleep 2",
+                &logged_path,
+                Duration::from_millis(100),
+                64 * 1024,
+                None,
+            )
+            .expect_err("logged command must honor its total deadline"),
+            "NVIDIA appliance command timed out."
+        );
+        assert_eq!(
+            crate::windows_ssh::run_logged_command(
+                session.ssh_port,
+                &session.ssh_key,
+                "head -c 1025 /dev/zero",
+                &logged_path,
+                Duration::from_secs(10),
+                1024,
+                None,
+            )
+            .expect_err("logged output must remain bounded"),
+            "NVIDIA appliance command output exceeded its bound."
+        );
+
         let runtime_dir = session.runtime_dir.clone();
         let archived_log = stop_session(&mut session)
             .expect("stop diagnostic appliance")

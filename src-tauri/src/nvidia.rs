@@ -3923,42 +3923,69 @@ pub(crate) fn run_guest_command_logged(
     log_path: &Path,
     cancel: Option<&AtomicBool>,
 ) -> Result<(), String> {
-    let log = File::create(log_path)
-        .map_err(|e| format!("Could not create the NVIDIA target-build log: {e}"))?;
-    let log_err = log
-        .try_clone()
-        .map_err(|e| format!("Could not prepare the NVIDIA target-build log: {e}"))?;
-    let mut child = ssh_command(session)?
-        .arg(command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log))
-        .stderr(Stdio::from(log_err))
-        .spawn()
-        .map_err(|e| format!("Could not start the NVIDIA target build: {e}"))?;
-    let status = loop {
-        if cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed)) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("NVIDIA target build cancelled.".into());
+    #[cfg(windows)]
+    {
+        const LOGGED_COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+        const LOGGED_COMMAND_OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
+        let status = crate::windows_ssh::run_logged_command(
+            session.ssh_port(),
+            session.ssh_key(),
+            command,
+            log_path,
+            LOGGED_COMMAND_TIMEOUT,
+            LOGGED_COMMAND_OUTPUT_LIMIT,
+            cancel,
+        )?;
+        if status == 0 {
+            return Ok(());
         }
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|e| format!("Could not inspect the NVIDIA target build: {e}"))?
-        {
-            break status;
-        }
-        thread::sleep(Duration::from_millis(500));
-    };
-    if status.success() {
-        return Ok(());
+        let bytes = fs::read(log_path).unwrap_or_default();
+        let detail = guest_command_failure_detail(&bytes);
+        return Err(if detail.is_empty() {
+            format!("NVIDIA appliance command exited with status {status}.")
+        } else {
+            format!("NVIDIA appliance command exited with status {status}: {detail}")
+        });
     }
-    let bytes = fs::read(log_path).unwrap_or_default();
-    let detail = guest_command_failure_detail(&bytes);
-    Err(if detail.is_empty() {
-        format!("NVIDIA appliance command exited with {status}.")
-    } else {
-        format!("NVIDIA appliance command exited with {status}: {detail}")
-    })
+    #[cfg(not(windows))]
+    {
+        let log = File::create(log_path)
+            .map_err(|e| format!("Could not create the NVIDIA target-build log: {e}"))?;
+        let log_err = log
+            .try_clone()
+            .map_err(|e| format!("Could not prepare the NVIDIA target-build log: {e}"))?;
+        let mut child = ssh_command(session)?
+            .arg(command)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(log_err))
+            .spawn()
+            .map_err(|e| format!("Could not start the NVIDIA target build: {e}"))?;
+        let status = loop {
+            if cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed)) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("NVIDIA target build cancelled.".into());
+            }
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|e| format!("Could not inspect the NVIDIA target build: {e}"))?
+            {
+                break status;
+            }
+            thread::sleep(Duration::from_millis(500));
+        };
+        if status.success() {
+            return Ok(());
+        }
+        let bytes = fs::read(log_path).unwrap_or_default();
+        let detail = guest_command_failure_detail(&bytes);
+        Err(if detail.is_empty() {
+            format!("NVIDIA appliance command exited with {status}.")
+        } else {
+            format!("NVIDIA appliance command exited with {status}: {detail}")
+        })
+    }
 }
 
 pub(crate) fn guest_command_failure_detail(bytes: &[u8]) -> String {
