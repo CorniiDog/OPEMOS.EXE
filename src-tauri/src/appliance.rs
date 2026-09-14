@@ -2319,7 +2319,7 @@ pub(crate) fn finish_guest_command(child: Child) -> Result<String, String> {
 
 const STRUCTURED_GUEST_COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
-fn structured_guest_command_marker() -> Result<String, String> {
+pub(crate) fn structured_guest_command_marker() -> Result<String, String> {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("Could not create a guest command marker: {error}"))?
@@ -2331,7 +2331,7 @@ fn structured_guest_command_marker() -> Result<String, String> {
     ))
 }
 
-fn start_structured_guest_command(
+pub(crate) fn start_structured_guest_command(
     session: &impl GuestConnection,
     command: &str,
     marker: &str,
