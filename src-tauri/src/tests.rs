@@ -5632,6 +5632,18 @@ esac
     }
 
     #[test]
+    fn guest_read_only_property_requires_one_exact_binary_value() {
+        assert_eq!(parse_guest_read_only_property("0", "fixture"), Ok(false));
+        assert_eq!(parse_guest_read_only_property("1", "fixture"), Ok(true));
+        for invalid in ["", " 1", "1\n0", "true", "2"] {
+            assert_eq!(
+                parse_guest_read_only_property(invalid, "fixture").unwrap_err(),
+                "fixture returned an invalid read-only property; expected exactly 0 or 1."
+            );
+        }
+    }
+
+    #[test]
     fn normalizes_bounded_os_release_values_without_executing_them() {
         assert_eq!(
             normalize_os_release_field("\"SteamOS 3.8\""),
@@ -6360,7 +6372,7 @@ esac
         let framed = finish_structured_guest_command(
             start_structured_guest_command(
                 &session,
-                "set -eu; DEVICE=/dev/disk/by-id/virtio-steamos-user-input; test -b \"$DEVICE\"; printf 'READ_ONLY=%s\n' \"$(sudo blockdev --getro \"$DEVICE\")\"",
+                "set -eu; DEVICE=/dev/disk/by-id/virtio-steamos-user-input; test -b \"$DEVICE\"; NODE=$(basename \"$(readlink -f \"$DEVICE\")\"); printf 'READ_ONLY=%s\n' \"$(cat \"/sys/class/block/$NODE/ro\")\"",
                 &marker,
             )
             .expect("start framed read-only attachment command"),

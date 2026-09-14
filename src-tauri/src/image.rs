@@ -224,11 +224,14 @@ pub(crate) fn inspect_user_image(
     cancel: Option<&AtomicBool>,
 ) -> Result<UserImageInspection, String> {
     const DEVICE: &str = "/dev/disk/by-id/virtio-steamos-user-input";
-    let read_only = run_guest_command_with_timeout(
-        session,
-        "set -eu; DEVICE=/dev/disk/by-id/virtio-steamos-user-input; test -b \"$DEVICE\"; sudo blockdev --getro \"$DEVICE\"",
-        Duration::from_secs(10),
-    )? == "1";
+    let read_only = parse_guest_read_only_property(
+        &run_guest_command_with_timeout(
+            session,
+            "set -eu; DEVICE=/dev/disk/by-id/virtio-steamos-user-input; test -b \"$DEVICE\"; NODE=$(basename \"$(readlink -f \"$DEVICE\")\"); cat \"/sys/class/block/$NODE/ro\"",
+            Duration::from_secs(10),
+        )?,
+        "selected image",
+    )?;
     if !read_only {
         return Err("Selected image was not attached read-only; inspection was stopped.".into());
     }
@@ -468,6 +471,19 @@ test "$MOUNTED" = 0"#;
     })
 }
 
+pub(crate) fn parse_guest_read_only_property(
+    value: &str,
+    description: &str,
+) -> Result<bool, String> {
+    match value {
+        "0" => Ok(false),
+        "1" => Ok(true),
+        _ => Err(format!(
+            "{description} returned an invalid read-only property; expected exactly 0 or 1."
+        )),
+    }
+}
+
 pub(crate) fn normalize_os_release_field(value: &str) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -494,8 +510,18 @@ fail_preflight() {
 }
 test -b "$SOURCE" || fail_preflight 'read-only source device is unavailable'
 test -b "$WORK" || fail_preflight 'disposable working device is unavailable'
-test "$(sudo blockdev --getro "$SOURCE")" = 1 || fail_preflight 'source device is not read-only'
-test "$(sudo blockdev --getro "$WORK")" = 0 || fail_preflight 'working device is not writable'
+read_only_property() {
+  node=$(basename "$(readlink -f "$1")") || return 1
+  value=$(cat "/sys/class/block/$node/ro") || return 1
+  case "$value" in
+    0|1) printf '%s' "$value" ;;
+    *) return 1 ;;
+  esac
+}
+SOURCE_READ_ONLY=$(read_only_property "$SOURCE") || fail_preflight 'source read-only property is invalid'
+WORK_READ_ONLY=$(read_only_property "$WORK") || fail_preflight 'working read-only property is invalid'
+test "$SOURCE_READ_ONLY" = 1 || fail_preflight 'source device is not read-only'
+test "$WORK_READ_ONLY" = 0 || fail_preflight 'working device is not writable'
 if lsblk -nr -o MOUNTPOINTS "$SOURCE" | grep -q '[^[:space:]]' || lsblk -nr -o MOUNTPOINTS "$WORK" | grep -q '[^[:space:]]'; then
   fail_preflight 'a selected-image device is unexpectedly mounted'
 fi"#;
