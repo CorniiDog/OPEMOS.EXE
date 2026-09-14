@@ -6327,6 +6327,72 @@ esac
 
     #[cfg(windows)]
     #[test]
+    #[ignore = "runs one bounded WHPX in-process SSH proof"]
+    fn live_windows_whpx_in_process_ssh_proof() {
+        const OUTPUT_LIMIT: usize = 64 * 1024;
+        let input = std::env::var_os("STEAMOS_RECOVERY_IMAGE")
+            .map(PathBuf::from)
+            .expect("set STEAMOS_RECOVERY_IMAGE to the official Valve recovery image");
+        let input = live_recovery_input(&input).expect("validate the non-symlink recovery image");
+        let mut session = prepare_session(Some(&input), None, None, false)
+            .expect("start the verified Fedora appliance with read-only input");
+        let boot_deadline = Instant::now() + NVIDIA_BUILD_BOOT_TIMEOUT;
+        loop {
+            assert_eq!(
+                session.child.try_wait().expect("diagnostic QEMU status"),
+                None,
+                "diagnostic QEMU exited before readiness"
+            );
+            let readiness = windows_ssh::run_command(
+                session.ssh_port,
+                &session.ssh_key,
+                "cat /etc/steamos-builder-ready",
+                Duration::from_secs(5),
+                OUTPUT_LIMIT,
+            );
+            if readiness.as_ref().is_ok_and(|output| {
+                output.status == 0
+                    && output.stderr.is_empty()
+                    && String::from_utf8_lossy(&output.stdout).trim() == READY_MARKER
+            }) {
+                break;
+            }
+            assert!(
+                Instant::now() < boot_deadline,
+                "in-process SSH readiness deadline expired: {readiness:?}"
+            );
+            thread::sleep(Duration::from_secs(1));
+        }
+        println!("IN_PROCESS_SSH readiness=ready");
+
+        let output = windows_ssh::run_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "printf 'IN_PROCESS_OK\n'",
+            Duration::from_secs(10),
+            OUTPUT_LIMIT,
+        )
+        .expect("run trivial in-process SSH command");
+        println!(
+            "IN_PROCESS_SSH status={} stdout={:?} stderr={:?}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.status, 0);
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "IN_PROCESS_OK\n");
+        assert!(output.stderr.is_empty());
+
+        let runtime_dir = session.runtime_dir.clone();
+        let archived_log = stop_session(&mut session)
+            .expect("stop diagnostic appliance")
+            .expect("retain diagnostic QEMU log");
+        assert!(!runtime_dir.exists(), "diagnostic runtime must be removed");
+        assert!(archived_log.is_file(), "diagnostic QEMU log must remain");
+    }
+
+    #[cfg(windows)]
+    #[test]
     #[ignore = "runs one bounded WHPX framed-first transport diagnostic"]
     fn live_windows_whpx_read_only_attachment_diagnostic() {
         const SSH_DEBUG_OUTPUT_LIMIT: u64 = 64 * 1024;

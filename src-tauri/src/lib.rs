@@ -83,6 +83,8 @@ mod nvidia;
 mod output_transaction;
 mod settings;
 mod windows;
+#[cfg(windows)]
+mod windows_ssh;
 
 pub use app::run;
 use appliance::*;
