@@ -2340,7 +2340,7 @@ fn read_bounded_guest_stream(
     })
 }
 
-fn finish_guest_command_bounded(
+pub(crate) fn finish_guest_command_bounded(
     mut child: Child,
     timeout: Duration,
     timeout_message: &str,
