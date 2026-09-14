@@ -75,6 +75,8 @@ pub fn run() {
             list_maintainer_local_branches,
             review_maintainer_checkout,
             execute_maintainer_checkout,
+            prepare_maintainer_release_operation,
+            run_maintainer_release_operation,
             start_appliance,
             start_nvidia_build_appliance,
             get_appliance_status,

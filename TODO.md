@@ -2330,6 +2330,23 @@ must be reported; a default-suite pass does not imply hardware certification.
 
 ## Release gates
 
+- [ ] Connect the maintainer release-plan review to Core's schema-1 release
+  session without granting publication authority. The bounded adapter pins
+  canonical Core `f66c374cf224b8e01c723304ad8ee2d5354f69d4`, stages the exact
+  `release_operation.py` and Windows-compatible
+  `release_operation_session.py`, prepares the existing publisher's dry-run
+  plan, and binds prepare/status/cancel/create-only execution to the exact
+  operation identity and attempt. Focused Rust contract/identity tests, 48
+  frontend workflow/session tests, documentation validation, host Cargo check,
+  warnings-as-errors Clippy, and diff hygiene pass. Exact committed source
+  `500ac56` also built as an unsigned static-CRT Windows executable (SHA-256
+  `27f96abbcb2904b9ea6128e7de3cc85d5d0a7ee48cecceefb3f1206cd33b8980`,
+  19,805,184 bytes), remained live for the bounded eight-second startup smoke,
+  closed without a new QEMU survivor, and invoked no release action. Required
+  pull-request checks, Core counterpart review, and the separately required
+  maintainer-menu create-only demonstration remain pending. No release or
+  publication has occurred.
+
 ### Alpha
 
 - [ ] One fresh official image builds, writes to USB, installs to the intended

@@ -7,7 +7,7 @@ const CHECKOUT = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262";
 const SETUP_NODE = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020";
 const RUST = "dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87";
 const UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02";
-const CORE = "b02ff79265e20bd7ef4fa4e16835c3c343afdee2";
+const CORE = "f66c374cf224b8e01c723304ad8ee2d5354f69d4";
 
 function requireText(text, value, label) {
   if (!text.includes(value)) throw new Error(`Windows workflow must preserve ${label}.`);
