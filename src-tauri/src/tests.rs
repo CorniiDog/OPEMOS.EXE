@@ -1035,9 +1035,9 @@ mod tests {
             signature_path: root.join(signature_local).to_string_lossy().into_owned(),
             package_sha256: "a".repeat(64),
         };
-        let arguments = userspace_installer_arguments(&[package]).unwrap();
-        assert!(arguments.contains(&format!("/tmp/{canonical}")));
-        assert!(arguments.contains(&format!("/tmp/{canonical}.sig")));
+        let (guest_package, guest_signature) = guest_userspace_filenames(&package).unwrap();
+        assert_eq!(guest_package, canonical);
+        assert_eq!(guest_signature, format!("{canonical}.sig"));
         fs::remove_dir_all(root).expect("remove epoch staging fixture");
     }
 
