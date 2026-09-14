@@ -30,11 +30,15 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "git config --global core.autocrlf false", "canonical Core byte preservation");
   requireText(text, "node-version: 22.23.2", "Node 22.23.2");
   requireText(text, "toolchain: 1.98.1", "Rust 1.98.1");
+  requireText(text, "RUSTFLAGS: -C target-feature=+crt-static", "static MSVC runtime linkage");
+  if ((text.match(/RUSTFLAGS: -C target-feature=\+crt-static/g) || []).length !== 2) throw new Error("Windows workflow must preserve static MSVC runtime linkage for both tests and the release build.");
   requireText(text, "run: npm ci", "locked JavaScript installation");
   requireText(text, "run: node --test tests/windows-portable-workflow.test.mjs", "focused cross-platform JavaScript tests");
   requireText(text, "run: node scripts/check_core_maintainer_workflow.mjs", "exact Core maintainer workflow parity check");
-  requireText(text, "cargo test --manifest-path src-tauri/Cargo.toml --locked windows_", "locked Windows Rust tests");
+  requireText(text, "cargo test --manifest-path src-tauri/Cargo.toml --locked --lib windows_", "locked library-only Windows Rust tests");
+  requireText(text, "RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\\scripts\\windows-test-v6.manifest", "the test-only Common Controls v6 activation manifest");
   requireText(text, "cargo build --manifest-path src-tauri/Cargo.toml --release --locked", "locked release build");
+  if ((text.match(/MANIFESTINPUT:/g) || []).length !== 1) throw new Error("Windows workflow must apply the activation manifest only to the Rust test step.");
   requireText(text, "Start-Process -FilePath $source -PassThru", "portable executable startup smoke test");
   requireText(text, "} while (($process.MainWindowHandle -eq 0 -or $process.MainWindowTitle -cne \"SteamOS NVIDIA Builder\") -and [DateTime]::UtcNow -lt $deadline)", "bounded native UI readiness polling");
   requireText(text, "if ($process.MainWindowHandle -eq 0) {", "a visible native main-window gate");
@@ -49,6 +53,7 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "SignatureStatus]::NotSigned", "the unsigned-only gate");
   requireText(text, "Get-FileHash -LiteralPath $destination -Algorithm SHA256", "SHA-256 provenance");
   requireText(text, `"source_commit=$env:OPEMOS_EXE_COMMIT"`, "exact-head provenance");
+  requireText(text, `"crt_static=true"`, "static-runtime provenance");
   requireText(text, "unsigned-${{ env.OPEMOS_EXE_COMMIT }}", "exact-head artifact identity");
   requireText(text, "retention-days: 1", "one-day artifact retention");
   requireText(text, "if-no-files-found: error", "missing-artifact failure");

@@ -224,10 +224,14 @@ pub(crate) fn inspect_user_image(
     cancel: Option<&AtomicBool>,
 ) -> Result<UserImageInspection, String> {
     const DEVICE: &str = "/dev/disk/by-id/virtio-steamos-user-input";
-    let read_only = run_guest_command(
-        session,
-        "set -eu; DEVICE=/dev/disk/by-id/virtio-steamos-user-input; test -b \"$DEVICE\"; sudo blockdev --getro \"$DEVICE\"",
-    )? == "1";
+    let read_only = parse_guest_read_only_property(
+        &run_guest_command_with_timeout(
+            session,
+            "set -eu; DEVICE=/dev/disk/by-id/virtio-steamos-user-input; test -b \"$DEVICE\"; NODE=$(basename \"$(readlink -f \"$DEVICE\")\"); cat \"/sys/class/block/$NODE/ro\"",
+            Duration::from_secs(10),
+        )?,
+        "selected image",
+    )?;
     if !read_only {
         return Err("Selected image was not attached read-only; inspection was stopped.".into());
     }
@@ -467,6 +471,19 @@ test "$MOUNTED" = 0"#;
     })
 }
 
+pub(crate) fn parse_guest_read_only_property(
+    value: &str,
+    description: &str,
+) -> Result<bool, String> {
+    match value {
+        "0" => Ok(false),
+        "1" => Ok(true),
+        _ => Err(format!(
+            "{description} returned an invalid read-only property; expected exactly 0 or 1."
+        )),
+    }
+}
+
 pub(crate) fn normalize_os_release_field(value: &str) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -493,8 +510,18 @@ fail_preflight() {
 }
 test -b "$SOURCE" || fail_preflight 'read-only source device is unavailable'
 test -b "$WORK" || fail_preflight 'disposable working device is unavailable'
-test "$(sudo blockdev --getro "$SOURCE")" = 1 || fail_preflight 'source device is not read-only'
-test "$(sudo blockdev --getro "$WORK")" = 0 || fail_preflight 'working device is not writable'
+read_only_property() {
+  node=$(basename "$(readlink -f "$1")") || return 1
+  value=$(cat "/sys/class/block/$node/ro") || return 1
+  case "$value" in
+    0|1) printf '%s' "$value" ;;
+    *) return 1 ;;
+  esac
+}
+SOURCE_READ_ONLY=$(read_only_property "$SOURCE") || fail_preflight 'source read-only property is invalid'
+WORK_READ_ONLY=$(read_only_property "$WORK") || fail_preflight 'working read-only property is invalid'
+test "$SOURCE_READ_ONLY" = 1 || fail_preflight 'source device is not read-only'
+test "$WORK_READ_ONLY" = 0 || fail_preflight 'working device is not writable'
 if lsblk -nr -o MOUNTPOINTS "$SOURCE" | grep -q '[^[:space:]]' || lsblk -nr -o MOUNTPOINTS "$WORK" | grep -q '[^[:space:]]'; then
   fail_preflight 'a selected-image device is unexpectedly mounted'
 fi"#;
@@ -660,31 +687,62 @@ printf '%s\n' "$KERNELS" | while IFS= read -r KERNEL; do
 done
 test "$(sudo blockdev --getro "$WORK")" = 1
 test "$MOUNTED" = 0"#;
-    let mut mutation = start_guest_command(session, MUTATE_COMMAND)?;
-    let stderr_drain = start_guest_stderr_drain(&mut mutation)?;
-    let stdout = mutation
-        .stdout
-        .take()
-        .ok_or("Could not capture the mutation guest command output.")?;
-    let readiness = read_guest_command_ready_line(&mut mutation, stdout, Duration::from_secs(30));
-    let (stdout, channel_ready) = match readiness {
-        Ok(readiness) => readiness,
-        Err(error) => {
-            let _ = stderr_drain.join();
-            return Err(format!("Could not establish the mutation channel: {error}"));
+    #[cfg(windows)]
+    let output = {
+        let output = crate::windows_ssh::run_gated_command(
+            session.ssh_port,
+            &session.ssh_key,
+            MUTATE_COMMAND,
+            "OPEMOS_MUTATION_CHANNEL_READY",
+            Duration::from_secs(30),
+            Duration::from_secs(120),
+            64 * 1024,
+            || qmp_remove_user_input(session),
+        )?;
+        if output.status != 0 {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let detail = if stderr.is_empty() { stdout } else { stderr };
+            return Err(if detail.is_empty() {
+                format!("Guest command exited with status {}.", output.status)
+            } else {
+                format!(
+                    "Guest command exited with status {}: {detail}",
+                    output.status
+                )
+            });
         }
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
     };
-    if channel_ready.trim() != "OPEMOS_MUTATION_CHANNEL_READY" {
-        stop_guest_command_group(&mut mutation);
-        let _ = stderr_drain.join();
-        return Err("Mutation guest command omitted the channel readiness marker.".into());
-    }
-    if let Err(error) = qmp_remove_user_input(session) {
-        stop_guest_command_group(&mut mutation);
-        let _ = stderr_drain.join();
-        return Err(error);
-    }
-    let output = finish_guest_command_with_stdout(mutation, stdout, String::new(), stderr_drain)?;
+    #[cfg(not(windows))]
+    let output = {
+        let mut mutation = start_guest_command(session, MUTATE_COMMAND)?;
+        let stderr_drain = start_guest_stderr_drain(&mut mutation)?;
+        let stdout = mutation
+            .stdout
+            .take()
+            .ok_or("Could not capture the mutation guest command output.")?;
+        let readiness =
+            read_guest_command_ready_line(&mut mutation, stdout, Duration::from_secs(30));
+        let (stdout, channel_ready) = match readiness {
+            Ok(readiness) => readiness,
+            Err(error) => {
+                let _ = stderr_drain.join();
+                return Err(format!("Could not establish the mutation channel: {error}"));
+            }
+        };
+        if channel_ready.trim() != "OPEMOS_MUTATION_CHANNEL_READY" {
+            stop_guest_command_group(&mut mutation);
+            let _ = stderr_drain.join();
+            return Err("Mutation guest command omitted the channel readiness marker.".into());
+        }
+        if let Err(error) = qmp_remove_user_input(session) {
+            stop_guest_command_group(&mut mutation);
+            let _ = stderr_drain.join();
+            return Err(error);
+        }
+        finish_guest_command_with_stdout(mutation, stdout, String::new(), stderr_drain)?
+    };
     let mut values = std::collections::HashMap::new();
     let mut kernel_versions = Vec::new();
     for line in output.lines() {
@@ -1122,7 +1180,10 @@ pub(crate) fn convert_working_image(
     if let Some(progress) = progress {
         progress("exporting-image", virtual_bytes, virtual_bytes);
     }
-    let output = File::open(destination)
+    let output = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(destination)
         .map_err(|e| storage_io_error("Could not open the exported image", e))?;
     output
         .sync_all()
@@ -1479,12 +1540,7 @@ pub(crate) fn payload_receipt_overlay_assertions(
          test \"$(stat -c '%s' \"$RECEIPT_ROOT/receipt.json\")\" -le 65536\n\
          test \"$(stat -c '%a:%u:%g' \"$RECEIPT_ROOT/receipt.json\")\" = 644:0:0\n\
          python3 -c 'import json,sys\n\
-def unique(pairs):\n\
- result={{}}\n\
- for key,value in pairs:\n\
-  if key in result: raise ValueError(\"duplicate JSON key\")\n\
-  result[key]=value\n\
- return result\n\
+unique=lambda pairs: dict(pairs) if len(pairs)==len({{key for key,value in pairs}}) else (_ for _ in ()).throw(ValueError(\"duplicate JSON key\"))\n\
 actual=json.load(open(sys.argv[1],encoding=\"utf-8\"),object_pairs_hook=unique,parse_constant=lambda value: 1/0)\n\
 expected=json.loads(sys.argv[2])\n\
 assert isinstance(actual,dict)\n\
@@ -2200,6 +2256,151 @@ pub(crate) fn validate_usb_helper_exchange(
     }
     Ok(())
 }
+
+#[cfg(target_os = "windows")]
+pub(crate) const WINDOWS_VIRTUAL_USB_BYTES: u64 = 32 * 1024 * 1024 * 1024;
+
+#[cfg(target_os = "windows")]
+mod windows_virtual_usb {
+    use super::WINDOWS_VIRTUAL_USB_BYTES;
+    use std::{
+        ffi::c_void,
+        fs::{self, File, OpenOptions},
+        os::windows::io::AsRawHandle,
+        path::{Path, PathBuf},
+        ptr,
+    };
+
+    const FSCTL_SET_SPARSE: u32 = 0x0009_00c4;
+    const FILE_ATTRIBUTE_SPARSE_FILE: u32 = 0x0000_0200;
+
+    #[repr(C)]
+    struct ByHandleFileInformation {
+        file_attributes: u32,
+        creation_time: [u32; 2],
+        last_access_time: [u32; 2],
+        last_write_time: [u32; 2],
+        volume_serial_number: u32,
+        file_size_high: u32,
+        file_size_low: u32,
+        number_of_links: u32,
+        file_index_high: u32,
+        file_index_low: u32,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn DeviceIoControl(
+            device: *mut c_void,
+            control_code: u32,
+            input: *mut c_void,
+            input_bytes: u32,
+            output: *mut c_void,
+            output_bytes: u32,
+            returned_bytes: *mut u32,
+            overlapped: *mut c_void,
+        ) -> i32;
+        fn GetFileInformationByHandle(
+            file: *mut c_void,
+            information: *mut ByHandleFileInformation,
+        ) -> i32;
+    }
+
+    fn exact_owned_path(root: &Path, target: &Path) -> Result<PathBuf, String> {
+        let root = fs::canonicalize(root)
+            .map_err(|error| format!("Could not canonicalize the virtual-USB root: {error}"))?;
+        if target.parent() != Some(root.as_path())
+            || target.file_name().and_then(|name| name.to_str()) != Some("virtual-usb-32g.raw")
+        {
+            return Err("The virtual USB path escaped its harness-owned root.".into());
+        }
+        Ok(target.to_path_buf())
+    }
+
+    fn mark_sparse(file: &File) -> Result<(), String> {
+        let mut returned = 0_u32;
+        let result = unsafe {
+            DeviceIoControl(
+                file.as_raw_handle().cast(),
+                FSCTL_SET_SPARSE,
+                ptr::null_mut(),
+                0,
+                ptr::null_mut(),
+                0,
+                &mut returned,
+                ptr::null_mut(),
+            )
+        };
+        if result == 0 {
+            return Err(format!(
+                "Could not mark the harness-owned virtual USB sparse: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn is_sparse(file: &File) -> Result<bool, String> {
+        let mut information = std::mem::MaybeUninit::<ByHandleFileInformation>::zeroed();
+        let result = unsafe {
+            GetFileInformationByHandle(file.as_raw_handle().cast(), information.as_mut_ptr())
+        };
+        if result == 0 {
+            return Err(format!(
+                "Could not inspect the harness-owned virtual USB: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let information = unsafe { information.assume_init() };
+        Ok(information.file_attributes & FILE_ATTRIBUTE_SPARSE_FILE != 0)
+    }
+
+    pub(crate) fn create(root: &Path, target: &Path) -> Result<File, String> {
+        let target = exact_owned_path(root, target)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&target)
+            .map_err(|error| format!("Could not create the harness-owned virtual USB: {error}"))?;
+        if let Err(error) = mark_sparse(&file).and_then(|()| {
+            file.set_len(WINDOWS_VIRTUAL_USB_BYTES)
+                .map_err(|error| format!("Could not size the harness-owned virtual USB: {error}"))
+        }) {
+            drop(file);
+            let _ = fs::remove_file(&target);
+            return Err(error);
+        }
+        if file.metadata().map_err(|error| error.to_string())?.len() != WINDOWS_VIRTUAL_USB_BYTES
+            || !is_sparse(&file)?
+        {
+            drop(file);
+            let _ = fs::remove_file(&target);
+            return Err("The harness-owned virtual USB is not an exact sparse 32 GiB file.".into());
+        }
+        Ok(file)
+    }
+
+    pub(crate) fn cleanup(root: &Path, target: &Path) -> Result<(), String> {
+        let target = exact_owned_path(root, target)?;
+        let metadata = fs::symlink_metadata(&target)
+            .map_err(|error| format!("Could not inspect the virtual USB for cleanup: {error}"))?;
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || metadata.len() != WINDOWS_VIRTUAL_USB_BYTES
+        {
+            return Err("Refusing to clean a drifted virtual-USB target.".into());
+        }
+        fs::remove_file(target)
+            .map_err(|error| format!("Could not clean the harness-owned virtual USB: {error}"))
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) use windows_virtual_usb::{
+    cleanup as cleanup_windows_virtual_usb, create as create_windows_virtual_usb,
+    is_sparse as windows_virtual_usb_is_sparse,
+};
 
 #[derive(Clone)]
 struct ArmedUsbPreflight {

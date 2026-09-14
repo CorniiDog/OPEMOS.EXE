@@ -3071,7 +3071,10 @@ pub(crate) fn validate_nvidia_install_handoff_blocking(
         if session.state != "ready" {
             return Err("The x86_64 Fedora installer appliance is not ready.".into());
         }
-        if session.attached_working_image.as_ref() != Some(&inputs.working_image) {
+        if !attached_working_image_matches(
+            session.attached_working_image.as_deref(),
+            &inputs.working_image,
+        )? {
             return Err("The x86 appliance is not attached to the expected working image.".into());
         }
         session.state = "validating".into();
@@ -3369,7 +3372,10 @@ pub(crate) fn install_nvidia_to_working_image_blocking(
             .as_mut()
             .ok_or("The x86_64 Fedora installer appliance is not running.")?;
         if session.state != "ready"
-            || session.attached_working_image.as_ref() != Some(&inputs.working_image)
+            || !attached_working_image_matches(
+                session.attached_working_image.as_deref(),
+                &inputs.working_image,
+            )?
         {
             return Err(
                 "The validated x86 appliance is not attached to the expected working image.".into(),
@@ -3786,6 +3792,20 @@ trap - EXIT INT TERM"#,
     session.message = "NVIDIA payload installed into the disposable working image.".into();
     session.nvidia_installation = Some(installation.clone());
     Ok(installation)
+}
+
+pub(crate) fn attached_working_image_matches(
+    attached: Option<&Path>,
+    expected: &Path,
+) -> Result<bool, String> {
+    let metadata = fs::symlink_metadata(expected)
+        .map_err(|error| format!("Could not inspect the expected working image: {error}"))?;
+    if !metadata.file_type().is_file() {
+        return Err("The expected working image is not a safe regular file.".into());
+    }
+    let expected = fs::canonicalize(expected)
+        .map_err(|error| format!("Could not resolve the expected working image: {error}"))?;
+    Ok(attached == Some(expected.as_path()))
 }
 
 #[tauri::command]

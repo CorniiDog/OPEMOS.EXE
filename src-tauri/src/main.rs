@@ -11,5 +11,16 @@ fn main() {
         }
         Ok(None) => {}
     }
+    match steamos_nvidia_image_builder_lib::run_windows_virtual_usb_harness(&arguments) {
+        Ok(Some(output)) => {
+            println!("{output}");
+            return;
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        Ok(None) => {}
+    }
     steamos_nvidia_image_builder_lib::run();
 }

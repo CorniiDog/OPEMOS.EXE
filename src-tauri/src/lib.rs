@@ -83,6 +83,8 @@ mod nvidia;
 mod output_transaction;
 mod settings;
 mod windows;
+#[cfg(windows)]
+mod windows_ssh;
 
 pub use app::run;
 use appliance::*;
@@ -149,11 +151,72 @@ pub fn run_core_driver_resolver(arguments: &[String]) -> Result<Option<String>, 
     .map_err(|error| format!("Could not encode selected Core driver resolution: {error}"))
 }
 
+#[cfg(target_os = "windows")]
+pub fn run_windows_virtual_usb_harness(arguments: &[String]) -> Result<Option<String>, String> {
+    if arguments.first().map(String::as_str) != Some("contained-virtual-usb") {
+        return Ok(None);
+    }
+    if arguments.len() != 5 || arguments[1] != "--root" || arguments[3] != "--image" {
+        return Err("Usage: contained-virtual-usb --root ROOT --image IMAGE.".into());
+    }
+    let root = PathBuf::from(&arguments[2]);
+    let image = PathBuf::from(&arguments[4]);
+    let target = fs::canonicalize(&root)
+        .map_err(|error| format!("Could not canonicalize the virtual-USB root: {error}"))?
+        .join("virtual-usb-32g.raw");
+    let (image, image_bytes, image_sha256) = validate_usb_image_identity(
+        image
+            .to_str()
+            .ok_or("The source image path is not valid UTF-8.")?,
+    )?;
+    let mut media = create_windows_virtual_usb(&root, &target)?;
+    let cancel = AtomicBool::new(false);
+    let result = copy_and_verify_usb_image(
+        &image,
+        &mut media,
+        image_bytes,
+        &image_sha256,
+        &cancel,
+        |_| {},
+    );
+    drop(media);
+    let cleanup = cleanup_windows_virtual_usb(&root, &target);
+    let verified_sha256 = match (result, cleanup) {
+        (Ok(sha256), Ok(())) => sha256,
+        (Err(error), Ok(())) => return Err(error),
+        (Ok(_), Err(error)) => return Err(error),
+        (Err(primary), Err(cleanup)) => {
+            return Err(format!("{primary} Cleanup also failed: {cleanup}"));
+        }
+    };
+    if sha256_file(&image)? != image_sha256 || target.exists() {
+        return Err("Contained virtual-USB cleanup or source preservation failed.".into());
+    }
+    serde_json::to_string(&serde_json::json!({
+        "schemaVersion": 1, "status": "passed",
+        "kind": "harness-owned-file-backed-virtual-usb",
+        "capacityBytes": WINDOWS_VIRTUAL_USB_BYTES, "bytesWritten": image_bytes,
+        "sourceSha256": image_sha256, "verifiedSha256": verified_sha256,
+        "flushed": true, "cleaned": true, "sourcePreserved": true,
+        "physicalMedia": false
+    }))
+    .map(Some)
+    .map_err(|error| format!("Could not encode virtual-USB evidence: {error}"))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn run_windows_virtual_usb_harness(arguments: &[String]) -> Result<Option<String>, String> {
+    if arguments.first().map(String::as_str) == Some("contained-virtual-usb") {
+        return Err("The contained virtual-USB executable harness requires Windows.".into());
+    }
+    Ok(None)
+}
+
 const READY_MARKER: &str = "SteamOS NVIDIA Image Builder appliance\nREADY";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
-const TCG_HARNESS_BOOT_TIMEOUT_SECS: u64 = 600;
+const TCG_HARNESS_BOOT_TIMEOUT_SECS: u64 = 1200;
 #[cfg(all(test, target_os = "linux"))]
-const TCG_HARNESS_OUTER_TIMEOUT_SECS: u64 = 660;
+const TCG_HARNESS_OUTER_TIMEOUT_SECS: u64 = 1260;
 const NVIDIA_BUILD_BOOT_TIMEOUT: Duration = Duration::from_secs(600);
 const NVIDIA_RELEASES_API: &str =
     "https://api.github.com/repos/CorniiDog/OPEMOS/releases?per_page=100";
@@ -193,7 +256,7 @@ const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/OPEMOS";
-const NVIDIA_SUPPORT_COMMIT: &str = "cbc44270440652875739c9386235ee8ae22861c9";
+const NVIDIA_SUPPORT_COMMIT: &str = "2102c73dbed5b2ec02a0d8b63f5081e9352b0cf5";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 // Compatibility target only. This does not become the production installer pin

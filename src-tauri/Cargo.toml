@@ -13,6 +13,7 @@ crate-type= ["staticlib", "cdylib", "rlib"]
 tauri-build= {version="2",features= [] }
 
 [dependencies]
+base64 = "0.22.1"
 bzip2 = "0.6.1"
 flate2 = "1.1.10"
 libc = "0.2"
@@ -26,6 +27,10 @@ tauri= {version="2",features= ["macos-private-api"] }
 tauri-plugin-dialog="2"
 tauri-plugin-opener="2"
 xz2 = "0.1.7"
+
+[target.'cfg(windows)'.dependencies]
+russh = { version = "0.63.2", default-features = false, features = ["ring"] }
+tokio = { version = "1.53.0", features = ["rt", "time"] }
 
 [profile.dev.package.sha2]
 opt-level=3

@@ -128,7 +128,7 @@ locked checks and release build in `.github/workflows/windows-portable.yml`:
 pwsh -File .\cargodev_init_windows.ps1 -CheckOnly
 pwsh -File .\cargodev_init_windows.ps1 -PrintOnly
 npm ci
-cargo test --manifest-path src-tauri/Cargo.toml --locked windows_
+cargo test --manifest-path src-tauri/Cargo.toml --locked --lib windows_
 cargo build --manifest-path src-tauri/Cargo.toml --release --locked
 pwsh -File .\test_welcome_windows.ps1
 ```

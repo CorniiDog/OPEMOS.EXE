@@ -16,9 +16,9 @@ test("all three hosts expose setup and safe welcome entry points", async () => {
 
 test("README pins real three-platform commands and output contracts", async () => {
   const readme = await readFile("README.md", "utf8");
-  for (const text of ["cargodev_init_macos.sh", "cargodev_init_linux.sh", "cargodev_init_windows.ps1", "test_welcome_macos.sh", "test_welcome_linux.sh", "test_welcome_windows.ps1", "pwsh -File", "npm run dev:linux-test", "npm run build:linux-test", "npm run build:debian12-test", "npm run test:package-linux", "cargo test --manifest-path src-tauri/Cargo.toml --locked windows_", "cargo build --manifest-path src-tauri/Cargo.toml --release --locked", "src-tauri/target/release/steamos-nvidia-image-builder.exe", "disposable overlay"])
+  for (const text of ["cargodev_init_macos.sh", "cargodev_init_linux.sh", "cargodev_init_windows.ps1", "test_welcome_macos.sh", "test_welcome_linux.sh", "test_welcome_windows.ps1", "pwsh -File", "npm run dev:linux-test", "npm run build:linux-test", "npm run build:debian12-test", "npm run test:package-linux", "cargo test --manifest-path src-tauri/Cargo.toml --locked --lib windows_", "cargo build --manifest-path src-tauri/Cargo.toml --release --locked", "src-tauri/target/release/steamos-nvidia-image-builder.exe", "disposable overlay"])
     assert.match(readme, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   const workflow = await readFile(".github/workflows/windows-portable.yml", "utf8");
-  assert.match(workflow, /cargo test --manifest-path src-tauri\/Cargo\.toml --locked windows_/);
+  assert.match(workflow, /cargo test --manifest-path src-tauri\/Cargo\.toml --locked --lib windows_/);
   assert.match(workflow, /cargo build --manifest-path src-tauri\/Cargo\.toml --release --locked/);
 });

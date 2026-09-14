@@ -56,6 +56,264 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn structured_guest_command_is_framed_bounded_and_reaped() {
+        const MARKER: &str = "OPEMOS_COMMAND_COMPLETE_TEST";
+
+        let multiline = "printf 'FIRST\nSECOND\n'";
+        let transport = structured_guest_command_transport(multiline, MARKER);
+        assert!(!transport.contains('\n'));
+        let encoded_child = Command::new("/bin/sh")
+            .args(["-c", &transport])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start encoded multiline fixture");
+        assert_eq!(
+            finish_structured_guest_command(encoded_child, Duration::from_secs(1), MARKER)
+                .expect("execute multiline command through one transport line"),
+            "FIRST\nSECOND"
+        );
+
+        let mut success = Command::new("/bin/sh");
+        success
+            .args([
+                "-c",
+                "printf 'VALUE=ready\nOPEMOS_COMMAND_COMPLETE_TEST:0\n'; sleep 30",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut success);
+        let success = success.spawn().expect("start framed success fixture");
+        let success_pid = success.id();
+        assert_eq!(
+            finish_structured_guest_command(success, Duration::from_secs(1), MARKER)
+                .expect("accept terminal marker before EOF"),
+            "VALUE=ready"
+        );
+        assert!(!process_is_alive(success_pid));
+
+        let mut failure = Command::new("/bin/sh");
+        failure
+            .args([
+                "-c",
+                "printf exact-error >&2; printf 'OPEMOS_COMMAND_COMPLETE_TEST:7\n'; sleep 30",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut failure);
+        let failure = failure.spawn().expect("start framed failure fixture");
+        let failure_pid = failure.id();
+        let error = finish_structured_guest_command(failure, Duration::from_secs(1), MARKER)
+            .expect_err("preserve framed nonzero status");
+        assert_eq!(error, "Guest command exited with status 7: exact-error");
+        assert!(!process_is_alive(failure_pid));
+
+        let mut missing = Command::new("/bin/sh");
+        missing
+            .args(["-c", "printf 'WRONG:0\n'"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut missing);
+        assert_eq!(
+            finish_structured_guest_command(
+                missing.spawn().expect("start missing-marker fixture"),
+                Duration::from_secs(1),
+                MARKER,
+            )
+            .expect_err("missing marker must fail"),
+            "Guest command ended without its terminal marker."
+        );
+
+        let mut excessive = Command::new("/bin/sh");
+        excessive
+            .args(["-c", "head -c 65537 /dev/zero"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut excessive);
+        assert_eq!(
+            finish_structured_guest_command(
+                excessive.spawn().expect("start excessive output fixture"),
+                Duration::from_secs(1),
+                MARKER,
+            )
+            .expect_err("excessive output must fail"),
+            "Guest command output exceeded its bound."
+        );
+
+        let mut stalled = Command::new("/bin/sh");
+        stalled
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut stalled);
+        let stalled = stalled.spawn().expect("start structured timeout fixture");
+        let stalled_pid = stalled.id();
+        assert_eq!(
+            finish_structured_guest_command(stalled, Duration::from_millis(50), MARKER)
+                .expect_err("structured timeout must fail"),
+            "Guest command timed out."
+        );
+        assert!(!process_is_alive(stalled_pid));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_structured_guest_marker_before_eof_reaps_the_child() {
+        const MARKER: &str = "OPEMOS_COMMAND_COMPLETE_TEST";
+        let mut success = Command::new("cmd.exe");
+        success
+            .args([
+                "/d",
+                "/c",
+                "(echo VALUE=ready& echo OPEMOS_COMMAND_COMPLETE_TEST:0& ping -n 31 127.0.0.1 >nul)",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut success);
+        let success = success.spawn().expect("start framed Windows fixture");
+        let success_pid = success.id();
+        assert_eq!(
+            finish_structured_guest_command(success, Duration::from_secs(1), MARKER)
+                .expect("accept Windows terminal marker before EOF"),
+            "VALUE=ready"
+        );
+        assert!(!process_is_alive(success_pid));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn guest_readiness_attempt_is_bounded_reaped_and_output_limited() {
+        let mut ready_then_stalled = Command::new("/bin/sh");
+        ready_then_stalled
+            .args([
+                "-c",
+                "printf 'SteamOS NVIDIA Image Builder appliance\nREADY\n'; sleep 30",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut ready_then_stalled);
+        let ready_then_stalled = ready_then_stalled
+            .spawn()
+            .expect("start ready-before-EOF fixture");
+        let ready_pid = ready_then_stalled.id();
+        let started = Instant::now();
+        assert_eq!(
+            finish_guest_readiness_attempt(ready_then_stalled, Duration::from_secs(1))
+                .expect("accept exact marker before EOF"),
+            READY_MARKER
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!process_is_alive(ready_pid));
+
+        let mut stalled = Command::new("/bin/sh");
+        stalled
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut stalled);
+        let stalled = stalled.spawn().expect("start stalled readiness fixture");
+        let stalled_pid = stalled.id();
+        let started = Instant::now();
+        let error = finish_guest_readiness_attempt(stalled, Duration::from_millis(50))
+            .expect_err("stalled readiness must expire");
+        assert_eq!(error, "Guest readiness transport attempt timed out.");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!process_is_alive(stalled_pid));
+
+        let mut excessive = Command::new("/bin/sh");
+        excessive
+            .args(["-c", "head -c 65537 /dev/zero"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut excessive);
+        let error = finish_guest_readiness_attempt(
+            excessive.spawn().expect("start excessive readiness fixture"),
+            Duration::from_secs(1),
+        )
+        .expect_err("excessive readiness output must fail");
+        assert_eq!(error, "Guest readiness output exceeded its bound.");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_guest_readiness_attempt_timeout_reaps_the_child() {
+        let mut ready_then_stalled = Command::new("cmd.exe");
+        ready_then_stalled
+            .args([
+                "/d",
+                "/c",
+                "(echo SteamOS NVIDIA Image Builder appliance& echo READY& ping -n 31 127.0.0.1 >nul)",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut ready_then_stalled);
+        let ready_then_stalled = ready_then_stalled
+            .spawn()
+            .expect("start ready-before-EOF fixture");
+        let ready_pid = ready_then_stalled.id();
+        let started = Instant::now();
+        assert_eq!(
+            finish_guest_readiness_attempt(ready_then_stalled, Duration::from_secs(1))
+                .expect("accept exact marker before EOF"),
+            READY_MARKER
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(!process_is_alive(ready_pid));
+
+        let mut stalled = Command::new("cmd.exe");
+        stalled
+            .args(["/d", "/c", "ping -n 31 127.0.0.1 >nul"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut stalled);
+        let stalled = stalled.spawn().expect("start stalled readiness fixture");
+        let stalled_pid = stalled.id();
+        let started = Instant::now();
+        let error = finish_guest_readiness_attempt(stalled, Duration::from_millis(100))
+            .expect_err("stalled readiness must expire");
+        assert_eq!(error, "Guest readiness transport attempt timed out.");
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(!process_is_alive(stalled_pid));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_guest_shutdown_timeout_reaps_the_child() {
+        let mut stalled = Command::new("cmd.exe");
+        stalled
+            .args(["/d", "/c", "ping -n 31 127.0.0.1 >nul"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut stalled);
+        let stalled = stalled.spawn().expect("start stalled shutdown fixture");
+        let stalled_pid = stalled.id();
+        let started = Instant::now();
+        let error = finish_guest_command_bounded(
+            stalled,
+            Duration::from_millis(100),
+            "Guest shutdown command timed out.",
+        )
+            .expect_err("stalled shutdown must expire");
+        assert_eq!(error, "Guest shutdown command timed out.");
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(!process_is_alive(stalled_pid));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn guest_channel_readiness_is_bounded_and_drains_stderr_concurrently() {
         let mut noisy = Command::new("/bin/sh");
         noisy
@@ -527,6 +785,78 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn live_tcg_retry_windows_keep_inspection_separate_from_mutation() {
+        assert_eq!(LIVE_INSPECTION_QUIESCENCE_SECS, 30);
+        assert_eq!(LIVE_INSPECTION_RETRY_TIMEOUT_SECS, 180);
+        assert_eq!(LIVE_INSPECTION_RETRY_INTERVAL_SECS, 5);
+        assert_eq!(LIVE_MUTATION_RETRY_TIMEOUT_SECS, 60);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn live_tcg_inspection_waits_once_then_retries_serially_at_fixed_intervals() {
+        let mut waits = Vec::new();
+        let mut attempts = 0;
+        let value = retry_live_tcg_inspection_with_waits(
+            Duration::from_secs(1),
+            |duration| waits.push(duration),
+            || {
+                attempts += 1;
+                if attempts == 1 {
+                    Err("Guest command exited with exit status: 255: banner timeout".into())
+                } else {
+                    Ok("ready")
+                }
+            },
+        )
+        .expect("retry one inspection transport failure");
+        assert_eq!(value, "ready");
+        assert_eq!(attempts, 2);
+        assert_eq!(
+            waits,
+            [
+                Duration::from_secs(LIVE_INSPECTION_QUIESCENCE_SECS),
+                Duration::from_secs(LIVE_INSPECTION_RETRY_INTERVAL_SECS),
+            ]
+        );
+
+        let mut semantic_waits = Vec::new();
+        let mut semantic_attempts = 0;
+        assert!(retry_live_tcg_inspection_with_waits(
+            Duration::from_secs(1),
+            |duration| semantic_waits.push(duration),
+            || {
+                semantic_attempts += 1;
+                Err::<(), _>("guest validation failed".into())
+            },
+        )
+        .is_err());
+        assert_eq!(semantic_attempts, 1);
+        assert_eq!(
+            semantic_waits,
+            [Duration::from_secs(LIVE_INSPECTION_QUIESCENCE_SECS)]
+        );
+
+        let mut expired_waits = Vec::new();
+        let mut expired_attempts = 0;
+        assert!(retry_live_tcg_inspection_with_waits(
+            Duration::ZERO,
+            |duration| expired_waits.push(duration),
+            || {
+                expired_attempts += 1;
+                Err::<(), _>("Guest command exited with exit status: 255: banner timeout".into())
+            },
+        )
+        .is_err());
+        assert_eq!(expired_attempts, 1);
+        assert_eq!(
+            expired_waits,
+            [Duration::from_secs(LIVE_INSPECTION_QUIESCENCE_SECS)]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn live_tcg_transport_retry_is_bounded_and_refuses_non_transport_failures() {
         let mut attempts = 0;
         let value = retry_live_tcg_transport(Instant::now() + Duration::from_secs(1), || {
@@ -663,6 +993,77 @@ mod tests {
 
         let unsafe_package = package("egl-wayland", "dependency", "../egl-wayland.pkg.tar.zst");
         assert!(guest_userspace_filenames(&unsafe_package).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_stages_arch_epoch_filenames_without_ntfs_streams() {
+        let canonical = "egl-wayland-4:1.1.19-1-x86_64.pkg.tar.zst";
+        let signature = format!("{canonical}.sig");
+        let package_local = local_userspace_staging_filename(canonical);
+        let signature_local = local_userspace_staging_filename(&signature);
+        assert!(!package_local.contains(':'));
+        assert!(!signature_local.contains(':'));
+        assert_ne!(package_local, signature_local);
+
+        let root = std::env::temp_dir().join(format!(
+            "opemos-windows-epoch-filename-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).expect("create epoch staging fixture");
+        for local in [&package_local, &signature_local] {
+            let destination = root.join(local);
+            let partial = destination.with_file_name(format!(".{local}.partial"));
+            fs::write(&partial, b"reviewed-input").expect("stage ordinary file");
+            fs::rename(&partial, &destination).expect("finalize ordinary file");
+            assert_eq!(fs::read(&destination).unwrap(), b"reviewed-input");
+        }
+        assert_eq!(
+            fs::read_dir(&root).unwrap().count(),
+            2,
+            "no alternate data stream path may be created"
+        );
+
+        let package = NvidiaUserspacePackage {
+            name: "egl-wayland".into(),
+            role: "dependency".into(),
+            filename: canonical.into(),
+            full_version: "4:1.1.19-1".into(),
+            package_path: root.join(package_local).to_string_lossy().into_owned(),
+            signature_path: root.join(signature_local).to_string_lossy().into_owned(),
+            package_sha256: "a".repeat(64),
+        };
+        let (guest_package, guest_signature) = guest_userspace_filenames(&package).unwrap();
+        assert_eq!(guest_package, canonical);
+        assert_eq!(guest_signature, format!("{canonical}.sig"));
+        fs::remove_dir_all(root).expect("remove epoch staging fixture");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_working_image_gates_compare_canonical_file_identity() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-windows-working-image-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).expect("create working-image fixture");
+        let expected = root.join("user-working.qcow2");
+        let distinct = root.join("other-working.qcow2");
+        fs::write(&expected, b"working").expect("create expected working image");
+        fs::write(&distinct, b"distinct").expect("create distinct working image");
+        let attached = fs::canonicalize(&expected).expect("canonicalize attached image");
+        assert!(attached.to_string_lossy().starts_with(r"\\?\"));
+
+        assert!(attached_working_image_matches(Some(&attached), &expected).unwrap());
+        assert!(!attached_working_image_matches(
+            Some(&fs::canonicalize(&distinct).unwrap()),
+            &expected,
+        )
+        .unwrap());
+        assert!(!attached_working_image_matches(None, &expected).unwrap());
+        fs::remove_dir_all(root).expect("remove working-image fixture");
     }
 
     #[test]
@@ -2140,6 +2541,120 @@ esac
         assert!(result.expect_err("cancelled write must fail").contains("cancelled"));
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_file_backed_32_gib_virtual_usb_writes_flushes_reads_back_and_cleans_up() {
+        struct TemporaryHarnessRoot(PathBuf);
+        impl Drop for TemporaryHarnessRoot {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TemporaryHarnessRoot(std::env::temp_dir().join(format!(
+            "opemos-windows-virtual-usb-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        )));
+        fs::create_dir(&root.0).expect("create harness-owned root");
+        let root_path = fs::canonicalize(&root.0).expect("canonicalize harness-owned root");
+        let source = root_path.join("source.img");
+        let target = root_path.join("virtual-usb-32g.raw");
+        let payload = b"authenticated NVIDIA image fixture";
+        fs::write(&source, payload).expect("write source fixture");
+        let expected = format!("{:x}", Sha256::digest(payload));
+
+        let mut media = create_windows_virtual_usb(&root_path, &target)
+            .expect("create exact sparse 32 GiB virtual USB");
+        assert_eq!(media.metadata().unwrap().len(), WINDOWS_VIRTUAL_USB_BYTES);
+        assert!(windows_virtual_usb_is_sparse(&media).unwrap());
+        assert!(create_windows_virtual_usb(&root_path, &target).is_err());
+
+        let cancel = AtomicBool::new(false);
+        let mut phases = Vec::new();
+        let verified = copy_and_verify_usb_image(
+            &source,
+            &mut media,
+            payload.len() as u64,
+            &expected,
+            &cancel,
+            |progress| phases.push(progress.phase),
+        )
+        .expect("write, flush, and read back virtual USB");
+        assert_eq!(verified, expected);
+        assert!(phases.iter().any(|phase| phase == "writing"));
+        assert!(phases.iter().any(|phase| phase == "verifying"));
+        assert_eq!(media.metadata().unwrap().len(), WINDOWS_VIRTUAL_USB_BYTES);
+        drop(media);
+
+        cleanup_windows_virtual_usb(&root_path, &target).expect("clean exact owned virtual USB");
+        assert!(!target.exists());
+        assert!(source.exists());
+        assert!(cleanup_windows_virtual_usb(&root_path, &source).is_err());
+
+        let cancelled_payload = vec![0x5a_u8; 5 * 1024 * 1024 + 17];
+        fs::write(&source, &cancelled_payload).expect("write cancellation fixture");
+        let cancelled_sha = format!("{:x}", Sha256::digest(&cancelled_payload));
+        let mut media = create_windows_virtual_usb(&root_path, &target)
+            .expect("recreate virtual USB for cancellation");
+        let cancel = AtomicBool::new(false);
+        let result = copy_and_verify_usb_image(
+            &source,
+            &mut media,
+            cancelled_payload.len() as u64,
+            &cancelled_sha,
+            &cancel,
+            |progress| {
+                if progress.phase == "writing" && progress.bytes_completed > 0 {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        assert!(result.expect_err("cancel exact virtual-USB write").contains("cancelled"));
+        assert_eq!(media.metadata().unwrap().len(), WINDOWS_VIRTUAL_USB_BYTES);
+        drop(media);
+        cleanup_windows_virtual_usb(&root_path, &target)
+            .expect("clean cancelled exact owned virtual USB");
+        assert!(!target.exists());
+        assert_eq!(fs::read(&source).unwrap(), cancelled_payload);
+
+        let executable_payload = vec![0x3c_u8; 512];
+        let executable_expected = format!("{:x}", Sha256::digest(&executable_payload));
+        fs::write(&source, &executable_payload).expect("restore aligned executable harness fixture");
+        fs::write(
+            manifest_path_for_output(&source),
+            serde_json::to_vec(&serde_json::json!({
+                "output": {
+                    "filename": "source.img",
+                    "format": "raw",
+                    "bytes": executable_payload.len(),
+                    "sha256": executable_expected.clone()
+                }
+            }))
+            .expect("serialize executable harness manifest"),
+        )
+        .expect("write executable harness manifest");
+        let output = run_windows_virtual_usb_harness(&[
+            "contained-virtual-usb".into(),
+            "--root".into(),
+            root_path.display().to_string(),
+            "--image".into(),
+            source.display().to_string(),
+        ])
+        .expect("run executable-contained virtual USB")
+        .expect("recognize contained virtual-USB command");
+        let evidence: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(evidence["status"], "passed");
+        assert_eq!(evidence["capacityBytes"], WINDOWS_VIRTUAL_USB_BYTES);
+        assert_eq!(evidence["sourceSha256"], executable_expected);
+        assert_eq!(evidence["verifiedSha256"], executable_expected);
+        assert_eq!(evidence["flushed"], true);
+        assert_eq!(evidence["cleaned"], true);
+        assert_eq!(evidence["sourcePreserved"], true);
+        assert_eq!(evidence["physicalMedia"], false);
+        assert!(!target.exists());
+        assert_eq!(fs::read(&source).unwrap(), executable_payload);
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "attaches a small disposable macOS virtual disk and writes its raw device"]
@@ -2336,15 +2851,15 @@ esac
         assert_eq!(harness_secs, TCG_HARNESS_BOOT_TIMEOUT_SECS);
         #[cfg(target_os = "linux")]
         {
-            assert_eq!(TCG_HARNESS_OUTER_TIMEOUT_SECS, 660);
+            assert_eq!(TCG_HARNESS_OUTER_TIMEOUT_SECS, 1260);
             assert_eq!(
                 TCG_HARNESS_OUTER_TIMEOUT_SECS - TCG_HARNESS_BOOT_TIMEOUT_SECS,
                 60
             );
         }
-        assert_eq!(harness_deadline.duration_since(started_at), Duration::from_secs(600));
+        assert_eq!(harness_deadline.duration_since(started_at), Duration::from_secs(1200));
         assert_eq!(appliance_readiness_deadline(started_at, Some(TCG_HARNESS_BOOT_TIMEOUT_SECS)).unwrap().0, harness_deadline, "polling must not reset the absolute deadline");
-        for malformed in [0, 119, 120, 599, 601, u64::MAX] {
+        for malformed in [0, 119, 120, 599, 899, 1199, 1201, u64::MAX] {
             assert!(appliance_readiness_deadline(started_at, Some(malformed)).is_err());
         }
     }
@@ -2352,7 +2867,7 @@ esac
     #[test]
     fn appliance_readiness_expiry_refuses_late_ready_marker() {
         let started_at = Instant::now();
-        let (deadline, _) = appliance_readiness_deadline(started_at, Some(600)).unwrap();
+        let (deadline, _) = appliance_readiness_deadline(started_at, Some(1200)).unwrap();
         assert_eq!(appliance_readiness_outcome(deadline - Duration::from_nanos(1), deadline, &Ok(READY_MARKER.into())), ApplianceReadinessOutcome::Ready);
         assert_eq!(appliance_readiness_outcome(deadline, deadline, &Ok(READY_MARKER.into())), ApplianceReadinessOutcome::TimedOut);
         assert_eq!(appliance_readiness_outcome(deadline, deadline, &Err("not ready".into())), ApplianceReadinessOutcome::TimedOut);
@@ -2951,8 +3466,14 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 583_001);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 50);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 662_686);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 52);
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "lib/diagnostic_safety.py" && !file.executable
+        }));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "lib/run_opaque_operation.py" && file.executable
+        }));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
@@ -3028,7 +3549,7 @@ esac
         }));
         assert!(PINNED_INSTALLER_FILES
             .iter()
-            .any(|file| file.path == "lib/prepare_pacman_config.py" && file.executable));
+            .any(|file| file.path == "lib/prepare_pacman_config.py" && !file.executable));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/gaming_payload_profiles.py" && file.executable));
@@ -4125,6 +4646,8 @@ esac
             payload_receipt_overlay_assertions(installed.payload_receipt.as_ref().unwrap())
                 .expect("render independent receipt checks");
         assert_eq!(overlay_assertions.matches("test -f ").count(), 7);
+        assert!(overlay_assertions.contains("unique=lambda pairs:"));
+        assert!(!overlay_assertions.contains("def unique(pairs):"));
         assert!(overlay_assertions.contains("object_pairs_hook=unique"));
         assert!(overlay_assertions.contains("actual.get(key)==value"));
         assert!(Command::new("bash")
@@ -5187,6 +5710,18 @@ esac
     }
 
     #[test]
+    fn guest_read_only_property_requires_one_exact_binary_value() {
+        assert_eq!(parse_guest_read_only_property("0", "fixture"), Ok(false));
+        assert_eq!(parse_guest_read_only_property("1", "fixture"), Ok(true));
+        for invalid in ["", " 1", "1\n0", "true", "2"] {
+            assert_eq!(
+                parse_guest_read_only_property(invalid, "fixture").unwrap_err(),
+                "fixture returned an invalid read-only property; expected exactly 0 or 1."
+            );
+        }
+    }
+
+    #[test]
     fn normalizes_bounded_os_release_values_without_executing_them() {
         assert_eq!(
             normalize_os_release_field("\"SteamOS 3.8\""),
@@ -5786,6 +6321,446 @@ esac
         fs::remove_dir_all(input_root).expect("remove live compressed input directory");
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "runs one bounded WHPX transport-only diagnostic"]
+    fn live_windows_whpx_second_session_transport_diagnostic() {
+        let mut session =
+            prepare_nvidia_build_session(None).expect("start verified Fedora appliance");
+        let boot_deadline = Instant::now() + NVIDIA_BUILD_BOOT_TIMEOUT;
+        loop {
+            assert_eq!(
+                session.child.try_wait().expect("diagnostic QEMU status"),
+                None,
+                "diagnostic QEMU exited before readiness"
+            );
+            if handshake(&session).as_deref() == Ok(READY_MARKER) {
+                break;
+            }
+            assert!(
+                Instant::now() < boot_deadline,
+                "diagnostic readiness deadline expired"
+            );
+            thread::sleep(Duration::from_secs(1));
+        }
+        println!("DIAGNOSTIC readiness=ready");
+
+        let tcp_started = Instant::now();
+        TcpStream::connect_timeout(
+            &format!("127.0.0.1:{}", session.ssh_port)
+                .parse()
+                .expect("diagnostic TCP address"),
+            Duration::from_secs(2),
+        )
+        .expect("diagnostic TCP connect");
+        println!(
+            "DIAGNOSTIC tcp=connected elapsedMs={}",
+            tcp_started.elapsed().as_millis()
+        );
+
+        let raw_started = Instant::now();
+        let raw = finish_guest_readiness_attempt(
+            start_guest_command(
+                &session,
+                "printf 'SECOND_OK\nSSH_CONNECTION=%s\n' \"$SSH_CONNECTION\"; sleep 30",
+            )
+            .expect("start diagnostic second SSH command"),
+            Duration::from_secs(30),
+        );
+        println!(
+            "DIAGNOSTIC rawResult={raw:?} elapsedMs={}",
+            raw_started.elapsed().as_millis()
+        );
+
+        let marker = structured_guest_command_marker().expect("create diagnostic terminal marker");
+        let framed_started = Instant::now();
+        let framed = finish_structured_guest_command(
+            start_structured_guest_command(
+                &session,
+                "printf 'SECOND_OK\nSSH_CONNECTION=%s\n' \"$SSH_CONNECTION\"",
+                &marker,
+            )
+            .expect("start diagnostic framed SSH command"),
+            Duration::from_secs(30),
+            &marker,
+        );
+        println!(
+            "DIAGNOSTIC framedResult={framed:?} marker={marker} elapsedMs={}",
+            framed_started.elapsed().as_millis()
+        );
+
+        let runtime_dir = session.runtime_dir.clone();
+        let archived_log = stop_nvidia_build_session(&mut session)
+            .expect("stop diagnostic appliance")
+            .expect("retain diagnostic QEMU log");
+        assert!(!runtime_dir.exists(), "diagnostic runtime must be removed");
+        assert!(archived_log.is_file(), "diagnostic QEMU log must remain");
+        assert!(raw
+            .as_deref()
+            .is_ok_and(|output| output.starts_with("SECOND_OK\nSSH_CONNECTION=")));
+        assert!(framed
+            .as_deref()
+            .is_ok_and(|output| output.starts_with("SECOND_OK\nSSH_CONNECTION=")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "runs one bounded WHPX in-process SSH proof"]
+    fn live_windows_whpx_in_process_ssh_proof() {
+        let input = std::env::var_os("STEAMOS_RECOVERY_IMAGE")
+            .map(PathBuf::from)
+            .expect("set STEAMOS_RECOVERY_IMAGE to the official Valve recovery image");
+        let input = live_recovery_input(&input).expect("validate the non-symlink recovery image");
+        let mut session = prepare_session(Some(&input), None, None, false)
+            .expect("start the verified Fedora appliance with read-only input");
+        let boot_deadline = Instant::now() + NVIDIA_BUILD_BOOT_TIMEOUT;
+        loop {
+            assert_eq!(
+                session.child.try_wait().expect("diagnostic QEMU status"),
+                None,
+                "diagnostic QEMU exited before readiness"
+            );
+            let readiness = handshake(&session);
+            if readiness.as_deref() == Ok(READY_MARKER) {
+                break;
+            }
+            assert!(
+                Instant::now() < boot_deadline,
+                "in-process SSH readiness deadline expired: {readiness:?}"
+            );
+            thread::sleep(Duration::from_secs(1));
+        }
+        println!("IN_PROCESS_SSH readiness=ready");
+
+        assert_eq!(
+            run_guest_command_with_timeout(
+                &session,
+                "printf 'IN_PROCESS_OK\n'",
+                Duration::from_secs(10),
+            )
+            .as_deref(),
+            Ok("IN_PROCESS_OK")
+        );
+        let nonzero = run_guest_command_with_timeout(
+            &session,
+            "printf 'EXPECTED_FAILURE\n' >&2; exit 7",
+            Duration::from_secs(10),
+        )
+        .expect_err("nonzero status must fail");
+        assert!(nonzero.contains("status 7") && nonzero.contains("EXPECTED_FAILURE"));
+        assert_eq!(
+            run_guest_command_with_timeout(
+                &session,
+                "sleep 2",
+                Duration::from_millis(100),
+            )
+            .expect_err("slow command must time out"),
+            "In-process SSH command timed out."
+        );
+        let overflow = run_guest_command_with_timeout(
+            &session,
+            "head -c 65537 /dev/zero",
+            Duration::from_secs(10),
+        )
+        .expect_err("excessive stdout must fail");
+        assert_eq!(overflow, "In-process SSH command stdout exceeded its bound.");
+
+        let callback_count = std::cell::Cell::new(0);
+        let gated = crate::windows_ssh::run_gated_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "printf 'OPEMOS_MUTATION_'; sleep 0.1; printf 'CHANNEL_READY\\nRESULT\\n'",
+            "OPEMOS_MUTATION_CHANNEL_READY",
+            Duration::from_secs(10),
+            Duration::from_secs(10),
+            64 * 1024,
+            || {
+                callback_count.set(callback_count.get() + 1);
+                Ok(())
+            },
+        )
+        .expect("split readiness marker must gate the command");
+        assert_eq!(callback_count.get(), 1);
+        assert_eq!(gated.status, 0);
+        assert_eq!(gated.stdout, b"RESULT\n");
+
+        for command in ["printf 'WRONG\\n'", "printf 'NO_NEWLINE'"] {
+            let count = std::cell::Cell::new(0);
+            let error = crate::windows_ssh::run_gated_command(
+                session.ssh_port,
+                &session.ssh_key,
+                command,
+                "OPEMOS_MUTATION_CHANNEL_READY",
+                Duration::from_secs(10),
+                Duration::from_secs(10),
+                64 * 1024,
+                || {
+                    count.set(count.get() + 1);
+                    Ok(())
+                },
+            )
+            .expect_err("missing or wrong readiness marker must fail closed");
+            assert!(error.contains("readiness marker"), "{error}");
+            assert_eq!(count.get(), 0);
+        }
+
+        let callback_error = crate::windows_ssh::run_gated_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "printf 'OPEMOS_MUTATION_CHANNEL_READY\\n'",
+            "OPEMOS_MUTATION_CHANNEL_READY",
+            Duration::from_secs(10),
+            Duration::from_secs(10),
+            64 * 1024,
+            || Err("EXPECTED_CALLBACK_FAILURE".into()),
+        )
+        .expect_err("callback failure must stop the gated command");
+        assert_eq!(callback_error, "EXPECTED_CALLBACK_FAILURE");
+
+        let nonzero = crate::windows_ssh::run_gated_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "printf 'OPEMOS_MUTATION_CHANNEL_READY\\n'; exit 9",
+            "OPEMOS_MUTATION_CHANNEL_READY",
+            Duration::from_secs(10),
+            Duration::from_secs(10),
+            64 * 1024,
+            || Ok(()),
+        )
+        .expect("transport must return the remote exit status");
+        assert_eq!(nonzero.status, 9);
+
+        let gated_overflow = crate::windows_ssh::run_gated_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "printf 'OPEMOS_MUTATION_CHANNEL_READY\\n'; head -c 65537 /dev/zero",
+            "OPEMOS_MUTATION_CHANNEL_READY",
+            Duration::from_secs(10),
+            Duration::from_secs(10),
+            64 * 1024,
+            || Ok(()),
+        )
+        .expect_err("gated command output must remain bounded");
+        assert_eq!(
+            gated_overflow,
+            "In-process SSH command stdout exceeded its bound."
+        );
+
+        let gated_timeout = crate::windows_ssh::run_gated_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "sleep 2; printf 'OPEMOS_MUTATION_CHANNEL_READY\\n'",
+            "OPEMOS_MUTATION_CHANNEL_READY",
+            Duration::from_millis(100),
+            Duration::from_secs(10),
+            64 * 1024,
+            || Ok(()),
+        )
+        .expect_err("readiness marker must honor its deadline");
+        assert_eq!(
+            gated_timeout,
+            "Mutation guest command readiness marker timed out."
+        );
+
+        let logged_path = session.runtime_dir.join("windows-russh-logged-command.log");
+        let status = crate::windows_ssh::run_logged_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "printf 'LOGGED_STDOUT\\n'; printf 'LOGGED_STDERR\\n' >&2",
+            &logged_path,
+            Duration::from_secs(10),
+            64 * 1024,
+            None,
+        )
+        .expect("logged command must complete");
+        assert_eq!(status, 0);
+        let logged = fs::read_to_string(&logged_path).unwrap();
+        assert!(logged.contains("LOGGED_STDOUT"));
+        assert!(logged.contains("LOGGED_STDERR"));
+
+        let status = crate::windows_ssh::run_logged_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "printf 'LOGGED_FAILURE\\n' >&2; exit 11",
+            &logged_path,
+            Duration::from_secs(10),
+            64 * 1024,
+            None,
+        )
+        .expect("logged nonzero command must return its status");
+        assert_eq!(status, 11);
+        assert!(fs::read_to_string(&logged_path)
+            .unwrap()
+            .contains("LOGGED_FAILURE"));
+
+        let cancelled = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(250));
+                cancelled.store(true, Ordering::Relaxed);
+            });
+            assert_eq!(
+                crate::windows_ssh::run_logged_command(
+                    session.ssh_port,
+                    &session.ssh_key,
+                    "printf 'LOGGED_BEFORE_CANCEL\n'; sleep 5",
+                    &logged_path,
+                    Duration::from_secs(10),
+                    64 * 1024,
+                    Some(&cancelled),
+                )
+                .expect_err("logged command must observe mid-operation cancellation"),
+                "NVIDIA target build cancelled."
+            );
+        });
+        assert!(fs::read_to_string(&logged_path)
+            .unwrap()
+            .contains("LOGGED_BEFORE_CANCEL"));
+        assert_eq!(
+            crate::windows_ssh::run_logged_command(
+                session.ssh_port,
+                &session.ssh_key,
+                "exit 0",
+                &logged_path,
+                Duration::from_secs(10),
+                64 * 1024,
+                None,
+            )
+            .expect("a command after cancellation must use a clean SSH session"),
+            0
+        );
+        assert_eq!(
+            crate::windows_ssh::run_logged_command(
+                session.ssh_port,
+                &session.ssh_key,
+                "sleep 2",
+                &logged_path,
+                Duration::from_millis(100),
+                64 * 1024,
+                None,
+            )
+            .expect_err("logged command must honor its total deadline"),
+            "NVIDIA appliance command timed out."
+        );
+        assert_eq!(
+            crate::windows_ssh::run_logged_command(
+                session.ssh_port,
+                &session.ssh_key,
+                "head -c 1025 /dev/zero",
+                &logged_path,
+                Duration::from_secs(10),
+                1024,
+                None,
+            )
+            .expect_err("logged output must remain bounded"),
+            "NVIDIA appliance command output exceeded its bound."
+        );
+
+        let runtime_dir = session.runtime_dir.clone();
+        let archived_log = stop_session(&mut session)
+            .expect("stop diagnostic appliance")
+            .expect("retain diagnostic QEMU log");
+        assert!(!runtime_dir.exists(), "diagnostic runtime must be removed");
+        assert!(archived_log.is_file(), "diagnostic QEMU log must remain");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "runs one bounded WHPX framed-first transport diagnostic"]
+    fn live_windows_whpx_read_only_attachment_diagnostic() {
+        const SSH_DEBUG_OUTPUT_LIMIT: u64 = 64 * 1024;
+        let input = std::env::var_os("STEAMOS_RECOVERY_IMAGE")
+            .map(PathBuf::from)
+            .expect("set STEAMOS_RECOVERY_IMAGE to the official Valve recovery image");
+        let input = live_recovery_input(&input).expect("validate the non-symlink recovery image");
+        let mut session = prepare_session(Some(&input), None, None, false)
+            .expect("start the verified Fedora appliance with read-only input");
+        let boot_deadline = Instant::now() + NVIDIA_BUILD_BOOT_TIMEOUT;
+        loop {
+            assert_eq!(
+                session.child.try_wait().expect("diagnostic QEMU status"),
+                None,
+                "diagnostic QEMU exited before readiness"
+            );
+            if handshake(&session).as_deref() == Ok(READY_MARKER) {
+                break;
+            }
+            assert!(
+                Instant::now() < boot_deadline,
+                "diagnostic readiness deadline expired"
+            );
+            thread::sleep(Duration::from_secs(1));
+        }
+        println!("SWAPPED_DIAGNOSTIC readiness=ready");
+
+        let framed_client_log = session.runtime_dir.join("framed-ssh-vvv.log");
+        let marker = structured_guest_command_marker().expect("create framed-first marker");
+        let framed_transport = format!(
+            "{}; sleep 1",
+            structured_guest_command_transport("printf 'FRAMED_START\n'", &marker)
+        );
+        let framed_started = Instant::now();
+        let framed = finish_structured_guest_command(
+            start_guest_command_with_client_log(
+                &session,
+                &framed_transport,
+                &framed_client_log,
+            )
+            .expect("start trivial framed-first command"),
+            Duration::from_secs(10),
+            &marker,
+        );
+        println!(
+            "SWAPPED_DIAGNOSTIC framed={framed:?} marker={marker} hostElapsedMs={}",
+            framed_started.elapsed().as_millis()
+        );
+
+        let raw_client_log = session.runtime_dir.join("raw-ssh-vvv.log");
+        let raw_started = Instant::now();
+        let raw = finish_guest_command_bounded(
+            start_guest_command_with_client_log(
+                &session,
+                "printf 'RAW_SECOND\nSSH_CONNECTION=%s\n' \"$SSH_CONNECTION\"; ps -o pid=,ppid=,comm= -p $$ -p $PPID",
+                &raw_client_log,
+            )
+            .expect("start trivial raw-second command"),
+            Duration::from_secs(10),
+            "Raw second diagnostic command timed out.",
+        );
+        println!(
+            "SWAPPED_DIAGNOSTIC raw={raw:?} hostElapsedMs={}",
+            raw_started.elapsed().as_millis()
+        );
+        for (label, path) in [
+            ("framed", &framed_client_log),
+            ("raw", &raw_client_log),
+        ] {
+            let mut client_evidence = String::new();
+            File::open(path)
+                .and_then(|file| {
+                    file.take(SSH_DEBUG_OUTPUT_LIMIT + 1)
+                        .read_to_string(&mut client_evidence)
+                })
+                .unwrap_or_else(|error| panic!("could not read {label} ssh client log: {error}"));
+            assert!(
+                client_evidence.len() <= SSH_DEBUG_OUTPUT_LIMIT as usize,
+                "{label} ssh client log exceeded its evidence bound"
+            );
+            println!("SWAPPED_DIAGNOSTIC {label}SshVvv={client_evidence}");
+        }
+
+        let runtime_dir = session.runtime_dir.clone();
+        let archived_log = stop_session(&mut session)
+            .expect("stop diagnostic appliance")
+            .expect("retain diagnostic QEMU log");
+        assert!(!runtime_dir.exists(), "diagnostic runtime must be removed");
+        assert!(archived_log.is_file(), "diagnostic QEMU log must remain");
+        assert_eq!(framed.as_deref(), Ok("FRAMED_START"));
+        assert!(raw.as_deref().is_ok_and(|output| output
+            .replace("\r\n", "\n")
+            .starts_with("RAW_SECOND\nSSH_CONNECTION=")));
+    }
+
     #[test]
     #[ignore = "launches the separately prepared x86_64 Fedora build appliance"]
     fn live_nvidia_build_appliance_reaches_ready_marker() {
@@ -6194,7 +7169,7 @@ trap - EXIT"#,
         );
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn live_recovery_input(path: &Path) -> Result<PathBuf, String> {
         let metadata = fs::symlink_metadata(path)
             .map_err(|error| format!("Could not inspect live recovery input: {error}"))?;
@@ -6205,7 +7180,7 @@ trap - EXIT"#,
             .map_err(|error| format!("Could not canonicalize live recovery input: {error}"))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn prepare_live_output_root(repository: &Path, candidate: &Path) -> Result<PathBuf, String> {
         let expected = repository.join("tests/virtual-usb/work");
         if candidate != expected {
@@ -6217,13 +7192,16 @@ trap - EXIT"#,
             .map_err(|error| format!("Could not inspect retained output root: {error}"))?;
         let canonical = fs::canonicalize(&expected)
             .map_err(|error| format!("Could not canonicalize retained output root: {error}"))?;
-        if metadata.file_type().is_symlink() || canonical != expected {
+        let canonical_expected = fs::canonicalize(repository)
+            .map_err(|error| format!("Could not canonicalize repository root: {error}"))?
+            .join("tests/virtual-usb/work");
+        if metadata.file_type().is_symlink() || canonical != canonical_expected {
             return Err("Retained live output root is linked or non-canonical.".into());
         }
         Ok(canonical)
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     fn live_harness_rejects_linked_missing_and_nonregular_inputs() {
         let root = std::env::temp_dir().join(format!(
@@ -6246,7 +7224,7 @@ trap - EXIT"#,
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     fn live_harness_rejects_output_path_drift_and_symlinked_root() {
         let root = std::env::temp_dir().join(format!(
@@ -6272,10 +7250,10 @@ trap - EXIT"#,
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     struct LiveImageApplianceCleanup(Option<tauri::AppHandle>);
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     impl Drop for LiveImageApplianceCleanup {
         fn drop(&mut self) {
             if let Some(app) = self.0.take() {
@@ -6285,6 +7263,15 @@ trap - EXIT"#,
     }
 
     #[cfg(target_os = "linux")]
+    const LIVE_INSPECTION_QUIESCENCE_SECS: u64 = 30;
+    #[cfg(target_os = "linux")]
+    const LIVE_INSPECTION_RETRY_TIMEOUT_SECS: u64 = 180;
+    #[cfg(target_os = "linux")]
+    const LIVE_INSPECTION_RETRY_INTERVAL_SECS: u64 = 5;
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    const LIVE_MUTATION_RETRY_TIMEOUT_SECS: u64 = 60;
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn retryable_live_tcg_error(error: &str) -> bool {
         transient_guest_connection_error(error)
             || error.contains(
@@ -6292,7 +7279,7 @@ trap - EXIT"#,
             )
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn retry_live_tcg_transport<T>(
         deadline: Instant,
         mut operation: impl FnMut() -> Result<T, String>,
@@ -6308,6 +7295,26 @@ trap - EXIT"#,
     }
 
     #[cfg(target_os = "linux")]
+    fn retry_live_tcg_inspection_with_waits<T>(
+        retry_timeout: Duration,
+        mut wait: impl FnMut(Duration),
+        mut operation: impl FnMut() -> Result<T, String>,
+    ) -> Result<T, String> {
+        wait(Duration::from_secs(LIVE_INSPECTION_QUIESCENCE_SECS));
+        let deadline = Instant::now() + retry_timeout;
+        loop {
+            match operation() {
+                Err(error)
+                    if transient_guest_connection_error(&error) && Instant::now() < deadline =>
+                {
+                    wait(Duration::from_secs(LIVE_INSPECTION_RETRY_INTERVAL_SECS));
+                }
+                result => return result,
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn run_live_marker_sequence<T>(
         deadline: Instant,
         preflight: impl FnMut() -> Result<(), String>,
@@ -6317,10 +7324,13 @@ trap - EXIT"#,
         mutation()
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn wait_for_live_image_appliance(app: &tauri::AppHandle) {
+        #[cfg(target_os = "linux")]
         let deadline =
             Instant::now() + Duration::from_secs(TCG_HARNESS_OUTER_TIMEOUT_SECS);
+        #[cfg(target_os = "windows")]
+        let deadline = Instant::now() + BOOT_TIMEOUT + Duration::from_secs(60);
         loop {
             let status = get_appliance_status_blocking(app.clone())
                 .expect("read live image-appliance status");
@@ -6335,7 +7345,7 @@ trap - EXIT"#,
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn wait_for_live_nvidia_appliance(app: &tauri::AppHandle) {
         let deadline = Instant::now() + NVIDIA_BUILD_BOOT_TIMEOUT + Duration::from_secs(60);
         loop {
@@ -6354,7 +7364,7 @@ trap - EXIT"#,
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     #[ignore = "requires STEAMOS_RECOVERY_IMAGE and performs the authenticated retained NVIDIA image lifecycle"]
     fn live_authenticated_nvidia_image_is_retained_for_virtual_usb() {
@@ -6381,6 +7391,7 @@ trap - EXIT"#,
 
         let appliance = appliance_path();
         let appliance_hash_before = sha256_file(&appliance).expect("hash authenticated appliance before the lifecycle");
+        #[cfg(target_os = "linux")]
         start_appliance_tcg_harness_blocking(
             input.to_string_lossy().into_owned(),
             Some(output_root.to_string_lossy().into_owned()),
@@ -6388,17 +7399,33 @@ trap - EXIT"#,
             app.clone(),
         )
         .expect("start the image appliance");
+        #[cfg(target_os = "windows")]
+        start_appliance_blocking(
+            input.to_string_lossy().into_owned(),
+            Some(output_root.to_string_lossy().into_owned()),
+            app.clone(),
+        )
+        .expect("start the image appliance");
         wait_for_live_image_appliance(&app);
 
-        let inspection_deadline = Instant::now() + Duration::from_secs(60);
-        let inspection = retry_live_tcg_transport(inspection_deadline, || {
-            inspect_selected_image_blocking(app.clone())
-        })
+        #[cfg(target_os = "linux")]
+        let inspection = retry_live_tcg_inspection_with_waits(
+            Duration::from_secs(LIVE_INSPECTION_RETRY_TIMEOUT_SECS),
+            thread::sleep,
+            || inspect_selected_image_blocking(app.clone()),
+        )
+        .expect("inspect the recovery image");
+        #[cfg(target_os = "windows")]
+        let inspection = retry_live_tcg_transport(
+            Instant::now() + Duration::from_secs(LIVE_MUTATION_RETRY_TIMEOUT_SECS),
+            || inspect_selected_image_blocking(app.clone()),
+        )
         .expect("inspect the recovery image");
         assert!(inspection.layout.recognized, "the Valve layout must be recognized");
         tauri::async_runtime::block_on(verify_working_image(app.clone()))
             .expect("verify the disposable working image");
-        let mutation_deadline = Instant::now() + Duration::from_secs(60);
+        let mutation_deadline = Instant::now()
+            + Duration::from_secs(LIVE_MUTATION_RETRY_TIMEOUT_SECS);
         let mutation = run_live_marker_sequence(
             mutation_deadline,
             || preflight_selected_marker_blocking(app.clone()),
@@ -6445,7 +7472,7 @@ trap - EXIT"#,
         assert!(validation.mounts_released);
         let installed = install_nvidia_to_working_image_blocking(app.clone())
             .expect("install NVIDIA into the disposable working image");
-        assert_eq!(installed.status, "installed");
+        assert_eq!(installed.status, "success");
         assert!(installed.mounts_released);
 
         let exported = export_marker_image_blocking(app.clone(), false)
@@ -6473,7 +7500,7 @@ trap - EXIT"#,
         );
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     #[ignore = "constructs the concrete Tauri runtime for the retained live-image harness"]
     fn live_image_harness_app_handle_reaches_managed_state() {
