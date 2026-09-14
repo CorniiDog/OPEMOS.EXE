@@ -6329,7 +6329,6 @@ esac
     #[test]
     #[ignore = "runs one bounded WHPX in-process SSH proof"]
     fn live_windows_whpx_in_process_ssh_proof() {
-        const OUTPUT_LIMIT: usize = 64 * 1024;
         let input = std::env::var_os("STEAMOS_RECOVERY_IMAGE")
             .map(PathBuf::from)
             .expect("set STEAMOS_RECOVERY_IMAGE to the official Valve recovery image");
@@ -6343,18 +6342,8 @@ esac
                 None,
                 "diagnostic QEMU exited before readiness"
             );
-            let readiness = windows_ssh::run_command(
-                session.ssh_port,
-                &session.ssh_key,
-                "cat /etc/steamos-builder-ready",
-                Duration::from_secs(5),
-                OUTPUT_LIMIT,
-            );
-            if readiness.as_ref().is_ok_and(|output| {
-                output.status == 0
-                    && output.stderr.is_empty()
-                    && String::from_utf8_lossy(&output.stdout).trim() == READY_MARKER
-            }) {
+            let readiness = handshake(&session);
+            if readiness.as_deref() == Ok(READY_MARKER) {
                 break;
             }
             assert!(
@@ -6365,23 +6354,38 @@ esac
         }
         println!("IN_PROCESS_SSH readiness=ready");
 
-        let output = windows_ssh::run_command(
-            session.ssh_port,
-            &session.ssh_key,
-            "printf 'IN_PROCESS_OK\n'",
-            Duration::from_secs(10),
-            OUTPUT_LIMIT,
-        )
-        .expect("run trivial in-process SSH command");
-        println!(
-            "IN_PROCESS_SSH status={} stdout={:?} stderr={:?}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+        assert_eq!(
+            run_guest_command_with_timeout(
+                &session,
+                "printf 'IN_PROCESS_OK\n'",
+                Duration::from_secs(10),
+            )
+            .as_deref(),
+            Ok("IN_PROCESS_OK")
         );
-        assert_eq!(output.status, 0);
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "IN_PROCESS_OK\n");
-        assert!(output.stderr.is_empty());
+        let nonzero = run_guest_command_with_timeout(
+            &session,
+            "printf 'EXPECTED_FAILURE\n' >&2; exit 7",
+            Duration::from_secs(10),
+        )
+        .expect_err("nonzero status must fail");
+        assert!(nonzero.contains("status 7") && nonzero.contains("EXPECTED_FAILURE"));
+        assert_eq!(
+            run_guest_command_with_timeout(
+                &session,
+                "sleep 2",
+                Duration::from_millis(100),
+            )
+            .expect_err("slow command must time out"),
+            "In-process SSH command timed out."
+        );
+        let overflow = run_guest_command_with_timeout(
+            &session,
+            "head -c 65537 /dev/zero",
+            Duration::from_secs(10),
+        )
+        .expect_err("excessive stdout must fail");
+        assert_eq!(overflow, "In-process SSH command stdout exceeded its bound.");
 
         let runtime_dir = session.runtime_dir.clone();
         let archived_log = stop_session(&mut session)

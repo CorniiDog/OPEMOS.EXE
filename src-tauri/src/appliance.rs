@@ -2474,12 +2474,39 @@ pub(crate) fn run_guest_command_with_timeout(
     command: &str,
     timeout: Duration,
 ) -> Result<String, String> {
-    let marker = structured_guest_command_marker()?;
-    finish_structured_guest_command(
-        start_structured_guest_command(session, command, &marker)?,
-        timeout,
-        &marker,
-    )
+    #[cfg(windows)]
+    {
+        let output = crate::windows_ssh::run_command(
+            session.ssh_port(),
+            session.ssh_key(),
+            command,
+            timeout,
+            READINESS_ATTEMPT_OUTPUT_LIMIT as usize,
+        )?;
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if output.status != 0 {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let detail = if stderr.is_empty() { stdout } else { stderr };
+            return Err(if detail.is_empty() {
+                format!("Guest command exited with status {}.", output.status)
+            } else {
+                format!(
+                    "Guest command exited with status {}: {detail}",
+                    output.status
+                )
+            });
+        }
+        Ok(stdout)
+    }
+    #[cfg(not(windows))]
+    {
+        let marker = structured_guest_command_marker()?;
+        finish_structured_guest_command(
+            start_structured_guest_command(session, command, &marker)?,
+            timeout,
+            &marker,
+        )
+    }
 }
 
 pub(crate) fn run_guest_command(
@@ -2877,10 +2904,36 @@ pub(crate) fn qmp_attach_nvidia_target(session: &NvidiaBuildSession) -> Result<(
 }
 
 pub(crate) fn handshake(session: &impl GuestConnection) -> Result<String, String> {
-    finish_guest_readiness_attempt(
-        start_guest_command(session, "cat /etc/steamos-builder-ready")?,
-        READINESS_ATTEMPT_TIMEOUT,
-    )
+    #[cfg(windows)]
+    {
+        let output = crate::windows_ssh::run_command(
+            session.ssh_port(),
+            session.ssh_key(),
+            "cat /etc/steamos-builder-ready",
+            READINESS_ATTEMPT_TIMEOUT,
+            READINESS_ATTEMPT_OUTPUT_LIMIT as usize,
+        )?;
+        if output.status != 0 {
+            return Err(format!(
+                "Guest readiness command exited with status {}.",
+                output.status
+            ));
+        }
+        if !output.stderr.is_empty() {
+            return Err(format!(
+                "Guest readiness command returned diagnostics: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        finish_guest_readiness_attempt(
+            start_guest_command(session, "cat /etc/steamos-builder-ready")?,
+            READINESS_ATTEMPT_TIMEOUT,
+        )
+    }
 }
 
 pub(crate) fn collect_guest_health(session: &impl GuestConnection) -> Result<GuestHealth, String> {
