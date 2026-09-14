@@ -377,7 +377,7 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 52] = [
         path: "lib/prepare_pacman_config.py",
         sha256: "12c4c41f26615b476da295574db7e80a8cc6a1862ac040e97592b80d1b6d2bba",
         bytes: 4_100,
-        executable: true,
+        executable: false,
     },
     PinnedInstallerFile {
         path: "lib/gaming_payload_profiles.py",

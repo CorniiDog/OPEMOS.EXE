@@ -3550,7 +3550,7 @@ esac
         }));
         assert!(PINNED_INSTALLER_FILES
             .iter()
-            .any(|file| file.path == "lib/prepare_pacman_config.py" && file.executable));
+            .any(|file| file.path == "lib/prepare_pacman_config.py" && !file.executable));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/gaming_payload_profiles.py" && file.executable));
