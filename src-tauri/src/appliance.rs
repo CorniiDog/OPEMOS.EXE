@@ -2304,6 +2304,7 @@ fn close_guest_command_stdin(child: &mut Child) {
     let _ = child;
 }
 
+#[cfg(all(test, windows))]
 pub(crate) fn start_guest_command_with_client_log(
     session: &impl GuestConnection,
     command: &str,
@@ -2345,7 +2346,7 @@ pub(crate) fn stop_guest_command_group(child: &mut Child) {
     let _ = child.wait();
 }
 
-#[cfg_attr(windows, allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn finish_guest_command(child: Child) -> Result<String, String> {
     let output = child
         .wait_with_output()

@@ -790,7 +790,6 @@ mod tests {
         assert_eq!(LIVE_INSPECTION_RETRY_TIMEOUT_SECS, 180);
         assert_eq!(LIVE_INSPECTION_RETRY_INTERVAL_SECS, 5);
         assert_eq!(LIVE_MUTATION_RETRY_TIMEOUT_SECS, 60);
-        assert!(LIVE_INSPECTION_RETRY_TIMEOUT_SECS > LIVE_MUTATION_RETRY_TIMEOUT_SECS);
     }
 
     #[cfg(target_os = "linux")]
