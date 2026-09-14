@@ -4647,6 +4647,8 @@ esac
             payload_receipt_overlay_assertions(installed.payload_receipt.as_ref().unwrap())
                 .expect("render independent receipt checks");
         assert_eq!(overlay_assertions.matches("test -f ").count(), 7);
+        assert!(overlay_assertions.contains("unique=lambda pairs:"));
+        assert!(!overlay_assertions.contains("def unique(pairs):"));
         assert!(overlay_assertions.contains("object_pairs_hook=unique"));
         assert!(overlay_assertions.contains("actual.get(key)==value"));
         assert!(Command::new("bash")

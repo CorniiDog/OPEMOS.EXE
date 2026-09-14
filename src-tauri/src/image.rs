@@ -1540,12 +1540,7 @@ pub(crate) fn payload_receipt_overlay_assertions(
          test \"$(stat -c '%s' \"$RECEIPT_ROOT/receipt.json\")\" -le 65536\n\
          test \"$(stat -c '%a:%u:%g' \"$RECEIPT_ROOT/receipt.json\")\" = 644:0:0\n\
          python3 -c 'import json,sys\n\
-def unique(pairs):\n\
- result={{}}\n\
- for key,value in pairs:\n\
-  if key in result: raise ValueError(\"duplicate JSON key\")\n\
-  result[key]=value\n\
- return result\n\
+unique=lambda pairs: dict(pairs) if len(pairs)==len({{key for key,value in pairs}}) else (_ for _ in ()).throw(ValueError(\"duplicate JSON key\"))\n\
 actual=json.load(open(sys.argv[1],encoding=\"utf-8\"),object_pairs_hook=unique,parse_constant=lambda value: 1/0)\n\
 expected=json.loads(sys.argv[2])\n\
 assert isinstance(actual,dict)\n\
