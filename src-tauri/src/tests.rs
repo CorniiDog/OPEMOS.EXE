@@ -6313,6 +6313,77 @@ esac
             .is_ok_and(|output| output.starts_with("SECOND_OK\nSSH_CONNECTION=")));
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "runs one bounded WHPX read-only attachment diagnostic"]
+    fn live_windows_whpx_read_only_attachment_diagnostic() {
+        let input = std::env::var_os("STEAMOS_RECOVERY_IMAGE")
+            .map(PathBuf::from)
+            .expect("set STEAMOS_RECOVERY_IMAGE to the official Valve recovery image");
+        let input = live_recovery_input(&input).expect("validate the non-symlink recovery image");
+        let mut session = prepare_session(Some(&input), None, None, false)
+            .expect("start the verified Fedora appliance with read-only input");
+        let boot_deadline = Instant::now() + NVIDIA_BUILD_BOOT_TIMEOUT;
+        loop {
+            assert_eq!(
+                session.child.try_wait().expect("diagnostic QEMU status"),
+                None,
+                "diagnostic QEMU exited before readiness"
+            );
+            if handshake(&session).as_deref() == Ok(READY_MARKER) {
+                break;
+            }
+            assert!(
+                Instant::now() < boot_deadline,
+                "diagnostic readiness deadline expired"
+            );
+            thread::sleep(Duration::from_secs(1));
+        }
+        println!("ATTACHMENT_DIAGNOSTIC readiness=ready");
+
+        let appearance_started = Instant::now();
+        let appearance = finish_guest_readiness_attempt(
+            start_guest_command(
+                &session,
+                "started=$(date +%s%3N); for attempt in $(seq 0 300); do if test -b /dev/disk/by-id/virtio-steamos-user-input; then now=$(date +%s%3N); printf 'DEVICE_PRESENT\nELAPSED_MS=%s\n' \"$((now-started))\"; sleep 30; exit 0; fi; sleep 0.1; done; printf 'DEVICE_MISSING\nELAPSED_MS=30000\n'; sleep 30",
+            )
+            .expect("start bounded device-appearance command"),
+            Duration::from_secs(30),
+        );
+        println!(
+            "ATTACHMENT_DIAGNOSTIC appearance={appearance:?} hostElapsedMs={}",
+            appearance_started.elapsed().as_millis()
+        );
+
+        let marker = structured_guest_command_marker().expect("create attachment marker");
+        let framed_started = Instant::now();
+        let framed = finish_structured_guest_command(
+            start_structured_guest_command(
+                &session,
+                "set -eu; DEVICE=/dev/disk/by-id/virtio-steamos-user-input; test -b \"$DEVICE\"; printf 'READ_ONLY=%s\n' \"$(sudo blockdev --getro \"$DEVICE\")\"",
+                &marker,
+            )
+            .expect("start framed read-only attachment command"),
+            Duration::from_secs(30),
+            &marker,
+        );
+        println!(
+            "ATTACHMENT_DIAGNOSTIC framed={framed:?} marker={marker} hostElapsedMs={}",
+            framed_started.elapsed().as_millis()
+        );
+
+        let runtime_dir = session.runtime_dir.clone();
+        let archived_log = stop_session(&mut session)
+            .expect("stop diagnostic appliance")
+            .expect("retain diagnostic QEMU log");
+        assert!(!runtime_dir.exists(), "diagnostic runtime must be removed");
+        assert!(archived_log.is_file(), "diagnostic QEMU log must remain");
+        assert!(appearance
+            .as_deref()
+            .is_ok_and(|output| output.starts_with("DEVICE_PRESENT\nELAPSED_MS=")));
+        assert_eq!(framed.as_deref(), Ok("READ_ONLY=1"));
+    }
+
     #[test]
     #[ignore = "launches the separately prepared x86_64 Fedora build appliance"]
     fn live_nvidia_build_appliance_reaches_ready_marker() {
