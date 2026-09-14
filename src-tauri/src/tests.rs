@@ -6329,6 +6329,7 @@ esac
     #[test]
     #[ignore = "runs one bounded WHPX framed-first transport diagnostic"]
     fn live_windows_whpx_read_only_attachment_diagnostic() {
+        const SSH_DEBUG_OUTPUT_LIMIT: u64 = 64 * 1024;
         let input = std::env::var_os("STEAMOS_RECOVERY_IMAGE")
             .map(PathBuf::from)
             .expect("set STEAMOS_RECOVERY_IMAGE to the official Valve recovery image");
@@ -6398,12 +6399,12 @@ esac
             let mut client_evidence = String::new();
             File::open(path)
                 .and_then(|file| {
-                    file.take(READINESS_ATTEMPT_OUTPUT_LIMIT + 1)
+                    file.take(SSH_DEBUG_OUTPUT_LIMIT + 1)
                         .read_to_string(&mut client_evidence)
                 })
                 .unwrap_or_else(|error| panic!("could not read {label} ssh client log: {error}"));
             assert!(
-                client_evidence.len() <= READINESS_ATTEMPT_OUTPUT_LIMIT as usize,
+                client_evidence.len() <= SSH_DEBUG_OUTPUT_LIMIT as usize,
                 "{label} ssh client log exceeded its evidence bound"
             );
             println!("SWAPPED_DIAGNOSTIC {label}SshVvv={client_evidence}");
