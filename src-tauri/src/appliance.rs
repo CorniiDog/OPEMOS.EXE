@@ -2299,6 +2299,7 @@ pub(crate) fn stop_guest_command_group(child: &mut Child) {
     let _ = child.wait();
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 pub(crate) fn finish_guest_command(child: Child) -> Result<String, String> {
     let output = child
         .wait_with_output()
