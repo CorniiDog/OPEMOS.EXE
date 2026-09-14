@@ -6417,9 +6417,9 @@ esac
         assert!(!runtime_dir.exists(), "diagnostic runtime must be removed");
         assert!(archived_log.is_file(), "diagnostic QEMU log must remain");
         assert_eq!(framed.as_deref(), Ok("FRAMED_START"));
-        assert!(raw
-            .as_deref()
-            .is_ok_and(|output| output.starts_with("RAW_SECOND\nSSH_CONNECTION=")));
+        assert!(raw.as_deref().is_ok_and(|output| output
+            .replace("\r\n", "\n")
+            .starts_with("RAW_SECOND\nSSH_CONNECTION=")));
     }
 
     #[test]

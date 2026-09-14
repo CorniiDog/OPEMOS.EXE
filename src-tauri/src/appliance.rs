@@ -2310,6 +2310,8 @@ pub(crate) fn start_guest_command_with_client_log(
     client_log: &Path,
 ) -> Result<Child, String> {
     let mut ssh = ssh_command_with_client_log(session, Some(client_log))?;
+    #[cfg(windows)]
+    ssh.args(["-o", "RequestTTY=force"]);
     ssh.arg(command)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
