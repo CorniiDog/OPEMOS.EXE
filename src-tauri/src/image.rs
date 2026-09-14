@@ -687,31 +687,62 @@ printf '%s\n' "$KERNELS" | while IFS= read -r KERNEL; do
 done
 test "$(sudo blockdev --getro "$WORK")" = 1
 test "$MOUNTED" = 0"#;
-    let mut mutation = start_guest_command(session, MUTATE_COMMAND)?;
-    let stderr_drain = start_guest_stderr_drain(&mut mutation)?;
-    let stdout = mutation
-        .stdout
-        .take()
-        .ok_or("Could not capture the mutation guest command output.")?;
-    let readiness = read_guest_command_ready_line(&mut mutation, stdout, Duration::from_secs(30));
-    let (stdout, channel_ready) = match readiness {
-        Ok(readiness) => readiness,
-        Err(error) => {
-            let _ = stderr_drain.join();
-            return Err(format!("Could not establish the mutation channel: {error}"));
+    #[cfg(windows)]
+    let output = {
+        let output = crate::windows_ssh::run_gated_command(
+            session.ssh_port,
+            &session.ssh_key,
+            MUTATE_COMMAND,
+            "OPEMOS_MUTATION_CHANNEL_READY",
+            Duration::from_secs(30),
+            Duration::from_secs(120),
+            READINESS_ATTEMPT_OUTPUT_LIMIT as usize,
+            || qmp_remove_user_input(session),
+        )?;
+        if output.status != 0 {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let detail = if stderr.is_empty() { stdout } else { stderr };
+            return Err(if detail.is_empty() {
+                format!("Guest command exited with status {}.", output.status)
+            } else {
+                format!(
+                    "Guest command exited with status {}: {detail}",
+                    output.status
+                )
+            });
         }
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
     };
-    if channel_ready.trim() != "OPEMOS_MUTATION_CHANNEL_READY" {
-        stop_guest_command_group(&mut mutation);
-        let _ = stderr_drain.join();
-        return Err("Mutation guest command omitted the channel readiness marker.".into());
-    }
-    if let Err(error) = qmp_remove_user_input(session) {
-        stop_guest_command_group(&mut mutation);
-        let _ = stderr_drain.join();
-        return Err(error);
-    }
-    let output = finish_guest_command_with_stdout(mutation, stdout, String::new(), stderr_drain)?;
+    #[cfg(not(windows))]
+    let output = {
+        let mut mutation = start_guest_command(session, MUTATE_COMMAND)?;
+        let stderr_drain = start_guest_stderr_drain(&mut mutation)?;
+        let stdout = mutation
+            .stdout
+            .take()
+            .ok_or("Could not capture the mutation guest command output.")?;
+        let readiness =
+            read_guest_command_ready_line(&mut mutation, stdout, Duration::from_secs(30));
+        let (stdout, channel_ready) = match readiness {
+            Ok(readiness) => readiness,
+            Err(error) => {
+                let _ = stderr_drain.join();
+                return Err(format!("Could not establish the mutation channel: {error}"));
+            }
+        };
+        if channel_ready.trim() != "OPEMOS_MUTATION_CHANNEL_READY" {
+            stop_guest_command_group(&mut mutation);
+            let _ = stderr_drain.join();
+            return Err("Mutation guest command omitted the channel readiness marker.".into());
+        }
+        if let Err(error) = qmp_remove_user_input(session) {
+            stop_guest_command_group(&mut mutation);
+            let _ = stderr_drain.join();
+            return Err(error);
+        }
+        finish_guest_command_with_stdout(mutation, stdout, String::new(), stderr_drain)?
+    };
     let mut values = std::collections::HashMap::new();
     let mut kernel_versions = Vec::new();
     for line in output.lines() {

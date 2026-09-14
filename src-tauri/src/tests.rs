@@ -6387,6 +6387,103 @@ esac
         .expect_err("excessive stdout must fail");
         assert_eq!(overflow, "In-process SSH command stdout exceeded its bound.");
 
+        let callback_count = std::cell::Cell::new(0);
+        let gated = crate::windows_ssh::run_gated_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "printf 'OPEMOS_MUTATION_'; sleep 0.1; printf 'CHANNEL_READY\\nRESULT\\n'",
+            "OPEMOS_MUTATION_CHANNEL_READY",
+            Duration::from_secs(10),
+            Duration::from_secs(10),
+            64 * 1024,
+            || {
+                callback_count.set(callback_count.get() + 1);
+                Ok(())
+            },
+        )
+        .expect("split readiness marker must gate the command");
+        assert_eq!(callback_count.get(), 1);
+        assert_eq!(gated.status, 0);
+        assert_eq!(gated.stdout, b"RESULT\n");
+
+        for command in ["printf 'WRONG\\n'", "printf 'NO_NEWLINE'"] {
+            let count = std::cell::Cell::new(0);
+            let error = crate::windows_ssh::run_gated_command(
+                session.ssh_port,
+                &session.ssh_key,
+                command,
+                "OPEMOS_MUTATION_CHANNEL_READY",
+                Duration::from_secs(10),
+                Duration::from_secs(10),
+                64 * 1024,
+                || {
+                    count.set(count.get() + 1);
+                    Ok(())
+                },
+            )
+            .expect_err("missing or wrong readiness marker must fail closed");
+            assert!(error.contains("readiness marker"), "{error}");
+            assert_eq!(count.get(), 0);
+        }
+
+        let callback_error = crate::windows_ssh::run_gated_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "printf 'OPEMOS_MUTATION_CHANNEL_READY\\n'",
+            "OPEMOS_MUTATION_CHANNEL_READY",
+            Duration::from_secs(10),
+            Duration::from_secs(10),
+            64 * 1024,
+            || Err("EXPECTED_CALLBACK_FAILURE".into()),
+        )
+        .expect_err("callback failure must stop the gated command");
+        assert_eq!(callback_error, "EXPECTED_CALLBACK_FAILURE");
+
+        let nonzero = crate::windows_ssh::run_gated_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "printf 'OPEMOS_MUTATION_CHANNEL_READY\\n'; exit 9",
+            "OPEMOS_MUTATION_CHANNEL_READY",
+            Duration::from_secs(10),
+            Duration::from_secs(10),
+            64 * 1024,
+            || Ok(()),
+        )
+        .expect("transport must return the remote exit status");
+        assert_eq!(nonzero.status, 9);
+
+        let gated_overflow = crate::windows_ssh::run_gated_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "printf 'OPEMOS_MUTATION_CHANNEL_READY\\n'; head -c 65537 /dev/zero",
+            "OPEMOS_MUTATION_CHANNEL_READY",
+            Duration::from_secs(10),
+            Duration::from_secs(10),
+            64 * 1024,
+            || Ok(()),
+        )
+        .expect_err("gated command output must remain bounded");
+        assert_eq!(
+            gated_overflow,
+            "In-process SSH command stdout exceeded its bound."
+        );
+
+        let gated_timeout = crate::windows_ssh::run_gated_command(
+            session.ssh_port,
+            &session.ssh_key,
+            "sleep 2; printf 'OPEMOS_MUTATION_CHANNEL_READY\\n'",
+            "OPEMOS_MUTATION_CHANNEL_READY",
+            Duration::from_millis(100),
+            Duration::from_secs(10),
+            64 * 1024,
+            || Ok(()),
+        )
+        .expect_err("readiness marker must honor its deadline");
+        assert_eq!(
+            gated_timeout,
+            "Mutation guest command readiness marker timed out."
+        );
+
         let runtime_dir = session.runtime_dir.clone();
         let archived_log = stop_session(&mut session)
             .expect("stop diagnostic appliance")
