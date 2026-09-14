@@ -1041,6 +1041,32 @@ mod tests {
         fs::remove_dir_all(root).expect("remove epoch staging fixture");
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_working_image_gates_compare_canonical_file_identity() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-windows-working-image-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).expect("create working-image fixture");
+        let expected = root.join("user-working.qcow2");
+        let distinct = root.join("other-working.qcow2");
+        fs::write(&expected, b"working").expect("create expected working image");
+        fs::write(&distinct, b"distinct").expect("create distinct working image");
+        let attached = fs::canonicalize(&expected).expect("canonicalize attached image");
+        assert!(attached.to_string_lossy().starts_with(r"\\?\"));
+
+        assert!(attached_working_image_matches(Some(&attached), &expected).unwrap());
+        assert!(!attached_working_image_matches(
+            Some(&fs::canonicalize(&distinct).unwrap()),
+            &expected,
+        )
+        .unwrap());
+        assert!(!attached_working_image_matches(None, &expected).unwrap());
+        fs::remove_dir_all(root).expect("remove working-image fixture");
+    }
+
     #[test]
     fn settings_schema_contains_preferences_but_no_credentials() {
         let serialized = serde_json::to_string(&BuilderSettings {
