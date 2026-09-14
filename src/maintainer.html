@@ -108,6 +108,14 @@
             </dl>
             <button id="open-vscode" class="primary" type="button" disabled>Open Selected Worktree in VS Code</button>
             <p id="worktree-message" class="message" aria-live="polite"></p>
+            <div id="version-panel" class="commit-panel hidden">
+                <label for="next-version"><span>Next NVIDIA version</span></label>
+                <input id="next-version" type="text" inputmode="numeric" maxlength="32" placeholder="580.1.2">
+                <button id="review-version" class="secondary" type="button" disabled>Review Version Change</button>
+                <pre id="version-preview" class="patch-preview hidden" tabindex="0"></pre>
+                <button id="apply-version" class="primary hidden" type="button">Apply Exact Version Change</button>
+                <p id="version-status" class="message" aria-live="polite"></p>
+            </div>
             <div id="checkout-panel" class="commit-panel hidden">
                 <label for="local-branch"><span>Local branch context</span></label>
                 <select id="local-branch" disabled><option value="">Load clean local branches first</option></select>

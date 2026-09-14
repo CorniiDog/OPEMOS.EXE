@@ -1842,6 +1842,321 @@ pub(crate) async fn execute_maintainer_checkout(
     .map_err(|error| format!("Maintainer checkout worker failed: {error}"))?
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerVersionReview {
+    repository: String,
+    path: String,
+    branch: String,
+    head: String,
+    file: String,
+    before_version: String,
+    after_version: String,
+    before_sha256: String,
+    after_sha256: String,
+    preview: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerVersionResult {
+    review: MaintainerVersionReview,
+    changed_files: usize,
+    remote_changed: bool,
+    message: String,
+}
+
+pub(crate) fn planned_nvidia_version_bytes(
+    bytes: &[u8],
+    after_version: &str,
+) -> Result<(String, Vec<u8>), String> {
+    if !valid_numeric_version(after_version, 2..=3) {
+        return Err("The NVIDIA version must contain two or three numeric components.".into());
+    }
+    let source =
+        std::str::from_utf8(bytes).map_err(|_| "The allowlisted version.mk is not valid UTF-8.")?;
+    let mut versions = Vec::new();
+    for line in source.lines() {
+        let line = line.trim_end_matches('\r');
+        for prefix in ["NVIDIA_VERSION = ", "NVIDIA_NVID_VERSION = "] {
+            if let Some(value) = line.strip_prefix(prefix) {
+                if value.is_empty() || value.contains(char::is_whitespace) {
+                    return Err(
+                        "The allowlisted version.mk contains an invalid version assignment.".into(),
+                    );
+                }
+                versions.push((prefix, value));
+            }
+        }
+    }
+    if versions.len() != 2
+        || versions[0].0 != "NVIDIA_VERSION = "
+        || versions[1].0 != "NVIDIA_NVID_VERSION = "
+        || versions[0].1 != versions[1].1
+        || !valid_numeric_version(versions[0].1, 2..=3)
+    {
+        return Err(
+            "The allowlisted version.mk does not contain one matching NVIDIA version pair.".into(),
+        );
+    }
+    let before_version = versions[0].1.to_owned();
+    if before_version == after_version {
+        return Err("The requested NVIDIA version is already current.".into());
+    }
+    let first = format!("NVIDIA_VERSION = {before_version}");
+    let second = format!("NVIDIA_NVID_VERSION = {before_version}");
+    let updated = source
+        .replacen(&first, &format!("NVIDIA_VERSION = {after_version}"), 1)
+        .replacen(
+            &second,
+            &format!("NVIDIA_NVID_VERSION = {after_version}"),
+            1,
+        )
+        .into_bytes();
+    Ok((before_version, updated))
+}
+
+fn review_version_change_blocking(
+    path: String,
+    repository: String,
+    after_version: String,
+) -> Result<(MaintainerVersionReview, Vec<u8>), String> {
+    if repository != NVIDIA_SOURCE_REPOSITORY {
+        return Err(
+            "Automated version changes are allowlisted only for the project NVIDIA repository."
+                .into(),
+        );
+    }
+    let worktree = inspect_maintainer_worktree_blocking(path, repository)?;
+    if worktree.changed_files != 0 {
+        return Err(
+            "Version changes require a completely clean worktree, index, and untracked-file set."
+                .into(),
+        );
+    }
+    let branch = worktree
+        .branch
+        .clone()
+        .ok_or("Version changes require a named branch; detached HEAD is not allowed.")?;
+    let file = Path::new(&worktree.path).join("version.mk");
+    let metadata = fs::symlink_metadata(&file)
+        .map_err(|error| format!("Could not inspect the allowlisted version.mk: {error}"))?;
+    if !metadata.file_type().is_file() || metadata.len() > 64 * 1024 {
+        return Err(
+            "The allowlisted version.mk must be one regular file of at most 64 KiB.".into(),
+        );
+    }
+    let before = fs::read(&file)
+        .map_err(|error| format!("Could not read the allowlisted version.mk: {error}"))?;
+    let (before_version, after) = planned_nvidia_version_bytes(&before, &after_version)?;
+    let before_sha256 = format!("{:x}", Sha256::digest(&before));
+    let after_sha256 = format!("{:x}", Sha256::digest(&after));
+    let preview = format!(
+        "version.mk\n- NVIDIA_VERSION = {before_version}\n- NVIDIA_NVID_VERSION = {before_version}\n+ NVIDIA_VERSION = {after_version}\n+ NVIDIA_NVID_VERSION = {after_version}"
+    );
+    Ok((
+        MaintainerVersionReview {
+            repository: worktree.repository,
+            path: worktree.path,
+            branch,
+            head: worktree.head,
+            file: "version.mk".into(),
+            before_version,
+            after_version,
+            before_sha256,
+            after_sha256,
+            preview,
+        },
+        after,
+    ))
+}
+
+static MAINTAINER_VERSION_WRITE_SEQUENCE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+struct MaintainerVersionTemporaryFile(PathBuf);
+
+impl Drop for MaintainerVersionTemporaryFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+#[cfg(windows)]
+fn replace_version_file(temporary: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn ReplaceFileW(
+            replaced_file_name: *const u16,
+            replacement_file_name: *const u16,
+            backup_file_name: *const u16,
+            replace_flags: u32,
+            exclude: *mut std::ffi::c_void,
+            reserved: *mut std::ffi::c_void,
+        ) -> i32;
+    }
+
+    const REPLACEFILE_WRITE_THROUGH: u32 = 0x0000_0001;
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let temporary = temporary
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: Both paths are owned, NUL-terminated UTF-16 buffers that remain
+    // alive for the call. The optional backup and callback pointers stay null.
+    let replaced = unsafe {
+        ReplaceFileW(
+            destination.as_ptr(),
+            temporary.as_ptr(),
+            std::ptr::null(),
+            REPLACEFILE_WRITE_THROUGH,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if replaced == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_version_file(temporary: &Path, destination: &Path) -> io::Result<()> {
+    fs::rename(temporary, destination)
+}
+
+pub(crate) fn write_maintainer_version_file_with<F>(
+    destination: &Path,
+    expected_before_sha256: &str,
+    after: &[u8],
+    write_staged: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&mut File, &[u8]) -> io::Result<()>,
+{
+    let parent = destination
+        .parent()
+        .ok_or("The reviewed version.mk has no parent directory.")?;
+    let metadata = fs::symlink_metadata(destination)
+        .map_err(|error| format!("Could not recheck the reviewed version.mk: {error}"))?;
+    if !metadata.file_type().is_file() || metadata.len() > 64 * 1024 {
+        return Err(
+            "The reviewed version.mk is no longer one regular file of at most 64 KiB.".into(),
+        );
+    }
+    let sequence =
+        MAINTAINER_VERSION_WRITE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temporary = MaintainerVersionTemporaryFile(parent.join(format!(
+        ".version.mk.{}.{}.tmp",
+        std::process::id(),
+        sequence
+    )));
+    let mut staged = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary.0)
+        .map_err(|error| format!("Could not create the private version.mk replacement: {error}"))?;
+    fs::set_permissions(&temporary.0, metadata.permissions()).map_err(|error| {
+        format!("Could not preserve the reviewed version.mk permissions: {error}")
+    })?;
+    write_staged(&mut staged, after)
+        .and_then(|_| staged.sync_all())
+        .map_err(|error| format!("Could not stage the reviewed version.mk safely: {error}"))?;
+    drop(staged);
+    let observed = fs::read(&temporary.0)
+        .map_err(|error| format!("Could not verify the staged version.mk: {error}"))?;
+    if observed != after {
+        return Err("The staged version.mk does not match the reviewed bytes.".into());
+    }
+    let current = fs::read(destination)
+        .map_err(|error| format!("Could not recheck the reviewed version.mk bytes: {error}"))?;
+    if format!("{:x}", Sha256::digest(&current)) != expected_before_sha256 {
+        return Err(
+            "The reviewed version.mk changed before atomic replacement. Review it again.".into(),
+        );
+    }
+    replace_version_file(&temporary.0, destination).map_err(|error| {
+        format!("Could not atomically replace the reviewed version.mk: {error}")
+    })?;
+    #[cfg(unix)]
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("Could not sync the version.mk directory: {error}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn review_maintainer_version_change(
+    path: String,
+    repository: String,
+    after_version: String,
+) -> Result<MaintainerVersionReview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        review_version_change_blocking(path, repository, after_version).map(|value| value.0)
+    })
+    .await
+    .map_err(|error| format!("Maintainer version-review worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn apply_maintainer_version_change(
+    path: String,
+    repository: String,
+    after_version: String,
+    expected_branch: String,
+    expected_head: String,
+    expected_before_sha256: String,
+    expected_after_sha256: String,
+) -> Result<MaintainerVersionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (review, after) = review_version_change_blocking(path, repository, after_version)?;
+        if review.branch != expected_branch
+            || review.head != expected_head
+            || review.before_sha256 != expected_before_sha256
+            || review.after_sha256 != expected_after_sha256
+        {
+            return Err("The worktree, HEAD, or version file changed after review. Review the version change again.".into());
+        }
+        let file = Path::new(&review.path).join(&review.file);
+        write_maintainer_version_file_with(
+            &file,
+            &review.before_sha256,
+            &after,
+            |staged, bytes| staged.write_all(bytes),
+        )?;
+        let observed = fs::read(&file)
+            .map_err(|error| format!("Could not verify the written version.mk: {error}"))?;
+        if format!("{:x}", Sha256::digest(&observed)) != review.after_sha256 {
+            return Err("The written version.mk does not match the reviewed result. Inspect the worktree manually; no cleanup was attempted.".into());
+        }
+        let inspected = inspect_authorized_maintainer_worktree(
+            review.path.clone(),
+            review.repository.clone(),
+        )?;
+        if inspected.head != review.head
+            || inspected.branch.as_deref() != Some(review.branch.as_str())
+            || inspected.changed_files != 1
+        {
+            return Err("The version change did not leave exactly one reviewed worktree change. Inspect it manually; no cleanup was attempted.".into());
+        }
+        Ok(MaintainerVersionResult {
+            review,
+            changed_files: inspected.changed_files,
+            remote_changed: false,
+            message: "Applied the exact reviewed version change locally. Nothing was staged, committed, pushed, reset, deleted, or published.".into(),
+        })
+    })
+    .await
+    .map_err(|error| format!("Maintainer version-apply worker failed: {error}"))?
+}
+
 pub(crate) fn fetch_nvidia_source_branches(
     client: &reqwest::blocking::Client,
 ) -> Result<Vec<NvidiaSourceBranch>, String> {
