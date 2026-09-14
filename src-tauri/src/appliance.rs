@@ -1,4 +1,5 @@
 use super::*;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 
 pub(crate) struct ApplianceSession {
     pub(crate) child: Child,
@@ -2331,6 +2332,11 @@ pub(crate) fn structured_guest_command_marker() -> Result<String, String> {
     ))
 }
 
+pub(crate) fn structured_guest_command_transport(command: &str, marker: &str) -> String {
+    let encoded = BASE64_STANDARD.encode(command.as_bytes());
+    format!("printf '%s' '{encoded}' | base64 --decode | sh; opemos_status=$?; printf '\\n{marker}:%s\\n' \"$opemos_status\"")
+}
+
 pub(crate) fn start_structured_guest_command(
     session: &impl GuestConnection,
     command: &str,
@@ -2338,7 +2344,7 @@ pub(crate) fn start_structured_guest_command(
 ) -> Result<Child, String> {
     start_guest_command(
         session,
-        &format!("({command})\nopemos_status=$?\nprintf '\\n{marker}:%s\\n' \"$opemos_status\""),
+        &structured_guest_command_transport(command, marker),
     )
 }
 
@@ -2418,16 +2424,24 @@ pub(crate) fn finish_structured_guest_command(
     Ok(stdout)
 }
 
-pub(crate) fn run_guest_command(
+pub(crate) fn run_guest_command_with_timeout(
     session: &impl GuestConnection,
     command: &str,
+    timeout: Duration,
 ) -> Result<String, String> {
     let marker = structured_guest_command_marker()?;
     finish_structured_guest_command(
         start_structured_guest_command(session, command, &marker)?,
-        STRUCTURED_GUEST_COMMAND_TIMEOUT,
+        timeout,
         &marker,
     )
+}
+
+pub(crate) fn run_guest_command(
+    session: &impl GuestConnection,
+    command: &str,
+) -> Result<String, String> {
+    run_guest_command_with_timeout(session, command, STRUCTURED_GUEST_COMMAND_TIMEOUT)
 }
 
 const READINESS_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);

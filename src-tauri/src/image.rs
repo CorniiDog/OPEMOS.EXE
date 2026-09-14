@@ -224,9 +224,10 @@ pub(crate) fn inspect_user_image(
     cancel: Option<&AtomicBool>,
 ) -> Result<UserImageInspection, String> {
     const DEVICE: &str = "/dev/disk/by-id/virtio-steamos-user-input";
-    let read_only = run_guest_command(
+    let read_only = run_guest_command_with_timeout(
         session,
         "set -eu; DEVICE=/dev/disk/by-id/virtio-steamos-user-input; test -b \"$DEVICE\"; sudo blockdev --getro \"$DEVICE\"",
+        Duration::from_secs(10),
     )? == "1";
     if !read_only {
         return Err("Selected image was not attached read-only; inspection was stopped.".into());

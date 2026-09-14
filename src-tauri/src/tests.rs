@@ -59,6 +59,22 @@ mod tests {
     fn structured_guest_command_is_framed_bounded_and_reaped() {
         const MARKER: &str = "OPEMOS_COMMAND_COMPLETE_TEST";
 
+        let multiline = "printf 'FIRST\nSECOND\n'";
+        let transport = structured_guest_command_transport(multiline, MARKER);
+        assert!(!transport.contains('\n'));
+        let encoded_child = Command::new("/bin/sh")
+            .args(["-c", &transport])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start encoded multiline fixture");
+        assert_eq!(
+            finish_structured_guest_command(encoded_child, Duration::from_secs(1), MARKER)
+                .expect("execute multiline command through one transport line"),
+            "FIRST\nSECOND"
+        );
+
         let mut success = Command::new("/bin/sh");
         success
             .args([
