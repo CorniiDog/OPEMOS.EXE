@@ -996,6 +996,51 @@ mod tests {
         assert!(guest_userspace_filenames(&unsafe_package).is_err());
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_stages_arch_epoch_filenames_without_ntfs_streams() {
+        let canonical = "egl-wayland-4:1.1.19-1-x86_64.pkg.tar.zst";
+        let signature = format!("{canonical}.sig");
+        let package_local = local_userspace_staging_filename(canonical);
+        let signature_local = local_userspace_staging_filename(&signature);
+        assert!(!package_local.contains(':'));
+        assert!(!signature_local.contains(':'));
+        assert_ne!(package_local, signature_local);
+
+        let root = std::env::temp_dir().join(format!(
+            "opemos-windows-epoch-filename-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).expect("create epoch staging fixture");
+        for local in [&package_local, &signature_local] {
+            let destination = root.join(local);
+            let partial = destination.with_file_name(format!(".{local}.partial"));
+            fs::write(&partial, b"reviewed-input").expect("stage ordinary file");
+            fs::rename(&partial, &destination).expect("finalize ordinary file");
+            assert_eq!(fs::read(&destination).unwrap(), b"reviewed-input");
+        }
+        assert_eq!(
+            fs::read_dir(&root).unwrap().count(),
+            2,
+            "no alternate data stream path may be created"
+        );
+
+        let package = NvidiaUserspacePackage {
+            name: "egl-wayland".into(),
+            role: "dependency".into(),
+            filename: canonical.into(),
+            full_version: "4:1.1.19-1".into(),
+            package_path: root.join(package_local).to_string_lossy().into_owned(),
+            signature_path: root.join(signature_local).to_string_lossy().into_owned(),
+            package_sha256: "a".repeat(64),
+        };
+        let arguments = userspace_installer_arguments(&[package]).unwrap();
+        assert!(arguments.contains(&format!("/tmp/{canonical}")));
+        assert!(arguments.contains(&format!("/tmp/{canonical}.sig")));
+        fs::remove_dir_all(root).expect("remove epoch staging fixture");
+    }
+
     #[test]
     fn settings_schema_contains_preferences_but_no_credentials() {
         let serialized = serde_json::to_string(&BuilderSettings {
