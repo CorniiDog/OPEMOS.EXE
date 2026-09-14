@@ -2346,6 +2346,22 @@ must be reported; a default-suite pass does not imply hardware certification.
   pull-request checks, Core counterpart review, and the separately required
   maintainer-menu create-only demonstration remain pending. No release or
   publication has occurred.
+  A reproduced post-merge gap showed that the menu could not consume a fresh
+  authenticated Core product outside the current in-memory build session. The
+  active follow-up adds one folder picker and an adapter-owned import path that
+  accepts exactly four regular publisher inputs, rejects links, duplicates and
+  extras, canonicalizes paths, verifies the archive hash and pinned Core dry-run
+  plan, isolates durable state by archive SHA-256, and repeats dry-run plus
+  maintainer authorization immediately before create-only publication. Host
+  Cargo check, formatting, Clippy with warnings denied, exact operation-binding
+  and pinned-publisher tests, the closed-world regular-file importer regression,
+  native Windows frontend adapter validation, and diff hygiene pass. Exact
+  implementation commit `1e20d91f23a4f939011fca3a11df253032bc24ba`
+  also built as an unsigned static-CRT Windows executable (SHA-256
+  `d4b29a7f710b860910283b2ac060b4dcb4e47eddcfb3afbb68842993e158dde1`,
+  19,860,992 bytes), remained live for the bounded eight-second startup smoke,
+  closed cleanly, and left zero new QEMU processes. Pull-request checks and
+  Core review remain pending; no product release or beta publication occurred.
 
 ### Alpha
 
