@@ -2346,6 +2346,17 @@ must be reported; a default-suite pass does not imply hardware certification.
   pull-request checks, Core counterpart review, and the separately required
   maintainer-menu create-only demonstration remain pending. No release or
   publication has occurred.
+  A reproduced post-merge gap showed that the menu could not consume a fresh
+  authenticated Core product outside the current in-memory build session. The
+  active follow-up adds one folder picker and an adapter-owned import path that
+  accepts exactly four regular publisher inputs, rejects links, duplicates and
+  extras, canonicalizes paths, verifies the archive hash and pinned Core dry-run
+  plan, isolates durable state by archive SHA-256, and repeats dry-run plus
+  maintainer authorization immediately before create-only publication. Host
+  Cargo check, formatting, Clippy with warnings denied, exact operation-binding
+  and pinned-publisher tests, the closed-world regular-file importer regression,
+  native Windows frontend adapter validation, and diff hygiene pass. Exact
+  Windows build/startup, pull-request checks, and Core review remain pending.
 
 ### Alpha
 

@@ -48,6 +48,7 @@ pub fn run() {
         .manage(Mutex::new(ApplianceManager::default()))
         .manage(Mutex::new(NvidiaBuildManager::default()))
         .manage(Mutex::new(UsbPreparationManager::default()))
+        .manage(Mutex::new(MaintainerReleaseManager::default()))
         .setup(|_| {
             cleanup_abandoned_runtimes().map_err(std::io::Error::other)?;
             cleanup_abandoned_nvidia_build_runtimes().map_err(std::io::Error::other)?;
@@ -76,6 +77,7 @@ pub fn run() {
             review_maintainer_checkout,
             execute_maintainer_checkout,
             prepare_maintainer_release_operation,
+            import_maintainer_release_product,
             run_maintainer_release_operation,
             start_appliance,
             start_nvidia_build_appliance,

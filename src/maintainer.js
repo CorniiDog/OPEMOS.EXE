@@ -14,6 +14,16 @@ installPageZoom();
 const releaseReview = installReleasePlanReview(document, (command, request) => (
   invoke("run_maintainer_release_operation", { command, request })
 ));
+document.querySelector("#release-import").addEventListener("click", async () => {
+  const directory = await openFolder({ multiple: false, directory: true });
+  if (!directory) return;
+  document.querySelector("#release-plan-status").textContent = "Validating exact Core publisher inputs…";
+  try {
+    releaseReview.render(await invoke("import_maintainer_release_product", { directory }));
+  } catch (error) {
+    document.querySelector("#release-plan-status").textContent = String(error);
+  }
+});
 invoke("prepare_maintainer_release_operation")
   .then(releaseReview.render)
   .catch((error) => {

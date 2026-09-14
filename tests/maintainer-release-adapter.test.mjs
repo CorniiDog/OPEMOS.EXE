@@ -7,5 +7,7 @@ test("maintainer menu loads and runs the authenticated release session", async (
   assert.match(source, /installReleasePlanReview\(document, \(command, request\) =>/);
   assert.match(source, /invoke\("run_maintainer_release_operation", \{ command, request \}\)/);
   assert.match(source, /invoke\("prepare_maintainer_release_operation"\)/);
+  assert.match(source, /invoke\("import_maintainer_release_product", \{ directory \}\)/);
+  assert.match(source, /openFolder\(\{ multiple: false, directory: true \}\)/);
   assert.match(source, /\.then\(releaseReview\.render\)/);
 });

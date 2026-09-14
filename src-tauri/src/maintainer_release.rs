@@ -18,10 +18,17 @@ pub(crate) struct MaintainerReleaseRequest {
     authorization: Option<MaintainerReleaseAuthorization>,
 }
 
+#[derive(Clone)]
 struct ReleaseRuntime {
     support_root: PathBuf,
     state: PathBuf,
     plan: PathBuf,
+    inputs: Option<[PathBuf; 4]>,
+}
+
+#[derive(Default)]
+pub(crate) struct MaintainerReleaseManager {
+    imported: Option<ReleaseRuntime>,
 }
 
 fn write_create_or_exact(path: &Path, bytes: &[u8], label: &str) -> Result<(), String> {
@@ -47,6 +54,15 @@ fn write_create_or_exact(path: &Path, bytes: &[u8], label: &str) -> Result<(), S
 }
 
 fn release_runtime(app: &tauri::AppHandle) -> Result<ReleaseRuntime, String> {
+    if let Some(runtime) = app
+        .state::<Mutex<MaintainerReleaseManager>>()
+        .lock()
+        .map_err(|_| "Maintainer release state lock is unavailable.")?
+        .imported
+        .clone()
+    {
+        return Ok(runtime);
+    }
     let (publication, artifact, plan, runtime_dir) = {
         let manager_state = app.state::<Mutex<ApplianceManager>>();
         let manager = manager_state
@@ -140,7 +156,141 @@ fn release_runtime(app: &tauri::AppHandle) -> Result<ReleaseRuntime, String> {
         support_root,
         state: runtime_dir.join("maintainer-release-operation.json"),
         plan: plan_path,
+        inputs: None,
     })
+}
+
+fn discover_imported_release_inputs(directory: &Path) -> Result<[PathBuf; 4], String> {
+    if !fs::symlink_metadata(directory)
+        .map(|value| value.file_type().is_dir())
+        .unwrap_or(false)
+    {
+        return Err("Verified product selection must be one real directory.".into());
+    }
+    let directory = fs::canonicalize(directory)
+        .map_err(|error| format!("Could not resolve the verified product folder: {error}"))?;
+    let mut archive = None;
+    let mut checksum = None;
+    let mut build_info = None;
+    let mut provenance = None;
+    let mut count = 0usize;
+    for entry in fs::read_dir(&directory)
+        .map_err(|error| format!("Could not inspect verified product folder: {error}"))?
+    {
+        let entry =
+            entry.map_err(|error| format!("Could not inspect verified product entry: {error}"))?;
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|error| format!("Could not inspect verified product entry: {error}"))?;
+        if !metadata.file_type().is_file() {
+            return Err(
+                "Verified product folder may contain only four regular publisher inputs.".into(),
+            );
+        }
+        count += 1;
+        let path = fs::canonicalize(entry.path())
+            .map_err(|error| format!("Could not resolve verified product entry: {error}"))?;
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or("Verified product filename is not UTF-8.")?;
+        let slot = if name.ends_with(".tar.gz.sha256") {
+            &mut checksum
+        } else if name.ends_with(".tar.gz") {
+            &mut archive
+        } else if name.ends_with(".build-info.txt") {
+            &mut build_info
+        } else if name.ends_with(".provenance.json") {
+            &mut provenance
+        } else {
+            return Err("Verified product folder contains an unexpected file.".into());
+        };
+        if slot.replace(path).is_some() {
+            return Err("Verified product folder contains duplicate publisher inputs.".into());
+        }
+    }
+    if count != 4 {
+        return Err("Verified product folder must contain exactly four publisher inputs.".into());
+    }
+    Ok([
+        archive.ok_or("Release archive is missing.")?,
+        checksum.ok_or("Release checksum is missing.")?,
+        build_info.ok_or("Release build-info is missing.")?,
+        provenance.ok_or("Release provenance is missing.")?,
+    ])
+}
+
+fn imported_release_runtime(
+    app: &tauri::AppHandle,
+    directory: &Path,
+) -> Result<ReleaseRuntime, String> {
+    let inputs = discover_imported_release_inputs(directory)?;
+    let actual = sha256_file(&inputs[0])?;
+    let runtime_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Could not resolve application data: {error}"))?
+        .join("maintainer-release-import")
+        .join(&actual);
+    fs::create_dir_all(&runtime_dir)
+        .map_err(|error| format!("Could not create maintainer release state: {error}"))?;
+    let support_root = prepare_pinned_nvidia_publisher(&runtime_dir)?;
+    let output = support_publisher_command(
+        &support_root.join("bootstrap/publish_artifacts.sh"),
+        &inputs[0],
+        &inputs[1],
+        &inputs[2],
+        &inputs[3],
+    )
+    .arg("--dry-run")
+    .output()
+    .map_err(|error| format!("Could not validate imported publisher inputs: {error}"))?;
+    if !output.status.success() || output.stdout.len() > RELEASE_RESULT_LIMIT {
+        return Err("Pinned Core publisher rejected the imported product.".into());
+    }
+    let plan: SupportPublicationPlan = serde_json::from_slice(&output.stdout).map_err(|error| {
+        format!("Pinned Core publisher returned invalid imported-product JSON: {error}")
+    })?;
+    let expected = inputs
+        .clone()
+        .map(|path| path.to_string_lossy().into_owned());
+    if plan.schema_version != 1
+        || plan.status != "ready"
+        || plan.repository != NVIDIA_SUPPORT_REPOSITORY
+        || plan.target_commit != NVIDIA_SUPPORT_BUILD_COMMIT
+        || plan.trust != "locally-built-verified"
+        || plan.assets.as_slice() != expected
+    {
+        return Err("Imported product does not match the pinned Core publication contract.".into());
+    }
+    if plan.archive_sha256 != actual {
+        return Err("Imported release archive identity is inconsistent.".into());
+    }
+    let plan_path = runtime_dir.join("maintainer-release-plan.json");
+    write_create_or_exact(&plan_path, &output.stdout, "maintainer release plan")?;
+    Ok(ReleaseRuntime {
+        support_root,
+        state: runtime_dir.join("maintainer-release-operation.json"),
+        plan: plan_path,
+        inputs: Some(inputs),
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn import_maintainer_release_product(
+    app: tauri::AppHandle,
+    directory: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let runtime = imported_release_runtime(&app, Path::new(&directory))?;
+        let operation = run_core_session(&runtime, "execute", None, None)?;
+        app.state::<Mutex<MaintainerReleaseManager>>()
+            .lock()
+            .map_err(|_| "Maintainer release state lock is unavailable.")?
+            .imported = Some(runtime);
+        Ok(operation)
+    })
+    .await
+    .map_err(|error| format!("Maintainer product-import worker failed: {error}"))?
 }
 
 fn run_core_session(
@@ -233,7 +383,32 @@ pub(crate) async fn run_maintainer_release_operation(
             {
                 return Err("Release authorization does not match the exact planned attempt.".into());
             }
-            publish_on_demand_nvidia_release(app.clone()).await?;
+            if let Some(inputs) = runtime.inputs.as_ref() {
+                let settings = load_builder_settings(&app)?;
+                if !settings.auto_release_verified_nvidia || !github_maintainer_status()?.authorized {
+                    return Err("Maintainer release permission is not enabled and freshly verified.".into());
+                }
+                let dry_run = support_publisher_command(
+                    &runtime.support_root.join("bootstrap/publish_artifacts.sh"),
+                    &inputs[0], &inputs[1], &inputs[2], &inputs[3],
+                ).arg("--dry-run").output().map_err(|error| format!("Could not revalidate imported product: {error}"))?;
+                if !dry_run.status.success() || fs::read(&runtime.plan).map_err(|error| format!("Could not reread release plan: {error}"))? != dry_run.stdout {
+                    return Err("Imported product changed after authorization.".into());
+                }
+                if !github_maintainer_status()?.authorized {
+                    return Err("GitHub maintainer permission expired before publication.".into());
+                }
+                let output = support_publisher_command(
+                    &runtime.support_root.join("bootstrap/publish_artifacts.sh"),
+                    &inputs[0], &inputs[1], &inputs[2], &inputs[3],
+                ).arg("--create-only").output().map_err(|error| format!("Could not run pinned create-only publisher: {error}"))?;
+                if !output.status.success() {
+                    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    return Err(format!("Pinned create-only publisher rejected the release: {detail}"));
+                }
+            } else {
+                publish_on_demand_nvidia_release(app.clone()).await?;
+            }
             let assets = current.get("assets").and_then(serde_json::Value::as_array)
                 .ok_or("Core release operation omitted its asset inventory.")?;
             let observed_assets = assets.iter().map(|asset| serde_json::json!({
@@ -257,6 +432,35 @@ pub(crate) async fn run_maintainer_release_operation(
 mod tests {
     use super::*;
 
+    struct ImportFixture(PathBuf);
+
+    impl ImportFixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "opemos-maintainer-release-import-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = fs::remove_dir_all(&root);
+            fs::create_dir_all(&root).expect("create import fixture");
+            for name in [
+                "product.tar.gz",
+                "product.tar.gz.sha256",
+                "product.build-info.txt",
+                "product.provenance.json",
+            ] {
+                fs::write(root.join(name), name).expect("write import fixture");
+            }
+            Self(root)
+        }
+    }
+
+    impl Drop for ImportFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
     fn request(operation_id: &str, attempt: u64) -> MaintainerReleaseRequest {
         MaintainerReleaseRequest {
             operation_id: operation_id.into(),
@@ -271,5 +475,43 @@ mod tests {
         assert!(bind_request(&current, &request("a", 2)).is_ok());
         assert!(bind_request(&current, &request("b", 2)).is_err());
         assert!(bind_request(&current, &request("a", 1)).is_err());
+    }
+
+    #[test]
+    fn imported_release_inputs_are_closed_world_regular_files() {
+        let fixture = ImportFixture::new();
+        let inputs = discover_imported_release_inputs(&fixture.0).expect("discover exact inputs");
+        assert!(inputs[0].ends_with("product.tar.gz"));
+        assert!(inputs[1].ends_with("product.tar.gz.sha256"));
+        assert!(inputs[2].ends_with("product.build-info.txt"));
+        assert!(inputs[3].ends_with("product.provenance.json"));
+
+        fs::write(fixture.0.join("unexpected.txt"), "unexpected").expect("write extra file");
+        assert!(discover_imported_release_inputs(&fixture.0)
+            .unwrap_err()
+            .contains("unexpected file"));
+        fs::remove_file(fixture.0.join("unexpected.txt")).expect("remove extra file");
+
+        fs::write(fixture.0.join("duplicate.tar.gz"), "duplicate").expect("write duplicate");
+        assert!(discover_imported_release_inputs(&fixture.0)
+            .unwrap_err()
+            .contains("duplicate publisher inputs"));
+        fs::remove_file(fixture.0.join("duplicate.tar.gz")).expect("remove duplicate");
+
+        fs::create_dir(fixture.0.join("nested")).expect("create nested directory");
+        assert!(discover_imported_release_inputs(&fixture.0)
+            .unwrap_err()
+            .contains("only four regular publisher inputs"));
+
+        #[cfg(unix)]
+        {
+            let linked = fixture.0.with_extension("linked");
+            let _ = fs::remove_file(&linked);
+            std::os::unix::fs::symlink(&fixture.0, &linked).expect("link import fixture");
+            assert!(discover_imported_release_inputs(&linked)
+                .unwrap_err()
+                .contains("must be one real directory"));
+            fs::remove_file(linked).expect("remove import fixture link");
+        }
     }
 }
