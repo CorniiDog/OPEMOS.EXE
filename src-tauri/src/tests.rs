@@ -1686,6 +1686,63 @@ mod tests {
     }
 
     #[test]
+    fn maintainer_version_apply_failure_preserves_original_bytes() {
+        struct TemporaryDirectory(PathBuf);
+        impl Drop for TemporaryDirectory {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let root = TemporaryDirectory(std::env::temp_dir().join(format!(
+            "steamos-maintainer-version-write-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        )));
+        fs::create_dir(&root.0).expect("create version write fixture");
+        let version = root.0.join("version.mk");
+        let before = b"NVIDIA_VERSION = 575.64.05\nNVIDIA_NVID_VERSION = 575.64.05\n";
+        let after = b"NVIDIA_VERSION = 580.1.2\nNVIDIA_NVID_VERSION = 580.1.2\n";
+        let before_sha256 = format!("{:x}", Sha256::digest(before));
+        fs::write(&version, before).expect("write original version file");
+
+        let error = write_maintainer_version_file_with(
+            &version,
+            &before_sha256,
+            after,
+            |staged, bytes| {
+                staged.write_all(&bytes[..12])?;
+                Err(io::Error::other("injected pre-commit write failure"))
+            },
+        )
+        .expect_err("injected write failure must abort before replacement");
+        assert!(error.contains("injected pre-commit write failure"));
+        assert_eq!(fs::read(&version).expect("read preserved original"), before);
+        assert_eq!(
+            fs::read_dir(&root.0)
+                .expect("read fixture directory")
+                .map(|entry| entry.expect("read fixture entry").file_name())
+                .collect::<Vec<_>>(),
+            vec![std::ffi::OsString::from("version.mk")]
+        );
+
+        write_maintainer_version_file_with(&version, &before_sha256, after, |staged, bytes| {
+            staged.write_all(bytes)
+        })
+        .expect("atomically replace the reviewed version file");
+        assert_eq!(fs::read(&version).expect("read replaced version"), after);
+        assert_eq!(
+            fs::read_dir(&root.0)
+                .expect("read replaced fixture directory")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn maintainer_git_output_is_streamed_to_a_hard_limit() {
         struct TemporaryGitDirectory(PathBuf);
         impl Drop for TemporaryGitDirectory {

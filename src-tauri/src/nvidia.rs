@@ -1971,6 +1971,127 @@ fn review_version_change_blocking(
     ))
 }
 
+static MAINTAINER_VERSION_WRITE_SEQUENCE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+struct MaintainerVersionTemporaryFile(PathBuf);
+
+impl Drop for MaintainerVersionTemporaryFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+#[cfg(windows)]
+fn replace_version_file(temporary: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn ReplaceFileW(
+            replaced_file_name: *const u16,
+            replacement_file_name: *const u16,
+            backup_file_name: *const u16,
+            replace_flags: u32,
+            exclude: *mut std::ffi::c_void,
+            reserved: *mut std::ffi::c_void,
+        ) -> i32;
+    }
+
+    const REPLACEFILE_WRITE_THROUGH: u32 = 0x0000_0001;
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let temporary = temporary
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: Both paths are owned, NUL-terminated UTF-16 buffers that remain
+    // alive for the call. The optional backup and callback pointers stay null.
+    let replaced = unsafe {
+        ReplaceFileW(
+            destination.as_ptr(),
+            temporary.as_ptr(),
+            std::ptr::null(),
+            REPLACEFILE_WRITE_THROUGH,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if replaced == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_version_file(temporary: &Path, destination: &Path) -> io::Result<()> {
+    fs::rename(temporary, destination)
+}
+
+pub(crate) fn write_maintainer_version_file_with<F>(
+    destination: &Path,
+    expected_before_sha256: &str,
+    after: &[u8],
+    write_staged: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&mut File, &[u8]) -> io::Result<()>,
+{
+    let parent = destination
+        .parent()
+        .ok_or("The reviewed version.mk has no parent directory.")?;
+    let metadata = fs::symlink_metadata(destination)
+        .map_err(|error| format!("Could not recheck the reviewed version.mk: {error}"))?;
+    if !metadata.file_type().is_file() || metadata.len() > 64 * 1024 {
+        return Err(
+            "The reviewed version.mk is no longer one regular file of at most 64 KiB.".into(),
+        );
+    }
+    let sequence =
+        MAINTAINER_VERSION_WRITE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temporary = MaintainerVersionTemporaryFile(parent.join(format!(
+        ".version.mk.{}.{}.tmp",
+        std::process::id(),
+        sequence
+    )));
+    let mut staged = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary.0)
+        .map_err(|error| format!("Could not create the private version.mk replacement: {error}"))?;
+    fs::set_permissions(&temporary.0, metadata.permissions()).map_err(|error| {
+        format!("Could not preserve the reviewed version.mk permissions: {error}")
+    })?;
+    write_staged(&mut staged, after)
+        .and_then(|_| staged.sync_all())
+        .map_err(|error| format!("Could not stage the reviewed version.mk safely: {error}"))?;
+    drop(staged);
+    let observed = fs::read(&temporary.0)
+        .map_err(|error| format!("Could not verify the staged version.mk: {error}"))?;
+    if observed != after {
+        return Err("The staged version.mk does not match the reviewed bytes.".into());
+    }
+    let current = fs::read(destination)
+        .map_err(|error| format!("Could not recheck the reviewed version.mk bytes: {error}"))?;
+    if format!("{:x}", Sha256::digest(&current)) != expected_before_sha256 {
+        return Err(
+            "The reviewed version.mk changed before atomic replacement. Review it again.".into(),
+        );
+    }
+    replace_version_file(&temporary.0, destination).map_err(|error| {
+        format!("Could not atomically replace the reviewed version.mk: {error}")
+    })?;
+    #[cfg(unix)]
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("Could not sync the version.mk directory: {error}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) async fn review_maintainer_version_change(
     path: String,
@@ -2004,17 +2125,12 @@ pub(crate) async fn apply_maintainer_version_change(
             return Err("The worktree, HEAD, or version file changed after review. Review the version change again.".into());
         }
         let file = Path::new(&review.path).join(&review.file);
-        let mut output = OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&file)
-            .map_err(|error| {
-                format!("Could not open the reviewed version.mk for writing: {error}")
-            })?;
-        output
-            .write_all(&after)
-            .and_then(|_| output.sync_all())
-            .map_err(|error| format!("Could not write the reviewed version.mk: {error}"))?;
+        write_maintainer_version_file_with(
+            &file,
+            &review.before_sha256,
+            &after,
+            |staged, bytes| staged.write_all(bytes),
+        )?;
         let observed = fs::read(&file)
             .map_err(|error| format!("Could not verify the written version.mk: {error}"))?;
         if format!("{:x}", Sha256::digest(&observed)) != review.after_sha256 {
