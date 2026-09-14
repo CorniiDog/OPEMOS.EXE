@@ -2414,19 +2414,23 @@ pub(crate) fn finish_guest_readiness_attempt(
     let stdout_reader = thread::spawn(move || {
         let result = (|| {
             let mut stdout = BufReader::new(stdout);
-            let mut captured = String::new();
+            let mut lines = Vec::with_capacity(2);
+            let mut captured_bytes = 0;
             for _ in 0..2 {
+                let mut line = String::new();
                 let bytes = stdout
-                    .read_line(&mut captured)
+                    .read_line(&mut line)
                     .map_err(|error| format!("Could not read guest readiness output: {error}"))?;
                 if bytes == 0 {
                     break;
                 }
-                if captured.len() > READINESS_ATTEMPT_OUTPUT_LIMIT as usize {
+                captured_bytes += bytes;
+                if captured_bytes > READINESS_ATTEMPT_OUTPUT_LIMIT as usize {
                     return Err("Guest readiness output exceeded its bound.".into());
                 }
+                lines.push(line.trim_end_matches(['\r', '\n']).to_string());
             }
-            Ok(captured.trim().to_string())
+            Ok(lines.join("\n"))
         })();
         let _ = sender.send(result);
     });
