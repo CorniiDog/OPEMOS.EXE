@@ -2398,14 +2398,59 @@ pub(crate) fn finish_guest_command_bounded(
 }
 
 pub(crate) fn finish_guest_readiness_attempt(
-    child: Child,
+    mut child: Child,
     timeout: Duration,
 ) -> Result<String, String> {
-    finish_guest_command_bounded(
-        child,
-        timeout,
-        "Guest readiness transport attempt timed out.",
-    )
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("Could not capture guest readiness output.")?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("Could not capture guest readiness diagnostics.")?;
+    let stderr_reader = read_bounded_guest_stream(stderr);
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let stdout_reader = thread::spawn(move || {
+        let result = (|| {
+            let mut stdout = BufReader::new(stdout);
+            let mut captured = String::new();
+            for _ in 0..2 {
+                let bytes = stdout
+                    .read_line(&mut captured)
+                    .map_err(|error| format!("Could not read guest readiness output: {error}"))?;
+                if bytes == 0 {
+                    break;
+                }
+                if captured.len() > READINESS_ATTEMPT_OUTPUT_LIMIT as usize {
+                    return Err("Guest readiness output exceeded its bound.".into());
+                }
+            }
+            Ok(captured.trim().to_string())
+        })();
+        let _ = sender.send(result);
+    });
+    let result = match receiver.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            stop_guest_command_group(&mut child);
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err("Guest readiness transport attempt timed out.".into());
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            let _ = stdout_reader.join();
+            Err("Guest readiness output reader stopped unexpectedly.".into())
+        }
+    };
+    stop_guest_command_group(&mut child);
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "Guest readiness diagnostics reader panicked.")??;
+    if stderr.len() > READINESS_ATTEMPT_OUTPUT_LIMIT as usize {
+        return Err("Guest readiness output exceeded its bound.".into());
+    }
+    result
 }
 
 pub(crate) fn read_guest_command_ready_line(

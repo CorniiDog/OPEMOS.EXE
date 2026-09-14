@@ -57,6 +57,29 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn guest_readiness_attempt_is_bounded_reaped_and_output_limited() {
+        let mut ready_then_stalled = Command::new("/bin/sh");
+        ready_then_stalled
+            .args([
+                "-c",
+                "printf 'SteamOS NVIDIA Image Builder appliance\nREADY\n'; sleep 30",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut ready_then_stalled);
+        let ready_then_stalled = ready_then_stalled
+            .spawn()
+            .expect("start ready-before-EOF fixture");
+        let ready_pid = ready_then_stalled.id();
+        let started = Instant::now();
+        assert_eq!(
+            finish_guest_readiness_attempt(ready_then_stalled, Duration::from_secs(1))
+                .expect("accept exact marker before EOF"),
+            READY_MARKER
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!process_is_alive(ready_pid));
+
         let mut stalled = Command::new("/bin/sh");
         stalled
             .args(["-c", "sleep 30"])
@@ -91,6 +114,30 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_guest_readiness_attempt_timeout_reaps_the_child() {
+        let mut ready_then_stalled = Command::new("cmd.exe");
+        ready_then_stalled
+            .args([
+                "/d",
+                "/c",
+                "(echo SteamOS NVIDIA Image Builder appliance& echo READY& ping -n 31 127.0.0.1 >nul)",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut ready_then_stalled);
+        let ready_then_stalled = ready_then_stalled
+            .spawn()
+            .expect("start ready-before-EOF fixture");
+        let ready_pid = ready_then_stalled.id();
+        let started = Instant::now();
+        assert_eq!(
+            finish_guest_readiness_attempt(ready_then_stalled, Duration::from_secs(1))
+                .expect("accept exact marker before EOF"),
+            READY_MARKER
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(!process_is_alive(ready_pid));
+
         let mut stalled = Command::new("cmd.exe");
         stalled
             .args(["/d", "/c", "ping -n 31 127.0.0.1 >nul"])
