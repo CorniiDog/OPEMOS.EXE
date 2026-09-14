@@ -3467,8 +3467,11 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 659_902);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 50);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 660_981);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 51);
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "lib/diagnostic_safety.py" && !file.executable
+        }));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/install_to_root.sh" && file.executable));
