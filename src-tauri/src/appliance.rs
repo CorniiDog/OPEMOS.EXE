@@ -2325,6 +2325,7 @@ pub(crate) fn run_guest_command(
 
 const READINESS_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
 const READINESS_ATTEMPT_OUTPUT_LIMIT: u64 = 64 * 1024;
+const SHUTDOWN_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn read_bounded_guest_stream(
     stream: impl Read + Send + 'static,
@@ -2339,9 +2340,10 @@ fn read_bounded_guest_stream(
     })
 }
 
-pub(crate) fn finish_guest_readiness_attempt(
+fn finish_guest_command_bounded(
     mut child: Child,
     timeout: Duration,
+    timeout_message: &str,
 ) -> Result<String, String> {
     let stdout = child
         .stdout
@@ -2367,7 +2369,7 @@ pub(crate) fn finish_guest_readiness_attempt(
             stop_guest_command_group(&mut child);
             let _ = stdout_reader.join();
             let _ = stderr_reader.join();
-            return Err("Guest readiness transport attempt timed out.".into());
+            return Err(timeout_message.into());
         }
         thread::sleep(Duration::from_millis(10));
     };
@@ -2393,6 +2395,17 @@ pub(crate) fn finish_guest_readiness_attempt(
         });
     }
     Ok(String::from_utf8_lossy(&stdout).trim().to_string())
+}
+
+pub(crate) fn finish_guest_readiness_attempt(
+    child: Child,
+    timeout: Duration,
+) -> Result<String, String> {
+    finish_guest_command_bounded(
+        child,
+        timeout,
+        "Guest readiness transport attempt timed out.",
+    )
 }
 
 pub(crate) fn read_guest_command_ready_line(
@@ -4141,29 +4154,12 @@ pub(crate) fn stop_session_process(session: &mut ApplianceSession) -> Result<(),
         .is_none()
     {
         let _ = qmp_quit(session.qmp_port);
-        if let Some(ssh) = find_binary("ssh") {
-            let _ = Command::new(ssh)
-                .arg("-p")
-                .arg(session.ssh_port.to_string())
-                .arg("-i")
-                .arg(&session.ssh_key)
-                .args([
-                    "-o",
-                    "IdentitiesOnly=yes",
-                    "-o",
-                    "BatchMode=yes",
-                    "-o",
-                    "ConnectTimeout=2",
-                    "-o",
-                    "StrictHostKeyChecking=no",
-                    "-o",
-                    "UserKnownHostsFile=/dev/null",
-                    "-o",
-                    "LogLevel=ERROR",
-                    "builder@127.0.0.1",
-                    "sudo systemctl poweroff",
-                ])
-                .output();
+        if let Ok(child) = start_guest_command(session, "sudo systemctl poweroff") {
+            let _ = finish_guest_command_bounded(
+                child,
+                SHUTDOWN_COMMAND_TIMEOUT,
+                "Guest shutdown command timed out.",
+            );
         }
         for _ in 0..20 {
             if session
@@ -4211,7 +4207,19 @@ pub(crate) fn stop_nvidia_build_session(
         .is_none()
     {
         if let Ok(mut command) = ssh_command(session) {
-            let _ = command.arg("sudo systemctl poweroff").output();
+            command
+                .arg("sudo systemctl poweroff")
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            isolate_process_group(&mut command);
+            if let Ok(child) = command.spawn() {
+                let _ = finish_guest_command_bounded(
+                    child,
+                    SHUTDOWN_COMMAND_TIMEOUT,
+                    "Guest shutdown command timed out.",
+                );
+            }
         }
         for _ in 0..40 {
             if session

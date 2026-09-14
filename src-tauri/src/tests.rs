@@ -108,6 +108,30 @@ mod tests {
         assert!(!process_is_alive(stalled_pid));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_guest_shutdown_timeout_reaps_the_child() {
+        let mut stalled = Command::new("cmd.exe");
+        stalled
+            .args(["/d", "/c", "ping -n 31 127.0.0.1 >nul"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut stalled);
+        let stalled = stalled.spawn().expect("start stalled shutdown fixture");
+        let stalled_pid = stalled.id();
+        let started = Instant::now();
+        let error = finish_guest_command_bounded(
+            stalled,
+            Duration::from_millis(100),
+            "Guest shutdown command timed out.",
+        )
+            .expect_err("stalled shutdown must expire");
+        assert_eq!(error, "Guest shutdown command timed out.");
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(!process_is_alive(stalled_pid));
+    }
+
     #[cfg(unix)]
     #[test]
     fn guest_channel_readiness_is_bounded_and_drains_stderr_concurrently() {
