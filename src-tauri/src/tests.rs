@@ -56,6 +56,123 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn structured_guest_command_is_framed_bounded_and_reaped() {
+        const MARKER: &str = "OPEMOS_COMMAND_COMPLETE_TEST";
+
+        let mut success = Command::new("/bin/sh");
+        success
+            .args([
+                "-c",
+                "printf 'VALUE=ready\nOPEMOS_COMMAND_COMPLETE_TEST:0\n'; sleep 30",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut success);
+        let success = success.spawn().expect("start framed success fixture");
+        let success_pid = success.id();
+        assert_eq!(
+            finish_structured_guest_command(success, Duration::from_secs(1), MARKER)
+                .expect("accept terminal marker before EOF"),
+            "VALUE=ready"
+        );
+        assert!(!process_is_alive(success_pid));
+
+        let mut failure = Command::new("/bin/sh");
+        failure
+            .args([
+                "-c",
+                "printf exact-error >&2; printf 'OPEMOS_COMMAND_COMPLETE_TEST:7\n'; sleep 30",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut failure);
+        let failure = failure.spawn().expect("start framed failure fixture");
+        let failure_pid = failure.id();
+        let error = finish_structured_guest_command(failure, Duration::from_secs(1), MARKER)
+            .expect_err("preserve framed nonzero status");
+        assert_eq!(error, "Guest command exited with status 7: exact-error");
+        assert!(!process_is_alive(failure_pid));
+
+        let mut missing = Command::new("/bin/sh");
+        missing
+            .args(["-c", "printf 'WRONG:0\n'"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut missing);
+        assert_eq!(
+            finish_structured_guest_command(
+                missing.spawn().expect("start missing-marker fixture"),
+                Duration::from_secs(1),
+                MARKER,
+            )
+            .expect_err("missing marker must fail"),
+            "Guest command ended without its terminal marker."
+        );
+
+        let mut excessive = Command::new("/bin/sh");
+        excessive
+            .args(["-c", "head -c 65537 /dev/zero"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut excessive);
+        assert_eq!(
+            finish_structured_guest_command(
+                excessive.spawn().expect("start excessive output fixture"),
+                Duration::from_secs(1),
+                MARKER,
+            )
+            .expect_err("excessive output must fail"),
+            "Guest command output exceeded its bound."
+        );
+
+        let mut stalled = Command::new("/bin/sh");
+        stalled
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut stalled);
+        let stalled = stalled.spawn().expect("start structured timeout fixture");
+        let stalled_pid = stalled.id();
+        assert_eq!(
+            finish_structured_guest_command(stalled, Duration::from_millis(50), MARKER)
+                .expect_err("structured timeout must fail"),
+            "Guest command timed out."
+        );
+        assert!(!process_is_alive(stalled_pid));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_structured_guest_marker_before_eof_reaps_the_child() {
+        const MARKER: &str = "OPEMOS_COMMAND_COMPLETE_TEST";
+        let mut success = Command::new("cmd.exe");
+        success
+            .args([
+                "/d",
+                "/c",
+                "(echo VALUE=ready& echo OPEMOS_COMMAND_COMPLETE_TEST:0& ping -n 31 127.0.0.1 >nul)",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        isolate_process_group(&mut success);
+        let success = success.spawn().expect("start framed Windows fixture");
+        let success_pid = success.id();
+        assert_eq!(
+            finish_structured_guest_command(success, Duration::from_secs(1), MARKER)
+                .expect("accept Windows terminal marker before EOF"),
+            "VALUE=ready"
+        );
+        assert!(!process_is_alive(success_pid));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn guest_readiness_attempt_is_bounded_reaped_and_output_limited() {
         let mut ready_then_stalled = Command::new("/bin/sh");
         ready_then_stalled

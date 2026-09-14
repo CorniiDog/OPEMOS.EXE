@@ -2316,11 +2316,117 @@ pub(crate) fn finish_guest_command(child: Child) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+const STRUCTURED_GUEST_COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+fn structured_guest_command_marker() -> Result<String, String> {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Could not create a guest command marker: {error}"))?
+        .as_nanos();
+    Ok(format!(
+        "OPEMOS_COMMAND_COMPLETE_{}_{}",
+        std::process::id(),
+        nonce
+    ))
+}
+
+fn start_structured_guest_command(
+    session: &impl GuestConnection,
+    command: &str,
+    marker: &str,
+) -> Result<Child, String> {
+    start_guest_command(
+        session,
+        &format!("({command})\nopemos_status=$?\nprintf '\\n{marker}:%s\\n' \"$opemos_status\""),
+    )
+}
+
+pub(crate) fn finish_structured_guest_command(
+    mut child: Child,
+    timeout: Duration,
+    marker: &str,
+) -> Result<String, String> {
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("Could not capture structured guest command output.")?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("Could not capture structured guest command diagnostics.")?;
+    let stderr_reader = read_bounded_guest_stream(stderr);
+    let marker_prefix = format!("{marker}:");
+    let (sender, receiver) = mpsc::sync_channel::<Result<(String, i32), String>>(1);
+    let stdout_reader = thread::spawn(move || {
+        let result = (|| {
+            let mut stdout = BufReader::new(stdout.take(READINESS_ATTEMPT_OUTPUT_LIMIT + 1));
+            let mut output = String::new();
+            loop {
+                let mut line = String::new();
+                let bytes = stdout
+                    .read_line(&mut line)
+                    .map_err(|error| format!("Could not read structured guest output: {error}"))?;
+                if bytes == 0 {
+                    return Err("Guest command ended without its terminal marker.".into());
+                }
+                if output.len() + bytes > READINESS_ATTEMPT_OUTPUT_LIMIT as usize {
+                    return Err("Guest command output exceeded its bound.".into());
+                }
+                let normalized = line.trim_end_matches(['\r', '\n']);
+                if let Some(status) = normalized.strip_prefix(&marker_prefix) {
+                    let status = status
+                        .parse::<i32>()
+                        .map_err(|_| "Guest command returned an invalid terminal status.")?;
+                    return Ok((output.trim().to_string(), status));
+                }
+                output.push_str(&line);
+            }
+        })();
+        let _ = sender.send(result);
+    });
+    let result = match receiver.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            stop_guest_command_group(&mut child);
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err("Guest command timed out.".into());
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            let _ = stdout_reader.join();
+            Err("Structured guest output reader stopped unexpectedly.".into())
+        }
+    };
+    stop_guest_command_group(&mut child);
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "Structured guest diagnostics reader panicked.")??;
+    if stderr.len() > READINESS_ATTEMPT_OUTPUT_LIMIT as usize {
+        return Err("Guest command output exceeded its bound.".into());
+    }
+    let (stdout, status) = result?;
+    if status != 0 {
+        let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(if detail.is_empty() {
+            format!("Guest command exited with status {status}.")
+        } else {
+            format!("Guest command exited with status {status}: {detail}")
+        });
+    }
+    Ok(stdout)
+}
+
 pub(crate) fn run_guest_command(
     session: &impl GuestConnection,
     command: &str,
 ) -> Result<String, String> {
-    finish_guest_command(start_guest_command(session, command)?)
+    let marker = structured_guest_command_marker()?;
+    finish_structured_guest_command(
+        start_structured_guest_command(session, command, &marker)?,
+        STRUCTURED_GUEST_COMMAND_TIMEOUT,
+        &marker,
+    )
 }
 
 const READINESS_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
