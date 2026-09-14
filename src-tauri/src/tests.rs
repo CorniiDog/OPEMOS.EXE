@@ -6357,7 +6357,7 @@ esac
         let appearance = finish_guest_readiness_attempt(
             start_guest_command(
                 &session,
-                "started=$(date +%s%3N); for attempt in $(seq 0 300); do if test -b /dev/disk/by-id/virtio-steamos-user-input; then now=$(date +%s%3N); printf 'DEVICE_PRESENT\nELAPSED_MS=%s\n' \"$((now-started))\"; sleep 30; exit 0; fi; sleep 0.1; done; printf 'DEVICE_MISSING\nELAPSED_MS=30000\n'; sleep 30",
+                "started=$(date +%s%3N); for attempt in $(seq 0 300); do if test -b /dev/disk/by-id/virtio-steamos-user-input; then now=$(date +%s%3N); printf 'DEVICE_PRESENT\nELAPSED_MS=%s\n' \"$((now-started))\"; exit 0; fi; sleep 0.1; done; printf 'DEVICE_MISSING\nELAPSED_MS=30000\n'; exit 1",
             )
             .expect("start bounded device-appearance command"),
             Duration::from_secs(30),
