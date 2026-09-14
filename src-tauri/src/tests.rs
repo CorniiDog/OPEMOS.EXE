@@ -3693,14 +3693,22 @@ esac
 
     #[test]
     fn pinned_publisher_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_publisher_contract().unwrap(), 19_918);
-        assert_eq!(PINNED_PUBLISHER_FILES.len(), 2);
+        assert_eq!(validate_pinned_publisher_contract().unwrap(), 36_020);
+        assert_eq!(PINNED_PUBLISHER_FILES.len(), 4);
         assert!(PINNED_PUBLISHER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/publish_artifacts.sh" && file.executable));
         assert!(PINNED_PUBLISHER_FILES
             .iter()
             .any(|file| file.path == "lib/validate_publish_inputs.py" && file.executable));
+        assert!(PINNED_PUBLISHER_FILES
+            .iter()
+            .any(|file| file.path == "lib/release_operation.py" && file.executable));
+        assert!(PINNED_PUBLISHER_FILES.iter().any(|file| {
+            file.path == "lib/release_operation_session.py"
+                && file.sha256 == "b038d9eefd2d139d1f031846877b02329b0a3f22fd64f44d293cee1827a68567"
+                && file.executable
+        }));
     }
 
     #[test]

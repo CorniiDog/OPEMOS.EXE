@@ -513,7 +513,7 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 52] = [
     },
 ];
 
-pub(crate) const PINNED_PUBLISHER_FILES: [PinnedInstallerFile; 2] = [
+pub(crate) const PINNED_PUBLISHER_FILES: [PinnedInstallerFile; 4] = [
     PinnedInstallerFile {
         path: "bootstrap/publish_artifacts.sh",
         sha256: "683943eea91c0367419cef9362857dae3b26617ab448d295a929c90d1c06de68",
@@ -524,6 +524,18 @@ pub(crate) const PINNED_PUBLISHER_FILES: [PinnedInstallerFile; 2] = [
         path: "lib/validate_publish_inputs.py",
         sha256: "b547d16179d7d706093fa916769e080a0e33073a555b0fa80425b669b57b94e9",
         bytes: 16_225,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/release_operation.py",
+        sha256: "6da8509e14431f2a97f3d0b80ec23791b8ed43f72e96e6519d5139ae79006db6",
+        bytes: 7_491,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/release_operation_session.py",
+        sha256: "b038d9eefd2d139d1f031846877b02329b0a3f22fd64f44d293cee1827a68567",
+        bytes: 8_611,
         executable: true,
     },
 ];

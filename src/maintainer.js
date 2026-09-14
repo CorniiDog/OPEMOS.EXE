@@ -11,7 +11,14 @@ import { installMaintainerReleaseWorkflow } from "./maintainer-release-workflow.
 const { invoke } = window.__TAURI__.core;
 installLocale();
 installPageZoom();
-installReleasePlanReview(document);
+const releaseReview = installReleasePlanReview(document, (command, request) => (
+  invoke("run_maintainer_release_operation", { command, request })
+));
+invoke("prepare_maintainer_release_operation")
+  .then(releaseReview.render)
+  .catch((error) => {
+    document.querySelector("#release-plan-status").textContent = String(error);
+  });
 installMaintainerReleaseWorkflow(document);
 const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 const openFolder = (options) => invoke("plugin:dialog|open", { options });

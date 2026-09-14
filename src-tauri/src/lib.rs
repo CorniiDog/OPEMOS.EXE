@@ -77,6 +77,7 @@ mod host_platform;
 mod host_storage;
 mod image;
 mod installer;
+mod maintainer_release;
 mod nvidia;
 #[cfg(unix)]
 #[allow(dead_code)]
@@ -93,6 +94,7 @@ use host_platform::*;
 use host_storage::*;
 use image::*;
 use installer::*;
+use maintainer_release::*;
 use nvidia::*;
 use settings::*;
 
@@ -256,7 +258,7 @@ const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/OPEMOS";
-const NVIDIA_SUPPORT_COMMIT: &str = "2102c73dbed5b2ec02a0d8b63f5081e9352b0cf5";
+const NVIDIA_SUPPORT_COMMIT: &str = "f66c374cf224b8e01c723304ad8ee2d5354f69d4";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 // Compatibility target only. This does not become the production installer pin
