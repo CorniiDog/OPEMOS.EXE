@@ -6327,7 +6327,7 @@ esac
 
     #[cfg(windows)]
     #[test]
-    #[ignore = "runs one bounded WHPX read-only attachment diagnostic"]
+    #[ignore = "runs one bounded WHPX framed-first transport diagnostic"]
     fn live_windows_whpx_read_only_attachment_diagnostic() {
         let input = std::env::var_os("STEAMOS_RECOVERY_IMAGE")
             .map(PathBuf::from)
@@ -6351,38 +6351,63 @@ esac
             );
             thread::sleep(Duration::from_secs(1));
         }
-        println!("ATTACHMENT_DIAGNOSTIC readiness=ready");
+        println!("SWAPPED_DIAGNOSTIC readiness=ready");
 
-        let appearance_started = Instant::now();
-        let appearance = finish_guest_readiness_attempt(
-            start_guest_command(
-                &session,
-                "started=$(date +%s%3N); for attempt in $(seq 0 300); do if test -b /dev/disk/by-id/virtio-steamos-user-input; then now=$(date +%s%3N); printf 'DEVICE_PRESENT\nELAPSED_MS=%s\n' \"$((now-started))\"; exit 0; fi; sleep 0.1; done; printf 'DEVICE_MISSING\nELAPSED_MS=30000\n'; exit 1",
-            )
-            .expect("start bounded device-appearance command"),
-            Duration::from_secs(30),
+        let framed_client_log = session.runtime_dir.join("framed-ssh-vvv.log");
+        let marker = structured_guest_command_marker().expect("create framed-first marker");
+        let framed_transport = structured_guest_command_transport(
+            "printf 'FRAMED_START\n'",
+            &marker,
         );
-        println!(
-            "ATTACHMENT_DIAGNOSTIC appearance={appearance:?} hostElapsedMs={}",
-            appearance_started.elapsed().as_millis()
-        );
-
-        let marker = structured_guest_command_marker().expect("create attachment marker");
         let framed_started = Instant::now();
         let framed = finish_structured_guest_command(
-            start_structured_guest_command(
+            start_guest_command_with_client_log(
                 &session,
-                "set -eu; DEVICE=/dev/disk/by-id/virtio-steamos-user-input; test -b \"$DEVICE\"; NODE=$(basename \"$(readlink -f \"$DEVICE\")\"); printf 'READ_ONLY=%s\n' \"$(cat \"/sys/class/block/$NODE/ro\")\"",
-                &marker,
+                &framed_transport,
+                &framed_client_log,
             )
-            .expect("start framed read-only attachment command"),
-            Duration::from_secs(30),
+            .expect("start trivial framed-first command"),
+            Duration::from_secs(10),
             &marker,
         );
         println!(
-            "ATTACHMENT_DIAGNOSTIC framed={framed:?} marker={marker} hostElapsedMs={}",
+            "SWAPPED_DIAGNOSTIC framed={framed:?} marker={marker} hostElapsedMs={}",
             framed_started.elapsed().as_millis()
         );
+
+        let raw_client_log = session.runtime_dir.join("raw-ssh-vvv.log");
+        let raw_started = Instant::now();
+        let raw = finish_guest_command_bounded(
+            start_guest_command_with_client_log(
+                &session,
+                "printf 'RAW_SECOND\nSSH_CONNECTION=%s\n' \"$SSH_CONNECTION\"; ps -o pid=,ppid=,comm= -p $$ -p $PPID",
+                &raw_client_log,
+            )
+            .expect("start trivial raw-second command"),
+            Duration::from_secs(10),
+            "Raw second diagnostic command timed out.",
+        );
+        println!(
+            "SWAPPED_DIAGNOSTIC raw={raw:?} hostElapsedMs={}",
+            raw_started.elapsed().as_millis()
+        );
+        for (label, path) in [
+            ("framed", &framed_client_log),
+            ("raw", &raw_client_log),
+        ] {
+            let mut client_evidence = String::new();
+            File::open(path)
+                .and_then(|file| {
+                    file.take(READINESS_ATTEMPT_OUTPUT_LIMIT + 1)
+                        .read_to_string(&mut client_evidence)
+                })
+                .unwrap_or_else(|error| panic!("could not read {label} ssh client log: {error}"));
+            assert!(
+                client_evidence.len() <= READINESS_ATTEMPT_OUTPUT_LIMIT as usize,
+                "{label} ssh client log exceeded its evidence bound"
+            );
+            println!("SWAPPED_DIAGNOSTIC {label}SshVvv={client_evidence}");
+        }
 
         let runtime_dir = session.runtime_dir.clone();
         let archived_log = stop_session(&mut session)
@@ -6390,10 +6415,10 @@ esac
             .expect("retain diagnostic QEMU log");
         assert!(!runtime_dir.exists(), "diagnostic runtime must be removed");
         assert!(archived_log.is_file(), "diagnostic QEMU log must remain");
-        assert!(appearance
+        assert_eq!(framed.as_deref(), Ok("FRAMED_START"));
+        assert!(raw
             .as_deref()
-            .is_ok_and(|output| output.starts_with("DEVICE_PRESENT\nELAPSED_MS=")));
-        assert_eq!(framed.as_deref(), Ok("READ_ONLY=1"));
+            .is_ok_and(|output| output.starts_with("RAW_SECOND\nSSH_CONNECTION=")));
     }
 
     #[test]

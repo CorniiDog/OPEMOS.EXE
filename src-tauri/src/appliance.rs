@@ -2254,7 +2254,10 @@ impl GuestConnection for NvidiaBuildConnection {
     }
 }
 
-pub(crate) fn ssh_command(session: &impl GuestConnection) -> Result<Command, String> {
+pub(crate) fn ssh_command_with_client_log(
+    session: &impl GuestConnection,
+    client_log: Option<&Path>,
+) -> Result<Command, String> {
     let ssh = find_binary("ssh").ok_or("ssh is required for the guest handshake.")?;
     let mut command = Command::new(ssh);
     command
@@ -2275,9 +2278,31 @@ pub(crate) fn ssh_command(session: &impl GuestConnection) -> Result<Command, Str
             "UserKnownHostsFile=/dev/null",
             "-o",
             "LogLevel=ERROR",
-            "builder@127.0.0.1",
         ]);
+    if let Some(client_log) = client_log {
+        command.arg("-vvv").arg("-E").arg(client_log);
+    }
+    command.arg("builder@127.0.0.1");
     Ok(command)
+}
+
+pub(crate) fn ssh_command(session: &impl GuestConnection) -> Result<Command, String> {
+    ssh_command_with_client_log(session, None)
+}
+
+pub(crate) fn start_guest_command_with_client_log(
+    session: &impl GuestConnection,
+    command: &str,
+    client_log: &Path,
+) -> Result<Child, String> {
+    let mut ssh = ssh_command_with_client_log(session, Some(client_log))?;
+    ssh.arg(command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    isolate_process_group(&mut ssh);
+    ssh.spawn()
+        .map_err(|e| format!("Could not start the diagnostic guest command: {e}"))
 }
 
 pub(crate) fn start_guest_command(
