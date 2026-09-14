@@ -3467,10 +3467,13 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 660_981);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 51);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 662_686);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 52);
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "lib/diagnostic_safety.py" && !file.executable
+        }));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "lib/run_opaque_operation.py" && file.executable
         }));
         assert!(PINNED_INSTALLER_FILES
             .iter()
