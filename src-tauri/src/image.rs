@@ -1180,7 +1180,10 @@ pub(crate) fn convert_working_image(
     if let Some(progress) = progress {
         progress("exporting-image", virtual_bytes, virtual_bytes);
     }
-    let output = File::open(destination)
+    let output = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(destination)
         .map_err(|e| storage_io_error("Could not open the exported image", e))?;
     output
         .sync_all()
