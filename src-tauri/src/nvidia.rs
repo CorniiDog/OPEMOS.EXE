@@ -2806,6 +2806,7 @@ pub(crate) fn download_arch_userspace_asset(
         .sync_all()
         .map_err(|e| storage_io_error("Could not finish NVIDIA userspace input", e))?;
     progress(stage, downloaded, total);
+    drop(output);
     fs::rename(&partial, destination)
         .map_err(|e| format!("Could not finalize NVIDIA userspace input: {e}"))?;
     guard.armed = false;
