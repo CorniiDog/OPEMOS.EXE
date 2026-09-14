@@ -2290,6 +2290,20 @@ pub(crate) fn ssh_command(session: &impl GuestConnection) -> Result<Command, Str
     ssh_command_with_client_log(session, None)
 }
 
+fn configure_guest_command_stdin(command: &mut Command) {
+    #[cfg(windows)]
+    command.stdin(Stdio::piped());
+    #[cfg(not(windows))]
+    command.stdin(Stdio::null());
+}
+
+fn close_guest_command_stdin(child: &mut Child) {
+    #[cfg(windows)]
+    drop(child.stdin.take());
+    #[cfg(not(windows))]
+    let _ = child;
+}
+
 pub(crate) fn start_guest_command_with_client_log(
     session: &impl GuestConnection,
     command: &str,
@@ -2297,12 +2311,15 @@ pub(crate) fn start_guest_command_with_client_log(
 ) -> Result<Child, String> {
     let mut ssh = ssh_command_with_client_log(session, Some(client_log))?;
     ssh.arg(command)
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    configure_guest_command_stdin(&mut ssh);
     isolate_process_group(&mut ssh);
-    ssh.spawn()
-        .map_err(|e| format!("Could not start the diagnostic guest command: {e}"))
+    let mut child = ssh
+        .spawn()
+        .map_err(|e| format!("Could not start the diagnostic guest command: {e}"))?;
+    close_guest_command_stdin(&mut child);
+    Ok(child)
 }
 
 pub(crate) fn start_guest_command(
@@ -2311,12 +2328,15 @@ pub(crate) fn start_guest_command(
 ) -> Result<Child, String> {
     let mut ssh = ssh_command(session)?;
     ssh.arg(command)
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    configure_guest_command_stdin(&mut ssh);
     isolate_process_group(&mut ssh);
-    ssh.spawn()
-        .map_err(|e| format!("Could not start the structured guest command: {e}"))
+    let mut child = ssh
+        .spawn()
+        .map_err(|e| format!("Could not start the structured guest command: {e}"))?;
+    close_guest_command_stdin(&mut child);
+    Ok(child)
 }
 
 pub(crate) fn stop_guest_command_group(child: &mut Child) {
@@ -4404,11 +4424,12 @@ pub(crate) fn stop_nvidia_build_session(
         if let Ok(mut command) = ssh_command(session) {
             command
                 .arg("sudo systemctl poweroff")
-                .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
+            configure_guest_command_stdin(&mut command);
             isolate_process_group(&mut command);
-            if let Ok(child) = command.spawn() {
+            if let Ok(mut child) = command.spawn() {
+                close_guest_command_stdin(&mut child);
                 let _ = finish_guest_command_bounded(
                     child,
                     SHUTDOWN_COMMAND_TIMEOUT,
