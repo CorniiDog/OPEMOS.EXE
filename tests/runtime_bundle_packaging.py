@@ -3,7 +3,9 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
+from scripts.acquire_runtime_linux import acquire_archive, construct, installed_owner, load_lock
 from scripts.stage_runtime_bundle import REQUIRED, stage
 
 
@@ -93,6 +95,60 @@ class RuntimeBundlePackagingTests(unittest.TestCase):
         for text, platform in ((linux, "linux"), (macos, "macos"), (windows, "windows")):
             self.assertIn(f"--platform {platform}", text)
             self.assertIn("OPEMOS_RUNTIME_MANIFEST_SHA256", text)
+
+    def test_linux_entry_acquires_pinned_runtime_by_default(self):
+        repository = Path(__file__).resolve().parent.parent
+        linux = (repository / "bundle_linux.sh").read_text()
+        self.assertIn("scripts/acquire_runtime_linux.py", linux)
+        self.assertIn("build/runtime/linux", linux)
+        lock = load_lock(repository / "runtime/linux-ubuntu-24.04-amd64.sources.json")
+        self.assertEqual(len(lock["archives"]), 62)
+
+    def test_linux_archive_cache_reuses_exact_and_replaces_tamper_without_partial_file(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        cache = Path(temporary.name)
+        payload = b"pinned archive"
+        item = {"package": "fixture", "version": "1", "file": "fixture_1_amd64.deb", "size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
+        target = cache / item["file"]
+        target.write_bytes(payload)
+        runner = mock.Mock()
+        self.assertEqual(acquire_archive(item, cache, runner), target)
+        runner.assert_not_called()
+        target.write_bytes(b"tampered")
+
+        def download(_args, cwd, check):
+            self.assertTrue(check)
+            self.assertFalse(target.exists())
+            Path(cwd, item["file"]).write_bytes(payload)
+
+        acquire_archive(item, cache, mock.Mock(side_effect=download))
+        self.assertEqual(target.read_bytes(), payload)
+        target.write_bytes(b"tampered again")
+        with self.assertRaisesRegex(SystemExit, "identity mismatch"):
+            acquire_archive(item, cache, mock.Mock(return_value=None))
+        self.assertFalse(target.exists())
+
+    @mock.patch("scripts.acquire_runtime_linux.subprocess.run")
+    def test_unowned_runtime_file_is_not_invented_as_a_component(self, run):
+        run.return_value = mock.Mock(returncode=1, stdout="")
+        self.assertIsNone(installed_owner(Path("/opt/vendor/libfixture.so")))
+
+    @mock.patch("scripts.acquire_runtime_linux.acquire_archive")
+    @mock.patch("scripts.acquire_runtime_linux.load_lock")
+    @mock.patch("scripts.acquire_runtime_linux.platform.machine", return_value="x86_64")
+    @mock.patch("scripts.acquire_runtime_linux.platform.system", return_value="Linux")
+    def test_linux_construction_failure_removes_transactional_output(self, _system, _machine, load, _acquire):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        output = root / "runtime"
+        load.return_value = {"schema_version": 1, "distribution": "Ubuntu 24.04", "archives": []}
+        with mock.patch("scripts.acquire_runtime_linux.shutil.which", return_value=None):
+            with self.assertRaisesRegex(SystemExit, "command is unavailable"):
+                construct(output, root / "cache", root / "lock.json")
+        self.assertFalse(output.exists())
+        self.assertEqual(list(root.glob(".runtime.staging-*")), [])
 
 
 if __name__ == "__main__":

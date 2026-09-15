@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ $# -eq 0 ]]; then
+  python3 scripts/acquire_runtime_linux.py
+  set -- --runtime-root build/runtime/linux
+fi
 if [[ $# -ne 2 || $1 != --runtime-root ]]; then
-  echo "usage: ./bundle_linux.sh --runtime-root PATH" >&2
+  echo "usage: ./bundle_linux.sh [--runtime-root PATH]" >&2
   exit 2
 fi
 root=$(cd -- "$2" && pwd -P)
