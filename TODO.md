@@ -2399,12 +2399,14 @@ must be reported; a default-suite pass does not imply hardware certification.
   shared heavy wrapper. The same native dry-run then advanced to Core's next
   exact dependency and failed because `validate_publish_inputs.py` invokes an
   unavailable external `zstd`; a concrete Core-owned dependency request is
-  recorded. Native Windows run `35005730804` proved the bridge succeeded but
-  exposed a test-only CRLF mismatch; the assertion now compares the trimmed
-  decoded marker, and host formatting plus focused compilation pass through the
-  shared heavy wrapper. Changed-head native Windows regression execution, exact
-  Windows build/startup,
-  Core counterpart review, and the resumed create-only proof remain pending.
+  recorded. Native Windows runs `35005730804` and `35006747321` exposed that
+  the new regression incorrectly depended on ambient runner Python and exited
+  before its marker with empty stderr; the contained guest proof independently
+  showed the bridge reaching bundled Python and advancing to `zstd`. The focused
+  test now verifies the injected function and its exact delegation body without
+  depending on runner Python. Changed-head native Windows regression execution,
+  exact Windows build/startup, Core counterpart review, and the resumed
+  create-only proof remain pending.
 
 ### Alpha
 

@@ -7705,7 +7705,7 @@ trap - EXIT"#,
         let publisher = root.join("publisher.sh");
         fs::write(
             &publisher,
-            "#!/usr/bin/env bash\nset -euo pipefail\npython3 -c 'print(\"bridge-ok\")'\n",
+            "#!/usr/bin/env bash\nset -euo pipefail\ndeclare -F python3 >/dev/null\ndeclare -f python3 | grep -F 'command python \"$@\"' >/dev/null\nprintf 'bridge-ok\\n'\n",
         )
         .expect("write publisher fixture");
         let dummy = root.join("unused-input");
