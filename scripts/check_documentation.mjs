@@ -178,7 +178,7 @@ assert.equal(
 );
 assert.match(
   checks,
-  /ref: f6871104ea83d8afa620b133b362a0578ff4a6a8\n          path: opemos-core-contracts\n          fetch-depth: 167\n          persist-credentials: false/,
+  /ref: f6871104ea83d8afa620b133b362a0578ff4a6a8\n          path: opemos-core-contracts\n          fetch-depth: 169\n          persist-credentials: false/,
 );
 assert.doesNotMatch(checks, /82241699497fb605b3d8b3fbc0015ec952f81ef3/);
 assert.match(checks, /persist-credentials: false/);
