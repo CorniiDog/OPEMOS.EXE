@@ -1,4 +1,5 @@
 import hashlib
+import os
 import json
 from pathlib import Path
 import subprocess
@@ -8,6 +9,7 @@ from unittest import mock
 
 from scripts.acquire_runtime_linux import PAYLOAD_MERGES, acquire_archive, construct, copy_payload_tree, current_lock_matches, extracted_file, load_lock, write_ca_bundle, write_wrapper
 from scripts.stage_runtime_bundle import REQUIRED, stage
+from scripts.prepare_windows_runtime import prepare
 
 
 class RuntimeBundlePackagingTests(unittest.TestCase):
@@ -90,6 +92,8 @@ class RuntimeBundlePackagingTests(unittest.TestCase):
         self.assertIn("--runtime-root", linux)
         self.assertIn("--runtime-root", macos)
         self.assertIn("RuntimeRoot", windows)
+        self.assertIn("CoreRoot", windows)
+        self.assertIn("prepare_windows_runtime.py", windows)
         self.assertIn("dist/linux", linux)
         self.assertIn("dist/macos", macos)
         self.assertIn("dist/windows", windows)
@@ -254,6 +258,26 @@ class RuntimeBundlePackagingTests(unittest.TestCase):
                 construct(output, root / "cache", root / "lock.json")
         self.assertFalse(output.exists())
         self.assertEqual(list(root.glob(".runtime.staging-*")), [])
+
+
+    def test_windows_runtime_adds_exact_core_zstd_dependency(self):
+        core_value = os.environ.get("OPEMOS_CORE_CONTRACT_ROOT")
+        if not core_value:
+            self.skipTest("exact canonical Core checkout is not supplied")
+        temporary, root, runtime, _ = self.fixture("windows")
+        self.addCleanup(temporary.cleanup)
+        base_manifest_path = runtime / "runtime-manifest.json"
+        base_manifest = json.loads(base_manifest_path.read_text())
+        base_manifest["commands"].pop("zstd")
+        base_manifest["files"] = [item for item in base_manifest["files"] if item["path"] != "bin/zstd"]
+        (runtime / "bin/zstd").unlink()
+        base_manifest_path.write_text(json.dumps(base_manifest, separators=(",", ":")))
+        output = root / "prepared"
+        prepare(runtime, Path(core_value), output)
+        manifest = json.loads((output / "runtime-manifest.json").read_text())
+        self.assertEqual(manifest["commands"]["zstd"], "bin/zstd.exe")
+        self.assertEqual(hashlib.sha256((output / "bin/zstd.exe").read_bytes()).hexdigest(), "8076aae03feac7c66b319579e82172eed168deed2a3f25e5e2d3c60f55e84111")
+        self.assertEqual([item["name"] for item in manifest["components"]][-1], "zstd")
 
 
 if __name__ == "__main__":
