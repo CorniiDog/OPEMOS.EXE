@@ -11,6 +11,7 @@ struct RuntimeManifest {
     platform: String,
     commands: HashMap<String, String>,
     files: Vec<RuntimeFile>,
+    components: Vec<RuntimeComponent>,
 }
 
 #[derive(Deserialize)]
@@ -19,6 +20,14 @@ struct RuntimeFile {
     path: String,
     sha256: String,
     size: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeComponent {
+    name: String,
+    version: String,
+    license_files: Vec<String>,
 }
 
 static VERIFIED_RUNTIME: OnceLock<Result<HashMap<String, PathBuf>, String>> = OnceLock::new();
@@ -160,6 +169,26 @@ fn verify_runtime_bundle(
         }
     }
 
+    if manifest.components.is_empty() {
+        return Err("The packaged runtime component inventory is empty.".into());
+    }
+    let mut component_names = HashSet::new();
+    for component in &manifest.components {
+        if component.name.is_empty()
+            || component.name.len() > 128
+            || component.version.is_empty()
+            || component.version.len() > 128
+            || component.license_files.is_empty()
+            || !component_names.insert(component.name.as_str())
+            || component
+                .license_files
+                .iter()
+                .any(|path| !declared.contains(path))
+        {
+            return Err("The packaged runtime component or license identity is invalid.".into());
+        }
+    }
+
     let mut commands = HashMap::new();
     for (name, relative) in manifest.commands {
         if name.is_empty()
@@ -176,6 +205,7 @@ fn verify_runtime_bundle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     fn fixture() -> (PathBuf, String) {
         let root = std::env::temp_dir().join(format!(
@@ -197,8 +227,25 @@ mod tests {
                 "path": "bin/tool",
                 "sha256": format!("{:x}", Sha256::digest(tool)),
                 "size": tool.len()
+            }],
+            "components": [{
+                "name": "fixture-tool",
+                "version": "1.0",
+                "license_files": ["licenses/fixture.txt"]
             }]
         });
+        fs::create_dir_all(root.join("licenses")).unwrap();
+        let license = b"fixture license";
+        fs::write(root.join("licenses/fixture.txt"), license).unwrap();
+        let mut manifest = manifest;
+        manifest["files"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "path": "licenses/fixture.txt",
+                "sha256": format!("{:x}", Sha256::digest(license)),
+                "size": license.len()
+            }));
         let bytes = serde_json::to_vec(&manifest).unwrap();
         fs::write(root.join(MANIFEST_NAME), &bytes).unwrap();
         let hash = format!("{:x}", Sha256::digest(&bytes));
@@ -227,5 +274,151 @@ mod tests {
         let hash = format!("{:x}", Sha256::digest(&bytes));
         assert!(verify_runtime_bundle(&root, &hash).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn runtime_manifest_refuses_missing_or_undeclared_component_license() {
+        let (root, _) = fixture();
+        let manifest_path = root.join(MANIFEST_NAME);
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        manifest["components"][0]["license_files"] = serde_json::json!([]);
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        fs::write(&manifest_path, &bytes).unwrap();
+        let hash = format!("{:x}", Sha256::digest(&bytes));
+        assert!(verify_runtime_bundle(&root, &hash).is_err());
+        manifest["components"][0]["license_files"] = serde_json::json!(["licenses/missing.txt"]);
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        fs::write(&manifest_path, &bytes).unwrap();
+        let hash = format!("{:x}", Sha256::digest(&bytes));
+        assert!(verify_runtime_bundle(&root, &hash).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn staged_manifest_activates_compiled_consumer() {
+        let temporary = std::env::temp_dir().join(format!(
+            "opemos-runtime-stage-consumer-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let runtime = temporary.join("runtime");
+        fs::create_dir_all(runtime.join("bin")).unwrap();
+        fs::create_dir_all(runtime.join("licenses")).unwrap();
+        let required: &[&str] = if cfg!(target_os = "windows") {
+            &[
+                "bash",
+                "gh",
+                "git",
+                "mkisofs",
+                "python",
+                "qemu-img",
+                "qemu-system-x86_64",
+                "scp",
+                "ssh",
+                "ssh-keygen",
+                "tar",
+            ]
+        } else if cfg!(target_os = "macos") {
+            &[
+                "bash",
+                "gh",
+                "git",
+                "python3",
+                "qemu-img",
+                "qemu-system-aarch64",
+                "scp",
+                "ssh",
+                "ssh-keygen",
+                "tar",
+            ]
+        } else {
+            &[
+                "bash",
+                "genisoimage",
+                "gh",
+                "git",
+                "python3",
+                "qemu-img",
+                "qemu-system-x86_64",
+                "scp",
+                "ssh",
+                "ssh-keygen",
+                "tar",
+            ]
+        };
+        let mut commands = serde_json::Map::new();
+        let mut files = Vec::new();
+        for name in required {
+            let relative = format!("bin/{name}");
+            let contents = format!("fixture {name}\n");
+            fs::write(runtime.join(&relative), &contents).unwrap();
+            commands.insert((*name).into(), serde_json::json!(relative));
+            files.push(serde_json::json!({
+                "path": relative,
+                "sha256": format!("{:x}", Sha256::digest(contents.as_bytes())),
+                "size": contents.len()
+            }));
+        }
+        let license = b"fixture license\n";
+        fs::write(runtime.join("licenses/fixture.txt"), license).unwrap();
+        files.push(serde_json::json!({
+            "path": "licenses/fixture.txt",
+            "sha256": format!("{:x}", Sha256::digest(license)),
+            "size": license.len()
+        }));
+        let manifest = serde_json::json!({
+            "schema_version": 1,
+            "platform": std::env::consts::OS,
+            "commands": commands,
+            "files": files,
+            "components": [{
+                "name": "fixture-runtime",
+                "version": "1.0",
+                "license_files": ["licenses/fixture.txt"]
+            }]
+        });
+        fs::write(
+            runtime.join(MANIFEST_NAME),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let application = temporary.join("application.bin");
+        fs::write(&application, b"application fixture").unwrap();
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let python = if cfg!(target_os = "windows") {
+            "python"
+        } else {
+            "python3"
+        };
+        let output = Command::new(python)
+            .arg(repository.join("scripts/stage_runtime_bundle.py"))
+            .args(["--platform", std::env::consts::OS])
+            .arg("--runtime-root")
+            .arg(&runtime)
+            .arg("--output")
+            .arg(temporary.join("output"))
+            .args([
+                "--source-commit",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ])
+            .arg("--application")
+            .arg(&application)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let hash = String::from_utf8(output.stdout).unwrap();
+        let staged = temporary.join("output/runtime");
+        let verified = verify_runtime_bundle(&staged, hash.trim()).unwrap();
+        assert_eq!(verified.len(), required.len());
+        assert!(verified.values().all(|path| path.starts_with(&staged)));
+        fs::remove_dir_all(temporary).unwrap();
     }
 }

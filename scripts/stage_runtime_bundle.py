@@ -79,11 +79,19 @@ def validate_runtime(root, platform):
     components = manifest["components"]
     if not isinstance(components, list) or not components:
         fail("Runtime component inventory is empty")
+    component_names = set()
     for component in components:
-        if set(component) != {"name", "version", "license_files"} or not component["name"] or not component["version"]:
+        if (set(component) != {"name", "version", "license_files"}
+                or not isinstance(component["name"], str)
+                or not isinstance(component["version"], str)
+                or not component["name"] or len(component["name"]) > 128
+                or not component["version"] or len(component["version"]) > 128
+                or component["name"] in component_names):
             fail("Runtime component identity is invalid")
+        component_names.add(component["name"])
         licenses = component["license_files"]
-        if not isinstance(licenses, list) or not licenses or any(path not in declared for path in licenses):
+        if (not isinstance(licenses, list) or not licenses
+                or any(not isinstance(path, str) or path not in declared for path in licenses)):
             fail("Every runtime component requires a declared license file")
     actual = {
         path.relative_to(root).as_posix()

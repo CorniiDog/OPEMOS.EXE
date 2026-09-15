@@ -65,6 +65,20 @@ class RuntimeBundlePackagingTests(unittest.TestCase):
         self.assertFalse(output.exists())
         self.assertEqual(list(root.glob(".output.staging-*")), [])
 
+    def test_refuses_duplicate_component_and_undeclared_license(self):
+        temporary, root, runtime, application = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        manifest_path = runtime / "runtime-manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["components"].append(dict(manifest["components"][0]))
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(SystemExit, "component identity"):
+            stage(runtime, root / "duplicate", "linux", self.COMMIT, [application])
+        manifest["components"] = [{"name": "fixture", "version": "1", "license_files": ["licenses/missing.txt"]}]
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(SystemExit, "declared license"):
+            stage(runtime, root / "missing-license", "linux", self.COMMIT, [application])
+
     def test_platform_entry_points_share_runtime_input_and_output_contract(self):
         repository = Path(__file__).resolve().parent.parent
         linux = (repository / "bundle_linux.sh").read_text()
