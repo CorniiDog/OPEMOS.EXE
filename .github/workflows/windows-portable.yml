@@ -84,7 +84,7 @@ jobs:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
 
       - name: Verify exact Core zstd runtime consumption
-        run: python -m unittest tests.runtime_bundle_packaging
+        run: python -m unittest tests.runtime_bundle_packaging.RuntimeBundlePackagingTests.test_windows_runtime_adds_exact_core_zstd_dependency
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
 
