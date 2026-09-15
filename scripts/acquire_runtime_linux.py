@@ -43,7 +43,7 @@ def load_lock(path):
     if set(raw) != {"schema_version", "distribution", "archives"} or raw["schema_version"] != 1 or raw["distribution"] != "Ubuntu 24.04":
         fail("Linux runtime source lock is invalid")
     archives = raw["archives"]
-    if not isinstance(archives, list) or len(archives) != 62:
+    if not isinstance(archives, list) or len(archives) != 63:
         fail("Linux runtime source lock must contain the exact archive closure")
     names = set()
     for item in archives:
@@ -75,25 +75,52 @@ def acquire_archive(item, cache, runner=subprocess.run):
     return target
 
 
-def command_output(args):
-    return subprocess.run(args, check=True, text=True, capture_output=True).stdout.strip()
+COMMAND_PATHS = {
+    "bash": "usr/bin/bash",
+    "genisoimage": "usr/bin/genisoimage",
+    "gh": "usr/bin/gh",
+    "git": "usr/bin/git",
+    "python3": "usr/bin/python3.12",
+    "qemu-img": "usr/bin/qemu-img",
+    "qemu-system-x86_64": "usr/bin/qemu-system-x86_64",
+    "scp": "usr/bin/scp",
+    "ssh": "usr/bin/ssh",
+    "ssh-keygen": "usr/bin/ssh-keygen",
+    "tar": "usr/bin/tar",
+}
 
 
-def installed_owner(path):
-    result = subprocess.run(["dpkg-query", "-S", str(path)], text=True, capture_output=True)
-    if result.returncode != 0:
-        return None
-    return result.stdout.split(":", 1)[0].split(",", 1)[0]
+def extracted_file(path, extraction):
+    if path.is_symlink():
+        target = Path(os.readlink(path))
+        path = extraction / target.relative_to("/") if target.is_absolute() else path.parent / target
+    resolved = path.resolve(strict=True)
+    try:
+        resolved.relative_to(extraction.resolve(strict=True))
+    except ValueError:
+        fail("Archive link escapes the verified extraction root")
+    if not resolved.is_file():
+        fail("Archive runtime entry is not a regular file")
+    return resolved
+
+
+def current_lock_matches(root, lock):
+    provenance = root / "source-provenance.json"
+    if provenance.is_symlink() or not provenance.is_file():
+        return False
+    expected = json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n"
+    return provenance.read_text(encoding="utf-8") == expected
 
 
 def construct(output, cache, lock_path):
     if platform.system() != "Linux" or platform.machine() not in ("x86_64", "AMD64"):
         fail("Pinned Linux runtime acquisition requires Ubuntu x86_64")
+    lock = load_lock(lock_path)
     if output.exists():
         validate_runtime(output, "linux")
-        return output
-    lock = load_lock(lock_path)
-    locked = {item["package"]: item for item in lock["archives"]}
+        if current_lock_matches(output, lock):
+            return output
+        fail("Existing Linux runtime does not match the current source lock")
     for item in lock["archives"]:
         acquire_archive(item, cache)
 
@@ -102,46 +129,40 @@ def construct(output, cache, lock_path):
     try:
         for name in ("bin", "lib", "licenses", "sources"):
             (staging / name).mkdir()
+        extraction = staging / ".archive-extraction"
+        extraction.mkdir()
+        for item in lock["archives"]:
+            subprocess.run(["dpkg-deb", "--extract", str(cache / item["file"]), str(extraction)], check=True)
+
         commands = {}
-        source_paths = []
         for name in sorted(REQUIRED["linux"]):
-            found = shutil.which(name)
-            if not found:
-                fail(f"Required pinned runtime command is unavailable: {name}")
-            source = Path(found).resolve(strict=True)
+            source = extracted_file(extraction / COMMAND_PATHS[name], extraction)
             target = staging / "bin" / name
             shutil.copy2(source, target)
             target.chmod(target.stat().st_mode | 0o111)
             commands[name] = target.relative_to(staging).as_posix()
-            source_paths.append(source)
-            for line in command_output(["ldd", str(source)]).splitlines():
-                match = re.search(r"(?:=>\s+)?(/[^ ]+)", line)
-                if not match:
-                    continue
-                library = Path(match.group(1)).resolve(strict=True)
-                destination = staging / "lib" / library.name
-                if destination.exists() and digest(destination) != digest(library):
-                    fail(f"Runtime library basename collision: {library.name}")
-                if not destination.exists():
-                    shutil.copy2(library, destination)
-                source_paths.append(library)
 
-        owners = {owner for path in source_paths if (owner := installed_owner(path)) is not None}
-        if owners != set(locked):
-            fail("Installed runtime package closure differs from the pinned source lock")
+        for archived in sorted(extraction.rglob("*.so*")):
+            if not (archived.is_file() or archived.is_symlink()):
+                continue
+            source = extracted_file(archived, extraction)
+            destination = staging / "lib" / archived.name
+            if destination.exists() and digest(destination) != digest(source):
+                fail(f"Runtime library basename collision: {archived.name}")
+            if not destination.exists():
+                shutil.copy2(source, destination)
+
         components = []
-        for package in sorted(owners):
-            item = locked[package]
-            version = command_output(["dpkg-query", "-W", "-f=${Version}", package])
-            if version != item["version"]:
-                fail(f"Installed package version differs from lock: {package}")
-            notice = (Path("/usr/share/doc") / package / "copyright").resolve(strict=True)
+        for item in sorted(lock["archives"], key=lambda entry: entry["package"]):
+            package = item["package"]
+            notice = extracted_file(extraction / "usr/share/doc" / package / "copyright", extraction)
             license_target = staging / "licenses" / f"{package}.txt"
             shutil.copy2(notice, license_target)
             shutil.copy2(cache / item["file"], staging / "sources" / item["file"])
-            components.append({"name": package, "version": version, "license_files": [license_target.relative_to(staging).as_posix()]})
+            components.append({"name": package, "version": item["version"], "license_files": [license_target.relative_to(staging).as_posix()]})
 
         (staging / "source-provenance.json").write_text(json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+        shutil.rmtree(extraction)
         files = []
         for path in sorted(staging.rglob("*")):
             if path.is_file():
