@@ -1842,6 +1842,478 @@ pub(crate) async fn execute_maintainer_checkout(
     .map_err(|error| format!("Maintainer checkout worker failed: {error}"))?
 }
 
+fn remote_branch_head(path: &Path, branch: &str) -> Result<Option<String>, String> {
+    let reference = format!("refs/heads/{branch}");
+    let output = git_output_bytes(
+        path,
+        &["ls-remote", "--heads", "origin", &reference],
+        "read the exact remote branch identity",
+        64 * 1024,
+    )?;
+    let text =
+        String::from_utf8(output).map_err(|_| "Git returned non-UTF-8 remote branch metadata.")?;
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    let rows = text.lines().collect::<Vec<_>>();
+    if rows.len() != 1 {
+        return Err("The remote branch identity is ambiguous.".into());
+    }
+    let (commit, actual_ref) = rows[0]
+        .split_once('\t')
+        .ok_or("Git returned malformed remote branch metadata.")?;
+    if actual_ref != reference || !valid_git_commit(commit) {
+        return Err("Git returned an unsafe remote branch identity.".into());
+    }
+    Ok(Some(commit.to_ascii_lowercase()))
+}
+
+fn review_push_blocking(path: String, repository: String) -> Result<MaintainerPushReview, String> {
+    let worktree = inspect_maintainer_worktree_blocking(path, repository)?;
+    if worktree.changed_files != 0 {
+        return Err(
+            "Push requires a completely clean worktree, index, and untracked-file set.".into(),
+        );
+    }
+    let branch = worktree
+        .branch
+        .ok_or("Push requires a named branch; detached HEAD is not allowed.")?;
+    if !valid_local_branch_name(&branch) || branch == "main" {
+        return Err("Push requires a safe non-main topic branch.".into());
+    }
+    let remote_head = remote_branch_head(Path::new(&worktree.path), &branch)?;
+    if let Some(remote) = remote_head.as_deref() {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&worktree.path)
+            .args(["merge-base", "--is-ancestor", remote, &worktree.head])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|error| format!("Could not verify fast-forward ancestry: {error}"))?;
+        if !status.success() {
+            return Err("The remote topic branch is not an ancestor of local HEAD. Fetch and resolve the divergence manually; force push is forbidden.".into());
+        }
+    }
+    let confirmation = format!(
+        "PUSH {} {} {}",
+        worktree.repository,
+        branch,
+        &worktree.head[..12]
+    );
+    Ok(MaintainerPushReview {
+        repository: worktree.repository,
+        path: worktree.path,
+        branch,
+        head: worktree.head,
+        remote_head,
+        confirmation,
+        message: "Normal fast-forward push reviewed for this exact repository, branch, local HEAD, and remote HEAD. No force, tag, deletion, merge, or release is allowed.".into(),
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn review_maintainer_push(
+    path: String,
+    repository: String,
+) -> Result<MaintainerPushReview, String> {
+    tauri::async_runtime::spawn_blocking(move || review_push_blocking(path, repository))
+        .await
+        .map_err(|error| format!("Maintainer push-review worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn execute_maintainer_push(
+    path: String,
+    repository: String,
+    expected_head: String,
+    expected_remote_head: Option<String>,
+    confirmation: String,
+) -> Result<MaintainerPushResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let review = review_push_blocking(path, repository)?;
+        if review.head != expected_head || review.remote_head != expected_remote_head {
+            return Err(
+                "The local or remote branch changed after review. Review the push again.".into(),
+            );
+        }
+        if confirmation != review.confirmation {
+            return Err("Fresh push authorization did not exactly match the reviewed repository, branch, and HEAD.".into());
+        }
+        let refspec = format!("{}:refs/heads/{}", review.head, review.branch);
+        bounded_git_mutation(
+            Path::new("git"),
+            Path::new(&review.path),
+            &["push", "--porcelain", "origin", &refspec],
+            None,
+            Duration::from_secs(120),
+            1024 * 1024,
+            "push the exact reviewed topic-branch commit",
+        )?;
+        let remote_head = remote_branch_head(Path::new(&review.path), &review.branch)?
+            .ok_or("The pushed remote branch is unexpectedly absent.")?;
+        if remote_head != review.head {
+            return Err(
+                "The remote branch does not identify the exact reviewed commit after push.".into(),
+            );
+        }
+        Ok(MaintainerPushResult {
+            review,
+            remote_head,
+            message: "Pushed the exact reviewed commit with a normal fast-forward topic-branch push. No tag, deletion, merge, or release occurred.".into(),
+        })
+    })
+    .await
+    .map_err(|error| format!("Maintainer push worker failed: {error}"))?
+}
+
+pub(crate) fn validate_pr_text(title: &str, body: &str) -> Result<(), String> {
+    if title.is_empty()
+        || title.trim() != title
+        || title.len() > 120
+        || title.chars().any(char::is_control)
+    {
+        return Err("Pull-request title must be 1-120 characters without surrounding whitespace or control characters.".into());
+    }
+    if body.is_empty()
+        || body.trim() != body
+        || body.len() > 16_384
+        || body
+            .chars()
+            .any(|character| character.is_control() && !matches!(character, '\n' | '\t'))
+    {
+        return Err("Pull-request body must be 1-16,384 reviewable characters without surrounding whitespace.".into());
+    }
+    Ok(())
+}
+
+fn review_pr_blocking(
+    path: String,
+    repository: String,
+    title: String,
+    body: String,
+) -> Result<MaintainerPullRequestReview, String> {
+    validate_pr_text(&title, &body)?;
+    let push = review_push_blocking(path, repository)?;
+    if push.remote_head.as_deref() != Some(push.head.as_str()) {
+        return Err("Create the pull request only after the exact local HEAD has been pushed to its same-named topic branch.".into());
+    }
+    let base_commit = remote_branch_head(Path::new(&push.path), "main")?
+        .ok_or("The origin main branch is unavailable.")?;
+    let body_sha256 = format!("{:x}", Sha256::digest(body.as_bytes()));
+    let confirmation = format!(
+        "CREATE PR {} {} {}",
+        push.repository,
+        push.branch,
+        &push.head[..12]
+    );
+    Ok(MaintainerPullRequestReview {
+        repository: push.repository,
+        path: push.path,
+        branch: push.branch,
+        head: push.head,
+        base_branch: "main".into(),
+        base_commit,
+        title,
+        body_sha256,
+        confirmation,
+        message: "Pull-request creation reviewed for the exact pushed topic head and current origin/main base. This creates only a review request; it does not merge or publish a release.".into(),
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn review_maintainer_pull_request(
+    path: String,
+    repository: String,
+    title: String,
+    body: String,
+) -> Result<MaintainerPullRequestReview, String> {
+    tauri::async_runtime::spawn_blocking(move || review_pr_blocking(path, repository, title, body))
+        .await
+        .map_err(|error| format!("Maintainer pull-request review worker failed: {error}"))?
+}
+
+#[derive(Deserialize)]
+struct GithubPullRepository {
+    full_name: String,
+}
+
+#[derive(Deserialize)]
+struct GithubPullHead {
+    sha: String,
+}
+
+#[derive(Deserialize)]
+struct GithubPullBase {
+    #[serde(rename = "ref")]
+    branch: String,
+    sha: String,
+    repo: GithubPullRepository,
+}
+
+#[derive(Deserialize)]
+struct GithubPullRecord {
+    html_url: String,
+    title: String,
+    body: Option<String>,
+    head: GithubPullHead,
+    base: GithubPullBase,
+}
+
+pub(crate) fn pull_number_from_url(repository: &str, url: &str) -> Result<u64, String> {
+    let prefix = format!("https://github.com/{repository}/pull/");
+    let number = url
+        .strip_prefix(&prefix)
+        .ok_or("GitHub returned a pull-request URL outside the reviewed repository.")?;
+    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("GitHub returned a malformed pull-request number or URL.".into());
+    }
+    let number = number
+        .parse::<u64>()
+        .map_err(|_| "GitHub returned an invalid pull-request number.")?;
+    if number == 0 {
+        return Err("GitHub returned an invalid pull-request number.".into());
+    }
+    Ok(number)
+}
+
+pub(crate) fn verify_created_pull_request(
+    review: &MaintainerPullRequestReview,
+    url: &str,
+    response: &[u8],
+) -> Result<(), String> {
+    let number = pull_number_from_url(&review.repository, url)?;
+    let observed: GithubPullRecord = serde_json::from_slice(response)
+        .map_err(|error| format!("Could not decode the created pull-request identity: {error}"))?;
+    let body_sha256 = format!(
+        "{:x}",
+        Sha256::digest(observed.body.as_deref().unwrap_or("").as_bytes())
+    );
+    let expected_url = format!("https://github.com/{}/pull/{number}", review.repository);
+    if observed.html_url != expected_url
+        || !observed
+            .base
+            .repo
+            .full_name
+            .eq_ignore_ascii_case(&review.repository)
+        || !observed.head.sha.eq_ignore_ascii_case(&review.head)
+        || observed.base.branch != review.base_branch
+        || !observed.base.sha.eq_ignore_ascii_case(&review.base_commit)
+        || observed.title != review.title
+        || body_sha256 != review.body_sha256
+    {
+        return Err(format!(
+            "Created pull request {url}, but its authenticated identity did not match the review (repository={}, head={}, base={}@{}, title={:?}, bodySha256={}). It was not merged, closed, deleted, or otherwise modified.",
+            observed.base.repo.full_name,
+            observed.head.sha,
+            observed.base.branch,
+            observed.base.sha,
+            observed.title,
+            body_sha256
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn create_maintainer_pull_request(
+    request: MaintainerPullRequestRequest,
+) -> Result<MaintainerPullRequestResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let review = review_pr_blocking(
+            request.path,
+            request.repository,
+            request.title,
+            request.body.clone(),
+        )?;
+        if review.head != request.expected_head
+            || review.base_commit != request.expected_base_commit
+            || review.body_sha256 != request.expected_body_sha256
+        {
+            return Err(
+                "The pull-request head, base, or body changed after review. Review it again."
+                    .into(),
+            );
+        }
+        if request.confirmation != review.confirmation {
+            return Err("Fresh pull-request authorization did not exactly match the reviewed repository, branch, and HEAD.".into());
+        }
+        let arguments = [
+                "pr",
+                "create",
+                "--repo",
+                &review.repository,
+                "--base",
+                &review.base_branch,
+                "--head",
+                &review.branch,
+                "--title",
+                &review.title,
+                "--body",
+                &request.body,
+            ];
+        let (status, stdout, stderr) = bounded_command_output_with_limits(
+            Path::new("gh"),
+            &arguments,
+            "create the exact reviewed pull request",
+            Duration::from_secs(120),
+            1024 * 1024,
+        )?;
+        if !status.success() {
+            return Err(format!(
+                "GitHub refused pull-request creation: {}",
+                String::from_utf8_lossy(&stderr).trim()
+            ));
+        }
+        let url = String::from_utf8(stdout)
+            .map_err(|_| "GitHub returned a non-UTF-8 pull-request URL.")?
+            .trim()
+            .to_owned();
+        let number = pull_number_from_url(&review.repository, &url)?;
+        let endpoint = format!("repos/{}/pulls/{number}", review.repository);
+        let (verify_status, verify_stdout, verify_stderr) = bounded_command_output_with_limits(
+            Path::new("gh"),
+            &["api", "--method", "GET", &endpoint],
+            "verify the created pull-request identity",
+            Duration::from_secs(30),
+            1024 * 1024,
+        )?;
+        if !verify_status.success() {
+            return Err(format!(
+                "Created pull request {url}, but authenticated post-create verification failed: {}. It was not merged, closed, deleted, or otherwise modified.",
+                String::from_utf8_lossy(&verify_stderr).trim()
+            ));
+        }
+        verify_created_pull_request(&review, &url, &verify_stdout)?;
+        Ok(MaintainerPullRequestResult {
+            review,
+            url,
+            message: "Created the exact reviewed pull request. It was not merged and no release was published.".into(),
+        })
+    })
+    .await
+    .map_err(|error| format!("Maintainer pull-request worker failed: {error}"))?
+}
+
+fn review_rollback_blocking(
+    path: String,
+    repository: String,
+) -> Result<MaintainerRollbackReview, String> {
+    let worktree = inspect_maintainer_worktree_blocking(path, repository)?;
+    if worktree.changed_files != 0 {
+        return Err(
+            "Rollback requires a completely clean worktree, index, and untracked-file set.".into(),
+        );
+    }
+    let branch = worktree
+        .branch
+        .ok_or("Rollback requires a named branch; detached HEAD is not allowed.")?;
+    if branch == "main" {
+        return Err(
+            "Rollback from main is forbidden; create and review a topic branch first.".into(),
+        );
+    }
+    let parents = git_output(
+        Path::new(&worktree.path),
+        &["show", "-s", "--format=%P", &worktree.head],
+        "read the rollback parent",
+    )?;
+    let items = parents.split_whitespace().collect::<Vec<_>>();
+    if items.len() != 1 || !valid_git_commit(items[0]) {
+        return Err("Only a single-parent HEAD commit can be rolled back automatically.".into());
+    }
+    let subject = git_output(
+        Path::new(&worktree.path),
+        &["show", "-s", "--format=%s", &worktree.head],
+        "read the rollback subject",
+    )?;
+    let confirmation = format!("ROLL BACK {} {}", branch, &worktree.head[..12]);
+    Ok(MaintainerRollbackReview {
+        repository: worktree.repository,
+        path: worktree.path,
+        branch,
+        head: worktree.head,
+        parent: items[0].to_ascii_lowercase(),
+        subject,
+        confirmation,
+        message: "History-preserving inverse commit reviewed for the exact clean topic-branch HEAD. No reset, force push, deletion, remote mutation, or history rewrite is allowed.".into(),
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn review_maintainer_rollback(
+    path: String,
+    repository: String,
+) -> Result<MaintainerRollbackReview, String> {
+    tauri::async_runtime::spawn_blocking(move || review_rollback_blocking(path, repository))
+        .await
+        .map_err(|error| format!("Maintainer rollback-review worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn execute_maintainer_rollback(
+    path: String,
+    repository: String,
+    expected_head: String,
+    expected_parent: String,
+    confirmation: String,
+) -> Result<MaintainerRollbackResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let review = review_rollback_blocking(path, repository)?;
+        if review.head != expected_head || review.parent != expected_parent {
+            return Err("HEAD or its parent changed after review. Review the rollback again.".into());
+        }
+        if confirmation != review.confirmation {
+            return Err("Fresh rollback authorization did not exactly match the reviewed branch and HEAD.".into());
+        }
+        bounded_git_mutation(
+            Path::new("git"),
+            Path::new(&review.path),
+            &[
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgSign=false",
+                "revert",
+                "--no-edit",
+                &review.head,
+            ],
+            None,
+            Duration::from_secs(60),
+            1024 * 1024,
+            "create the reviewed history-preserving inverse commit",
+        )?;
+        let commit = git_output(
+            Path::new(&review.path),
+            &["rev-parse", "HEAD"],
+            "verify the rollback commit",
+        )?;
+        let tree = git_output(
+            Path::new(&review.path),
+            &["rev-parse", "HEAD^{tree}"],
+            "verify the rollback tree",
+        )?;
+        let parent_tree_spec = format!("{}^{{tree}}", review.parent);
+        let parent_tree = git_output(
+            Path::new(&review.path),
+            &["rev-parse", &parent_tree_spec],
+            "verify the prior tree",
+        )?;
+        if !valid_git_commit(&commit) || tree != parent_tree {
+            return Err("The inverse commit did not restore the exact reviewed parent tree. Inspect the worktree manually; no cleanup was attempted.".into());
+        }
+        Ok(MaintainerRollbackResult {
+            review,
+            commit,
+            remote_changed: false,
+            message: "Created a new history-preserving inverse commit for the exact reviewed HEAD. Nothing was pushed or deleted.".into(),
+        })
+    })
+    .await
+    .map_err(|error| format!("Maintainer rollback worker failed: {error}"))?
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MaintainerVersionReview {

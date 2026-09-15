@@ -134,6 +134,34 @@
                 <button id="create-local-commit" class="primary hidden" type="button">Create Exact Local Commit</button>
                 <p id="commit-message-status" class="message" aria-live="polite"></p>
             </div>
+            <div id="remote-review-panel" class="commit-panel hidden">
+                <h3>Reviewed GitHub delivery</h3>
+                <p class="section-copy">Each remote action is bound to the exact repository, topic branch, local HEAD, and observed remote identity. Type the displayed phrase immediately before execution.</p>
+                <button id="review-push" class="secondary" type="button">Review Exact Push</button>
+                <div id="push-review" class="notice hidden"></div>
+                <label for="push-confirmation"><span>Fresh push confirmation</span></label>
+                <input id="push-confirmation" class="hidden" type="text" autocomplete="off" spellcheck="false">
+                <button id="execute-push" class="primary hidden" type="button">Push Reviewed Topic Head</button>
+                <p id="push-status" class="message" aria-live="polite"></p>
+
+                <label for="pull-request-title"><span>Pull-request title</span></label>
+                <input id="pull-request-title" type="text" maxlength="120">
+                <label for="pull-request-body"><span>Pull-request body</span></label>
+                <textarea id="pull-request-body" rows="6" maxlength="16384"></textarea>
+                <button id="review-pull-request" class="secondary" type="button" disabled>Review Pull Request</button>
+                <div id="pull-request-review" class="notice hidden"></div>
+                <label for="pull-request-confirmation"><span>Fresh pull-request confirmation</span></label>
+                <input id="pull-request-confirmation" class="hidden" type="text" autocomplete="off" spellcheck="false">
+                <button id="create-pull-request" class="primary hidden" type="button">Create Reviewed Pull Request</button>
+                <p id="pull-request-status" class="message" aria-live="polite"></p>
+
+                <button id="review-rollback" class="secondary" type="button">Review History-Safe Rollback</button>
+                <div id="rollback-review" class="notice hidden"></div>
+                <label for="rollback-confirmation"><span>Fresh rollback confirmation</span></label>
+                <input id="rollback-confirmation" class="hidden" type="text" autocomplete="off" spellcheck="false">
+                <button id="execute-rollback" class="primary hidden" type="button">Create Reviewed Inverse Commit</button>
+                <p id="rollback-status" class="message" aria-live="polite"></p>
+            </div>
         </section>
 
         <section class="card plan-card">

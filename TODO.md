@@ -2331,6 +2331,26 @@ must be reported; a default-suite pass does not imply hardware certification.
 
 ## Release gates
 
+- [ ] Complete the explicitly authorized maintainer Git delivery controls without
+  granting merge or release-publication authority. The active bounded batch
+  reviews a clean named non-main topic branch against its exact repository,
+  local HEAD, and observed remote HEAD; permits only a normal same-name
+  fast-forward push after a freshly typed identity phrase; creates only an exact
+  reviewed pull request against the observed `origin/main`; and implements
+  rollback only as a new inverse commit for a reviewed single-parent HEAD.
+  Changed identities refuse and require a fresh review. Force push, tag/ref
+  deletion, main-branch push/rollback, reset, merge, release, and history rewrite
+  remain unavailable. The authenticated post-create check additionally accepts
+  only the reviewed repository's canonical PR URL and verifies its repository,
+  immutable head, base branch/commit, title, and body SHA-256; a race or wrong
+  result reports the created URL and observed identities without closing,
+  deleting, merging, or otherwise mutating it. Focused Rust validation and
+  remote-race cases (2/2) plus warnings-denied all-target Clippy pass through
+  `heavy.sh`; local frontend execution is pending
+  because this host has no Node runtime, so required CI must exercise the
+  frontend review/confirmation regression before merge. No real remote action or
+  release publication has occurred.
+
 - [ ] Connect the maintainer release-plan review to Core's schema-1 release
   session without granting publication authority. The bounded adapter pins
   canonical Core `f66c374cf224b8e01c723304ad8ee2d5354f69d4`, stages the exact

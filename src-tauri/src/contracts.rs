@@ -191,6 +191,84 @@ pub(crate) struct MaintainerCheckoutResult {
     pub(crate) message: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerPushReview {
+    pub(crate) repository: String,
+    pub(crate) path: String,
+    pub(crate) branch: String,
+    pub(crate) head: String,
+    pub(crate) remote_head: Option<String>,
+    pub(crate) confirmation: String,
+    pub(crate) message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerPushResult {
+    pub(crate) review: MaintainerPushReview,
+    pub(crate) remote_head: String,
+    pub(crate) message: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerPullRequestReview {
+    pub(crate) repository: String,
+    pub(crate) path: String,
+    pub(crate) branch: String,
+    pub(crate) head: String,
+    pub(crate) base_branch: String,
+    pub(crate) base_commit: String,
+    pub(crate) title: String,
+    pub(crate) body_sha256: String,
+    pub(crate) confirmation: String,
+    pub(crate) message: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerPullRequestRequest {
+    pub(crate) path: String,
+    pub(crate) repository: String,
+    pub(crate) title: String,
+    pub(crate) body: String,
+    pub(crate) expected_head: String,
+    pub(crate) expected_base_commit: String,
+    pub(crate) expected_body_sha256: String,
+    pub(crate) confirmation: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerPullRequestResult {
+    pub(crate) review: MaintainerPullRequestReview,
+    pub(crate) url: String,
+    pub(crate) message: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerRollbackReview {
+    pub(crate) repository: String,
+    pub(crate) path: String,
+    pub(crate) branch: String,
+    pub(crate) head: String,
+    pub(crate) parent: String,
+    pub(crate) subject: String,
+    pub(crate) confirmation: String,
+    pub(crate) message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintainerRollbackResult {
+    pub(crate) review: MaintainerRollbackReview,
+    pub(crate) commit: String,
+    pub(crate) remote_changed: bool,
+    pub(crate) message: String,
+}
+
 pub(crate) struct PinnedInstallerFile {
     pub(crate) path: &'static str,
     pub(crate) sha256: &'static str,

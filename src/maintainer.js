@@ -70,6 +70,15 @@ const elements = {
   versionPanel: $("#version-panel"), nextVersion: $("#next-version"),
   reviewVersion: $("#review-version"), versionPreview: $("#version-preview"),
   applyVersion: $("#apply-version"), versionStatus: $("#version-status"),
+  remotePanel: $("#remote-review-panel"), reviewPush: $("#review-push"),
+  pushReview: $("#push-review"), pushConfirmation: $("#push-confirmation"),
+  executePush: $("#execute-push"), pushStatus: $("#push-status"),
+  prTitle: $("#pull-request-title"), prBody: $("#pull-request-body"),
+  reviewPr: $("#review-pull-request"), prReview: $("#pull-request-review"),
+  prConfirmation: $("#pull-request-confirmation"), createPr: $("#create-pull-request"),
+  prStatus: $("#pull-request-status"), reviewRollback: $("#review-rollback"),
+  rollbackReview: $("#rollback-review"), rollbackConfirmation: $("#rollback-confirmation"),
+  executeRollback: $("#execute-rollback"), rollbackStatus: $("#rollback-status"),
 };
 
 let sources = [];
@@ -80,6 +89,9 @@ let localWorktree = null;
 let commitReview = null;
 let branchReview = null;
 let versionReview = null;
+let pushReview = null;
+let pullRequestReview = null;
+let rollbackReview = null;
 let workspaceGeneration = 0;
 const sourceRefreshGate = createLatestRequestGate();
 const planRequestGate = createLatestRequestGate();
@@ -93,6 +105,7 @@ const localCommitGate = createLatestRequestGate();
 const checkoutExecutionGate = createLatestRequestGate();
 const versionReviewGate = createLatestRequestGate();
 const versionApplyGate = createLatestRequestGate();
+const remoteActionGate = createLatestRequestGate();
 let preserveWorktreeSelectionRequest = false;
 
 installKeyboardBindings([
@@ -152,6 +165,7 @@ function resetPlan({ invalidateRequest = true } = {}) {
   checkoutExecutionGate.begin();
   versionReviewGate.begin();
   versionApplyGate.begin();
+  remoteActionGate.begin();
   workspaceGeneration += 1;
   plannedRepository = null;
   plannedSource = null;
@@ -159,6 +173,9 @@ function resetPlan({ invalidateRequest = true } = {}) {
   commitReview = null;
   branchReview = null;
   versionReview = null;
+  pushReview = null;
+  pullRequestReview = null;
+  rollbackReview = null;
   elements.planTitle.textContent = "No workspace prepared";
   elements.planStatus.textContent = "Idle";
   elements.planStatus.className = "status";
@@ -171,6 +188,7 @@ function resetPlan({ invalidateRequest = true } = {}) {
   elements.localCommitPanel.classList.add("hidden");
   elements.checkoutPanel.classList.add("hidden");
   elements.versionPanel.classList.add("hidden");
+  elements.remotePanel.classList.add("hidden");
 }
 
 function disableSourceControls(disabled) {
@@ -197,6 +215,10 @@ function setWorkspaceMutationPending(pending) {
   elements.reviewCheckout.disabled = pending || !elements.localBranch.value;
   elements.nextVersion.disabled = pending;
   elements.reviewVersion.disabled = pending || !localWorktree || !elements.nextVersion.value.trim();
+  elements.reviewPush.disabled = pending || !localWorktree;
+  elements.reviewPr.disabled = pending || !localWorktree
+    || !elements.prTitle.value.trim() || !elements.prBody.value.trim();
+  elements.reviewRollback.disabled = pending || !localWorktree;
   renderSelection();
 }
 
@@ -312,12 +334,16 @@ function renderWorktree(worktree) {
   checkoutExecutionGate.begin();
   versionReviewGate.begin();
   versionApplyGate.begin();
+  remoteActionGate.begin();
   if (!preserveWorktreeSelectionRequest) worktreeSelectionGate.begin();
   workspaceGeneration += 1;
   localWorktree = worktree;
   commitReview = null;
   branchReview = null;
   versionReview = null;
+  pushReview = null;
+  pullRequestReview = null;
+  rollbackReview = null;
   elements.worktreePath.textContent = worktree?.path || "—";
   elements.worktreePath.title = worktree?.path || "";
   elements.worktreeBranch.textContent = worktree?.branch || (worktree ? "Detached HEAD" : "—");
@@ -330,6 +356,12 @@ function renderWorktree(worktree) {
   const versionAllowed = Boolean(worktree && plannedSource?.component === "nvidia"
     && plannedSource?.origin === "project");
   elements.versionPanel.classList.toggle("hidden", !versionAllowed);
+  elements.remotePanel.classList.toggle("hidden", !worktree);
+  for (const element of [elements.pushReview, elements.pushConfirmation, elements.executePush,
+    elements.prReview, elements.prConfirmation, elements.createPr,
+    elements.rollbackReview, elements.rollbackConfirmation, elements.executeRollback]) {
+    element.classList.add("hidden");
+  }
   elements.reviewVersion.disabled = !versionAllowed || !elements.nextVersion.value.trim();
   elements.versionPreview.classList.add("hidden");
   elements.applyVersion.classList.add("hidden");
@@ -880,6 +912,177 @@ elements.executeCheckout.addEventListener("click", async () => {
       setWorkspaceMutationPending(false);
       elements.executeCheckout.disabled = false;
     }
+  }
+});
+
+function exactWorktreeContext() {
+  if (!localWorktree || !plannedRepository) return null;
+  return { generation: workspaceGeneration, path: localWorktree.path, repository: plannedRepository };
+}
+
+elements.reviewPush.addEventListener("click", async () => {
+  const context = exactWorktreeContext();
+  if (!context) return;
+  const requestGeneration = remoteActionGate.begin();
+  pushReview = null;
+  elements.pushStatus.textContent = "Reading the exact local and remote topic-branch identities…";
+  try {
+    const review = await invoke("review_maintainer_push", { path: context.path, repository: context.repository });
+    if (!remoteActionGate.isCurrent(requestGeneration) || !operationContextMatches(context, {
+      generation: workspaceGeneration, path: localWorktree?.path, repository: plannedRepository,
+    })) return;
+    pushReview = review;
+    elements.pushReview.textContent = `${review.message} Type: ${review.confirmation}`;
+    elements.pushReview.classList.remove("hidden");
+    elements.pushConfirmation.value = "";
+    elements.pushConfirmation.classList.remove("hidden");
+    elements.executePush.classList.remove("hidden");
+    elements.pushStatus.textContent = `Reviewed ${review.branch} at ${review.head.slice(0, 12)}; remote ${review.remoteHead?.slice(0, 12) || "does not exist"}.`;
+  } catch (error) {
+    if (!remoteActionGate.isCurrent(requestGeneration)) return;
+    elements.pushStatus.textContent = String(error);
+    elements.pushStatus.className = "message error";
+  }
+});
+
+elements.executePush.addEventListener("click", async () => {
+  const context = exactWorktreeContext();
+  if (!context || !pushReview) return;
+  const review = pushReview;
+  const requestGeneration = remoteActionGate.begin();
+  setWorkspaceMutationPending(true);
+  try {
+    const result = await invoke("execute_maintainer_push", {
+      path: context.path, repository: context.repository, expectedHead: review.head,
+      expectedRemoteHead: review.remoteHead, confirmation: elements.pushConfirmation.value,
+    });
+    if (!remoteActionGate.isCurrent(requestGeneration)) return;
+    elements.pushStatus.textContent = `${result.message} Remote HEAD ${result.remoteHead}.`;
+    pushReview = null;
+    elements.pushConfirmation.classList.add("hidden");
+    elements.executePush.classList.add("hidden");
+  } catch (error) {
+    if (!remoteActionGate.isCurrent(requestGeneration)) return;
+    pushReview = null;
+    elements.pushStatus.textContent = String(error);
+    elements.pushStatus.className = "message error";
+  } finally {
+    if (remoteActionGate.isCurrent(requestGeneration)) setWorkspaceMutationPending(false);
+  }
+});
+
+for (const element of [elements.prTitle, elements.prBody]) {
+  element.addEventListener("input", () => {
+    remoteActionGate.begin();
+    pullRequestReview = null;
+    elements.reviewPr.disabled = !localWorktree || !elements.prTitle.value.trim() || !elements.prBody.value.trim();
+    elements.prReview.classList.add("hidden");
+    elements.prConfirmation.classList.add("hidden");
+    elements.createPr.classList.add("hidden");
+  });
+}
+
+elements.reviewPr.addEventListener("click", async () => {
+  const context = exactWorktreeContext();
+  if (!context) return;
+  const title = elements.prTitle.value;
+  const body = elements.prBody.value;
+  const requestGeneration = remoteActionGate.begin();
+  try {
+    const review = await invoke("review_maintainer_pull_request", {
+      path: context.path, repository: context.repository, title, body,
+    });
+    if (!remoteActionGate.isCurrent(requestGeneration) || title !== elements.prTitle.value
+      || body !== elements.prBody.value) return;
+    pullRequestReview = review;
+    elements.prReview.textContent = `${review.message} Base ${review.baseBranch} at ${review.baseCommit}. Type: ${review.confirmation}`;
+    elements.prReview.classList.remove("hidden");
+    elements.prConfirmation.value = "";
+    elements.prConfirmation.classList.remove("hidden");
+    elements.createPr.classList.remove("hidden");
+    elements.prStatus.textContent = `Reviewed ${review.branch} at ${review.head.slice(0, 12)}.`;
+  } catch (error) {
+    if (!remoteActionGate.isCurrent(requestGeneration)) return;
+    pullRequestReview = null;
+    elements.prStatus.textContent = String(error);
+    elements.prStatus.className = "message error";
+  }
+});
+
+elements.createPr.addEventListener("click", async () => {
+  const context = exactWorktreeContext();
+  if (!context || !pullRequestReview) return;
+  const review = pullRequestReview;
+  const requestGeneration = remoteActionGate.begin();
+  setWorkspaceMutationPending(true);
+  try {
+    const result = await invoke("create_maintainer_pull_request", { request: {
+      path: context.path, repository: context.repository, title: elements.prTitle.value,
+      body: elements.prBody.value, expectedHead: review.head,
+      expectedBaseCommit: review.baseCommit, expectedBodySha256: review.bodySha256,
+      confirmation: elements.prConfirmation.value,
+    } });
+    if (!remoteActionGate.isCurrent(requestGeneration)) return;
+    elements.prStatus.textContent = `${result.message} ${result.url}`;
+    pullRequestReview = null;
+    elements.prConfirmation.classList.add("hidden");
+    elements.createPr.classList.add("hidden");
+  } catch (error) {
+    if (!remoteActionGate.isCurrent(requestGeneration)) return;
+    pullRequestReview = null;
+    elements.prStatus.textContent = String(error);
+    elements.prStatus.className = "message error";
+  } finally {
+    if (remoteActionGate.isCurrent(requestGeneration)) setWorkspaceMutationPending(false);
+  }
+});
+
+elements.reviewRollback.addEventListener("click", async () => {
+  const context = exactWorktreeContext();
+  if (!context) return;
+  const requestGeneration = remoteActionGate.begin();
+  try {
+    const review = await invoke("review_maintainer_rollback", { path: context.path, repository: context.repository });
+    if (!remoteActionGate.isCurrent(requestGeneration)) return;
+    rollbackReview = review;
+    elements.rollbackReview.textContent = `${review.message} Revert “${review.subject}” at ${review.head}. Type: ${review.confirmation}`;
+    elements.rollbackReview.classList.remove("hidden");
+    elements.rollbackConfirmation.value = "";
+    elements.rollbackConfirmation.classList.remove("hidden");
+    elements.executeRollback.classList.remove("hidden");
+    elements.rollbackStatus.textContent = "Nothing has changed locally or remotely.";
+  } catch (error) {
+    if (!remoteActionGate.isCurrent(requestGeneration)) return;
+    rollbackReview = null;
+    elements.rollbackStatus.textContent = String(error);
+    elements.rollbackStatus.className = "message error";
+  }
+});
+
+elements.executeRollback.addEventListener("click", async () => {
+  const context = exactWorktreeContext();
+  if (!context || !rollbackReview) return;
+  const review = rollbackReview;
+  const requestGeneration = remoteActionGate.begin();
+  setWorkspaceMutationPending(true);
+  try {
+    const result = await invoke("execute_maintainer_rollback", {
+      path: context.path, repository: context.repository, expectedHead: review.head,
+      expectedParent: review.parent, confirmation: elements.rollbackConfirmation.value,
+    });
+    if (!remoteActionGate.isCurrent(requestGeneration)) return;
+    const refreshed = await invoke("inspect_maintainer_worktree", { path: context.path, repository: context.repository });
+    if (!remoteActionGate.isCurrent(requestGeneration)) return;
+    setWorkspaceMutationPending(false);
+    renderWorktree(refreshed);
+    elements.rollbackStatus.textContent = `${result.message} New commit ${result.commit}.`;
+  } catch (error) {
+    if (!remoteActionGate.isCurrent(requestGeneration)) return;
+    rollbackReview = null;
+    elements.rollbackStatus.textContent = String(error);
+    elements.rollbackStatus.className = "message error";
+  } finally {
+    if (remoteActionGate.isCurrent(requestGeneration)) setWorkspaceMutationPending(false);
   }
 });
 
