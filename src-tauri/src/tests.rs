@@ -1654,6 +1654,62 @@ mod tests {
     }
 
     #[test]
+    fn created_pull_request_must_match_the_exact_reviewed_remote_identity() {
+        let review = MaintainerPullRequestReview {
+            repository: "CorniiDog/OPEMOS.EXE".into(),
+            path: "/reviewed/worktree".into(),
+            branch: "work/exact-delivery".into(),
+            head: "a".repeat(40),
+            base_branch: "main".into(),
+            base_commit: "b".repeat(40),
+            title: "Add exact delivery".into(),
+            body_sha256: format!("{:x}", Sha256::digest(b"Reviewed body")),
+            confirmation: "CREATE PR CorniiDog/OPEMOS.EXE work/exact-delivery aaaaaaaaaaaa"
+                .into(),
+            message: "reviewed".into(),
+        };
+        let exact = serde_json::json!({
+            "html_url": "https://github.com/CorniiDog/OPEMOS.EXE/pull/123",
+            "title": "Add exact delivery",
+            "body": "Reviewed body",
+            "head": { "sha": "a".repeat(40) },
+            "base": {
+                "ref": "main",
+                "sha": "b".repeat(40),
+                "repo": { "full_name": "CorniiDog/OPEMOS.EXE" }
+            }
+        });
+        assert!(verify_created_pull_request(
+            &review,
+            "https://github.com/CorniiDog/OPEMOS.EXE/pull/123",
+            exact.to_string().as_bytes(),
+        )
+        .is_ok());
+
+        let mut raced = exact;
+        raced["base"]["sha"] = serde_json::Value::String("c".repeat(40));
+        let error = verify_created_pull_request(
+            &review,
+            "https://github.com/CorniiDog/OPEMOS.EXE/pull/123",
+            raced.to_string().as_bytes(),
+        )
+        .unwrap_err();
+        assert!(error.contains("Created pull request https://github.com/CorniiDog/OPEMOS.EXE/pull/123"));
+        assert!(error.contains(&format!("base=main@{}", "c".repeat(40))));
+        assert!(error.contains("not merged, closed, deleted"));
+        assert!(pull_number_from_url(
+            "CorniiDog/OPEMOS.EXE",
+            "https://github.com/SomeoneElse/OPEMOS.EXE/pull/123"
+        )
+        .is_err());
+        assert!(pull_number_from_url(
+            "CorniiDog/OPEMOS.EXE",
+            "https://github.com/CorniiDog/OPEMOS.EXE/pull/123/files"
+        )
+        .is_err());
+    }
+
+    #[test]
     fn maintainer_checkout_accepts_only_safe_local_branch_names() {
         assert!(valid_local_branch_name("main"));
         assert!(valid_local_branch_name("feature/local-context"));

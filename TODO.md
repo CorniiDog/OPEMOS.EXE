@@ -2340,8 +2340,13 @@ must be reported; a default-suite pass does not imply hardware certification.
   rollback only as a new inverse commit for a reviewed single-parent HEAD.
   Changed identities refuse and require a fresh review. Force push, tag/ref
   deletion, main-branch push/rollback, reset, merge, release, and history rewrite
-  remain unavailable. Focused Rust input validation and warnings-denied
-  all-target Clippy pass through `heavy.sh`; local frontend execution is pending
+  remain unavailable. The authenticated post-create check additionally accepts
+  only the reviewed repository's canonical PR URL and verifies its repository,
+  immutable head, base branch/commit, title, and body SHA-256; a race or wrong
+  result reports the created URL and observed identities without closing,
+  deleting, merging, or otherwise mutating it. Focused Rust validation and
+  remote-race cases (2/2) plus warnings-denied all-target Clippy pass through
+  `heavy.sh`; local frontend execution is pending
   because this host has no Node runtime, so required CI must exercise the
   frontend review/confirmation regression before merge. No real remote action or
   release publication has occurred.

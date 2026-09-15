@@ -2034,6 +2034,88 @@ pub(crate) async fn review_maintainer_pull_request(
         .map_err(|error| format!("Maintainer pull-request review worker failed: {error}"))?
 }
 
+#[derive(Deserialize)]
+struct GithubPullRepository {
+    full_name: String,
+}
+
+#[derive(Deserialize)]
+struct GithubPullHead {
+    sha: String,
+}
+
+#[derive(Deserialize)]
+struct GithubPullBase {
+    #[serde(rename = "ref")]
+    branch: String,
+    sha: String,
+    repo: GithubPullRepository,
+}
+
+#[derive(Deserialize)]
+struct GithubPullRecord {
+    html_url: String,
+    title: String,
+    body: Option<String>,
+    head: GithubPullHead,
+    base: GithubPullBase,
+}
+
+pub(crate) fn pull_number_from_url(repository: &str, url: &str) -> Result<u64, String> {
+    let prefix = format!("https://github.com/{repository}/pull/");
+    let number = url
+        .strip_prefix(&prefix)
+        .ok_or("GitHub returned a pull-request URL outside the reviewed repository.")?;
+    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("GitHub returned a malformed pull-request number or URL.".into());
+    }
+    let number = number
+        .parse::<u64>()
+        .map_err(|_| "GitHub returned an invalid pull-request number.")?;
+    if number == 0 {
+        return Err("GitHub returned an invalid pull-request number.".into());
+    }
+    Ok(number)
+}
+
+pub(crate) fn verify_created_pull_request(
+    review: &MaintainerPullRequestReview,
+    url: &str,
+    response: &[u8],
+) -> Result<(), String> {
+    let number = pull_number_from_url(&review.repository, url)?;
+    let observed: GithubPullRecord = serde_json::from_slice(response)
+        .map_err(|error| format!("Could not decode the created pull-request identity: {error}"))?;
+    let body_sha256 = format!(
+        "{:x}",
+        Sha256::digest(observed.body.as_deref().unwrap_or("").as_bytes())
+    );
+    let expected_url = format!("https://github.com/{}/pull/{number}", review.repository);
+    if observed.html_url != expected_url
+        || !observed
+            .base
+            .repo
+            .full_name
+            .eq_ignore_ascii_case(&review.repository)
+        || !observed.head.sha.eq_ignore_ascii_case(&review.head)
+        || observed.base.branch != review.base_branch
+        || !observed.base.sha.eq_ignore_ascii_case(&review.base_commit)
+        || observed.title != review.title
+        || body_sha256 != review.body_sha256
+    {
+        return Err(format!(
+            "Created pull request {url}, but its authenticated identity did not match the review (repository={}, head={}, base={}@{}, title={:?}, bodySha256={}). It was not merged, closed, deleted, or otherwise modified.",
+            observed.base.repo.full_name,
+            observed.head.sha,
+            observed.base.branch,
+            observed.base.sha,
+            observed.title,
+            body_sha256
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) async fn create_maintainer_pull_request(
     request: MaintainerPullRequestRequest,
@@ -2088,9 +2170,22 @@ pub(crate) async fn create_maintainer_pull_request(
             .map_err(|_| "GitHub returned a non-UTF-8 pull-request URL.")?
             .trim()
             .to_owned();
-        if !(url.starts_with("https://github.com/") && url.contains("/pull/")) {
-            return Err("GitHub did not return a recognized pull-request URL.".into());
+        let number = pull_number_from_url(&review.repository, &url)?;
+        let endpoint = format!("repos/{}/pulls/{number}", review.repository);
+        let (verify_status, verify_stdout, verify_stderr) = bounded_command_output_with_limits(
+            Path::new("gh"),
+            &["api", "--method", "GET", &endpoint],
+            "verify the created pull-request identity",
+            Duration::from_secs(30),
+            1024 * 1024,
+        )?;
+        if !verify_status.success() {
+            return Err(format!(
+                "Created pull request {url}, but authenticated post-create verification failed: {}. It was not merged, closed, deleted, or otherwise modified.",
+                String::from_utf8_lossy(&verify_stderr).trim()
+            ));
         }
+        verify_created_pull_request(&review, &url, &verify_stdout)?;
         Ok(MaintainerPullRequestResult {
             review,
             url,

@@ -202,6 +202,7 @@ test("maintainer remote delivery requires exact reviews and fresh typed confirma
   assert.match(backend, /"push", "--porcelain", "origin", &refspec/);
   assert.match(backend, /Fresh push authorization[\s\S]*?Fresh pull-request authorization/);
   assert.match(backend, /"pr",[\s\S]*?"create",[\s\S]*?"--base",[\s\S]*?"--head"/);
+  assert.match(backend, /pull_number_from_url\(&review\.repository, &url\)[\s\S]*?"api", "--method", "GET"[\s\S]*?verify_created_pull_request\(&review, &url, &verify_stdout\)/);
   assert.match(backend, /Only a single-parent HEAD commit can be rolled back automatically/);
   assert.match(backend, /"revert",[\s\S]*?"--no-edit"[\s\S]*?Nothing was pushed or deleted/);
 });
