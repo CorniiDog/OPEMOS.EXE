@@ -2384,6 +2384,32 @@ must be reported; a default-suite pass does not imply hardware certification.
   closed cleanly, and left zero new QEMU processes. Pull-request checks and
   Core review remain pending; no product release or beta publication occurred.
 
+- [ ] Make the immutable Core publisher executable from the bundled Windows
+  maintainer runtime without modifying Core-owned bytes or weakening its
+  validation. Exact native proof with EXE SHA-256
+  `5ea0f696e24a1a02cbc41222157fd0e4da2d0a47bfd9f2ab8f03c9e4d000ddf1`
+  and authenticated r2 archive
+  `cc4b30e5ba65dd61b1c0cf8089531f6393fae1372025af5fe96697b9d6937c3b`
+  reached the pinned publisher and failed first because Windows bundles
+  `python.exe` while Core invokes `python3`. The bounded Windows-only command
+  adapter now defines `python3` as the already resolved bundled `python` only
+  inside the Bash process that sources the exact immutable publisher; Unix
+  execution and publisher bytes remain unchanged. Host formatting, focused
+  library compilation, and warnings-denied all-target Clippy pass through the
+  shared heavy wrapper. The same native dry-run then advanced to Core's next
+  exact dependency and failed because `validate_publish_inputs.py` invokes an
+  unavailable external `zstd`; a concrete Core-owned dependency request is
+  recorded. Native Windows runs `35005730804`, `35006747321`, and `35007612060`
+  all exited the temporary publisher process before its marker with empty stderr,
+  even after removing the Python invocation, isolating the instability to running
+  a temporary Windows path through CI Git Bash. The contained guest proof
+  independently showed the bridge reaching bundled Python and advancing to
+  `zstd`. The focused Windows regression now verifies the exact constructed Bash
+  command, injected function, delegation body, publisher position, and four
+  closed-world input flags without executing an ambient runner tool. Changed-head native Windows regression execution,
+  exact Windows build/startup, Core counterpart review, and the resumed
+  create-only proof remain pending.
+
 ### Alpha
 
 - [ ] One fresh official image builds, writes to USB, installs to the intended

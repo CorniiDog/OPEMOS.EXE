@@ -7690,4 +7690,29 @@ trap - EXIT"#,
             .is_some());
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_core_publisher_bridges_bundled_python_to_python3() {
+        let publisher = Path::new("publisher.sh");
+        let dummy = Path::new("unused-input");
+        let command = support_publisher_command(publisher, dummy, dummy, dummy, dummy);
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(command.get_program(), "bash");
+        assert_eq!(arguments[0], "-c");
+        assert_eq!(
+            arguments[1],
+            "python3() { command python \"$@\"; }; source \"$1\" \"${@:2}\""
+        );
+        assert_eq!(arguments[2], "opemos-core-publisher");
+        assert_eq!(arguments[3], "publisher.sh");
+        assert_eq!(arguments[4], "--archive");
+        assert_eq!(arguments[6], "--checksum");
+        assert_eq!(arguments[8], "--build-info");
+        assert_eq!(arguments[10], "--provenance");
+    }
+
 }

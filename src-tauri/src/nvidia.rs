@@ -4503,6 +4503,12 @@ pub(crate) fn support_publisher_command(
     provenance: &Path,
 ) -> Command {
     let mut command = Command::new("bash");
+    #[cfg(windows)]
+    command.args([
+        "-c",
+        "python3() { command python \"$@\"; }; source \"$1\" \"${@:2}\"",
+        "opemos-core-publisher",
+    ]);
     command
         .arg(publisher)
         .arg("--archive")
