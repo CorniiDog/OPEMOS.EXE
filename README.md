@@ -155,7 +155,7 @@ only through that verified bundle and do not fall back to the host `PATH`.
 ```
 
 ```powershell
-pwsh -File .\bundle_windows.ps1 -RuntimeRoot C:\absolute\path\to\windows-runtime
+pwsh -File .\bundle_windows.ps1 -RuntimeRoot C:\absolute\path\to\windows-runtime -CoreRoot C:\absolute\path\to\opemos-core
 ```
 
 The outputs are `dist/linux`, `dist/macos`, and `dist/windows`. Run compilation

@@ -12,7 +12,7 @@ import tempfile
 
 
 REQUIRED = {
-    "windows": {"git", "python", "qemu-img", "qemu-system-x86_64", "mkisofs", "ssh", "scp", "ssh-keygen", "gh", "bash", "tar"},
+    "windows": {"git", "python", "qemu-img", "qemu-system-x86_64", "mkisofs", "ssh", "scp", "ssh-keygen", "gh", "bash", "tar", "zstd"},
     "linux": {"git", "python3", "qemu-img", "qemu-system-x86_64", "genisoimage", "ssh", "scp", "ssh-keygen", "gh", "bash", "tar"},
     "macos": {"git", "python3", "qemu-img", "qemu-system-aarch64", "ssh", "scp", "ssh-keygen", "gh", "bash", "tar"},
 }

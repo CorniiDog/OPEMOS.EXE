@@ -321,6 +321,7 @@ mod tests {
                 "ssh",
                 "ssh-keygen",
                 "tar",
+                "zstd",
             ]
         } else if cfg!(target_os = "macos") {
             &[

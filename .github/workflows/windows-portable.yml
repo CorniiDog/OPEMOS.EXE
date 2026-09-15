@@ -13,7 +13,7 @@ concurrency:
 
 env:
   OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-  OPEMOS_CORE_COMMIT: f66c374cf224b8e01c723304ad8ee2d5354f69d4
+  OPEMOS_CORE_COMMIT: f6871104ea83d8afa620b133b362a0578ff4a6a8
   RUST_TOOLCHAIN: 1.98.1
   NODE_VERSION: 22.23.2
   RUSTFLAGS: -C target-feature=+crt-static
@@ -45,7 +45,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: CorniiDog/OPEMOS
-          ref: f66c374cf224b8e01c723304ad8ee2d5354f69d4
+          ref: f6871104ea83d8afa620b133b362a0578ff4a6a8
           path: opemos-core-contracts
           fetch-depth: 1
           persist-credentials: false
@@ -83,11 +83,16 @@ jobs:
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
 
+      - name: Verify exact Core zstd runtime consumption
+        run: python -m unittest tests.runtime_bundle_packaging.RuntimeBundlePackagingTests.test_windows_runtime_adds_exact_core_zstd_dependency
+        env:
+          OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
+
       - name: Compile locked Rust tests and run Windows cases
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib windows_
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
-          OPEMOS_CORE_EXPECTED_COMMIT: f66c374cf224b8e01c723304ad8ee2d5354f69d4
+          OPEMOS_CORE_EXPECTED_COMMIT: f6871104ea83d8afa620b133b362a0578ff4a6a8
           RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\scripts\windows-test-v6.manifest
 
       - name: Build unsigned portable executable
