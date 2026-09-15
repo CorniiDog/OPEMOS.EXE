@@ -7690,4 +7690,35 @@ trap - EXIT"#,
             .is_some());
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_core_publisher_bridges_bundled_python_to_python3() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-python3-publisher-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("create publisher fixture directory");
+        let publisher = root.join("publisher.sh");
+        fs::write(
+            &publisher,
+            "#!/usr/bin/env bash\nset -euo pipefail\npython3 -c 'print(\"bridge-ok\")'\n",
+        )
+        .expect("write publisher fixture");
+        let dummy = root.join("unused-input");
+        let output = support_publisher_command(&publisher, &dummy, &dummy, &dummy, &dummy)
+            .output()
+            .expect("run publisher through the Windows adapter");
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"bridge-ok\n");
+    }
+
 }
