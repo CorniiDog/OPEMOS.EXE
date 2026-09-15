@@ -921,6 +921,9 @@ pub(crate) fn find_binary_in_paths(
 }
 
 pub(crate) fn find_binary(binary: &str) -> Option<PathBuf> {
+    if bundled_runtime_required() {
+        return bundled_runtime_binary(binary);
+    }
     let extensions: Vec<String> = if cfg!(windows) {
         std::env::var("PATHEXT")
             .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())

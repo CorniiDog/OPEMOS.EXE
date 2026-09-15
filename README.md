@@ -141,6 +141,30 @@ is currently unsigned. Physical USB writing remains unavailable; only an
 exactly owned 32 GiB virtual USB may be used by the separately gated harness,
 and short tests are never end-to-end evidence.
 
+## Build self-contained runtime bundles
+
+Each platform entry point accepts one already assembled, platform-native
+runtime directory whose closed `runtime-manifest.json` records every command,
+file SHA-256, byte size, component version, and license file. The manifest hash
+is compiled into the application; packaged builds resolve required commands
+only through that verified bundle and do not fall back to the host `PATH`.
+
+```bash
+./bundle_linux.sh --runtime-root /absolute/path/to/linux-runtime
+./bundle_macos.sh --runtime-root /absolute/path/to/macos-runtime
+```
+
+```powershell
+pwsh -File .\bundle_windows.ps1 -RuntimeRoot C:\absolute\path\to\windows-runtime
+```
+
+The outputs are `dist/linux`, `dist/macos`, and `dist/windows`. Run compilation
+and packaging through the repository's authorized heavy-work wrapper. These
+commands create local unsigned artifacts only; they do not sign, upload,
+publish, install, or access a device. macOS layout and identity can be checked
+off-platform, but native Apple-silicon package execution remains a separate
+future Mac validation.
+
 ## Repository boundaries
 
 The authoritative cross-project ownership contract is

@@ -82,6 +82,7 @@ mod nvidia;
 #[cfg(unix)]
 #[allow(dead_code)]
 mod output_transaction;
+mod runtime_bundle;
 mod settings;
 mod windows;
 #[cfg(windows)]
@@ -96,6 +97,8 @@ use image::*;
 use installer::*;
 use maintainer_release::*;
 use nvidia::*;
+pub use runtime_bundle::activate_runtime_bundle;
+use runtime_bundle::{bundled_runtime_binary, bundled_runtime_required};
 use settings::*;
 
 pub fn run_core_driver_resolver(arguments: &[String]) -> Result<Option<String>, String> {
