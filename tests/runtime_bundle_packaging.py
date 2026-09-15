@@ -1,9 +1,12 @@
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
+from scripts.acquire_runtime_linux import PAYLOAD_MERGES, acquire_archive, construct, copy_payload_tree, current_lock_matches, extracted_file, load_lock, write_ca_bundle, write_wrapper
 from scripts.stage_runtime_bundle import REQUIRED, stage
 
 
@@ -93,6 +96,164 @@ class RuntimeBundlePackagingTests(unittest.TestCase):
         for text, platform in ((linux, "linux"), (macos, "macos"), (windows, "windows")):
             self.assertIn(f"--platform {platform}", text)
             self.assertIn("OPEMOS_RUNTIME_MANIFEST_SHA256", text)
+
+    def test_linux_entry_acquires_pinned_runtime_by_default(self):
+        repository = Path(__file__).resolve().parent.parent
+        linux = (repository / "bundle_linux.sh").read_text()
+        self.assertIn("scripts/acquire_runtime_linux.py", linux)
+        self.assertIn("build/runtime/linux", linux)
+        lock = load_lock(repository / "runtime/linux-ubuntu-24.04-amd64.sources.json")
+        self.assertEqual(len(lock["archives"]), 78)
+        self.assertIn(("usr/share/seabios", "usr/share/qemu"), PAYLOAD_MERGES)
+        self.assertIn(("usr/lib/ipxe/qemu", "usr/share/qemu"), PAYLOAD_MERGES)
+
+    def test_linux_archive_cache_reuses_exact_and_replaces_tamper_without_partial_file(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        cache = Path(temporary.name)
+        payload = b"pinned archive"
+        item = {"package": "fixture", "version": "1", "file": "fixture_1_amd64.deb", "size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
+        target = cache / item["file"]
+        target.write_bytes(payload)
+        runner = mock.Mock()
+        self.assertEqual(acquire_archive(item, cache, runner), target)
+        runner.assert_not_called()
+        target.write_bytes(b"tampered")
+
+        def download(_args, cwd, check):
+            self.assertTrue(check)
+            self.assertFalse(target.exists())
+            Path(cwd, item["file"]).write_bytes(payload)
+
+        acquire_archive(item, cache, mock.Mock(side_effect=download))
+        self.assertEqual(target.read_bytes(), payload)
+        target.write_bytes(b"tampered again")
+        with self.assertRaisesRegex(SystemExit, "identity mismatch"):
+            acquire_archive(item, cache, mock.Mock(return_value=None))
+        self.assertFalse(target.exists())
+
+    def test_selected_runtime_bytes_come_from_archive_extraction_not_host(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        extracted = root / "extract/usr/bin/tool"
+        host = root / "host/tool"
+        extracted.parent.mkdir(parents=True)
+        host.parent.mkdir()
+        extracted.write_bytes(b"authenticated archive bytes")
+        host.write_bytes(b"modified host bytes")
+        self.assertEqual(extracted_file(extracted, root / "extract").read_bytes(), b"authenticated archive bytes")
+
+    def test_wrappers_resolve_python_git_and_qemu_data_inside_runtime(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "bin").mkdir()
+        (root / "programs").mkdir()
+        for name in ("python3", "git", "qemu-system-x86_64"):
+            path = root / "bin" / name
+            write_wrapper(path, name)
+            text = path.read_text()
+            self.assertIn('"$root/programs/', text)
+            self.assertNotIn("dirname", text)
+            self.assertNotIn('="/usr/', text)
+            self.assertNotIn(' -L "/usr/', text)
+            self.assertIn('SSL_CERT_FILE="$root/payload/etc/ssl/certs/ca-certificates.crt"', text)
+            self.assertIn('SSL_CERT_DIR="$root/payload/etc/ssl/certs-empty"', text)
+            program = root / "programs" / name
+            program.write_text("#!/bin/sh\nprintf '%s\\n' \"${PYTHONHOME-}\" \"${GIT_EXEC_PATH-}\" \"${GIT_TEMPLATE_DIR-}\" \"${SSL_CERT_FILE-}\" \"${SSL_CERT_DIR-}\" \"${GIT_SSL_CAINFO-}\" \"$*\"\n")
+            program.chmod(0o755)
+        self.assertIn("PYTHONHOME", (root / "bin/python3").read_text())
+        self.assertIn("PYTHONDONTWRITEBYTECODE=1", (root / "bin/python3").read_text())
+        self.assertIn("GIT_EXEC_PATH", (root / "bin/git").read_text())
+        self.assertIn("GIT_SSL_CAINFO", (root / "bin/git").read_text())
+        self.assertIn('-L "$root/payload/usr/share/qemu"', (root / "bin/qemu-system-x86_64").read_text())
+        environment = {
+            "PATH": "/host-data-unavailable",
+            "SSL_CERT_FILE": "/host-ca-unavailable",
+            "SSL_CERT_DIR": "/host-ca-unavailable",
+            "GIT_SSL_CAINFO": "/host-ca-unavailable",
+        }
+        python = subprocess.run([root / "bin/python3"], env=environment, check=True, capture_output=True, text=True).stdout
+        git = subprocess.run([root / "bin/git"], env=environment, check=True, capture_output=True, text=True).stdout
+        qemu = subprocess.run([root / "bin/qemu-system-x86_64", "-machine", "none"], env=environment, check=True, capture_output=True, text=True).stdout
+        self.assertIn(str(root / "payload/usr"), python)
+        self.assertIn(str(root / "payload/usr/lib/git-core"), git)
+        self.assertIn(str(root / "payload/usr/share/git-core/templates"), git)
+        for output in (python, git, qemu):
+            values = output.splitlines()
+            self.assertEqual(values[3], str(root / "payload/etc/ssl/certs/ca-certificates.crt"))
+            self.assertEqual(values[4], str(root / "payload/etc/ssl/certs-empty"))
+        self.assertEqual(git.splitlines()[5], str(root / "payload/etc/ssl/certs/ca-certificates.crt"))
+        self.assertIn(f"-L {root / 'payload/usr/share/qemu'} -machine none", qemu)
+
+    def test_ca_bundle_uses_only_sorted_verified_archive_certificates(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        certificates = root / "extract/usr/share/ca-certificates/mozilla"
+        certificates.mkdir(parents=True)
+        (certificates / "z.crt").write_bytes(b"Z")
+        (certificates / "a.crt").write_bytes(b"A\n")
+        payload = root / "payload"
+        write_ca_bundle(root / "extract", payload)
+        self.assertEqual((payload / "etc/ssl/certs/ca-certificates.crt").read_bytes(), b"A\nZ\n")
+        self.assertTrue((payload / "etc/ssl/certs-empty").is_dir())
+
+    def test_payload_copy_omits_empty_archive_markers(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        source = root / "extract/data"
+        source.mkdir(parents=True)
+        (source / "empty.py").write_bytes(b"")
+        (source / "module.py").write_bytes(b"import json\n")
+        destination = root / "runtime"
+        copy_payload_tree(source, destination, root / "extract")
+        self.assertFalse((destination / "empty.py").exists())
+        self.assertEqual((destination / "module.py").read_bytes(), b"import json\n")
+
+    def test_existing_runtime_reuse_is_bound_to_current_source_lock(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        lock = {"schema_version": 1, "distribution": "Ubuntu 24.04", "archives": []}
+        (root / "source-provenance.json").write_text(json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n")
+        self.assertTrue(current_lock_matches(root, lock))
+        changed = dict(lock, distribution="Ubuntu 24.04 changed")
+        self.assertFalse(current_lock_matches(root, changed))
+
+    @mock.patch("scripts.acquire_runtime_linux.load_lock")
+    @mock.patch("scripts.acquire_runtime_linux.platform.machine", return_value="x86_64")
+    @mock.patch("scripts.acquire_runtime_linux.platform.system", return_value="Linux")
+    def test_construct_rejects_valid_but_stale_existing_runtime(self, _system, _machine, load):
+        temporary, root, runtime, _application = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        provenance = runtime / "source-provenance.json"
+        provenance.write_text('{"lock":"old"}\n')
+        manifest_path = runtime / "runtime-manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["files"].append({"path": provenance.name, "size": provenance.stat().st_size, "sha256": hashlib.sha256(provenance.read_bytes()).hexdigest()})
+        manifest_path.write_text(json.dumps(manifest, separators=(",", ":")))
+        load.return_value = {"schema_version": 1, "distribution": "Ubuntu 24.04", "archives": []}
+        with self.assertRaisesRegex(SystemExit, "does not match the current source lock"):
+            construct(runtime, root / "cache", root / "lock.json")
+
+    @mock.patch("scripts.acquire_runtime_linux.acquire_archive")
+    @mock.patch("scripts.acquire_runtime_linux.load_lock")
+    @mock.patch("scripts.acquire_runtime_linux.platform.machine", return_value="x86_64")
+    @mock.patch("scripts.acquire_runtime_linux.platform.system", return_value="Linux")
+    def test_linux_construction_failure_removes_transactional_output(self, _system, _machine, load, _acquire):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        output = root / "runtime"
+        load.return_value = {"schema_version": 1, "distribution": "Ubuntu 24.04", "archives": []}
+        with mock.patch("scripts.acquire_runtime_linux.extracted_file", side_effect=SystemExit("Required pinned runtime command is unavailable")):
+            with self.assertRaisesRegex(SystemExit, "command is unavailable"):
+                construct(output, root / "cache", root / "lock.json")
+        self.assertFalse(output.exists())
+        self.assertEqual(list(root.glob(".runtime.staging-*")), [])
 
 
 if __name__ == "__main__":
