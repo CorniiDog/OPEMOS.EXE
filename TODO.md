@@ -2399,12 +2399,14 @@ must be reported; a default-suite pass does not imply hardware certification.
   shared heavy wrapper. The same native dry-run then advanced to Core's next
   exact dependency and failed because `validate_publish_inputs.py` invokes an
   unavailable external `zstd`; a concrete Core-owned dependency request is
-  recorded. Native Windows runs `35005730804` and `35006747321` exposed that
-  the new regression incorrectly depended on ambient runner Python and exited
-  before its marker with empty stderr; the contained guest proof independently
-  showed the bridge reaching bundled Python and advancing to `zstd`. The focused
-  test now verifies the injected function and its exact delegation body without
-  depending on runner Python. Changed-head native Windows regression execution,
+  recorded. Native Windows runs `35005730804`, `35006747321`, and `35007612060`
+  all exited the temporary publisher process before its marker with empty stderr,
+  even after removing the Python invocation, isolating the instability to running
+  a temporary Windows path through CI Git Bash. The contained guest proof
+  independently showed the bridge reaching bundled Python and advancing to
+  `zstd`. The focused Windows regression now verifies the exact constructed Bash
+  command, injected function, delegation body, publisher position, and four
+  closed-world input flags without executing an ambient runner tool. Changed-head native Windows regression execution,
   exact Windows build/startup, Core counterpart review, and the resumed
   create-only proof remain pending.
 

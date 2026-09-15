@@ -7693,32 +7693,26 @@ trap - EXIT"#,
     #[cfg(windows)]
     #[test]
     fn windows_core_publisher_bridges_bundled_python_to_python3() {
-        let root = std::env::temp_dir().join(format!(
-            "opemos-python3-publisher-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system clock")
-                .as_nanos()
-        ));
-        fs::create_dir(&root).expect("create publisher fixture directory");
-        let publisher = root.join("publisher.sh");
-        fs::write(
-            &publisher,
-            "#!/usr/bin/env bash\nset -euo pipefail\ndeclare -F python3 >/dev/null\ndeclare -f python3 | grep -F 'command python \"$@\"' >/dev/null\nprintf 'bridge-ok\\n'\n",
-        )
-        .expect("write publisher fixture");
-        let dummy = root.join("unused-input");
-        let output = support_publisher_command(&publisher, &dummy, &dummy, &dummy, &dummy)
-            .output()
-            .expect("run publisher through the Windows adapter");
-        let _ = fs::remove_dir_all(&root);
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        let publisher = Path::new("publisher.sh");
+        let dummy = Path::new("unused-input");
+        let command = support_publisher_command(publisher, dummy, dummy, dummy, dummy);
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(command.get_program(), "bash");
+        assert_eq!(arguments[0], "-c");
+        assert_eq!(
+            arguments[1],
+            "python3() { command python \"$@\"; }; source \"$1\" \"${@:2}\""
         );
-        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "bridge-ok");
+        assert_eq!(arguments[2], "opemos-core-publisher");
+        assert_eq!(arguments[3], "publisher.sh");
+        assert_eq!(arguments[4], "--archive");
+        assert_eq!(arguments[6], "--checksum");
+        assert_eq!(arguments[8], "--build-info");
+        assert_eq!(arguments[10], "--provenance");
     }
 
 }
