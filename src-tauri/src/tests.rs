@@ -1638,6 +1638,22 @@ mod tests {
     }
 
     #[test]
+    fn pull_request_text_is_bounded_and_reviewable() {
+        assert!(validate_pr_text(
+            "Add reviewed delivery",
+            "Closes the exact maintainer gap."
+        )
+        .is_ok());
+        assert!(validate_pr_text("", "body").is_err());
+        assert!(validate_pr_text(" title", "body").is_err());
+        assert!(validate_pr_text(&"x".repeat(121), "body").is_err());
+        assert!(validate_pr_text("title", "").is_err());
+        assert!(validate_pr_text("title", " body").is_err());
+        assert!(validate_pr_text("title", "body\runsafe").is_err());
+        assert!(validate_pr_text("title", &"x".repeat(16_385)).is_err());
+    }
+
+    #[test]
     fn maintainer_checkout_accepts_only_safe_local_branch_names() {
         assert!(valid_local_branch_name("main"));
         assert!(valid_local_branch_name("feature/local-context"));

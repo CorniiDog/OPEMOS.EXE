@@ -184,3 +184,24 @@ test("maintainer version change requires an exact unchanged review", async () =>
   assert.match(script, /invoke\("apply_maintainer_version_change", \{[\s\S]*?expectedBranch: review\.branch,[\s\S]*?expectedHead: review\.head,[\s\S]*?expectedBeforeSha256: review\.beforeSha256,[\s\S]*?expectedAfterSha256: review\.afterSha256/);
   assert.match(script, /versionReviewGate\.isCurrent\(requestGeneration\)[\s\S]*?operationContextMatches\(context/);
 });
+
+test("maintainer remote delivery requires exact reviews and fresh typed confirmations", async () => {
+  const [markup, script, backend] = await Promise.all([
+    readFile(new URL("../src/maintainer.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/maintainer.js", import.meta.url), "utf8"),
+    readFile(new URL("../src-tauri/src/nvidia.rs", import.meta.url), "utf8"),
+  ]);
+  assert.match(markup, /id="review-push"[\s\S]*?id="push-confirmation"[\s\S]*?id="execute-push"/);
+  assert.match(markup, /id="review-pull-request"[\s\S]*?id="pull-request-confirmation"[\s\S]*?id="create-pull-request"/);
+  assert.match(markup, /id="review-rollback"[\s\S]*?id="rollback-confirmation"[\s\S]*?id="execute-rollback"/);
+  assert.match(script, /invoke\("execute_maintainer_push", \{[\s\S]*?expectedHead: review\.head,[\s\S]*?expectedRemoteHead: review\.remoteHead,[\s\S]*?confirmation: elements\.pushConfirmation\.value/);
+  assert.match(script, /invoke\("create_maintainer_pull_request", \{ request: \{[\s\S]*?expectedBaseCommit: review\.baseCommit,[\s\S]*?expectedBodySha256: review\.bodySha256,[\s\S]*?confirmation: elements\.prConfirmation\.value/);
+  assert.match(script, /invoke\("execute_maintainer_rollback", \{[\s\S]*?expectedHead: review\.head,[\s\S]*?expectedParent: review\.parent,[\s\S]*?confirmation: elements\.rollbackConfirmation\.value/);
+  assert.match(backend, /branch == "main"[\s\S]*?safe non-main topic branch/);
+  assert.match(backend, /merge-base", "--is-ancestor"[\s\S]*?force push is forbidden/);
+  assert.match(backend, /"push", "--porcelain", "origin", &refspec/);
+  assert.match(backend, /Fresh push authorization[\s\S]*?Fresh pull-request authorization/);
+  assert.match(backend, /"pr",[\s\S]*?"create",[\s\S]*?"--base",[\s\S]*?"--head"/);
+  assert.match(backend, /Only a single-parent HEAD commit can be rolled back automatically/);
+  assert.match(backend, /"revert",[\s\S]*?"--no-edit"[\s\S]*?Nothing was pushed or deleted/);
+});
