@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from scripts.acquire_runtime_linux import PAYLOAD_MERGES, acquire_archive, construct, copy_payload_tree, current_lock_matches, extracted_file, load_lock, write_wrapper
+from scripts.acquire_runtime_linux import PAYLOAD_MERGES, acquire_archive, construct, copy_payload_tree, current_lock_matches, extracted_file, load_lock, write_ca_bundle, write_wrapper
 from scripts.stage_runtime_bundle import REQUIRED, stage
 
 
@@ -103,7 +103,7 @@ class RuntimeBundlePackagingTests(unittest.TestCase):
         self.assertIn("scripts/acquire_runtime_linux.py", linux)
         self.assertIn("build/runtime/linux", linux)
         lock = load_lock(repository / "runtime/linux-ubuntu-24.04-amd64.sources.json")
-        self.assertEqual(len(lock["archives"]), 77)
+        self.assertEqual(len(lock["archives"]), 78)
         self.assertIn(("usr/share/seabios", "usr/share/qemu"), PAYLOAD_MERGES)
         self.assertIn(("usr/lib/ipxe/qemu", "usr/share/qemu"), PAYLOAD_MERGES)
 
@@ -158,21 +158,47 @@ class RuntimeBundlePackagingTests(unittest.TestCase):
             self.assertNotIn("dirname", text)
             self.assertNotIn('="/usr/', text)
             self.assertNotIn(' -L "/usr/', text)
+            self.assertIn('SSL_CERT_FILE="$root/payload/etc/ssl/certs/ca-certificates.crt"', text)
+            self.assertIn('SSL_CERT_DIR="$root/payload/etc/ssl/certs-empty"', text)
             program = root / "programs" / name
-            program.write_text("#!/bin/sh\nprintf '%s\\n' \"${PYTHONHOME-}\" \"${GIT_EXEC_PATH-}\" \"${GIT_TEMPLATE_DIR-}\" \"$*\"\n")
+            program.write_text("#!/bin/sh\nprintf '%s\\n' \"${PYTHONHOME-}\" \"${GIT_EXEC_PATH-}\" \"${GIT_TEMPLATE_DIR-}\" \"${SSL_CERT_FILE-}\" \"${SSL_CERT_DIR-}\" \"${GIT_SSL_CAINFO-}\" \"$*\"\n")
             program.chmod(0o755)
         self.assertIn("PYTHONHOME", (root / "bin/python3").read_text())
         self.assertIn("PYTHONDONTWRITEBYTECODE=1", (root / "bin/python3").read_text())
         self.assertIn("GIT_EXEC_PATH", (root / "bin/git").read_text())
+        self.assertIn("GIT_SSL_CAINFO", (root / "bin/git").read_text())
         self.assertIn('-L "$root/payload/usr/share/qemu"', (root / "bin/qemu-system-x86_64").read_text())
-        environment = {"PATH": "/host-data-unavailable"}
+        environment = {
+            "PATH": "/host-data-unavailable",
+            "SSL_CERT_FILE": "/host-ca-unavailable",
+            "SSL_CERT_DIR": "/host-ca-unavailable",
+            "GIT_SSL_CAINFO": "/host-ca-unavailable",
+        }
         python = subprocess.run([root / "bin/python3"], env=environment, check=True, capture_output=True, text=True).stdout
         git = subprocess.run([root / "bin/git"], env=environment, check=True, capture_output=True, text=True).stdout
         qemu = subprocess.run([root / "bin/qemu-system-x86_64", "-machine", "none"], env=environment, check=True, capture_output=True, text=True).stdout
         self.assertIn(str(root / "payload/usr"), python)
         self.assertIn(str(root / "payload/usr/lib/git-core"), git)
         self.assertIn(str(root / "payload/usr/share/git-core/templates"), git)
+        for output in (python, git, qemu):
+            values = output.splitlines()
+            self.assertEqual(values[3], str(root / "payload/etc/ssl/certs/ca-certificates.crt"))
+            self.assertEqual(values[4], str(root / "payload/etc/ssl/certs-empty"))
+        self.assertEqual(git.splitlines()[5], str(root / "payload/etc/ssl/certs/ca-certificates.crt"))
         self.assertIn(f"-L {root / 'payload/usr/share/qemu'} -machine none", qemu)
+
+    def test_ca_bundle_uses_only_sorted_verified_archive_certificates(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        certificates = root / "extract/usr/share/ca-certificates/mozilla"
+        certificates.mkdir(parents=True)
+        (certificates / "z.crt").write_bytes(b"Z")
+        (certificates / "a.crt").write_bytes(b"A\n")
+        payload = root / "payload"
+        write_ca_bundle(root / "extract", payload)
+        self.assertEqual((payload / "etc/ssl/certs/ca-certificates.crt").read_bytes(), b"A\nZ\n")
+        self.assertTrue((payload / "etc/ssl/certs-empty").is_dir())
 
     def test_payload_copy_omits_empty_archive_markers(self):
         temporary = tempfile.TemporaryDirectory()

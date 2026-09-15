@@ -43,7 +43,7 @@ def load_lock(path):
     if set(raw) != {"schema_version", "distribution", "archives"} or raw["schema_version"] != 1 or raw["distribution"] != "Ubuntu 24.04":
         fail("Linux runtime source lock is invalid")
     archives = raw["archives"]
-    if not isinstance(archives, list) or len(archives) != 77:
+    if not isinstance(archives, list) or len(archives) != 78:
         fail("Linux runtime source lock must contain the exact archive closure")
     names = set()
     for item in archives:
@@ -141,8 +141,29 @@ def copy_payload_tree(source, destination, extraction):
             shutil.copy2(selected, target)
 
 
+def write_ca_bundle(extraction, payload):
+    certificates = extraction / "usr/share/ca-certificates/mozilla"
+    if not certificates.is_dir() or certificates.is_symlink():
+        fail("Required archive CA directory is unavailable")
+    selected = [extracted_file(path, extraction) for path in sorted(certificates.glob("*.crt"))]
+    if not selected:
+        fail("Verified archive contains no CA certificates")
+    target = payload / "etc/ssl/certs/ca-certificates.crt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("wb") as output:
+        for certificate in selected:
+            data = certificate.read_bytes()
+            output.write(data)
+            if not data.endswith(b"\n"):
+                output.write(b"\n")
+    (payload / "etc/ssl/certs-empty").mkdir(parents=True)
+
+
 def write_wrapper(path, name):
-    setup = []
+    setup = [
+        'export SSL_CERT_FILE="$root/payload/etc/ssl/certs/ca-certificates.crt"',
+        'export SSL_CERT_DIR="$root/payload/etc/ssl/certs-empty"',
+    ]
     arguments = '"$@"'
     if name == "python3":
         setup.extend([
@@ -153,6 +174,7 @@ def write_wrapper(path, name):
         setup.extend([
             'export GIT_EXEC_PATH="$root/payload/usr/lib/git-core"',
             'export GIT_TEMPLATE_DIR="$root/payload/usr/share/git-core/templates"',
+            'export GIT_SSL_CAINFO="$SSL_CERT_FILE"',
         ])
     elif name == "qemu-system-x86_64":
         arguments = '-L "$root/payload/usr/share/qemu" "$@"'
@@ -216,6 +238,7 @@ def construct(output, cache, lock_path):
             copy_payload_tree(extraction / relative, payload / relative, extraction)
         for source, destination in PAYLOAD_MERGES:
             copy_payload_tree(extraction / source, payload / destination, extraction)
+        write_ca_bundle(extraction, payload)
 
         components = []
         for item in sorted(lock["archives"], key=lambda entry: entry["package"]):
