@@ -1,11 +1,12 @@
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
 
-from scripts.acquire_runtime_linux import acquire_archive, construct, current_lock_matches, extracted_file, load_lock
+from scripts.acquire_runtime_linux import PAYLOAD_MERGES, acquire_archive, construct, copy_payload_tree, current_lock_matches, extracted_file, load_lock, write_wrapper
 from scripts.stage_runtime_bundle import REQUIRED, stage
 
 
@@ -102,7 +103,9 @@ class RuntimeBundlePackagingTests(unittest.TestCase):
         self.assertIn("scripts/acquire_runtime_linux.py", linux)
         self.assertIn("build/runtime/linux", linux)
         lock = load_lock(repository / "runtime/linux-ubuntu-24.04-amd64.sources.json")
-        self.assertEqual(len(lock["archives"]), 63)
+        self.assertEqual(len(lock["archives"]), 77)
+        self.assertIn(("usr/share/seabios", "usr/share/qemu"), PAYLOAD_MERGES)
+        self.assertIn(("usr/lib/ipxe/qemu", "usr/share/qemu"), PAYLOAD_MERGES)
 
     def test_linux_archive_cache_reuses_exact_and_replaces_tamper_without_partial_file(self):
         temporary = tempfile.TemporaryDirectory()
@@ -140,6 +143,49 @@ class RuntimeBundlePackagingTests(unittest.TestCase):
         extracted.write_bytes(b"authenticated archive bytes")
         host.write_bytes(b"modified host bytes")
         self.assertEqual(extracted_file(extracted, root / "extract").read_bytes(), b"authenticated archive bytes")
+
+    def test_wrappers_resolve_python_git_and_qemu_data_inside_runtime(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "bin").mkdir()
+        (root / "programs").mkdir()
+        for name in ("python3", "git", "qemu-system-x86_64"):
+            path = root / "bin" / name
+            write_wrapper(path, name)
+            text = path.read_text()
+            self.assertIn('"$root/programs/', text)
+            self.assertNotIn("dirname", text)
+            self.assertNotIn('="/usr/', text)
+            self.assertNotIn(' -L "/usr/', text)
+            program = root / "programs" / name
+            program.write_text("#!/bin/sh\nprintf '%s\\n' \"${PYTHONHOME-}\" \"${GIT_EXEC_PATH-}\" \"${GIT_TEMPLATE_DIR-}\" \"$*\"\n")
+            program.chmod(0o755)
+        self.assertIn("PYTHONHOME", (root / "bin/python3").read_text())
+        self.assertIn("PYTHONDONTWRITEBYTECODE=1", (root / "bin/python3").read_text())
+        self.assertIn("GIT_EXEC_PATH", (root / "bin/git").read_text())
+        self.assertIn('-L "$root/payload/usr/share/qemu"', (root / "bin/qemu-system-x86_64").read_text())
+        environment = {"PATH": "/host-data-unavailable"}
+        python = subprocess.run([root / "bin/python3"], env=environment, check=True, capture_output=True, text=True).stdout
+        git = subprocess.run([root / "bin/git"], env=environment, check=True, capture_output=True, text=True).stdout
+        qemu = subprocess.run([root / "bin/qemu-system-x86_64", "-machine", "none"], env=environment, check=True, capture_output=True, text=True).stdout
+        self.assertIn(str(root / "payload/usr"), python)
+        self.assertIn(str(root / "payload/usr/lib/git-core"), git)
+        self.assertIn(str(root / "payload/usr/share/git-core/templates"), git)
+        self.assertIn(f"-L {root / 'payload/usr/share/qemu'} -machine none", qemu)
+
+    def test_payload_copy_omits_empty_archive_markers(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        source = root / "extract/data"
+        source.mkdir(parents=True)
+        (source / "empty.py").write_bytes(b"")
+        (source / "module.py").write_bytes(b"import json\n")
+        destination = root / "runtime"
+        copy_payload_tree(source, destination, root / "extract")
+        self.assertFalse((destination / "empty.py").exists())
+        self.assertEqual((destination / "module.py").read_bytes(), b"import json\n")
 
     def test_existing_runtime_reuse_is_bound_to_current_source_lock(self):
         temporary = tempfile.TemporaryDirectory()
