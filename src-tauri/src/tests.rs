@@ -7718,7 +7718,7 @@ trap - EXIT"#,
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(output.stdout, b"bridge-ok\n");
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "bridge-ok");
     }
 
 }
