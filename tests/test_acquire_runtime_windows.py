@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from scripts.acquire_runtime_windows import acquire_source, current_lock_matches, load_lock
+from scripts.acquire_runtime_windows import acquire_source, current_lock_matches, load_lock, move_tree
 
 
 class WindowsRuntimeAcquisitionTests(unittest.TestCase):
@@ -46,6 +46,17 @@ class WindowsRuntimeAcquisitionTests(unittest.TestCase):
             (root / "source-provenance.json").write_text(json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n")
             self.assertTrue(current_lock_matches(root, lock))
             self.assertFalse(current_lock_matches(root, dict(lock, architecture="arm64")))
+
+    def test_archive_root_move_does_not_delete_an_already_moved_temporary_tree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            extracted = root / ".gh"
+            extracted.mkdir()
+            (extracted / "LICENSE").write_text("license")
+            destination = root / "gh"
+            move_tree(extracted, destination, extracted)
+            self.assertEqual((destination / "LICENSE").read_text(), "license")
+            self.assertFalse(extracted.exists())
 
 
 if __name__ == "__main__":

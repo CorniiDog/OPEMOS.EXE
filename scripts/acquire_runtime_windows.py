@@ -65,6 +65,9 @@ def unzip(archive,destination):
 def run(args,label):
     result=subprocess.run(args,check=False)
     if result.returncode: fail(f"{label} failed with exit code {result.returncode}")
+def move_tree(source,destination,temporary):
+    shutil.move(str(source),destination)
+    if temporary.exists(): shutil.rmtree(temporary)
 def construct(output,cache,lock_path):
     if platform.system()!="Windows" or platform.machine() not in ("AMD64","x86_64"): fail("Pinned Windows runtime acquisition requires Windows x86_64")
     lock=load_lock(lock_path)
@@ -79,7 +82,7 @@ def construct(output,cache,lock_path):
             if path.exists(): shutil.rmtree(path)
         temp=staging/".gh"; temp.mkdir(); unzip(sources["github-cli"],temp); gh=one(temp,"gh.exe","GitHub CLI executable").parent.parent
         if not (gh/"LICENSE").is_file(): fail("Pinned GitHub CLI license is unavailable")
-        shutil.move(str(gh),staging/"gh"); shutil.rmtree(temp)
+        move_tree(gh,staging/"gh",temp)
         python=staging/"python"; python.mkdir(); unzip(sources["python"],python); run([str(sources["qemu"]),"/S",f"/D={staging/'qemu'}"],"QEMU extraction")
         temp=staging/".cdr"; temp.mkdir(); seven=shutil.which("7z") or shutil.which("7zz")
         if not seven: fail("7-Zip is required to extract cdrtools")
