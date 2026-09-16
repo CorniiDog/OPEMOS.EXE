@@ -23,7 +23,7 @@ for (const [name, mutate, expected] of [
   ["tagged action", text => text.replace("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", "actions/setup-node@v4"), /setup-node action/],
   ["missing unsigned gate", text => text.replace("SignatureStatus]::NotSigned", "SignatureStatus]::Valid"), /unsigned-only gate/],
   ["long artifact retention", text => text.replace("retention-days: 1", "retention-days: 90"), /one-day artifact retention/],
-  ["unlocked Rust build", text => text.replace("--release --locked", "--release"), /locked release build/],
+  ["missing verified bundle build", text => text.replace("run: .\\bundle_windows.ps1 -CoreRoot opemos-core-contracts", "run: Write-Host skipped"), /verified Windows bundle build/],
   ["all-target Windows Rust test", text => text.replace("--locked --lib windows_", "--locked windows_"), /library-only Windows Rust tests/],
   ["dynamic MSVC runtime", text => text.replace("RUSTFLAGS: -C target-feature=+crt-static", "RUSTFLAGS: dynamic"), /static MSVC runtime linkage/],
   ["missing test activation manifest", text => text.replace(" -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\\scripts\\windows-test-v6.manifest", ""), /test-only Common Controls v6 activation manifest/],

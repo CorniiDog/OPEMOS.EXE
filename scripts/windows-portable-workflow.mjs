@@ -31,13 +31,15 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "node-version: 22.23.2", "Node 22.23.2");
   requireText(text, "toolchain: 1.98.1", "Rust 1.98.1");
   requireText(text, "RUSTFLAGS: -C target-feature=+crt-static", "static MSVC runtime linkage");
-  if ((text.match(/RUSTFLAGS: -C target-feature=\+crt-static/g) || []).length !== 2) throw new Error("Windows workflow must preserve static MSVC runtime linkage for both tests and the release build.");
+  if ((text.match(/RUSTFLAGS: -C target-feature=\+crt-static/g) || []).length !== 2) throw new Error("Windows workflow must preserve static MSVC runtime linkage for tests and the bundle build.");
   requireText(text, "run: npm ci", "locked JavaScript installation");
   requireText(text, "run: node --test tests/windows-portable-workflow.test.mjs", "focused cross-platform JavaScript tests");
   requireText(text, "run: node scripts/check_core_maintainer_workflow.mjs", "exact Core maintainer workflow parity check");
   requireText(text, "cargo test --manifest-path src-tauri/Cargo.toml --locked --lib windows_", "locked library-only Windows Rust tests");
   requireText(text, "RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\\scripts\\windows-test-v6.manifest", "the test-only Common Controls v6 activation manifest");
-  requireText(text, "cargo build --manifest-path src-tauri/Cargo.toml --release --locked", "locked release build");
+  requireText(text, "run: .\\bundle_windows.ps1 -CoreRoot opemos-core-contracts", "verified Windows bundle build");
+  requireText(text, "dist/windows/OPEMOS.EXE-windows-x86_64-unsigned.exe", "bundled executable startup");
+  requireText(text, "path: dist/windows", "complete verified bundle upload");
   if ((text.match(/MANIFESTINPUT:/g) || []).length !== 1) throw new Error("Windows workflow must apply the activation manifest only to the Rust test step.");
   requireText(text, "Start-Process -FilePath $source -PassThru", "portable executable startup smoke test");
   requireText(text, "} while (($process.MainWindowHandle -eq 0 -or $process.MainWindowTitle -cne \"SteamOS NVIDIA Builder\") -and [DateTime]::UtcNow -lt $deadline)", "bounded native UI readiness polling");
