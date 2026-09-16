@@ -4504,11 +4504,24 @@ pub(crate) fn support_publisher_command(
 ) -> Command {
     let mut command = Command::new("bash");
     #[cfg(windows)]
-    command.args([
-        "-c",
-        "python3() { command python \"$@\"; }; source \"$1\" \"${@:2}\"",
-        "opemos-core-publisher",
-    ]);
+    {
+        command.args([
+            "-c",
+            "python3() { command python \"$@\"; }; source \"$1\" \"${@:2}\"",
+            "opemos-core-publisher",
+        ]);
+        command
+            .arg(publisher.to_string_lossy().replace('\\', "/"))
+            .arg("--archive")
+            .arg(archive.to_string_lossy().replace('\\', "/"))
+            .arg("--checksum")
+            .arg(checksum.to_string_lossy().replace('\\', "/"))
+            .arg("--build-info")
+            .arg(build_info.to_string_lossy().replace('\\', "/"))
+            .arg("--provenance")
+            .arg(provenance.to_string_lossy().replace('\\', "/"));
+    }
+    #[cfg(not(windows))]
     command
         .arg(publisher)
         .arg("--archive")

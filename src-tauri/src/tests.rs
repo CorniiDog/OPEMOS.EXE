@@ -7692,10 +7692,14 @@ trap - EXIT"#,
 
     #[cfg(windows)]
     #[test]
-    fn windows_core_publisher_bridges_bundled_python_to_python3() {
-        let publisher = Path::new("publisher.sh");
-        let dummy = Path::new("unused-input");
-        let command = support_publisher_command(publisher, dummy, dummy, dummy, dummy);
+    fn windows_core_publisher_bridges_python_and_translates_inputs_for_git_bash() {
+        let command = support_publisher_command(
+            Path::new(r"C:\Users\connor\publisher.sh"),
+            Path::new(r"C:\Users\connor\product\archive.tar.gz"),
+            Path::new(r"C:\Users\connor\product\archive.tar.gz.sha256"),
+            Path::new(r"C:\Users\connor\product\build-info.txt"),
+            Path::new(r"C:\Users\connor\product\provenance.json"),
+        );
         let arguments = command
             .get_args()
             .map(|argument| argument.to_string_lossy().into_owned())
@@ -7708,11 +7712,18 @@ trap - EXIT"#,
             "python3() { command python \"$@\"; }; source \"$1\" \"${@:2}\""
         );
         assert_eq!(arguments[2], "opemos-core-publisher");
-        assert_eq!(arguments[3], "publisher.sh");
+        assert_eq!(arguments[3], "C:/Users/connor/publisher.sh");
         assert_eq!(arguments[4], "--archive");
+        assert_eq!(arguments[5], "C:/Users/connor/product/archive.tar.gz");
         assert_eq!(arguments[6], "--checksum");
+        assert_eq!(
+            arguments[7],
+            "C:/Users/connor/product/archive.tar.gz.sha256"
+        );
         assert_eq!(arguments[8], "--build-info");
+        assert_eq!(arguments[9], "C:/Users/connor/product/build-info.txt");
         assert_eq!(arguments[10], "--provenance");
+        assert_eq!(arguments[11], "C:/Users/connor/product/provenance.json");
     }
 
 }
