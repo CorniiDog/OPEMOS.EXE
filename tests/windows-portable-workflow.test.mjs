@@ -27,7 +27,7 @@ for (const [name, mutate, expected] of [
   ["all-target Windows Rust test", text => text.replace("--locked --lib windows_", "--locked windows_"), /library-only Windows Rust tests/],
   ["dynamic MSVC runtime", text => text.replace("RUSTFLAGS: -C target-feature=+crt-static", "RUSTFLAGS: dynamic"), /static MSVC runtime linkage/],
   ["missing test activation manifest", text => text.replace(" -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\\scripts\\windows-test-v6.manifest", ""), /test-only Common Controls v6 activation manifest/],
-  ["activation manifest applied twice", text => text.replace("      - name: Build unsigned portable executable", "      - name: Duplicate manifest input\n        env:\n          RUSTFLAGS: -C link-arg=/MANIFESTINPUT:duplicate.manifest\n      - name: Build unsigned portable executable"), /only to the Rust test step/],
+  ["activation manifest applied twice", text => text.replace("      - name: Build unsigned verified runtime bundle", "      - name: Duplicate manifest input\n        env:\n          RUSTFLAGS: -C link-arg=/MANIFESTINPUT:duplicate.manifest\n      - name: Build unsigned verified runtime bundle"), /only to the Rust test step/],
   ["missing static-runtime provenance", text => text.replace(`"crt_static=true"`, `"crt_static=false"`), /static-runtime provenance/],
   ["missing executable smoke test", text => text.replace("Start-Process -FilePath $source -PassThru", "Write-Host skipped"), /startup smoke test/],
   ["missing UI readiness polling", text => text.replace("} while (($process.MainWindowHandle -eq 0 -or $process.MainWindowTitle -cne \"SteamOS NVIDIA Builder\") -and [DateTime]::UtcNow -lt $deadline)", "} while ($false)"), /native UI readiness polling/],

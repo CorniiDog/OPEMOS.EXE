@@ -20,5 +20,7 @@ test("README pins real three-platform commands and output contracts", async () =
     assert.match(readme, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   const workflow = await readFile(".github/workflows/windows-portable.yml", "utf8");
   assert.match(workflow, /cargo test --manifest-path src-tauri\/Cargo\.toml --locked --lib windows_/);
-  assert.match(workflow, /cargo build --manifest-path src-tauri\/Cargo\.toml --release --locked/);
+  assert.match(workflow, /\.\\bundle_windows\.ps1 -CoreRoot opemos-core-contracts/);
+  const bundle = await readFile("bundle_windows.ps1", "utf8");
+  assert.match(bundle, /cargo build --manifest-path src-tauri\/Cargo\.toml --release --locked/);
 });
