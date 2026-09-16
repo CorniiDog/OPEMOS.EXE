@@ -59,6 +59,7 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "unsigned-${{ env.OPEMOS_EXE_COMMIT }}", "exact-head artifact identity");
   requireText(text, "retention-days: 1", "one-day artifact retention");
   requireText(text, "if-no-files-found: error", "missing-artifact failure");
+  requireText(text, "include-hidden-files: true", "declared hidden runtime files in the artifact");
   if (/uses:\s*[^\s@]+@(v\d+|main|master|stable)\b/i.test(text)) throw new Error("Windows workflow actions must use immutable commits.");
   if (/secrets\.|signtool|gh\s+release|create-release|pages/i.test(text)) throw new Error("Windows workflow must not use secrets, signing, releases, or Pages.");
   return true;

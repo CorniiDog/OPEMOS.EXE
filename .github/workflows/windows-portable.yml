@@ -180,5 +180,6 @@ jobs:
           name: OPEMOS.EXE-windows-x86_64-unsigned-${{ env.OPEMOS_EXE_COMMIT }}
           path: dist/windows
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 1
           compression-level: 0
