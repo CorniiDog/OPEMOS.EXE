@@ -95,13 +95,14 @@ jobs:
           OPEMOS_CORE_EXPECTED_COMMIT: f6871104ea83d8afa620b133b362a0578ff4a6a8
           RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\scripts\windows-test-v6.manifest
 
-      - name: Build unsigned portable executable
-        run: cargo build --manifest-path src-tauri/Cargo.toml --release --locked
+      - name: Build unsigned verified runtime bundle
+        shell: pwsh
+        run: .\bundle_windows.ps1 -CoreRoot opemos-core-contracts
 
       - name: Smoke-test portable executable startup
         shell: pwsh
         run: |
-          $source = "src-tauri/target/release/steamos-nvidia-image-builder.exe"
+          $source = "dist/windows/OPEMOS.EXE-windows-x86_64-unsigned.exe"
           $qemuBefore = @(Get-Process -Name "qemu-system-*" -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" })
           $process = Start-Process -FilePath $source -PassThru
           try {
@@ -141,7 +142,7 @@ jobs:
       - name: Verify executable and record provenance
         shell: pwsh
         run: |
-          $source = "src-tauri/target/release/steamos-nvidia-image-builder.exe"
+          $source = "dist/windows/OPEMOS.EXE-windows-x86_64-unsigned.exe"
           if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
             throw "Expected executable is absent: $source"
           }
@@ -149,11 +150,9 @@ jobs:
           if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
             throw "Executable must be unsigned; signature status is $($signature.Status)"
           }
-          $output = "windows-portable-artifact"
-          New-Item -ItemType Directory -Path $output | Out-Null
+          $output = "dist/windows"
           $name = "OPEMOS.EXE-windows-x86_64-unsigned.exe"
-          $destination = Join-Path $output $name
-          Copy-Item -LiteralPath $source -Destination $destination
+          $destination = $source
           $file = Get-Item -LiteralPath $destination
           $sha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
           $lines = @(
@@ -179,7 +178,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: OPEMOS.EXE-windows-x86_64-unsigned-${{ env.OPEMOS_EXE_COMMIT }}
-          path: windows-portable-artifact
+          path: dist/windows
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
