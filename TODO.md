@@ -2408,6 +2408,19 @@ must be reported; a default-suite pass does not imply hardware certification.
   command, injected function, delegation body, publisher position, and four
   closed-world input flags without executing an ambient runner tool. PR #99 passed its changed-head native Windows build, startup, artifact, and regression gates plus exact Core review, then squash-merged through protection as EXE main `2090dbc8111ee3230f5a6ae8a147dd58be882612`. Core subsequently supplied the exact Windows zstd dependency at canonical squash commit `f6871104ea83d8afa620b133b362a0578ff4a6a8`. The active consumption batch advances the ordinary Core pin to that commit, verifies the closed contract and retained ZIP/license bytes, extracts only exact `zstd.exe` into the existing closed runtime, records its license and command identity in the hash-bound manifest, and leaves Core publisher bytes unchanged. Focused Python runtime validation passes 15/15 against the canonical GitHub cache. Native Windows run `35012965074` proved the new exact zstd consumer passed, then failed only because the newly broad workflow invocation also executed an unrelated Unix-wrapper fixture as a Win32 program; the workflow now invokes only the platform-relevant exact-zstd regression. Replacement native Windows run `35013164238` passes exact zstd consumption, all Windows tests, unsigned build, startup, provenance, and artifact upload. Both Rust jobs then showed the advanced Core head is 168 commits after retained compatibility commit `a1c03c9`, so the exact shallow checkout depth advances from 167 to 169; Linux and Debian jobs pass. Required CI, unchanged-head Core review, merge, and the resumed create-only proof remain pending.
 
+  Exact-head Core approval and every required replacement check then passed; PR
+  #100 squash-merged through protected main as
+  `740bc61d5212445160feff3dc72bd960e1610b05`. The resumed exact
+  imported-product dry-run proved Core accepts the r2 bytes and emits the
+  expected plan, but the Windows wrapper fails earlier while EXE discarded its
+  stderr behind a generic rejection. The bounded follow-up retains a nonempty
+  publisher diagnostic only within the existing 1 MiB result limit, preserves
+  the generic empty-stderr refusal, and reports oversized stderr without echoing
+  it. Formatting, the focused Windows-line-ending/empty/oversized diagnostic
+  regression, and warnings-denied all-target Clippy pass through `heavy.sh`.
+  Changed-head native Windows build/startup validation, required CI, exact Core
+  review, merge, and the resumed create-only proof remain pending.
+
 ### Alpha
 
 - [ ] One fresh official image builds, writes to USB, installs to the intended
