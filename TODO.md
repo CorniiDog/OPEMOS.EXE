@@ -2269,6 +2269,17 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   discovery and writing remain unavailable.
 
 ## CI and test commands
+- [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
+  enabling automated NVIDIA release. Protected-main executable
+  `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
+  persisted the setting but then reported `Could not sync the settings
+  directory: Access is denied. (os error 5)` before opening the workspace.
+  Windows does not support opening a directory as a file for `sync_all`; retain
+  the directory durability sync on Unix while treating the already-synced file
+  plus atomic rename as the Windows completion boundary. The existing full
+  save-path regression is named explicitly for cross-platform execution and
+  must pass in native Windows CI before the proof resumes.
+
 
 Every normal code change must pass:
 
