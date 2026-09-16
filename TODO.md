@@ -2432,6 +2432,22 @@ must be reported; a default-suite pass does not imply hardware certification.
   Changed-head native Windows build/startup validation, required CI, exact Core
   review, merge, and the resumed create-only proof remain pending.
 
+  PR #103 then preserved hidden runtime manifest entries in the downloadable
+  artifact and squash-merged as `e79eb96c3ecf60e1cba801007a2cee3a6436dd95`.
+  The native maintainer proof exposed Windows directory syncing as unsupported;
+  PR #104 retained file sync plus atomic rename, kept directory sync on Unix,
+  passed every required check and exact Core review, and squash-merged as
+  `42768e582c31ab0e28e901f8d7e45d3c057ab0fa`. Protected-main run
+  `35097743801` produced the closed 5,671-file runtime and unsigned executable
+  SHA-256 `d20b590f3aa43671317dcd24ef372a078806ace5d0ed28a4c23a3a43631b7399`.
+  The resumed native proof then reached the immutable Core publisher, which
+  rejected all four verified regular files because Rust supplied backslash
+  Windows paths to Git Bash. The active bounded fix translates only the five
+  publisher-command path arguments to forward slashes on Windows; Unix command
+  construction and Core-owned publisher bytes remain unchanged. Its Windows
+  regression verifies the exact publisher and four closed-world file arguments.
+  No release, tag, asset, or beta publication occurred.
+
 ### Alpha
 
 - [ ] One fresh official image builds, writes to USB, installs to the intended
