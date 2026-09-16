@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from scripts.acquire_runtime_windows import acquire_source, current_lock_matches, load_lock, move_tree
+from scripts.acquire_runtime_windows import acquire_source, current_lock_matches, load_lock, move_tree, remove_empty_files
 
 
 class WindowsRuntimeAcquisitionTests(unittest.TestCase):
@@ -57,6 +57,15 @@ class WindowsRuntimeAcquisitionTests(unittest.TestCase):
             move_tree(extracted, destination, extracted)
             self.assertEqual((destination / "LICENSE").read_text(), "license")
             self.assertFalse(extracted.exists())
+
+    def test_zero_byte_archive_placeholders_are_removed_before_manifesting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "empty.pem").write_bytes(b"")
+            (root / "command.exe").write_bytes(b"command")
+            remove_empty_files(root)
+            self.assertFalse((root / "empty.pem").exists())
+            self.assertEqual((root / "command.exe").read_bytes(), b"command")
 
 
 if __name__ == "__main__":

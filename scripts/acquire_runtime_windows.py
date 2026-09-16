@@ -42,7 +42,7 @@ def validate_base(root):
     if set(manifest)!={"schema_version","platform","commands","files","components"} or manifest["schema_version"]!=1 or manifest["platform"]!="windows" or manifest["commands"]!=COMMANDS: fail("Windows base runtime manifest identity is invalid")
     declared=set()
     for item in manifest["files"]:
-        if set(item)!={"path","sha256","size"} or item["path"] in declared or not exact(root/item["path"],item): fail("Windows base runtime file identity changed")
+        if set(item)!={"path","sha256","size"} or item["path"] in declared or item["size"] <= 0 or not exact(root/item["path"],item): fail("Windows base runtime file identity changed")
         declared.add(item["path"])
     if any(path not in declared for path in COMMANDS.values()): fail("Windows base runtime command is undeclared")
     names=set()
@@ -68,6 +68,9 @@ def run(args,label):
 def move_tree(source,destination,temporary):
     shutil.move(str(source),destination)
     if temporary.exists(): shutil.rmtree(temporary)
+def remove_empty_files(root):
+    for path in root.rglob("*"):
+        if path.is_file() and not path.is_symlink() and path.stat().st_size == 0: path.unlink()
 def construct(output,cache,lock_path):
     if platform.system()!="Windows" or platform.machine() not in ("AMD64","x86_64"): fail("Pinned Windows runtime acquisition requires Windows x86_64")
     lock=load_lock(lock_path)
@@ -89,6 +92,7 @@ def construct(output,cache,lock_path):
         run([seven,"x","-y",f"-o{temp}",str(sources["cdrtools-binary"])],"cdrtools extraction"); cdr=staging/"cdrtools"; cdr.mkdir(); shutil.copy2(one(temp,"mkisofs.exe","cdrtools executable"),cdr/"mkisofs.exe"); shutil.rmtree(temp)
         with tarfile.open(sources["cdrtools-source"],"r:gz") as source:
             stream=source.extractfile(source.getmember("cdrtools-3.02/COPYING")); (cdr/"COPYING").write_bytes(stream.read() if stream else fail("Pinned cdrtools license is unavailable"))
+        remove_empty_files(staging)
         for relative in COMMANDS.values():
             if not (staging/relative).is_file(): fail(f"Pinned Windows runtime command is unavailable: {relative}")
         licenses={"git-for-windows":("2.55.0.windows.5",["git/LICENSE.txt"]),"python":("3.13.15",["python/LICENSE.txt"]),"github-cli":("2.100.0",["gh/LICENSE"]),"qemu":("11.1.0",["qemu/COPYING","qemu/COPYING.LIB"]),"cdrtools":("3.02a09",["cdrtools/COPYING"])}; components=[]
