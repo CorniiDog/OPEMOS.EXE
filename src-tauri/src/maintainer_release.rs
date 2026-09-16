@@ -2,6 +2,18 @@ use super::*;
 
 const RELEASE_RESULT_LIMIT: usize = 1024 * 1024;
 
+fn imported_publisher_rejection(stderr: &[u8]) -> String {
+    if stderr.len() > RELEASE_RESULT_LIMIT {
+        return "Pinned Core publisher rejected the imported product; its diagnostic exceeded the output limit.".into();
+    }
+    let detail = String::from_utf8_lossy(stderr).trim().to_string();
+    if detail.is_empty() {
+        "Pinned Core publisher rejected the imported product.".into()
+    } else {
+        format!("Pinned Core publisher rejected the imported product: {detail}")
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MaintainerReleaseAuthorization {
@@ -244,8 +256,11 @@ fn imported_release_runtime(
     .arg("--dry-run")
     .output()
     .map_err(|error| format!("Could not validate imported publisher inputs: {error}"))?;
-    if !output.status.success() || output.stdout.len() > RELEASE_RESULT_LIMIT {
-        return Err("Pinned Core publisher rejected the imported product.".into());
+    if !output.status.success() {
+        return Err(imported_publisher_rejection(&output.stderr));
+    }
+    if output.stdout.len() > RELEASE_RESULT_LIMIT {
+        return Err("Pinned Core publisher returned an oversized imported-product plan.".into());
     }
     let plan: SupportPublicationPlan = serde_json::from_slice(&output.stdout).map_err(|error| {
         format!("Pinned Core publisher returned invalid imported-product JSON: {error}")
@@ -475,6 +490,22 @@ mod tests {
         assert!(bind_request(&current, &request("a", 2)).is_ok());
         assert!(bind_request(&current, &request("b", 2)).is_err());
         assert!(bind_request(&current, &request("a", 1)).is_err());
+    }
+
+    #[test]
+    fn imported_publisher_rejection_retains_only_bounded_diagnostics() {
+        assert_eq!(
+            imported_publisher_rejection(b"validate_publish_inputs.py: zstd failed\r\n"),
+            "Pinned Core publisher rejected the imported product: validate_publish_inputs.py: zstd failed"
+        );
+        assert_eq!(
+            imported_publisher_rejection(b" \r\n"),
+            "Pinned Core publisher rejected the imported product."
+        );
+        assert_eq!(
+            imported_publisher_rejection(&vec![b'x'; RELEASE_RESULT_LIMIT + 1]),
+            "Pinned Core publisher rejected the imported product; its diagnostic exceeded the output limit."
+        );
     }
 
     #[test]
