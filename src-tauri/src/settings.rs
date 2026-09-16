@@ -387,9 +387,11 @@ pub(crate) fn save_builder_settings_path_unlocked(
             .map_err(|error| format!("Could not sync settings.json: {error}"))?;
         fs::rename(&temporary, path)
             .map_err(|error| format!("Could not finalize settings.json: {error}"))?;
+        #[cfg(unix)]
         File::open(parent)
             .and_then(|directory| directory.sync_all())
-            .map_err(|error| format!("Could not sync the settings directory: {error}"))
+            .map_err(|error| format!("Could not sync the settings directory: {error}"))?;
+        Ok(())
     })();
     if staged.is_err() {
         let _ = fs::remove_file(&temporary);

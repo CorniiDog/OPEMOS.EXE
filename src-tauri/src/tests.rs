@@ -1195,7 +1195,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_writes_are_unique_atomic_durable_and_leave_no_temporary_files() {
+    fn settings_writes_complete_on_the_host_and_leave_no_temporary_files() {
         let root = std::env::temp_dir().join(format!("steamos-settings-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root); fs::create_dir_all(&root).expect("create settings fixture");
         let path = root.join("settings.json");
