@@ -38,7 +38,6 @@ pub fn run() {
             if webview.label() == "main"
                 && payload.event() == tauri::webview::PageLoadEvent::Finished
             {
-                let _ = webview.window().show();
                 #[cfg(all(debug_assertions, target_os = "linux"))]
                 if linux_gui_smoke_companion() == Some("build-progress") {
                     let _ = windows::open_progress_window(webview.app_handle().clone());
@@ -49,9 +48,17 @@ pub fn run() {
         .manage(Mutex::new(NvidiaBuildManager::default()))
         .manage(Mutex::new(UsbPreparationManager::default()))
         .manage(Mutex::new(MaintainerReleaseManager::default()))
-        .setup(|_| {
+        .setup(|app| {
             cleanup_abandoned_runtimes().map_err(std::io::Error::other)?;
             cleanup_abandoned_nvidia_build_runtimes().map_err(std::io::Error::other)?;
+            let main = app.get_webview_window("main").ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "configured main window is unavailable during setup",
+                )
+            })?;
+            main.show().map_err(std::io::Error::other)?;
+            main.set_focus().map_err(std::io::Error::other)?;
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
