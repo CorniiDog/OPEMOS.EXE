@@ -4535,15 +4535,9 @@ pub(crate) fn support_publisher_command(
     command
 }
 
+#[cfg(windows)]
 pub(crate) fn support_publisher_path(path: &Path) -> String {
-    #[cfg(windows)]
-    {
-        path.to_string_lossy().replace('\\', "/")
-    }
-    #[cfg(not(windows))]
-    {
-        path.to_string_lossy().into_owned()
-    }
+    path.to_string_lossy().replace('\\', "/")
 }
 
 pub(crate) fn validate_staged_nvidia_installer_bundle(
