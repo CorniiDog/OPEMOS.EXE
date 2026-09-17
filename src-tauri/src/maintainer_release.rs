@@ -1,6 +1,7 @@
 use super::*;
 
 const RELEASE_RESULT_LIMIT: usize = 1024 * 1024;
+const CORE_SESSION_BOOTSTRAP: &str = "import runpy,sys; library=sys.argv.pop(1); script=sys.argv.pop(1); sys.path.insert(0,library); sys.argv[0]=script; runpy.run_path(script,run_name='__main__')";
 
 fn imported_publisher_rejection(stderr: &[u8]) -> String {
     if stderr.len() > RELEASE_RESULT_LIMIT {
@@ -326,25 +327,7 @@ fn run_core_session(
     let python = find_binary("python3")
         .or_else(|| find_binary("python"))
         .ok_or("Python 3 is required by the pinned Core release session.")?;
-    let mut process = Command::new(python);
-    process
-        .arg(
-            runtime
-                .support_root
-                .join("lib/release_operation_session.py"),
-        )
-        .arg(command)
-        .arg("--state")
-        .arg(&runtime.state);
-    if command == "execute" || command == "reconcile" {
-        process.arg("--plan").arg(&runtime.plan);
-    }
-    if let Some(path) = observed {
-        process.arg("--observed").arg(path);
-    }
-    if let Some(value) = attempt {
-        process.arg("--attempt").arg(value.to_string());
-    }
+    let mut process = core_session_command(&python, runtime, command, observed, attempt);
     let output = process
         .output()
         .map_err(|error| format!("Could not run the pinned Core release session: {error}"))?;
@@ -358,6 +341,36 @@ fn run_core_session(
     }
     serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("Pinned Core release session returned invalid JSON: {error}"))
+}
+
+fn core_session_command(
+    python: &Path,
+    runtime: &ReleaseRuntime,
+    command: &str,
+    observed: Option<&Path>,
+    attempt: Option<u64>,
+) -> Command {
+    let library = runtime.support_root.join("lib");
+    let script = library.join("release_operation_session.py");
+    let mut process = Command::new(python);
+    process
+        .arg("-c")
+        .arg(CORE_SESSION_BOOTSTRAP)
+        .arg(library)
+        .arg(script)
+        .arg(command)
+        .arg("--state")
+        .arg(&runtime.state);
+    if command == "execute" || command == "reconcile" {
+        process.arg("--plan").arg(&runtime.plan);
+    }
+    if let Some(path) = observed {
+        process.arg("--observed").arg(path);
+    }
+    if let Some(value) = attempt {
+        process.arg("--attempt").arg(value.to_string());
+    }
+    process
 }
 
 fn bind_request(
@@ -499,6 +512,57 @@ mod tests {
         assert!(bind_request(&current, &request("a", 2)).is_ok());
         assert!(bind_request(&current, &request("b", 2)).is_err());
         assert!(bind_request(&current, &request("a", 1)).is_err());
+    }
+
+    #[test]
+    fn core_session_bootstrap_imports_sibling_module_and_preserves_arguments() {
+        let fixture = ImportFixture::new();
+        let library = fixture.0.join("support/lib");
+        fs::create_dir_all(&library).expect("create Core library fixture");
+        fs::write(
+            library.join("release_operation.py"),
+            "VALUE = 'sibling-loaded'\n",
+        )
+        .expect("write sibling module");
+        fs::write(
+            library.join("release_operation_session.py"),
+            "import json, sys\nfrom release_operation import VALUE\nprint(json.dumps({'value': VALUE, 'argv': sys.argv}))\n",
+        )
+        .expect("write Core session fixture");
+        let runtime = ReleaseRuntime {
+            support_root: fixture.0.join("support"),
+            state: fixture.0.join("state.json"),
+            plan: fixture.0.join("plan.json"),
+            inputs: None,
+        };
+        let python = find_binary("python3")
+            .or_else(|| find_binary("python"))
+            .expect("Python 3 is required for the Core session regression");
+        let output = core_session_command(&python, &runtime, "execute", None, Some(7))
+            .output()
+            .expect("run Core session bootstrap");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("parse fixture output");
+        assert_eq!(value["value"], "sibling-loaded");
+        assert_eq!(
+            value["argv"][0],
+            library
+                .join("release_operation_session.py")
+                .to_string_lossy()
+                .as_ref()
+        );
+        assert_eq!(value["argv"][1], "execute");
+        assert_eq!(value["argv"][2], "--state");
+        assert_eq!(value["argv"][3], runtime.state.to_string_lossy().as_ref());
+        assert_eq!(value["argv"][4], "--plan");
+        assert_eq!(value["argv"][5], runtime.plan.to_string_lossy().as_ref());
+        assert_eq!(value["argv"][6], "--attempt");
+        assert_eq!(value["argv"][7], 7.to_string());
     }
 
     #[test]

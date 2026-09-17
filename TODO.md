@@ -2503,7 +2503,23 @@ must be reported; a default-suite pass does not imply hardware certification.
   bounded correction compares returned assets with canonical native input paths
   while retaining forward slashes only at the Bash command boundary; a focused
   Windows regression rejects substituting command-argument paths for publisher
-  result paths. Create-only and the single native proof remain pending.
+  result paths. PR #109 passed exact Core review and all nine required jobs,
+  then squash-merged through protection as
+  `76a1d304491192687fc68cfccfc4eafb549f2f64`. Protected-main artifact
+  `10486856434` closed-validates on both hosts with 5,676 files, executable
+  SHA-256 `2c63352ee19657d040507b2d8a45ac50165250b7592861210dd6910873295c95`,
+  and runtime-manifest SHA-256
+  `bde1c333f18d935357083740900514a1cc964f25c414af6d8444fede7699b612`.
+  The exact VM candidate is visible, responsive, authenticated, and reaches the
+  imported Core session after accepting artifact `10483206683`; the next
+  reproduced Windows failure is Python's isolated embeddable runtime omitting
+  the extracted sibling `lib` directory, so `release_operation_session.py`
+  fails to import `release_operation`. The active bounded fix invokes the same
+  pinned session script through a fixed Python bootstrap that prepends only its
+  extracted `lib` directory and preserves the exact script arguments. Its
+  focused executable regression proves the sibling import and complete
+  execute/state/plan/attempt argument order. Create-only and the single native
+  proof remain pending.
   No release, tag, asset, or beta publication occurred.
 
 ### Alpha
