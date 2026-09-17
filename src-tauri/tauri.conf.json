@@ -29,7 +29,7 @@
           "radius": 10,
           "color": [11, 17, 24, 220]
         },
-        "visible": false,
+        "visible": true,
         "resizable": false,
         "maximizable": false,
         "fullscreen": false

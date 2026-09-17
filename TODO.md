@@ -2460,6 +2460,22 @@ must be reported; a default-suite pass does not imply hardware certification.
   accepted plan identity to the exact command argument representation. Host
   formatting, the focused importer regression (1/1), and warnings-denied
   all-target Clippy pass through the shared heavy wrapper.
+  PR #106 passed exact Core review and all nine required jobs, then
+  squash-merged through protection as
+  `1ff4dbac4b0f04af6e38b77aaf3aad8cde9e6a99`. Protected-main Windows run
+  `35168518101` passed identity, contract, native tests, build, startup,
+  provenance, and upload. Artifact `10476442402` closed-validated 5,676 files
+  and 5,671 runtime entries at executable SHA-256
+  `d58fa28156e23caa90c52f8ac10027f7364149a259f8f2d7d1c77d3b90482dba`;
+  the full native Desktop copy and standalone replacement rehashed identically.
+  Native interactive direct and Explorer launches then reproduced a new
+  user-visible gap: the exact process remained responsive in session 1 with its
+  WebView tree, but after the full 30-second readiness bound it still exposed no
+  top-level window or title. The configured main window was initially hidden
+  and depended on a page-load callback whose `show()` failure is discarded.
+  The active bounded startup fix makes only the main window visible at creation;
+  companion windows retain their explicit hidden-until-requested behavior.
+  A configuration regression preserves that user-visible startup invariant.
   No release, tag, asset, or beta publication occurred.
 
 ### Alpha
