@@ -102,7 +102,12 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   that cache; settings remain separate, migrate once through the existing
   settings-schema validator, and are preserved across cache replacement.
   WebView2 receives an explicit bundle-local user-data directory before Tauri
-  starts. Focused first-launch, reuse, changed-version, interruption,
+  starts. Initial native Windows build/startup run `35227704908` compiled and
+  packaged successfully but failed before its main window with
+  `0xC00000FD`: the new pre-Tauri executable hasher allocated its 1 MiB read
+  block on the Windows main-thread stack. The remediation moves only that block
+  to the heap and adds a packaged-sized hashing regression. Focused first-launch,
+  reuse, changed-version, interruption,
   corruption, settings migration/preservation, and placement tests pass locally
   through `heavy.sh`; warnings-as-errors, remote Windows build/startup, exact
   counterpart review, merge, and the required disposable-VM matrix remain

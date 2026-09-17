@@ -40,7 +40,9 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file = File::open(path)
         .map_err(|error| format!("Could not open portable-state identity file: {error}"))?;
     let mut digest = Sha256::new();
-    let mut block = [0_u8; 1024 * 1024];
+    // The packaged executable is verified before Tauri starts on the Windows
+    // main thread, whose stack cannot accommodate a 1 MiB local array.
+    let mut block = vec![0_u8; 1024 * 1024];
     loop {
         let read = file
             .read(&mut block)
@@ -402,6 +404,19 @@ mod tests {
         assert!(state.join("settings").starts_with(&state));
         assert_eq!(webview_data_path(&state), state.join("webview-v1"));
         assert!(webview_data_path(&state).starts_with(&state));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn packaged_sized_identity_is_hashed_without_main_thread_stack_pressure() {
+        let (root, _) = fixture("large-hash");
+        let path = root.join("large-executable.exe");
+        let bytes = vec![0x5a_u8; 6 * 1024 * 1024];
+        fs::write(&path, &bytes).unwrap();
+        assert_eq!(
+            sha256_file(&path).unwrap(),
+            format!("{:x}", Sha256::digest(&bytes))
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }
