@@ -4511,15 +4511,15 @@ pub(crate) fn support_publisher_command(
             "opemos-core-publisher",
         ]);
         command
-            .arg(publisher.to_string_lossy().replace('\\', "/"))
+            .arg(support_publisher_path(publisher))
             .arg("--archive")
-            .arg(archive.to_string_lossy().replace('\\', "/"))
+            .arg(support_publisher_path(archive))
             .arg("--checksum")
-            .arg(checksum.to_string_lossy().replace('\\', "/"))
+            .arg(support_publisher_path(checksum))
             .arg("--build-info")
-            .arg(build_info.to_string_lossy().replace('\\', "/"))
+            .arg(support_publisher_path(build_info))
             .arg("--provenance")
-            .arg(provenance.to_string_lossy().replace('\\', "/"));
+            .arg(support_publisher_path(provenance));
     }
     #[cfg(not(windows))]
     command
@@ -4533,6 +4533,17 @@ pub(crate) fn support_publisher_command(
         .arg("--provenance")
         .arg(provenance);
     command
+}
+
+pub(crate) fn support_publisher_path(path: &Path) -> String {
+    #[cfg(windows)]
+    {
+        path.to_string_lossy().replace('\\', "/")
+    }
+    #[cfg(not(windows))]
+    {
+        path.to_string_lossy().into_owned()
+    }
 }
 
 pub(crate) fn validate_staged_nvidia_installer_bundle(

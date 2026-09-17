@@ -7724,6 +7724,10 @@ trap - EXIT"#,
         assert_eq!(arguments[9], "C:/Users/connor/product/build-info.txt");
         assert_eq!(arguments[10], "--provenance");
         assert_eq!(arguments[11], "C:/Users/connor/product/provenance.json");
+        assert_eq!(
+            support_publisher_path(Path::new(r"C:\Users\connor\product\archive.tar.gz")),
+            arguments[5]
+        );
     }
 
 }

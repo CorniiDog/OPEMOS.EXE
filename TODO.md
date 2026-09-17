@@ -2446,6 +2446,20 @@ must be reported; a default-suite pass does not imply hardware certification.
   publisher-command path arguments to forward slashes on Windows; Unix command
   construction and Core-owned publisher bytes remain unchanged. Its Windows
   regression verifies the exact publisher and four closed-world file arguments.
+  PR #105 passed exact Core review and all required checks, then squash-merged
+  as protected main `5cc0840b359c93fb2e49a51d4667a2f93965e2f8`.
+  Protected-main run `35125810684` produced a closed 5,671-file runtime and
+  unsigned executable SHA-256
+  `254bbd8aa9bdb096c0c1f505e94479bd977ac728336407cbe5d6d3ecbb85ee8d`.
+  The resumed native proof showed Core now accepts all four inputs and emits a
+  ready plan, but EXE rejected that plan because it compared Core's exact
+  forward-slash Git Bash asset paths with the original backslash Windows paths.
+  The active follow-up uses the same platform-specific publisher-path function
+  for command arguments and returned-plan expectations, preserving Unix paths,
+  Core bytes, and every other contract field. The Windows regression binds the
+  accepted plan identity to the exact command argument representation. Host
+  formatting, the focused importer regression (1/1), and warnings-denied
+  all-target Clippy pass through the shared heavy wrapper.
   No release, tag, asset, or beta publication occurred.
 
 ### Alpha

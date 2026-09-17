@@ -265,9 +265,23 @@ fn imported_release_runtime(
     let plan: SupportPublicationPlan = serde_json::from_slice(&output.stdout).map_err(|error| {
         format!("Pinned Core publisher returned invalid imported-product JSON: {error}")
     })?;
-    let expected = inputs
-        .clone()
-        .map(|path| path.to_string_lossy().into_owned());
+    validate_imported_publication_plan(&plan, &inputs, &actual)?;
+    let plan_path = runtime_dir.join("maintainer-release-plan.json");
+    write_create_or_exact(&plan_path, &output.stdout, "maintainer release plan")?;
+    Ok(ReleaseRuntime {
+        support_root,
+        state: runtime_dir.join("maintainer-release-operation.json"),
+        plan: plan_path,
+        inputs: Some(inputs),
+    })
+}
+
+fn validate_imported_publication_plan(
+    plan: &SupportPublicationPlan,
+    inputs: &[PathBuf; 4],
+    actual: &str,
+) -> Result<(), String> {
+    let expected = inputs.clone().map(|path| support_publisher_path(&path));
     if plan.schema_version != 1
         || plan.status != "ready"
         || plan.repository != NVIDIA_SUPPORT_REPOSITORY
@@ -280,14 +294,7 @@ fn imported_release_runtime(
     if plan.archive_sha256 != actual {
         return Err("Imported release archive identity is inconsistent.".into());
     }
-    let plan_path = runtime_dir.join("maintainer-release-plan.json");
-    write_create_or_exact(&plan_path, &output.stdout, "maintainer release plan")?;
-    Ok(ReleaseRuntime {
-        support_root,
-        state: runtime_dir.join("maintainer-release-operation.json"),
-        plan: plan_path,
-        inputs: Some(inputs),
-    })
+    Ok(())
 }
 
 #[tauri::command]
@@ -506,6 +513,34 @@ mod tests {
             imported_publisher_rejection(&vec![b'x'; RELEASE_RESULT_LIMIT + 1]),
             "Pinned Core publisher rejected the imported product; its diagnostic exceeded the output limit."
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn imported_plan_accepts_the_exact_git_bash_asset_paths() {
+        let inputs = [
+            PathBuf::from(r"C:\Users\connor\product\archive.tar.gz"),
+            PathBuf::from(r"C:\Users\connor\product\archive.tar.gz.sha256"),
+            PathBuf::from(r"C:\Users\connor\product\build-info.txt"),
+            PathBuf::from(r"C:\Users\connor\product\provenance.json"),
+        ];
+        let mut plan = SupportPublicationPlan {
+            schema_version: 1,
+            status: "ready".into(),
+            repository: NVIDIA_SUPPORT_REPOSITORY.into(),
+            tag: "unused-by-import".into(),
+            target_commit: NVIDIA_SUPPORT_BUILD_COMMIT.into(),
+            trust: "locally-built-verified".into(),
+            archive_sha256: "a".repeat(64),
+            assets: inputs
+                .clone()
+                .map(|path| support_publisher_path(&path))
+                .to_vec(),
+        };
+        assert!(validate_imported_publication_plan(&plan, &inputs, &"a".repeat(64)).is_ok());
+
+        plan.assets[0] = inputs[0].to_string_lossy().into_owned();
+        assert!(validate_imported_publication_plan(&plan, &inputs, &"a".repeat(64)).is_err());
     }
 
     #[test]
