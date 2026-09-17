@@ -92,6 +92,24 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
+- [ ] Replace implicit packaged-Windows AppData reuse with bundle-local,
+  versioned application state before the final native candidate run. The
+  approved implementation derives `state/` from the executable's Desktop
+  bundle root, binds cache schema 1 to the exact executable SHA-256/size,
+  package version, and runtime-manifest SHA-256, and atomically repopulates a
+  closed cache root after identity mismatch, incomplete population, or
+  same-version corruption. Imported-release state and maintainer worktrees use
+  that cache; settings remain separate, migrate once through the existing
+  settings-schema validator, and are preserved across cache replacement.
+  WebView2 receives an explicit bundle-local user-data directory before Tauri
+  starts. Focused first-launch, reuse, changed-version, interruption,
+  corruption, settings migration/preservation, and placement tests pass locally
+  through `heavy.sh`; warnings-as-errors, remote Windows build/startup, exact
+  counterpart review, merge, and the required disposable-VM matrix remain
+  pending. This supersedes candidate `bcdb47dd` without consuming its unused
+  native execution and does not change imaging, Core bytes, release publication,
+  or physical-device behavior.
+
 ### Experimental Ubuntu/Debian host testing (current user priority)
 
 This authorizes an EXE host-testing path alongside macOS, not Ubuntu/Debian

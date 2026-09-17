@@ -82,6 +82,7 @@ mod nvidia;
 #[cfg(unix)]
 #[allow(dead_code)]
 mod output_transaction;
+mod portable_state;
 mod runtime_bundle;
 mod settings;
 mod windows;
@@ -97,6 +98,8 @@ use image::*;
 use installer::*;
 use maintainer_release::*;
 use nvidia::*;
+pub use portable_state::prepare_portable_state;
+use portable_state::{portable_cache_root, portable_settings_path};
 pub use runtime_bundle::activate_runtime_bundle;
 use runtime_bundle::{bundled_runtime_binary, bundled_runtime_required};
 use settings::*;

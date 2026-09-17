@@ -1072,11 +1072,13 @@ pub(crate) fn managed_maintainer_worktree_destination(
 }
 
 fn managed_maintainer_worktree_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let root = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("Could not determine the managed-worktree directory: {error}"))?
-        .join("maintainer-worktrees");
+    let cache = match portable_cache_root() {
+        Some(root) => root.clone(),
+        None => app.path().app_data_dir().map_err(|error| {
+            format!("Could not determine the managed-worktree directory: {error}")
+        })?,
+    };
+    let root = cache.join("maintainer-worktrees");
     fs::create_dir_all(&root)
         .map_err(|error| format!("Could not create the managed-worktree directory: {error}"))?;
     let metadata = fs::symlink_metadata(&root)
