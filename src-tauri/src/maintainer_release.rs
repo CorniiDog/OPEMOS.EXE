@@ -281,7 +281,9 @@ fn validate_imported_publication_plan(
     inputs: &[PathBuf; 4],
     actual: &str,
 ) -> Result<(), String> {
-    let expected = inputs.clone().map(|path| support_publisher_path(&path));
+    let expected = inputs
+        .clone()
+        .map(|path| path.to_string_lossy().into_owned());
     if plan.schema_version != 1
         || plan.status != "ready"
         || plan.repository != NVIDIA_SUPPORT_REPOSITORY
@@ -517,7 +519,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn imported_plan_accepts_the_exact_git_bash_asset_paths() {
+    fn imported_plan_accepts_the_exact_publisher_result_paths() {
         let inputs = [
             PathBuf::from(r"C:\Users\connor\product\archive.tar.gz"),
             PathBuf::from(r"C:\Users\connor\product\archive.tar.gz.sha256"),
@@ -534,12 +536,12 @@ mod tests {
             archive_sha256: "a".repeat(64),
             assets: inputs
                 .clone()
-                .map(|path| support_publisher_path(&path))
+                .map(|path| path.to_string_lossy().into_owned())
                 .to_vec(),
         };
         assert!(validate_imported_publication_plan(&plan, &inputs, &"a".repeat(64)).is_ok());
 
-        plan.assets[0] = inputs[0].to_string_lossy().into_owned();
+        plan.assets[0] = support_publisher_path(&inputs[0]);
         assert!(validate_imported_publication_plan(&plan, &inputs, &"a".repeat(64)).is_err());
     }
 

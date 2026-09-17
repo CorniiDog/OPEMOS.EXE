@@ -2488,6 +2488,22 @@ must be reported; a default-suite pass does not imply hardware certification.
   page-load visibility error. Changed-head checks, exact Core review,
   protected-main artifact construction, and one native proof in the authorized
   time window remain pending.
+  PR #108 passed exact Core review and all nine required jobs, then
+  squash-merged as protected main
+  `86428293a9baaae8ebc3eebaa34531b33c92d1a3`. Exact artifact `10481593965`
+  closed-validates at executable SHA-256
+  `c0b0cf5cbdfe582763c30ce2c509956abd25e47f4d920ca724ddef6297f22307`;
+  its disposable-VM proof exposes a visible authenticated maintainer workspace
+  and passed the contained 32-GiB file-backed write, flush, SHA-256 readback,
+  and owned-target cleanup lifecycle. Core artifact `10483206683` supplies the
+  exact four-file driver-only product bound to pinned Core `f6871104`, but the
+  resumed import exposed a Windows adapter mismatch: command arguments require
+  forward slashes for Git Bash while Core's Python publisher returns canonical
+  native backslash asset paths. Every other plan field matches. The active
+  bounded correction compares returned assets with canonical native input paths
+  while retaining forward slashes only at the Bash command boundary; a focused
+  Windows regression rejects substituting command-argument paths for publisher
+  result paths. Create-only and the single native proof remain pending.
   No release, tag, asset, or beta publication occurred.
 
 ### Alpha
