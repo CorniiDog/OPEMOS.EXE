@@ -51,6 +51,10 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, '$qemuDeadline = [DateTime]::UtcNow.AddSeconds(5)', "the bounded post-close QEMU check");
   requireText(text, 'Where-Object { $_ -notin $qemuBefore }', "new-QEMU identity comparison");
   requireText(text, 'if ($qemuAfter.Count -ne 0) {', "the no-orphan QEMU gate");
+  requireText(text, '$state = Join-Path $bundleRoot "state"', "exact bundle-local smoke-state selection");
+  requireText(text, '($stateItem.Attributes -band [IO.FileAttributes]::ReparsePoint)', "linked smoke-state refusal");
+  requireText(text, 'Remove-Item -LiteralPath $state -Recurse -Force', "owned smoke-state cleanup");
+  requireText(text, 'throw "Portable smoke-test state survived cleanup."', "post-cleanup absence gate");
   requireText(text, "Get-AuthenticodeSignature -LiteralPath $source", "Authenticode inspection");
   requireText(text, "SignatureStatus]::NotSigned", "the unsigned-only gate");
   requireText(text, "Get-FileHash -LiteralPath $destination -Algorithm SHA256", "SHA-256 provenance");

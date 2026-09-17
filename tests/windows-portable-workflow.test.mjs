@@ -39,6 +39,10 @@ for (const [name, mutate, expected] of [
   ["unbounded post-close QEMU check", text => text.replace('$qemuDeadline = [DateTime]::UtcNow.AddSeconds(5)', '$qemuDeadline = [DateTime]::MaxValue'), /bounded post-close QEMU check/],
   ["missing new-QEMU identity comparison", text => text.replace('Where-Object { $_ -notin $qemuBefore }', 'Where-Object { $false }'), /new-QEMU identity comparison/],
   ["missing no-orphan QEMU gate", text => text.replace('if ($qemuAfter.Count -ne 0) {', 'if ($false) {'), /no-orphan QEMU gate/],
+  ["missing bundle-local state selection", text => text.replace('$state = Join-Path $bundleRoot "state"', '$state = "$env:APPDATA\\state"'), /bundle-local smoke-state selection/],
+  ["linked smoke-state accepted", text => text.replace('($stateItem.Attributes -band [IO.FileAttributes]::ReparsePoint)', '$false'), /linked smoke-state refusal/],
+  ["missing smoke-state cleanup", text => text.replace('Remove-Item -LiteralPath $state -Recurse -Force', 'Write-Host skipped'), /owned smoke-state cleanup/],
+  ["missing clean-artifact gate", text => text.replace('throw "Portable smoke-test state survived cleanup."', 'Write-Host skipped'), /post-cleanup absence gate/],
   ["secret signing input", text => text + "\n# secrets.WINDOWS_CERT signtool", /must not use secrets/],
 ]) {
   test(`Windows portable workflow rejects ${name}`, () => {
