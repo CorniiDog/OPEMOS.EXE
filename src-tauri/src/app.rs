@@ -49,6 +49,7 @@ pub fn run() {
         .manage(Mutex::new(UsbPreparationManager::default()))
         .manage(Mutex::new(MaintainerReleaseManager::default()))
         .setup(|app| {
+            migrate_legacy_settings(app.handle()).map_err(std::io::Error::other)?;
             cleanup_abandoned_runtimes().map_err(std::io::Error::other)?;
             cleanup_abandoned_nvidia_build_runtimes().map_err(std::io::Error::other)?;
             let main = app.get_webview_window("main").ok_or_else(|| {

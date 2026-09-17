@@ -238,12 +238,14 @@ fn imported_release_runtime(
 ) -> Result<ReleaseRuntime, String> {
     let inputs = discover_imported_release_inputs(directory)?;
     let actual = sha256_file(&inputs[0])?;
-    let runtime_dir = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|error| format!("Could not resolve application data: {error}"))?
-        .join("maintainer-release-import")
-        .join(&actual);
+    let cache = match portable_cache_root() {
+        Some(root) => root.clone(),
+        None => app
+            .path()
+            .app_local_data_dir()
+            .map_err(|error| format!("Could not resolve application data: {error}"))?,
+    };
+    let runtime_dir = cache.join("maintainer-release-import").join(&actual);
     fs::create_dir_all(&runtime_dir)
         .map_err(|error| format!("Could not create maintainer release state: {error}"))?;
     let support_root = prepare_pinned_nvidia_publisher(&runtime_dir)?;

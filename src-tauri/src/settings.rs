@@ -239,10 +239,37 @@ pub(crate) fn acquire_settings_file_lock(
 }
 
 pub(crate) fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Some(directory) = portable_settings_path() {
+        return Ok(directory.join("settings.json"));
+    }
     app.path()
         .app_config_dir()
         .map(|directory| directory.join("settings.json"))
         .map_err(|error| format!("Could not determine the settings directory: {error}"))
+}
+
+pub(crate) fn migrate_legacy_settings(app: &tauri::AppHandle) -> Result<(), String> {
+    let destination = settings_path(app)?;
+    if destination.exists() {
+        return Ok(());
+    }
+    let legacy = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("Could not determine the legacy settings directory: {error}"))?
+        .join("settings.json");
+    migrate_settings_path(&legacy, &destination)
+}
+
+fn migrate_settings_path(legacy: &Path, destination: &Path) -> Result<(), String> {
+    if destination.exists() {
+        return Ok(());
+    }
+    if !legacy.exists() {
+        return Ok(());
+    }
+    let settings = load_builder_settings_path_unlocked(legacy)?;
+    save_builder_settings_path_unlocked(destination, &settings)
 }
 
 pub(crate) fn load_builder_settings(app: &tauri::AppHandle) -> Result<BuilderSettings, String> {
@@ -415,6 +442,45 @@ pub(crate) fn validate_recent_maintainer_worktrees(paths: &[String]) -> Result<(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod portable_settings_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_settings_are_migrated_once_and_portable_settings_win_afterward() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-portable-settings-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let legacy = root.join("legacy/settings.json");
+        let portable = root.join("portable/settings.json");
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::write(
+            &legacy,
+            br#"{"schemaVersion":3,"autoReleaseVerifiedNvidia":true,"trackSteamosDriverUpdates":true,"includeUpstreamNvidiaReleases":true,"recentMaintainerWorktrees":[]}"#,
+        )
+        .unwrap();
+        migrate_settings_path(&legacy, &portable).unwrap();
+        let migrated = load_builder_settings_path_unlocked(&portable).unwrap();
+        assert_eq!(migrated.schema_version, BUILDER_SETTINGS_SCHEMA);
+        assert!(migrated.auto_release_verified_nvidia);
+        assert!(migrated.track_steamos_driver_updates);
+        assert!(migrated.include_upstream_nvidia_releases);
+        assert!(!migrated.omit_optional_cuda);
+
+        let replacement = BuilderSettings::default();
+        save_builder_settings_path_unlocked(&legacy, &replacement).unwrap();
+        migrate_settings_path(&legacy, &portable).unwrap();
+        let retained = load_builder_settings_path_unlocked(&portable).unwrap();
+        assert!(retained.auto_release_verified_nvidia);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 pub(crate) fn remember_maintainer_worktree(
