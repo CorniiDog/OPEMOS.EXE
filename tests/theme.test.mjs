@@ -39,6 +39,7 @@ test("preload and native window backgrounds preserve translucent dark fallback",
 
   const config = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
   const main = config.app.windows[0];
+  assert.equal(main.visible, true);
   assert.equal(config.app.macOSPrivateApi, true);
   assert.equal(main.transparent, true);
   assert.equal(main.titleBarStyle, "Overlay");
