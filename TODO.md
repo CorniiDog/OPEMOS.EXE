@@ -2476,6 +2476,18 @@ must be reported; a default-suite pass does not imply hardware certification.
   The active bounded startup fix makes only the main window visible at creation;
   companion windows retain their explicit hidden-until-requested behavior.
   A configuration regression preserves that user-visible startup invariant.
+  Protected-main artifact `10477773213` from squash commit
+  `3bc588bf8a93e5cf4d27cf5522cad8c51bdc2fe8` passed the automated Windows
+  build/startup job, but its native interactive proof still exposed no visible
+  OPEMOS window, so configuration-time visibility alone is insufficient and
+  the artifact must not be reused. The bounded follow-up resolves the configured
+  main window synchronously during Tauri setup, propagates missing-window,
+  `show`, and focus failures instead of discarding them, and preserves the
+  page-load hook only for the debug Linux companion. A focused source invariant
+  binds the synchronous lookup/show/focus sequence and rejects the discarded
+  page-load visibility error. Changed-head checks, exact Core review,
+  protected-main artifact construction, and one native proof in the authorized
+  time window remain pending.
   No release, tag, asset, or beta publication occurred.
 
 ### Alpha
