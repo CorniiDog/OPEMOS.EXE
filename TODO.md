@@ -114,6 +114,15 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   pending. This supersedes candidate `bcdb47dd` without consuming its unused
   native execution and does not change imaging, Core bytes, release publication,
   or physical-device behavior.
+  Protected-main artifact `10505943633` at squash `bfda07ec06f88c5fe0a42d0fcd29fce8ca3dc237`
+  then failed closed validation because its Windows startup smoke left a
+  populated `state/cache-v1` inside the uploaded bundle, preventing a genuine
+  clean-first-launch proof. The bounded follow-up removes only that exact
+  smoke-owned real `dist/windows/state` directory after process/QEMU cleanup,
+  refuses a reparse-point replacement, and requires post-cleanup absence before
+  provenance and upload. A focused workflow invariant covers path selection,
+  linked-state refusal, cleanup, and the absence gate; a fresh protected-main
+  artifact is required before resuming the VM matrix.
 
 ### Experimental Ubuntu/Debian host testing (current user priority)
 

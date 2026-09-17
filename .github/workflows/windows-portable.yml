@@ -138,6 +138,18 @@ jobs:
           if ($qemuAfter.Count -ne 0) {
             throw "Portable executable left new QEMU processes after bounded shutdown: $($qemuAfter -join ', ')"
           }
+          $bundleRoot = (Resolve-Path -LiteralPath "dist/windows").Path
+          $state = Join-Path $bundleRoot "state"
+          if (Test-Path -LiteralPath $state) {
+            $stateItem = Get-Item -LiteralPath $state -Force
+            if (-not $stateItem.PSIsContainer -or ($stateItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+              throw "Portable smoke-test state is not an owned real directory."
+            }
+            Remove-Item -LiteralPath $state -Recurse -Force
+          }
+          if (Test-Path -LiteralPath $state) {
+            throw "Portable smoke-test state survived cleanup."
+          }
 
       - name: Verify executable and record provenance
         shell: pwsh
