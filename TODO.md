@@ -2627,8 +2627,12 @@ must be reported; a default-suite pass does not imply hardware certification.
   of registry/display/unrelated-process mutation. Rebased preparation commit
   `866de67` has a clean diff, passes formatting and an all-target Rust check
   through `heavy.sh`; Node is unavailable locally, so the focused mutation
-  regression and exact Windows build/startup remain required in CI. The native
-  candidate has not been launched and the exactly-once proof remains unused.
+  regression and exact Windows build/startup remain required in CI. PR #114's
+  first frontend job exposed the existing startup invariant still requiring a
+  non-capturing `.setup(|app|` closure; the proof flag necessarily makes that
+  closure `move`. The focused remediation updates only that invariant while
+  retaining its synchronous main-window lookup/show/focus requirements. The
+  native candidate has not been launched and the exactly-once proof remains unused.
   No release, tag, asset, or beta publication occurred.
 
 ### Alpha
