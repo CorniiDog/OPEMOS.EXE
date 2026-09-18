@@ -56,13 +56,19 @@ class WindowsApplianceAcquisitionTests(unittest.TestCase):
         fixture_lock = dict(lock, size=7, sha256=hashlib.sha256(b"qcow2\n").hexdigest())
         image.write_bytes(b"qcow2\n")
         output = root / "output"
-        stage(fixture_lock, image, repository / "builder/appliance/cloud-init", output)
+        cloud_init = root / "builder/appliance/cloud-init"
+        cloud_init.mkdir(parents=True)
+        for name in ("meta-data", "user-data"):
+            source = repository / "builder/appliance/cloud-init" / name
+            cloud_init.joinpath(name).write_bytes(source.read_bytes().replace(b"\n", b"\r\n"))
+        stage(fixture_lock, image, cloud_init, output)
         manifest = json.loads((output / "appliance-manifest.json").read_text())
         self.assertEqual(manifest["files"][0]["sha256"], fixture_lock["sha256"])
         self.assertEqual(
             sorted(path.relative_to(output).as_posix() for path in output.rglob("*") if path.is_file()),
             ["appliance-manifest.json", "cloud-init/meta-data", "cloud-init/user-data", "fedora-builder.qcow2"],
         )
+        self.assertNotIn(b"\r", (output / "cloud-init/user-data").read_bytes())
 
     def test_lock_rejects_unpinned_origin_and_extra_fields(self):
         temporary = tempfile.TemporaryDirectory()

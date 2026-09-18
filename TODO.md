@@ -155,6 +155,14 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   remain pending. No imaging bytes, Core contracts, native execution, release,
   publication, physical device, boundary, integrity, trust, or governance
   behavior changed.
+  Initial native Windows run `35298538480` passed policy, contract, zstd, and
+  Windows Rust stages, then failed closed before appliance placement because
+  checkout CRLF conversion changed the two cloud-init text identities. The
+  bounded remediation canonicalizes only CRLF checkout text to the committed
+  LF bytes before exact size/hash validation and staging; a focused regression
+  exercises CRLF inputs and requires LF output. The failed build stage must run
+  on the changed immutable head; earlier successful companion jobs do not need
+  an unchanged local rerun.
 
 ### Experimental Ubuntu/Debian host testing (current user priority)
 

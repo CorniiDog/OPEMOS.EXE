@@ -43,6 +43,16 @@ def exact_file(path, size, sha256):
             and metadata.st_size == size and digest(path) == sha256)
 
 
+def canonical_text(path, size, sha256):
+    metadata = path.lstat()
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        fail(f"Bundled Fedora appliance support path is not a regular file: {path}")
+    content = path.read_bytes().replace(b"\r\n", b"\n")
+    if b"\r" in content or len(content) != size or hashlib.sha256(content).hexdigest() != sha256:
+        fail(f"Bundled Fedora appliance support file changed: {path.relative_to(path.parents[1]).as_posix()}")
+    return content
+
+
 def load_lock(path):
     document = json.loads(path.read_text(encoding="utf-8"))
     if (set(document) != LOCK_FIELDS or document["schema_version"] != 1
@@ -81,10 +91,10 @@ def stage(lock, image, cloud_init, output):
     if output.exists() or output.is_symlink():
         fail("Windows appliance output already exists")
     files = [{"path": lock["filename"], "size": lock["size"], "sha256": lock["sha256"]}]
+    support = {}
     for relative, (size, sha256) in CLOUD_INIT.items():
         source = cloud_init.parent / relative
-        if not exact_file(source, size, sha256):
-            fail(f"Bundled Fedora appliance support file changed: {relative}")
+        support[relative] = canonical_text(source, size, sha256)
         files.append({"path": relative, "size": size, "sha256": sha256})
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
@@ -93,7 +103,7 @@ def stage(lock, image, cloud_init, output):
         for relative, _identity in CLOUD_INIT.items():
             destination = staging / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(cloud_init.parent / relative, destination)
+            destination.write_bytes(support[relative])
         manifest = {"schema_version": 1, "appliance_protocol_version": 1,
                     "fedora_release": lock["fedora_release"],
                     "fedora_compose": lock["fedora_compose"],
