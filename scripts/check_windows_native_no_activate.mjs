@@ -12,14 +12,22 @@ export function validateNativeNoActivateProof(app, launcher) {
   requireText(app, "if !native_no_activate_proof", "hidden startup under the proof gate");
   requireText(launcher, "$info.Environment['OPEMOS_NATIVE_NO_ACTIVATE_PROOF']='1'", "child-only proof environment");
   requireText(launcher, "SetWinEventHook(3,3", "the foreground activation event hook");
+  requireText(launcher, "observedForegroundProcesses.Add(pid)", "foreground transition recording before child binding");
+  requireText(launcher, "BindForbiddenProcess([uint32]$process.Id)", "the exact launched-child guard binding");
+  requireText(launcher, "pid==forbiddenProcess", "child-only foreground rejection");
+  requireText(launcher, "Foreground().ProcessId==forbidden", "current child foreground rejection");
+  requireText(launcher, "The foreground sentinel executable identity changed.", "final sentinel executable identity verification");
   requireText(launcher, "[OpemosNoActivateNative]::AssertGuard()", "foreground checks around every phase");
   requireText(launcher, "ExpectedForegroundProcessId", "the expected game process identity");
-  requireText(launcher, "ExpectedForegroundExecutableSha256", "the expected game executable identity");
+  requireText(launcher, "ExpectedForegroundExecutableSha256", "the expected sentinel executable identity");
   requireText(launcher, "Exactly one existing leftmost portrait monitor is required.", "unambiguous portrait-monitor selection");
   requireText(launcher, "SWP_NOACTIVATE", "no-activate placement");
   requireText(launcher, "The OPEMOS window is not wholly contained by the left portrait monitor.", "post-placement bounds verification");
   requireText(launcher, "Stop-Process -Id $process.Id -Force", "owned candidate cleanup");
   requireText(launcher, "Remove-Item -LiteralPath $PSCommandPath", "transient launcher cleanup");
+  if (/expectedForeground|unexpectedForeground|Foreground window no longer matches the captured game window/.test(launcher)) {
+    throw new Error("Native no-activate proof must not reject unrelated foreground transitions.");
+  }
   if (/Set-ItemProperty|New-ItemProperty|Remove-ItemProperty|ChangeDisplaySettings|DisplaySwitch|reg\.exe|Stop-Process\s+-(?:Name|InputObject)/i.test(launcher)) {
     throw new Error("Native no-activate proof must not change registry, display, system, or unrelated process state.");
   }

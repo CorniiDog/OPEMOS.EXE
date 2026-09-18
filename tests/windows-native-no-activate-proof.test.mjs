@@ -16,7 +16,12 @@ test("native proof is process-scoped, no-activate, foreground-bound, portrait-bo
 for (const [name, mutate, expected] of [
   ["process-scoped app gate", (a, l) => [a.replace('std::env::var("OPEMOS_NATIVE_NO_ACTIVATE_PROOF").as_deref() == Ok("1")', "false"), l], /process-scoped app gate/],
   ["foreground event hook", (a, l) => [a, l.replace("SetWinEventHook(3,3", "SetWinEventHook(4,4")], /foreground activation event hook/],
-  ["game executable identity", (a, l) => [a, l.replaceAll("ExpectedForegroundExecutableSha256", "IgnoredForegroundHash")], /game executable identity/],
+  ["pre-bind transition recording", (a, l) => [a, l.replace("observedForegroundProcesses.Add(pid)", "ignoredTransitions.Add(pid)")], /foreground transition recording/],
+  ["exact child guard binding", (a, l) => [a, l.replace("BindForbiddenProcess([uint32]$process.Id)", "BindForbiddenProcess(0)")], /exact launched-child guard binding/],
+  ["child-only event rejection", (a, l) => [a, l.replace("pid==forbiddenProcess", "pid!=forbiddenProcess")], /child-only foreground rejection/],
+  ["current child rejection", (a, l) => [a, l.replace("Foreground().ProcessId==forbidden", "Foreground().ProcessId!=forbidden")], /current child foreground rejection/],
+  ["sentinel executable identity", (a, l) => [a, l.replaceAll("ExpectedForegroundExecutableSha256", "IgnoredForegroundHash")], /sentinel executable identity/],
+  ["final sentinel executable identity", (a, l) => [a, l.replace("The foreground sentinel executable identity changed.", "ignored")], /final sentinel executable identity verification/],
   ["no-activate placement", (a, l) => [a, l.replaceAll("SWP_NOACTIVATE", "SWP_FRAMECHANGED")], /no-activate placement/],
   ["portrait containment", (a, l) => [a, l.replace("The OPEMOS window is not wholly contained by the left portrait monitor.", "ignored")], /post-placement bounds verification/],
   ["owned cleanup", (a, l) => [a, l.replace("Stop-Process -Id $process.Id -Force", "Write-Output skipped")], /owned candidate cleanup/],
@@ -27,3 +32,10 @@ for (const [name, mutate, expected] of [
     assert.throws(() => validateNativeNoActivateProof(changedApp, changedLauncher), expected);
   });
 }
+
+test("native proof rejects the reproduced all-foreground-transitions guard", () => {
+  assert.throws(
+    () => validateNativeNoActivateProof(app, `${launcher}\nprivate static long expectedForeground;`),
+    /must not reject unrelated foreground transitions/,
+  );
+});

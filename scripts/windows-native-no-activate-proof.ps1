@@ -32,7 +32,7 @@ public static class OpemosNoActivateNative {
   private delegate bool MonitorEnumDelegate(IntPtr monitor,IntPtr hdc,IntPtr rect,IntPtr data);
   [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X,Y; }
   [StructLayout(LayoutKind.Sequential)] private struct MSG { public IntPtr Hwnd; public uint Message; public UIntPtr WParam; public IntPtr LParam; public uint Time; public POINT Point; }
-  private static WinEventDelegate guardDelegate; private static IntPtr guardHook; private static long expectedForeground; private static long unexpectedForeground; private static uint guardThreadId; private static Thread guardThread;
+  private static WinEventDelegate guardDelegate; private static IntPtr guardHook; private static readonly object guardLock=new object(); private static readonly HashSet<uint> observedForegroundProcesses=new HashSet<uint>(); private static uint forbiddenProcess; private static uint forbiddenActivation; private static uint guardThreadId; private static Thread guardThread;
   [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] private static extern bool GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
   [DllImport("user32.dll",CharSet=CharSet.Unicode)] private static extern int GetWindowText(IntPtr hwnd,StringBuilder text,int count);
@@ -49,8 +49,9 @@ public static class OpemosNoActivateNative {
   [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
   private static WindowIdentity Read(IntPtr hwnd) { uint pid; GetWindowThreadProcessId(hwnd,out pid); var title=new StringBuilder(512); GetWindowText(hwnd,title,title.Capacity); var klass=new StringBuilder(256); GetClassName(hwnd,klass,klass.Capacity); return new WindowIdentity{Handle=hwnd,ProcessId=pid,Title=title.ToString(),ClassName=klass.ToString()}; }
   public static WindowIdentity Foreground() { return Read(GetForegroundWindow()); }
-  public static void StartGuard(IntPtr expected) { if(expected==IntPtr.Zero) throw new InvalidOperationException("Foreground window is unavailable."); expectedForeground=expected.ToInt64(); unexpectedForeground=0; var ready=new ManualResetEventSlim(false); Exception failure=null; guardThread=new Thread(delegate(){ try { guardThreadId=GetCurrentThreadId(); guardDelegate=delegate(IntPtr h,uint e,IntPtr w,int o,int c,uint t,uint m){ if(w!=IntPtr.Zero && w.ToInt64()!=Interlocked.Read(ref expectedForeground)) Interlocked.CompareExchange(ref unexpectedForeground,w.ToInt64(),0); }; guardHook=SetWinEventHook(3,3,IntPtr.Zero,guardDelegate,0,0,0); if(guardHook==IntPtr.Zero)throw new InvalidOperationException("Could not install the foreground-event guard."); ready.Set(); MSG message; while(GetMessage(out message,IntPtr.Zero,0,0)>0){} } catch(Exception error){failure=error;ready.Set();} finally {if(guardHook!=IntPtr.Zero){UnhookWinEvent(guardHook);guardHook=IntPtr.Zero;}} }); guardThread.IsBackground=true;guardThread.Start(); if(!ready.Wait(5000))throw new InvalidOperationException("Foreground-event guard did not become ready."); if(failure!=null)throw new InvalidOperationException("Foreground-event guard failed.",failure); }
-  public static void AssertGuard() { long changed=Interlocked.Read(ref unexpectedForeground); if(changed!=0) throw new InvalidOperationException("Foreground activation changed."); if(GetForegroundWindow().ToInt64()!=Interlocked.Read(ref expectedForeground)) throw new InvalidOperationException("Foreground window no longer matches the captured game window."); }
+  public static void StartGuard() { lock(guardLock){observedForegroundProcesses.Clear();forbiddenProcess=0;forbiddenActivation=0;} var ready=new ManualResetEventSlim(false); Exception failure=null; guardThread=new Thread(delegate(){ try { guardThreadId=GetCurrentThreadId(); guardDelegate=delegate(IntPtr h,uint e,IntPtr w,int o,int c,uint t,uint m){ if(w==IntPtr.Zero)return;uint pid;GetWindowThreadProcessId(w,out pid);lock(guardLock){observedForegroundProcesses.Add(pid);if(forbiddenProcess!=0 && pid==forbiddenProcess)forbiddenActivation=pid;} }; guardHook=SetWinEventHook(3,3,IntPtr.Zero,guardDelegate,0,0,0); if(guardHook==IntPtr.Zero)throw new InvalidOperationException("Could not install the foreground-event guard."); ready.Set(); MSG message; while(GetMessage(out message,IntPtr.Zero,0,0)>0){} } catch(Exception error){failure=error;ready.Set();} finally {if(guardHook!=IntPtr.Zero){UnhookWinEvent(guardHook);guardHook=IntPtr.Zero;}} }); guardThread.IsBackground=true;guardThread.Start(); if(!ready.Wait(5000))throw new InvalidOperationException("Foreground-event guard did not become ready."); if(failure!=null)throw new InvalidOperationException("Foreground-event guard failed.",failure); }
+  public static void BindForbiddenProcess(uint pid) { if(pid==0)throw new InvalidOperationException("OPEMOS process identity is unavailable.");lock(guardLock){forbiddenProcess=pid;if(observedForegroundProcesses.Contains(pid))forbiddenActivation=pid;}if(Foreground().ProcessId==pid)lock(guardLock){forbiddenActivation=pid;} }
+  public static void AssertGuard() { uint pid;lock(guardLock){pid=forbiddenActivation;}if(pid!=0)throw new InvalidOperationException("OPEMOS foreground activation detected.");uint forbidden;lock(guardLock){forbidden=forbiddenProcess;}if(forbidden!=0 && Foreground().ProcessId==forbidden)throw new InvalidOperationException("OPEMOS is the current foreground process."); }
   public static void StopGuard() { if(guardThreadId!=0)PostThreadMessage(guardThreadId,0x0012,UIntPtr.Zero,IntPtr.Zero);if(guardThread!=null && !guardThread.Join(5000))throw new InvalidOperationException("Foreground-event guard did not stop.");guardThread=null;guardThreadId=0;guardDelegate=null; }
   public static WindowIdentity FindWindow(uint pid,string title) { var found=new List<WindowIdentity>(); EnumWindows(delegate(IntPtr hwnd,IntPtr data){var item=Read(hwnd);if(item.ProcessId==pid && item.Title==title)found.Add(item);return true;},IntPtr.Zero); if(found.Count==0)return null;if(found.Count!=1)throw new InvalidOperationException("Expected exactly one OPEMOS top-level window.");return found[0]; }
   public static MonitorBounds[] Monitors() { var found=new List<MonitorBounds>(); EnumDisplayMonitors(IntPtr.Zero,IntPtr.Zero,delegate(IntPtr monitor,IntPtr hdc,IntPtr rect,IntPtr data){var info=new MONITORINFOEX();info.Size=Marshal.SizeOf(info);if(!GetMonitorInfo(monitor,ref info))throw new InvalidOperationException("Could not inspect monitor bounds.");found.Add(new MonitorBounds{Device=info.Device,Left=info.Monitor.Left,Top=info.Monitor.Top,Right=info.Monitor.Right,Bottom=info.Monitor.Bottom,WorkLeft=info.Work.Left,WorkTop=info.Work.Top,WorkRight=info.Work.Right,WorkBottom=info.Work.Bottom});return true;},IntPtr.Zero);return found.ToArray(); }
@@ -61,13 +62,12 @@ public static class OpemosNoActivateNative {
 
 $process = $null
 $foreground = [OpemosNoActivateNative]::Foreground()
-if ($foreground.Handle -eq [IntPtr]::Zero -or $foreground.ProcessId -ne $ExpectedForegroundProcessId) { throw 'The current foreground window does not match the required gaming process.' }
-$game = Get-Process -Id $ExpectedForegroundProcessId -ErrorAction Stop
-if ((Get-FileHash -LiteralPath $game.MainModule.FileName -Algorithm SHA256).Hash -cne $ExpectedForegroundExecutableSha256.ToUpperInvariant()) { throw 'The foreground gaming executable SHA-256 does not match the required identity.' }
-$gameStart = $game.StartTime.ToUniversalTime().Ticks
-[OpemosNoActivateNative]::StartGuard($foreground.Handle)
+if ($foreground.Handle -eq [IntPtr]::Zero -or $foreground.ProcessId -ne $ExpectedForegroundProcessId) { throw 'The current foreground window does not match the required sentinel process.' }
+$sentinel = Get-Process -Id $ExpectedForegroundProcessId -ErrorAction Stop
+if ((Get-FileHash -LiteralPath $sentinel.MainModule.FileName -Algorithm SHA256).Hash -cne $ExpectedForegroundExecutableSha256.ToUpperInvariant()) { throw 'The foreground sentinel executable SHA-256 does not match the required identity.' }
+$sentinelStart = $sentinel.StartTime.ToUniversalTime().Ticks
+[OpemosNoActivateNative]::StartGuard()
 try {
-  [OpemosNoActivateNative]::AssertGuard()
   $monitors = @([OpemosNoActivateNative]::Monitors())
   if ($monitors.Count -lt 2) { throw 'The existing multi-monitor layout is unavailable.' }
   $minimumLeft = ($monitors | Measure-Object -Property Left -Minimum).Minimum
@@ -77,6 +77,8 @@ try {
   $info = [Diagnostics.ProcessStartInfo]::new(); $info.FileName=$candidate; $info.UseShellExecute=$false; $info.Environment['OPEMOS_NATIVE_NO_ACTIVATE_PROOF']='1'
   $process = [Diagnostics.Process]::new(); $process.StartInfo=$info
   if (-not $process.Start()) { throw 'Could not start the exact OPEMOS candidate.' }
+  [OpemosNoActivateNative]::BindForbiddenProcess([uint32]$process.Id)
+  [OpemosNoActivateNative]::AssertGuard()
   $deadline=[DateTime]::UtcNow.AddSeconds($StartupTimeoutSeconds); $window=$null
   do { [OpemosNoActivateNative]::AssertGuard(); if($process.HasExited){throw 'OPEMOS exited before its hidden proof window was ready.'}; $window=[OpemosNoActivateNative]::FindWindow([uint32]$process.Id,'SteamOS NVIDIA Builder'); if(-not $window){Start-Sleep -Milliseconds 10} } while(-not $window -and [DateTime]::UtcNow -lt $deadline)
   if(-not $window){throw 'OPEMOS did not create its hidden main window before the deadline.'}
@@ -87,8 +89,9 @@ try {
   do { [OpemosNoActivateNative]::AssertGuard(); Start-Sleep -Milliseconds 10 } while([DateTime]::UtcNow -lt $observeUntil)
   $placed=[OpemosNoActivateNative]::WindowRect($window.Handle)
   if($placed[0] -lt $monitor.WorkLeft -or $placed[1] -lt $monitor.WorkTop -or $placed[2] -gt $monitor.WorkRight -or $placed[3] -gt $monitor.WorkBottom){throw 'The OPEMOS window is not wholly contained by the left portrait monitor.'}
-  $currentGame=Get-Process -Id $ExpectedForegroundProcessId -ErrorAction Stop
-  if($currentGame.StartTime.ToUniversalTime().Ticks -ne $gameStart){throw 'The foreground gaming process identity changed.'}
+  $currentSentinel=Get-Process -Id $ExpectedForegroundProcessId -ErrorAction Stop
+  if($currentSentinel.StartTime.ToUniversalTime().Ticks -ne $sentinelStart){throw 'The foreground sentinel process identity changed.'}
+  if((Get-FileHash -LiteralPath $currentSentinel.MainModule.FileName -Algorithm SHA256).Hash -cne $ExpectedForegroundExecutableSha256.ToUpperInvariant()){throw 'The foreground sentinel executable identity changed.'}
   [OpemosNoActivateNative]::AssertGuard()
   [pscustomobject]@{result='passed';candidate_sha256=$ExecutableSha256.ToLowerInvariant();opemos_pid=$process.Id;foreground_pid=$ExpectedForegroundProcessId;foreground_title=$foreground.Title;foreground_class=$foreground.ClassName;monitor=$monitor.Device;bounds=@($placed)} | ConvertTo-Json -Compress
 }
