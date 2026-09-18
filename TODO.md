@@ -2402,8 +2402,15 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   executable action binder. The bounded follow-up binds its fixed phases to
   SHA-256-bound no-shell commands beneath one owned root, accepts only exact per-phase JSON
   receipts, terminates and settles failed children, and always invokes owned
-  cleanup. Focused tests cover exact order, cleanup/no-reinstall after failed
-  install, and refusal of commands outside the owned root. Native Windows
+  cleanup. Exact-head review found that lexical containment did not cover an
+  intermediate Windows junction and that a refused graceful child termination
+  could leave cleanup racing an unsettled process. The correction canonicalizes
+  the owned root and every plan, input, executable, and working-directory path
+  before containment and use, then escalates only an unsettled exact child and
+  requires its exit before cancellation completes. Focused sealed-Windows tests
+  pass 25/25, including intermediate-junction escape and refused-graceful-stop
+  regressions, exact order, cleanup/no-reinstall after failed install, and
+  refusal of commands outside the owned root. Native Windows
   validation, partial/full execution, exact counterpart review, and merge remain
   pending; no publication or physical-media path is added.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after

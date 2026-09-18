@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -71,11 +71,44 @@ test("failed install runs cleanup and never reaches reinstall", async () => {
 });
 
 test("refuses commands outside the owned full-run root before spawning", async () => {
-  const { file, plan, root } = await fixture(); plan.actions.imageConstructed.executable = path.join(path.dirname(root), "outside.exe"); await writeFile(file, JSON.stringify(plan));
+  const { file, plan, root } = await fixture(); plan.actions.imageConstructed.executable = path.join(path.dirname(root), "outside.exe");
+  await writeFile(plan.actions.imageConstructed.executable, "fixture"); await writeFile(file, JSON.stringify(plan));
   let spawned = false; await assert.rejects(runWindowsImagingFullPlan(file, { platform: "win32", spawnProcess() { spawned = true; } }), /beneath the owned/); assert.equal(spawned, false);
 });
 
 test("refuses a changed phase executable before spawning", async () => {
   const { file, plan } = await fixture(); plan.actions.imageConstructed.sha256 = "e".repeat(64); await writeFile(file, JSON.stringify(plan));
   let spawned = false; await assert.rejects(runWindowsImagingFullPlan(file, { platform: "win32", spawnProcess() { spawned = true; } }), /identity changed/); assert.equal(spawned, false);
+});
+
+test("refuses an intermediate directory redirect outside the owned root", async () => {
+  const { file, plan, root } = await fixture();
+  const outside = await mkdtemp(path.join(tmpdir(), "opemos-full-runner-outside-"));
+  const redirectedExecutable = path.join(outside, "phase.exe"); await writeFile(redirectedExecutable, "fixture");
+  const redirect = path.join(root, "redirect"); await symlink(outside, redirect, "junction");
+  plan.actions.imageConstructed.executable = path.join(redirect, "phase.exe");
+  await writeFile(file, JSON.stringify(plan));
+  let spawned = false;
+  await assert.rejects(runWindowsImagingFullPlan(file, { platform: "win32", spawnProcess() { spawned = true; } }), /beneath the owned/);
+  assert.equal(spawned, false);
+});
+
+test("forces and proves child exit when graceful termination is refused", async () => {
+  const { file } = await fixture(); const signals = []; const log = [];
+  await assert.rejects(runWindowsImagingFullPlan(file, {
+    platform: "win32", timeoutMs: 80, terminationGraceMs: 5,
+    spawnProcess(_executable, args) {
+      const phase = args[0];
+      if (phase !== "officialSteamOsAuthenticated") return childFor(phase, log);
+      const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+      child.kill = signal => {
+        signals.push(signal);
+        if (signal === "SIGTERM") return false;
+        queueMicrotask(() => child.emit("exit", 137)); return true;
+      };
+      return child;
+    },
+  }), /timed out during officialSteamOsAuthenticated/);
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+  assert.equal(log.at(-1), "cancellationCleanup");
 });
