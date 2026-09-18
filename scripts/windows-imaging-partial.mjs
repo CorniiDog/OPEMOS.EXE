@@ -12,6 +12,23 @@ const PHASES = Object.freeze([
   "candidateFlushed",
   "completeReadbackHashMatched",
 ]);
+const FULL_PHASES = Object.freeze([
+  "officialSteamOsAuthenticated",
+  "immutableDriverOnlyRelease",
+  "driverBundleOfflineValidated",
+  "driverBundleSourceEvidence",
+  "imageConstructed",
+  "imageExported",
+  "candidateEnumeratedOwned32GiBUsb",
+  "candidateWroteCompleteImage",
+  "candidateFlushed",
+  "completeReadbackHashMatched",
+  "retainedUsbBooted",
+  "steamOsInstalled",
+  "steamOsReinstalled",
+  "reinstallBooted",
+  "noOrphans",
+]);
 const CLEANUP = "cancellationCleanup";
 const COMMIT = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -49,15 +66,15 @@ function validateTarget(target, expectedTarget) {
   }
   exact(target, expectedTarget, "Virtual USB identity");
 }
-function requireActions(actions) {
-  if (!actions || typeof actions !== "object" || Array.isArray(actions)) fail("Windows partial-mode actions are required.");
-  for (const name of [...PHASES, CLEANUP]) {
-    if (typeof actions[name] !== "function") fail("Windows partial-mode action is missing: " + name + ".");
+function requireActions(actions, phases, mode) {
+  if (!actions || typeof actions !== "object" || Array.isArray(actions)) fail(`Windows ${mode}-mode actions are required.`);
+  for (const name of [...phases, CLEANUP]) {
+    if (typeof actions[name] !== "function") fail(`Windows ${mode}-mode action is missing: ${name}.`);
   }
 }
-function owned(value, label) {
+function owned(value, label, mode) {
   if (!value || typeof value !== "object" || !value.completion || typeof value.cancelAndWait !== "function") {
-    fail("Windows partial-mode action did not return an owned operation: " + label + ".");
+    fail(`Windows ${mode}-mode action did not return an owned operation: ${label}.`);
   }
   return value;
 }
@@ -71,11 +88,11 @@ async function bounded(promise, deadline, message) {
   } finally { clearTimeout(timer); }
 }
 async function runOwned(action, context, phaseDeadline, totalDeadline, label) {
-  const operation = owned(action(context), label);
+  const operation = owned(action(context), label, context.mode);
   let timer;
   let rejectAbort;
   let failure;
-  const onAbort = () => rejectAbort(new Error("Windows partial mode was cancelled during " + label + "."));
+  const onAbort = () => rejectAbort(new Error(`Windows ${context.mode} mode was cancelled during ${label}.`));
   const aborted = new Promise((_, reject) => {
     rejectAbort = reject;
     if (context.signal.aborted) onAbort();
@@ -83,10 +100,10 @@ async function runOwned(action, context, phaseDeadline, totalDeadline, label) {
   });
   try {
     const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error("Windows partial mode timed out during " + label + ".")), left(phaseDeadline));
+      timer = setTimeout(() => reject(new Error(`Windows ${context.mode} mode timed out during ${label}.`)), left(phaseDeadline));
     });
     const result = await Promise.race([Promise.resolve(operation.completion), aborted, timeout]);
-    if (result !== true) fail("Windows partial-mode action did not prove success: " + label + ".");
+    if (result !== true) fail(`Windows ${context.mode}-mode action did not prove success: ${label}.`);
     return;
   } catch (error) { failure = error; }
   finally {
@@ -94,34 +111,38 @@ async function runOwned(action, context, phaseDeadline, totalDeadline, label) {
     context.signal.removeEventListener("abort", onAbort);
   }
   context.controller.abort();
-  const stopped = await bounded(operation.cancelAndWait(), totalDeadline, "Windows partial-mode action did not settle: " + label + ".");
-  if (stopped !== true) fail("Windows partial-mode action did not prove cancellation and settlement: " + label + ".");
-  await bounded(Promise.resolve(operation.completion).catch(() => false), totalDeadline, "Windows partial-mode action remained unsettled: " + label + ".");
+  const stopped = await bounded(operation.cancelAndWait(), totalDeadline, `Windows ${context.mode}-mode action did not settle: ${label}.`);
+  if (stopped !== true) fail(`Windows ${context.mode}-mode action did not prove cancellation and settlement: ${label}.`);
+  await bounded(Promise.resolve(operation.completion).catch(() => false), totalDeadline, `Windows ${context.mode}-mode action remained unsettled: ${label}.`);
   throw failure;
 }
 
-export async function runWindowsImagingPartial({
+async function runWindowsImaging({
+  mode, phases,
   exeCommit, exeSha256, expectedExeCommit, expectedExeSha256,
   steamOsImage, expectedSteamOsImage, driverBundle, expectedDriverBundle,
-  virtualUsb, expectedVirtualUsb, actions, signal, timeoutMs = 4 * 60 * 60 * 1000,
+  virtualUsb, expectedVirtualUsb, actions, signal, timeoutMs,
 }) {
-  requireActions(actions);
+  requireActions(actions, phases, mode);
   validateCandidate(exeCommit, exeSha256, expectedExeCommit, expectedExeSha256);
   validateSteamOs(steamOsImage);
   exact(steamOsImage, expectedSteamOsImage, "Official SteamOS identity");
   exact(driverBundle, expectedDriverBundle, "Driver-only bundle identity");
   validateTarget(virtualUsb, expectedVirtualUsb);
+  const full = mode === "full";
   validateWindowsImagingResult({
-    schemaVersion: 1, status: "passed", mode: "partial", claim: windowsImagingMode("partial").claim,
+    schemaVersion: 1, status: "passed", mode, claim: windowsImagingMode(mode).claim,
     sealedWindowsBase: true, disposableOverlay: true, windowsReinstalled: false,
     combinedNvidiaSteamOsAsset: false, published: false,
-    retainedUsbBooted: false, steamOsInstalled: false, steamOsReinstalled: false,
-    reinstallBooted: false, installSuccess: false,
+    retainedUsbBooted: full, steamOsInstalled: full, steamOsReinstalled: full,
+    reinstallBooted: full, installSuccess: full,
     exeCommit, exeSha256, driverBundle,
-    evidence: Object.fromEntries(PHASES.map(name => [name, true])),
-  }, "partial", expectedDriverBundle);
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 20 || timeoutMs > 4 * 60 * 60 * 1000) {
-    fail("Windows partial-mode timeout must be between 20 ms and 4 hours.");
+    evidence: Object.fromEntries(phases.map(name => [name, true])),
+  }, mode, expectedDriverBundle);
+  const maximumTimeoutMs = (mode === "full" ? 10 : 4) * 60 * 60 * 1000;
+  timeoutMs ??= maximumTimeoutMs;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 20 || timeoutMs > maximumTimeoutMs) {
+    fail(`Windows ${mode}-mode timeout must be between 20 ms and ${mode === "full" ? 10 : 4} hours.`);
   }
 
   const totalDeadline = Date.now() + timeoutMs;
@@ -132,14 +153,14 @@ export async function runWindowsImagingPartial({
   signal?.addEventListener("abort", relay, { once: true });
   if (signal?.aborted) controller.abort();
   const context = Object.freeze({
-    mode: "partial", exeCommit, exeSha256, steamOsImage, driverBundle,
+    mode, exeCommit, exeSha256, steamOsImage, driverBundle,
     virtualUsb, signal: controller.signal, controller, deadline: totalDeadline,
   });
   const evidence = {};
   let primaryError;
   try {
-    for (const name of PHASES) {
-      if (controller.signal.aborted) fail("Windows partial mode was cancelled.");
+    for (const name of phases) {
+      if (controller.signal.aborted) fail(`Windows ${mode} mode was cancelled.`);
       await runOwned(actions[name], context, phaseDeadline, totalDeadline, name);
       evidence[name] = true;
     }
@@ -149,21 +170,29 @@ export async function runWindowsImagingPartial({
     const cleanupBudget = left(totalDeadline);
     await runOwned(actions[CLEANUP], context, Date.now() + Math.max(1, Math.floor(cleanupBudget / 2)), totalDeadline, CLEANUP);
   } catch (cleanupError) {
-    if (primaryError) throw new AggregateError([primaryError, cleanupError], "Windows partial mode failed and cleanup did not complete.");
+    if (primaryError) throw new AggregateError([primaryError, cleanupError], `Windows ${mode} mode failed and cleanup did not complete.`);
     throw cleanupError;
   } finally { signal?.removeEventListener("abort", relay); }
   if (primaryError) throw primaryError;
-  if (controller.signal.aborted) fail("Windows partial mode was cancelled.");
+  if (controller.signal.aborted) fail(`Windows ${mode} mode was cancelled.`);
 
   const result = {
-    schemaVersion: 1, status: "passed", mode: "partial",
-    claim: windowsImagingMode("partial").claim,
+    schemaVersion: 1, status: "passed", mode,
+    claim: windowsImagingMode(mode).claim,
     sealedWindowsBase: true, disposableOverlay: true, windowsReinstalled: false,
     combinedNvidiaSteamOsAsset: false, published: false,
-    retainedUsbBooted: false, steamOsInstalled: false, steamOsReinstalled: false,
-    reinstallBooted: false, installSuccess: false,
+    retainedUsbBooted: full, steamOsInstalled: full, steamOsReinstalled: full,
+    reinstallBooted: full, installSuccess: full,
     exeCommit, exeSha256, driverBundle, evidence,
   };
-  validateWindowsImagingResult(result, "partial", expectedDriverBundle);
+  validateWindowsImagingResult(result, mode, expectedDriverBundle);
   return result;
+}
+
+export function runWindowsImagingPartial(options) {
+  return runWindowsImaging({ ...options, mode: "partial", phases: PHASES });
+}
+
+export function runWindowsImagingFull(options) {
+  return runWindowsImaging({ ...options, mode: "full", phases: FULL_PHASES });
 }
