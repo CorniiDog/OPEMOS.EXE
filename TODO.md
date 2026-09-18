@@ -2604,6 +2604,22 @@ must be reported; a default-suite pass does not imply hardware certification.
   focused executable regression proves the sibling import and complete
   execute/state/plan/attempt argument order. Create-only and the single native
   proof remain pending.
+  The user additionally requires that the exactly-once native proof preserve
+  the pre-existing gaming foreground window continuously while the exact final
+  OPEMOS window is shown wholly on the existing leftmost portrait monitor. A
+  separate bounded preparation branch adds a Windows-only process environment
+  gate that leaves the configured main window hidden instead of running the
+  normal setup `show`/`set_focus` sequence. Its transient PowerShell launcher
+  requires exact candidate and foreground-game executable SHA-256 identities,
+  installs an event-driven foreground hook before launch, rejects every
+  foreground change, selects but never reconfigures the unique leftmost
+  portrait monitor, and uses only `SetWindowPos` with `SWP_NOACTIVATE` to show
+  and place the hidden window. It verifies final containment and unchanged game
+  process identity, then stops only its child and removes its exact transient
+  launcher. Focused mutation tests bind the process gate, event hook, game
+  identity, no-activate flag, portrait containment, owned cleanup, and refusal
+  of registry/display/unrelated-process mutation. The native candidate has not
+  been launched and the exactly-once proof remains unused.
   No release, tag, asset, or beta publication occurred.
 
 ### Alpha
