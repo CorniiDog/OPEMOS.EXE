@@ -58,7 +58,7 @@ test("preload and native window backgrounds preserve translucent dark fallback",
   ]);
 
   const app = await readFile(new URL("../src-tauri/src/app.rs", import.meta.url), "utf8");
-  assert.match(app, /\.setup\(\|app\|[\s\S]*get_webview_window\("main"\)[\s\S]*main\.show\(\)\.map_err\(std::io::Error::other\)\?[\s\S]*main\.set_focus\(\)\.map_err\(std::io::Error::other\)\?/);
+  assert.match(app, /\.setup\(move \|app\|[\s\S]*get_webview_window\("main"\)[\s\S]*main\.show\(\)\.map_err\(std::io::Error::other\)\?[\s\S]*main\.set_focus\(\)\.map_err\(std::io::Error::other\)\?/);
   assert.doesNotMatch(app, /let _ = webview\.window\(\)\.show\(\)/);
 
   const buildScript = await readFile(new URL("../src-tauri/build.rs", import.meta.url), "utf8");

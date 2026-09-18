@@ -33,6 +33,9 @@ fn cleanup_managed_workers(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "windows")]
+    let native_no_activate_proof =
+        std::env::var("OPEMOS_NATIVE_NO_ACTIVATE_PROOF").as_deref() == Ok("1");
     let app = tauri::Builder::default()
         .on_page_load(|webview, payload| {
             if webview.label() == "main"
@@ -48,7 +51,7 @@ pub fn run() {
         .manage(Mutex::new(NvidiaBuildManager::default()))
         .manage(Mutex::new(UsbPreparationManager::default()))
         .manage(Mutex::new(MaintainerReleaseManager::default()))
-        .setup(|app| {
+        .setup(move |app| {
             migrate_legacy_settings(app.handle()).map_err(std::io::Error::other)?;
             cleanup_abandoned_runtimes().map_err(std::io::Error::other)?;
             cleanup_abandoned_nvidia_build_runtimes().map_err(std::io::Error::other)?;
@@ -58,8 +61,16 @@ pub fn run() {
                     "configured main window is unavailable during setup",
                 )
             })?;
-            main.show().map_err(std::io::Error::other)?;
-            main.set_focus().map_err(std::io::Error::other)?;
+            #[cfg(target_os = "windows")]
+            if !native_no_activate_proof {
+                main.show().map_err(std::io::Error::other)?;
+                main.set_focus().map_err(std::io::Error::other)?;
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                main.show().map_err(std::io::Error::other)?;
+                main.set_focus().map_err(std::io::Error::other)?;
+            }
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())

@@ -138,7 +138,7 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   unchanged legacy AppData, visible authenticated UI, and zero-process/credential/
   guest-artifact cleanup. The matrix also demonstrated the next concrete gap:
   packaged startup reported `QEMU is ready. Fedora builder appliance is missing.`
-- [ ] Include the exact authenticated Fedora 44 compose 1.7 x86_64 builder
+- [x] Include the exact authenticated Fedora 44 compose 1.7 x86_64 builder
   appliance in the Windows portable bundle and resolve all packaged appliance
   and disposable-session paths from that bundle's versioned state. The current
   branch pins the signed-checksum-derived 583,729,152-byte qcow2 identity
@@ -175,6 +175,12 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   tests pass 4/4 locally. Remote Node policy validation, exact changed-head Core
   rereview, and a successful replacement Windows build/startup remain pending;
   the unchanged cancelled run will not be retried.
+  Exact head `52499e5dcc22dbc3652a669a6ac46df15d13c9e4` then received Core
+  approval and passed native Windows run `35303653184` plus both frontend/docs,
+  Rust, Linux integration, and Debian package jobs. PR #113 squash-merged
+  through protected main as `6f193a988668e683eabc04d03794ac864c4087b5`;
+  its sole parent is the approved base
+  `64cbe5fa7781743e6b38d3bc6c4a35a0bb98d9f3`.
 
 ### Experimental Ubuntu/Debian host testing (current user priority)
 
@@ -2604,6 +2610,29 @@ must be reported; a default-suite pass does not imply hardware certification.
   focused executable regression proves the sibling import and complete
   execute/state/plan/attempt argument order. Create-only and the single native
   proof remain pending.
+  The user additionally requires that the exactly-once native proof preserve
+  the pre-existing gaming foreground window continuously while the exact final
+  OPEMOS window is shown wholly on the existing leftmost portrait monitor. A
+  separate bounded preparation branch adds a Windows-only process environment
+  gate that leaves the configured main window hidden instead of running the
+  normal setup `show`/`set_focus` sequence. Its transient PowerShell launcher
+  requires exact candidate and foreground-game executable SHA-256 identities,
+  installs an event-driven foreground hook before launch, rejects every
+  foreground change, selects but never reconfigures the unique leftmost
+  portrait monitor, and uses only `SetWindowPos` with `SWP_NOACTIVATE` to show
+  and place the hidden window. It verifies final containment and unchanged game
+  process identity, then stops only its child and removes its exact transient
+  launcher. Focused mutation tests bind the process gate, event hook, game
+  identity, no-activate flag, portrait containment, owned cleanup, and refusal
+  of registry/display/unrelated-process mutation. Rebased preparation commit
+  `866de67` has a clean diff, passes formatting and an all-target Rust check
+  through `heavy.sh`; Node is unavailable locally, so the focused mutation
+  regression and exact Windows build/startup remain required in CI. PR #114's
+  first frontend job exposed the existing startup invariant still requiring a
+  non-capturing `.setup(|app|` closure; the proof flag necessarily makes that
+  closure `move`. The focused remediation updates only that invariant while
+  retaining its synchronous main-window lookup/show/focus requirements. The
+  native candidate has not been launched and the exactly-once proof remains unused.
   No release, tag, asset, or beta publication occurred.
 
 ### Alpha
