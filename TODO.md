@@ -181,6 +181,20 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   through protected main as `6f193a988668e683eabc04d03794ac864c4087b5`;
   its sole parent is the approved base
   `64cbe5fa7781743e6b38d3bc6c4a35a0bb98d9f3`.
+  After subsequent reviewed Windows-startup work reached protected main
+  `163d69a06a08f8bdb0a170f633702559a9f829cc`, exact artifact run
+  `35316821002` failed before producing an artifact: the locked Fedora transfer
+  remained at 0/583,729,152 bytes until its 120-second socket inactivity bound
+  raised `TimeoutError`. The bounded correction keeps the same immutable URL,
+  4,500-second absolute deadline, managed partial, exact size/SHA-256 gate, and
+  cleanup, but permits at most three connections. A partial transfer resumes
+  only when HTTP 206 returns a `Content-Range` beginning at the exact existing
+  byte offset; an ignored range deletes only the managed partial and restarts
+  cleanly. Focused progress/deadline, exact-resume, ignored-range restart, cache
+  tamper/cleanup, stage, and lock tests pass 6/6 locally. A changed-head native
+  Windows artifact build, closed validation, maximal VM-first proof, exact Core
+  review, and merge remain pending; no native execution, imaging, or publication
+  occurred.
 
 ### Experimental Ubuntu/Debian host testing (current user priority)
 

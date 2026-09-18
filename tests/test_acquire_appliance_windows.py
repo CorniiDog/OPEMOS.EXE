@@ -8,6 +8,25 @@ import unittest
 from scripts.acquire_appliance_windows import acquire, download_locked, load_lock, stage
 
 
+class Response(io.BytesIO):
+    def __init__(self, payload, status=200, content_range=""):
+        super().__init__(payload)
+        self.status = status
+        self.headers = {"Content-Range": content_range}
+
+
+class InterruptingResponse(Response):
+    def __init__(self, payload):
+        super().__init__(payload)
+        self.interrupted = False
+
+    def read(self, size=-1):
+        if self.interrupted:
+            raise TimeoutError("fixture inactivity timeout")
+        self.interrupted = True
+        return super().read(size)
+
+
 class WindowsApplianceAcquisitionTests(unittest.TestCase):
     def test_locked_download_reports_exact_progress_and_enforces_deadline(self):
         temporary = tempfile.TemporaryDirectory()
@@ -20,7 +39,7 @@ class WindowsApplianceAcquisitionTests(unittest.TestCase):
             root / "complete.partial",
             len(payload),
             10,
-            opener=lambda _url, timeout: io.BytesIO(payload),
+            opener=lambda _request, timeout: Response(payload),
             clock=lambda: 0,
             output=messages.append,
         )
@@ -37,10 +56,57 @@ class WindowsApplianceAcquisitionTests(unittest.TestCase):
                 root / "expired.partial",
                 len(payload),
                 10,
-                opener=lambda _url, timeout: io.BytesIO(payload),
+                opener=lambda _request, timeout: Response(payload),
                 clock=lambda: next(ticks),
                 output=lambda _message: None,
             )
+
+    def test_locked_download_resumes_only_an_exact_honored_range(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        destination = Path(temporary.name) / "resume.partial"
+        payload = b"first block and resumed remainder"
+        first = payload[:11]
+        requests = []
+
+        def opener(request, timeout):
+            requests.append(request)
+            if len(requests) == 1:
+                return InterruptingResponse(first)
+            self.assertEqual(request.headers["Range"], f"bytes={len(first)}-")
+            return Response(payload[len(first):], 206, f"bytes {len(first)}-{len(payload) - 1}/{len(payload)}")
+
+        messages = []
+        download_locked(
+            "https://download.fedoraproject.org/fixture", destination, len(payload), 10,
+            opener=opener, clock=lambda: 0, output=messages.append,
+        )
+        self.assertEqual(destination.read_bytes(), payload)
+        self.assertTrue(any("connection interrupted" in message for message in messages))
+
+    def test_locked_download_restarts_when_source_ignores_resume_range(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        destination = Path(temporary.name) / "restart.partial"
+        payload = b"authenticated bytes"
+        first = payload[:5]
+        calls = 0
+
+        def opener(request, timeout):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return InterruptingResponse(first)
+            return Response(payload)
+
+        messages = []
+        download_locked(
+            "https://download.fedoraproject.org/fixture", destination, len(payload), 10,
+            opener=opener, clock=lambda: 0, output=messages.append,
+        )
+        self.assertEqual(destination.read_bytes(), payload)
+        self.assertEqual(calls, 3)
+        self.assertTrue(any("ignored exact resume range" in message for message in messages))
 
     def test_reuses_exact_cache_and_replaces_tamper_transactionally(self):
         temporary = tempfile.TemporaryDirectory()
