@@ -2373,6 +2373,25 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   discovery and writing remain unavailable.
 
 ## CI and test commands
+- [ ] Run the exact final Windows candidate through one clean full-mode gate.
+  The existing bounded partial orchestrator now has a full sequence that retains
+  the same exact 32-GiB virtual USB through authenticated construction, export,
+  executable enumeration/write/flush/readback, boot, install, reinstall, reboot,
+  and no-orphan proof before its owned cleanup. It reuses the existing identity,
+  deadline, cancellation, settlement, and independent full-result validator;
+  it does not publish, substitute a shorter mode, or introduce another harness.
+  Focused behavioral coverage requires exact phase order, source evidence before
+  mutation, cleanup after a failed install, no reinstall after that failure, and
+  fail-closed independent input identity. The existing sealed guest's exact
+  Node 22.23.2 build tool passes all 18 focused full, partial, and mode tests;
+  the required jobs must still run in PR CI. In that guest, the
+  already-authorized official URL
+  `https://steamdeck-images.steamos.cloud/recovery/steamdeck-oobe-repair-20260707.10-3.8.14.img.bz2`
+  independently downloaded as 3,357,999,306 bytes with SHA-256
+  `4254ee02ec34ae8add9aceef1881a2ce675a9d0176171df92e0eaa1bf014c594`.
+  Construction remains pending exact Core confirmation of the immutable
+  driver-only Release identities, changed-head CI, counterpart review, merge,
+  and execution against the final downloadable executable bytes.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
