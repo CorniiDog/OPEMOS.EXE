@@ -2427,6 +2427,11 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   first, then emits the marker through `cmd.exe`'s unbuffered echo path while
   retaining the same under-three-second reap contract; production code remains
   unchanged.
+  Native Windows run `35393723215` exposed one remaining fixture-only quoting
+  ambiguity: the inline `start` form again withheld the marker and retained the
+  pipe for 30.27 seconds. The deterministic follow-up writes the same commands
+  as separate lines in one temporary `.cmd` fixture, so descendant launch
+  completes before the two exact marker lines and cleanup is guarded on unwind.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

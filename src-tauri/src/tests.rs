@@ -247,13 +247,27 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_guest_readiness_attempt_timeout_reaps_the_child() {
+        struct ReadinessFixture(PathBuf);
+        impl Drop for ReadinessFixture {
+            fn drop(&mut self) {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+
+        let fixture = ReadinessFixture(std::env::temp_dir().join(format!(
+            "opemos-readiness-fixture-{}.cmd",
+            std::process::id()
+        )));
+        fs::write(
+            &fixture.0,
+            "@echo off\r\nstart \"\" /b ping -n 31 127.0.0.1 >nul\r\necho SteamOS NVIDIA Image Builder appliance\r\necho READY\r\nping -n 31 127.0.0.1 >nul\r\n",
+        )
+        .expect("write deterministic readiness fixture");
+
         let mut ready_then_stalled = Command::new("cmd.exe");
         ready_then_stalled
-            .args([
-                "/d",
-                "/c",
-                "(start \"\" /b ping -n 31 127.0.0.1 >nul & echo SteamOS NVIDIA Image Builder appliance& echo READY& ping -n 31 127.0.0.1 >nul)",
-            ])
+            .args(["/d", "/c"])
+            .arg(&fixture.0)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
