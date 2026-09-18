@@ -87,28 +87,30 @@ async function bounded(promise, deadline, message) {
     ]);
   } finally { clearTimeout(timer); }
 }
-async function runOwned(action, context, phaseDeadline, totalDeadline, label) {
+async function runOwned(action, context, phaseDeadline, totalDeadline, label, honorAbort = true) {
   const operation = owned(action(context), label, context.mode);
   let timer;
   let rejectAbort;
   let failure;
   const onAbort = () => rejectAbort(new Error(`Windows ${context.mode} mode was cancelled during ${label}.`));
-  const aborted = new Promise((_, reject) => {
+  const aborted = honorAbort ? new Promise((_, reject) => {
     rejectAbort = reject;
     if (context.signal.aborted) onAbort();
     else context.signal.addEventListener("abort", onAbort, { once: true });
-  });
+  }) : null;
   try {
     const timeout = new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error(`Windows ${context.mode} mode timed out during ${label}.`)), left(phaseDeadline));
     });
-    const result = await Promise.race([Promise.resolve(operation.completion), aborted, timeout]);
+    const result = await Promise.race(honorAbort
+      ? [Promise.resolve(operation.completion), aborted, timeout]
+      : [Promise.resolve(operation.completion), timeout]);
     if (result !== true) fail(`Windows ${context.mode}-mode action did not prove success: ${label}.`);
     return;
   } catch (error) { failure = error; }
   finally {
     clearTimeout(timer);
-    context.signal.removeEventListener("abort", onAbort);
+    if (honorAbort) context.signal.removeEventListener("abort", onAbort);
   }
   context.controller.abort();
   const stopped = await bounded(operation.cancelAndWait(), totalDeadline, `Windows ${context.mode}-mode action did not settle: ${label}.`);
@@ -168,7 +170,7 @@ async function runWindowsImaging({
 
   try {
     const cleanupBudget = left(totalDeadline);
-    await runOwned(actions[CLEANUP], context, Date.now() + Math.max(1, Math.floor(cleanupBudget / 2)), totalDeadline, CLEANUP);
+    await runOwned(actions[CLEANUP], context, Date.now() + Math.max(1, Math.floor(cleanupBudget / 2)), totalDeadline, CLEANUP, false);
   } catch (cleanupError) {
     if (primaryError) throw new AggregateError([primaryError, cleanupError], `Windows ${mode} mode failed and cleanup did not complete.`);
     throw cleanupError;

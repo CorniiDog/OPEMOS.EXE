@@ -2392,6 +2392,20 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   Construction remains pending exact Core confirmation of the immutable
   driver-only Release identities, changed-head CI, counterpart review, merge,
   and execution against the final downloadable executable bytes.
+  Protected-main artifact `10559379216` at squash
+  `0ac1c36da0097500ba0d7a58ae530af43b2426a8` closed-validates on the host and
+  sealed Windows guest: the 20,296,192-byte executable has SHA-256
+  `fb75192878bd62c0b8ad5cc7593b58afefdcc84fbc0093cc1dec01e554258634`,
+  and runtime manifest SHA-256
+  `3932e25c9edd6ec9901fb89e0398cd7cc9d5fb621fe170d5e497ce9652334a52`
+  covers 5,671 files. Attempting the full run exposed that the validator had no
+  executable action binder. The bounded follow-up binds its fixed phases to
+  SHA-256-bound no-shell commands beneath one owned root, accepts only exact per-phase JSON
+  receipts, terminates and settles failed children, and always invokes owned
+  cleanup. Focused tests cover exact order, cleanup/no-reinstall after failed
+  install, and refusal of commands outside the owned root. Native Windows
+  validation, partial/full execution, exact counterpart review, and merge remain
+  pending; no publication or physical-media path is added.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

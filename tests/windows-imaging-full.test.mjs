@@ -84,6 +84,18 @@ test("failed install settles before cleanup and cannot reach reinstall", async (
   assert.equal(log.indexOf("install-settled") < log.indexOf("cancellationCleanup"), true);
 });
 
+test("asynchronous cleanup can settle after the failed phase aborts the run", async () => {
+  const log = [];
+  const value = actions(log);
+  value.steamOsInstalled = () => settled(false);
+  value.cancellationCleanup = () => ({
+    completion: new Promise(resolve => setImmediate(() => { log.push("cancellationCleanup"); resolve(true); })),
+    cancelAndWait: async () => true,
+  });
+  await assert.rejects(runWindowsImagingFull({ ...pins, actions: value }), /did not prove success/);
+  assert.equal(log.at(-1), "cancellationCleanup");
+});
+
 test("full identity mismatches fail before boot or mutation actions", async () => {
   const log = [];
   await assert.rejects(runWindowsImagingFull({
