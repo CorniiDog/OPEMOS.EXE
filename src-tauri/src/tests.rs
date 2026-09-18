@@ -247,13 +247,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_guest_readiness_attempt_timeout_reaps_the_child() {
-        let mut ready_then_stalled = Command::new("powershell.exe");
+        let mut ready_then_stalled = Command::new("cmd.exe");
         ready_then_stalled
             .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "Write-Output 'SteamOS NVIDIA Image Builder appliance'; Write-Output 'READY'; Start-Sleep -Seconds 30",
+                "/d",
+                "/c",
+                "(start \"\" /b ping -n 31 127.0.0.1 >nul & echo SteamOS NVIDIA Image Builder appliance& echo READY& ping -n 31 127.0.0.1 >nul)",
             ])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -272,14 +271,9 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(3));
         assert!(!process_is_alive(ready_pid));
 
-        let mut stalled = Command::new("powershell.exe");
+        let mut stalled = Command::new("cmd.exe");
         stalled
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "Start-Sleep -Seconds 30",
-            ])
+            .args(["/d", "/c", "ping -n 31 127.0.0.1 >nul"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

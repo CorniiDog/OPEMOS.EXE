@@ -2421,6 +2421,12 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   open. The bounded correction keeps the same marker-before-EOF and timeout/reap
   behavior but uses one exact long-lived PowerShell process, removing only that
   fixture race; the failed Windows test stage must pass before rebuilding.
+  Native Windows PR run `35387744116` confirmed bounded cleanup in 1.08 seconds
+  but PowerShell did not expose the exact `READY` marker before the intentional
+  one-second deadline. The follow-up fixture starts its long-lived descendant
+  first, then emits the marker through `cmd.exe`'s unbuffered echo path while
+  retaining the same under-three-second reap contract; production code remains
+  unchanged.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
