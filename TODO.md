@@ -2632,7 +2632,24 @@ must be reported; a default-suite pass does not imply hardware certification.
   non-capturing `.setup(|app|` closure; the proof flag necessarily makes that
   closure `move`. The focused remediation updates only that invariant while
   retaining its synchronous main-window lookup/show/focus requirements. The
-  native candidate has not been launched and the exactly-once proof remains unused.
+  exact reviewed head `70977b1a18163279eafbda1b5991c146883f3b38` passed all
+  nine required checks and exact Core review, then PR #114 squash-merged as
+  protected main `808d9f752c7f6e063a66f28cff71516f5568b9d6`. Its native
+  artifact closed-validates at executable SHA-256
+  `f92643bddc712ec3baaa72c8975c1a822982dfc7647341e5bf992fb8751337e8`;
+  the final VM startup evidence shows a visible, responsive 776-by-788 main
+  window and owned cleanup with no new QEMU process. The first authorized native
+  attempt failed before launch when its previously captured sentinel was no
+  longer foreground. The single authorized retry captured Explorer immediately
+  before launch, then reproduced a false failure: the guard rejected an unrelated
+  foreground transition even though it must forbid only activation of the exact
+  launched OPEMOS child. No candidate survived either failure. The bounded
+  correction records foreground-event PIDs before child binding, binds the guard
+  to the exact launched child PID immediately after `Start()`, rejects any past,
+  current, or later child foreground activation, permits unrelated foreground
+  changes, and revalidates the initial sentinel's process start and executable
+  SHA-256 at completion. Focused mutation validation, required CI, exact Core
+  review, merge, and any newly authorized native execution remain pending.
   No release, tag, asset, or beta publication occurred.
 
 ### Alpha
