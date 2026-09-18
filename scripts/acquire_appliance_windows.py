@@ -10,6 +10,7 @@ import shutil
 import stat
 import tempfile
 import time
+import urllib.error
 import urllib.request
 
 
@@ -25,6 +26,7 @@ DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 DOWNLOAD_PROGRESS_INTERVAL = 64 * 1024 * 1024
 DOWNLOAD_SOCKET_TIMEOUT_SECONDS = 120
 DEFAULT_DOWNLOAD_DEADLINE_SECONDS = 4500
+DOWNLOAD_MAX_CONNECTION_ATTEMPTS = 3
 
 
 def fail(message):
@@ -79,22 +81,49 @@ def download_locked(url, destination, expected_size, deadline_seconds,
     downloaded = 0
     next_progress = DOWNLOAD_PROGRESS_INTERVAL
     output(f"Downloading locked Fedora appliance: 0/{expected_size} bytes")
-    with opener(url, timeout=min(DOWNLOAD_SOCKET_TIMEOUT_SECONDS, deadline_seconds)) as response:
-        with destination.open("xb") as stream:
-            while True:
-                if clock() >= deadline:
-                    fail(f"Fedora appliance download exceeded {deadline_seconds} seconds")
-                block = response.read(DOWNLOAD_CHUNK_SIZE)
-                if not block:
-                    break
-                stream.write(block)
-                downloaded += len(block)
-                if downloaded > expected_size:
-                    fail("Downloaded Fedora appliance exceeds its exact locked size")
-                if downloaded >= next_progress or downloaded == expected_size:
-                    output(f"Downloading locked Fedora appliance: {downloaded}/{expected_size} bytes")
-                    while next_progress <= downloaded:
-                        next_progress += DOWNLOAD_PROGRESS_INTERVAL
+    for attempt in range(1, DOWNLOAD_MAX_CONNECTION_ATTEMPTS + 1):
+        now = clock()
+        if now >= deadline:
+            fail(f"Fedora appliance download exceeded {deadline_seconds} seconds")
+        headers = {"Range": f"bytes={downloaded}-"} if downloaded else {}
+        request = urllib.request.Request(url, headers=headers)
+        try:
+            with opener(request, timeout=min(DOWNLOAD_SOCKET_TIMEOUT_SECONDS, max(1, deadline - now))) as response:
+                if downloaded:
+                    content_range = response.headers.get("Content-Range", "")
+                    if response.status != 206 or not content_range.startswith(f"bytes {downloaded}-"):
+                        destination.unlink()
+                        downloaded = 0
+                        next_progress = DOWNLOAD_PROGRESS_INTERVAL
+                        output("Fedora appliance source ignored exact resume range; restarting managed partial")
+                        continue
+                with destination.open("ab" if downloaded else "wb") as stream:
+                    while downloaded < expected_size:
+                        if clock() >= deadline:
+                            fail(f"Fedora appliance download exceeded {deadline_seconds} seconds")
+                        block = response.read(DOWNLOAD_CHUNK_SIZE)
+                        if not block:
+                            break
+                        stream.write(block)
+                        downloaded += len(block)
+                        if downloaded > expected_size:
+                            fail("Downloaded Fedora appliance exceeds its exact locked size")
+                        if downloaded >= next_progress or downloaded == expected_size:
+                            output(f"Downloading locked Fedora appliance: {downloaded}/{expected_size} bytes")
+                            while next_progress <= downloaded:
+                                next_progress += DOWNLOAD_PROGRESS_INTERVAL
+        except (TimeoutError, urllib.error.URLError, OSError) as error:
+            if clock() >= deadline:
+                fail(f"Fedora appliance download exceeded {deadline_seconds} seconds")
+            if attempt == DOWNLOAD_MAX_CONNECTION_ATTEMPTS:
+                fail(f"Fedora appliance download failed after {attempt} bounded connection attempts: {error}")
+            output(f"Fedora appliance download connection interrupted at {downloaded}/{expected_size} bytes; reconnecting")
+            continue
+        if downloaded == expected_size:
+            return
+        if attempt < DOWNLOAD_MAX_CONNECTION_ATTEMPTS:
+            output(f"Fedora appliance download ended at {downloaded}/{expected_size} bytes; reconnecting")
+    fail(f"Fedora appliance download failed after {DOWNLOAD_MAX_CONNECTION_ATTEMPTS} bounded connection attempts")
 
 
 def acquire(lock, cache, downloader=None, deadline_seconds=DEFAULT_DOWNLOAD_DEADLINE_SECONDS):
