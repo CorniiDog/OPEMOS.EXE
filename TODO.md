@@ -2413,6 +2413,14 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   refusal of commands outside the owned root. Native Windows
   validation, partial/full execution, exact counterpart review, and merge remain
   pending; no publication or physical-media path is added.
+  Protected-main artifact run `35386972474` then stopped before bundle
+  construction when the Windows readiness timeout regression took 30.37 seconds
+  and violated its under-three-second assertion. Its `cmd.exe` fixture emitted
+  `READY` before starting a long-lived `ping` descendant, allowing process-tree
+  cleanup to race descendant creation while the inherited output pipe remained
+  open. The bounded correction keeps the same marker-before-EOF and timeout/reap
+  behavior but uses one exact long-lived PowerShell process, removing only that
+  fixture race; the failed Windows test stage must pass before rebuilding.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
