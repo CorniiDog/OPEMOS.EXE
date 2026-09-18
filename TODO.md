@@ -92,7 +92,7 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
-- [ ] Replace implicit packaged-Windows AppData reuse with bundle-local,
+- [x] Replace implicit packaged-Windows AppData reuse with bundle-local,
   versioned application state before the final native candidate run. The
   approved implementation derives `state/` from the executable's Desktop
   bundle root, binds cache schema 1 to the exact executable SHA-256/size,
@@ -123,6 +123,38 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   provenance and upload. A focused workflow invariant covers path selection,
   linked-state refusal, cleanup, and the absence gate; a fresh protected-main
   artifact is required before resuming the VM matrix.
+  PR #111 passed all nine required jobs and exact changed-head Core review,
+  squash-merging as protected main `bfda07ec06f88c5fe0a42d0fcd29fce8ca3dc237`.
+  PR #112 then passed all nine required jobs and exact Core review before its
+  smoke-state cleanup squash-merged as protected main
+  `64cbe5fa7781743e6b38d3bc6c4a35a0bb98d9f3`. Exact artifact `10525023225`
+  closed-validates with 5,671 runtime files, no uploaded `state/`, executable
+  SHA-256 `633e556754645e6dc8cec959e328772b9bc28ff696ca97be5d26520f3fea1f29`,
+  and runtime-manifest SHA-256
+  `41951f52ba8b3961ff563b499103df06707d8eae939d673525166af97d838dbd`.
+  Its disposable Hyper-V matrix passed clean first launch, same-version reuse,
+  prior-version repopulation, interrupted-population recovery, same-version
+  corruption recovery, settings preservation, exact bundle-local WebView data,
+  unchanged legacy AppData, visible authenticated UI, and zero-process/credential/
+  guest-artifact cleanup. The matrix also demonstrated the next concrete gap:
+  packaged startup reported `QEMU is ready. Fedora builder appliance is missing.`
+- [ ] Include the exact authenticated Fedora 44 compose 1.7 x86_64 builder
+  appliance in the Windows portable bundle and resolve all packaged appliance
+  and disposable-session paths from that bundle's versioned state. The current
+  branch pins the signed-checksum-derived 583,729,152-byte qcow2 identity
+  `28680fe5b371a5a82ebf43a31926e086a168e59949d03969c5093e7071f90b7f`,
+  acquires it transactionally from Fedora HTTPS, stages a closed appliance tree
+  with exact cloud-init identities, and makes the application hash and
+  closed-validate all files before either normal or NVIDIA appliance use. The
+  existing Output destinations group receives only a containing-block stretch
+  rule; its structure, order, labels, behavior, and surrounding layout remain
+  unchanged. Focused acquisition tests pass 3/3, the platform-entry-point
+  contract passes, formatting passes, and the five portable-state Rust tests
+  pass through `heavy.sh`; warnings-denied Clippy, remote Node/UI checks,
+  packaged Windows startup, disposable-VM proof, exact Core review, and merge
+  remain pending. No imaging bytes, Core contracts, native execution, release,
+  publication, physical device, boundary, integrity, trust, or governance
+  behavior changed.
 
 ### Experimental Ubuntu/Debian host testing (current user priority)
 

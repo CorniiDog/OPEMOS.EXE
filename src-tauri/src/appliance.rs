@@ -522,6 +522,13 @@ pub(crate) fn repository_root() -> PathBuf {
 }
 
 pub(crate) fn appliance_dir() -> PathBuf {
+    if bundled_runtime_required() {
+        if let Ok(executable) = std::env::current_exe() {
+            if let Some(bundle) = executable.parent() {
+                return bundle.join("appliance");
+            }
+        }
+    }
     repository_root().join("builder/appliance")
 }
 pub(crate) fn appliance_path() -> PathBuf {
@@ -529,7 +536,108 @@ pub(crate) fn appliance_path() -> PathBuf {
 }
 
 pub(crate) fn nvidia_build_appliance_path() -> PathBuf {
+    if bundled_runtime_required() {
+        return appliance_path();
+    }
     appliance_dir().join("fedora-builder-x86_64.qcow2")
+}
+
+const WINDOWS_APPLIANCE_SHA256: &str =
+    "28680fe5b371a5a82ebf43a31926e086a168e59949d03969c5093e7071f90b7f";
+const WINDOWS_APPLIANCE_SIZE: u64 = 583_729_152;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackagedApplianceManifest {
+    schema_version: u8,
+    appliance_protocol_version: u8,
+    fedora_release: String,
+    fedora_compose: String,
+    architecture: String,
+    source_url: String,
+    files: Vec<PackagedApplianceFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackagedApplianceFile {
+    path: String,
+    size: u64,
+    sha256: String,
+}
+
+static VERIFIED_PACKAGED_APPLIANCE: std::sync::OnceLock<Result<(), String>> =
+    std::sync::OnceLock::new();
+
+fn verify_packaged_appliance() -> Result<(), String> {
+    if !bundled_runtime_required() {
+        return Ok(());
+    }
+    VERIFIED_PACKAGED_APPLIANCE
+        .get_or_init(|| {
+            let root = appliance_dir();
+            let manifest_path = root.join("appliance-manifest.json");
+            let metadata = fs::symlink_metadata(&manifest_path)
+                .map_err(|error| format!("Could not inspect packaged appliance manifest: {error}"))?;
+            if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 64 * 1024 {
+                return Err("Packaged appliance manifest must be a bounded regular file.".into());
+            }
+            let manifest: PackagedApplianceManifest = serde_json::from_slice(
+                &fs::read(&manifest_path)
+                    .map_err(|error| format!("Could not read packaged appliance manifest: {error}"))?,
+            )
+            .map_err(|error| format!("Packaged appliance manifest is invalid: {error}"))?;
+            let expected = [
+                ("fedora-builder.qcow2", WINDOWS_APPLIANCE_SIZE, WINDOWS_APPLIANCE_SHA256),
+                ("cloud-init/meta-data", 75, "8c5c072b26bd904148b4b1fe1699fe7bf4701d3f8661549aa332ba611d0001ac"),
+                ("cloud-init/user-data", 474, "78b1be42378b2409724a2a673a8fb0ffe55c67fb053edfaf760b402b47e5d5ce"),
+            ];
+            if manifest.schema_version != 1
+                || manifest.appliance_protocol_version != 1
+                || manifest.fedora_release != "44"
+                || manifest.fedora_compose != "1.7"
+                || manifest.architecture != "x86_64"
+                || manifest.source_url != "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2"
+                || manifest.files.len() != expected.len()
+            {
+                return Err("Packaged appliance identity is not the exact supported Fedora build.".into());
+            }
+            for (relative, size, sha256) in expected {
+                let entries = manifest.files.iter().filter(|entry| entry.path == relative).collect::<Vec<_>>();
+                if entries.len() != 1 || entries[0].size != size || entries[0].sha256 != sha256 {
+                    return Err(format!("Packaged appliance identity changed: {relative}."));
+                }
+                let path = root.join(relative);
+                let metadata = fs::symlink_metadata(&path)
+                    .map_err(|error| format!("Could not inspect packaged appliance file {relative}: {error}"))?;
+                if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != size
+                    || sha256_file(&path)? != sha256
+                {
+                    return Err(format!("Packaged appliance file failed closed validation: {relative}."));
+                }
+            }
+            let entries = |directory: &Path| -> Result<Vec<String>, String> {
+                let mut names = fs::read_dir(directory)
+                    .map_err(|error| format!("Could not enumerate packaged appliance: {error}"))?
+                    .map(|entry| {
+                        entry
+                            .map_err(|error| format!("Could not inspect packaged appliance entry: {error}"))?
+                            .file_name()
+                            .into_string()
+                            .map_err(|_| "Packaged appliance filename is not UTF-8.".to_string())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                names.sort();
+                Ok(names)
+            };
+            if entries(&root)? != ["appliance-manifest.json", "cloud-init", "fedora-builder.qcow2"]
+                || entries(&root.join("cloud-init"))? != ["meta-data", "user-data"]
+            {
+                return Err("Packaged appliance file inventory is not closed.".into());
+            }
+            Ok(())
+        })
+        .clone()
 }
 
 pub(crate) fn appliance_root_qemu_arguments(runtime_disk: &Path) -> [String; 4] {
@@ -668,10 +776,16 @@ pub(crate) fn verify_nvidia_guest_device_timeout(
 }
 
 pub(crate) fn runtime_root() -> PathBuf {
+    if let Some(cache) = portable_cache_root() {
+        return cache.join("appliance-runtime");
+    }
     appliance_dir().join("runtime")
 }
 
 pub(crate) fn nvidia_build_runtime_root() -> PathBuf {
+    if let Some(cache) = portable_cache_root() {
+        return cache.join("appliance-runtime-x86_64");
+    }
     appliance_dir().join("runtime-x86_64-managed")
 }
 
@@ -1587,6 +1701,7 @@ pub(crate) fn prepare_session_with_output(
         linux_host_prerequisites()?;
     }
     cleanup_abandoned_runtimes()?;
+    verify_packaged_appliance()?;
     let appliance = appliance_path();
     if !appliance.is_file() {
         return Err(format!(
@@ -1970,6 +2085,7 @@ pub(crate) fn prepare_nvidia_build_session(
         linux_host_prerequisites()?;
     }
     cleanup_abandoned_nvidia_build_runtimes()?;
+    verify_packaged_appliance()?;
     let appliance = nvidia_build_appliance_path();
     if !appliance.is_file() {
         return Err(format!(
@@ -3072,7 +3188,8 @@ pub(crate) async fn check_nvidia_build_environment() -> Result<NvidiaBuildEnviro
 pub(crate) fn check_nvidia_build_environment_blocking() -> NvidiaBuildEnvironment {
     let host_arch = std::env::consts::ARCH.to_string();
     let appliance = nvidia_build_appliance_path();
-    let appliance_present = appliance.is_file();
+    let appliance_validation = verify_packaged_appliance();
+    let appliance_present = appliance.is_file() && appliance_validation.is_ok();
     let appliance_path = appliance.to_string_lossy().into_owned();
     let (acceleration, _, _) = match nvidia_build_qemu_spec(&host_arch).and_then(|spec| {
         if cfg!(target_os = "linux") {
@@ -3116,7 +3233,9 @@ pub(crate) fn check_nvidia_build_environment_blocking() -> NvidiaBuildEnvironmen
     let launch_result = smoke_test_qemu(&qemu);
     let firmware_present = host_firmware("x86_64").is_ok();
     let ready = appliance_present && version.is_some() && launch_result.is_ok() && firmware_present;
-    let message = if !appliance_present {
+    let message = if let Err(error) = appliance_validation {
+        error
+    } else if !appliance_present {
         "The separate x86_64 Fedora build appliance has not been prepared.".into()
     } else if version.is_none() {
         "QEMU was found, but its version could not be determined.".into()
@@ -3493,7 +3612,8 @@ pub(crate) fn check_builder_environment_blocking() -> BuilderEnvironment {
         Ok(spec)
     });
     let appliance = appliance_path();
-    let appliance_present = appliance.is_file();
+    let appliance_validation = verify_packaged_appliance();
+    let appliance_present = appliance.is_file() && appliance_validation.is_ok();
     let appliance_path = appliance.to_string_lossy().into_owned();
     if let Err(message) = host_plan {
         return BuilderEnvironment {
@@ -3586,7 +3706,9 @@ pub(crate) fn check_builder_environment_blocking() -> BuilderEnvironment {
         qemu_launch_test: true,
         appliance_present,
         appliance_path,
-        message: if ready {
+        message: if let Err(error) = appliance_validation {
+            error
+        } else if ready {
             "Host prerequisites are ready.".into()
         } else {
             "QEMU is ready. Fedora builder appliance is missing.".into()
