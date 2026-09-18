@@ -24,3 +24,6 @@ $application = "build/OPEMOS.EXE-windows-x86_64-unsigned.exe"
 Copy-Item -LiteralPath "src-tauri/target/release/steamos-nvidia-image-builder.exe" -Destination $application
 python scripts/stage_runtime_bundle.py --platform windows --runtime-root $prepared --output dist/windows --source-commit $sourceCommit --application $application
 if ($LASTEXITCODE -ne 0) { throw "Windows bundle staging failed." }
+python scripts/acquire_appliance_windows.py --deadline-seconds 4500
+if ($LASTEXITCODE -ne 0) { throw "Windows Fedora appliance acquisition failed." }
+Move-Item -LiteralPath "build/appliance/windows" -Destination "dist/windows/appliance"

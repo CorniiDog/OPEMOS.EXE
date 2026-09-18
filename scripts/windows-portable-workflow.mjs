@@ -8,6 +8,7 @@ const SETUP_NODE = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020"
 const RUST = "dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87";
 const UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02";
 const CORE = "f6871104ea83d8afa620b133b362a0578ff4a6a8";
+const bundle = await readFile(new URL("../bundle_windows.ps1", import.meta.url), "utf8");
 
 function requireText(text, value, label) {
   if (!text.includes(value)) throw new Error(`Windows workflow must preserve ${label}.`);
@@ -16,6 +17,7 @@ function requireText(text, value, label) {
 export function validateWindowsPortableWorkflow(text) {
   text = text.replace(/\r\n/g, "\n");
   requireText(text, "runs-on: windows-latest", "the Windows runner");
+  requireText(text, "timeout-minutes: 120", "the bounded Windows artifact job budget");
   requireText(text, "permissions:\n  contents: read", "read-only permissions");
   requireText(text, "OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}", "the exact EXE source identity");
   if ((text.match(new RegExp(CHECKOUT, "g")) || []).length !== 2) throw new Error("Windows workflow must use the exact checkout action twice.");
@@ -38,6 +40,9 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "cargo test --manifest-path src-tauri/Cargo.toml --locked --lib windows_", "locked library-only Windows Rust tests");
   requireText(text, "RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\\scripts\\windows-test-v6.manifest", "the test-only Common Controls v6 activation manifest");
   requireText(text, "run: .\\bundle_windows.ps1 -CoreRoot opemos-core-contracts", "verified Windows bundle build");
+  requireText(bundle, "scripts/acquire_appliance_windows.py", "exact Fedora appliance acquisition");
+  requireText(bundle, "--deadline-seconds 4500", "the bounded Fedora appliance acquisition deadline");
+  requireText(bundle, 'dist/windows/appliance', "portable Fedora appliance placement");
   requireText(text, "dist/windows/OPEMOS.EXE-windows-x86_64-unsigned.exe", "bundled executable startup");
   requireText(text, "path: dist/windows", "complete verified bundle upload");
   if ((text.match(/MANIFESTINPUT:/g) || []).length !== 1) throw new Error("Windows workflow must apply the activation manifest only to the Rust test step.");

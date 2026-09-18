@@ -14,6 +14,7 @@ test("main workflow keeps readiness compact and balances output and source colum
   assert.match(css, /\.readiness-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/);
   assert.match(css, /\.build-options-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.12fr\) minmax\(0, \.88fr\);/);
   assert.match(css, /\.build-side-column \.build-summary\s*\{[^}]*grid-template-columns:\s*1fr;/);
+  assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*width:\s*100%;[^}]*justify-self:\s*stretch;/);
 });
 
 test("narrow effective widths and high zoom reflow without horizontal clipping", () => {

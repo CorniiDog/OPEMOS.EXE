@@ -3,7 +3,12 @@ use super::*;
 const CACHE_SCHEMA: u32 = 1;
 const CACHE_MANIFEST: &str = "cache-manifest.json";
 const CACHE_COMPLETE: &str = "population-complete";
-const REQUIRED_DIRECTORIES: [&str; 2] = ["maintainer-release-import", "maintainer-worktrees"];
+const REQUIRED_DIRECTORIES: [&str; 4] = [
+    "appliance-runtime",
+    "appliance-runtime-x86_64",
+    "maintainer-release-import",
+    "maintainer-worktrees",
+];
 static PORTABLE_STATE_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 static PORTABLE_CACHE_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
