@@ -163,6 +163,18 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   exercises CRLF inputs and requires LF output. The failed build stage must run
   on the changed immutable head; earlier successful companion jobs do not need
   an unchanged local rerun.
+  Replacement run `35299573146` built the unsigned executable and recorded
+  SHA-256 `b922e96fa59d53aa6646ed13e7a4d64c11767e7f746c400ec330baf5efbecf09`,
+  then remained silent inside the 583,729,152-byte Fedora acquisition until the
+  exact 60-minute job limit cancelled it. The bounded remediation streams the
+  same immutable URL into the same managed partial path with a 120-second
+  inactivity timeout, an absolute 4,500-second acquisition deadline, exact
+  byte-count progress every 64 MiB, and the unchanged final size/SHA-256 gate;
+  the Windows artifact job receives a 120-minute outer budget. Focused progress,
+  absolute-deadline, cache-reuse/tamper/cleanup, closed-stage, and lock-refusal
+  tests pass 4/4 locally. Remote Node policy validation, exact changed-head Core
+  rereview, and a successful replacement Windows build/startup remain pending;
+  the unchanged cancelled run will not be retried.
 
 ### Experimental Ubuntu/Debian host testing (current user priority)
 

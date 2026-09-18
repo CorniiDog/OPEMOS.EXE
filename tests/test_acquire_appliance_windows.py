@@ -1,13 +1,47 @@
 import hashlib
+import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.acquire_appliance_windows import acquire, load_lock, stage
+from scripts.acquire_appliance_windows import acquire, download_locked, load_lock, stage
 
 
 class WindowsApplianceAcquisitionTests(unittest.TestCase):
+    def test_locked_download_reports_exact_progress_and_enforces_deadline(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        payload = b"authenticated appliance bytes"
+        messages = []
+        download_locked(
+            "https://download.fedoraproject.org/fixture",
+            root / "complete.partial",
+            len(payload),
+            10,
+            opener=lambda _url, timeout: io.BytesIO(payload),
+            clock=lambda: 0,
+            output=messages.append,
+        )
+        self.assertEqual((root / "complete.partial").read_bytes(), payload)
+        self.assertEqual(messages, [
+            f"Downloading locked Fedora appliance: 0/{len(payload)} bytes",
+            f"Downloading locked Fedora appliance: {len(payload)}/{len(payload)} bytes",
+        ])
+
+        ticks = iter((0, 1, 11))
+        with self.assertRaisesRegex(SystemExit, "exceeded 10 seconds"):
+            download_locked(
+                "https://download.fedoraproject.org/fixture",
+                root / "expired.partial",
+                len(payload),
+                10,
+                opener=lambda _url, timeout: io.BytesIO(payload),
+                clock=lambda: next(ticks),
+                output=lambda _message: None,
+            )
+
     def test_reuses_exact_cache_and_replaces_tamper_transactionally(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

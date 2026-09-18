@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import stat
 import tempfile
+import time
 import urllib.request
 
 
@@ -20,6 +21,10 @@ CLOUD_INIT = {
     "cloud-init/meta-data": (75, "8c5c072b26bd904148b4b1fe1699fe7bf4701d3f8661549aa332ba611d0001ac"),
     "cloud-init/user-data": (474, "78b1be42378b2409724a2a673a8fb0ffe55c67fb053edfaf760b402b47e5d5ce"),
 }
+DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+DOWNLOAD_PROGRESS_INTERVAL = 64 * 1024 * 1024
+DOWNLOAD_SOCKET_TIMEOUT_SECONDS = 120
+DEFAULT_DOWNLOAD_DEADLINE_SECONDS = 4500
 
 
 def fail(message):
@@ -66,7 +71,33 @@ def load_lock(path):
     return document
 
 
-def acquire(lock, cache, downloader=urllib.request.urlretrieve):
+def download_locked(url, destination, expected_size, deadline_seconds,
+                    opener=urllib.request.urlopen, clock=time.monotonic, output=print):
+    if deadline_seconds <= 0:
+        fail("Fedora appliance download deadline must be positive")
+    deadline = clock() + deadline_seconds
+    downloaded = 0
+    next_progress = DOWNLOAD_PROGRESS_INTERVAL
+    output(f"Downloading locked Fedora appliance: 0/{expected_size} bytes")
+    with opener(url, timeout=min(DOWNLOAD_SOCKET_TIMEOUT_SECONDS, deadline_seconds)) as response:
+        with destination.open("xb") as stream:
+            while True:
+                if clock() >= deadline:
+                    fail(f"Fedora appliance download exceeded {deadline_seconds} seconds")
+                block = response.read(DOWNLOAD_CHUNK_SIZE)
+                if not block:
+                    break
+                stream.write(block)
+                downloaded += len(block)
+                if downloaded > expected_size:
+                    fail("Downloaded Fedora appliance exceeds its exact locked size")
+                if downloaded >= next_progress or downloaded == expected_size:
+                    output(f"Downloading locked Fedora appliance: {downloaded}/{expected_size} bytes")
+                    while next_progress <= downloaded:
+                        next_progress += DOWNLOAD_PROGRESS_INTERVAL
+
+
+def acquire(lock, cache, downloader=None, deadline_seconds=DEFAULT_DOWNLOAD_DEADLINE_SECONDS):
     cache.mkdir(parents=True, exist_ok=True)
     target = cache / lock["filename"]
     if exact_file(target, lock["size"], lock["sha256"]):
@@ -77,7 +108,10 @@ def acquire(lock, cache, downloader=urllib.request.urlretrieve):
     if partial.exists() or partial.is_symlink():
         partial.unlink()
     try:
-        downloader(lock["url"], partial)
+        if downloader is None:
+            download_locked(lock["url"], partial, lock["size"], deadline_seconds)
+        else:
+            downloader(lock["url"], partial)
         if not exact_file(partial, lock["size"], lock["sha256"]):
             fail("Downloaded Fedora appliance does not match its exact locked identity")
         os.replace(partial, target)
@@ -123,9 +157,10 @@ def main():
     parser.add_argument("--cache", type=Path, default=Path("build/cache/windows-appliance"))
     parser.add_argument("--cloud-init", type=Path, default=Path("builder/appliance/cloud-init"))
     parser.add_argument("--output", type=Path, default=Path("build/appliance/windows"))
+    parser.add_argument("--deadline-seconds", type=int, default=DEFAULT_DOWNLOAD_DEADLINE_SECONDS)
     args = parser.parse_args()
     lock = load_lock(args.lock)
-    stage(lock, acquire(lock, args.cache), args.cloud_init, args.output)
+    stage(lock, acquire(lock, args.cache, deadline_seconds=args.deadline_seconds), args.cloud_init, args.output)
 
 
 if __name__ == "__main__":

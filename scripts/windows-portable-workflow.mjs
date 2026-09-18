@@ -17,6 +17,7 @@ function requireText(text, value, label) {
 export function validateWindowsPortableWorkflow(text) {
   text = text.replace(/\r\n/g, "\n");
   requireText(text, "runs-on: windows-latest", "the Windows runner");
+  requireText(text, "timeout-minutes: 120", "the bounded Windows artifact job budget");
   requireText(text, "permissions:\n  contents: read", "read-only permissions");
   requireText(text, "OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}", "the exact EXE source identity");
   if ((text.match(new RegExp(CHECKOUT, "g")) || []).length !== 2) throw new Error("Windows workflow must use the exact checkout action twice.");
@@ -40,6 +41,7 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\\scripts\\windows-test-v6.manifest", "the test-only Common Controls v6 activation manifest");
   requireText(text, "run: .\\bundle_windows.ps1 -CoreRoot opemos-core-contracts", "verified Windows bundle build");
   requireText(bundle, "scripts/acquire_appliance_windows.py", "exact Fedora appliance acquisition");
+  requireText(bundle, "--deadline-seconds 4500", "the bounded Fedora appliance acquisition deadline");
   requireText(bundle, 'dist/windows/appliance', "portable Fedora appliance placement");
   requireText(text, "dist/windows/OPEMOS.EXE-windows-x86_64-unsigned.exe", "bundled executable startup");
   requireText(text, "path: dist/windows", "complete verified bundle upload");
