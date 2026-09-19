@@ -24,6 +24,16 @@ test("packaged Windows actions expose visible outcomes instead of silent clicks"
   assert.doesNotMatch(script, /plugin:opener\|open_url/);
   assert.match(script, /invoke\("open_progress_window"\);[\s\S]*Build progress is opening in a separate window/);
   assert.match(script, /buildButton\.addEventListener\("click", async \(\) => \{[\s\S]*const admission = admitBuildStart\(currentBuildSnapshot\(\)\);[\s\S]*Build cannot start: \$\{admission\.blocker\}/);
+  const progressWindow = tauriConfig.app.windows.find(({ label }) => label === "build-progress");
+  assert.deepEqual(progressWindow && {
+    url: progressWindow.url,
+    visible: progressWindow.visible,
+    title: progressWindow.title,
+  }, {
+    url: "build.html",
+    visible: false,
+    title: "SteamOS NVIDIA Builder — Progress",
+  });
 });
 
 test("narrow effective widths and high zoom reflow without horizontal clipping", () => {

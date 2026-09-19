@@ -2552,6 +2552,22 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   test import. The bounded correction exposes only that constructor within the
   crate; no runtime arguments or behavior change. Changed-head Windows build,
   replacement artifact validation, and exact-head Core review remain pending.
+  Replacement head `4bddb3d4060fa9b20e435fb2e8f1f0bed35942ed`
+  subsequently passed every required CI job and its sole artifact closed-
+  validated at executable SHA-256
+  `dc2e58d905b3448426a296d89324615cfdedcaafff99967d08e3a6c0bf2e6e21`.
+  Actual sealed-Windows UI proof confirms the Valve control visibly opens the
+  exact SteamOS download page, Connect GitHub visibly opens the packaged
+  `gh.exe` device-login prompt, the authenticated recovery input is accepted,
+  and Output destinations fills the content width. It also reproduces one
+  remaining release blocker: Build opens the titled progress native window,
+  but its WebView remains `about:blank` after more than one minute and no
+  packaged QEMU process starts. The bounded remediation preloads the existing
+  `build.html` progress WebView as a hidden configured application window so
+  the existing show/focus/readiness/request path cannot race dynamic Windows
+  navigation. A focused configuration regression requires that exact hidden
+  page and title. Changed-head frontend validation, Windows artifact/startup,
+  sealed-Windows failed-stage rerun, and exact-head Core review remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
