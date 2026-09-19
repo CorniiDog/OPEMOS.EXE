@@ -2451,6 +2451,47 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   changed-head CI, exact counterpart review, and merge remain pending; no
   physical media, publication, trust, boundary, integrity, or governance path
   is introduced.
+  Canonical GitHub inspection of the exact r1 Core product commit
+  `0b9550ab0ffc9ababe79800a407835c9c4a27dd0`, the EXE-pinned Core installer
+  commit `a1c03c9658c5ed885f094b5f8e0896d818fee785`, and current remote Core main
+  `8d20e71337e8bc7e647848ae501d8ccd656e3aee` exposes a concrete consumption
+  dependency: the r1 product carries `payload/nvidia-driver.tar.zst`, while
+  every available Core installer validator still opens the module archive only
+  as gzip. EXE must not reinterpret or transcode that Core-owned product
+  contract. A canonical immutable Core consumer contract/implementation for the
+  exact r1 payload is required before the construction action can install it.
+  Independent retained-media investigation reused the preserved PR #90 output
+  image at exact SHA-256
+  `10c151ecd75247e489701e5e1425bd367cacc522519bd231ad59c3cbb4f4e970`
+  and the packaged QEMU 11.1.0/EDK2 closure. A bounded read-only WHPX boot
+  reached the image's own `EFI/steamos/grubx64.efi` from GPT partition UUID
+  `C1C7E615-F0A6-4F7D-988E-C2F06AFED580`, proving firmware and GRUB entry
+  selection, but not recovery-OS readiness. The corrected readiness probe then
+  waited 187 seconds with a forwarded guest port and end-of-window framebuffer:
+  no SSH protocol banner appeared, the framebuffer remained entirely black,
+  serial stayed at 821 bytes after GRUB, and exact-child cleanup left zero QEMU
+  survivors. The embedded welcome server is deliberately loopback-only and no
+  existing authenticated guest control channel is present. Full install and
+  reinstall execution therefore cannot be driven or independently evidenced
+  without either a new test-only guest trust/control input or a different
+  pre-existing authenticated channel. On 2026-09-19 the user delegated the
+  narrow test-only decision to Resolver, which approved fresh per-run Ed25519
+  client and host keys beneath the exact owned full-run root, injection only
+  into disposable overlays and installed targets, loopback-only `restrict=on`
+  QEMU forwarding, a closed forced-command set, and exact credential, overlay,
+  and process cleanup proof. The bounded implementation now generates
+  non-reusable key material through the hash-pinned bundled `ssh-keygen`, emits
+  an SSH server configuration disabling passwords, root, PTY, agent/X11/TCP
+  forwarding, tunnels, and gateway ports, and limits the controller to
+  readiness, inventory, install, reinstall, receipt, and shutdown. It binds the
+  executable commit/hash and retained-image hash before use, refuses path
+  redirection or identity drift, and removes only the exact owned credential
+  directory after rehashing the retained image. Focused tests cover the closed
+  command set, loopback/restricted network arguments, stale-credential refusal,
+  changed-image evidence preservation, and intermediate-directory escape
+  refusal. Native Windows validation and disposable-overlay injection/boot
+  proof remain pending; the separate Core zstd consumption dependency is
+  unchanged.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
