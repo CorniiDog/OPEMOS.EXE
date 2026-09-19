@@ -2537,6 +2537,15 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   Windows-only command-shape regression. Replacement artifact validation,
   native acceptance, and a fresh exact-head Core review remain pending; the
   user's running prerelease process is not inspected or disturbed.
+  The user's subsequent transfer policy requires a 100 Mbit/s ceiling for
+  every OPEMOS SCP send or receive, including packaged Fedora-appliance
+  transfers used by Windows VM acceptance. The single shared `scp_command`
+  constructor now adds OpenSSH `-l 100000` (Kbit/s), so every existing image,
+  installer, and NVIDIA appliance call site inherits the ceiling. A focused
+  argument-level regression requires the exact option once and preserves the
+  existing port, owned key, batch, timeout, host-key, and logging arguments.
+  That focused regression passes 1/1 through `heavy.sh`; changed-head validation
+  and replacement artifact evidence remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

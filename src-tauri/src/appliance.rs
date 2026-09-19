@@ -3121,12 +3121,19 @@ done"#;
 pub(crate) fn scp_command(session: &impl GuestConnection) -> Result<Command, String> {
     let scp = find_binary("scp").ok_or("scp is required for controlled guest file transfer.")?;
     let mut command = Command::new(scp);
+    configure_scp_command(&mut command, session);
+    Ok(command)
+}
+
+pub(crate) fn configure_scp_command(command: &mut Command, session: &impl GuestConnection) {
     command
         .arg("-P")
         .arg(session.ssh_port().to_string())
         .arg("-i")
         .arg(session.ssh_key())
         .args([
+            "-l",
+            "100000",
             "-o",
             "IdentitiesOnly=yes",
             "-o",
@@ -3140,7 +3147,6 @@ pub(crate) fn scp_command(session: &impl GuestConnection) -> Result<Command, Str
             "-o",
             "LogLevel=ERROR",
         ]);
-    Ok(command)
 }
 
 pub(crate) fn session_status(session: &ApplianceSession) -> ApplianceStatus {

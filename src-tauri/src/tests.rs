@@ -3,6 +3,66 @@
 mod tests {
     use super::*;
 
+    struct ScpTestConnection {
+        ssh_key: PathBuf,
+        runtime_dir: PathBuf,
+        ssh_port: u16,
+    }
+
+    impl GuestConnection for ScpTestConnection {
+        fn ssh_key(&self) -> &Path {
+            &self.ssh_key
+        }
+
+        fn ssh_port(&self) -> u16 {
+            self.ssh_port
+        }
+
+        fn runtime_dir(&self) -> &Path {
+            &self.runtime_dir
+        }
+    }
+
+    #[test]
+    fn every_fedora_appliance_scp_transfer_has_the_100_mbit_ceiling() {
+        let connection = ScpTestConnection {
+            ssh_key: PathBuf::from("owned-test-key"),
+            runtime_dir: PathBuf::from("owned-runtime"),
+            ssh_port: 22022,
+        };
+        let mut command = Command::new("scp");
+        configure_scp_command(&mut command, &connection);
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            arguments,
+            [
+                "-P",
+                "22022",
+                "-i",
+                "owned-test-key",
+                "-l",
+                "100000",
+                "-o",
+                "IdentitiesOnly=yes",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=3",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                "-o",
+                "LogLevel=ERROR",
+            ]
+        );
+        assert_eq!(arguments.iter().filter(|argument| *argument == "-l").count(), 1);
+    }
+
     #[cfg(unix)]
     #[test]
     fn finished_guest_command_captures_stdout_and_stderr() {
