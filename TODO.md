@@ -2544,8 +2544,14 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   installer, and NVIDIA appliance call site inherits the ceiling. A focused
   argument-level regression requires the exact option once and preserves the
   existing port, owned key, batch, timeout, host-key, and logging arguments.
-  That focused regression passes 1/1 through `heavy.sh`; changed-head validation
-  and replacement artifact evidence remain pending.
+  That focused regression passes 1/1 through `heavy.sh`. Required Linux and
+  documentation checks passed at head `a6910ffdd2204cd7a54ca0d2e9a371c6521cdeb4`,
+  but Windows artifact run `35430006068` failed at compile time because the
+  Windows-only visible-login constructor remained private to `settings` while
+  its crate-level command-shape regression consumed it through the existing
+  test import. The bounded correction exposes only that constructor within the
+  crate; no runtime arguments or behavior change. Changed-head Windows build,
+  replacement artifact validation, and exact-head Core review remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

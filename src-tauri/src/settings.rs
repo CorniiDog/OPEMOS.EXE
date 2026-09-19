@@ -672,7 +672,7 @@ pub(crate) async fn get_github_maintainer_status() -> Result<GithubMaintainerSta
 }
 
 #[cfg(target_os = "windows")]
-fn windows_github_login_command(gh: &Path) -> Command {
+pub(crate) fn windows_github_login_command(gh: &Path) -> Command {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
