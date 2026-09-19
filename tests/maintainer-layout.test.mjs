@@ -33,6 +33,13 @@ test("maintainer controls and long identities reflow at high zoom", () => {
   assert.match(responsive, /\.patch-preview\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;/);
 });
 
+test("maintainer release controls keep primary actions vertically separated", () => {
+  assert.match(css, /\.release-review > \.primary\s*\{[^}]*margin-top:\s*10px;/);
+  assert.match(css, /\.release-controls\s*\{[^}]*margin-top:\s*10px;[^}]*display:\s*grid;[^}]*gap:\s*8px;/);
+  assert.match(html, /id="authorize-release" class="primary"/);
+  assert.match(html, /class="release-controls"[^>]*>[\s\S]*id="release-start" class="primary"/);
+});
+
 
 test("maintainer release review exposes the exact Core operation identity and closed action", () => {
   for (const field of ["repository", "tag", "target-commit", "operation-id"]) {

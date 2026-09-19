@@ -2588,6 +2588,15 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   materializer under Python isolated mode and requires successful `--help`;
   authenticated r1 materialization, changed-head CI/artifact validation,
   resumed admission/QEMU proof, and fresh exact-head review remain pending.
+  Exact head `c1d9b243aff5ae029df55354eaaada38b34cd912` subsequently passed
+  required CI, closed artifact validation, real sealed-Windows packaged
+  build/QEMU validation, contained 32-GiB virtual-USB write/flush/readback/
+  cleanup, and packaged Maintainer import. The user's 1280-by-1024 review then
+  exposed the release-review primary controls touching vertically because that
+  existing control stack had no gap. The active smallest UI correction adds
+  spacing only to the existing release-review primary boundary and control
+  stack; focused layout validation, changed-head Windows startup/artifact,
+  visual confirmation, and refreshed exact-head Core review remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

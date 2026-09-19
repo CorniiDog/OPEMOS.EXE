@@ -120,6 +120,8 @@ textarea { width: 100%; margin: 5px 0 9px; padding: 9px 10px; resize: vertical; 
 .plan-summary strong { display: block; margin-top: 4px; overflow: hidden; color: #dce5ff; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .actions-card { display: grid; grid-template-columns: .75fr 1.7fr; gap: 16px; align-items: start; }
 .release-review { grid-column: 1 / -1; }
+.release-review > .primary { margin-top: 10px; }
+.release-controls { margin-top: 10px; display: grid; gap: 8px; }
 .release-identity { grid-template-columns: repeat(2, 1fr); }
 .release-assets { max-height: 180px; margin: 0 0 12px; padding: 0; overflow: auto; list-style: none; }
 .release-assets li { padding: 8px; border-bottom: 1px solid var(--glass-border); color: #cbd5e5; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
