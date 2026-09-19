@@ -2432,6 +2432,25 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   pipe for 30.27 seconds. The deterministic follow-up writes the same commands
   as separate lines in one temporary `.cmd` fixture, so descendant launch
   completes before the two exact marker lines and cleanup is guarded on unwind.
+  Exact head `32b63469c42b673c798e96e27d432aa75078dc64` then passed all nine
+  required jobs, including native Windows run `35394339804`, and PR #119
+  squash-merged through protected main as
+  `a6ef1637cec7c7509c3e92a3359782e120f74322`. Exact protected-main artifact
+  `10570700244` closed-validates with executable SHA-256
+  `cb7375d6bd6723bc1cea5657be21bbde99c9ed5a64e995a676b11e7dfcf4b444`,
+  5,671 runtime files, the exact three-file appliance closure, and no packaged
+  transient state. The sealed two-processor Windows VM remains healthy.
+  Attempting to bind that candidate to the full product path exposed that the
+  executable's contained virtual-USB command always cleaned the verified 32-GiB
+  file immediately, so its exact bytes could not be retained for the subsequent
+  boot, install, and reinstall phases. The bounded follow-up preserves the
+  existing one-shot write/flush/readback/cleanup command and adds paired
+  Windows-only retain and cleanup forms over the same sparse-file creation,
+  production copy/readback engine, source-preservation check, and exact owned
+  cleanup guard. Focused native Windows execution, the required imaging partial,
+  changed-head CI, exact counterpart review, and merge remain pending; no
+  physical media, publication, trust, boundary, integrity, or governance path
+  is introduced.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

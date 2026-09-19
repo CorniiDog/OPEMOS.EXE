@@ -2825,10 +2825,49 @@ esac
         assert_eq!(evidence["verifiedSha256"], executable_expected);
         assert_eq!(evidence["flushed"], true);
         assert_eq!(evidence["cleaned"], true);
+        assert_eq!(evidence["retained"], false);
+        assert_eq!(evidence["targetPath"], serde_json::Value::Null);
         assert_eq!(evidence["sourcePreserved"], true);
         assert_eq!(evidence["physicalMedia"], false);
         assert!(!target.exists());
         assert_eq!(fs::read(&source).unwrap(), executable_payload);
+
+        let retained_output = run_windows_virtual_usb_harness(&[
+            "contained-virtual-usb-retain".into(),
+            "--root".into(),
+            root_path.display().to_string(),
+            "--image".into(),
+            source.display().to_string(),
+        ])
+        .expect("retain executable-contained virtual USB")
+        .expect("recognize retained virtual-USB command");
+        let retained: serde_json::Value = serde_json::from_str(&retained_output).unwrap();
+        assert_eq!(retained["status"], "passed");
+        assert_eq!(retained["retained"], true);
+        assert_eq!(retained["cleaned"], false);
+        assert_eq!(retained["targetPath"], target.to_string_lossy().as_ref());
+        assert_eq!(fs::metadata(&target).unwrap().len(), WINDOWS_VIRTUAL_USB_BYTES);
+        assert_eq!(fs::read(&source).unwrap(), executable_payload);
+
+        let cleanup_output = run_windows_virtual_usb_harness(&[
+            "contained-virtual-usb-cleanup".into(),
+            "--root".into(),
+            root_path.display().to_string(),
+        ])
+        .expect("clean retained executable-contained virtual USB")
+        .expect("recognize retained virtual-USB cleanup command");
+        let cleanup: serde_json::Value = serde_json::from_str(&cleanup_output).unwrap();
+        assert_eq!(cleanup["status"], "passed");
+        assert_eq!(cleanup["cleaned"], true);
+        assert_eq!(cleanup["physicalMedia"], false);
+        assert!(!target.exists());
+        assert_eq!(fs::read(&source).unwrap(), executable_payload);
+        assert!(run_windows_virtual_usb_harness(&[
+            "contained-virtual-usb-cleanup".into(),
+            "--root".into(),
+            root_path.display().to_string(),
+        ])
+        .is_err());
     }
 
     #[cfg(target_os = "macos")]
