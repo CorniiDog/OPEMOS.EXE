@@ -23,10 +23,6 @@ const FULL_PHASES = Object.freeze([
   "candidateWroteCompleteImage",
   "candidateFlushed",
   "completeReadbackHashMatched",
-  "retainedUsbBooted",
-  "steamOsInstalled",
-  "steamOsReinstalled",
-  "reinstallBooted",
   "noOrphans",
 ]);
 const CLEANUP = "cancellationCleanup";
@@ -131,13 +127,12 @@ async function runWindowsImaging({
   exact(steamOsImage, expectedSteamOsImage, "Official SteamOS identity");
   exact(driverBundle, expectedDriverBundle, "Driver-only bundle identity");
   validateTarget(virtualUsb, expectedVirtualUsb);
-  const full = mode === "full";
   validateWindowsImagingResult({
     schemaVersion: 1, status: "passed", mode, claim: windowsImagingMode(mode).claim,
     sealedWindowsBase: true, disposableOverlay: true, windowsReinstalled: false,
     combinedNvidiaSteamOsAsset: false, published: false,
-    retainedUsbBooted: full, steamOsInstalled: full, steamOsReinstalled: full,
-    reinstallBooted: full, installSuccess: full,
+    retainedUsbBooted: false, steamOsInstalled: false, steamOsReinstalled: false,
+    reinstallBooted: false, installSuccess: false,
     exeCommit, exeSha256, driverBundle,
     evidence: Object.fromEntries(phases.map(name => [name, true])),
   }, mode, expectedDriverBundle);
@@ -183,8 +178,8 @@ async function runWindowsImaging({
     claim: windowsImagingMode(mode).claim,
     sealedWindowsBase: true, disposableOverlay: true, windowsReinstalled: false,
     combinedNvidiaSteamOsAsset: false, published: false,
-    retainedUsbBooted: full, steamOsInstalled: full, steamOsReinstalled: full,
-    reinstallBooted: full, installSuccess: full,
+    retainedUsbBooted: false, steamOsInstalled: false, steamOsReinstalled: false,
+    reinstallBooted: false, installSuccess: false,
     exeCommit, exeSha256, driverBundle, evidence,
   };
   validateWindowsImagingResult(result, mode, expectedDriverBundle);

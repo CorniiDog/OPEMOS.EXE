@@ -9,8 +9,7 @@ const phases = [
   "driverBundleOfflineValidated", "driverBundleSourceEvidence",
   "imageConstructed", "imageExported", "candidateEnumeratedOwned32GiBUsb",
   "candidateWroteCompleteImage", "candidateFlushed", "completeReadbackHashMatched",
-  "retainedUsbBooted", "steamOsInstalled", "steamOsReinstalled",
-  "reinstallBooted", "noOrphans",
+  "noOrphans",
 ];
 const steamOs = {
   schemaVersion: 1, kind: "official-steamos-recovery",
@@ -56,13 +55,14 @@ function actions(log = []) {
   };
 }
 
-test("full runner retains the written USB through boot, install, reinstall, and orphan proof", async () => {
+test("full runner proves exact final construction, write, flush, readback, and orphan cleanup", async () => {
   const log = [];
   const result = await runWindowsImagingFull({ ...pins, actions: actions(log), timeoutMs: 5 * 60 * 60 * 1000 });
   assert.equal(result.mode, "full");
   assert.equal(result.claim, "publication-gate");
   assert.equal(result.published, false);
-  assert.equal(result.installSuccess, true);
+  assert.equal(result.installSuccess, false);
+  assert.equal(result.retainedUsbBooted, false);
   assert.deepEqual(log, [...phases, "cancellationCleanup"]);
 });
 
@@ -72,22 +72,22 @@ test("full runner refuses missing source evidence before any action", async () =
   await assert.rejects(runWindowsImagingFull({ ...pins, actions: value }), /missing: driverBundleSourceEvidence/);
 });
 
-test("failed install settles before cleanup and cannot reach reinstall", async () => {
+test("failed write settles before cleanup and cannot reach readback", async () => {
   const log = [];
   const value = actions(log);
-  value.steamOsInstalled = () => ({
+  value.candidateWroteCompleteImage = () => ({
     completion: Promise.resolve(false),
-    cancelAndWait: async () => { log.push("install-settled"); return true; },
+    cancelAndWait: async () => { log.push("write-settled"); return true; },
   });
   await assert.rejects(runWindowsImagingFull({ ...pins, actions: value }), /did not prove success/);
-  assert.equal(log.includes("steamOsReinstalled"), false);
-  assert.equal(log.indexOf("install-settled") < log.indexOf("cancellationCleanup"), true);
+  assert.equal(log.includes("completeReadbackHashMatched"), false);
+  assert.equal(log.indexOf("write-settled") < log.indexOf("cancellationCleanup"), true);
 });
 
 test("asynchronous cleanup can settle after the failed phase aborts the run", async () => {
   const log = [];
   const value = actions(log);
-  value.steamOsInstalled = () => settled(false);
+  value.candidateWroteCompleteImage = () => settled(false);
   value.cancellationCleanup = () => ({
     completion: new Promise(resolve => setImmediate(() => { log.push("cancellationCleanup"); resolve(true); })),
     cancelAndWait: async () => true,
@@ -96,7 +96,7 @@ test("asynchronous cleanup can settle after the failed phase aborts the run", as
   assert.equal(log.at(-1), "cancellationCleanup");
 });
 
-test("full identity mismatches fail before boot or mutation actions", async () => {
+test("full identity mismatches fail before construction or write actions", async () => {
   const log = [];
   await assert.rejects(runWindowsImagingFull({
     ...pins,

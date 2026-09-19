@@ -2492,6 +2492,13 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   refusal. Native Windows validation and disposable-overlay injection/boot
   proof remain pending; the separate Core zstd consumption dependency is
   unchanged.
+  A later 2026-09-19 user scope correction removed SteamOS boot and guest
+  install/reinstall proof from acceptance because the user will perform that
+  validation. The ephemeral guest-control implementation was consequently
+  removed before merge as sole-purpose out-of-scope work; its development
+  commit remains preserved in PR #120 history. The retained 32-GiB virtual-USB
+  construction, write, flush, readback, guarded cleanup, executable artifact,
+  and maintainer/Core-consumption requirements remain unchanged.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
