@@ -373,8 +373,10 @@ fn core_materializer_command(
     output_dir: &Path,
 ) -> Command {
     let mut command = Command::new(python);
+    let library = support_root.join("lib");
+    let script = library.join("materialize_driver_product.py");
+    append_core_script_args(&mut command, &library, &script);
     command
-        .arg(support_root.join("lib/materialize_driver_product.py"))
         .arg("--manifest")
         .arg(manifest)
         .arg("--asset-dir")
@@ -394,6 +396,14 @@ fn core_materializer_command(
         .arg("--output-dir")
         .arg(output_dir);
     command
+}
+
+fn append_core_script_args(command: &mut Command, library: &Path, script: &Path) {
+    command
+        .arg("-c")
+        .arg(CORE_SESSION_BOOTSTRAP)
+        .arg(library)
+        .arg(script);
 }
 
 fn materialize_r1_release_inputs(
@@ -635,14 +645,8 @@ fn core_session_command(
     let library = runtime.support_root.join("lib");
     let script = library.join("release_operation_session.py");
     let mut process = Command::new(python);
-    process
-        .arg("-c")
-        .arg(CORE_SESSION_BOOTSTRAP)
-        .arg(library)
-        .arg(script)
-        .arg(command)
-        .arg("--state")
-        .arg(&runtime.state);
+    append_core_script_args(&mut process, &library, &script);
+    process.arg(command).arg("--state").arg(&runtime.state);
     if command == "execute" || command == "reconcile" {
         process.arg("--plan").arg(&runtime.plan);
     }
@@ -876,7 +880,10 @@ mod tests {
             .get_args()
             .map(|value| value.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        assert_eq!(arguments[0], "support/lib/materialize_driver_product.py");
+        assert_eq!(arguments[0], "-c");
+        assert_eq!(arguments[1], CORE_SESSION_BOOTSTRAP);
+        assert_eq!(arguments[2], "support/lib");
+        assert_eq!(arguments[3], "support/lib/materialize_driver_product.py");
         for expected in [
             R1_BUNDLE_MANIFEST,
             R1_BUNDLE_MANIFEST_SHA256,
@@ -889,6 +896,40 @@ mod tests {
             assert!(arguments.iter().any(|value| value == expected));
         }
         assert!(!arguments.iter().any(|value| value.contains("convert")));
+    }
+
+    #[test]
+    fn materializer_bootstrap_imports_sibling_module_under_isolated_python() {
+        let fixture = ImportFixture::new();
+        let library = fixture.0.join("support/lib");
+        fs::create_dir_all(&library).expect("create Core materializer fixture");
+        fs::write(
+            library.join("driver_binary_bundle.py"),
+            "VALUE = 'materializer-sibling-loaded'\n",
+        )
+        .expect("write sibling materializer module");
+        let script = library.join("materialize_driver_product.py");
+        fs::write(
+            &script,
+            "import argparse\nfrom driver_binary_bundle import VALUE\nparser = argparse.ArgumentParser()\nparser.parse_args()\nprint(VALUE)\n",
+        )
+        .expect("write materializer fixture");
+        let python = find_binary("python3")
+            .or_else(|| find_binary("python"))
+            .expect("Python 3 is required for the isolated materializer regression");
+        let mut command = Command::new(python);
+        command.arg("-I");
+        append_core_script_args(&mut command, &library, &script);
+        command.arg("--help");
+        let output = command
+            .output()
+            .expect("run isolated materializer bootstrap");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("usage:"));
     }
 
     #[test]

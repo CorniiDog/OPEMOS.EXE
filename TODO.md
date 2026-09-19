@@ -2568,6 +2568,26 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   navigation. A focused configuration regression requires that exact hidden
   page and title. Changed-head frontend validation, Windows artifact/startup,
   sealed-Windows failed-stage rerun, and exact-head Core review remain pending.
+  Exact artifact `10581673687` for head
+  `be6997a2e9a48bc49d4bf294dfb7b67ba6e94e35` closed-validates with
+  executable SHA-256
+  `f18892e12803410ce4b1963ae83c3751791d84bd94fb5a0cd8ec5972cb4ee75e`,
+  5,671 runtime files/six components, the exact three-file appliance, and no
+  packaged transient state. Sealed-Windows execution now renders the real
+  progress WebView with visible source-hashing status, proving the
+  `about:blank` regression fixed, then fails visibly before QEMU with
+  `storage-admission-no-space`: 28,722,593,792 bytes required versus
+  10,598,367,232 available. Resolver cleanup approval is pending for only two
+  exact older non-reparse OPEMOS-generated test workspaces; current input,
+  candidate, and evidence remain preserved. Core's exact-head review also
+  found that the embeddable Python runtime isolates the materializer from its
+  sibling `driver_binary_bundle` module. The bounded correction now launches
+  the pinned materializer through the same library-inserting bootstrap already
+  used by Core release sessions, without weakening Python isolation or changing
+  Core bytes. A focused executable-boundary regression runs a sibling-importing
+  materializer under Python isolated mode and requires successful `--help`;
+  authenticated r1 materialization, changed-head CI/artifact validation,
+  resumed admission/QEMU proof, and fresh exact-head review remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
