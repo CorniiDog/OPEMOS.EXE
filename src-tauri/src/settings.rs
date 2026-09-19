@@ -671,9 +671,51 @@ pub(crate) async fn get_github_maintainer_status() -> Result<GithubMaintainerSta
         .map_err(|error| format!("GitHub authorization worker failed: {error}"))?
 }
 
+#[cfg(target_os = "windows")]
+fn windows_github_login_command(gh: &Path) -> Command {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+
+    let mut command = Command::new(gh);
+    command
+        .args([
+            "auth",
+            "login",
+            "--hostname",
+            "github.com",
+            "--git-protocol",
+            "https",
+            "--web",
+            "--clipboard",
+            "--skip-ssh-key",
+        ])
+        .creation_flags(CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP);
+    command
+}
+
 #[tauri::command]
 pub(crate) async fn connect_github_maintainer() -> Result<GithubMaintainerStatus, String> {
     tauri::async_runtime::spawn_blocking(|| {
+        #[cfg(target_os = "windows")]
+        {
+            let gh = find_binary("gh").ok_or(
+                "GitHub CLI is not available. The verified Windows bundle should include it.",
+            )?;
+            windows_github_login_command(&gh)
+                .spawn()
+                .map_err(|error| format!("Could not open GitHub login in a visible console: {error}"))?;
+            return Ok(GithubMaintainerStatus {
+                gh_available: true,
+                authenticated: false,
+                authorized: false,
+                username: None,
+                permission: None,
+                message: "GitHub login opened in a separate console. Complete the browser authorization; this panel will detect it automatically.".into(),
+            });
+        }
+
         #[cfg(target_os = "macos")]
         {
             let gh = find_binary("gh").ok_or(
@@ -709,7 +751,7 @@ end run"#;
             })
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         Err("Visible GitHub login is currently implemented only for the macOS development application.".into())
     })
     .await

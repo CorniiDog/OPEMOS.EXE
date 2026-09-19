@@ -2522,6 +2522,21 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   commit remains preserved in PR #120 history. The retained 32-GiB virtual-USB
   construction, write, flush, readback, guarded cleanup, executable artifact,
   and maintainer/Core-consumption requirements remain unchanged.
+  Native acceptance of packaged PR #120 head
+  `19397c5de316923e20a972daf8e72f4f0393cdec` then found four release-blocking
+  Windows UI defects: the Valve link and GitHub connection appeared inert, the
+  output-destination card did not fill its grid track, and Build NVIDIA Image
+  produced neither a visible progress window nor appliance activity. The
+  bounded remediation moves the existing Valve URL through a backend opener
+  command with visible success/failure status, implements the existing exact
+  `gh auth login` browser flow in a fresh Windows console, makes the output
+  card explicitly border-box/full-width, and shows the progress window before
+  its existing readiness handshake. Local all-target Rust compilation, Rust
+  format, and diff hygiene pass; the focused frontend suite cannot run locally
+  because Node is unavailable and remains required in CI alongside the
+  Windows-only command-shape regression. Replacement artifact validation,
+  native acceptance, and a fresh exact-head Core review remain pending; the
+  user's running prerelease process is not inspected or disturbed.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

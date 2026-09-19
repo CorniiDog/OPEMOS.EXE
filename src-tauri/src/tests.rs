@@ -7798,4 +7798,28 @@ trap - EXIT"#,
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_github_login_uses_exact_visible_browser_flow() {
+        let command = windows_github_login_command(Path::new(r"C:\OPEMOS\runtime\gh.exe"));
+        assert_eq!(command.get_program(), r"C:\OPEMOS\runtime\gh.exe");
+        assert_eq!(
+            command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "auth",
+                "login",
+                "--hostname",
+                "github.com",
+                "--git-protocol",
+                "https",
+                "--web",
+                "--clipboard",
+                "--skip-ssh-key",
+            ]
+        );
+    }
+
 }
