@@ -33,6 +33,21 @@
         "resizable": false,
         "maximizable": false,
         "fullscreen": false
+      },
+      {
+        "label": "build-progress",
+        "url": "build.html",
+        "title": "SteamOS NVIDIA Builder — Progress",
+        "width": 680,
+        "height": 680,
+        "minWidth": 680,
+        "minHeight": 680,
+        "theme": "Dark",
+        "backgroundColor": [11, 17, 24, 0],
+        "transparent": true,
+        "shadow": false,
+        "visible": false,
+        "resizable": true
       }
     ],
     "security": {

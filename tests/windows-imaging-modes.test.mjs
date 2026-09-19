@@ -35,8 +35,7 @@ function result(mode) {
     exeCommit: commit, exeSha256: sha,
     evidence: Object.fromEntries(spec.requires.map(field => [field, true])),
   };
-  if (mode === "full") Object.assign(base, { retainedUsbBooted: true, steamOsInstalled: true, steamOsReinstalled: true, reinstallBooted: true, installSuccess: true });
-  else Object.assign(base, { retainedUsbBooted: false, steamOsInstalled: false, steamOsReinstalled: false, reinstallBooted: false, installSuccess: false });
+  Object.assign(base, { retainedUsbBooted: false, steamOsInstalled: false, steamOsReinstalled: false, reinstallBooted: false, installSuccess: false });
   if (mode !== "short") base.driverBundle = driverBundle();
   return base;
 }
@@ -79,20 +78,12 @@ test("negative boundary declarations must be present and false", () => {
   }
 });
 
-test("short and partial explicitly deny every boot, install, and reinstall claim", () => {
+test("every mode explicitly denies boot, install, and reinstall claims", () => {
   const fields = ["retainedUsbBooted", "steamOsInstalled", "steamOsReinstalled", "reinstallBooted", "installSuccess"];
-  for (const mode of ["short", "partial"]) for (const field of fields) for (const value of [undefined, true]) {
+  for (const mode of ["short", "partial", "full"]) for (const field of fields) for (const value of [undefined, true]) {
     const changed = result(mode);
     if (value === undefined) delete changed[field]; else changed[field] = value;
     assert.throws(() => validate(changed, mode), /explicitly deny/);
-  }
-});
-
-test("full requires affirmative boot, install, and reinstall claims", () => {
-  for (const field of ["retainedUsbBooted", "steamOsInstalled", "steamOsReinstalled", "reinstallBooted", "installSuccess"]) for (const value of [undefined, false]) {
-    const changed = result("full");
-    if (value === undefined) delete changed[field]; else changed[field] = value;
-    assert.throws(() => validate(changed, "full"), /incomplete/);
   }
 });
 

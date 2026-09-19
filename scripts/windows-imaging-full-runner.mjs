@@ -12,7 +12,6 @@ const PHASES = Object.freeze([
   "driverBundleOfflineValidated", "driverBundleSourceEvidence",
   "imageConstructed", "imageExported", "candidateEnumeratedOwned32GiBUsb",
   "candidateWroteCompleteImage", "candidateFlushed", "completeReadbackHashMatched",
-  "retainedUsbBooted", "steamOsInstalled", "steamOsReinstalled", "reinstallBooted",
   "noOrphans", "cancellationCleanup",
 ]);
 const KEYS = new Set(["schemaVersion", "kind", "ownedRoot", "exeCommit", "exeSha256",

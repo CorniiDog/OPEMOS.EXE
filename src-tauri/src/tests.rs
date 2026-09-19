@@ -3,6 +3,66 @@
 mod tests {
     use super::*;
 
+    struct ScpTestConnection {
+        ssh_key: PathBuf,
+        runtime_dir: PathBuf,
+        ssh_port: u16,
+    }
+
+    impl GuestConnection for ScpTestConnection {
+        fn ssh_key(&self) -> &Path {
+            &self.ssh_key
+        }
+
+        fn ssh_port(&self) -> u16 {
+            self.ssh_port
+        }
+
+        fn runtime_dir(&self) -> &Path {
+            &self.runtime_dir
+        }
+    }
+
+    #[test]
+    fn every_fedora_appliance_scp_transfer_has_the_100_mbit_ceiling() {
+        let connection = ScpTestConnection {
+            ssh_key: PathBuf::from("owned-test-key"),
+            runtime_dir: PathBuf::from("owned-runtime"),
+            ssh_port: 22022,
+        };
+        let mut command = Command::new("scp");
+        configure_scp_command(&mut command, &connection);
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            arguments,
+            [
+                "-P",
+                "22022",
+                "-i",
+                "owned-test-key",
+                "-l",
+                "100000",
+                "-o",
+                "IdentitiesOnly=yes",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=3",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                "-o",
+                "LogLevel=ERROR",
+            ]
+        );
+        assert_eq!(arguments.iter().filter(|argument| *argument == "-l").count(), 1);
+    }
+
     #[cfg(unix)]
     #[test]
     fn finished_guest_command_captures_stdout_and_stderr() {
@@ -2825,10 +2885,49 @@ esac
         assert_eq!(evidence["verifiedSha256"], executable_expected);
         assert_eq!(evidence["flushed"], true);
         assert_eq!(evidence["cleaned"], true);
+        assert_eq!(evidence["retained"], false);
+        assert_eq!(evidence["targetPath"], serde_json::Value::Null);
         assert_eq!(evidence["sourcePreserved"], true);
         assert_eq!(evidence["physicalMedia"], false);
         assert!(!target.exists());
         assert_eq!(fs::read(&source).unwrap(), executable_payload);
+
+        let retained_output = run_windows_virtual_usb_harness(&[
+            "contained-virtual-usb-retain".into(),
+            "--root".into(),
+            root_path.display().to_string(),
+            "--image".into(),
+            source.display().to_string(),
+        ])
+        .expect("retain executable-contained virtual USB")
+        .expect("recognize retained virtual-USB command");
+        let retained: serde_json::Value = serde_json::from_str(&retained_output).unwrap();
+        assert_eq!(retained["status"], "passed");
+        assert_eq!(retained["retained"], true);
+        assert_eq!(retained["cleaned"], false);
+        assert_eq!(retained["targetPath"], target.to_string_lossy().as_ref());
+        assert_eq!(fs::metadata(&target).unwrap().len(), WINDOWS_VIRTUAL_USB_BYTES);
+        assert_eq!(fs::read(&source).unwrap(), executable_payload);
+
+        let cleanup_output = run_windows_virtual_usb_harness(&[
+            "contained-virtual-usb-cleanup".into(),
+            "--root".into(),
+            root_path.display().to_string(),
+        ])
+        .expect("clean retained executable-contained virtual USB")
+        .expect("recognize retained virtual-USB cleanup command");
+        let cleanup: serde_json::Value = serde_json::from_str(&cleanup_output).unwrap();
+        assert_eq!(cleanup["status"], "passed");
+        assert_eq!(cleanup["cleaned"], true);
+        assert_eq!(cleanup["physicalMedia"], false);
+        assert!(!target.exists());
+        assert_eq!(fs::read(&source).unwrap(), executable_payload);
+        assert!(run_windows_virtual_usb_harness(&[
+            "contained-virtual-usb-cleanup".into(),
+            "--root".into(),
+            root_path.display().to_string(),
+        ])
+        .is_err());
     }
 
     #[cfg(target_os = "macos")]
@@ -3869,8 +3968,8 @@ esac
 
     #[test]
     fn pinned_publisher_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_publisher_contract().unwrap(), 36_020);
-        assert_eq!(PINNED_PUBLISHER_FILES.len(), 4);
+        assert_eq!(validate_pinned_publisher_contract().unwrap(), 74_819);
+        assert_eq!(PINNED_PUBLISHER_FILES.len(), 7);
         assert!(PINNED_PUBLISHER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/publish_artifacts.sh" && file.executable));
@@ -3884,6 +3983,21 @@ esac
             file.path == "lib/release_operation_session.py"
                 && file.sha256 == "b038d9eefd2d139d1f031846877b02329b0a3f22fd64f44d293cee1827a68567"
                 && file.executable
+        }));
+        assert!(PINNED_PUBLISHER_FILES.iter().any(|file| {
+            file.path == "lib/materialize_driver_product.py"
+                && file.sha256 == "b84c17271ca1d81c1f9945c9b6cf6e68658831288726a4fd06d2f2b592830651"
+                && file.executable
+        }));
+        assert!(PINNED_PUBLISHER_FILES.iter().any(|file| {
+            file.path == "lib/driver_binary_bundle.py"
+                && file.sha256 == "9470dec9279658ab851d0d7803b71cac4f8c84a8683e1b20f10f2012bfc88809"
+                && file.executable
+        }));
+        assert!(PINNED_PUBLISHER_FILES.iter().any(|file| {
+            file.path == "contracts/schemas/driver-product-materialization-v1.schema.json"
+                && file.sha256 == "26d8df8ec307cc2f58b84d8b1268ad68feeb84a8a401abeca81adf2eb547aae0"
+                && !file.executable
         }));
     }
 
@@ -7741,6 +7855,30 @@ trap - EXIT"#,
         assert_eq!(
             support_publisher_path(Path::new(r"C:\Users\connor\product\archive.tar.gz")),
             arguments[5]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_github_login_uses_exact_visible_browser_flow() {
+        let command = windows_github_login_command(Path::new(r"C:\OPEMOS\runtime\gh.exe"));
+        assert_eq!(command.get_program(), r"C:\OPEMOS\runtime\gh.exe");
+        assert_eq!(
+            command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "auth",
+                "login",
+                "--hostname",
+                "github.com",
+                "--git-protocol",
+                "https",
+                "--web",
+                "--clipboard",
+                "--skip-ssh-key",
+            ]
         );
     }
 

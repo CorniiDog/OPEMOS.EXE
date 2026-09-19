@@ -591,7 +591,7 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 52] = [
     },
 ];
 
-pub(crate) const PINNED_PUBLISHER_FILES: [PinnedInstallerFile; 4] = [
+pub(crate) const PINNED_PUBLISHER_FILES: [PinnedInstallerFile; 7] = [
     PinnedInstallerFile {
         path: "bootstrap/publish_artifacts.sh",
         sha256: "683943eea91c0367419cef9362857dae3b26617ab448d295a929c90d1c06de68",
@@ -615,6 +615,24 @@ pub(crate) const PINNED_PUBLISHER_FILES: [PinnedInstallerFile; 4] = [
         sha256: "b038d9eefd2d139d1f031846877b02329b0a3f22fd64f44d293cee1827a68567",
         bytes: 8_611,
         executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/materialize_driver_product.py",
+        sha256: "b84c17271ca1d81c1f9945c9b6cf6e68658831288726a4fd06d2f2b592830651",
+        bytes: 21_620,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/driver_binary_bundle.py",
+        sha256: "9470dec9279658ab851d0d7803b71cac4f8c84a8683e1b20f10f2012bfc88809",
+        bytes: 14_410,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "contracts/schemas/driver-product-materialization-v1.schema.json",
+        sha256: "26d8df8ec307cc2f58b84d8b1268ad68feeb84a8a401abeca81adf2eb547aae0",
+        bytes: 2_769,
+        executable: false,
     },
 ];
 

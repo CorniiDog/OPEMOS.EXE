@@ -1,6 +1,10 @@
 use super::require_maintainer_authorization;
 use tauri::window::{Color, Effect, EffectState, EffectsBuilder};
 use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
+
+const VALVE_STEAMOS_DOWNLOAD_URL: &str =
+    "https://store.steampowered.com/steamos/download/?ver=steamdeck";
 
 fn glass_window_effects() -> tauri::utils::config::WindowEffectsConfig {
     EffectsBuilder::new()
@@ -9,6 +13,13 @@ fn glass_window_effects() -> tauri::utils::config::WindowEffectsConfig {
         .radius(10.0)
         .color(Color(11, 17, 24, 220))
         .build()
+}
+
+#[tauri::command]
+pub(crate) fn open_valve_download_page(app: tauri::AppHandle) -> Result<(), String> {
+    app.opener()
+        .open_url(VALVE_STEAMOS_DOWNLOAD_URL, None::<&str>)
+        .map_err(|error| format!("Could not open Valve's SteamOS download page: {error}"))
 }
 
 #[tauri::command]
@@ -39,7 +50,7 @@ pub(crate) fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> 
     .background_color(Color(11, 17, 24, 0))
     .effects(glass_window_effects())
     .shadow(false)
-    .visible(false);
+    .visible(true);
     #[cfg(target_os = "macos")]
     let progress_builder = progress_builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)

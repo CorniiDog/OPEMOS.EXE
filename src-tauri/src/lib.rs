@@ -161,11 +161,38 @@ pub fn run_core_driver_resolver(arguments: &[String]) -> Result<Option<String>, 
 
 #[cfg(target_os = "windows")]
 pub fn run_windows_virtual_usb_harness(arguments: &[String]) -> Result<Option<String>, String> {
-    if arguments.first().map(String::as_str) != Some("contained-virtual-usb") {
+    let command = arguments.first().map(String::as_str);
+    if !matches!(
+        command,
+        Some("contained-virtual-usb")
+            | Some("contained-virtual-usb-retain")
+            | Some("contained-virtual-usb-cleanup")
+    ) {
         return Ok(None);
     }
+    if command == Some("contained-virtual-usb-cleanup") {
+        if arguments.len() != 3 || arguments[1] != "--root" {
+            return Err("Usage: contained-virtual-usb-cleanup --root ROOT.".into());
+        }
+        let root = PathBuf::from(&arguments[2]);
+        let root = fs::canonicalize(&root)
+            .map_err(|error| format!("Could not canonicalize the virtual-USB root: {error}"))?;
+        let target = root.join("virtual-usb-32g.raw");
+        cleanup_windows_virtual_usb(&root, &target)?;
+        return serde_json::to_string(&serde_json::json!({
+            "schemaVersion": 1, "status": "passed",
+            "kind": "harness-owned-file-backed-virtual-usb-cleanup",
+            "capacityBytes": WINDOWS_VIRTUAL_USB_BYTES,
+            "cleaned": true, "physicalMedia": false
+        }))
+        .map(Some)
+        .map_err(|error| format!("Could not encode virtual-USB cleanup evidence: {error}"));
+    }
     if arguments.len() != 5 || arguments[1] != "--root" || arguments[3] != "--image" {
-        return Err("Usage: contained-virtual-usb --root ROOT --image IMAGE.".into());
+        return Err(format!(
+            "Usage: {} --root ROOT --image IMAGE.",
+            command.unwrap_or("contained-virtual-usb")
+        ));
     }
     let root = PathBuf::from(&arguments[2]);
     let image = PathBuf::from(&arguments[4]);
@@ -188,16 +215,21 @@ pub fn run_windows_virtual_usb_harness(arguments: &[String]) -> Result<Option<St
         |_| {},
     );
     drop(media);
-    let cleanup = cleanup_windows_virtual_usb(&root, &target);
-    let verified_sha256 = match (result, cleanup) {
-        (Ok(sha256), Ok(())) => sha256,
-        (Err(error), Ok(())) => return Err(error),
-        (Ok(_), Err(error)) => return Err(error),
-        (Err(primary), Err(cleanup)) => {
-            return Err(format!("{primary} Cleanup also failed: {cleanup}"));
+    let retain = command == Some("contained-virtual-usb-retain");
+    let verified_sha256 = if retain {
+        result?
+    } else {
+        let cleanup = cleanup_windows_virtual_usb(&root, &target);
+        match (result, cleanup) {
+            (Ok(sha256), Ok(())) => sha256,
+            (Err(error), Ok(())) => return Err(error),
+            (Ok(_), Err(error)) => return Err(error),
+            (Err(primary), Err(cleanup)) => {
+                return Err(format!("{primary} Cleanup also failed: {cleanup}"));
+            }
         }
     };
-    if sha256_file(&image)? != image_sha256 || target.exists() {
+    if sha256_file(&image)? != image_sha256 || target.exists() == !retain {
         return Err("Contained virtual-USB cleanup or source preservation failed.".into());
     }
     serde_json::to_string(&serde_json::json!({
@@ -205,7 +237,9 @@ pub fn run_windows_virtual_usb_harness(arguments: &[String]) -> Result<Option<St
         "kind": "harness-owned-file-backed-virtual-usb",
         "capacityBytes": WINDOWS_VIRTUAL_USB_BYTES, "bytesWritten": image_bytes,
         "sourceSha256": image_sha256, "verifiedSha256": verified_sha256,
-        "flushed": true, "cleaned": true, "sourcePreserved": true,
+        "flushed": true, "cleaned": !retain, "retained": retain,
+        "targetPath": if retain { Some(target.to_string_lossy().into_owned()) } else { None },
+        "sourcePreserved": true,
         "physicalMedia": false
     }))
     .map(Some)
@@ -214,7 +248,12 @@ pub fn run_windows_virtual_usb_harness(arguments: &[String]) -> Result<Option<St
 
 #[cfg(not(target_os = "windows"))]
 pub fn run_windows_virtual_usb_harness(arguments: &[String]) -> Result<Option<String>, String> {
-    if arguments.first().map(String::as_str) == Some("contained-virtual-usb") {
+    if matches!(
+        arguments.first().map(String::as_str),
+        Some("contained-virtual-usb")
+            | Some("contained-virtual-usb-retain")
+            | Some("contained-virtual-usb-cleanup")
+    ) {
         return Err("The contained virtual-USB executable harness requires Windows.".into());
     }
     Ok(None)
@@ -264,7 +303,7 @@ const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/OPEMOS";
-const NVIDIA_SUPPORT_COMMIT: &str = "f6871104ea83d8afa620b133b362a0578ff4a6a8";
+const NVIDIA_SUPPORT_COMMIT: &str = "c5d66d0fabbebf17a5dfb3fc636c813be3fa9a82";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 // Compatibility target only. This does not become the production installer pin

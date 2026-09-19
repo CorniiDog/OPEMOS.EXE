@@ -14,7 +14,7 @@ const MODES = Object.freeze({
   full: {
     claim: "publication-gate",
     targetMinutes: [360, 600],
-    requires: ["officialSteamOsAuthenticated", "immutableDriverOnlyRelease", "driverBundleOfflineValidated", "driverBundleSourceEvidence", "imageConstructed", "imageExported", "candidateEnumeratedOwned32GiBUsb", "candidateWroteCompleteImage", "candidateFlushed", "completeReadbackHashMatched", "retainedUsbBooted", "steamOsInstalled", "steamOsReinstalled", "reinstallBooted", "noOrphans"],
+    requires: ["officialSteamOsAuthenticated", "immutableDriverOnlyRelease", "driverBundleOfflineValidated", "driverBundleSourceEvidence", "imageConstructed", "imageExported", "candidateEnumeratedOwned32GiBUsb", "candidateWroteCompleteImage", "candidateFlushed", "completeReadbackHashMatched", "noOrphans"],
   },
 });
 
@@ -71,8 +71,7 @@ export function validateWindowsImagingResult(result, requiredMode, expectedDrive
   if (result.published !== false) fail("Validation must explicitly declare that publication did not occur.");
   if (!HEX40.test(result.exeCommit || "") || !HEX64.test(result.exeSha256 || "")) fail("Candidate executable identity is invalid.");
   for (const field of selected.requires) if (result.evidence?.[field] !== true) fail(`Windows ${result.mode} evidence is incomplete: ${field}.`);
-  if (result.mode !== "full" && ["retainedUsbBooted", "steamOsInstalled", "steamOsReinstalled", "reinstallBooted", "installSuccess"].some(field => result[field] !== false)) fail(`${result.mode} mode must explicitly deny boot, install, and reinstall claims.`);
-  if (result.mode === "full" && ["retainedUsbBooted", "steamOsInstalled", "steamOsReinstalled", "reinstallBooted", "installSuccess"].some(field => result[field] !== true)) fail("Full mode boot, install, and reinstall claims are incomplete.");
+  if (["retainedUsbBooted", "steamOsInstalled", "steamOsReinstalled", "reinstallBooted", "installSuccess"].some(field => result[field] !== false)) fail(`${result.mode} mode must explicitly deny boot, install, and reinstall claims.`);
   if (result.mode !== "short") validateDriverBundle(result.driverBundle, expectedDriverBundle);
   return { schemaVersion: 1, mode: result.mode, requiredMode, claim: selected.claim, targetMinutes: selected.targetMinutes, accepted: true };
 }

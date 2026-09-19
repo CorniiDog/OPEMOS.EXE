@@ -19,7 +19,7 @@ test("Windows portable workflow accepts CRLF checkout line endings", () => {
 for (const [name, mutate, expected] of [
   ["merge-ref source identity", text => text.replace("github.event.pull_request.head.sha || github.sha", "github.sha"), /exact EXE source identity/],
   ["short artifact job budget", text => text.replace("timeout-minutes: 120", "timeout-minutes: 60"), /bounded Windows artifact job budget/],
-  ["mutable Core checkout", text => text.replace("ref: f6871104ea83d8afa620b133b362a0578ff4a6a8", "ref: main"), /Core checkout pin/],
+  ["mutable Core checkout", text => text.replace("ref: c5d66d0fabbebf17a5dfb3fc636c813be3fa9a82", "ref: main"), /Core checkout pin/],
   ["Core CRLF conversion", text => text.replace("git config --global core.autocrlf false", "git config --global core.autocrlf true"), /canonical Core byte preservation/],
   ["tagged action", text => text.replace("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", "actions/setup-node@v4"), /setup-node action/],
   ["missing unsigned gate", text => text.replace("SignatureStatus]::NotSigned", "SignatureStatus]::Valid"), /unsigned-only gate/],

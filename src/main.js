@@ -53,7 +53,6 @@ installCompatibilityPreview(document, invoke, () => open({
   directory: false,
   filters: [{ name: "Core resolver JSON", extensions: ["json"] }],
 }));
-const openUrl = (url) => invoke("plugin:opener|open_url", { url });
 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
@@ -687,7 +686,21 @@ elements.chooseImage.addEventListener("click", async () => {
   if (typeof selected === "string") await selectImage(selected);
 });
 
-elements.openValve.addEventListener("click", () => openUrl("https://store.steampowered.com/steamos/download/?ver=steamdeck"));
+elements.openValve.addEventListener("click", async () => {
+  elements.openValve.disabled = true;
+  elements.resultMessage.textContent = "Opening Valve's SteamOS download page…";
+  elements.resultMessage.className = "result-message";
+  try {
+    await invoke("open_valve_download_page");
+    elements.resultMessage.textContent = "Valve's SteamOS download page opened in your default browser.";
+    elements.resultMessage.className = "result-message success";
+  } catch (error) {
+    elements.resultMessage.textContent = String(error);
+    elements.resultMessage.className = "result-message error";
+  } finally {
+    elements.openValve.disabled = false;
+  }
+});
 
 elements.settingsButton.addEventListener("click", () => setSettingsOpen(true));
 elements.settingsClose.addEventListener("click", () => setSettingsOpen(false));
@@ -863,7 +876,12 @@ elements.resetOutputFolder.addEventListener("click", () => {
 
 elements.buildButton.addEventListener("click", async () => {
   const exportMode = selectedExportMode();
-  if (!admitBuildStart(currentBuildSnapshot()).accepted) return;
+  const admission = admitBuildStart(currentBuildSnapshot());
+  if (!admission.accepted) {
+    elements.resultMessage.textContent = `Build cannot start: ${admission.blocker}.`;
+    elements.resultMessage.className = "result-message error";
+    return;
+  }
   const buildContext = {
     generation: ++buildContextGeneration,
     requestId: crypto.randomUUID(),
@@ -906,6 +924,7 @@ elements.buildButton.addEventListener("click", async () => {
     elements.summaryOutput.title = displayPath(plannedOutput);
     await invoke("open_progress_window");
     setCompanionMode("build-progress");
+    elements.resultMessage.textContent = "Build progress is opening in a separate window…";
     const windows = await getAllWebviewWindows();
     const progressWindow = windows.find((window) => window.label === "build-progress");
     if (!progressWindow) throw new Error("The build progress window is unavailable.");

@@ -2432,6 +2432,171 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   pipe for 30.27 seconds. The deterministic follow-up writes the same commands
   as separate lines in one temporary `.cmd` fixture, so descendant launch
   completes before the two exact marker lines and cleanup is guarded on unwind.
+  Exact head `32b63469c42b673c798e96e27d432aa75078dc64` then passed all nine
+  required jobs, including native Windows run `35394339804`, and PR #119
+  squash-merged through protected main as
+  `a6ef1637cec7c7509c3e92a3359782e120f74322`. Exact protected-main artifact
+  `10570700244` closed-validates with executable SHA-256
+  `cb7375d6bd6723bc1cea5657be21bbde99c9ed5a64e995a676b11e7dfcf4b444`,
+  5,671 runtime files, the exact three-file appliance closure, and no packaged
+  transient state. The sealed two-processor Windows VM remains healthy.
+  Attempting to bind that candidate to the full product path exposed that the
+  executable's contained virtual-USB command always cleaned the verified 32-GiB
+  file immediately, so its exact bytes could not be retained for the subsequent
+  boot, install, and reinstall phases. The bounded follow-up preserves the
+  existing one-shot write/flush/readback/cleanup command and adds paired
+  Windows-only retain and cleanup forms over the same sparse-file creation,
+  production copy/readback engine, source-preservation check, and exact owned
+  cleanup guard. Focused native Windows execution, the required imaging partial,
+  changed-head CI, exact counterpart review, and merge remain pending; no
+  physical media, publication, trust, boundary, integrity, or governance path
+  is introduced.
+  Canonical GitHub inspection of the exact r1 Core product commit
+  `0b9550ab0ffc9ababe79800a407835c9c4a27dd0`, the EXE-pinned Core installer
+  commit `a1c03c9658c5ed885f094b5f8e0896d818fee785`, and current remote Core main
+  `8d20e71337e8bc7e647848ae501d8ccd656e3aee` exposes a concrete consumption
+  dependency: the r1 product carries `payload/nvidia-driver.tar.zst`, while
+  every available Core installer validator still opens the module archive only
+  as gzip. EXE must not reinterpret or transcode that Core-owned product
+  contract. A canonical immutable Core consumer contract/implementation for the
+  exact r1 payload is required before the construction action can install it.
+  Core PR #44 supplied that dependency and squash-merged through protected main
+  as `c5d66d0fabbebf17a5dfb3fc636c813be3fa9a82` after both Shell checks and
+  exact EXE counterpart review. The active Maintainer-first integration advances
+  the ordinary EXE Core consumer pin to that commit, downloads and hash-checks
+  its materializer, bundle validator, and result schema from canonical GitHub,
+  and accepts only the exact three-file r1 bundle manifest SHA-256
+  `3e36fc5490ca4186ec7dbd79e9bd5cb1453d56845aafefd7703f7730bed5bcc1`
+  with product provenance commit `0b9550ab0ffc9ababe79800a407835c9c4a27dd0`.
+  It materializes the byte-identical gzip installer member into the existing
+  four-file Maintainer publisher/import path, independently verifies every
+  output record and the 21,634,427-byte archive SHA-256
+  `3412cf68ee79450f58afd4bb09e6c8dc9ed1f20ef4410118127ff98211727784`,
+  and preserves the existing dry-run/create-only release session. Focused Rust,
+  frontend, exact Windows bundle/startup, packaged Maintainer execution, and
+  changed-head counterpart review remain pending. The first focused checkpoint
+  passes all four new Rust regressions and warnings-denied all-target Clippy
+  through `heavy.sh`; direct execution of the canonical materializer against the
+  authenticated cached r1 bundle independently rehashed every output and proved
+  the exact 21,634,427-byte archive identity above. Diff hygiene and Rust format
+  checks pass; Node is unavailable locally, so frontend and workflow-policy
+  validation remain for CI. Native Windows execution is separately deferred
+  until the user's scheduled window and SteamOS boot/install remains paused
+  until this packaged Maintainer path works.
+  Independent retained-media investigation reused the preserved PR #90 output
+  image at exact SHA-256
+  `10c151ecd75247e489701e5e1425bd367cacc522519bd231ad59c3cbb4f4e970`
+  and the packaged QEMU 11.1.0/EDK2 closure. A bounded read-only WHPX boot
+  reached the image's own `EFI/steamos/grubx64.efi` from GPT partition UUID
+  `C1C7E615-F0A6-4F7D-988E-C2F06AFED580`, proving firmware and GRUB entry
+  selection, but not recovery-OS readiness. The corrected readiness probe then
+  waited 187 seconds with a forwarded guest port and end-of-window framebuffer:
+  no SSH protocol banner appeared, the framebuffer remained entirely black,
+  serial stayed at 821 bytes after GRUB, and exact-child cleanup left zero QEMU
+  survivors. The embedded welcome server is deliberately loopback-only and no
+  existing authenticated guest control channel is present. Full install and
+  reinstall execution therefore cannot be driven or independently evidenced
+  without either a new test-only guest trust/control input or a different
+  pre-existing authenticated channel. On 2026-09-19 the user delegated the
+  narrow test-only decision to Resolver, which approved fresh per-run Ed25519
+  client and host keys beneath the exact owned full-run root, injection only
+  into disposable overlays and installed targets, loopback-only `restrict=on`
+  QEMU forwarding, a closed forced-command set, and exact credential, overlay,
+  and process cleanup proof. The bounded implementation now generates
+  non-reusable key material through the hash-pinned bundled `ssh-keygen`, emits
+  an SSH server configuration disabling passwords, root, PTY, agent/X11/TCP
+  forwarding, tunnels, and gateway ports, and limits the controller to
+  readiness, inventory, install, reinstall, receipt, and shutdown. It binds the
+  executable commit/hash and retained-image hash before use, refuses path
+  redirection or identity drift, and removes only the exact owned credential
+  directory after rehashing the retained image. Focused tests cover the closed
+  command set, loopback/restricted network arguments, stale-credential refusal,
+  changed-image evidence preservation, and intermediate-directory escape
+  refusal. Native Windows validation and disposable-overlay injection/boot
+  proof remain pending; the separate Core zstd consumption dependency is
+  unchanged.
+  A later 2026-09-19 user scope correction removed SteamOS boot and guest
+  install/reinstall proof from acceptance because the user will perform that
+  validation. The ephemeral guest-control implementation was consequently
+  removed before merge as sole-purpose out-of-scope work; its development
+  commit remains preserved in PR #120 history. The retained 32-GiB virtual-USB
+  construction, write, flush, readback, guarded cleanup, executable artifact,
+  and maintainer/Core-consumption requirements remain unchanged.
+  Native acceptance of packaged PR #120 head
+  `19397c5de316923e20a972daf8e72f4f0393cdec` then found four release-blocking
+  Windows UI defects: the Valve link and GitHub connection appeared inert, the
+  output-destination card did not fill its grid track, and Build NVIDIA Image
+  produced neither a visible progress window nor appliance activity. The
+  bounded remediation moves the existing Valve URL through a backend opener
+  command with visible success/failure status, implements the existing exact
+  `gh auth login` browser flow in a fresh Windows console, makes the output
+  card explicitly border-box/full-width, and shows the progress window before
+  its existing readiness handshake. Local all-target Rust compilation, Rust
+  format, and diff hygiene pass; the focused frontend suite cannot run locally
+  because Node is unavailable and remains required in CI alongside the
+  Windows-only command-shape regression. Replacement artifact validation,
+  native acceptance, and a fresh exact-head Core review remain pending; the
+  user's running prerelease process is not inspected or disturbed.
+  The user's subsequent transfer policy requires a 100 Mbit/s ceiling for
+  every OPEMOS SCP send or receive, including packaged Fedora-appliance
+  transfers used by Windows VM acceptance. The single shared `scp_command`
+  constructor now adds OpenSSH `-l 100000` (Kbit/s), so every existing image,
+  installer, and NVIDIA appliance call site inherits the ceiling. A focused
+  argument-level regression requires the exact option once and preserves the
+  existing port, owned key, batch, timeout, host-key, and logging arguments.
+  That focused regression passes 1/1 through `heavy.sh`. Required Linux and
+  documentation checks passed at head `a6910ffdd2204cd7a54ca0d2e9a371c6521cdeb4`,
+  but Windows artifact run `35430006068` failed at compile time because the
+  Windows-only visible-login constructor remained private to `settings` while
+  its crate-level command-shape regression consumed it through the existing
+  test import. The bounded correction exposes only that constructor within the
+  crate; no runtime arguments or behavior change. Changed-head Windows build,
+  replacement artifact validation, and exact-head Core review remain pending.
+  Replacement head `4bddb3d4060fa9b20e435fb2e8f1f0bed35942ed`
+  subsequently passed every required CI job and its sole artifact closed-
+  validated at executable SHA-256
+  `dc2e58d905b3448426a296d89324615cfdedcaafff99967d08e3a6c0bf2e6e21`.
+  Actual sealed-Windows UI proof confirms the Valve control visibly opens the
+  exact SteamOS download page, Connect GitHub visibly opens the packaged
+  `gh.exe` device-login prompt, the authenticated recovery input is accepted,
+  and Output destinations fills the content width. It also reproduces one
+  remaining release blocker: Build opens the titled progress native window,
+  but its WebView remains `about:blank` after more than one minute and no
+  packaged QEMU process starts. The bounded remediation preloads the existing
+  `build.html` progress WebView as a hidden configured application window so
+  the existing show/focus/readiness/request path cannot race dynamic Windows
+  navigation. A focused configuration regression requires that exact hidden
+  page and title. Changed-head frontend validation, Windows artifact/startup,
+  sealed-Windows failed-stage rerun, and exact-head Core review remain pending.
+  Exact artifact `10581673687` for head
+  `be6997a2e9a48bc49d4bf294dfb7b67ba6e94e35` closed-validates with
+  executable SHA-256
+  `f18892e12803410ce4b1963ae83c3751791d84bd94fb5a0cd8ec5972cb4ee75e`,
+  5,671 runtime files/six components, the exact three-file appliance, and no
+  packaged transient state. Sealed-Windows execution now renders the real
+  progress WebView with visible source-hashing status, proving the
+  `about:blank` regression fixed, then fails visibly before QEMU with
+  `storage-admission-no-space`: 28,722,593,792 bytes required versus
+  10,598,367,232 available. Resolver cleanup approval is pending for only two
+  exact older non-reparse OPEMOS-generated test workspaces; current input,
+  candidate, and evidence remain preserved. Core's exact-head review also
+  found that the embeddable Python runtime isolates the materializer from its
+  sibling `driver_binary_bundle` module. The bounded correction now launches
+  the pinned materializer through the same library-inserting bootstrap already
+  used by Core release sessions, without weakening Python isolation or changing
+  Core bytes. A focused executable-boundary regression runs a sibling-importing
+  materializer under Python isolated mode and requires successful `--help`;
+  authenticated r1 materialization, changed-head CI/artifact validation,
+  resumed admission/QEMU proof, and fresh exact-head review remain pending.
+  Exact head `c1d9b243aff5ae029df55354eaaada38b34cd912` subsequently passed
+  required CI, closed artifact validation, real sealed-Windows packaged
+  build/QEMU validation, contained 32-GiB virtual-USB write/flush/readback/
+  cleanup, and packaged Maintainer import. The user's 1280-by-1024 review then
+  exposed the release-review primary controls touching vertically because that
+  existing control stack had no gap. The active smallest UI correction adds
+  spacing only to the existing release-review primary boundary and control
+  stack; focused layout validation, changed-head Windows startup/artifact,
+  visual confirmation, and refreshed exact-head Core review remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

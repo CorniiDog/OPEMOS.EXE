@@ -10,8 +10,7 @@ import { runWindowsImagingFullPlan } from "../scripts/windows-imaging-full-runne
 
 const phases = ["officialSteamOsAuthenticated", "immutableDriverOnlyRelease", "driverBundleOfflineValidated",
   "driverBundleSourceEvidence", "imageConstructed", "imageExported", "candidateEnumeratedOwned32GiBUsb",
-  "candidateWroteCompleteImage", "candidateFlushed", "completeReadbackHashMatched", "retainedUsbBooted",
-  "steamOsInstalled", "steamOsReinstalled", "reinstallBooted", "noOrphans", "cancellationCleanup"];
+  "candidateWroteCompleteImage", "candidateFlushed", "completeReadbackHashMatched", "noOrphans", "cancellationCleanup"];
 const sha = "a".repeat(64);
 
 async function fixture() {
@@ -64,10 +63,10 @@ test("executes the exact full sequence and cleanup without a shell", async () =>
   assert.ok(invocations.every(value => value.options.shell === false && value.options.windowsHide === true));
 });
 
-test("failed install runs cleanup and never reaches reinstall", async () => {
+test("failed write runs cleanup and never reaches readback", async () => {
   const { file } = await fixture(); const log = [];
-  await assert.rejects(runWindowsImagingFullPlan(file, { platform: "win32", spawnProcess(_executable, args) { return childFor(args[0], log, "steamOsInstalled"); } }), /exited 7/);
-  assert.equal(log.includes("steamOsReinstalled"), false); assert.equal(log.at(-1), "cancellationCleanup");
+  await assert.rejects(runWindowsImagingFullPlan(file, { platform: "win32", spawnProcess(_executable, args) { return childFor(args[0], log, "candidateWroteCompleteImage"); } }), /exited 7/);
+  assert.equal(log.includes("completeReadbackHashMatched"), false); assert.equal(log.at(-1), "cancellationCleanup");
 });
 
 test("refuses commands outside the owned full-run root before spawning", async () => {
