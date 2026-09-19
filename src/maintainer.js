@@ -17,7 +17,7 @@ const releaseReview = installReleasePlanReview(document, (command, request) => (
 document.querySelector("#release-import").addEventListener("click", async () => {
   const directory = await openFolder({ multiple: false, directory: true });
   if (!directory) return;
-  document.querySelector("#release-plan-status").textContent = "Validating exact Core publisher inputs…";
+  document.querySelector("#release-plan-status").textContent = "Validating and materializing the exact Core product…";
   try {
     releaseReview.render(await invoke("import_maintainer_release_product", { directory }));
   } catch (error) {

@@ -2460,6 +2460,29 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   as gzip. EXE must not reinterpret or transcode that Core-owned product
   contract. A canonical immutable Core consumer contract/implementation for the
   exact r1 payload is required before the construction action can install it.
+  Core PR #44 supplied that dependency and squash-merged through protected main
+  as `c5d66d0fabbebf17a5dfb3fc636c813be3fa9a82` after both Shell checks and
+  exact EXE counterpart review. The active Maintainer-first integration advances
+  the ordinary EXE Core consumer pin to that commit, downloads and hash-checks
+  its materializer, bundle validator, and result schema from canonical GitHub,
+  and accepts only the exact three-file r1 bundle manifest SHA-256
+  `3e36fc5490ca4186ec7dbd79e9bd5cb1453d56845aafefd7703f7730bed5bcc1`
+  with product provenance commit `0b9550ab0ffc9ababe79800a407835c9c4a27dd0`.
+  It materializes the byte-identical gzip installer member into the existing
+  four-file Maintainer publisher/import path, independently verifies every
+  output record and the 21,634,427-byte archive SHA-256
+  `3412cf68ee79450f58afd4bb09e6c8dc9ed1f20ef4410118127ff98211727784`,
+  and preserves the existing dry-run/create-only release session. Focused Rust,
+  frontend, exact Windows bundle/startup, packaged Maintainer execution, and
+  changed-head counterpart review remain pending. The first focused checkpoint
+  passes all four new Rust regressions and warnings-denied all-target Clippy
+  through `heavy.sh`; direct execution of the canonical materializer against the
+  authenticated cached r1 bundle independently rehashed every output and proved
+  the exact 21,634,427-byte archive identity above. Diff hygiene and Rust format
+  checks pass; Node is unavailable locally, so frontend and workflow-policy
+  validation remain for CI. Native Windows execution is separately deferred
+  until the user's scheduled window and SteamOS boot/install remains paused
+  until this packaged Maintainer path works.
   Independent retained-media investigation reused the preserved PR #90 output
   image at exact SHA-256
   `10c151ecd75247e489701e5e1425bd367cacc522519bd231ad59c3cbb4f4e970`

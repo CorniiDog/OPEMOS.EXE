@@ -3908,8 +3908,8 @@ esac
 
     #[test]
     fn pinned_publisher_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_publisher_contract().unwrap(), 36_020);
-        assert_eq!(PINNED_PUBLISHER_FILES.len(), 4);
+        assert_eq!(validate_pinned_publisher_contract().unwrap(), 74_819);
+        assert_eq!(PINNED_PUBLISHER_FILES.len(), 7);
         assert!(PINNED_PUBLISHER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/publish_artifacts.sh" && file.executable));
@@ -3923,6 +3923,21 @@ esac
             file.path == "lib/release_operation_session.py"
                 && file.sha256 == "b038d9eefd2d139d1f031846877b02329b0a3f22fd64f44d293cee1827a68567"
                 && file.executable
+        }));
+        assert!(PINNED_PUBLISHER_FILES.iter().any(|file| {
+            file.path == "lib/materialize_driver_product.py"
+                && file.sha256 == "b84c17271ca1d81c1f9945c9b6cf6e68658831288726a4fd06d2f2b592830651"
+                && file.executable
+        }));
+        assert!(PINNED_PUBLISHER_FILES.iter().any(|file| {
+            file.path == "lib/driver_binary_bundle.py"
+                && file.sha256 == "9470dec9279658ab851d0d7803b71cac4f8c84a8683e1b20f10f2012bfc88809"
+                && file.executable
+        }));
+        assert!(PINNED_PUBLISHER_FILES.iter().any(|file| {
+            file.path == "contracts/schemas/driver-product-materialization-v1.schema.json"
+                && file.sha256 == "26d8df8ec307cc2f58b84d8b1268ad68feeb84a8a401abeca81adf2eb547aae0"
+                && !file.executable
         }));
     }
 

@@ -2,6 +2,13 @@ use super::*;
 
 const RELEASE_RESULT_LIMIT: usize = 1024 * 1024;
 const CORE_SESSION_BOOTSTRAP: &str = "import runpy,sys; library=sys.argv.pop(1); script=sys.argv.pop(1); sys.path.insert(0,library); sys.argv[0]=script; runpy.run_path(script,run_name='__main__')";
+const R1_BUNDLE_MANIFEST: &str = "opemos-driver-bundle-steamos-3.8.14-nvidia-575.64.05-k6.16.12-valve24.4-1-neptune-616-gfe145653a794-modules-zstd-r1-x86_64.manifest.json";
+const R1_BUNDLE_MANIFEST_SHA256: &str =
+    "3e36fc5490ca4186ec7dbd79e9bd5cb1453d56845aafefd7703f7730bed5bcc1";
+const R1_PRODUCT_CORE_COMMIT: &str = "0b9550ab0ffc9ababe79800a407835c9c4a27dd0";
+const R1_INSTALLER_ARCHIVE_SHA256: &str =
+    "3412cf68ee79450f58afd4bb09e6c8dc9ed1f20ef4410118127ff98211727784";
+const R1_INSTALLER_ARCHIVE_BYTES: u64 = 21_634_427;
 
 fn imported_publisher_rejection(stderr: &[u8]) -> String {
     if stderr.len() > RELEASE_RESULT_LIMIT {
@@ -232,12 +239,264 @@ fn discover_imported_release_inputs(directory: &Path) -> Result<[PathBuf; 4], St
     ])
 }
 
+fn validate_materialized_result(
+    result: &serde_json::Value,
+    manifest: &serde_json::Value,
+    output_dir: &Path,
+) -> Result<[PathBuf; 4], String> {
+    let expected_target = serde_json::json!({
+        "steamosVersion": "3.8.14",
+        "kernelVersion": "6.16.12-valve24.4-1-neptune-616-gfe145653a794",
+        "nvidiaVersion": "575.64.05",
+        "architecture": "x86_64",
+    });
+    let expected_representation = serde_json::json!({
+        "productMember": "payload/nvidia-driver.tar.zst",
+        "installerContainer": "tar+gzip",
+        "modules": "ko.zst",
+        "conversion": "none-byte-identical",
+    });
+    let top_level = result.as_object();
+    if top_level.is_none_or(|value| {
+        value.len() != 8
+            || ![
+                "schemaVersion",
+                "status",
+                "target",
+                "core",
+                "source",
+                "release",
+                "representation",
+                "outputs",
+            ]
+            .iter()
+            .all(|field| value.contains_key(*field))
+    }) || result
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+        || result.get("status").and_then(serde_json::Value::as_str) != Some("materialized")
+        || result.get("target") != Some(&expected_target)
+        || result.get("representation") != Some(&expected_representation)
+        || result.get("core")
+            != Some(&serde_json::json!({
+                "repository": NVIDIA_SUPPORT_REPOSITORY,
+                "commit": R1_PRODUCT_CORE_COMMIT,
+            }))
+        || result.get("source") != manifest.get("source")
+        || result.get("release") != manifest.get("release")
+    {
+        return Err("Materialized product does not match the exact r1 Core contract.".into());
+    }
+    let outputs = result
+        .get("outputs")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("Core materializer omitted its output inventory.")?;
+    if outputs.len() != 4
+        || !["archive", "checksum", "provenance", "buildInfo"]
+            .iter()
+            .all(|role| outputs.contains_key(*role))
+    {
+        return Err("Core materializer returned a non-canonical output inventory.".into());
+    }
+    let canonical_output = fs::canonicalize(output_dir)
+        .map_err(|error| format!("Could not resolve materialized output: {error}"))?;
+    let mut paths = Vec::new();
+    for role in ["archive", "checksum", "buildInfo", "provenance"] {
+        let record = outputs[role]
+            .as_object()
+            .ok_or("Core materializer returned an invalid output record.")?;
+        if record.len() != 3 {
+            return Err("Core materializer returned a non-canonical output record.".into());
+        }
+        let name = record
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .filter(|name| {
+                name.len() <= 255
+                    && name
+                        .bytes()
+                        .next()
+                        .is_some_and(|byte| byte.is_ascii_alphanumeric())
+                    && name
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"._+-".contains(&byte))
+                    && Path::new(name).file_name().and_then(|value| value.to_str()) == Some(*name)
+            })
+            .ok_or("Core materializer returned an unsafe output name.")?;
+        let bytes = record
+            .get("bytes")
+            .and_then(serde_json::Value::as_u64)
+            .filter(|value| *value > 0)
+            .ok_or("Core materializer returned an invalid output size.")?;
+        let sha256 = record
+            .get("sha256")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| {
+                value.len() == 64
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+            .ok_or("Core materializer returned an invalid output SHA-256.")?;
+        let unresolved = output_dir.join(name);
+        let metadata = fs::symlink_metadata(&unresolved)
+            .map_err(|error| format!("Could not inspect materialized output: {error}"))?;
+        let path = fs::canonicalize(&unresolved)
+            .map_err(|error| format!("Could not resolve materialized output: {error}"))?;
+        if !metadata.file_type().is_file()
+            || path.parent() != Some(canonical_output.as_path())
+            || metadata.len() != bytes
+            || sha256_file(&path)? != sha256
+        {
+            return Err("Materialized output does not match the Core result record.".into());
+        }
+        if role == "archive"
+            && (bytes != R1_INSTALLER_ARCHIVE_BYTES || sha256 != R1_INSTALLER_ARCHIVE_SHA256)
+        {
+            return Err(
+                "Materialized installer archive does not match the exact r1 identity.".into(),
+            );
+        }
+        paths.push(path);
+    }
+    paths
+        .try_into()
+        .map_err(|_| "Core materializer output count changed.".into())
+}
+
+fn core_materializer_command(
+    python: &Path,
+    support_root: &Path,
+    manifest: &Path,
+    asset_dir: &Path,
+    output_dir: &Path,
+) -> Command {
+    let mut command = Command::new(python);
+    command
+        .arg(support_root.join("lib/materialize_driver_product.py"))
+        .arg("--manifest")
+        .arg(manifest)
+        .arg("--asset-dir")
+        .arg(asset_dir)
+        .arg("--expected-manifest-sha256")
+        .arg(R1_BUNDLE_MANIFEST_SHA256)
+        .arg("--expected-core-commit")
+        .arg(R1_PRODUCT_CORE_COMMIT)
+        .arg("--expected-steamos")
+        .arg("3.8.14")
+        .arg("--expected-kernel")
+        .arg("6.16.12-valve24.4-1-neptune-616-gfe145653a794")
+        .arg("--expected-nvidia")
+        .arg("575.64.05")
+        .arg("--expected-architecture")
+        .arg("x86_64")
+        .arg("--output-dir")
+        .arg(output_dir);
+    command
+}
+
+fn materialize_r1_release_inputs(
+    directory: &Path,
+    runtime_dir: &Path,
+    support_root: &Path,
+) -> Result<[PathBuf; 4], String> {
+    let metadata = fs::symlink_metadata(directory)
+        .map_err(|error| format!("Could not inspect the verified product folder: {error}"))?;
+    if !metadata.file_type().is_dir() {
+        return Err("Verified r1 product selection must be one real directory.".into());
+    }
+    let directory = fs::canonicalize(directory)
+        .map_err(|error| format!("Could not resolve the verified product folder: {error}"))?;
+    let entries = fs::read_dir(&directory)
+        .map_err(|error| format!("Could not inspect verified r1 product folder: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Could not inspect verified r1 product entry: {error}"))?;
+    if entries.len() != 3
+        || entries.iter().any(|entry| {
+            fs::symlink_metadata(entry.path())
+                .map(|value| !value.file_type().is_file())
+                .unwrap_or(true)
+        })
+    {
+        return Err(
+            "Verified r1 product folder must contain exactly three regular bundle files.".into(),
+        );
+    }
+    let manifest_path = directory.join(R1_BUNDLE_MANIFEST);
+    if sha256_file(&manifest_path)? != R1_BUNDLE_MANIFEST_SHA256 {
+        return Err("Verified r1 bundle manifest does not match its pinned SHA-256.".into());
+    }
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(&manifest_path)
+            .map_err(|error| format!("Could not read verified r1 bundle manifest: {error}"))?,
+    )
+    .map_err(|error| format!("Verified r1 bundle manifest is invalid JSON: {error}"))?;
+    let output_dir = runtime_dir.join("materialized-r1-installer");
+    let result_path = runtime_dir.join("materialized-r1-result.json");
+    let retained_result = fs::symlink_metadata(&result_path).ok();
+    if retained_result
+        .as_ref()
+        .is_some_and(|metadata| metadata.file_type().is_file())
+    {
+        if retained_result.is_some_and(|metadata| metadata.len() > RELEASE_RESULT_LIMIT as u64) {
+            return Err("Retained Core materialization result is excessive.".into());
+        }
+        let result = serde_json::from_slice(&fs::read(&result_path).map_err(|error| {
+            format!("Could not read retained Core materialization result: {error}")
+        })?)
+        .map_err(|error| {
+            format!("Retained Core materialization result is invalid JSON: {error}")
+        })?;
+        return validate_materialized_result(&result, &manifest, &output_dir);
+    }
+    if result_path.exists() || result_path.is_symlink() {
+        return Err("Retained Core materialization result is not a regular file.".into());
+    }
+    if output_dir.exists() {
+        return Err(
+            "Incomplete retained Core materialization output requires owned cleanup.".into(),
+        );
+    }
+    fs::create_dir(&output_dir)
+        .map_err(|error| format!("Could not create materialized installer output: {error}"))?;
+    let mut output_guard = StagingDirectoryGuard {
+        path: output_dir.clone(),
+        armed: true,
+    };
+    let python = find_binary("python3")
+        .or_else(|| find_binary("python"))
+        .ok_or("Python 3 is required by the pinned Core product materializer.")?;
+    let output = core_materializer_command(
+        &python,
+        support_root,
+        &manifest_path,
+        &directory,
+        &output_dir,
+    )
+    .output()
+    .map_err(|error| format!("Could not run the pinned Core product materializer: {error}"))?;
+    if !output.status.success() || output.stdout.len() > RELEASE_RESULT_LIMIT {
+        return Err(imported_publisher_rejection(&output.stderr)
+            .replace("Pinned Core publisher", "Pinned Core product materializer"));
+    }
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("Pinned Core materializer returned invalid JSON: {error}"))?;
+    let inputs = validate_materialized_result(&result, &manifest, &output_dir)?;
+    if let Err(error) =
+        write_create_or_exact(&result_path, &output.stdout, "Core materialization result")
+    {
+        let _ = fs::remove_file(&result_path);
+        return Err(error);
+    }
+    output_guard.armed = false;
+    Ok(inputs)
+}
+
 fn imported_release_runtime(
     app: &tauri::AppHandle,
     directory: &Path,
 ) -> Result<ReleaseRuntime, String> {
-    let inputs = discover_imported_release_inputs(directory)?;
-    let actual = sha256_file(&inputs[0])?;
     let cache = match portable_cache_root() {
         Some(root) => root.clone(),
         None => app
@@ -245,10 +504,21 @@ fn imported_release_runtime(
             .app_local_data_dir()
             .map_err(|error| format!("Could not resolve application data: {error}"))?,
     };
+    let is_r1_bundle = directory.join(R1_BUNDLE_MANIFEST).exists();
+    let actual = if is_r1_bundle {
+        R1_INSTALLER_ARCHIVE_SHA256.into()
+    } else {
+        sha256_file(&discover_imported_release_inputs(directory)?[0])?
+    };
     let runtime_dir = cache.join("maintainer-release-import").join(&actual);
     fs::create_dir_all(&runtime_dir)
         .map_err(|error| format!("Could not create maintainer release state: {error}"))?;
     let support_root = prepare_pinned_nvidia_publisher(&runtime_dir)?;
+    let inputs = if is_r1_bundle {
+        materialize_r1_release_inputs(directory, &runtime_dir, &support_root)?
+    } else {
+        discover_imported_release_inputs(directory)?
+    };
     let output = support_publisher_command(
         &support_root.join("bootstrap/publish_artifacts.sh"),
         &inputs[0],
@@ -268,7 +538,16 @@ fn imported_release_runtime(
     let plan: SupportPublicationPlan = serde_json::from_slice(&output.stdout).map_err(|error| {
         format!("Pinned Core publisher returned invalid imported-product JSON: {error}")
     })?;
-    validate_imported_publication_plan(&plan, &inputs, &actual)?;
+    validate_imported_publication_plan(
+        &plan,
+        &inputs,
+        &actual,
+        if is_r1_bundle {
+            R1_PRODUCT_CORE_COMMIT
+        } else {
+            NVIDIA_SUPPORT_BUILD_COMMIT
+        },
+    )?;
     let plan_path = runtime_dir.join("maintainer-release-plan.json");
     write_create_or_exact(&plan_path, &output.stdout, "maintainer release plan")?;
     Ok(ReleaseRuntime {
@@ -283,6 +562,7 @@ fn validate_imported_publication_plan(
     plan: &SupportPublicationPlan,
     inputs: &[PathBuf; 4],
     actual: &str,
+    expected_product_commit: &str,
 ) -> Result<(), String> {
     let expected = inputs
         .clone()
@@ -290,7 +570,7 @@ fn validate_imported_publication_plan(
     if plan.schema_version != 1
         || plan.status != "ready"
         || plan.repository != NVIDIA_SUPPORT_REPOSITORY
-        || plan.target_commit != NVIDIA_SUPPORT_BUILD_COMMIT
+        || plan.target_commit != expected_product_commit
         || plan.trust != "locally-built-verified"
         || plan.assets.as_slice() != expected
     {
@@ -583,6 +863,113 @@ mod tests {
         );
     }
 
+    #[test]
+    fn r1_materializer_command_binds_exact_product_and_consumer_identities() {
+        let command = core_materializer_command(
+            Path::new("python3"),
+            Path::new("support"),
+            Path::new(R1_BUNDLE_MANIFEST),
+            Path::new("assets"),
+            Path::new("output"),
+        );
+        let arguments = command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(arguments[0], "support/lib/materialize_driver_product.py");
+        for expected in [
+            R1_BUNDLE_MANIFEST,
+            R1_BUNDLE_MANIFEST_SHA256,
+            R1_PRODUCT_CORE_COMMIT,
+            "3.8.14",
+            "6.16.12-valve24.4-1-neptune-616-gfe145653a794",
+            "575.64.05",
+            "x86_64",
+        ] {
+            assert!(arguments.iter().any(|value| value == expected));
+        }
+        assert!(!arguments.iter().any(|value| value.contains("convert")));
+    }
+
+    #[test]
+    fn r1_materialization_result_rejects_identity_or_representation_changes() {
+        let manifest = serde_json::json!({
+            "source": {"repository": "CorniiDog/open-gpu-kernel-modules-steamos", "commit": "40bd1b5d6d39ae4e4180b7a665df144b08854d14"},
+            "release": {"repository": NVIDIA_SUPPORT_REPOSITORY, "tag": "exact-r1"},
+        });
+        let base = serde_json::json!({
+            "schemaVersion": 1,
+            "status": "materialized",
+            "target": {
+                "steamosVersion": "3.8.14",
+                "kernelVersion": "6.16.12-valve24.4-1-neptune-616-gfe145653a794",
+                "nvidiaVersion": "575.64.05",
+                "architecture": "x86_64"
+            },
+            "core": {"repository": NVIDIA_SUPPORT_REPOSITORY, "commit": R1_PRODUCT_CORE_COMMIT},
+            "source": manifest["source"],
+            "release": manifest["release"],
+            "representation": {
+                "productMember": "payload/nvidia-driver.tar.zst",
+                "installerContainer": "tar+gzip",
+                "modules": "ko.zst",
+                "conversion": "none-byte-identical"
+            },
+            "outputs": {}
+        });
+        let mut changed_core = base.clone();
+        changed_core["core"]["commit"] = serde_json::json!(NVIDIA_SUPPORT_COMMIT);
+        assert!(
+            validate_materialized_result(&changed_core, &manifest, Path::new("unused"))
+                .unwrap_err()
+                .contains("exact r1 Core contract")
+        );
+        let mut converted = base;
+        converted["representation"]["conversion"] = serde_json::json!("recompressed");
+        assert!(
+            validate_materialized_result(&converted, &manifest, Path::new("unused"))
+                .unwrap_err()
+                .contains("exact r1 Core contract")
+        );
+    }
+
+    #[test]
+    fn r1_publication_plan_retains_product_provenance_commit() {
+        let inputs = [
+            PathBuf::from("product.tar.gz"),
+            PathBuf::from("product.tar.gz.sha256"),
+            PathBuf::from("product.build-info.txt"),
+            PathBuf::from("product.provenance.json"),
+        ];
+        let plan = SupportPublicationPlan {
+            schema_version: 1,
+            status: "ready".into(),
+            repository: NVIDIA_SUPPORT_REPOSITORY.into(),
+            tag: "unused-by-import".into(),
+            target_commit: R1_PRODUCT_CORE_COMMIT.into(),
+            trust: "locally-built-verified".into(),
+            archive_sha256: R1_INSTALLER_ARCHIVE_SHA256.into(),
+            assets: inputs
+                .clone()
+                .map(|path| path.to_string_lossy().into_owned())
+                .to_vec(),
+        };
+        assert!(validate_imported_publication_plan(
+            &plan,
+            &inputs,
+            R1_INSTALLER_ARCHIVE_SHA256,
+            R1_PRODUCT_CORE_COMMIT,
+        )
+        .is_ok());
+        assert!(validate_imported_publication_plan(
+            &plan,
+            &inputs,
+            R1_INSTALLER_ARCHIVE_SHA256,
+            NVIDIA_SUPPORT_BUILD_COMMIT,
+        )
+        .is_err());
+    }
+
     #[cfg(windows)]
     #[test]
     fn imported_plan_accepts_the_exact_publisher_result_paths() {
@@ -605,10 +992,22 @@ mod tests {
                 .map(|path| path.to_string_lossy().into_owned())
                 .to_vec(),
         };
-        assert!(validate_imported_publication_plan(&plan, &inputs, &"a".repeat(64)).is_ok());
+        assert!(validate_imported_publication_plan(
+            &plan,
+            &inputs,
+            &"a".repeat(64),
+            NVIDIA_SUPPORT_BUILD_COMMIT,
+        )
+        .is_ok());
 
         plan.assets[0] = support_publisher_path(&inputs[0]);
-        assert!(validate_imported_publication_plan(&plan, &inputs, &"a".repeat(64)).is_err());
+        assert!(validate_imported_publication_plan(
+            &plan,
+            &inputs,
+            &"a".repeat(64),
+            NVIDIA_SUPPORT_BUILD_COMMIT,
+        )
+        .is_err());
     }
 
     #[test]
