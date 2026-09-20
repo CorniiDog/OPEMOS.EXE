@@ -2353,7 +2353,24 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   Clippy with warnings denied, the three focused Windows inventory/identifier
   guards, and the complete Rust suite (393 passed, 30 ignored); local Node is
   unavailable, and the host lacks the MSVC `lib.exe`, so layout execution and
-  native compilation remain assigned to Windows CI. Contained virtual-disk
+  native compilation remain assigned to Windows CI. Independent review of PR
+  #121 head `d85e3ce05569c81e0902a01c06f833260367acb3` rejected physical testing and
+  merge: Windows intent was unreachable, discovery lacked positive removable
+  and online proof, raw mutation did not retain volume locks or bind the opened
+  handle's stable identity, ejection was only an offline-state check, and the
+  GUI required whole-process elevation. The active changed-head remediation
+  accepts only exact `PhysicalDriveN` intent, requires removable, online,
+  writable, non-system whole disks with nonempty unique ID and serial and
+  refuses duplicate stable identities, retains exclusive volume lock/dismount
+  handles through an exact write-through raw open, binds that handle to number,
+  capacity, USB, removable, and serial plus the revalidated unique identity,
+  uses Windows media-removal and eject IOCTLs truthfully, and launches a digest-
+  bound expiring UAC helper only for the selected operation. Focused heavy-
+  wrapper tests pass the write, cancellation, short-source, hash-mismatch,
+  injected flush-failure, and readback-disconnect paths. The exact four-test
+  Windows inventory/intent suite also passes after adding duplicate stable-
+  identity refusal and identity-drift coverage, and changed-code all-target
+  Clippy passes with warnings denied. Contained virtual-disk
   write/flush/readback/cleanup acceptance, exact-head Core review, PR merge, and
   replacement prerelease staging remain required. The user's attached SMI USB is
   explicitly excluded until separate physical-media authorization.

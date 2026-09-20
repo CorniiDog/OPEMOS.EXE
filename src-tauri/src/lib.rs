@@ -160,6 +160,16 @@ pub fn run_core_driver_resolver(arguments: &[String]) -> Result<Option<String>, 
 }
 
 #[cfg(target_os = "windows")]
+pub fn run_windows_usb_writer_helper(arguments: &[String]) -> Result<Option<String>, String> {
+    image::run_windows_usb_writer_helper(arguments)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn run_windows_usb_writer_helper(arguments: &[String]) -> Result<Option<String>, String> {
+    image::run_windows_usb_writer_helper(arguments)
+}
+
+#[cfg(target_os = "windows")]
 pub fn run_windows_virtual_usb_harness(arguments: &[String]) -> Result<Option<String>, String> {
     let command = arguments.first().map(String::as_str);
     if !matches!(

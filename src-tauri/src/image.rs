@@ -2056,7 +2056,7 @@ pub(crate) fn physical_usb_writes_allowed() -> bool {
 }
 #[cfg(target_os = "windows")]
 pub(crate) fn physical_usb_writes_allowed() -> bool {
-    windows_process_is_elevated()
+    true
 }
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn physical_usb_writes_allowed() -> bool {
@@ -2070,7 +2070,7 @@ fn usb_write_permission_message() -> &'static str {
 
 #[cfg(target_os = "windows")]
 fn usb_write_permission_message() -> &'static str {
-    "The elevated Windows writer will lock and dismount only the selected whole USB disk before opening it exclusively."
+    "Windows will request administrator approval for only this exact revalidated USB write."
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -2324,7 +2324,6 @@ mod windows_virtual_usb {
             information: *mut ByHandleFileInformation,
         ) -> i32;
     }
-
     fn exact_owned_path(root: &Path, target: &Path) -> Result<PathBuf, String> {
         let root = fs::canonicalize(root)
             .map_err(|error| format!("Could not canonicalize the virtual-USB root: {error}"))?;
@@ -2633,9 +2632,19 @@ impl Drop for UsbPreparationManager {
     }
 }
 
+pub(crate) trait UsbWriteMedia: Read + Write + Seek {
+    fn durable_flush(&mut self) -> std::io::Result<()>;
+}
+
+impl UsbWriteMedia for File {
+    fn durable_flush(&mut self) -> std::io::Result<()> {
+        self.sync_all()
+    }
+}
+
 pub(crate) fn copy_and_verify_usb_image(
     image: &Path,
-    target: &mut File,
+    target: &mut impl UsbWriteMedia,
     image_bytes: u64,
     expected_sha256: &str,
     cancel: &AtomicBool,
@@ -2681,7 +2690,7 @@ pub(crate) fn copy_and_verify_usb_image(
             message: "Writing the validated image to USB.".into(),
         });
     }
-    if let Err(error) = target.sync_all() {
+    if let Err(error) = target.durable_flush() {
         #[cfg(target_os = "macos")]
         if error.raw_os_error() == Some(25) {
             let status = Command::new("/bin/sync").status().map_err(|sync_error| {
@@ -2846,9 +2855,18 @@ fn revalidate_usb_target(identifier: &str, image_bytes: u64) -> Result<UsbTarget
 }
 
 #[cfg(any(target_os = "windows", test))]
-fn usb_candidates_from_windows_json(
+pub(crate) fn usb_candidates_from_windows_json(
     bytes: &[u8],
     image_bytes: u64,
+) -> Result<Vec<UsbTargetCandidate>, String> {
+    usb_candidates_from_windows_json_state(bytes, image_bytes, false)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn usb_candidates_from_windows_json_state(
+    bytes: &[u8],
+    image_bytes: u64,
+    require_offline: bool,
 ) -> Result<Vec<UsbTargetCandidate>, String> {
     if bytes.len() > 4 * 1024 * 1024 {
         return Err("Windows returned more than 4 MiB of disk metadata.".into());
@@ -2886,7 +2904,11 @@ fn usb_candidates_from_windows_json(
         if object.get("IsBoot").and_then(|v| v.as_bool()) != Some(false)
             || object.get("IsSystem").and_then(|v| v.as_bool()) != Some(false)
             || object.get("IsReadOnly").and_then(|v| v.as_bool()) != Some(false)
+            || object.get("IsOffline").and_then(|v| v.as_bool()) != Some(require_offline)
         {
+            continue;
+        }
+        if object.get("MediaType").and_then(|v| v.as_str()) != Some("Removable Media") {
             continue;
         }
         let Some(bytes) = object.get("Size").and_then(|v| v.as_u64()) else {
@@ -2911,6 +2933,14 @@ fn usb_candidates_from_windows_json(
         else {
             continue;
         };
+        let Some(serial_number) = object
+            .get("SerialNumber")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        else {
+            continue;
+        };
         let media_name: String = object
             .get("FriendlyName")
             .and_then(|v| v.as_str())
@@ -2918,25 +2948,40 @@ fn usb_candidates_from_windows_json(
             .chars()
             .take(120)
             .collect();
-        let identity =
-            format!("{index}\0{device_node}\0{bytes}\0{block_size}\0{media_name}\0{unique_id}");
-        targets.push(UsbTargetCandidate {
-            device_identifier: format!("PhysicalDrive{index}"),
-            device_node,
-            media_name,
-            bus_protocol: "USB".into(),
-            bytes,
-            block_size,
-            identity_token: format!("{:x}", Sha256::digest(identity.as_bytes())),
-        });
+        let identity = format!(
+            "{index}\0{device_node}\0{bytes}\0{block_size}\0{media_name}\0{unique_id}\0{serial_number}"
+        );
+        let stable_identity = format!("{unique_id}\0{serial_number}");
+        targets.push((
+            UsbTargetCandidate {
+                device_identifier: format!("PhysicalDrive{index}"),
+                device_node,
+                media_name,
+                bus_protocol: "USB".into(),
+                bytes,
+                block_size,
+                identity_token: format!("{:x}", Sha256::digest(identity.as_bytes())),
+            },
+            stable_identity,
+        ));
     }
+    let mut counts = std::collections::HashMap::new();
+    for (_, stable_identity) in &targets {
+        *counts.entry(stable_identity.clone()).or_insert(0_usize) += 1;
+    }
+    let mut targets: Vec<_> = targets
+        .into_iter()
+        .filter_map(|(target, stable_identity)| {
+            (counts.get(&stable_identity) == Some(&1)).then_some(target)
+        })
+        .collect();
     targets.sort_by(|a, b| a.device_identifier.cmp(&b.device_identifier));
     Ok(targets)
 }
 
 #[cfg(target_os = "windows")]
 fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
-    let script = "Get-Disk | Select-Object @{n='Index';e={$_.Number}},FriendlyName,BusType,Size,@{n='BytesPerSector';e={$_.LogicalSectorSize}},UniqueId,IsBoot,IsSystem,IsReadOnly,IsOffline | ConvertTo-Json -Compress";
+    let script = "Get-Disk | ForEach-Object { $d=$_; $w=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number) -ErrorAction Stop; [pscustomobject]@{Index=$d.Number;FriendlyName=$d.FriendlyName;BusType=[string]$d.BusType;Size=[uint64]$d.Size;BytesPerSector=[uint64]$d.LogicalSectorSize;UniqueId=[string]$d.UniqueId;SerialNumber=[string]$w.SerialNumber;MediaType=[string]$w.MediaType;IsBoot=[bool]$d.IsBoot;IsSystem=[bool]$d.IsSystem;IsReadOnly=[bool]$d.IsReadOnly;IsOffline=[bool]$d.IsOffline} } | ConvertTo-Json -Compress";
     let output = Command::new("powershell.exe")
         .args([
             "-NoLogo",
@@ -3027,15 +3072,28 @@ fn windows_process_is_elevated() -> bool {
 #[cfg(target_os = "windows")]
 fn windows_disk_inventory(number: u32) -> Result<Vec<u8>, String> {
     windows_powershell(
-        &format!("$d=Get-Disk -Number {number} -ErrorAction Stop; $d | Select-Object @{{n='Index';e={{$_.Number}}}},FriendlyName,BusType,Size,@{{n='BytesPerSector';e={{$_.LogicalSectorSize}}}},UniqueId,IsBoot,IsSystem,IsReadOnly,IsOffline | ConvertTo-Json -Compress"),
+        &format!("$d=Get-Disk -Number {number} -ErrorAction Stop; $w=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number) -ErrorAction Stop; [pscustomobject]@{{Index=$d.Number;FriendlyName=$d.FriendlyName;BusType=[string]$d.BusType;Size=[uint64]$d.Size;BytesPerSector=[uint64]$d.LogicalSectorSize;UniqueId=[string]$d.UniqueId;SerialNumber=[string]$w.SerialNumber;MediaType=[string]$w.MediaType;IsBoot=[bool]$d.IsBoot;IsSystem=[bool]$d.IsSystem;IsReadOnly=[bool]$d.IsReadOnly;IsOffline=[bool]$d.IsOffline}} | ConvertTo-Json -Compress"),
         "revalidate the selected Windows removable disk",
     )
 }
 
 #[cfg(target_os = "windows")]
 fn revalidate_usb_target(identifier: &str, image_bytes: u64) -> Result<UsbTargetCandidate, String> {
+    revalidate_windows_usb_target_state(identifier, image_bytes, false)
+}
+
+#[cfg(target_os = "windows")]
+fn revalidate_windows_usb_target_state(
+    identifier: &str,
+    image_bytes: u64,
+    require_offline: bool,
+) -> Result<UsbTargetCandidate, String> {
     let number = windows_disk_number(identifier)?;
-    let targets = usb_candidates_from_windows_json(&windows_disk_inventory(number)?, image_bytes)?;
+    let targets = usb_candidates_from_windows_json_state(
+        &windows_disk_inventory(number)?,
+        image_bytes,
+        require_offline,
+    )?;
     if targets.len() != 1 || targets[0].device_identifier != identifier {
         return Err(
             "The selected disk is no longer the same eligible whole removable device.".into(),
@@ -3294,12 +3352,19 @@ pub(crate) fn validate_usb_write_intent(
     expected_identity_token: &str,
     confirmation: &str,
 ) -> Result<(), String> {
-    if !requested_identifier.starts_with("disk")
-        || requested_identifier.len() <= 4
-        || !requested_identifier[4..]
-            .bytes()
-            .all(|byte| byte.is_ascii_digit())
-    {
+    let macos_shape = requested_identifier
+        .strip_prefix("disk")
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+        && target.device_node == format!("/dev/{requested_identifier}");
+    let windows_shape = requested_identifier
+        .strip_prefix("PhysicalDrive")
+        .is_some_and(|digits| {
+            !digits.is_empty()
+                && digits.bytes().all(|b| b.is_ascii_digit())
+                && (digits == "0" || !digits.starts_with('0'))
+        })
+        && target.device_node == format!(r"\\.\PHYSICALDRIVE{}", &requested_identifier[13..]);
+    if !macos_shape && !windows_shape {
         return Err("The selected device identifier is invalid.".into());
     }
     let expected_confirmation = format!("ERASE {requested_identifier}");
@@ -3308,9 +3373,7 @@ pub(crate) fn validate_usb_write_intent(
             "Type {expected_confirmation} exactly to confirm the selected whole disk."
         ));
     }
-    if target.device_identifier != requested_identifier
-        || target.device_node != format!("/dev/{requested_identifier}")
-    {
+    if target.device_identifier != requested_identifier {
         return Err("The revalidated disk does not match the requested whole device.".into());
     }
     if expected_identity_token.len() != 64
@@ -3744,7 +3807,10 @@ pub(crate) fn authorized_open_path(path: &Path, cancel: &AtomicBool) -> Result<F
 }
 
 #[cfg(target_os = "macos")]
-fn open_usb_raw_device(target: &UsbTargetCandidate, cancel: &AtomicBool) -> Result<File, String> {
+fn open_usb_raw_device(
+    target: &UsbTargetCandidate,
+    cancel: &AtomicBool,
+) -> Result<(File, Vec<File>), String> {
     use std::os::unix::fs::MetadataExt as _;
 
     let raw_node = PathBuf::from(format!("/dev/r{}", target.device_identifier));
@@ -3770,7 +3836,327 @@ fn open_usb_raw_device(target: &UsbTargetCandidate, cancel: &AtomicBool) -> Resu
                 .into(),
         );
     }
-    Ok(file)
+    Ok((file, Vec::new()))
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WindowsUsbWriterRequest {
+    schema_version: u32,
+    expires_at_unix_ms: u64,
+    image_path: String,
+    image_bytes: u64,
+    image_sha256: String,
+    device_identifier: String,
+    device_node: String,
+    media_name: String,
+    device_bytes: u64,
+    block_size: u64,
+    identity_token: String,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WindowsUsbWriterReceipt {
+    schema_version: u32,
+    request_sha256: String,
+    success: bool,
+    verified_sha256: String,
+    ejected: bool,
+    error: String,
+}
+
+#[cfg(target_os = "windows")]
+fn perform_windows_usb_write(
+    request: &WindowsUsbWriterRequest,
+    cancel: &AtomicBool,
+) -> Result<(String, bool), String> {
+    if !windows_process_is_elevated() {
+        return Err("The bounded Windows USB writer was not elevated.".into());
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "The system clock is earlier than the Unix epoch.")?
+        .as_millis() as u64;
+    if request.schema_version != 1
+        || request.expires_at_unix_ms <= now
+        || request.expires_at_unix_ms.saturating_sub(now) > USB_PREFLIGHT_TTL.as_millis() as u64
+        || !valid_sha256(&request.image_sha256)
+        || !valid_sha256(&request.identity_token)
+    {
+        return Err("The bounded Windows USB writer request is invalid or expired.".into());
+    }
+    let (image, image_bytes, image_sha256) = validate_usb_image_identity(&request.image_path)?;
+    if image_bytes != request.image_bytes || image_sha256 != request.image_sha256 {
+        return Err("The completed image changed before elevated USB writing.".into());
+    }
+    let target = revalidate_usb_target(&request.device_identifier, image_bytes)?;
+    if target.device_node != request.device_node
+        || target.media_name != request.media_name
+        || target.bytes != request.device_bytes
+        || target.block_size != request.block_size
+        || target.identity_token != request.identity_token
+    {
+        return Err(
+            "The selected Windows removable disk changed before elevation completed.".into(),
+        );
+    }
+    unmount_usb_target(&target.device_identifier)?;
+    let (mut device, volume_locks) = open_usb_raw_device(&target, cancel)?;
+    let opened = revalidate_windows_usb_target_state(&target.device_identifier, image_bytes, true)?;
+    if opened.identity_token != target.identity_token {
+        drop(device);
+        drop(volume_locks);
+        return Err("The selected Windows removable disk changed after raw open.".into());
+    }
+    let result = copy_and_verify_usb_image(
+        &image,
+        &mut device,
+        image_bytes,
+        &image_sha256,
+        cancel,
+        |_| {},
+    );
+    drop(device);
+    drop(volume_locks);
+    let ejected = eject_usb_target(&target.device_identifier);
+    let verified = result?;
+    Ok((verified, ejected))
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn run_windows_usb_writer_helper(
+    arguments: &[String],
+) -> Result<Option<String>, String> {
+    if arguments.first().map(String::as_str) != Some("windows-usb-writer-helper") {
+        return Ok(None);
+    }
+    if arguments.len() != 7
+        || arguments[1] != "--request"
+        || arguments[3] != "--request-sha256"
+        || arguments[5] != "--receipt"
+    {
+        return Err("Invalid bounded Windows USB writer helper arguments.".into());
+    }
+    let request_path = PathBuf::from(&arguments[2]);
+    let receipt_path = PathBuf::from(&arguments[6]);
+    let root = request_path
+        .parent()
+        .ok_or("The bounded Windows USB writer request has no parent.")?;
+    if !request_path.is_absolute()
+        || !receipt_path.is_absolute()
+        || receipt_path.parent() != Some(root)
+        || request_path.file_name().and_then(|v| v.to_str()) != Some("request.json")
+        || receipt_path.file_name().and_then(|v| v.to_str()) != Some("receipt.json")
+    {
+        return Err("The bounded Windows USB writer paths are invalid.".into());
+    }
+    let request_bytes = fs::read(&request_path)
+        .map_err(|error| format!("Could not read the bounded USB writer request: {error}"))?;
+    if request_bytes.len() > 32 * 1024
+        || format!("{:x}", Sha256::digest(&request_bytes)) != arguments[4]
+    {
+        return Err("The bounded Windows USB writer request identity is invalid.".into());
+    }
+    let request: WindowsUsbWriterRequest = serde_json::from_slice(&request_bytes)
+        .map_err(|_| "The bounded Windows USB writer request is malformed.")?;
+    let cancel_path = root.join("cancel");
+    let cancel = Arc::new(AtomicBool::new(false));
+    let stop = Arc::new(AtomicBool::new(false));
+    let watcher_cancel = cancel.clone();
+    let watcher_stop = stop.clone();
+    let watcher = thread::spawn(move || {
+        while !watcher_stop.load(Ordering::Relaxed) {
+            if cancel_path.exists() {
+                watcher_cancel.store(true, Ordering::Relaxed);
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    });
+    let outcome = perform_windows_usb_write(&request, &cancel);
+    stop.store(true, Ordering::Relaxed);
+    let _ = watcher.join();
+    let receipt = match outcome {
+        Ok((verified_sha256, ejected)) => WindowsUsbWriterReceipt {
+            schema_version: 1,
+            request_sha256: arguments[4].clone(),
+            success: true,
+            verified_sha256,
+            ejected,
+            error: String::new(),
+        },
+        Err(error) => WindowsUsbWriterReceipt {
+            schema_version: 1,
+            request_sha256: arguments[4].clone(),
+            success: false,
+            verified_sha256: String::new(),
+            ejected: false,
+            error: error.chars().take(1000).collect(),
+        },
+    };
+    let receipt_bytes = serde_json::to_vec(&receipt)
+        .map_err(|error| format!("Could not encode the bounded USB writer receipt: {error}"))?;
+    let mut receipt_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&receipt_path)
+        .map_err(|error| format!("Could not create the bounded USB writer receipt: {error}"))?;
+    receipt_file
+        .write_all(&receipt_bytes)
+        .and_then(|_| receipt_file.sync_all())
+        .map_err(|error| format!("Could not persist the bounded USB writer receipt: {error}"))?;
+    Ok(Some("bounded Windows USB writer completed".into()))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn run_windows_usb_writer_helper(
+    arguments: &[String],
+) -> Result<Option<String>, String> {
+    if arguments.first().map(String::as_str) == Some("windows-usb-writer-helper") {
+        return Err("The bounded Windows USB writer helper requires Windows.".into());
+    }
+    Ok(None)
+}
+
+#[cfg(target_os = "windows")]
+fn launch_elevated_windows_usb_writer(
+    image: &Path,
+    image_bytes: u64,
+    image_sha256: &str,
+    target: &UsbTargetCandidate,
+    cancel: &AtomicBool,
+) -> Result<UsbWriteResult, String> {
+    struct ExchangeCleanup(PathBuf);
+    impl Drop for ExchangeCleanup {
+        fn drop(&mut self) {
+            for name in ["cancel", "receipt.json", "request.json"] {
+                let _ = fs::remove_file(self.0.join(name));
+            }
+            let _ = fs::remove_dir(&self.0);
+        }
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "The system clock is earlier than the Unix epoch.")?;
+    let root = std::env::temp_dir().join(format!(
+        "opemos-usb-writer-{}-{}",
+        std::process::id(),
+        now.as_nanos()
+    ));
+    fs::create_dir(&root)
+        .map_err(|error| format!("Could not create the bounded USB writer exchange: {error}"))?;
+    let _cleanup = ExchangeCleanup(root.clone());
+    let request_path = root.join("request.json");
+    let receipt_path = root.join("receipt.json");
+    let cancel_path = root.join("cancel");
+    let request = WindowsUsbWriterRequest {
+        schema_version: 1,
+        expires_at_unix_ms: now
+            .checked_add(USB_PREFLIGHT_TTL)
+            .ok_or("USB writer expiration overflowed.")?
+            .as_millis() as u64,
+        image_path: image.to_string_lossy().into_owned(),
+        image_bytes,
+        image_sha256: image_sha256.into(),
+        device_identifier: target.device_identifier.clone(),
+        device_node: target.device_node.clone(),
+        media_name: target.media_name.clone(),
+        device_bytes: target.bytes,
+        block_size: target.block_size,
+        identity_token: target.identity_token.clone(),
+    };
+    let request_bytes = serde_json::to_vec(&request)
+        .map_err(|error| format!("Could not encode the bounded USB writer request: {error}"))?;
+    let request_sha256 = format!("{:x}", Sha256::digest(&request_bytes));
+    let mut request_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&request_path)
+        .map_err(|error| format!("Could not create the bounded USB writer request: {error}"))?;
+    request_file
+        .write_all(&request_bytes)
+        .and_then(|_| request_file.sync_all())
+        .map_err(|error| format!("Could not persist the bounded USB writer request: {error}"))?;
+    drop(request_file);
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("Could not resolve the OPEMOS executable: {error}"))?;
+    let script = "$p=Start-Process -FilePath $env:OPEMOS_USB_EXE -ArgumentList @('windows-usb-writer-helper','--request',$env:OPEMOS_USB_REQUEST,'--request-sha256',$env:OPEMOS_USB_REQUEST_SHA,'--receipt',$env:OPEMOS_USB_RECEIPT) -Verb RunAs -WindowStyle Hidden -PassThru; $p.WaitForExit(); exit $p.ExitCode";
+    let mut child = Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ])
+        .env("OPEMOS_USB_EXE", &executable)
+        .env("OPEMOS_USB_REQUEST", &request_path)
+        .env("OPEMOS_USB_REQUEST_SHA", &request_sha256)
+        .env("OPEMOS_USB_RECEIPT", &receipt_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Could not request Windows USB writer elevation: {error}"))?;
+    let deadline = Instant::now() + Duration::from_secs(24 * 60 * 60);
+    let status = loop {
+        if cancel.load(Ordering::Relaxed) && !cancel_path.exists() {
+            let _ = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&cancel_path);
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("Could not inspect the elevated USB writer: {error}"))?
+        {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("The elevated Windows USB writer exceeded its bounded lifetime.".into());
+        }
+        thread::sleep(Duration::from_millis(100));
+    };
+    let receipt_bytes = fs::read(&receipt_path).map_err(|error| {
+        format!(
+            "The elevated Windows USB writer returned no verifiable receipt ({status}): {error}"
+        )
+    })?;
+    if receipt_bytes.len() > 32 * 1024 {
+        return Err("The elevated Windows USB writer receipt is oversized.".into());
+    }
+    let receipt: WindowsUsbWriterReceipt = serde_json::from_slice(&receipt_bytes)
+        .map_err(|_| "The elevated Windows USB writer receipt is malformed.")?;
+    if receipt.schema_version != 1 || receipt.request_sha256 != request_sha256 {
+        return Err("The elevated Windows USB writer receipt identity is invalid.".into());
+    }
+    if !receipt.success {
+        return Err(if receipt.error.is_empty() {
+            "The elevated Windows USB writer failed without a bounded diagnostic.".into()
+        } else {
+            receipt.error
+        });
+    }
+    Ok(UsbWriteResult {
+        status: "verified".into(),
+        device_identifier: target.device_identifier.clone(),
+        device_node: target.device_node.clone(),
+        bytes_written: image_bytes,
+        image_sha256: image_sha256.into(),
+        verified_sha256: receipt.verified_sha256,
+        ejected: receipt.ejected,
+        message: if receipt.ejected {
+            "USB writing and byte-for-byte verification completed; Windows ejected the device."
+                .into()
+        } else {
+            "USB writing and byte-for-byte verification completed, but Windows could not eject the device; use Safely Remove Hardware before unplugging it.".into()
+        },
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -3778,26 +4164,71 @@ fn unmount_usb_target(identifier: &str) -> Result<(), String> {
     if !windows_process_is_elevated() {
         return Err("Windows USB writing requires running OPEMOS as administrator.".into());
     }
-    let number = windows_disk_number(identifier)?;
-    let script = format!(
-        "$d=Get-Disk -Number {number} -ErrorAction Stop; if ($d.BusType -ne 'USB' -or $d.IsBoot -or $d.IsSystem -or $d.IsReadOnly) {{ throw 'disk safety guard refused' }}; if (-not $d.IsOffline) {{ Set-Disk -Number {number} -IsOffline $true -ErrorAction Stop }}; $after=Get-Disk -Number {number}; if (-not $after.IsOffline) {{ throw 'disk did not become offline' }}"
-    );
-    windows_powershell(
-        &script,
-        "lock and dismount the selected Windows removable disk",
-    )?;
+    revalidate_usb_target(identifier, 0)?;
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
 fn eject_usb_target(identifier: &str) -> bool {
+    use std::ffi::c_void;
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use std::os::windows::io::AsRawHandle as _;
+
     let Ok(number) = windows_disk_number(identifier) else {
         return false;
     };
-    let script = format!(
-        "$d=Get-Disk -Number {number} -ErrorAction Stop; if ($d.BusType -ne 'USB' -or $d.IsBoot -or $d.IsSystem -or -not $d.IsOffline) {{ exit 1 }}"
-    );
-    windows_powershell(&script, "confirm the Windows removable disk is offline").is_ok()
+    if revalidate_windows_usb_target_state(identifier, 0, true).is_err() {
+        return false;
+    }
+    let Ok(file) = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .access_mode(0x8000_0000 | 0x4000_0000)
+        .share_mode(0x0000_0001 | 0x0000_0002)
+        .open(format!(r"\\.\PHYSICALDRIVE{number}"))
+    else {
+        return false;
+    };
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn DeviceIoControl(
+            device: *mut c_void,
+            code: u32,
+            input: *mut c_void,
+            input_bytes: u32,
+            output: *mut c_void,
+            output_bytes: u32,
+            returned: *mut u32,
+            overlapped: *mut c_void,
+        ) -> i32;
+    }
+    let mut returned = 0_u32;
+    let mut prevent = 0_u8;
+    let released = unsafe {
+        DeviceIoControl(
+            file.as_raw_handle(),
+            0x002d_4804,
+            (&mut prevent as *mut u8).cast(),
+            1,
+            std::ptr::null_mut(),
+            0,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    } != 0;
+    released
+        && unsafe {
+            DeviceIoControl(
+                file.as_raw_handle(),
+                0x002d_4808,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                0,
+                &mut returned,
+                std::ptr::null_mut(),
+            )
+        } != 0
 }
 
 #[cfg(target_os = "windows")]
@@ -3816,7 +4247,10 @@ fn remount_usb_target(identifier: &str) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn open_usb_raw_device(target: &UsbTargetCandidate, _cancel: &AtomicBool) -> Result<File, String> {
+fn open_usb_raw_device(
+    target: &UsbTargetCandidate,
+    _cancel: &AtomicBool,
+) -> Result<(File, Vec<File>), String> {
     use std::ffi::c_void;
     use std::os::windows::fs::OpenOptionsExt as _;
     use std::os::windows::io::AsRawHandle as _;
@@ -3845,6 +4279,27 @@ fn open_usb_raw_device(target: &UsbTargetCandidate, _cancel: &AtomicBool) -> Res
         ) -> i32;
     }
 
+    let ioctl = |file: &File,
+                 code: u32,
+                 input: *mut c_void,
+                 input_bytes: u32,
+                 output: *mut c_void,
+                 output_bytes: u32| {
+        let mut returned = 0_u32;
+        (unsafe {
+            DeviceIoControl(
+                file.as_raw_handle(),
+                code,
+                input,
+                input_bytes,
+                output,
+                output_bytes,
+                &mut returned,
+                std::ptr::null_mut(),
+            )
+        }) != 0
+    };
+
     let number = windows_disk_number(&target.device_identifier)?;
     if target.device_node != format!(r"\\.\PHYSICALDRIVE{number}") {
         return Err(
@@ -3857,6 +4312,59 @@ fn open_usb_raw_device(target: &UsbTargetCandidate, _cancel: &AtomicBool) -> Res
         || before.block_size != target.block_size
     {
         return Err("The selected Windows removable disk changed before raw open.".into());
+    }
+    let letter_bytes = windows_powershell(
+        &format!("Get-Partition -DiskNumber {number} -ErrorAction Stop | Get-Volume -ErrorAction SilentlyContinue | Where-Object DriveLetter | ForEach-Object {{ [Console]::Out.WriteLine([string]$_.DriveLetter) }}"),
+        "enumerate only the selected Windows disk volumes",
+    )?;
+    let letters = String::from_utf8(letter_bytes)
+        .map_err(|_| "Windows returned invalid volume-letter metadata.")?;
+    let mut volume_locks = Vec::new();
+    for line in letters
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        if line.len() != 1 || !line.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+            return Err("Windows returned an invalid selected-disk volume letter.".into());
+        }
+        let volume = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .access_mode(0x8000_0000 | 0x4000_0000)
+            .share_mode(0)
+            .open(format!(r"\\.\{}:", line.to_ascii_uppercase()))
+            .map_err(|error| {
+                format!("Could not exclusively open selected USB volume {line}: {error}")
+            })?;
+        if !ioctl(
+            &volume,
+            0x0009_0018,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            0,
+        ) || !ioctl(
+            &volume,
+            0x0009_0020,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            0,
+        ) {
+            return Err(format!(
+                "Windows could not lock and dismount selected USB volume {line}:."
+            ));
+        }
+        volume_locks.push(volume);
+    }
+    windows_powershell(
+        &format!("$d=Get-Disk -Number {number} -ErrorAction Stop; if ($d.BusType -ne 'USB' -or $d.IsBoot -or $d.IsSystem -or $d.IsReadOnly -or $d.IsOffline) {{ throw 'disk safety guard refused' }}; Set-Disk -Number {number} -IsOffline $true -ErrorAction Stop; if (-not (Get-Disk -Number {number}).IsOffline) {{ throw 'disk did not become offline' }}"),
+        "take only the locked selected Windows removable disk offline",
+    )?;
+    let offline = revalidate_windows_usb_target_state(&target.device_identifier, 0, true)?;
+    if offline.identity_token != target.identity_token {
+        return Err("The selected Windows removable disk changed while it was locked.".into());
     }
     const GENERIC_READ: u32 = 0x8000_0000;
     const GENERIC_WRITE: u32 = 0x4000_0000;
@@ -3877,46 +4385,72 @@ fn open_usb_raw_device(target: &UsbTargetCandidate, _cancel: &AtomicBool) -> Res
         })?;
     const IOCTL_STORAGE_GET_DEVICE_NUMBER: u32 = 0x002d_1080;
     const IOCTL_DISK_GET_LENGTH_INFO: u32 = 0x0007_405c;
-    let mut returned = 0_u32;
     let mut opened_number = StorageDeviceNumber {
         device_type: 0,
         device_number: u32::MAX,
         partition_number: 0,
     };
-    let number_ok = unsafe {
-        DeviceIoControl(
-            file.as_raw_handle(),
-            IOCTL_STORAGE_GET_DEVICE_NUMBER,
-            std::ptr::null_mut(),
-            0,
-            (&mut opened_number as *mut StorageDeviceNumber).cast(),
-            std::mem::size_of::<StorageDeviceNumber>() as u32,
-            &mut returned,
-            std::ptr::null_mut(),
-        )
-    } != 0;
+    let number_ok = ioctl(
+        &file,
+        IOCTL_STORAGE_GET_DEVICE_NUMBER,
+        std::ptr::null_mut(),
+        0,
+        (&mut opened_number as *mut StorageDeviceNumber).cast(),
+        std::mem::size_of::<StorageDeviceNumber>() as u32,
+    );
     let mut opened_length = GetLengthInformation { length: -1 };
-    let length_ok = unsafe {
-        DeviceIoControl(
-            file.as_raw_handle(),
-            IOCTL_DISK_GET_LENGTH_INFO,
-            std::ptr::null_mut(),
-            0,
-            (&mut opened_length as *mut GetLengthInformation).cast(),
-            std::mem::size_of::<GetLengthInformation>() as u32,
-            &mut returned,
-            std::ptr::null_mut(),
-        )
-    } != 0;
+    let length_ok = ioctl(
+        &file,
+        IOCTL_DISK_GET_LENGTH_INFO,
+        std::ptr::null_mut(),
+        0,
+        (&mut opened_length as *mut GetLengthInformation).cast(),
+        std::mem::size_of::<GetLengthInformation>() as u32,
+    );
+    let mut query = [0_u8; 12];
+    let mut descriptor = [0_u8; 4096];
+    let descriptor_ok = ioctl(
+        &file,
+        0x002d_1400,
+        query.as_mut_ptr().cast(),
+        query.len() as u32,
+        descriptor.as_mut_ptr().cast(),
+        descriptor.len() as u32,
+    );
+    let serial_offset =
+        u32::from_le_bytes(descriptor[24..28].try_into().unwrap_or_default()) as usize;
+    let serial = if descriptor_ok && serial_offset > 0 && serial_offset < descriptor.len() {
+        let end = descriptor[serial_offset..]
+            .iter()
+            .position(|byte| *byte == 0)
+            .map(|offset| serial_offset + offset)
+            .unwrap_or(descriptor.len());
+        String::from_utf8_lossy(&descriptor[serial_offset..end])
+            .trim()
+            .to_string()
+    } else {
+        String::new()
+    };
+    let inventory_serial = windows_powershell(
+        &format!("$w=Get-CimInstance Win32_DiskDrive -Filter 'Index={number}' -ErrorAction Stop; [Console]::Out.Write(([string]$w.SerialNumber).Trim())"),
+        "bind the opened Windows raw disk to its stable serial identity",
+    )?;
+    let inventory_serial = String::from_utf8(inventory_serial)
+        .map_err(|_| "Windows returned an invalid selected-disk serial identity.")?;
     if !number_ok
         || !length_ok
         || opened_number.device_number != number
         || opened_number.partition_number != u32::MAX
         || u64::try_from(opened_length.length).ok() != Some(target.bytes)
+        || !descriptor_ok
+        || descriptor[10] == 0
+        || u32::from_le_bytes(descriptor[28..32].try_into().unwrap_or_default()) != 7
+        || serial.is_empty()
+        || serial != inventory_serial.trim()
     {
         return Err("The opened Windows raw handle does not identify the exact selected whole disk and capacity.".into());
     }
-    Ok(file)
+    Ok((file, volume_locks))
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -3935,7 +4469,10 @@ fn remount_usb_target(_identifier: &str) -> bool {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn open_usb_raw_device(_target: &UsbTargetCandidate, _cancel: &AtomicBool) -> Result<File, String> {
+fn open_usb_raw_device(
+    _target: &UsbTargetCandidate,
+    _cancel: &AtomicBool,
+) -> Result<(File, Vec<File>), String> {
     Err("USB writing is currently implemented only for macOS.".into())
 }
 
@@ -3993,6 +4530,16 @@ pub(crate) async fn write_image_to_usb(
     let device_node = target.device_node.clone();
     let expected_sha256 = image_sha256.clone();
     let worker = tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "windows")]
+        if !windows_process_is_elevated() {
+            return launch_elevated_windows_usb_writer(
+                &image,
+                image_bytes,
+                &expected_sha256,
+                &target,
+                &cancel,
+            );
+        }
         let _ = app_for_progress.emit(
             "usb-write-progress",
             UsbWriteProgress {
@@ -4016,24 +4563,33 @@ pub(crate) async fn write_image_to_usb(
                 message: usb_write_permission_message().into(),
             },
         );
-        let mut device = match open_usb_raw_device(&revalidated, &cancel) {
+        let (mut device, volume_locks) = match open_usb_raw_device(&revalidated, &cancel) {
             Ok(device) => device,
             Err(error) => {
                 let _ = remount_usb_target(&revalidated.device_identifier);
                 return Err(error);
             }
         };
-        let opened_target = match revalidate_usb_target(&revalidated.device_identifier, image_bytes)
-        {
+        #[cfg(target_os = "windows")]
+        let opened_result = revalidate_windows_usb_target_state(
+            &revalidated.device_identifier,
+            image_bytes,
+            true,
+        );
+        #[cfg(not(target_os = "windows"))]
+        let opened_result = revalidate_usb_target(&revalidated.device_identifier, image_bytes);
+        let opened_target = match opened_result {
             Ok(target) => target,
             Err(error) => {
                 drop(device);
+                drop(volume_locks);
                 let _ = remount_usb_target(&revalidated.device_identifier);
                 return Err(error);
             }
         };
         if opened_target.identity_token != revalidated.identity_token {
             drop(device);
+            drop(volume_locks);
             return Err("The selected removable device changed during authorization.".into());
         }
         let copy_result = copy_and_verify_usb_image(
@@ -4047,6 +4603,7 @@ pub(crate) async fn write_image_to_usb(
             },
         );
         drop(device);
+        drop(volume_locks);
         let verified_sha256 = match copy_result {
             Ok(sha256) => sha256,
             Err(error) => {
@@ -4065,12 +4622,12 @@ pub(crate) async fn write_image_to_usb(
             ejected,
             message: if ejected {
                 if cfg!(target_os = "windows") {
-                    "USB writing and byte-for-byte verification completed; Windows left the disk offline and safe to remove."
+                    "USB writing and byte-for-byte verification completed; Windows ejected the device."
                 } else {
                     "USB writing and byte-for-byte verification completed; the device was ejected safely."
                 }
             } else {
-                "USB writing and byte-for-byte verification completed, but the operating system could not make the device safe to remove automatically."
+                "USB writing and byte-for-byte verification completed, but the operating system could not eject the device; use its safe-removal workflow before unplugging it."
             }
             .into(),
         })
@@ -4091,7 +4648,7 @@ mod windows_usb_inventory_tests {
         // PowerShell ConvertTo-Json escapes each backslash in the canonical
         // Win32_DiskDrive DeviceID. Keep this as wire-format JSON so the test
         // covers decoding as well as the exact identity comparison.
-        let json = br#"[{"FriendlyName":"USB Drive","BusType":"USB","Size":16000000000,"BytesPerSector":512,"UniqueId":"USBSTOR\\DISK&VEN_TEST","Index":3,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false},{"FriendlyName":"Internal","BusType":"NVMe","Size":1000000000000,"BytesPerSector":512,"UniqueId":"PCI\\INTERNAL","Index":0,"IsBoot":true,"IsSystem":true,"IsReadOnly":false,"IsOffline":false},{"FriendlyName":"Too small","BusType":"USB","Size":1024,"BytesPerSector":512,"UniqueId":"USBSTOR\\SMALL","Index":4,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}]"#;
+        let json = br#"[{"FriendlyName":"USB Drive","BusType":"USB","MediaType":"Removable Media","SerialNumber":"SERIAL-3","Size":16000000000,"BytesPerSector":512,"UniqueId":"USBSTOR\\DISK&VEN_TEST","Index":3,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false},{"FriendlyName":"Internal","BusType":"NVMe","MediaType":"Fixed hard disk media","SerialNumber":"SERIAL-0","Size":1000000000000,"BytesPerSector":512,"UniqueId":"PCI\\INTERNAL","Index":0,"IsBoot":true,"IsSystem":true,"IsReadOnly":false,"IsOffline":false},{"FriendlyName":"Too small","BusType":"USB","MediaType":"Removable Media","SerialNumber":"SERIAL-4","Size":1024,"BytesPerSector":512,"UniqueId":"USBSTOR\\SMALL","Index":4,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}]"#;
         let targets = usb_candidates_from_windows_json(json, 8 * 1024 * 1024).unwrap();
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].device_identifier, "PhysicalDrive3");
@@ -4112,16 +4669,16 @@ mod windows_usb_inventory_tests {
         assert!(usb_candidates_from_windows_json(b"not-json", 512)
             .unwrap_err()
             .contains("malformed"));
-        let boot = br#"{"FriendlyName":"USB Boot","BusType":"USB","Size":4096,"BytesPerSector":512,"UniqueId":"USBSTOR\\BOOT","Index":8,"IsBoot":true,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}"#;
+        let boot = br#"{"FriendlyName":"USB Boot","BusType":"USB","MediaType":"Removable Media","SerialNumber":"SERIAL-8","Size":4096,"BytesPerSector":512,"UniqueId":"USBSTOR\\BOOT","Index":8,"IsBoot":true,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}"#;
         assert!(usb_candidates_from_windows_json(boot, 512)
             .unwrap()
             .is_empty());
-        let missing_identity = br#"{"FriendlyName":"No identity","BusType":"USB","Size":4096,"BytesPerSector":512,"UniqueId":"","Index":2,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}"#;
+        let missing_identity = br#"{"FriendlyName":"No identity","BusType":"USB","MediaType":"Removable Media","SerialNumber":"","Size":4096,"BytesPerSector":512,"UniqueId":"","Index":2,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}"#;
         assert!(usb_candidates_from_windows_json(missing_identity, 512)
             .unwrap()
             .is_empty());
-        for field in ["IsBoot", "IsSystem", "IsReadOnly"] {
-            let mut value: serde_json::Value = serde_json::from_slice(br#"{"FriendlyName":"Guarded","BusType":"USB","Size":4096,"BytesPerSector":512,"UniqueId":"USBSTOR\\SAFE","Index":2,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}"#).unwrap();
+        for field in ["IsBoot", "IsSystem", "IsReadOnly", "IsOffline"] {
+            let mut value: serde_json::Value = serde_json::from_slice(br#"{"FriendlyName":"Guarded","BusType":"USB","MediaType":"Removable Media","SerialNumber":"SERIAL-2","Size":4096,"BytesPerSector":512,"UniqueId":"USBSTOR\\SAFE","Index":2,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}"#).unwrap();
             value[field] = serde_json::Value::Bool(true);
             assert!(
                 usb_candidates_from_windows_json(&serde_json::to_vec(&value).unwrap(), 512)
@@ -4129,6 +4686,21 @@ mod windows_usb_inventory_tests {
                     .is_empty()
             );
         }
+        let fixed = br#"{"FriendlyName":"Fixed USB","BusType":"USB","MediaType":"Fixed hard disk media","SerialNumber":"SERIAL-2","Size":4096,"BytesPerSector":512,"UniqueId":"USBSTOR\\SAFE","Index":2,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}"#;
+        assert!(usb_candidates_from_windows_json(fixed, 512)
+            .unwrap()
+            .is_empty());
+
+        let duplicate = br#"[{"FriendlyName":"USB A","BusType":"USB","MediaType":"Removable Media","SerialNumber":"SAME-SERIAL","Size":4096,"BytesPerSector":512,"UniqueId":"USBSTOR\\SAME","Index":2,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false},{"FriendlyName":"USB B","BusType":"USB","MediaType":"Removable Media","SerialNumber":"SAME-SERIAL","Size":4096,"BytesPerSector":512,"UniqueId":"USBSTOR\\SAME","Index":3,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}]"#;
+        assert!(usb_candidates_from_windows_json(duplicate, 512)
+            .unwrap()
+            .is_empty());
+
+        let original = br#"{"FriendlyName":"USB","BusType":"USB","MediaType":"Removable Media","SerialNumber":"SERIAL-A","Size":4096,"BytesPerSector":512,"UniqueId":"USBSTOR\\A","Index":2,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}"#;
+        let changed = br#"{"FriendlyName":"USB","BusType":"USB","MediaType":"Removable Media","SerialNumber":"SERIAL-B","Size":4096,"BytesPerSector":512,"UniqueId":"USBSTOR\\B","Index":2,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}"#;
+        let original = usb_candidates_from_windows_json(original, 512).unwrap();
+        let changed = usb_candidates_from_windows_json(changed, 512).unwrap();
+        assert_ne!(original[0].identity_token, changed[0].identity_token);
     }
 
     #[test]
@@ -4145,6 +4717,45 @@ mod windows_usb_inventory_tests {
             r"\\.\PHYSICALDRIVE4",
         ] {
             assert!(windows_disk_number(identifier).is_err(), "{identifier}");
+        }
+    }
+
+    #[test]
+    fn windows_usb_write_intent_binds_exact_physical_drive_shape() {
+        let target = UsbTargetCandidate {
+            device_identifier: "PhysicalDrive4".into(),
+            device_node: r"\\.\PHYSICALDRIVE4".into(),
+            media_name: "Removable USB".into(),
+            bus_protocol: "USB".into(),
+            bytes: 31_264_289_280,
+            block_size: 512,
+            identity_token: "a".repeat(64),
+        };
+        validate_usb_write_intent(
+            &target,
+            8_120_172_544,
+            "PhysicalDrive4",
+            &target.identity_token,
+            "ERASE PhysicalDrive4",
+        )
+        .expect("exact Windows whole-disk intent");
+        for (identifier, phrase) in [
+            ("PhysicalDrive04", "ERASE PhysicalDrive04"),
+            ("physicaldrive4", "ERASE physicaldrive4"),
+            (
+                "PhysicalDrive4\\Partition1",
+                "ERASE PhysicalDrive4\\Partition1",
+            ),
+            ("PhysicalDrive4", "ERASE PhysicalDrive5"),
+        ] {
+            assert!(validate_usb_write_intent(
+                &target,
+                8_120_172_544,
+                identifier,
+                &target.identity_token,
+                phrase,
+            )
+            .is_err());
         }
     }
 }
