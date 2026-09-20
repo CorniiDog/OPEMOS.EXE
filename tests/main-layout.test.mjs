@@ -6,22 +6,28 @@ const html = await readFile(new URL("../src/index.html", import.meta.url), "utf8
 const css = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
 const chromeCss = await readFile(new URL("../src/window-chrome.css", import.meta.url), "utf8");
 const script = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
+const windowsSource = await readFile(new URL("../src-tauri/src/windows.rs", import.meta.url), "utf8");
+const appSource = await readFile(new URL("../src-tauri/src/app.rs", import.meta.url), "utf8");
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
-test("main workflow keeps readiness compact and balances output and source columns", () => {
+test("main workflow keeps readiness compact and gives USB selection the full build width", () => {
   assert.match(html, /id="readiness-grid"[\s\S]*class="environment-card"[\s\S]*id="selection-card"[\s\S]*id="drop-zone"/);
-  assert.match(html, /class="build-options-grid"[\s\S]*class="source-choice export-choice"[\s\S]*id="usb-target"[\s\S]*class="build-side-column"[\s\S]*for="nvidia-source"[\s\S]*id="summary-output"[\s\S]*id="build-button"/);
+  assert.match(html, /class="build-options-grid"[\s\S]*class="source-choice export-choice"[\s\S]*class="build-side-column"[\s\S]*for="nvidia-source"[\s\S]*id="summary-output"[\s\S]*id="usb-picker"[\s\S]*id="usb-target"[\s\S]*id="build-button"/);
   assert.match(css, /\.readiness-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/);
   assert.match(css, /\.build-options-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.12fr\) minmax\(0, \.88fr\);/);
   assert.match(css, /\.build-side-column \.build-summary\s*\{[^}]*grid-template-columns:\s*1fr;/);
   assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*width:\s*100%;[^}]*justify-self:\s*stretch;/);
   assert.match(css, /\.build-options-grid \.export-choice,[\s\S]*\.output-destination\s*\{\s*box-sizing:\s*border-box;/);
   assert.match(css, /\.output-destination\s*\{[^}]*width:\s*100%;/);
+  assert.match(css, /\.usb-picker\s*\{[^}]*grid-column:\s*1 \/ -1;[^}]*width:\s*100%;[^}]*box-sizing:\s*border-box;/);
 });
 
 test("packaged Windows actions expose visible outcomes instead of silent clicks", () => {
   assert.match(script, /openValve\.addEventListener\("click", async \(\) => \{[\s\S]*invoke\("open_valve_download_page"\)[\s\S]*default browser[\s\S]*catch \(error\)/);
-  assert.doesNotMatch(script, /plugin:opener\|open_url/);
+  assert.doesNotMatch(script, /invoke\("plugin:opener\|open_url"/);
+  assert.match(appSource, /windows::open_valve_download_page/);
+  assert.match(windowsSource, /#\[cfg\(target_os = "windows"\)\][\s\S]*ShellExecuteW\([\s\S]*SW_SHOWNORMAL/);
+  assert.match(windowsSource, /if result as isize <= 32[\s\S]*ShellExecuteW code/);
   assert.match(script, /invoke\("open_progress_window"\);[\s\S]*Build progress is opening in a separate window/);
   assert.match(script, /buildButton\.addEventListener\("click", async \(\) => \{[\s\S]*const admission = admitBuildStart\(currentBuildSnapshot\(\)\);[\s\S]*Build cannot start: \$\{admission\.blocker\}/);
   const progressWindow = tauriConfig.app.windows.find(({ label }) => label === "build-progress");
@@ -34,6 +40,14 @@ test("packaged Windows actions expose visible outcomes instead of silent clicks"
     visible: false,
     title: "SteamOS NVIDIA Builder — Progress",
   });
+});
+
+test("image-only completion refreshes USB identity before enabling a later physical write", () => {
+  const completion = script.match(/async function applyBuildFinished\(completion\) \{([\s\S]*?)\n\}\n\nawait mainWindow\.listen\("build-finished"/)?.[1] || "";
+  assert.match(completion, /applyCompletedOutput\(completed \|\| output\)/);
+  assert.match(completion, /if \(activeExportMode === "image"\) \{[\s\S]*await revealCompletedImage\(output\.path\);[\s\S]*await refreshUsbTargets\(\);/);
+  assert.match(completion, /await refreshUsbTargets\(\);[\s\S]*operationContextMatches\(buildContext, activeBuildContext \|\| \{\}\)[\s\S]*selectionGeneration !== imageSelectionGeneration[\s\S]*inputPath !== currentImage/);
+  assert.match(completion, /Select a freshly detected USB drive/);
 });
 
 test("narrow effective widths and high zoom reflow without horizontal clipping", () => {
@@ -77,8 +91,8 @@ test("image output folder selection is explicit, reversible, and build-bound", a
   assert.match(progress, /invoke\("start_appliance",\s*\{[\s\S]*outputDirectory:\s*request\.outputDirectory \?\? null/);
 });
 
-test("USB drives are embedded beside an independent image-output checkbox", () => {
-  assert.match(html, /class="source-choice export-choice"[\s\S]*id="export-image"[^>]*checked[\s\S]*id="usb-target" size="3"[\s\S]*id="review-usb-target"/);
+test("USB drives remain optional and use their own full-width destination row", () => {
+  assert.match(html, /class="source-choice export-choice"[\s\S]*id="export-image"[^>]*checked[\s\S]*id="usb-picker" class="usb-picker is-empty"[\s\S]*id="usb-target" size="3"[\s\S]*id="review-usb-target"/);
   assert.match(html, /id="usb-scrim" class="usb-scrim hidden"/);
   assert.match(html, /id="usb-card"[^>]*role="dialog"[\s\S]*class="usb-heading"[\s\S]*id="close-usb-menu"/);
   assert.match(html, /id="review-usb-target"[^>]*aria-haspopup="dialog"[^>]*aria-controls="usb-card"[^>]*aria-expanded="false"/);
@@ -325,7 +339,8 @@ test("compact main window height agrees between web content and Tauri", () => {
 });
 
 test("Windows live-test controls update immediately and form accessible workflow groups", () => {
-  assert.match(html, /role="group" aria-labelledby="output-options-title"[\s\S]*id="output-options-title"[\s\S]*id="export-image"[\s\S]*id="usb-target"[\s\S]*id="output-folder-label"/);
+  assert.match(html, /role="group" aria-labelledby="output-options-title"[\s\S]*id="output-options-title"[\s\S]*id="export-image"[\s\S]*id="output-folder-label"/);
+  assert.match(html, /id="usb-picker"[^>]*role="group" aria-labelledby="usb-picker-title"[\s\S]*id="usb-picker-title"[\s\S]*id="usb-target"/);
   assert.match(html, /role="group" aria-labelledby="nvidia-options-title"[\s\S]*id="nvidia-options-title"[\s\S]*id="nvidia-source"/);
   assert.match(html, /id="usb-picker-message"[^>]*aria-live="polite"/);
   assert.match(html, /id="settings-message"[^>]*aria-live="polite"/);
