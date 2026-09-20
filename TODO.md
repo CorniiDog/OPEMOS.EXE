@@ -2401,7 +2401,17 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   remains fixed at 100 ms; only ordinary fixture modes now receive five seconds,
   and the failure assertion reports the unexpected error. The exact focused
   regression passes 1/1 through `heavy.sh`. Changed-head native CI and review, and
-  packaged failure/progress evidence remain pending. Contained virtual-disk
+  packaged failure/progress evidence remain pending. Core review of exact head
+  `2c05cfc7dc13bb587c4a25af1a206da587848baf` then found that selected volume
+  GUID handles used zero sharing before `FSCTL_LOCK_VOLUME`, contrary to the
+  documented Windows volume-management open contract. The active remediation
+  opens only those selected volume GUIDs with read/write sharing while retaining
+  lock/dismount exclusivity and the separate raw-drive guards; an ignored native
+  regression accepts only an explicitly provisioned disposable multi-volume
+  disk, proves a busy file refuses the lock, releases it, and then proves every
+  volume can be locked and dismounted on retry. Exact Windows compilation, the
+  contained native disposable-volume run, changed-head CI, and fresh exact-head
+  Core review remain pending. Contained virtual-disk
   write/flush/readback/cleanup acceptance, exact-head Core review, PR merge, and
   replacement prerelease staging remain required. The user's attached SMI USB is
   explicitly excluded until separate physical-media authorization.

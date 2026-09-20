@@ -4681,6 +4681,8 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
     const INVALID_HANDLE_VALUE: *mut c_void = -1_isize as *mut c_void;
     const ERROR_NO_MORE_FILES: u32 = 18;
     const ERROR_MORE_DATA: u32 = 234;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
     const IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS: u32 = 0x0056_0000;
     const FSCTL_LOCK_VOLUME: u32 = 0x0009_0018;
     const FSCTL_DISMOUNT_VOLUME: u32 = 0x0009_0020;
@@ -4776,7 +4778,7 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
                 .read(true)
                 .write(true)
                 .access_mode(0x8000_0000 | 0x4000_0000)
-                .share_mode(0)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
                 .open(&path)
                 .map_err(|error| {
                     format!(
@@ -5364,6 +5366,43 @@ mod windows_usb_inventory_tests {
         assert_eq!(selected_names, ["lettered-data", "unlettered-efi"]);
         assert!(windows_volume_belongs_exclusively_to_disk(&[selected, 0], selected).is_err());
         assert!(windows_volume_belongs_exclusively_to_disk(&[], selected).is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "requires an explicitly provisioned disposable multi-volume Windows test disk"]
+    fn windows_native_disposable_volumes_lock_dismount_refuse_busy_file_and_release_on_failure() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+        let disk_number = std::env::var("OPEMOS_TEST_WINDOWS_DISPOSABLE_DISK_NUMBER")
+            .expect("disposable disk number is required")
+            .parse::<u32>()
+            .expect("disposable disk number must be numeric");
+        let busy_file = PathBuf::from(
+            std::env::var_os("OPEMOS_TEST_WINDOWS_DISPOSABLE_BUSY_FILE")
+                .expect("disposable busy-file path is required"),
+        );
+
+        let busy = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(&busy_file)
+            .expect("the disposable busy file must open");
+        let error = lock_windows_disk_volumes(disk_number)
+            .expect_err("an open file must prevent exclusive volume locking");
+        assert!(error.contains("could not lock selected-disk volume GUID"));
+        drop(busy);
+
+        let reacquired = lock_windows_disk_volumes(disk_number).expect(
+            "all prior volume locks must be released, then every volume must lock and dismount",
+        );
+        assert!(
+            reacquired.len() >= 2,
+            "the native regression requires two disposable volumes"
+        );
     }
 
     #[test]
