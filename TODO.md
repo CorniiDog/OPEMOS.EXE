@@ -2395,7 +2395,12 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   request, wrong-hash, nonzero-exit, inconsistent-failure, valid-success, and
   same-number identity-replacement tests pass in the 18-case USB suite through
   `heavy.sh`; the full Rust suite passes 399 tests with 30 ignored and all-target
-  Clippy passes with warnings denied. Changed-head native CI and review, and
+  Clippy passes with warnings denied. One duplicate Linux Rust job then exposed
+  an unrelated one-second deadline in the maintainer Git mutation fixture under
+  full-suite CI load while its duplicate passed. The explicit timeout case
+  remains fixed at 100 ms; only ordinary fixture modes now receive five seconds,
+  and the failure assertion reports the unexpected error. The exact focused
+  regression passes 1/1 through `heavy.sh`. Changed-head native CI and review, and
   packaged failure/progress evidence remain pending. Contained virtual-disk
   write/flush/readback/cleanup acceptance, exact-head Core review, PR merge, and
   replacement prerelease staging remain required. The user's attached SMI USB is

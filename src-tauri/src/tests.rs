@@ -1965,15 +1965,16 @@ esac
             fs::write(root.0.join("mode"), mode).expect("select fake Git mode");
             bounded_git_mutation(&binary, &root.0, &["commit-tree"], Some(b"message"), timeout, 64, "test Git mutation")
         };
-        assert!(run("overflow", Duration::from_secs(1)).unwrap_err().contains("safe limit"));
-        assert!(run("stderr-overflow", Duration::from_secs(1)).unwrap_err().contains("safe limit"));
+        let fixture_timeout = Duration::from_secs(5);
+        assert!(run("overflow", fixture_timeout).unwrap_err().contains("safe limit"));
+        assert!(run("stderr-overflow", fixture_timeout).unwrap_err().contains("safe limit"));
         fs::write(root.0.join("mode"), "broken-pipe").expect("select broken pipe");
         assert!(bounded_git_mutation(&binary, &root.0, &["commit-tree"], Some(&vec![b'x'; 1024 * 1024]),
             Duration::from_secs(1), 64, "test broken Git input").is_err());
         let started = Instant::now();
         assert!(run("timeout", Duration::from_millis(100)).unwrap_err().contains("time limit"));
         assert!(started.elapsed() < Duration::from_secs(2));
-        run("descendant", Duration::from_secs(1)).expect("clean descendant mode");
+        run("descendant", fixture_timeout).expect("clean descendant mode");
         let descendant = fs::read_to_string(root.0.join("descendant.pid")).expect("descendant pid");
         let descendant = descendant.trim().parse::<u32>().expect("numeric descendant PID");
         let deadline = Instant::now() + Duration::from_secs(1);
@@ -1981,10 +1982,11 @@ esac
             thread::sleep(Duration::from_millis(10));
         }
         assert!(!process_is_alive(descendant), "bounded runner left a descendant alive");
-        let non_utf8 = run("nonutf8", Duration::from_secs(1)).expect("capture non-UTF8 bytes");
+        let non_utf8 = run("nonutf8", fixture_timeout).expect("capture non-UTF8 bytes");
         assert!(String::from_utf8(non_utf8).is_err());
-        assert!(run("failure", Duration::from_secs(1)).unwrap_err().contains("partial-error"));
-        assert_eq!(run("success", Duration::from_secs(1)).expect("successful bounded Git"), b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n");
+        let failure = run("failure", fixture_timeout).unwrap_err();
+        assert!(failure.contains("partial-error"), "unexpected failure: {failure}");
+        assert_eq!(run("success", fixture_timeout).expect("successful bounded Git"), b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n");
         struct FailingReader(bool);
         impl Read for FailingReader {
             fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
