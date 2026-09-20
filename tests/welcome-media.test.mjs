@@ -24,6 +24,9 @@ test("installation-media UI delegates only bounded operations", () => {
   assert.match(welcome, /Diagnostics — review media identity/);
   assert.match(welcome, /last-install-log/);
   assert.match(welcome, /flock -n 8/);
+  assert.match(welcome, /welcome-startup\.log/);
+  assert.match(welcome, /installer is already running/);
+  assert.match(welcome, /before a stable window opened/);
   assert.match(welcome, /--start-fullscreen/);
   assert.match(welcome, /welcome_server\.py/);
   assert.match(welcome, /TRUE shutdown/);

@@ -424,6 +424,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if path in ("/", "/index.html"):
                 body = body.replace(b'"__OPEMOS_SESSION_TOKEN__"', json.dumps(self.controller.token).encode())
                 body = body.replace(b"__OPEMOS_CSP_NONCE__", self.controller.nonce.encode("ascii"))
+                marker = self.controller.runtime / "ui-ready"
+                descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                os.close(descriptor)
             self.send_payload(200, body, content_type)
         except OSError:
             self.send_payload(404, b"Not found\n", "text/plain; charset=utf-8")

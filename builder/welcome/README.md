@@ -17,6 +17,11 @@ Only one welcome instance can run in a recovery session. Its diagnostics view
 shows the pinned NVIDIA/support identity and currently eligible disks. Complete
 installation output is retained under the recovery user's private state
 directory and remains viewable after closing and reopening the window.
+Launcher diagnostics are retained in `welcome-startup.log` in that same private
+state directory. A second launch reports where to find the existing instance,
+and a browser that exits before presenting a stable window activates the
+existing Zenity recovery interface instead of being reported as success.
+
 The visible Desktop launcher is installed as a deck-owned executable desktop
 entry so KDE treats it as trusted before the recovery session appears. The
 matching autostart entry remains non-executable because it is configuration,
