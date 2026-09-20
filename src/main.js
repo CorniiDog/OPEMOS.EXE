@@ -300,6 +300,13 @@ function renderSourceWarning() {
 }
 
 function applyCompletedOutput(output, imported = false) {
+  const selectedUsb = elements.usbTarget.selectedOptions[0];
+  const preferredUsbTarget = selectedUsb?.value
+    ? Object.freeze({
+      deviceIdentifier: selectedUsb.value,
+      identityToken: selectedUsb.dataset.identityToken,
+    })
+    : null;
   completedOutput = output;
   completedOutputImported = imported;
   plannedOutput = output.path;
@@ -324,6 +331,9 @@ function applyCompletedOutput(output, imported = false) {
     : `NVIDIA image complete and verified. Select a USB drive to write it, or keep the exported image.`;
   elements.resultMessage.className = "result-message success";
   renderSourceWarning();
+  renderUsbTargetSelection();
+  renderExportMode();
+  if (preferredUsbTarget) void refreshUsbTargets(preferredUsbTarget);
 }
 
 function waitForPaint() {

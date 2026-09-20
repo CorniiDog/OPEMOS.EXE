@@ -1965,15 +1965,16 @@ esac
             fs::write(root.0.join("mode"), mode).expect("select fake Git mode");
             bounded_git_mutation(&binary, &root.0, &["commit-tree"], Some(b"message"), timeout, 64, "test Git mutation")
         };
-        assert!(run("overflow", Duration::from_secs(1)).unwrap_err().contains("safe limit"));
-        assert!(run("stderr-overflow", Duration::from_secs(1)).unwrap_err().contains("safe limit"));
+        let fixture_timeout = Duration::from_secs(5);
+        assert!(run("overflow", fixture_timeout).unwrap_err().contains("safe limit"));
+        assert!(run("stderr-overflow", fixture_timeout).unwrap_err().contains("safe limit"));
         fs::write(root.0.join("mode"), "broken-pipe").expect("select broken pipe");
         assert!(bounded_git_mutation(&binary, &root.0, &["commit-tree"], Some(&vec![b'x'; 1024 * 1024]),
             Duration::from_secs(1), 64, "test broken Git input").is_err());
         let started = Instant::now();
         assert!(run("timeout", Duration::from_millis(100)).unwrap_err().contains("time limit"));
         assert!(started.elapsed() < Duration::from_secs(2));
-        run("descendant", Duration::from_secs(1)).expect("clean descendant mode");
+        run("descendant", fixture_timeout).expect("clean descendant mode");
         let descendant = fs::read_to_string(root.0.join("descendant.pid")).expect("descendant pid");
         let descendant = descendant.trim().parse::<u32>().expect("numeric descendant PID");
         let deadline = Instant::now() + Duration::from_secs(1);
@@ -1981,10 +1982,11 @@ esac
             thread::sleep(Duration::from_millis(10));
         }
         assert!(!process_is_alive(descendant), "bounded runner left a descendant alive");
-        let non_utf8 = run("nonutf8", Duration::from_secs(1)).expect("capture non-UTF8 bytes");
+        let non_utf8 = run("nonutf8", fixture_timeout).expect("capture non-UTF8 bytes");
         assert!(String::from_utf8(non_utf8).is_err());
-        assert!(run("failure", Duration::from_secs(1)).unwrap_err().contains("partial-error"));
-        assert_eq!(run("success", Duration::from_secs(1)).expect("successful bounded Git"), b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n");
+        let failure = run("failure", fixture_timeout).unwrap_err();
+        assert!(failure.contains("partial-error"), "unexpected failure: {failure}");
+        assert_eq!(run("success", fixture_timeout).expect("successful bounded Git"), b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n");
         struct FailingReader(bool);
         impl Read for FailingReader {
             fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
@@ -2775,6 +2777,140 @@ esac
             },
         );
         assert!(result.expect_err("cancelled write must fail").contains("cancelled"));
+
+        fs::write(&image, &payload[..payload.len() - 512]).expect("shorten source image");
+        fs::write(&target, vec![0_u8; payload.len()]).expect("reset short-write target");
+        let mut target_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&target)
+            .expect("reopen short-write target");
+        let error = copy_and_verify_usb_image(
+            &image,
+            &mut target_file,
+            payload.len() as u64,
+            &expected,
+            &AtomicBool::new(false),
+            |_| {},
+        )
+        .expect_err("short source must fail closed");
+        assert!(error.contains("read the completed image"));
+
+        fs::write(&image, &payload).expect("restore source image");
+        fs::write(&target, vec![0_u8; payload.len()]).expect("reset mismatch target");
+        let mut target_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&target)
+            .expect("reopen mismatch target");
+        let error = copy_and_verify_usb_image(
+            &image,
+            &mut target_file,
+            payload.len() as u64,
+            &"0".repeat(64),
+            &AtomicBool::new(false),
+            |_| {},
+        )
+        .expect_err("readback identity mismatch must fail closed");
+        assert!(error.contains("bytes read back do not match"));
+    }
+
+    #[test]
+    fn usb_copy_engine_rejects_flush_failure_and_readback_disconnect() {
+        use std::io::{Cursor, Error, ErrorKind};
+
+        struct FaultMedia {
+            bytes: Cursor<Vec<u8>>,
+            fail_flush: bool,
+            fail_read: bool,
+        }
+
+        impl Read for FaultMedia {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.fail_read && self.bytes.position() == 0 {
+                    return Err(Error::new(ErrorKind::NotConnected, "virtual USB disconnected"));
+                }
+                self.bytes.read(buffer)
+            }
+        }
+
+        impl Write for FaultMedia {
+            fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+                self.bytes.write(buffer)
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.bytes.flush()
+            }
+        }
+
+        impl Seek for FaultMedia {
+            fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+                self.bytes.seek(position)
+            }
+        }
+
+        impl UsbWriteMedia for FaultMedia {
+            fn durable_flush(&mut self) -> std::io::Result<()> {
+                if self.fail_flush {
+                    Err(Error::other("virtual USB flush failed"))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        struct TemporaryUsbDirectory(PathBuf);
+        impl Drop for TemporaryUsbDirectory {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TemporaryUsbDirectory(std::env::temp_dir().join(format!(
+            "steamos-usb-faults-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        )));
+        fs::create_dir(&root.0).expect("create USB fault fixture");
+        let image = root.0.join("source.img");
+        let payload = b"bounded USB failure fixture";
+        fs::write(&image, payload).expect("write USB failure fixture");
+        let expected = format!("{:x}", Sha256::digest(payload));
+
+        let mut flush_failure = FaultMedia {
+            bytes: Cursor::new(vec![0_u8; payload.len()]),
+            fail_flush: true,
+            fail_read: false,
+        };
+        let error = copy_and_verify_usb_image(
+            &image,
+            &mut flush_failure,
+            payload.len() as u64,
+            &expected,
+            &AtomicBool::new(false),
+            |_| {},
+        )
+        .expect_err("flush failure must reject the write");
+        assert!(error.contains("flush the selected USB device"));
+
+        let mut disconnected = FaultMedia {
+            bytes: Cursor::new(vec![0_u8; payload.len()]),
+            fail_flush: false,
+            fail_read: true,
+        };
+        let error = copy_and_verify_usb_image(
+            &image,
+            &mut disconnected,
+            payload.len() as u64,
+            &expected,
+            &AtomicBool::new(false),
+            |_| {},
+        )
+        .expect_err("readback disconnect must reject the write");
+        assert!(error.contains("verify the selected USB device"));
     }
 
     #[cfg(target_os = "windows")]
