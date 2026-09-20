@@ -2370,7 +2370,20 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   injected flush-failure, and readback-disconnect paths. The exact four-test
   Windows inventory/intent suite also passes after adding duplicate stable-
   identity refusal and identity-drift coverage, and changed-code all-target
-  Clippy passes with warnings denied. Contained virtual-disk
+  Clippy passes with warnings denied. A later independent review of exact head
+  `91549aaf978f2d9ce1479ecd955727c92b8e3b06` identified five remaining blockers:
+  helper dispatch followed ordinary runtime/state initialization, volume locking
+  omitted unlettered volume GUIDs, post-lock failures lacked guaranteed exact-
+  target recovery, the PowerShell elevation wrapper did not own the elevated
+  child, and elevated progress was invisible. The active same-PR remediation
+  dispatches the helper before ordinary initialization; binds every enumerated
+  volume GUID through complete disk extents and refuses mixed-disk volumes;
+  releases retained handles and identity-gates eject/online recovery; launches
+  the exact elevated executable through a directly waitable process handle with
+  cancel-then-settle/terminate behavior; and relays digest-bound, size-bounded,
+  monotonic atomic progress through receipt validation. Windows cross-
+  compilation, focused/full validation, changed-head CI and review, and native
+  packaged failure/progress evidence remain pending. Contained virtual-disk
   write/flush/readback/cleanup acceptance, exact-head Core review, PR merge, and
   replacement prerelease staging remain required. The user's attached SMI USB is
   explicitly excluded until separate physical-media authorization.
