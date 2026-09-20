@@ -2412,7 +2412,14 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   refuses the lock, releases the busy file, and then proves both volumes can be
   locked and dismounted on retry. Exact Windows compilation, the
   contained native disposable-volume run, changed-head CI, and fresh exact-head
-  Core review remain pending. Contained virtual-disk
+  Core review remain pending. The first real disposable-volume run reached the
+  native Win32 path and failed before target locking because the global volume
+  walk attempted disk-extents IOCTLs on the guest's empty CD-ROM volume GUID.
+  The active correction identifies and skips only `DRIVE_CDROM` roots before
+  disk-extents inspection; fixed-disk volume enumeration, selected-disk extent
+  binding, and every lock/dismount guard remain unchanged. The failed run left
+  the exact generated disk and both volumes online, writable, and healthy; rerun
+  only this failed native stage after fresh compilation. Contained virtual-disk
   write/flush/readback/cleanup acceptance, exact-head Core review, PR merge, and
   replacement prerelease staging remain required. The user's attached SMI USB is
   explicitly excluded until separate physical-media authorization.

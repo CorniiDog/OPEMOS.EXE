@@ -4660,6 +4660,7 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
         fn FindFirstVolumeW(name: *mut u16, length: u32) -> *mut c_void;
         fn FindNextVolumeW(find: *mut c_void, name: *mut u16, length: u32) -> i32;
         fn FindVolumeClose(find: *mut c_void) -> i32;
+        fn GetDriveTypeW(root_path: *const u16) -> u32;
         fn GetLastError() -> u32;
         fn DeviceIoControl(
             device: *mut c_void,
@@ -4681,6 +4682,7 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
     const INVALID_HANDLE_VALUE: *mut c_void = -1_isize as *mut c_void;
     const ERROR_NO_MORE_FILES: u32 = 18;
     const ERROR_MORE_DATA: u32 = 234;
+    const DRIVE_CDROM: u32 = 5;
     const FILE_SHARE_READ: u32 = 0x0000_0001;
     const FILE_SHARE_WRITE: u32 = 0x0000_0002;
     const IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS: u32 = 0x0056_0000;
@@ -4699,6 +4701,16 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
         let end = name.iter().position(|value| *value == 0).ok_or(
             "Windows returned an unterminated volume GUID while locking the selected disk.",
         )?;
+        if unsafe { GetDriveTypeW(name.as_ptr()) } == DRIVE_CDROM {
+            name.fill(0);
+            if unsafe { FindNextVolumeW(find.0, name.as_mut_ptr(), name.len() as u32) } == 0 {
+                if unsafe { GetLastError() } == ERROR_NO_MORE_FILES {
+                    break;
+                }
+                return Err("Windows volume GUID enumeration failed before completion.".into());
+            }
+            continue;
+        }
         let mut volume_path = std::ffi::OsString::from_wide(&name[..end]);
         let mut path = PathBuf::from(&volume_path);
         if path.to_string_lossy().ends_with('\\') {
