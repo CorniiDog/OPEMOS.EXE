@@ -327,8 +327,9 @@ test("compact main window height agrees between web content and Tauri", () => {
 });
 
 test("Windows live-test controls update immediately and form accessible workflow groups", () => {
-  assert.match(html, /role="group" aria-labelledby="output-options-title"[\s\S]*id="output-options-title"[\s\S]*id="export-image"[\s\S]*id="usb-target"[\s\S]*id="output-folder-label"/);
+  assert.match(html, /role="group" aria-labelledby="output-options-title"[\s\S]*id="output-options-title"[\s\S]*id="export-image"[\s\S]*id="output-folder-label"/);
   assert.match(html, /role="group" aria-labelledby="nvidia-options-title"[\s\S]*id="nvidia-options-title"[\s\S]*id="nvidia-source"/);
+  assert.match(html, /id="usb-picker"[^>]*role="group"[^>]*aria-labelledby="usb-destination-title"[\s\S]*id="usb-destination-title"[\s\S]*id="usb-target"/);
   assert.match(html, /id="usb-picker-message"[^>]*aria-live="polite"/);
   assert.match(html, /id="settings-message"[^>]*aria-live="polite"/);
   assert.match(script, /trackDriverUpdates\.addEventListener\("change"[\s\S]*builderSettings = \{ \.\.\.builderSettings, trackSteamosDriverUpdates: checked \};[\s\S]*renderSettings\(\);[\s\S]*saveSettings\(\{ trackSteamosDriverUpdates: checked \}, previous\)/);
