@@ -10,7 +10,7 @@ const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.j
 
 test("main workflow keeps readiness compact and balances output and source columns", () => {
   assert.match(html, /id="readiness-grid"[\s\S]*class="environment-card"[\s\S]*id="selection-card"[\s\S]*id="drop-zone"/);
-  assert.match(html, /class="build-options-grid"[\s\S]*class="source-choice export-choice"[\s\S]*id="usb-target"[\s\S]*class="build-side-column"[\s\S]*for="nvidia-source"[\s\S]*id="summary-output"[\s\S]*id="build-button"/);
+  assert.match(html, /class="build-options-grid"[\s\S]*class="source-choice export-choice"[\s\S]*class="build-side-column"[\s\S]*for="nvidia-source"[\s\S]*id="summary-output"[\s\S]*id="usb-picker"[\s\S]*id="usb-target"[\s\S]*id="build-button"/);
   assert.match(css, /\.readiness-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/);
   assert.match(css, /\.build-options-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.12fr\) minmax\(0, \.88fr\);/);
   assert.match(css, /\.build-side-column \.build-summary\s*\{[^}]*grid-template-columns:\s*1fr;/);
@@ -78,7 +78,8 @@ test("image output folder selection is explicit, reversible, and build-bound", a
 });
 
 test("USB drives are embedded beside an independent image-output checkbox", () => {
-  assert.match(html, /class="source-choice export-choice"[\s\S]*id="export-image"[^>]*checked[\s\S]*id="usb-target" size="3"[\s\S]*id="review-usb-target"/);
+  assert.match(html, /class="source-choice export-choice"[\s\S]*id="export-image"[^>]*checked[\s\S]*class="build-side-column"[\s\S]*id="usb-picker"[\s\S]*id="usb-target" size="3"[\s\S]*id="review-usb-target"/);
+  assert.match(css, /\.usb-picker\s*\{[^}]*grid-column:\s*1 \/ -1;[^}]*width:\s*100%;/);
   assert.match(html, /id="usb-scrim" class="usb-scrim hidden"/);
   assert.match(html, /id="usb-card"[^>]*role="dialog"[\s\S]*class="usb-heading"[\s\S]*id="close-usb-menu"/);
   assert.match(html, /id="review-usb-target"[^>]*aria-haspopup="dialog"[^>]*aria-controls="usb-card"[^>]*aria-expanded="false"/);
@@ -175,6 +176,7 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /option\.dataset\.nvidiaVersion = branch\.version/);
   assert.match(script, /NVIDIA \$\{output\.nvidiaVersion\}, SteamOS \$\{output\.steamosVersion\}, kernel \$\{output\.kernelVersion\}, trust \$\{output\.trust\}/);
   assert.match(script, /function applyCompletedOutput\(output, imported = false\)/);
+  assert.match(script, /function applyCompletedOutput[\s\S]*preferredUsbTarget[\s\S]*renderUsbTargetSelection\(\);[\s\S]*renderExportMode\(\);[\s\S]*refreshUsbTargets\(preferredUsbTarget\)/);
   assert.match(script, /elements\.resultMessage\.title = installedIdentity;/);
   assert.match(script, /Verified existing NVIDIA.*No rebuild needed; select a USB drive/);
   assert.doesNotMatch(script, /Existing NVIDIA output and adjacent manifest match byte-for-byte/);

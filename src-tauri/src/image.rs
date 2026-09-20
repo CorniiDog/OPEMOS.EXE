@@ -2054,9 +2054,28 @@ pub(crate) const USB_PREFLIGHT_TTL: Duration = Duration::from_secs(60);
 pub(crate) fn physical_usb_writes_allowed() -> bool {
     validate_system_authopen().is_ok()
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub(crate) fn physical_usb_writes_allowed() -> bool {
+    windows_process_is_elevated()
+}
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn physical_usb_writes_allowed() -> bool {
     false
+}
+
+#[cfg(target_os = "macos")]
+fn usb_write_permission_message() -> &'static str {
+    "macOS will request permission for only the selected raw device when writing begins."
+}
+
+#[cfg(target_os = "windows")]
+fn usb_write_permission_message() -> &'static str {
+    "The elevated Windows writer will lock and dismount only the selected whole USB disk before opening it exclusively."
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn usb_write_permission_message() -> &'static str {
+    "Physical writing is not available on this platform yet."
 }
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const USB_HELPER_PROTOCOL: &str = "org.steamos-nvidia-builder.usb-writer/1";
@@ -2568,7 +2587,9 @@ impl UsbPreparationManager {
                 image_sha256: Some(armed.image_sha256.clone()),
                 identity_token: Some(armed.identity_token.clone()),
                 message: if physical_usb_writes_allowed() {
-                    "The confirmed USB intent session is active. macOS will request permission to open only the revalidated raw device when writing begins."
+                    usb_write_permission_message()
+                } else if cfg!(target_os = "windows") {
+                    "The confirmed USB intent session is active, but OPEMOS must be restarted as administrator before Windows can open the disk."
                 } else {
                     "The confirmed USB intent session is active. Physical writing is not available on this platform yet."
                 }
@@ -2849,7 +2870,7 @@ fn usb_candidates_from_windows_json(
             continue;
         };
         if !object
-            .get("InterfaceType")
+            .get("BusType")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .eq_ignore_ascii_case("USB")
@@ -2860,6 +2881,12 @@ fn usb_candidates_from_windows_json(
             continue;
         };
         if index > 1024 {
+            continue;
+        }
+        if object.get("IsBoot").and_then(|v| v.as_bool()) != Some(false)
+            || object.get("IsSystem").and_then(|v| v.as_bool()) != Some(false)
+            || object.get("IsReadOnly").and_then(|v| v.as_bool()) != Some(false)
+        {
             continue;
         }
         let Some(bytes) = object.get("Size").and_then(|v| v.as_u64()) else {
@@ -2877,25 +2904,22 @@ fn usb_candidates_from_windows_json(
             continue;
         }
         let device_node = format!(r"\\.\PHYSICALDRIVE{index}");
-        if object.get("DeviceID").and_then(|v| v.as_str()) != Some(device_node.as_str()) {
-            continue;
-        }
-        let Some(pnp) = object
-            .get("PNPDeviceID")
+        let Some(unique_id) = object
+            .get("UniqueId")
             .and_then(|v| v.as_str())
             .filter(|v| !v.is_empty())
         else {
             continue;
         };
         let media_name: String = object
-            .get("Model")
+            .get("FriendlyName")
             .and_then(|v| v.as_str())
             .unwrap_or("USB removable media")
             .chars()
             .take(120)
             .collect();
         let identity =
-            format!("{index}\0{device_node}\0{bytes}\0{block_size}\0{media_name}\0{pnp}");
+            format!("{index}\0{device_node}\0{bytes}\0{block_size}\0{media_name}\0{unique_id}");
         targets.push(UsbTargetCandidate {
             device_identifier: format!("PhysicalDrive{index}"),
             device_node,
@@ -2912,7 +2936,7 @@ fn usb_candidates_from_windows_json(
 
 #[cfg(target_os = "windows")]
 fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
-    let script = "Get-CimInstance Win32_DiskDrive | Select-Object DeviceID,Model,InterfaceType,MediaType,Size,BytesPerSector,PNPDeviceID,Index | ConvertTo-Json -Compress";
+    let script = "Get-Disk | Select-Object @{n='Index';e={$_.Number}},FriendlyName,BusType,Size,@{n='BytesPerSector';e={$_.LogicalSectorSize}},UniqueId,IsBoot,IsSystem,IsReadOnly,IsOffline | ConvertTo-Json -Compress";
     let output = Command::new("powershell.exe")
         .args([
             "-NoLogo",
@@ -2940,6 +2964,89 @@ fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, Str
     usb_candidates_from_windows_json(&output.stdout, image_bytes)
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn windows_disk_number(identifier: &str) -> Result<u32, String> {
+    let value = identifier
+        .strip_prefix("PhysicalDrive")
+        .ok_or("The selected Windows device identifier is invalid.")?;
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("The selected Windows device identifier is invalid.".into());
+    }
+    value
+        .parse::<u32>()
+        .ok()
+        .filter(|number| *number <= 1024)
+        .ok_or_else(|| "The selected Windows device identifier is invalid.".into())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_powershell(script: &str, description: &str) -> Result<Vec<u8>, String> {
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ])
+        .output()
+        .map_err(|error| format!("Could not {description}: {error}"))?;
+    if !output.status.success() {
+        let detail: String = String::from_utf8_lossy(&output.stderr)
+            .trim()
+            .chars()
+            .take(500)
+            .collect();
+        return Err(format!(
+            "Could not {description}{}.",
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            }
+        ));
+    }
+    Ok(output.stdout)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_process_is_elevated() -> bool {
+    let script = "if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 0 } else { exit 1 }";
+    Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ])
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_disk_inventory(number: u32) -> Result<Vec<u8>, String> {
+    windows_powershell(
+        &format!("$d=Get-Disk -Number {number} -ErrorAction Stop; $d | Select-Object @{{n='Index';e={{$_.Number}}}},FriendlyName,BusType,Size,@{{n='BytesPerSector';e={{$_.LogicalSectorSize}}}},UniqueId,IsBoot,IsSystem,IsReadOnly,IsOffline | ConvertTo-Json -Compress"),
+        "revalidate the selected Windows removable disk",
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn revalidate_usb_target(identifier: &str, image_bytes: u64) -> Result<UsbTargetCandidate, String> {
+    let number = windows_disk_number(identifier)?;
+    let targets = usb_candidates_from_windows_json(&windows_disk_inventory(number)?, image_bytes)?;
+    if targets.len() != 1 || targets[0].device_identifier != identifier {
+        return Err(
+            "The selected disk is no longer the same eligible whole removable device.".into(),
+        );
+    }
+    Ok(targets
+        .into_iter()
+        .next()
+        .expect("one guarded Windows target"))
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn discover_usb_targets(_image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
     Err(
@@ -2948,7 +3055,7 @@ fn discover_usb_targets(_image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, St
     )
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn revalidate_usb_target(
     _identifier: &str,
     _image_bytes: u64,
@@ -3246,7 +3353,9 @@ pub(crate) async fn inspect_usb_targets(image_path: String) -> Result<UsbTargetP
             message: if targets_empty {
                 "No eligible removable USB drives were found. Connect or replug a drive, then refresh."
             } else if writes_allowed {
-                "Eligible removable drives are shown. The image and exact device will be revalidated before macOS requests permission to open it."
+                "Eligible removable drives are shown. The image and exact device will be revalidated immediately before guarded whole-disk writing."
+            } else if cfg!(target_os = "windows") {
+                "Eligible removable drives are shown read-only. Restart OPEMOS as administrator to enable guarded Windows whole-disk writing."
             } else {
                 "Eligible removable drives are shown read-only. Physical USB writing is not available on this platform yet."
             }
@@ -3369,7 +3478,9 @@ pub(crate) async fn arm_usb_write_preflight(
             "Intent confirmed for {}. {} This authorization expires in 60 seconds.",
             image.display(),
             if physical_usb_writes_allowed() {
-                "macOS will request permission for only the selected raw device when writing begins."
+                usb_write_permission_message()
+            } else if cfg!(target_os = "windows") {
+                "Restart OPEMOS as administrator to enable the guarded Windows whole-disk writer."
             } else {
                 "Physical writing is not available on this platform yet."
             },
@@ -3662,22 +3773,168 @@ fn open_usb_raw_device(target: &UsbTargetCandidate, cancel: &AtomicBool) -> Resu
     Ok(file)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn unmount_usb_target(identifier: &str) -> Result<(), String> {
+    if !windows_process_is_elevated() {
+        return Err("Windows USB writing requires running OPEMOS as administrator.".into());
+    }
+    let number = windows_disk_number(identifier)?;
+    let script = format!(
+        "$d=Get-Disk -Number {number} -ErrorAction Stop; if ($d.BusType -ne 'USB' -or $d.IsBoot -or $d.IsSystem -or $d.IsReadOnly) {{ throw 'disk safety guard refused' }}; if (-not $d.IsOffline) {{ Set-Disk -Number {number} -IsOffline $true -ErrorAction Stop }}; $after=Get-Disk -Number {number}; if (-not $after.IsOffline) {{ throw 'disk did not become offline' }}"
+    );
+    windows_powershell(
+        &script,
+        "lock and dismount the selected Windows removable disk",
+    )?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn eject_usb_target(identifier: &str) -> bool {
+    let Ok(number) = windows_disk_number(identifier) else {
+        return false;
+    };
+    let script = format!(
+        "$d=Get-Disk -Number {number} -ErrorAction Stop; if ($d.BusType -ne 'USB' -or $d.IsBoot -or $d.IsSystem -or -not $d.IsOffline) {{ exit 1 }}"
+    );
+    windows_powershell(&script, "confirm the Windows removable disk is offline").is_ok()
+}
+
+#[cfg(target_os = "windows")]
+fn remount_usb_target(identifier: &str) -> bool {
+    let Ok(number) = windows_disk_number(identifier) else {
+        return false;
+    };
+    let script = format!(
+        "$d=Get-Disk -Number {number} -ErrorAction Stop; if ($d.BusType -ne 'USB' -or $d.IsBoot -or $d.IsSystem) {{ exit 1 }}; if ($d.IsOffline) {{ Set-Disk -Number {number} -IsOffline $false -ErrorAction Stop }}"
+    );
+    windows_powershell(
+        &script,
+        "return the unchanged Windows removable disk online",
+    )
+    .is_ok()
+}
+
+#[cfg(target_os = "windows")]
+fn open_usb_raw_device(target: &UsbTargetCandidate, _cancel: &AtomicBool) -> Result<File, String> {
+    use std::ffi::c_void;
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use std::os::windows::io::AsRawHandle as _;
+
+    #[repr(C)]
+    struct StorageDeviceNumber {
+        device_type: u32,
+        device_number: u32,
+        partition_number: u32,
+    }
+    #[repr(C)]
+    struct GetLengthInformation {
+        length: i64,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn DeviceIoControl(
+            device: *mut c_void,
+            control_code: u32,
+            input: *mut c_void,
+            input_bytes: u32,
+            output: *mut c_void,
+            output_bytes: u32,
+            returned_bytes: *mut u32,
+            overlapped: *mut c_void,
+        ) -> i32;
+    }
+
+    let number = windows_disk_number(&target.device_identifier)?;
+    if target.device_node != format!(r"\\.\PHYSICALDRIVE{number}") {
+        return Err(
+            "The selected Windows raw-device path no longer matches its disk number.".into(),
+        );
+    }
+    let before = revalidate_usb_target(&target.device_identifier, 0)?;
+    if before.identity_token != target.identity_token
+        || before.bytes != target.bytes
+        || before.block_size != target.block_size
+    {
+        return Err("The selected Windows removable disk changed before raw open.".into());
+    }
+    const GENERIC_READ: u32 = 0x8000_0000;
+    const GENERIC_WRITE: u32 = 0x4000_0000;
+    const FILE_FLAG_WRITE_THROUGH: u32 = 0x8000_0000;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .access_mode(GENERIC_READ | GENERIC_WRITE)
+        .share_mode(0)
+        .custom_flags(FILE_FLAG_WRITE_THROUGH)
+        .open(&target.device_node)
+        .map_err(|error| {
+            if error.kind() == io::ErrorKind::PermissionDenied {
+                "Windows denied exclusive raw-disk access. Run OPEMOS as administrator and close programs using the USB drive.".into()
+            } else {
+                format!("Could not exclusively open the selected Windows raw disk: {error}")
+            }
+        })?;
+    const IOCTL_STORAGE_GET_DEVICE_NUMBER: u32 = 0x002d_1080;
+    const IOCTL_DISK_GET_LENGTH_INFO: u32 = 0x0007_405c;
+    let mut returned = 0_u32;
+    let mut opened_number = StorageDeviceNumber {
+        device_type: 0,
+        device_number: u32::MAX,
+        partition_number: 0,
+    };
+    let number_ok = unsafe {
+        DeviceIoControl(
+            file.as_raw_handle(),
+            IOCTL_STORAGE_GET_DEVICE_NUMBER,
+            std::ptr::null_mut(),
+            0,
+            (&mut opened_number as *mut StorageDeviceNumber).cast(),
+            std::mem::size_of::<StorageDeviceNumber>() as u32,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    } != 0;
+    let mut opened_length = GetLengthInformation { length: -1 };
+    let length_ok = unsafe {
+        DeviceIoControl(
+            file.as_raw_handle(),
+            IOCTL_DISK_GET_LENGTH_INFO,
+            std::ptr::null_mut(),
+            0,
+            (&mut opened_length as *mut GetLengthInformation).cast(),
+            std::mem::size_of::<GetLengthInformation>() as u32,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    } != 0;
+    if !number_ok
+        || !length_ok
+        || opened_number.device_number != number
+        || opened_number.partition_number != u32::MAX
+        || u64::try_from(opened_length.length).ok() != Some(target.bytes)
+    {
+        return Err("The opened Windows raw handle does not identify the exact selected whole disk and capacity.".into());
+    }
+    Ok(file)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn unmount_usb_target(_identifier: &str) -> Result<(), String> {
     Err("USB writing is currently implemented only for macOS.".into())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn eject_usb_target(_identifier: &str) -> bool {
     false
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn remount_usb_target(_identifier: &str) -> bool {
     false
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn open_usb_raw_device(_target: &UsbTargetCandidate, _cancel: &AtomicBool) -> Result<File, String> {
     Err("USB writing is currently implemented only for macOS.".into())
 }
@@ -3689,7 +3946,11 @@ pub(crate) async fn write_image_to_usb(
     image_path: String,
 ) -> Result<UsbWriteResult, String> {
     if !physical_usb_writes_allowed() {
-        return Err("Physical USB writing is not available on this platform yet.".into());
+        return Err(if cfg!(target_os = "windows") {
+            "Windows USB writing requires running OPEMOS as administrator.".into()
+        } else {
+            "Physical USB writing is not available on this platform yet.".into()
+        });
     }
     if !valid_usb_preflight_session_token(&session_token) {
         return Err("The USB intent session token is invalid.".into());
@@ -3752,8 +4013,7 @@ pub(crate) async fn write_image_to_usb(
                 phase: "authorizing".into(),
                 bytes_completed: 0,
                 bytes_total: image_bytes,
-                message: "Waiting for macOS permission to open only the selected raw device."
-                    .into(),
+                message: usb_write_permission_message().into(),
             },
         );
         let mut device = match open_usb_raw_device(&revalidated, &cancel) {
@@ -3804,9 +4064,13 @@ pub(crate) async fn write_image_to_usb(
             verified_sha256,
             ejected,
             message: if ejected {
-                "USB writing and byte-for-byte verification completed; the device was ejected safely."
+                if cfg!(target_os = "windows") {
+                    "USB writing and byte-for-byte verification completed; Windows left the disk offline and safe to remove."
+                } else {
+                    "USB writing and byte-for-byte verification completed; the device was ejected safely."
+                }
             } else {
-                "USB writing and byte-for-byte verification completed. macOS could not eject the device automatically."
+                "USB writing and byte-for-byte verification completed, but the operating system could not make the device safe to remove automatically."
             }
             .into(),
         })
@@ -3827,7 +4091,7 @@ mod windows_usb_inventory_tests {
         // PowerShell ConvertTo-Json escapes each backslash in the canonical
         // Win32_DiskDrive DeviceID. Keep this as wire-format JSON so the test
         // covers decoding as well as the exact identity comparison.
-        let json = br#"[{"DeviceID":"\\\\.\\PHYSICALDRIVE3","Model":"USB Drive","InterfaceType":"USB","Size":16000000000,"BytesPerSector":512,"PNPDeviceID":"USBSTOR\\DISK&VEN_TEST","Index":3},{"DeviceID":"\\\\.\\PHYSICALDRIVE0","Model":"Internal","InterfaceType":"NVMe","Size":1000000000000,"BytesPerSector":512,"PNPDeviceID":"PCI\\INTERNAL","Index":0},{"DeviceID":"\\\\.\\PHYSICALDRIVE4","Model":"Too small","InterfaceType":"USB","Size":1024,"BytesPerSector":512,"PNPDeviceID":"USBSTOR\\SMALL","Index":4}]"#;
+        let json = br#"[{"FriendlyName":"USB Drive","BusType":"USB","Size":16000000000,"BytesPerSector":512,"UniqueId":"USBSTOR\\DISK&VEN_TEST","Index":3,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false},{"FriendlyName":"Internal","BusType":"NVMe","Size":1000000000000,"BytesPerSector":512,"UniqueId":"PCI\\INTERNAL","Index":0,"IsBoot":true,"IsSystem":true,"IsReadOnly":false,"IsOffline":false},{"FriendlyName":"Too small","BusType":"USB","Size":1024,"BytesPerSector":512,"UniqueId":"USBSTOR\\SMALL","Index":4,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}]"#;
         let targets = usb_candidates_from_windows_json(json, 8 * 1024 * 1024).unwrap();
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].device_identifier, "PhysicalDrive3");
@@ -3848,13 +4112,39 @@ mod windows_usb_inventory_tests {
         assert!(usb_candidates_from_windows_json(b"not-json", 512)
             .unwrap_err()
             .contains("malformed"));
-        let mismatch = br#"{"DeviceID":"\\\\.\\PHYSICALDRIVE9","Model":"Mismatch","InterfaceType":"USB","Size":4096,"BytesPerSector":512,"PNPDeviceID":"USBSTOR\\ONE","Index":8}"#;
-        assert!(usb_candidates_from_windows_json(mismatch, 512)
+        let boot = br#"{"FriendlyName":"USB Boot","BusType":"USB","Size":4096,"BytesPerSector":512,"UniqueId":"USBSTOR\\BOOT","Index":8,"IsBoot":true,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}"#;
+        assert!(usb_candidates_from_windows_json(boot, 512)
             .unwrap()
             .is_empty());
-        let missing_identity = br#"{"DeviceID":"\\\\.\\PHYSICALDRIVE2","Model":"No identity","InterfaceType":"USB","Size":4096,"BytesPerSector":512,"PNPDeviceID":"","Index":2}"#;
+        let missing_identity = br#"{"FriendlyName":"No identity","BusType":"USB","Size":4096,"BytesPerSector":512,"UniqueId":"","Index":2,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}"#;
         assert!(usb_candidates_from_windows_json(missing_identity, 512)
             .unwrap()
             .is_empty());
+        for field in ["IsBoot", "IsSystem", "IsReadOnly"] {
+            let mut value: serde_json::Value = serde_json::from_slice(br#"{"FriendlyName":"Guarded","BusType":"USB","Size":4096,"BytesPerSector":512,"UniqueId":"USBSTOR\\SAFE","Index":2,"IsBoot":false,"IsSystem":false,"IsReadOnly":false,"IsOffline":false}"#).unwrap();
+            value[field] = serde_json::Value::Bool(true);
+            assert!(
+                usb_candidates_from_windows_json(&serde_json::to_vec(&value).unwrap(), 512)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn windows_disk_identifiers_accept_only_bounded_physical_drive_numbers() {
+        assert_eq!(windows_disk_number("PhysicalDrive0").unwrap(), 0);
+        assert_eq!(windows_disk_number("PhysicalDrive1024").unwrap(), 1024);
+        for identifier in [
+            "",
+            "PhysicalDrive",
+            "physicaldrive4",
+            "PhysicalDrive-1",
+            "PhysicalDrive4\\..\\0",
+            "PhysicalDrive1025",
+            r"\\.\PHYSICALDRIVE4",
+        ] {
+            assert!(windows_disk_number(identifier).is_err(), "{identifier}");
+        }
     }
 }
