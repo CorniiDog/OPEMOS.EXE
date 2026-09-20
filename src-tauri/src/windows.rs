@@ -1,10 +1,58 @@
 use super::require_maintainer_authorization;
 use tauri::window::{Color, Effect, EffectState, EffectsBuilder};
 use tauri::Manager;
-use tauri_plugin_opener::OpenerExt;
 
 const VALVE_STEAMOS_DOWNLOAD_URL: &str =
     "https://store.steampowered.com/steamos/download/?ver=steamdeck";
+
+#[cfg(target_os = "windows")]
+fn open_valve_download_page_native() -> Result<(), String> {
+    use std::iter::once;
+    use std::ptr;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let operation = "open".encode_utf16().chain(once(0)).collect::<Vec<_>>();
+    let url = VALVE_STEAMOS_DOWNLOAD_URL
+        .encode_utf16()
+        .chain(once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: The string buffers are NUL-terminated UTF-16 and remain alive for this call.
+    // All other pointers are documented optional arguments and ShellExecuteW retains none.
+    let result = unsafe {
+        ShellExecuteW(
+            ptr::null_mut(),
+            operation.as_ptr(),
+            url.as_ptr(),
+            ptr::null(),
+            ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if result as isize <= 32 {
+        return Err(format!(
+            "Windows could not open Valve's SteamOS download page (ShellExecuteW code {}).",
+            result as isize
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn open_valve_download_page(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = app;
+        open_valve_download_page_native()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener()
+            .open_url(VALVE_STEAMOS_DOWNLOAD_URL, None::<&str>)
+            .map_err(|error| format!("Could not open Valve's SteamOS download page: {error}"))
+    }
+}
 
 fn glass_window_effects() -> tauri::utils::config::WindowEffectsConfig {
     EffectsBuilder::new()
@@ -13,13 +61,6 @@ fn glass_window_effects() -> tauri::utils::config::WindowEffectsConfig {
         .radius(10.0)
         .color(Color(11, 17, 24, 220))
         .build()
-}
-
-#[tauri::command]
-pub(crate) fn open_valve_download_page(app: tauri::AppHandle) -> Result<(), String> {
-    app.opener()
-        .open_url(VALVE_STEAMOS_DOWNLOAD_URL, None::<&str>)
-        .map_err(|error| format!("Could not open Valve's SteamOS download page: {error}"))
 }
 
 #[tauri::command]

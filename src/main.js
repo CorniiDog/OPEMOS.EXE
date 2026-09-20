@@ -988,6 +988,14 @@ async function applyBuildFinished(completion) {
     applyCompletedOutput(completed || output);
     if (activeExportMode === "image") {
       await revealCompletedImage(output.path);
+      elements.resultMessage.textContent = "The image is complete. Refreshing removable drives for an optional verified USB write…";
+      elements.resultMessage.className = "result-message";
+      await refreshUsbTargets();
+      if (!operationContextMatches(buildContext, activeBuildContext || {})
+        || buildContext.selectionGeneration !== imageSelectionGeneration
+        || inputPath !== currentImage) return;
+      elements.resultMessage.textContent = "NVIDIA image complete and verified. Select a freshly detected USB drive to write it, or keep the exported image.";
+      elements.resultMessage.className = "result-message success";
     } else {
       const preferredTarget = pendingUsbTarget;
       pendingUsbTarget = null;

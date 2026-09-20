@@ -295,24 +295,6 @@
                             <small>Checked by default. Uncheck only when writing exclusively to a selected USB drive.</small>
                         </span>
                     </label>
-                    <div id="usb-picker" class="usb-picker is-empty">
-                        <div class="usb-picker-heading">
-                            <span>
-                                <strong>Optional USB destination</strong>
-                                <span class="usb-detail-line">
-                                    <small id="usb-target-detail">Connect a removable drive, then refresh the list.</small>
-                                </span>
-                            </span>
-                            <span class="usb-picker-actions">
-                                <button id="clear-usb-target" class="usb-clear hidden" type="button">Clear</button>
-                                <button id="refresh-usb-targets" class="secondary" type="button">Refresh Drives</button>
-                            </span>
-                        </div>
-                        <select id="usb-target" size="3" disabled aria-label="Detected removable USB drives">
-                            <option value="" disabled selected>Connect a USB drive, then refresh…</option>
-                        </select>
-                        <p id="usb-picker-message" class="usb-picker-message" aria-live="polite">No USB drive will be written unless one is selected.</p>
-                    </div>
                     <div class="output-destination">
                         <span>
                             <strong>Output folder</strong>
@@ -323,8 +305,6 @@
                             <button id="choose-output-folder" class="secondary" type="button">Choose…</button>
                         </span>
                     </div>
-
-                    <button id="review-usb-target" class="secondary hidden" type="button" aria-haspopup="dialog" aria-controls="usb-card" aria-expanded="false">Review &amp; Write Selected USB…</button>
                 </div>
 
                 <div class="build-side-column" role="group" aria-labelledby="nvidia-options-title">
@@ -361,6 +341,26 @@
                         </div>
                         <p id="summary-action">The isolated x86_64 builder will validate an exact compatible NVIDIA artifact and export a separate image.</p>
                     </div>
+                </div>
+
+                <div id="usb-picker" class="usb-picker is-empty" role="group" aria-labelledby="usb-picker-title">
+                    <div class="usb-picker-heading">
+                        <span>
+                            <strong id="usb-picker-title">Optional USB destination</strong>
+                            <span class="usb-detail-line">
+                                <small id="usb-target-detail">Connect a removable drive, then refresh the list.</small>
+                            </span>
+                        </span>
+                        <span class="usb-picker-actions">
+                            <button id="clear-usb-target" class="usb-clear hidden" type="button">Clear</button>
+                            <button id="refresh-usb-targets" class="secondary" type="button">Refresh Drives</button>
+                        </span>
+                    </div>
+                    <select id="usb-target" size="3" disabled aria-label="Detected removable USB drives">
+                        <option value="" disabled selected>Connect a USB drive, then refresh…</option>
+                    </select>
+                    <p id="usb-picker-message" class="usb-picker-message" aria-live="polite">No USB drive will be written unless one is selected.</p>
+                    <button id="review-usb-target" class="secondary hidden" type="button" aria-haspopup="dialog" aria-controls="usb-card" aria-expanded="false">Review &amp; Write Selected USB…</button>
                 </div>
             </div>
 

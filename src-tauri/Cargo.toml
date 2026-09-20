@@ -31,6 +31,7 @@ xz2 = "0.1.7"
 [target.'cfg(windows)'.dependencies]
 russh = { version = "0.63.2", default-features = false, features = ["ring"] }
 tokio = { version = "1.53.0", features = ["rt", "time"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.dev.package.sha2]
 opt-level=3
