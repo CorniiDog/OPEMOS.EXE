@@ -3878,7 +3878,7 @@ struct WindowsUsbWriterRequest {
     identity_token: String,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct WindowsUsbWriterReceipt {
@@ -3888,6 +3888,46 @@ struct WindowsUsbWriterReceipt {
     verified_sha256: String,
     ejected: bool,
     error: String,
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn validate_windows_usb_writer_receipt(
+    bytes: &[u8],
+    process_exit_code: u32,
+    expected_request_sha256: &str,
+    expected_image_sha256: &str,
+) -> Result<WindowsUsbWriterReceipt, String> {
+    if bytes.len() > 32 * 1024 {
+        return Err("The elevated Windows USB writer receipt is oversized.".into());
+    }
+    let receipt: WindowsUsbWriterReceipt = serde_json::from_slice(bytes)
+        .map_err(|_| "The elevated Windows USB writer receipt is malformed.")?;
+    if receipt.schema_version != 1 || receipt.request_sha256 != expected_request_sha256 {
+        return Err("The elevated Windows USB writer receipt identity is invalid.".into());
+    }
+    if receipt.success {
+        if process_exit_code != 0 {
+            return Err(format!(
+                "The elevated Windows USB writer reported success but exited with code {process_exit_code}."
+            ));
+        }
+        if !receipt.error.is_empty()
+            || !valid_sha256(&receipt.verified_sha256)
+            || !receipt
+                .verified_sha256
+                .eq_ignore_ascii_case(expected_image_sha256)
+        {
+            return Err(
+                "The elevated Windows USB writer success receipt does not match the expected verified image digest."
+                    .into(),
+            );
+        }
+        return Ok(receipt);
+    }
+    if !receipt.verified_sha256.is_empty() || receipt.ejected || receipt.error.is_empty() {
+        return Err("The elevated Windows USB writer failure receipt is inconsistent.".into());
+    }
+    Err(receipt.error)
 }
 
 #[cfg(target_os = "windows")]
@@ -4454,21 +4494,8 @@ fn launch_elevated_windows_usb_writer(
             "The elevated Windows USB writer returned no verifiable receipt (exit {status}): {error}"
         )
     })?;
-    if receipt_bytes.len() > 32 * 1024 {
-        return Err("The elevated Windows USB writer receipt is oversized.".into());
-    }
-    let receipt: WindowsUsbWriterReceipt = serde_json::from_slice(&receipt_bytes)
-        .map_err(|_| "The elevated Windows USB writer receipt is malformed.")?;
-    if receipt.schema_version != 1 || receipt.request_sha256 != request_sha256 {
-        return Err("The elevated Windows USB writer receipt identity is invalid.".into());
-    }
-    if !receipt.success {
-        return Err(if receipt.error.is_empty() {
-            "The elevated Windows USB writer failed without a bounded diagnostic.".into()
-        } else {
-            receipt.error
-        });
-    }
+    let receipt =
+        validate_windows_usb_writer_receipt(&receipt_bytes, status, &request_sha256, image_sha256)?;
     progress(UsbWriteProgress {
         phase: "completed".into(),
         bytes_completed: image_bytes,
@@ -4597,7 +4624,7 @@ fn recover_windows_usb_target(target: &UsbTargetCandidate) -> Result<bool, Strin
             Err(online_error) => return Err(format!("The selected Windows disk could not be revalidated as offline ({offline_error}) or online ({online_error}); leave it connected for manual handling.")),
         },
     };
-    if current.identity_token != target.identity_token {
+    if !windows_usb_recovery_identity_is_unchanged(target, &current) {
         return Err("The selected Windows disk identity drifted during the operation; it was not remounted or ejected and requires manual handling.".into());
     }
     if !offline {
@@ -4610,6 +4637,15 @@ fn recover_windows_usb_target(target: &UsbTargetCandidate) -> Result<bool, Strin
         return Ok(false);
     }
     Err("Windows could neither safely eject nor return the unchanged selected disk online; leave it connected for manual handling.".into())
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_usb_recovery_identity_is_unchanged(
+    original: &UsbTargetCandidate,
+    current: &UsbTargetCandidate,
+) -> bool {
+    current.device_identifier == original.device_identifier
+        && current.identity_token == original.identity_token
 }
 
 #[cfg(target_os = "windows")]
@@ -5083,7 +5119,11 @@ pub(crate) async fn write_image_to_usb(
         let (mut device, volume_locks) = match open_usb_raw_device(&revalidated, &cancel) {
             Ok(device) => device,
             Err(error) => {
+                #[cfg(target_os = "windows")]
+                return Err(error);
+                #[cfg(not(target_os = "windows"))]
                 let _ = remount_usb_target(&revalidated.device_identifier);
+                #[cfg(not(target_os = "windows"))]
                 return Err(error);
             }
         };
@@ -5337,5 +5377,70 @@ mod windows_usb_inventory_tests {
             .expect("runtime setup");
         let state = source.find("prepare_portable_state").expect("state setup");
         assert!(helper < runtime && helper < state);
+    }
+
+    #[test]
+    fn elevated_receipt_requires_exact_success_exit_request_and_image_digest() {
+        let request_sha256 = "1".repeat(64);
+        let image_sha256 = "a".repeat(64);
+        let receipt = |request: &str, success: bool, verified: &str, ejected: bool, error: &str| {
+            serde_json::to_vec(&WindowsUsbWriterReceipt {
+                schema_version: 1,
+                request_sha256: request.into(),
+                success,
+                verified_sha256: verified.into(),
+                ejected,
+                error: error.into(),
+            })
+            .unwrap()
+        };
+
+        let valid = receipt(&request_sha256, true, &image_sha256, true, "");
+        let accepted =
+            validate_windows_usb_writer_receipt(&valid, 0, &request_sha256, &image_sha256)
+                .expect("exact successful receipt");
+        assert_eq!(accepted.verified_sha256, image_sha256);
+
+        for (bytes, status) in [
+            (b"not-json".to_vec(), 0),
+            (receipt(&"2".repeat(64), true, &image_sha256, true, ""), 0),
+            (receipt(&request_sha256, true, &"b".repeat(64), true, ""), 0),
+            (valid.clone(), 9),
+            (
+                receipt(&request_sha256, false, &image_sha256, true, "failed"),
+                1,
+            ),
+            (receipt(&request_sha256, false, "", false, ""), 1),
+        ] {
+            assert!(validate_windows_usb_writer_receipt(
+                &bytes,
+                status,
+                &request_sha256,
+                &image_sha256,
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn same_number_identity_replacement_is_not_eligible_for_windows_recovery() {
+        let original = UsbTargetCandidate {
+            device_identifier: "PhysicalDrive4".into(),
+            device_node: r"\\.\PHYSICALDRIVE4".into(),
+            media_name: "Removable USB".into(),
+            bus_protocol: "USB".into(),
+            bytes: 31_264_289_280,
+            block_size: 512,
+            identity_token: "a".repeat(64),
+        };
+        let mut replacement = original.clone();
+        replacement.identity_token = "b".repeat(64);
+        assert!(!windows_usb_recovery_identity_is_unchanged(
+            &original,
+            &replacement
+        ));
+        assert!(windows_usb_recovery_identity_is_unchanged(
+            &original, &original
+        ));
     }
 }

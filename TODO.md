@@ -2383,6 +2383,19 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   cancel-then-settle/terminate behavior; and relays digest-bound, size-bounded,
   monotonic atomic progress through receipt validation. Windows cross-
   compilation, focused/full validation, changed-head CI and review, and native
+  packaged failure/progress evidence remain pending. Independent review of
+  changed head `bd9dca0274bc7f85593dac5ada3da25337ebb123` confirmed those five
+  blockers closed but rejected two residuals: success was not bound to zero
+  helper exit plus the exact verified digest, and the already-elevated path
+  retained a redundant identifier-only remount after identity-aware open
+  recovery refused drift. The active correction validates closed receipt
+  schema, exact request and image SHA-256, zero helper exit, and consistent
+  success/failure fields before reporting verified; it removes the redundant
+  Windows remount while preserving macOS recovery. Focused malformed, wrong-
+  request, wrong-hash, nonzero-exit, inconsistent-failure, valid-success, and
+  same-number identity-replacement tests pass in the 18-case USB suite through
+  `heavy.sh`; the full Rust suite passes 399 tests with 30 ignored and all-target
+  Clippy passes with warnings denied. Changed-head native CI and review, and
   packaged failure/progress evidence remain pending. Contained virtual-disk
   write/flush/readback/cleanup acceptance, exact-head Core review, PR merge, and
   replacement prerelease staging remain required. The user's attached SMI USB is
