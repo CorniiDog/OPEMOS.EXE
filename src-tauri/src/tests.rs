@@ -4174,6 +4174,20 @@ esac
         let html = std::str::from_utf8(INSTALL_MEDIA_WELCOME_HTML).unwrap();
         let javascript = std::str::from_utf8(INSTALL_MEDIA_WELCOME_JS).unwrap();
 
+        for (name, bytes) in [
+            ("open-opemos-welcome", INSTALL_MEDIA_WELCOME),
+            ("opemos-install-helper", INSTALL_MEDIA_HELPER),
+            ("patch_repair_device.py", INSTALL_MEDIA_PATCHER),
+            ("Open-OPEMOS.desktop", INSTALL_MEDIA_DESKTOP),
+            ("welcome_server.py", INSTALL_MEDIA_WELCOME_SERVER),
+        ] {
+            assert!(
+                !bytes.contains(&b'\r'),
+                "{name} must be embedded with Unix line endings so booted media can execute it"
+            );
+        }
+        assert!(INSTALL_MEDIA_WELCOME.starts_with(b"#!/usr/bin/env bash\n"));
+
         assert!(desktop.contains("Name=Install SteamOS with NVIDIA drivers"));
         assert!(desktop.contains("Exec=/home/deck/tools/open-opemos-welcome"));
         assert!(desktop.contains("X-KDE-AutostartScript=true"));
