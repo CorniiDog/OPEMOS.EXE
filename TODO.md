@@ -2408,8 +2408,9 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   opens only those selected volume GUIDs with read/write sharing while retaining
   lock/dismount exclusivity and the separate raw-drive guards; an ignored native
   regression accepts only an explicitly provisioned disposable multi-volume
-  disk, proves a busy file refuses the lock, releases it, and then proves every
-  volume can be locked and dismounted on retry. Exact Windows compilation, the
+  disk, requires the first volume to lock/dismount before a busy second volume
+  refuses the lock, releases the busy file, and then proves both volumes can be
+  locked and dismounted on retry. Exact Windows compilation, the
   contained native disposable-volume run, changed-head CI, and fresh exact-head
   Core review remain pending. Contained virtual-disk
   write/flush/readback/cleanup acceptance, exact-head Core review, PR merge, and

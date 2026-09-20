@@ -4805,8 +4805,9 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
                 } == 0
                 {
                     return Err(format!(
-                        "Windows could not {action} selected-disk volume GUID {}.",
-                        path.display()
+                        "Windows could not {action} selected-disk volume GUID {} after {} earlier selected-disk volume(s) were locked and dismounted.",
+                        path.display(),
+                        locked.len()
                     ));
                 }
             }
@@ -5392,16 +5393,19 @@ mod windows_usb_inventory_tests {
             .open(&busy_file)
             .expect("the disposable busy file must open");
         let error = lock_windows_disk_volumes(disk_number)
-            .expect_err("an open file must prevent exclusive volume locking");
+            .expect_err("the later busy volume must refuse locking after the first volume locks");
         assert!(error.contains("could not lock selected-disk volume GUID"));
+        assert!(
+            error.contains("after 1 earlier selected-disk volume(s) were locked and dismounted")
+        );
         drop(busy);
 
         let reacquired = lock_windows_disk_volumes(disk_number).expect(
             "all prior volume locks must be released, then every volume must lock and dismount",
         );
         assert!(
-            reacquired.len() >= 2,
-            "the native regression requires two disposable volumes"
+            reacquired.len() == 2,
+            "the native regression requires exactly two disposable volumes"
         );
     }
 
