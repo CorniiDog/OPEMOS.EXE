@@ -66,6 +66,16 @@ test("install helper binds and revalidates a physical device identity", () => {
   assert.match(helper, /ui_stage "Installing the recovery guardian into rootfs-\$slot/);
 });
 
+test("guardian installation temporarily unlocks each new SteamOS root and always restores read-only mode", () => {
+  const lifecycle = helper.match(/install_guardian_slot\(\) \{[\s\S]*?\n\}\n\ninstall_to_disk/)?.[0] || "";
+  assert.match(lifecycle, /steamos-chroot --no-overlay --disk "\$device" --partset "\$slot"/);
+  assert.match(lifecycle, /steamos-readonly disable/);
+  assert.match(lifecycle, /trap restore_readonly EXIT/);
+  assert.match(lifecycle, /"\$installer"[\s\S]*--root \/[\s\S]*--support-revision[\s\S]*--nvidia/);
+  assert.match(lifecycle, /steamos-readonly enable\n\s+trap - EXIT/);
+  assert.match(helper, /install_guardian_slot "\$device" "\$slot" "\$support_revision" "\$nvidia_version"/);
+});
+
 test("guarded patcher accepts the audited Valve contract without broad rewriting", (context) => {
   const directory = mkdtempSync(join(tmpdir(), "opemos-welcome-test-"));
   context.after(() => rmSync(directory, { recursive: true, force: true }));

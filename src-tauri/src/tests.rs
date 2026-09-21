@@ -4375,6 +4375,9 @@ esac
         assert!(!helper.contains("bin/opemos-interstitial"));
         assert!(helper.contains("installed recovery guardian verification failed"));
         assert!(helper.contains("ui_stage \"Installing the recovery guardian into rootfs-$slot"));
+        assert!(helper.contains("steamos-readonly disable"));
+        assert!(helper.contains("trap restore_readonly EXIT"));
+        assert!(helper.contains("steamos-readonly enable\n      trap - EXIT"));
         assert!(!helper.contains("eval "));
 
         assert!(patcher.contains("unsupported Valve installer structure for guarded anchor"));
