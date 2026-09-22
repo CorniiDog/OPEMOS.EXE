@@ -2711,7 +2711,20 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   a focused regression binds that lifecycle. Focused validation, a rebuilt
   exact Windows artifact, rerun of only the failed install/first-boot/update/
   Maintainer stages, required CI, and fresh exact-head Core review remain
-  pending. PR #123 stays draft; no physical media, publication, trust,
+  pending. Exact head `d36d9600386b87fe254d12d7cf393f025a30273c`
+  passed required CI, produced closed-validated artifact `10663023176`, and
+  rebuilt an authenticated image. The failed Boot-B stage then completed Valve
+  partitioning and EFI setup but stopped before guardian mutation because the
+  pinned Core installer bundle omitted three exact runtime dependencies named
+  by `install_recovery_guardian_to_root.sh`: `recovery_policy.py`,
+  `recovery_fallback_state.py`, and `validate_github_meta.py`. Their bytes,
+  lengths, executable modes, and blob identities were authenticated directly
+  from canonical GitHub Core commit `c5d66d0fabbebf17a5dfb3fc636c813be3fa9a82`;
+  the bounded correction adds only those existing Core files to the immutable
+  consumer list and binds the guardian dependency closure in the focused
+  contract regression. Rebuilt exact-head CI/artifact, fresh Core review, and
+  rerun of only the failed Boot-B stage remain pending. PR #123 stays draft;
+  no physical media, publication, trust,
   boundary, integrity, or governance action occurred.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable

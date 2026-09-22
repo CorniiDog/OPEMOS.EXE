@@ -120,7 +120,7 @@ fn stage_install_media_welcome_assets(
     })
 }
 
-fn installation_media_support_install_commands(
+pub(crate) fn installation_media_support_install_commands(
     files: &[NvidiaInstallerBundleFile],
 ) -> Result<String, String> {
     validate_installer_file_records(files)?;
