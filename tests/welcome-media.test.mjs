@@ -63,19 +63,41 @@ test("install helper binds and revalidates a physical device identity", () => {
   assert.match(helper, /media-info\)/);
   assert.match(helper, /verify_guardian_slot/);
   assert.match(helper, /installed recovery guardian verification failed/);
-  assert.match(helper, /recovery\/lib\/run_in_process_group\.py/);
-  assert.match(helper, /recovery\/lib\/payload_receipt\.py/);
+  assert.match(helper, /\$payload\/lib\/run_in_process_group\.py/);
+  assert.match(helper, /\$payload\/lib\/payload_receipt\.py/);
+  assert.match(helper, /\$payload\/lib\/atomic_output\.py/);
   assert.match(helper, /ui_stage "Installing the recovery guardian into rootfs-\$slot/);
 });
 
-test("guardian installation temporarily unlocks each new SteamOS root and always restores read-only mode", () => {
+test("guardian installation binds persistent home and slot-matched etc overlays with owned cleanup", () => {
   const lifecycle = helper.match(/install_guardian_slot\(\) \{[\s\S]*?\n\}\n\ninstall_to_disk/)?.[0] || "";
-  assert.match(lifecycle, /steamos-chroot --no-overlay --disk "\$device" --partset "\$slot"/);
+  assert.match(lifecycle, /partition_by_label "\$device" "rootfs-\$slot"/);
+  assert.match(lifecycle, /partition_by_label "\$device" home/);
+  assert.match(lifecycle, /partition_by_label "\$device" "var-\$slot"/);
   assert.match(lifecycle, /steamos-readonly disable/);
-  assert.match(lifecycle, /trap restore_readonly EXIT/);
-  assert.match(lifecycle, /"\$installer"[\s\S]*--root \/[\s\S]*--support-revision[\s\S]*--nvidia/);
-  assert.match(lifecycle, /steamos-readonly enable\n\s+trap - EXIT/);
+  assert.match(lifecycle, /trap cleanup_guardian_installation EXIT INT TERM/);
+  assert.match(lifecycle, /mount -o rw "\$root_device" "\$root_mount"/);
+  assert.match(lifecycle, /mount -o rw "\$home_device" "\$home_mount"/);
+  assert.match(lifecycle, /mount -o rw "\$var_device" "\$var_mount"/);
+  assert.match(lifecycle, /etc_root=\$var_mount\/lib\/overlays\/etc\/upper/);
+  assert.match(lifecycle, /--root "\$root_mount"/);
+  assert.match(lifecycle, /--persistent-home-root "\$home_mount"/);
+  assert.match(lifecycle, /--persistent-etc-root "\$etc_root"/);
+  assert.match(lifecycle, /umount "\$var_mount"[\s\S]*umount "\$home_mount"[\s\S]*umount "\$root_mount"/);
+  assert.match(lifecycle, /steamos-readonly enable[\s\S]*could not confirm read-only mode was restored/);
   assert.match(helper, /install_guardian_slot "\$device" "\$slot" "\$support_revision" "\$nvidia_version"/);
+});
+
+test("guardian verification reads shared payload and both slot-matched persistent etc overlays", () => {
+  const verification = helper.match(/verify_guardian_slot\(\) \{[\s\S]*?\n\}\n\ninstall_guardian_slot/)?.[0] || "";
+  assert.match(verification, /partition_by_label "\$device" home/);
+  assert.match(verification, /partition_by_label "\$device" "var-\$slot"/);
+  assert.match(verification, /mount -o ro,noload "\$home_device" "\$home_mount"/);
+  assert.match(verification, /mount -o ro,noload "\$var_device" "\$var_mount"/);
+  assert.match(verification, /payload=\$home_mount\/\.steamos\/open-gpu-kernel-modules-steamos-support\/recovery/);
+  assert.match(verification, /units=\$var_mount\/lib\/overlays\/etc\/upper/);
+  assert.match(verification, /Environment=HOME=\/root/);
+  assert.match(verification, /recovery guardian verification failed for persistent slot-\$slot state/);
 });
 
 test("guarded patcher accepts the audited Valve contract without broad rewriting", (context) => {

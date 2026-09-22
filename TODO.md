@@ -2752,8 +2752,26 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   diff hygiene, and all five installation-media tests pass. A durable
   scheduler request for a Core-owned complete runtime closure, required
   service environment, and SteamOS update-persistent placement is submitted.
-  The corresponding exact Core squash commit, EXE pin/consumer update,
-  imaging validation, exact-head review, and merge remain pending.
+  Core PR #45 subsequently passed exact EXE counterpart review and
+  squash-merged to canonical main as
+  `7a29ebf6a70bbbb0f08d749d5167cfce24ca2af7`. Authenticated canonical bytes
+  now require explicit persistent home and etc roots, install the complete
+  guardian runtime closure, set `HOME=/root` for the services, and retain the
+  existing confinement validation for every added helper. Read-only inspection
+  of the preserved exact installed image confirmed one shared `home` partition
+  and slot-matched `var-A`/`var-B` partitions whose persistent systemd upper
+  directory is `lib/overlays/etc/upper`. The active EXE consumer update pins
+  the exact Core squash, mounts only the selected root, shared home, and
+  slot-matched var partition in an owned workspace, supplies those explicit
+  roots to Core, independently verifies both persistent slots, and requires
+  read-only restoration and complete mount cleanup. All 44 focused
+  installation-media/Core-pin/Windows-workflow tests pass; the exact pinned
+  installer contract test passes against the authenticated canonical Core
+  checkout, as do documentation contracts, shell syntax, formatting,
+  warnings-denied all-target Clippy, and diff hygiene through `heavy.sh` where
+  required. Changed-head Windows artifact construction, rerun of only the
+  failed install/update/persistence stage, exact-head Core review, and merge
+  remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

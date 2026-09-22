@@ -3877,7 +3877,7 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 675_657);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 676_925);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 55);
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "lib/diagnostic_safety.py" && !file.executable
@@ -3902,6 +3902,15 @@ esac
             assert!(PINNED_INSTALLER_FILES
                 .iter()
                 .any(|file| file.path == guardian_dependency && file.executable));
+        }
+        for guardian_runtime_dependency in [
+            "lib/run_in_process_group.py",
+            "lib/payload_receipt.py",
+            "lib/atomic_output.py",
+        ] {
+            assert!(PINNED_INSTALLER_FILES
+                .iter()
+                .any(|file| file.path == guardian_runtime_dependency));
         }
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "bootstrap/launch_desktop_companion.sh" && file.executable
