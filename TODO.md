@@ -2769,9 +2769,12 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   installer contract test passes against the authenticated canonical Core
   checkout, as do documentation contracts, shell syntax, formatting,
   warnings-denied all-target Clippy, and diff hygiene through `heavy.sh` where
-  required. Changed-head Windows artifact construction, rerun of only the
-  failed install/update/persistence stage, exact-head Core review, and merge
-  remain pending.
+  required. Initial CI exposed one stale Rust source invariant for the replaced
+  chroot-only read-only trap; that exact failed test now binds the persistent
+  mount arguments, owned cleanup trap, and asserted read-only restoration and
+  passes locally through `heavy.sh`. Changed-head Windows artifact construction,
+  rerun of only the failed install/update/persistence stage, exact-head Core
+  review, and merge remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

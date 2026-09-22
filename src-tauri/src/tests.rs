@@ -4404,9 +4404,13 @@ esac
         assert!(!helper.contains("bin/opemos-interstitial"));
         assert!(helper.contains("installed recovery guardian verification failed"));
         assert!(helper.contains("ui_stage \"Installing the recovery guardian into rootfs-$slot"));
+        assert!(helper.contains("partition_by_label \"$device\" home"));
+        assert!(helper.contains("partition_by_label \"$device\" \"var-$slot\""));
+        assert!(helper.contains("--persistent-home-root \"$home_mount\""));
+        assert!(helper.contains("--persistent-etc-root \"$etc_root\""));
+        assert!(helper.contains("trap cleanup_guardian_installation EXIT INT TERM"));
         assert!(helper.contains("steamos-readonly disable"));
-        assert!(helper.contains("trap restore_readonly EXIT"));
-        assert!(helper.contains("steamos-readonly enable\n      trap - EXIT"));
+        assert!(helper.contains("could not confirm read-only mode was restored for rootfs-$slot"));
         assert!(!helper.contains("eval "));
 
         assert!(patcher.contains("unsupported Valve installer structure for guarded anchor"));
