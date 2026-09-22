@@ -3877,8 +3877,8 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 662_686);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 52);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 675_657);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 55);
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "lib/diagnostic_safety.py" && !file.executable
         }));
@@ -3894,6 +3894,15 @@ esac
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/recoveryctl.sh" && file.executable));
+        for guardian_dependency in [
+            "lib/recovery_policy.py",
+            "lib/recovery_fallback_state.py",
+            "lib/validate_github_meta.py",
+        ] {
+            assert!(PINNED_INSTALLER_FILES
+                .iter()
+                .any(|file| file.path == guardian_dependency && file.executable));
+        }
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "bootstrap/launch_desktop_companion.sh" && file.executable
         }));
@@ -4004,6 +4013,17 @@ esac
         assert!(guest_permissions.contains("\"$WORK/support/lib/verify_initramfs.py\""));
         assert!(guest_permissions.contains("chmod 0644 "));
         assert!(guest_permissions.contains("\"$WORK/support/lib/atomic_output.py\""));
+        let media_install_commands =
+            installation_media_support_install_commands(&installer_files).unwrap();
+        for guardian_dependency in [
+            "lib/recovery_policy.py",
+            "lib/recovery_fallback_state.py",
+            "lib/validate_github_meta.py",
+        ] {
+            assert!(media_install_commands.contains(&format!(
+                "sudo install -D -o root -g root -m 0755 \"$WORK/support/{guardian_dependency}\" \"$ROOT/usr/lib/opemos-install-media/support/{guardian_dependency}\""
+            )));
+        }
 
         let uppercase_commit = "A".repeat(40);
         assert!(validate_pinned_support_files(&uppercase_commit, &PINNED_INSTALLER_FILES)
@@ -4310,6 +4330,20 @@ esac
         let html = std::str::from_utf8(INSTALL_MEDIA_WELCOME_HTML).unwrap();
         let javascript = std::str::from_utf8(INSTALL_MEDIA_WELCOME_JS).unwrap();
 
+        for (name, bytes) in [
+            ("open-opemos-welcome", INSTALL_MEDIA_WELCOME),
+            ("opemos-install-helper", INSTALL_MEDIA_HELPER),
+            ("patch_repair_device.py", INSTALL_MEDIA_PATCHER),
+            ("Open-OPEMOS.desktop", INSTALL_MEDIA_DESKTOP),
+            ("welcome_server.py", INSTALL_MEDIA_WELCOME_SERVER),
+        ] {
+            assert!(
+                !bytes.contains(&b'\r'),
+                "{name} must be embedded with Unix line endings so booted media can execute it"
+            );
+        }
+        assert!(INSTALL_MEDIA_WELCOME.starts_with(b"#!/usr/bin/env bash\n"));
+
         assert!(desktop.contains("Name=Install SteamOS with NVIDIA drivers"));
         assert!(desktop.contains("Exec=/home/deck/tools/open-opemos-welcome"));
         assert!(desktop.contains("X-KDE-AutostartScript=true"));
@@ -4361,6 +4395,9 @@ esac
         assert!(!helper.contains("bin/opemos-interstitial"));
         assert!(helper.contains("installed recovery guardian verification failed"));
         assert!(helper.contains("ui_stage \"Installing the recovery guardian into rootfs-$slot"));
+        assert!(helper.contains("steamos-readonly disable"));
+        assert!(helper.contains("trap restore_readonly EXIT"));
+        assert!(helper.contains("steamos-readonly enable\n      trap - EXIT"));
         assert!(!helper.contains("eval "));
 
         assert!(patcher.contains("unsupported Valve installer structure for guarded anchor"));

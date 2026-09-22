@@ -276,7 +276,7 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 52] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 55] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
         sha256: "55854918a14facc1924c2aed834759c9f9324115d252c540c389d93a6c5beda2",
@@ -341,6 +341,24 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 52] = [
         path: "lib/recovery_status.py",
         sha256: "752cc19913d35f0ab61143d3ede1227128ceabe4bacb2021e6c56394b729a7c5",
         bytes: 20_395,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/recovery_policy.py",
+        sha256: "605ef7fe98216db99bfc4bca1d39f105298ef5ceee411a9935302629b8e3bce6",
+        bytes: 4_522,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/recovery_fallback_state.py",
+        sha256: "591076bea90513928e24c6e9afa8fb3fbb2e012a1f649ac8794cdd53adead218",
+        bytes: 7_149,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/validate_github_meta.py",
+        sha256: "3a26fc6c8bdf66d785f7a78b0c0aecb1aaad979f1aafc2ed9c1780f334b2dab1",
+        bytes: 1_300,
         executable: true,
     },
     PinnedInstallerFile {

@@ -24,6 +24,9 @@ test("installation-media UI delegates only bounded operations", () => {
   assert.match(welcome, /Diagnostics — review media identity/);
   assert.match(welcome, /last-install-log/);
   assert.match(welcome, /flock -n 8/);
+  assert.match(welcome, /welcome-startup\.log/);
+  assert.match(welcome, /installer is already running/);
+  assert.match(welcome, /before a stable window opened/);
   assert.match(welcome, /--start-fullscreen/);
   assert.match(welcome, /welcome_server\.py/);
   assert.match(welcome, /TRUE shutdown/);
@@ -61,6 +64,16 @@ test("install helper binds and revalidates a physical device identity", () => {
   assert.match(helper, /verify_guardian_slot/);
   assert.match(helper, /installed recovery guardian verification failed/);
   assert.match(helper, /ui_stage "Installing the recovery guardian into rootfs-\$slot/);
+});
+
+test("guardian installation temporarily unlocks each new SteamOS root and always restores read-only mode", () => {
+  const lifecycle = helper.match(/install_guardian_slot\(\) \{[\s\S]*?\n\}\n\ninstall_to_disk/)?.[0] || "";
+  assert.match(lifecycle, /steamos-chroot --no-overlay --disk "\$device" --partset "\$slot"/);
+  assert.match(lifecycle, /steamos-readonly disable/);
+  assert.match(lifecycle, /trap restore_readonly EXIT/);
+  assert.match(lifecycle, /"\$installer"[\s\S]*--root \/[\s\S]*--support-revision[\s\S]*--nvidia/);
+  assert.match(lifecycle, /steamos-readonly enable\n\s+trap - EXIT/);
+  assert.match(helper, /install_guardian_slot "\$device" "\$slot" "\$support_revision" "\$nvidia_version"/);
 });
 
 test("guarded patcher accepts the audited Valve contract without broad rewriting", (context) => {

@@ -201,6 +201,31 @@ verify_guardian_slot() {
     die "installed recovery guardian verification failed for rootfs-$slot"
 }
 
+install_guardian_slot() {
+  local device=$1 slot=$2 support_revision=$3 nvidia_version=$4
+  steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- \
+    sh -eu -c '
+      installer=$1
+      support_revision=$2
+      nvidia_version=$3
+      steamos-readonly disable
+      restore_readonly() {
+        steamos-readonly enable
+      }
+      trap restore_readonly EXIT
+      "$installer" \
+        --root / \
+        --support-revision "$support_revision" \
+        --nvidia "$nvidia_version"
+      steamos-readonly enable
+      trap - EXIT
+    ' opemos-guardian-installer \
+      "$SUPPORT_ROOT/bootstrap/install_recovery_guardian_to_root.sh" \
+      "$support_revision" \
+      "$nvidia_version" ||
+    die "installed recovery guardian failed for rootfs-$slot"
+}
+
 install_to_disk() {
   local mode=$1 requested=$2 expected_identity=$3 confirmation=$4
   local device current_identity basename majmin phrase
@@ -260,11 +285,7 @@ install_to_disk() {
   ui_stage "Valve installation finished. Preparing offline and delayed-network recovery."
   for slot in A B; do
     ui_stage "Installing the recovery guardian into rootfs-$slot."
-    steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- \
-      "$SUPPORT_ROOT/bootstrap/install_recovery_guardian_to_root.sh" \
-        --root / \
-        --support-revision "$support_revision" \
-        --nvidia "$nvidia_version"
+    install_guardian_slot "$device" "$slot" "$support_revision" "$nvidia_version"
   done
   ui_stage "Independently verifying recovery-guardian identity in both A/B slots."
   for slot in A B; do

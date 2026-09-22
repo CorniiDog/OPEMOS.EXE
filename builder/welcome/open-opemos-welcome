@@ -10,32 +10,73 @@ readonly WELCOME_UI=/usr/share/opemos-install-media/ui/welcome
 readonly WELCOME_SERVER=/usr/lib/opemos-install-media/welcome_server.py
 readonly STATE_DIRECTORY=/home/deck/.local/state/open-opemos
 readonly LAST_LOG_FILE="$STATE_DIRECTORY/last-install-log"
+readonly STARTUP_LOG_FILE="$STATE_DIRECTORY/welcome-startup.log"
+
+show_startup_message() {
+  local kind=$1 text=$2
+  printf '%s\n' "$text" >&2
+  if command -v zenity >/dev/null 2>&1; then
+    command zenity "--$kind" --title="SteamOS with NVIDIA drivers" --width=560 \
+      --no-wrap --text="$text" >/dev/null 2>&1 || true
+  elif command -v kdialog >/dev/null 2>&1; then
+    if [[ "$kind" == error ]]; then
+      command kdialog --error "$text" --title "SteamOS with NVIDIA drivers" >/dev/null 2>&1 || true
+    else
+      command kdialog --msgbox "$text" --title "SteamOS with NVIDIA drivers" >/dev/null 2>&1 || true
+    fi
+  elif command -v xmessage >/dev/null 2>&1; then
+    command xmessage -center "$text" >/dev/null 2>&1 || true
+  fi
+}
+
+if [[ -L "$STATE_DIRECTORY" ]] || ! mkdir -p "$STATE_DIRECTORY" || ! chmod 0700 "$STATE_DIRECTORY"; then
+  show_startup_message error "The installer could not create its private diagnostic directory. Installation has not started."
+  exit 1
+fi
+if [[ -e "$STARTUP_LOG_FILE" && ( ! -f "$STARTUP_LOG_FILE" || -L "$STARTUP_LOG_FILE" ) ]]; then
+  show_startup_message error "The installer startup log is unsafe. Installation has not started."
+  exit 1
+fi
+touch "$STARTUP_LOG_FILE"
+chmod 0600 "$STARTUP_LOG_FILE"
+exec >>"$STARTUP_LOG_FILE" 2>&1
+printf '\n[%s] Starting installation-media welcome interface.\n' "$(date --iso-8601=seconds 2>/dev/null || date)"
 
 for tool in awk flock sudo tee; do
   command -v "$tool" >/dev/null 2>&1 || {
-    printf 'The SteamOS NVIDIA installer requires %s in the recovery environment.\n' "$tool" >&2
+    show_startup_message error "The SteamOS NVIDIA installer requires $tool in the recovery environment. Installation has not started.\n\nStartup log: $STARTUP_LOG_FILE"
     exit 1
   }
 done
 [[ -x "$HELPER" && ! -L "$HELPER" ]] || {
-  printf 'The protected installation helper is missing from this media.\n' >&2
+  show_startup_message error "The protected installation helper is missing from this media. Installation has not started.\n\nStartup log: $STARTUP_LOG_FILE"
   exit 1
 }
 
 exec 8>/tmp/open-opemos-welcome.lock
 if ! flock -n 8; then
-  exit 0
+  show_startup_message info "The SteamOS NVIDIA installer is already running. Check the taskbar or other desktops. If no installer window is visible, restart the recovery session and try again.\n\nStartup log: $STARTUP_LOG_FILE"
+  exit 1
 fi
 
 launch_fullscreen_welcome() {
-  local browser runtime server_pid browser_pid port url
-  [[ -x "$WELCOME_SERVER" && ! -L "$WELCOME_SERVER" && -d "$WELCOME_UI" && ! -L "$WELCOME_UI" ]] || return 1
-  command -v python3 >/dev/null 2>&1 || return 1
+  local browser runtime server_pid browser_pid port url browser_status started_at elapsed
+  [[ -x "$WELCOME_SERVER" && ! -L "$WELCOME_SERVER" && -d "$WELCOME_UI" && ! -L "$WELCOME_UI" ]] || {
+    printf 'The protected graphical installer bundle is missing or unsafe.\n'
+    return 1
+  }
+  command -v python3 >/dev/null 2>&1 || {
+    printf 'Python 3 is unavailable for the graphical installer.\n'
+    return 1
+  }
   for browser in chromium chromium-browser google-chrome-stable firefox; do
     command -v "$browser" >/dev/null 2>&1 && break
     browser=""
   done
-  [[ -n "$browser" ]] || return 1
+  [[ -n "$browser" ]] || {
+    printf 'No supported browser is installed for the graphical installer.\n'
+    return 1
+  }
   runtime=$(mktemp -d /tmp/open-opemos-welcome.XXXXXX) || return 1
   chmod 0700 "$runtime"
   cleanup_graphical() {
@@ -59,6 +100,8 @@ launch_fullscreen_welcome() {
   [[ "$port" =~ ^[0-9]+$ ]] || { cleanup_graphical; trap - EXIT INT TERM; return 1; }
   url="http://127.0.0.1:$port/"
   while kill -0 "$server_pid" 2>/dev/null; do
+    rm -f "$runtime/ui-ready"
+    started_at=$SECONDS
     if [[ "$browser" == firefox ]]; then
       [[ -d "$runtime/firefox-profile" ]] || mkdir -m 0700 "$runtime/firefox-profile"
       "$browser" --no-remote --profile "$runtime/firefox-profile" --kiosk "$url" &
@@ -71,8 +114,17 @@ launch_fullscreen_welcome() {
     browser_pid=$!
     printf '%s\n' "$browser_pid" >"$runtime/browser.pid"
     chmod 0600 "$runtime/browser.pid"
-    wait "$browser_pid" || true
+    browser_status=0
+    wait "$browser_pid" || browser_status=$?
+    elapsed=$((SECONDS - started_at))
     browser_pid=""
+    if (( browser_status != 0 )) || [[ ! -f "$runtime/ui-ready" || "$elapsed" -lt 2 ]]; then
+      printf 'The graphical installer browser (%s) exited with status %s after %s second(s) before a stable window opened.\n' \
+        "$browser" "$browser_status" "$elapsed"
+      cleanup_graphical
+      trap - EXIT INT TERM
+      return 1
+    fi
     [[ -e "$runtime/operation-running" ]] || break
     sleep 0.2
   done
@@ -86,6 +138,8 @@ launch_fullscreen_welcome() {
 if launch_fullscreen_welcome; then
   exit 0
 fi
+
+show_startup_message info "The full-screen installer could not open. The recovery interface will use its existing fallback window.\n\nStartup log: $STARTUP_LOG_FILE"
 
 export GTK_THEME="${GTK_THEME:-Breeze-Dark}"
 [[ -d "$UI_CONFIG" ]] && export XDG_CONFIG_HOME="$UI_CONFIG"

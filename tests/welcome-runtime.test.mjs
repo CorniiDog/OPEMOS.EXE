@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -35,6 +35,8 @@ test("mock welcome controller serves and completes the real UI contract safely",
   assert.match(port, /^\d+$/);
   const origin = `http://127.0.0.1:${port}`;
   const html = await (await fetch(`${origin}/`)).text();
+  const readyMarker = statSync(join(runtime, "ui-ready"));
+  assert.equal(readyMarker.mode & 0o777, 0o600);
   const token = html.match(/window\.__OPEMOS_SESSION_TOKEN__=("[0-9a-f]+")/)?.[1];
   assert.ok(token);
   const headers = {

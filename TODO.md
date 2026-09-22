@@ -2682,6 +2682,50 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   spacing only to the existing release-review primary boundary and control
   stack; focused layout validation, changed-head Windows startup/artifact,
   visual confirmation, and refreshed exact-head Core review remain pending.
+  Draft PR #123 then completed packaged Maintainer construction from the
+  authenticated source and produced an exact 8,120,172,544-byte integrated
+  image with SHA-256
+  `e8c277ec104a6118a2e5be9d202b2b3a6a883001641181d581081d67741cb950`
+  and a 42,347-byte manifest with SHA-256
+  `f84177af420ed90d977220fb9eb1e0b831eb611f028a4721c47b49c6dbcbfd98`.
+  A disposable WHPX boot reached the SteamOS KDE desktop, where executing the
+  real bundled launcher failed with `env: 'bash\r': No such file or directory`.
+  The bounded remediation enforces LF checkout for only `builder/welcome/**`
+  and adds a regression requiring Unix line endings across the embedded
+  launcher/helper/patcher/desktop/server assets plus the launcher's exact Unix
+  shebang. The focused Rust regression passes 1/1 through `heavy.sh`; format,
+  attribute, and diff-hygiene checks pass. A rebuilt exact Windows artifact,
+  corrected head `1ee1776f531da6c56d9d65f57ed932c787dc0d85` then passed all
+  required CI and produced artifact `10624946974`. Its exact executable
+  SHA-256 is `bc2770234cf26c71e1d9dddb3fd3134dd57ade7cb222ef30e8a1be54760285cd`.
+  Native Windows packaged UI and contained 32-GiB virtual-USB write, flush,
+  readback, and cleanup acceptance pass. A fresh WHPX boot of the exact
+  8,120,172,544-byte image SHA-256
+  `94573c92251a3043893c70160f5f3b33dcb4fd9ff55f1ab362faed15cbec6aa2`
+  reaches KDE and opens the real recovery launcher, resolving the CRLF failure.
+  The contained 64-GiB install target then reaches Valve partitioning and EFI
+  installation but stops safely while installing the offline guardian because
+  both new SteamOS roots remain read-only. The bounded remediation now disables
+  SteamOS read-only mode only inside each selected target root, installs the
+  authenticated guardian, and restores read-only mode through an EXIT trap;
+  a focused regression binds that lifecycle. Focused validation, a rebuilt
+  exact Windows artifact, rerun of only the failed install/first-boot/update/
+  Maintainer stages, required CI, and fresh exact-head Core review remain
+  pending. Exact head `d36d9600386b87fe254d12d7cf393f025a30273c`
+  passed required CI, produced closed-validated artifact `10663023176`, and
+  rebuilt an authenticated image. The failed Boot-B stage then completed Valve
+  partitioning and EFI setup but stopped before guardian mutation because the
+  pinned Core installer bundle omitted three exact runtime dependencies named
+  by `install_recovery_guardian_to_root.sh`: `recovery_policy.py`,
+  `recovery_fallback_state.py`, and `validate_github_meta.py`. Their bytes,
+  lengths, executable modes, and blob identities were authenticated directly
+  from canonical GitHub Core commit `c5d66d0fabbebf17a5dfb3fc636c813be3fa9a82`;
+  the bounded correction adds only those existing Core files to the immutable
+  consumer list and binds the guardian dependency closure in the focused
+  contract regression. Rebuilt exact-head CI/artifact, fresh Core review, and
+  rerun of only the failed Boot-B stage remain pending. PR #123 stays draft;
+  no physical media, publication, trust,
+  boundary, integrity, or governance action occurred.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
