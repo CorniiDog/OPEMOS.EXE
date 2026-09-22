@@ -188,6 +188,8 @@ verify_guardian_slot() {
       test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/lib/desktop_update_generations.py
       test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/lib/interstitial_progress.py
       test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/lib/validate_interstitial_binary.py
+      test -f /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/lib/run_in_process_group.py
+      test -f /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/lib/payload_receipt.py
       test -f /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/trust/desktop-update-signers.json
       test -f /etc/systemd/system/opemos-nvidia-guardian.service
       test -f /etc/systemd/system/opemos-interstitial.service

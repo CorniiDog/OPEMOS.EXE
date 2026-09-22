@@ -2725,7 +2725,35 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   contract regression. Rebuilt exact-head CI/artifact, fresh Core review, and
   rerun of only the failed Boot-B stage remain pending. PR #123 stays draft;
   no physical media, publication, trust,
-  boundary, integrity, or governance action occurred.
+  boundary, integrity, or governance action occurred. PR #123 subsequently
+  squash-merged through protected main as
+  `c2d8d9996589828cef439da6b98a84482de787f8`. Exact protected-main Windows
+  artifact SHA-256
+  `f16b2ba025e01a35dad56bb0c33041ff8af64fc9cf067387357351457058425d`
+  completed native packaged Maintainer acceptance and the installed-image KVM
+  path. A disposable KVM-B boot proved SteamOS userspace,
+  `graphical.target`, and a `seat0`/`tty1` session; Valve's normal updater
+  completed with `UPDATE_RC=0`, switching root B kernel
+  `6.16.12-valve24.4-1-neptune-616-gfe145653a794` to root A kernel
+  `6.16.12-valve24.5-1-neptune-616-gb2f7cfe85e45`, where graphical userspace
+  returned. The same run demonstrated that guardian persistence is not yet
+  valid: Core's canonical `c5d66d0` installer places its payload beneath the
+  slot-local root's `/home`, which the runtime home partition masks; its
+  service environment leaves `HOME` unset although `common.sh` expands it;
+  and its selective copy omits the already-pinned `run_in_process_group.py`
+  and `payload_receipt.py` used at runtime. After the successful A/B update,
+  root A contained no guardian/repair units and the repair timer was inactive.
+  Evidence `RESULT.md` SHA-256 is
+  `bf8d09deda754ce555dbfffceeb47a00cf6b61a526c1dccf5c6c8d9e4dedddd5`;
+  update log SHA-256 is
+  `f44292b85408b143a9f73ac13bc7ed7af68fbab636721e5c22cbb7866e16f7d9`.
+  EXE's focused verifier now requires both demonstrated runtime dependencies
+  so this incomplete installation fails before first boot; shell syntax,
+  diff hygiene, and all five installation-media tests pass. A durable
+  scheduler request for a Core-owned complete runtime closure, required
+  service environment, and SteamOS update-persistent placement is submitted.
+  The corresponding exact Core squash commit, EXE pin/consumer update,
+  imaging validation, exact-head review, and merge remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

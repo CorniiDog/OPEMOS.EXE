@@ -63,6 +63,8 @@ test("install helper binds and revalidates a physical device identity", () => {
   assert.match(helper, /media-info\)/);
   assert.match(helper, /verify_guardian_slot/);
   assert.match(helper, /installed recovery guardian verification failed/);
+  assert.match(helper, /recovery\/lib\/run_in_process_group\.py/);
+  assert.match(helper, /recovery\/lib\/payload_receipt\.py/);
   assert.match(helper, /ui_stage "Installing the recovery guardian into rootfs-\$slot/);
 });
 
