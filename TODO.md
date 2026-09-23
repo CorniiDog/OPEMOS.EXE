@@ -2837,8 +2837,25 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   Btrfs subvolume flag. Rerunning only that failed stage passed after an
   explicit `mount -o remount,rw /`. This correction applies that exact remount
   in both normal and trap cleanup restoration paths and binds both calls in the
-  focused lifecycle regression. A rebuilt exact artifact, failed-stage rerun,
-  update/persistence/self-heal proof, and cleanup remain pending.
+  focused lifecycle regression. PR #127 passed all nine required jobs and exact
+  Core review, then squash-merged to protected main as
+  `c98df0b07c8699c7935c8187d71cbd37e101d2a1`. Its exact Windows artifact
+  `10756785112` passed startup and provenance checks; the 2,237,081,682-byte
+  archive has SHA-256
+  `994119b748387e7337dd4d26149a66c7c6182e4b87198f2b87459c2af4d18888`.
+  Two bounded headless construction attempts preserved source SHA-256
+  `4254ee02ec34ae8add9aceef1881a2ce675a9d0176171df92e0eaa1bf014c594`
+  and left output, candidate, and QEMU counts at zero, but both stopped at the
+  fixed 120-second production appliance-readiness deadline. The warmed retry's
+  appliance log (SHA-256
+  `d6533a18f8011e8ec39c263a05bc9d49b031933f21e044cd8863473eb93260e3`)
+  proves healthy Fedora reached SSH/basic targets, configured networking at
+  about 65 seconds, and continued cloud-init normally until the deadline killed
+  it. This bounded correction gives only native Windows production boots a
+  300-second readiness deadline; Linux/macOS retain 120 seconds and the exact
+  TCG harness override remains unchanged. A rebuilt exact artifact,
+  failed-stage rerun, update/persistence/self-heal proof, and cleanup remain
+  pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
