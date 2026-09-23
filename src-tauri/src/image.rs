@@ -2414,10 +2414,11 @@ mod windows_virtual_usb {
     }
 }
 
+#[cfg(all(target_os = "windows", test))]
+pub(crate) use windows_virtual_usb::is_sparse as windows_virtual_usb_is_sparse;
 #[cfg(target_os = "windows")]
 pub(crate) use windows_virtual_usb::{
     cleanup as cleanup_windows_virtual_usb, create as create_windows_virtual_usb,
-    is_sparse as windows_virtual_usb_is_sparse,
 };
 
 #[derive(Clone)]

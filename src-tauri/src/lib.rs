@@ -269,6 +269,226 @@ pub fn run_windows_virtual_usb_harness(arguments: &[String]) -> Result<Option<St
     Ok(None)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct HeadlessImageBuildRequest {
+    input: PathBuf,
+    output_root: PathBuf,
+}
+
+fn parse_headless_image_build_request(
+    arguments: &[String],
+) -> Result<Option<HeadlessImageBuildRequest>, String> {
+    if arguments.first().map(String::as_str) != Some("headless-build") {
+        return Ok(None);
+    }
+    if arguments.len() != 5 || arguments[1] != "--input" || arguments[3] != "--output-root" {
+        return Err(
+            "Usage: headless-build --input IMAGE --output-root EMPTY_OWNED_DIRECTORY.".into(),
+        );
+    }
+    Ok(Some(HeadlessImageBuildRequest {
+        input: PathBuf::from(&arguments[2]),
+        output_root: PathBuf::from(&arguments[4]),
+    }))
+}
+
+#[cfg(target_os = "windows")]
+fn validate_headless_build_paths(
+    request: HeadlessImageBuildRequest,
+) -> Result<HeadlessImageBuildRequest, String> {
+    let input_metadata = fs::symlink_metadata(&request.input)
+        .map_err(|error| format!("Could not inspect the headless-build input: {error}"))?;
+    if input_metadata.file_type().is_symlink() || !input_metadata.is_file() {
+        return Err("The headless-build input must be a non-linked regular file.".into());
+    }
+    let input = fs::canonicalize(&request.input)
+        .map_err(|error| format!("Could not canonicalize the headless-build input: {error}"))?;
+
+    let output_metadata = fs::symlink_metadata(&request.output_root)
+        .map_err(|error| format!("Could not inspect the headless-build output root: {error}"))?;
+    if output_metadata.file_type().is_symlink() || !output_metadata.is_dir() {
+        return Err("The headless-build output root must be a non-linked directory.".into());
+    }
+    let output_root = fs::canonicalize(&request.output_root).map_err(|error| {
+        format!("Could not canonicalize the headless-build output root: {error}")
+    })?;
+    if fs::read_dir(&output_root)
+        .map_err(|error| format!("Could not inspect the headless-build output root: {error}"))?
+        .next()
+        .is_some()
+    {
+        return Err("The headless-build output root must be empty before construction.".into());
+    }
+    if input.starts_with(&output_root) || output_root == input {
+        return Err("The headless-build input and output root must be separate.".into());
+    }
+    Ok(HeadlessImageBuildRequest { input, output_root })
+}
+
+#[cfg(target_os = "windows")]
+struct HeadlessImageBuildCleanup(Option<tauri::AppHandle>);
+
+#[cfg(target_os = "windows")]
+impl Drop for HeadlessImageBuildCleanup {
+    fn drop(&mut self) {
+        if let Some(app) = self.0.take() {
+            let _ = stop_appliance_blocking(app);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn wait_for_headless_appliance(app: &tauri::AppHandle, nvidia: bool) -> Result<(), String> {
+    let deadline = Instant::now()
+        + if nvidia {
+            NVIDIA_BUILD_BOOT_TIMEOUT + Duration::from_secs(60)
+        } else {
+            BOOT_TIMEOUT + Duration::from_secs(60)
+        };
+    loop {
+        let (state, message) = if nvidia {
+            let status =
+                tauri::async_runtime::block_on(get_nvidia_build_appliance_status(app.clone()))?;
+            (status.state, status.message)
+        } else {
+            let status = get_appliance_status_blocking(app.clone())?;
+            (status.state, status.message)
+        };
+        match state.as_str() {
+            "ready" => return Ok(()),
+            "failed" | "timedOut" => return Err(message),
+            _ if Instant::now() >= deadline => {
+                return Err(
+                    "The headless build appliance exceeded its bounded readiness deadline.".into(),
+                )
+            }
+            _ => thread::sleep(Duration::from_millis(750)),
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_headless_image_build(request: HeadlessImageBuildRequest) -> Result<String, String> {
+    let request = validate_headless_build_paths(request)?;
+    let input_sha256 = sha256_file(&request.input)?;
+    let app = tauri::Builder::default()
+        .any_thread()
+        .manage(Mutex::new(ApplianceManager::default()))
+        .manage(Mutex::new(NvidiaBuildManager::default()))
+        .build(tauri::generate_context!())
+        .map_err(|error| format!("Could not create the headless build runtime: {error}"))?;
+    let app = app.handle().clone();
+    let mut cleanup = HeadlessImageBuildCleanup(Some(app.clone()));
+
+    start_appliance_blocking(
+        request.input.to_string_lossy().into_owned(),
+        Some(request.output_root.to_string_lossy().into_owned()),
+        app.clone(),
+    )?;
+    wait_for_headless_appliance(&app, false)?;
+    let inspection_deadline = Instant::now() + Duration::from_secs(60);
+    let inspection = loop {
+        match inspect_selected_image_blocking(app.clone()) {
+            Err(error)
+                if transient_guest_connection_error(&error)
+                    && Instant::now() < inspection_deadline =>
+            {
+                thread::sleep(Duration::from_millis(250));
+            }
+            result => break result?,
+        }
+    };
+    if !inspection.layout.recognized {
+        return Err("The headless-build input is not a recognized SteamOS layout.".into());
+    }
+    tauri::async_runtime::block_on(verify_working_image(app.clone()))?;
+    preflight_selected_marker_blocking(app.clone())?;
+    let mutation = mutate_selected_marker_after_preflight_blocking(app.clone())?;
+    if !mutation.input_unchanged {
+        return Err(
+            "The headless build could not prove that its source remained unchanged.".into(),
+        );
+    }
+    let target = tauri::async_runtime::block_on(assess_nvidia_target(app.clone()))?;
+    if !target.ready {
+        return Err(format!(
+            "The headless-build target is not installable: {}",
+            target.message
+        ));
+    }
+
+    let mut resolution = tauri::async_runtime::block_on(resolve_published_nvidia(
+        app.clone(),
+        Some("automatic".into()),
+        Some(false),
+    ))?;
+    let mut nvidia_appliance_ready = false;
+    if resolution.status == "build_required" {
+        start_nvidia_install_appliance_blocking(app.clone())?;
+        wait_for_headless_appliance(&app, true)?;
+        nvidia_appliance_ready = true;
+        resolution = tauri::async_runtime::block_on(build_nvidia_target_on_demand(app.clone()))?;
+    }
+    if resolution.status != "compatible" {
+        return Err(format!(
+            "No exact authenticated NVIDIA support is available: {}",
+            resolution.message
+        ));
+    }
+    tauri::async_runtime::block_on(prepare_nvidia_userspace(app.clone()))?;
+    tauri::async_runtime::block_on(prepare_nvidia_installer_bundle(app.clone()))?;
+    if !nvidia_appliance_ready {
+        start_nvidia_install_appliance_blocking(app.clone())?;
+        wait_for_headless_appliance(&app, true)?;
+    }
+    let validation = validate_nvidia_install_handoff_blocking(app.clone())?;
+    if validation.status != "validated" || !validation.mounts_released {
+        return Err("The headless-build installer handoff did not close-validate.".into());
+    }
+    let installed = install_nvidia_to_working_image_blocking(app.clone())?;
+    if installed.status != "success" || !installed.mounts_released {
+        return Err("The headless-build installer did not finish with released mounts.".into());
+    }
+    let exported = export_marker_image_blocking(app.clone(), false)?;
+    if exported.source_sha256 != input_sha256 || sha256_file(&request.input)? != input_sha256 {
+        return Err("The headless build could not prove final source immutability.".into());
+    }
+    let completed = completed_nvidia_image_from_path(&exported.path)?
+        .ok_or("The headless build output omitted its authenticated adjacent manifest.")?;
+    let stopped = stop_appliance_blocking(app.clone())?;
+    if stopped.state != "stopped" {
+        return Err("The headless build could not confirm appliance cleanup.".into());
+    }
+    cleanup.0 = None;
+    serde_json::to_string(&serde_json::json!({
+        "schemaVersion": 1,
+        "status": "passed",
+        "kind": "headless-authenticated-nvidia-image-build",
+        "sourceSha256": input_sha256,
+        "output": completed.output,
+        "physicalMedia": false,
+        "published": false,
+        "cleanupComplete": true
+    }))
+    .map_err(|error| format!("Could not encode headless-build evidence: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+pub fn run_windows_headless_image_builder(arguments: &[String]) -> Result<Option<String>, String> {
+    let Some(request) = parse_headless_image_build_request(arguments)? else {
+        return Ok(None);
+    };
+    run_windows_headless_image_build(request).map(Some)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn run_windows_headless_image_builder(arguments: &[String]) -> Result<Option<String>, String> {
+    if parse_headless_image_build_request(arguments)?.is_some() {
+        return Err("The headless authenticated image builder requires Windows.".into());
+    }
+    Ok(None)
+}
+
 const READY_MARKER: &str = "SteamOS NVIDIA Image Builder appliance\nREADY";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
 const TCG_HARNESS_BOOT_TIMEOUT_SECS: u64 = 1200;
@@ -313,7 +533,7 @@ const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/OPEMOS";
-const NVIDIA_SUPPORT_COMMIT: &str = "c5d66d0fabbebf17a5dfb3fc636c813be3fa9a82";
+const NVIDIA_SUPPORT_COMMIT: &str = "7a29ebf6a70bbbb0f08d749d5167cfce24ca2af7";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 // Compatibility target only. This does not become the production installer pin

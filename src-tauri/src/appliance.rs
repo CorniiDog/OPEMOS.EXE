@@ -4062,13 +4062,13 @@ pub(crate) async fn mutate_test_marker(app: tauri::AppHandle) -> Result<MarkerMu
     .map_err(|error| format!("Synthetic mutation worker failed: {error}"))?
 }
 
-#[cfg(test)]
+#[cfg(any(test, target_os = "windows"))]
 pub(crate) fn preflight_selected_marker_blocking(app: tauri::AppHandle) -> Result<(), String> {
     let session = ready_session_snapshot(&app, "selected-image marker preflight")?;
     preflight_user_marker(&session)
 }
 
-#[cfg(test)]
+#[cfg(any(test, target_os = "windows"))]
 pub(crate) fn mutate_selected_marker_after_preflight_blocking(
     app: tauri::AppHandle,
 ) -> Result<UserMarkerMutation, String> {

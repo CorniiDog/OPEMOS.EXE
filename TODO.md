@@ -2725,7 +2725,77 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   contract regression. Rebuilt exact-head CI/artifact, fresh Core review, and
   rerun of only the failed Boot-B stage remain pending. PR #123 stays draft;
   no physical media, publication, trust,
-  boundary, integrity, or governance action occurred.
+  boundary, integrity, or governance action occurred. PR #123 subsequently
+  squash-merged through protected main as
+  `c2d8d9996589828cef439da6b98a84482de787f8`. Exact protected-main Windows
+  artifact SHA-256
+  `f16b2ba025e01a35dad56bb0c33041ff8af64fc9cf067387357351457058425d`
+  completed native packaged Maintainer acceptance and the installed-image KVM
+  path. A disposable KVM-B boot proved SteamOS userspace,
+  `graphical.target`, and a `seat0`/`tty1` session; Valve's normal updater
+  completed with `UPDATE_RC=0`, switching root B kernel
+  `6.16.12-valve24.4-1-neptune-616-gfe145653a794` to root A kernel
+  `6.16.12-valve24.5-1-neptune-616-gb2f7cfe85e45`, where graphical userspace
+  returned. The same run demonstrated that guardian persistence is not yet
+  valid: Core's canonical `c5d66d0` installer places its payload beneath the
+  slot-local root's `/home`, which the runtime home partition masks; its
+  service environment leaves `HOME` unset although `common.sh` expands it;
+  and its selective copy omits the already-pinned `run_in_process_group.py`
+  and `payload_receipt.py` used at runtime. After the successful A/B update,
+  root A contained no guardian/repair units and the repair timer was inactive.
+  Evidence `RESULT.md` SHA-256 is
+  `bf8d09deda754ce555dbfffceeb47a00cf6b61a526c1dccf5c6c8d9e4dedddd5`;
+  update log SHA-256 is
+  `f44292b85408b143a9f73ac13bc7ed7af68fbab636721e5c22cbb7866e16f7d9`.
+  EXE's focused verifier now requires both demonstrated runtime dependencies
+  so this incomplete installation fails before first boot; shell syntax,
+  diff hygiene, and all five installation-media tests pass. A durable
+  scheduler request for a Core-owned complete runtime closure, required
+  service environment, and SteamOS update-persistent placement is submitted.
+  Core PR #45 subsequently passed exact EXE counterpart review and
+  squash-merged to canonical main as
+  `7a29ebf6a70bbbb0f08d749d5167cfce24ca2af7`. Authenticated canonical bytes
+  now require explicit persistent home and etc roots, install the complete
+  guardian runtime closure, set `HOME=/root` for the services, and retain the
+  existing confinement validation for every added helper. Read-only inspection
+  of the preserved exact installed image confirmed one shared `home` partition
+  and slot-matched `var-A`/`var-B` partitions whose persistent systemd upper
+  directory is `lib/overlays/etc/upper`. The active EXE consumer update pins
+  the exact Core squash, mounts only the selected root, shared home, and
+  slot-matched var partition in an owned workspace, supplies those explicit
+  roots to Core, independently verifies both persistent slots, and requires
+  read-only restoration and complete mount cleanup. All 44 focused
+  installation-media/Core-pin/Windows-workflow tests pass; the exact pinned
+  installer contract test passes against the authenticated canonical Core
+  checkout, as do documentation contracts, shell syntax, formatting,
+  warnings-denied all-target Clippy, and diff hygiene through `heavy.sh` where
+  required. Initial CI exposed one stale Rust source invariant for the replaced
+  chroot-only read-only trap; that exact failed test now binds the persistent
+  mount arguments, owned cleanup trap, and asserted read-only restoration and
+  passes locally through `heavy.sh`. Changed-head Windows artifact construction,
+  rerun of only the failed install/update/persistence stage, exact-head Core
+  review, and merge remain pending. The exact packaged candidate and
+  authenticated SteamOS input were then staged headlessly on
+  `OPEMOS-Agent-Boot-B`, but session-0 WebView2 never exposed its loopback CDP
+  target; the preserved result reports `Status=failed` and `QemuSeen=false`, so
+  no construction or VM mutation occurred. Native desktop, RDP, and interactive
+  window-session routing are prohibited. The bounded correction adds a packaged
+  `headless-build` command that reuses the existing authenticated appliance,
+  exact-target resolution/build, signed-userspace, pinned-installer,
+  validation, install, independent export, source-immutability, and owned
+  cleanup path without WebView or publication. It accepts only one regular
+  input plus one pre-existing empty output directory and emits schema-1 JSON on
+  success. The focused closed-argument regression passes locally through
+  `heavy.sh`. Native Windows run `35805310088` then reached unsigned runtime
+  bundle construction and failed with E0425 because the new production command
+  called two existing blocking marker wrappers that were still test-gated; the
+  same build also exposed a production-unused sparse-inspection re-export. The
+  bounded correction makes only those existing guarded wrappers available to
+  production and keeps sparse inspection exported only for Windows tests.
+  The focused headless argument/refusal regression, formatting, warnings-denied
+  all-target Clippy, and diff hygiene pass through `heavy.sh`. Native Windows
+  path/refusal coverage, changed-head artifact build, failed-stage acceptance,
+  refreshed exact-head Core review, and merge remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

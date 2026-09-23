@@ -285,8 +285,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 55] = [
     },
     PinnedInstallerFile {
         path: "bootstrap/install_recovery_guardian_to_root.sh",
-        sha256: "8fc0fe7f6224418da8f0cbde0e5c7317563b2d0c8e5f5217064a064cadd0bf73",
-        bytes: 8_203,
+        sha256: "b41a0c33d1577696cddde144ad61fb4315dbc017c4af03a26c00850d83728a2f",
+        bytes: 9_402,
         executable: true,
     },
     PinnedInstallerFile {
@@ -567,20 +567,20 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 55] = [
     },
     PinnedInstallerFile {
         path: "support/recovery/opemos-nvidia-guardian.service.in",
-        sha256: "537a34afe65550ef7dca2d5b9725dbd42e1961c3a8a25a0cce7ffe4217d5c018",
-        bytes: 341,
+        sha256: "0b7242212c5a9f92d97910458d980f998155eb6ba7201804c661078d8628d103",
+        bytes: 364,
         executable: false,
     },
     PinnedInstallerFile {
         path: "support/recovery/opemos-interstitial.service.in",
-        sha256: "3225436d6d97cad3b51069b6f657bc8346b52234e4f169fa205e2555242dc57f",
-        bytes: 1_730,
+        sha256: "474f51f0634a71dd474517f10cb98af24b00eed7493dc4199ede7fd0ba89bc48",
+        bytes: 1_753,
         executable: false,
     },
     PinnedInstallerFile {
         path: "support/recovery/opemos-nvidia-repair.service.in",
-        sha256: "87cb1564c90f977af4a89e2e15f82590160a745ff5c40ad2b20aea8d41082c07",
-        bytes: 276,
+        sha256: "46e6bee43746845a3c6880447aa8a6ab703efe0e7da9259d0c4751de3504fb88",
+        bytes: 299,
         executable: false,
     },
     PinnedInstallerFile {

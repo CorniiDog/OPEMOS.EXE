@@ -3877,7 +3877,7 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 675_657);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 676_925);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 55);
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "lib/diagnostic_safety.py" && !file.executable
@@ -3902,6 +3902,15 @@ esac
             assert!(PINNED_INSTALLER_FILES
                 .iter()
                 .any(|file| file.path == guardian_dependency && file.executable));
+        }
+        for guardian_runtime_dependency in [
+            "lib/run_in_process_group.py",
+            "lib/payload_receipt.py",
+            "lib/atomic_output.py",
+        ] {
+            assert!(PINNED_INSTALLER_FILES
+                .iter()
+                .any(|file| file.path == guardian_runtime_dependency));
         }
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "bootstrap/launch_desktop_companion.sh" && file.executable
@@ -4395,9 +4404,13 @@ esac
         assert!(!helper.contains("bin/opemos-interstitial"));
         assert!(helper.contains("installed recovery guardian verification failed"));
         assert!(helper.contains("ui_stage \"Installing the recovery guardian into rootfs-$slot"));
+        assert!(helper.contains("partition_by_label \"$device\" home"));
+        assert!(helper.contains("partition_by_label \"$device\" \"var-$slot\""));
+        assert!(helper.contains("--persistent-home-root \"$home_mount\""));
+        assert!(helper.contains("--persistent-etc-root \"$etc_root\""));
+        assert!(helper.contains("trap cleanup_guardian_installation EXIT INT TERM"));
         assert!(helper.contains("steamos-readonly disable"));
-        assert!(helper.contains("trap restore_readonly EXIT"));
-        assert!(helper.contains("steamos-readonly enable\n      trap - EXIT"));
+        assert!(helper.contains("could not confirm read-only mode was restored for rootfs-$slot"));
         assert!(!helper.contains("eval "));
 
         assert!(patcher.contains("unsupported Valve installer structure for guarded anchor"));
@@ -7622,6 +7635,70 @@ trap - EXIT"#,
         let mut wrong = base; wrong.extend(["0".repeat(64), path.to_string_lossy().into_owned()]);
         assert!(run_core_driver_resolver(&wrong).unwrap_err().contains("authenticated SHA-256"));
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn headless_image_build_command_requires_exact_closed_arguments() {
+        let request = parse_headless_image_build_request(&[
+            "headless-build".into(),
+            "--input".into(),
+            "C:/OPEMOS/input.img.bz2".into(),
+            "--output-root".into(),
+            "C:/OPEMOS/output".into(),
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(request.input, PathBuf::from("C:/OPEMOS/input.img.bz2"));
+        assert_eq!(request.output_root, PathBuf::from("C:/OPEMOS/output"));
+        assert!(parse_headless_image_build_request(&[
+            "headless-build".into(),
+            "--input".into(),
+            "input.img".into(),
+        ])
+        .is_err());
+        assert!(parse_headless_image_build_request(&[
+            "headless-build".into(),
+            "--output-root".into(),
+            "output".into(),
+            "--input".into(),
+            "input.img".into(),
+        ])
+        .is_err());
+        assert_eq!(parse_headless_image_build_request(&["unrelated".into()]).unwrap(), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn headless_image_build_requires_regular_input_and_empty_owned_output() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-headless-build-boundary-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let input = root.join("input.img.bz2");
+        let output = root.join("output");
+        fs::create_dir_all(&output).unwrap();
+        fs::write(&input, b"authenticated fixture").unwrap();
+        let validated = validate_headless_build_paths(HeadlessImageBuildRequest {
+            input: input.clone(),
+            output_root: output.clone(),
+        })
+        .unwrap();
+        assert_eq!(validated.input, fs::canonicalize(&input).unwrap());
+        assert_eq!(validated.output_root, fs::canonicalize(&output).unwrap());
+
+        fs::write(output.join("unexpected"), b"do not replace").unwrap();
+        assert!(validate_headless_build_paths(HeadlessImageBuildRequest {
+            input: input.clone(),
+            output_root: output.clone(),
+        })
+        .unwrap_err()
+        .contains("must be empty"));
+        assert_eq!(fs::read(output.join("unexpected")).unwrap(), b"do not replace");
+        fs::remove_dir_all(root).unwrap();
     }
 
 

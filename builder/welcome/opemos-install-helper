@@ -22,7 +22,7 @@ need() {
   command -v "$1" >/dev/null 2>&1 || die "required recovery tool is missing: $1"
 }
 
-for tool in awk blockdev findmnt flock lsblk readlink sed sha256sum steamos-chroot; do
+for tool in awk blockdev findmnt flock install lsblk mktemp mount mountpoint readlink sed sha256sum steamos-chroot umount; do
   need "$tool"
 done
 
@@ -127,6 +127,18 @@ has_exact_steamos_layout() {
   done
 }
 
+partition_by_label() {
+  local device=$1 wanted=$2 path label type extra match=""
+  while read -r path label type extra; do
+    [[ -z "${extra:-}" ]] || return 1
+    [[ "$type" == part && "$label" == "$wanted" ]] || continue
+    [[ -z "$match" ]] || return 1
+    match=$path
+  done < <(lsblk -nrpo PATH,PARTLABEL,TYPE "$device")
+  [[ -n "$match" && -b "$match" ]] || return 1
+  printf '%s\n' "$match"
+}
+
 inventory() {
   local candidate device bytes token model serial transport layout
   while IFS= read -r candidate; do
@@ -178,52 +190,115 @@ media_info() {
 
 verify_guardian_slot() {
   local device=$1 slot=$2 support_revision=$3 nvidia_version=$4
-  steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- \
-    sh -eu -c '
-      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/recoveryctl.sh
-      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/online_install.sh
-      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/launch_desktop_companion.sh
-      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/launch_interstitial.sh
-      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/bootstrap/run_guardian_with_interstitial.sh
-      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/lib/desktop_update_generations.py
-      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/lib/interstitial_progress.py
-      test -x /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/lib/validate_interstitial_binary.py
-      test -f /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/trust/desktop-update-signers.json
-      test -f /etc/systemd/system/opemos-nvidia-guardian.service
-      test -f /etc/systemd/system/opemos-interstitial.service
-      test -f /etc/systemd/system/opemos-nvidia-repair.service
-      test -L /etc/systemd/system/multi-user.target.wants/opemos-nvidia-guardian.service
-      test -L /etc/systemd/system/multi-user.target.wants/opemos-interstitial.service
-      test -L /etc/systemd/system/timers.target.wants/opemos-nvidia-repair.timer
-      test "$(cat /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/support-revision)" = "$1"
-      test "$(cat /home/.steamos/open-gpu-kernel-modules-steamos-support/recovery/nvidia-version)" = "$2"
-    ' opemos-guardian-verifier "$support_revision" "$nvidia_version" ||
-    die "installed recovery guardian verification failed for rootfs-$slot"
+  local home_device var_device workspace home_mount var_mount payload units
+  home_device=$(partition_by_label "$device" home) ||
+    die "installed SteamOS home partition is missing or duplicated"
+  var_device=$(partition_by_label "$device" "var-$slot") ||
+    die "installed SteamOS var-$slot partition is missing or duplicated"
+  workspace=$(mktemp -d "$LOCK_DIRECTORY/opemos-guardian-verify-$slot.XXXXXX") ||
+    die "could not create the guardian verification workspace"
+  chmod 0700 "$workspace"
+  home_mount=$workspace/home
+  var_mount=$workspace/var
+  mkdir -m 0700 "$home_mount" "$var_mount"
+  (
+    set -e
+    cleanup_guardian_verification() {
+      mountpoint -q "$var_mount" && umount "$var_mount" || true
+      mountpoint -q "$home_mount" && umount "$home_mount" || true
+    }
+    trap cleanup_guardian_verification EXIT INT TERM
+    mount -o ro,noload "$home_device" "$home_mount"
+    mount -o ro,noload "$var_device" "$var_mount"
+    [[ "$(findmnt -nro SOURCE -T "$home_mount")" == "$home_device" ]]
+    [[ "$(findmnt -nro SOURCE -T "$var_mount")" == "$var_device" ]]
+    payload=$home_mount/.steamos/open-gpu-kernel-modules-steamos-support/recovery
+    units=$var_mount/lib/overlays/etc/upper
+    test -x "$payload/bootstrap/recoveryctl.sh"
+    test -x "$payload/bootstrap/online_install.sh"
+    test -x "$payload/bootstrap/launch_desktop_companion.sh"
+    test -x "$payload/bootstrap/launch_interstitial.sh"
+    test -x "$payload/bootstrap/run_guardian_with_interstitial.sh"
+    test -x "$payload/lib/desktop_update_generations.py"
+    test -x "$payload/lib/interstitial_progress.py"
+    test -x "$payload/lib/validate_interstitial_binary.py"
+    test -x "$payload/lib/run_in_process_group.py"
+    test -x "$payload/lib/payload_receipt.py"
+    test -x "$payload/lib/atomic_output.py"
+    test -f "$payload/trust/desktop-update-signers.json"
+    test -f "$units/systemd/system/opemos-nvidia-guardian.service"
+    test -f "$units/systemd/system/opemos-interstitial.service"
+    test -f "$units/systemd/system/opemos-nvidia-repair.service"
+    test -L "$units/systemd/system/multi-user.target.wants/opemos-nvidia-guardian.service"
+    test -L "$units/systemd/system/multi-user.target.wants/opemos-interstitial.service"
+    test -L "$units/systemd/system/timers.target.wants/opemos-nvidia-repair.timer"
+    grep -Fqx 'Environment=HOME=/root' "$units/systemd/system/opemos-nvidia-guardian.service"
+    grep -Fqx 'Environment=HOME=/root' "$units/systemd/system/opemos-interstitial.service"
+    grep -Fqx 'Environment=HOME=/root' "$units/systemd/system/opemos-nvidia-repair.service"
+    test "$(cat "$payload/support-revision")" = "$support_revision"
+    test "$(cat "$payload/nvidia-version")" = "$nvidia_version"
+  ) || {
+    rmdir "$home_mount" "$var_mount" "$workspace" 2>/dev/null || true
+    die "installed recovery guardian verification failed for persistent slot-$slot state"
+  }
+  rmdir "$home_mount" "$var_mount" "$workspace" ||
+    die "could not clean the guardian verification workspace"
 }
 
 install_guardian_slot() {
   local device=$1 slot=$2 support_revision=$3 nvidia_version=$4
-  steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- \
-    sh -eu -c '
-      installer=$1
-      support_revision=$2
-      nvidia_version=$3
-      steamos-readonly disable
-      restore_readonly() {
-        steamos-readonly enable
-      }
-      trap restore_readonly EXIT
-      "$installer" \
-        --root / \
-        --support-revision "$support_revision" \
-        --nvidia "$nvidia_version"
-      steamos-readonly enable
-      trap - EXIT
-    ' opemos-guardian-installer \
-      "$SUPPORT_ROOT/bootstrap/install_recovery_guardian_to_root.sh" \
-      "$support_revision" \
-      "$nvidia_version" ||
-    die "installed recovery guardian failed for rootfs-$slot"
+  local root_device home_device var_device workspace root_mount home_mount var_mount etc_root
+  root_device=$(partition_by_label "$device" "rootfs-$slot") ||
+    die "installed SteamOS rootfs-$slot partition is missing or duplicated"
+  home_device=$(partition_by_label "$device" home) ||
+    die "installed SteamOS home partition is missing or duplicated"
+  var_device=$(partition_by_label "$device" "var-$slot") ||
+    die "installed SteamOS var-$slot partition is missing or duplicated"
+  workspace=$(mktemp -d "$LOCK_DIRECTORY/opemos-guardian-install-$slot.XXXXXX") ||
+    die "could not create the guardian installation workspace"
+  chmod 0700 "$workspace"
+  root_mount=$workspace/root
+  home_mount=$workspace/home
+  var_mount=$workspace/var
+  mkdir -m 0700 "$root_mount" "$home_mount" "$var_mount"
+  steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- steamos-readonly disable || {
+    rmdir "$root_mount" "$home_mount" "$var_mount" "$workspace" 2>/dev/null || true
+    die "could not disable read-only mode for rootfs-$slot"
+  }
+  (
+    set -e
+    cleanup_guardian_installation() {
+      mountpoint -q "$var_mount" && umount "$var_mount" || true
+      mountpoint -q "$home_mount" && umount "$home_mount" || true
+      mountpoint -q "$root_mount" && umount "$root_mount" || true
+      steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- steamos-readonly enable >/dev/null 2>&1 || true
+    }
+    trap cleanup_guardian_installation EXIT INT TERM
+    mount -o rw "$root_device" "$root_mount"
+    mount -o rw "$home_device" "$home_mount"
+    mount -o rw "$var_device" "$var_mount"
+    [[ "$(findmnt -nro SOURCE -T "$root_mount")" == "$root_device" ]]
+    [[ "$(findmnt -nro SOURCE -T "$home_mount")" == "$home_device" ]]
+    [[ "$(findmnt -nro SOURCE -T "$var_mount")" == "$var_device" ]]
+    etc_root=$var_mount/lib/overlays/etc/upper
+    install -d -o root -g root -m 0755 "$etc_root"
+    "$SUPPORT_ROOT/bootstrap/install_recovery_guardian_to_root.sh" \
+      --root "$root_mount" \
+      --persistent-home-root "$home_mount" \
+      --persistent-etc-root "$etc_root" \
+      --support-revision "$support_revision" \
+      --nvidia "$nvidia_version"
+    sync
+  ) || {
+    rmdir "$root_mount" "$home_mount" "$var_mount" "$workspace" 2>/dev/null || true
+    die "installed recovery guardian failed for persistent slot-$slot state"
+  }
+  steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- steamos-readonly enable || {
+    rmdir "$root_mount" "$home_mount" "$var_mount" "$workspace" 2>/dev/null || true
+    die "could not confirm read-only mode was restored for rootfs-$slot"
+  }
+  rmdir "$root_mount" "$home_mount" "$var_mount" "$workspace" ||
+    die "could not clean the guardian installation workspace"
 }
 
 install_to_disk() {
