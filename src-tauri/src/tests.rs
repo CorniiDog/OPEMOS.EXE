@@ -4416,7 +4416,9 @@ esac
         assert!(helper.contains("--persistent-home-root \"$home_mount\""));
         assert!(helper.contains("--persistent-etc-root \"$etc_root\""));
         assert!(helper.contains("trap cleanup_guardian_installation EXIT INT TERM"));
-        assert!(helper.contains("steamos-readonly disable"));
+        assert!(!helper.contains("-- steamos-readonly disable"));
+        assert!(helper.contains("btrfs property set \"$root_mount\" ro false"));
+        assert!(helper.contains("btrfs property set \"$root_mount\" ro true"));
         assert!(helper.contains("could not confirm read-only mode was restored for rootfs-$slot"));
         assert!(!helper.contains("eval "));
 

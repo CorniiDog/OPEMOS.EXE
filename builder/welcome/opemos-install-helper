@@ -22,7 +22,7 @@ need() {
   command -v "$1" >/dev/null 2>&1 || die "required recovery tool is missing: $1"
 }
 
-for tool in awk blockdev findmnt flock install lsblk mktemp mount mountpoint readlink sed sha256sum steamos-chroot umount; do
+for tool in awk blockdev btrfs findmnt flock install lsblk mktemp mount mountpoint readlink sed sha256sum steamos-chroot umount; do
   need "$tool"
 done
 
@@ -261,6 +261,18 @@ install_guardian_slot() {
   home_mount=$workspace/home
   var_mount=$workspace/var
   mkdir -m 0700 "$root_mount" "$home_mount" "$var_mount"
+  disable_readonly() {
+    mount -o rw "$root_device" "$root_mount" || return 1
+    if ! btrfs property set "$root_mount" ro false; then
+      umount "$root_mount" || true
+      return 1
+    fi
+    if ! umount "$root_mount"; then
+      btrfs property set "$root_mount" ro true || true
+      umount "$root_mount" || true
+      return 1
+    fi
+  }
   restore_readonly() {
     if [[ "$(steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- steamos-readonly status)" == enabled ]]; then
       return 0
@@ -268,7 +280,7 @@ install_guardian_slot() {
     steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- \
       sh -c 'mount -o remount,rw / && steamos-readonly enable'
   }
-  steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- steamos-readonly disable || {
+  disable_readonly || {
     rmdir "$root_mount" "$home_mount" "$var_mount" "$workspace" 2>/dev/null || true
     die "could not disable read-only mode for rootfs-$slot"
   }

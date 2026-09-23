@@ -74,7 +74,11 @@ test("guardian installation binds persistent home and slot-matched etc overlays 
   assert.match(lifecycle, /partition_by_label "\$device" "rootfs-\$slot"/);
   assert.match(lifecycle, /partition_by_label "\$device" home/);
   assert.match(lifecycle, /partition_by_label "\$device" "var-\$slot"/);
-  assert.match(lifecycle, /steamos-readonly disable/);
+  assert.doesNotMatch(lifecycle, /steamos-chroot[^\n]*steamos-readonly disable/);
+  assert.match(lifecycle, /disable_readonly\(\)[\s\S]*mount -o rw "\$root_device" "\$root_mount"/);
+  assert.match(lifecycle, /btrfs property set "\$root_mount" ro false/);
+  assert.match(lifecycle, /if ! umount "\$root_mount"; then[\s\S]*btrfs property set "\$root_mount" ro true/);
+  assert.match(lifecycle, /disable_readonly \|\| \{[\s\S]*could not disable read-only mode for rootfs-\$slot/);
   assert.match(lifecycle, /trap cleanup_guardian_installation EXIT INT TERM/);
   assert.match(lifecycle, /mount -o rw "\$root_device" "\$root_mount"/);
   assert.match(lifecycle, /mount -o rw "\$home_device" "\$home_mount"/);
