@@ -490,6 +490,9 @@ pub fn run_windows_headless_image_builder(arguments: &[String]) -> Result<Option
 }
 
 const READY_MARKER: &str = "SteamOS NVIDIA Image Builder appliance\nREADY";
+#[cfg(target_os = "windows")]
+const BOOT_TIMEOUT: Duration = Duration::from_secs(300);
+#[cfg(not(target_os = "windows"))]
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
 const TCG_HARNESS_BOOT_TIMEOUT_SECS: u64 = 1200;
 #[cfg(all(test, target_os = "linux"))]

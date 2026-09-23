@@ -3256,6 +3256,9 @@ esac
     fn appliance_readiness_deadline_defaults_and_exact_tcg_override_fail_closed() {
         let started_at = Instant::now();
         let (default_deadline, default_secs) = appliance_readiness_deadline(started_at, None).unwrap();
+        #[cfg(target_os = "windows")]
+        assert_eq!(default_secs, 300);
+        #[cfg(not(target_os = "windows"))]
         assert_eq!(default_secs, 120);
         assert_eq!(default_deadline.duration_since(started_at), BOOT_TIMEOUT);
         let (harness_deadline, harness_secs) = appliance_readiness_deadline(started_at, Some(TCG_HARNESS_BOOT_TIMEOUT_SECS)).unwrap();
