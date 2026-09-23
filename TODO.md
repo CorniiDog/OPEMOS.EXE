@@ -2794,8 +2794,21 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   production and keeps sparse inspection exported only for Windows tests.
   The focused headless argument/refusal regression, formatting, warnings-denied
   all-target Clippy, and diff hygiene pass through `heavy.sh`. Native Windows
-  path/refusal coverage, changed-head artifact build, failed-stage acceptance,
-  refreshed exact-head Core review, and merge remain pending.
+  path/refusal coverage and the changed-head artifact build then passed on
+  exact EXE head `d9975efde888d4f00cc9eb8656cddf45cd4f9598`, and PR #124
+  squash-merged as `b68346981024cde4bbc8ab38ac5a287f914578b2`. The first
+  failed-stage acceptance exposed Core's suppressed `pacman -Qkk`
+  `nvidia-utils` inherited-directory diagnostic after all six packages had
+  installed. Core PR #46 bounded diagnostic capture during execution, accepts
+  only the complete exact-package grammar for shared `usr/lib` when the same
+  authenticated archive explicitly contains that directory and independent
+  payload verification succeeds, and publishes structured mismatches for all
+  rejected cases. Exact head `2b7e2ca063725a773e02066af39766d655fdb28c`
+  passed both required checks and EXE counterpart review, then squash-merged to
+  canonical Core main as `ca06b5182ab0fda2accf725283027882fb2e28d6`
+  with the reviewed tree unchanged. This EXE consumer batch pins that exact
+  squash for the failed-stage rerun; headless SteamOS acceptance and cleanup
+  remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

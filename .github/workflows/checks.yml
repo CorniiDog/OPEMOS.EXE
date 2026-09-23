@@ -46,7 +46,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: CorniiDog/OPEMOS
-          ref: 7a29ebf6a70bbbb0f08d749d5167cfce24ca2af7
+          ref: ca06b5182ab0fda2accf725283027882fb2e28d6
           path: opemos-core-contracts
           fetch-depth: 172
           persist-credentials: false
@@ -79,7 +79,7 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
-          OPEMOS_CORE_EXPECTED_COMMIT: 7a29ebf6a70bbbb0f08d749d5167cfce24ca2af7
+          OPEMOS_CORE_EXPECTED_COMMIT: ca06b5182ab0fda2accf725283027882fb2e28d6
 
   linux-integration:
     runs-on: ubuntu-24.04
