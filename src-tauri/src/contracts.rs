@@ -495,8 +495,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 55] = [
     },
     PinnedInstallerFile {
         path: "lib/verify_installed_userspace.py",
-        sha256: "322ea67984187640f069a2b678924c8e63ad041243f1e8c9d821d651d276bb1b",
-        bytes: 17_453,
+        sha256: "57827a9baecd81291fdf8b5ec0f54ede7f8356aa1d7b4cb4c3ba8bcbd5f9a18e",
+        bytes: 24_020,
         executable: true,
     },
     PinnedInstallerFile {

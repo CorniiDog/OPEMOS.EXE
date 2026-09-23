@@ -3877,7 +3877,7 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 676_925);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 683_492);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 55);
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "lib/diagnostic_safety.py" && !file.executable
@@ -3988,9 +3988,13 @@ esac
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "lib/verify_installed_modules.py" && file.executable));
-        assert!(PINNED_INSTALLER_FILES
-            .iter()
-            .any(|file| file.path == "lib/verify_installed_userspace.py" && file.executable));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "lib/verify_installed_userspace.py"
+                && file.sha256
+                    == "57827a9baecd81291fdf8b5ec0f54ede7f8356aa1d7b4cb4c3ba8bcbd5f9a18e"
+                && file.bytes == 24_020
+                && file.executable
+        }));
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "profiles/gaming/reviewed-policy-v1.json" && !file.executable
         }));
