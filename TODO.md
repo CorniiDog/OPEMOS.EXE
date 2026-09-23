@@ -2786,9 +2786,16 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   cleanup path without WebView or publication. It accepts only one regular
   input plus one pre-existing empty output directory and emits schema-1 JSON on
   success. The focused closed-argument regression passes locally through
-  `heavy.sh`; native Windows path/refusal coverage, changed-head artifact build,
-  failed-stage acceptance, refreshed exact-head Core review, and merge remain
-  pending.
+  `heavy.sh`. Native Windows run `35805310088` then reached unsigned runtime
+  bundle construction and failed with E0425 because the new production command
+  called two existing blocking marker wrappers that were still test-gated; the
+  same build also exposed a production-unused sparse-inspection re-export. The
+  bounded correction makes only those existing guarded wrappers available to
+  production and keeps sparse inspection exported only for Windows tests.
+  The focused headless argument/refusal regression, formatting, warnings-denied
+  all-target Clippy, and diff hygiene pass through `heavy.sh`. Native Windows
+  path/refusal coverage, changed-head artifact build, failed-stage acceptance,
+  refreshed exact-head Core review, and merge remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
