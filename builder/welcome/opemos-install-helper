@@ -262,6 +262,9 @@ install_guardian_slot() {
   var_mount=$workspace/var
   mkdir -m 0700 "$root_mount" "$home_mount" "$var_mount"
   restore_readonly() {
+    if [[ "$(steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- steamos-readonly status)" == enabled ]]; then
+      return 0
+    fi
     steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- \
       sh -c 'mount -o remount,rw / && steamos-readonly enable'
   }
