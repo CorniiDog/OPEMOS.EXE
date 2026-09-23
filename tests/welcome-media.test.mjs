@@ -84,6 +84,7 @@ test("guardian installation binds persistent home and slot-matched etc overlays 
   assert.match(lifecycle, /--persistent-home-root "\$home_mount"/);
   assert.match(lifecycle, /--persistent-etc-root "\$etc_root"/);
   assert.match(lifecycle, /umount "\$var_mount"[\s\S]*umount "\$home_mount"[\s\S]*umount "\$root_mount"/);
+  assert.match(lifecycle, /steamos-readonly status\)" == enabled \]\]; then\s+return 0/);
   assert.match(lifecycle, /restore_readonly\(\)[\s\S]*mount -o remount,rw \/ && steamos-readonly enable/);
   assert.equal(lifecycle.match(/restore_readonly/g)?.length, 3);
   assert.match(lifecycle, /restore_readonly \|\| \{[\s\S]*could not confirm read-only mode was restored/);

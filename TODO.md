@@ -2853,9 +2853,19 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   about 65 seconds, and continued cloud-init normally until the deadline killed
   it. This bounded correction gives only native Windows production boots a
   300-second readiness deadline; Linux/macOS retain 120 seconds and the exact
-  TCG harness override remains unchanged. A rebuilt exact artifact,
-  failed-stage rerun, update/persistence/self-heal proof, and cleanup remain
-  pending.
+  TCG harness override remains unchanged. PR #128 passed all required checks
+  and exact-head Core review, then squash-merged as
+  `928c6b5ea53f7b225c3ec3e23e9b0918ce42958e`; its exact Windows artifact
+  constructed the 8,120,172,544-byte image with SHA-256
+  `8150509cbee72fb834c63ceca99d48dad4c14ab6f002825c4fc3fa6d4e86704b`.
+  The exact KVM install then completed both 5-GiB A/B copies and EFI before
+  exposing a narrower helper defect: trap cleanup had already restored
+  rootfs-A read-only, so the normal restoration repeated `steamos-readonly
+  enable`; its already-read-only warning made `steamos-chroot` leave `/run`
+  busy and fail confirmation. Read-only restoration must therefore short-circuit
+  on an exact `enabled` status before invoking the mutating fallback. A rebuilt
+  exact artifact, failed-stage rerun, update/persistence/self-heal proof, and
+  cleanup remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
