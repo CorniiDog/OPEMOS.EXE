@@ -261,6 +261,10 @@ install_guardian_slot() {
   home_mount=$workspace/home
   var_mount=$workspace/var
   mkdir -m 0700 "$root_mount" "$home_mount" "$var_mount"
+  restore_readonly() {
+    steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- \
+      sh -c 'mount -o remount,rw / && steamos-readonly enable'
+  }
   steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- steamos-readonly disable || {
     rmdir "$root_mount" "$home_mount" "$var_mount" "$workspace" 2>/dev/null || true
     die "could not disable read-only mode for rootfs-$slot"
@@ -271,7 +275,7 @@ install_guardian_slot() {
       mountpoint -q "$var_mount" && umount "$var_mount" || true
       mountpoint -q "$home_mount" && umount "$home_mount" || true
       mountpoint -q "$root_mount" && umount "$root_mount" || true
-      steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- steamos-readonly enable >/dev/null 2>&1 || true
+      restore_readonly >/dev/null 2>&1 || true
     }
     trap cleanup_guardian_installation EXIT INT TERM
     mount -o rw "$root_device" "$root_mount"
@@ -293,7 +297,7 @@ install_guardian_slot() {
     rmdir "$root_mount" "$home_mount" "$var_mount" "$workspace" 2>/dev/null || true
     die "installed recovery guardian failed for persistent slot-$slot state"
   }
-  steamos-chroot --no-overlay --disk "$device" --partset "$slot" -- steamos-readonly enable || {
+  restore_readonly || {
     rmdir "$root_mount" "$home_mount" "$var_mount" "$workspace" 2>/dev/null || true
     die "could not confirm read-only mode was restored for rootfs-$slot"
   }

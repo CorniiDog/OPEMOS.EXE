@@ -2826,8 +2826,19 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   this bounded correction updates that immutable file identity and binds it in
   the installer-contract regression. The exact regression, formatting,
   warnings-denied all-target Clippy, documentation contracts, and diff hygiene
-  pass through `heavy.sh`. Headless SteamOS acceptance and cleanup remain
-  pending.
+  pass through `heavy.sh`. PR #126 passed all nine jobs and exact-head Core
+  review, then squash-merged as
+  `3253ec7be54e5683568cd036955b5ee8f4259737`. Its exact artifact constructed
+  and exported an 8,120,172,544-byte image with SHA-256
+  `448034aae8b8f201eb1ba606eca5ef9a55226f99d270457d21249e9b086b5921`.
+  The first KVM install completed Valve's A/B layout and bootloader, then
+  exposed an EXE helper defect while restoring rootfs-A read-only state:
+  `steamos-readonly enable` ran in a read-only chroot and failed to set the
+  Btrfs subvolume flag. Rerunning only that failed stage passed after an
+  explicit `mount -o remount,rw /`. This correction applies that exact remount
+  in both normal and trap cleanup restoration paths and binds both calls in the
+  focused lifecycle regression. A rebuilt exact artifact, failed-stage rerun,
+  update/persistence/self-heal proof, and cleanup remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
