@@ -2813,7 +2813,21 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   reports the new Core squash is exactly 172 commits ahead. The bounded
   checkout and its documentation guard now fetch 173 commits so the immutable
   compatibility object is present without fetching unrelated history.
-  Headless SteamOS acceptance and cleanup remain pending.
+  PR #125 passed all nine required jobs and exact-head Core review, then
+  squash-merged to protected main as
+  `f9264c39bddc37184c524d5056859a6b12a1b794`. Its exact Windows artifact
+  passed startup and provenance checks. The failed-stage rerun then cleared
+  Core's prior userspace-verification defect and exposed the next stale EXE
+  consumer input before any output survived: the pinned
+  `lib/verify_installed_userspace.py` size still described the pre-PR46 file.
+  Canonical GitHub Core commit `ca06b5182ab0fda2accf725283027882fb2e28d6`
+  serves the exact 24,020-byte file with SHA-256
+  `57827a9baecd81291fdf8b5ec0f54ede7f8356aa1d7b4cb4c3ba8bcbd5f9a18e`;
+  this bounded correction updates that immutable file identity and binds it in
+  the installer-contract regression. The exact regression, formatting,
+  warnings-denied all-target Clippy, documentation contracts, and diff hygiene
+  pass through `heavy.sh`. Headless SteamOS acceptance and cleanup remain
+  pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
