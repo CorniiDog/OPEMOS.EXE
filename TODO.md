@@ -2774,7 +2774,21 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   mount arguments, owned cleanup trap, and asserted read-only restoration and
   passes locally through `heavy.sh`. Changed-head Windows artifact construction,
   rerun of only the failed install/update/persistence stage, exact-head Core
-  review, and merge remain pending.
+  review, and merge remain pending. The exact packaged candidate and
+  authenticated SteamOS input were then staged headlessly on
+  `OPEMOS-Agent-Boot-B`, but session-0 WebView2 never exposed its loopback CDP
+  target; the preserved result reports `Status=failed` and `QemuSeen=false`, so
+  no construction or VM mutation occurred. Native desktop, RDP, and interactive
+  window-session routing are prohibited. The bounded correction adds a packaged
+  `headless-build` command that reuses the existing authenticated appliance,
+  exact-target resolution/build, signed-userspace, pinned-installer,
+  validation, install, independent export, source-immutability, and owned
+  cleanup path without WebView or publication. It accepts only one regular
+  input plus one pre-existing empty output directory and emits schema-1 JSON on
+  success. The focused closed-argument regression passes locally through
+  `heavy.sh`; native Windows path/refusal coverage, changed-head artifact build,
+  failed-stage acceptance, refreshed exact-head Core review, and merge remain
+  pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

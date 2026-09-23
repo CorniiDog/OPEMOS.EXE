@@ -7637,6 +7637,70 @@ trap - EXIT"#,
         fs::remove_file(path).unwrap();
     }
 
+    #[test]
+    fn headless_image_build_command_requires_exact_closed_arguments() {
+        let request = parse_headless_image_build_request(&[
+            "headless-build".into(),
+            "--input".into(),
+            "C:/OPEMOS/input.img.bz2".into(),
+            "--output-root".into(),
+            "C:/OPEMOS/output".into(),
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(request.input, PathBuf::from("C:/OPEMOS/input.img.bz2"));
+        assert_eq!(request.output_root, PathBuf::from("C:/OPEMOS/output"));
+        assert!(parse_headless_image_build_request(&[
+            "headless-build".into(),
+            "--input".into(),
+            "input.img".into(),
+        ])
+        .is_err());
+        assert!(parse_headless_image_build_request(&[
+            "headless-build".into(),
+            "--output-root".into(),
+            "output".into(),
+            "--input".into(),
+            "input.img".into(),
+        ])
+        .is_err());
+        assert_eq!(parse_headless_image_build_request(&["unrelated".into()]).unwrap(), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn headless_image_build_requires_regular_input_and_empty_owned_output() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-headless-build-boundary-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let input = root.join("input.img.bz2");
+        let output = root.join("output");
+        fs::create_dir_all(&output).unwrap();
+        fs::write(&input, b"authenticated fixture").unwrap();
+        let validated = validate_headless_build_paths(HeadlessImageBuildRequest {
+            input: input.clone(),
+            output_root: output.clone(),
+        })
+        .unwrap();
+        assert_eq!(validated.input, fs::canonicalize(&input).unwrap());
+        assert_eq!(validated.output_root, fs::canonicalize(&output).unwrap());
+
+        fs::write(output.join("unexpected"), b"do not replace").unwrap();
+        assert!(validate_headless_build_paths(HeadlessImageBuildRequest {
+            input: input.clone(),
+            output_root: output.clone(),
+        })
+        .unwrap_err()
+        .contains("must be empty"));
+        assert_eq!(fs::read(output.join("unexpected")).unwrap(), b"do not replace");
+        fs::remove_dir_all(root).unwrap();
+    }
+
 
     #[test]
     fn appliance_root_has_explicit_first_boot_priority_and_escaped_path() {
