@@ -2863,9 +2863,24 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   rootfs-A read-only, so the normal restoration repeated `steamos-readonly
   enable`; its already-read-only warning made `steamos-chroot` leave `/run`
   busy and fail confirmation. Read-only restoration must therefore short-circuit
-  on an exact `enabled` status before invoking the mutating fallback. A rebuilt
-  exact artifact, failed-stage rerun, update/persistence/self-heal proof, and
-  cleanup remain pending.
+  on an exact `enabled` status before invoking the mutating fallback. PR #129
+  passed all nine required jobs and exact-head Core review, then squash-merged
+  as `88ea491839181e312f3092054e8961d33221a548`. Its exact Windows artifact
+  `10772891248` passed startup and provenance checks; the 2,237,081,682-byte
+  archive has SHA-256
+  `888934a3239c686e9045c7d23d9c1c2702304f9bd65444fc249b9e79c061a55a`.
+  The exact 8,120,172,544-byte image SHA-256
+  `ef574d6a3f06d8d440084e259c1b0c13ac7ea49fb54728bd048fb33c699d92bd`
+  then completed both A/B copies, Btrfs checks, GRUB/EFI installation, and the
+  rootfs-A guardian install. Rootfs-B exposed the next narrower lifecycle
+  failure: `steamos-readonly disable` bind-mounted the host `/run` into the
+  temporary chroot, then left `/run` and the root mount busy while unwinding.
+  The bounded correction avoids that unnecessary chroot lifecycle by mounting
+  only the already-resolved slot root, directly clearing its Btrfs read-only
+  property, unmounting it before guardian installation, and rolling the
+  property back to read-only if the owned unmount fails. Focused validation,
+  rebuilt exact-head Windows artifact, rerun of the failed install stage,
+  update/persistence/self-heal proof, and cleanup remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`
