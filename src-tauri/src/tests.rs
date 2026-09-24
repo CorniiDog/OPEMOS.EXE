@@ -3880,8 +3880,8 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 685_040);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 55);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 708_650);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 57);
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "lib/diagnostic_safety.py" && !file.executable
         }));
@@ -3894,17 +3894,21 @@ esac
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "bootstrap/install_recovery_guardian_to_root.sh"
                 && file.sha256
-                    == "c45c23e67f3779b6baf909f4df77dc401e231a4e203a4245e30495254ae92e4c"
-                && file.bytes == 10_950
+                    == "f05436bf0f9d8aa70af4c809a6337d99344aa7b3302a3c0b44ccd2bc74ba8bb8"
+                && file.bytes == 11_271
                 && file.executable
         }));
         assert!(PINNED_INSTALLER_FILES
             .iter()
             .any(|file| file.path == "bootstrap/recoveryctl.sh" && file.executable));
+        assert!(PINNED_INSTALLER_FILES
+            .iter()
+            .any(|file| file.path == "bootstrap/install.sh" && file.executable));
         for guardian_dependency in [
             "lib/recovery_policy.py",
             "lib/recovery_fallback_state.py",
             "lib/validate_github_meta.py",
+            "lib/recovery_cached_product.py",
         ] {
             assert!(PINNED_INSTALLER_FILES
                 .iter()
