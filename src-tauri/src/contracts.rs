@@ -285,8 +285,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 55] = [
     },
     PinnedInstallerFile {
         path: "bootstrap/install_recovery_guardian_to_root.sh",
-        sha256: "b41a0c33d1577696cddde144ad61fb4315dbc017c4af03a26c00850d83728a2f",
-        bytes: 9_402,
+        sha256: "c45c23e67f3779b6baf909f4df77dc401e231a4e203a4245e30495254ae92e4c",
+        bytes: 10_950,
         executable: true,
     },
     PinnedInstallerFile {
