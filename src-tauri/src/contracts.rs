@@ -285,8 +285,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 57] = [
     },
     PinnedInstallerFile {
         path: "bootstrap/install.sh",
-        sha256: "1fa43924f86edc19871761019553ade97c6a1457277180ac3b80c446b3d546a0",
-        bytes: 10_914,
+        sha256: "20418d8a10b4a0c6ae90980e35a219db9cafbb5aaccee2065e52c4c9187f682f",
+        bytes: 10_995,
         executable: true,
     },
     PinnedInstallerFile {
@@ -315,8 +315,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 57] = [
     },
     PinnedInstallerFile {
         path: "bootstrap/recoveryctl.sh",
-        sha256: "f3f2006e727288aa19064ebad7d80bdd5b6ca70f09b62306f92ca78a070355d4",
-        bytes: 22_948,
+        sha256: "be4dd03f0fe36d388f5140b55d3a70cc90149d401328683e783d7eb0151f409c",
+        bytes: 23_005,
         executable: true,
     },
     PinnedInstallerFile {
@@ -387,8 +387,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 57] = [
     },
     PinnedInstallerFile {
         path: "lib/recovery_transaction.py",
-        sha256: "6acfbb3d52725b41f0fa84f9f9b1d813a345b4785ca2a31612243723cc22ee8b",
-        bytes: 18_658,
+        sha256: "ef41971974f5b464a45afe5d7ce3e9a5cefc01e6f47fdcc7cb4f5c40b633cac0",
+        bytes: 18_672,
         executable: true,
     },
     PinnedInstallerFile {

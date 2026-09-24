@@ -92,26 +92,26 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
-- [ ] Consume canonical Core squash `342e81025da0551facee2a28e8f2d9ddf1bd2fd6`
+- [ ] Consume canonical Core squash `ec32dc9f3048ab9b35621ca4fce5116e418f16b3`
   so the preserved PR131 target can use an exact cached materialized driver
   product before any network probe during automatic repair. The reviewed Core
-  tree `9cf7e978b74a521dab6083a99aff60409e3bdf21` validates the closed product
+  tree `19c4f661147b29482d5a835a6926221563ecefca` validates the closed product
   identity, target, inventory, ownership, modes, sizes, hashes, and canonical
   checksum; malformed cache objects fail closed while true absence retains the
   existing network path, and the canonical 118-entry bundle includes the local
   installer executed by cached repair plus the reviewed exact SteamOS 3.8.16,
   kernel 6.16.12-valve24.5, NVIDIA 575.64.05 plan. Its generated manifest has
-  SHA-256 `41fbb0e918ba11234d640731b0bfb9d32796c7bdaf615cf933516aa74a135ea3`.
-  The reviewed cached-heal correction permits only the required transaction
-  edge from `offline_waiting` to `installing` after the existing exact cached
-  product validation; its executable regression proves real installer reach,
-  bounded retry scheduling on deliberate pre-mutation failure, and no network
-  acquisition.
+  SHA-256 `a70f5846dae7dba5cb4c741beaff517b9d5930c88c62a21cee6b7828040df5b3`.
+  The reviewed cached-heal correction passes the already exact-validated NVIDIA
+  target into the local installer and permits `retry_scheduled` to re-enter
+  `installing` only after the same cache validation. Its executable regression
+  proves two automatic cached attempts reach the real installer, persist
+  attempt 2 then 4 bounded retry state, and perform no network acquisition.
   This EXE batch advances only the ordinary Core pin and workflow fixtures. The
   focused pinned-installer regression passes 1/1; all 55 literal file pins match
   the authenticated canonical GitHub checkout byte-for-byte, the two unchanged
   trust-policy pins retain their governed constants, and the 57-file total is
-  708,664 bytes. Formatting and warnings-denied all-target Clippy pass through
+  708,816 bytes. Formatting and warnings-denied all-target Clippy pass through
   `heavy.sh`. Native Windows build/startup, exact Core review, protected squash
   merge, materialization/staging, and the failed-stage-only automatic-heal
   acceptance remain.
