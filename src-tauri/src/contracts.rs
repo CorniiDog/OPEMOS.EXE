@@ -387,8 +387,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 57] = [
     },
     PinnedInstallerFile {
         path: "lib/recovery_transaction.py",
-        sha256: "10b8a21311aeefd201ea0ff84e340a5ec905fdfece836f9ab9c403f973713e52",
-        bytes: 18_644,
+        sha256: "6acfbb3d52725b41f0fa84f9f9b1d813a345b4785ca2a31612243723cc22ee8b",
+        bytes: 18_658,
         executable: true,
     },
     PinnedInstallerFile {
