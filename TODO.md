@@ -92,21 +92,26 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
-- [ ] Consume canonical Core squash `ec32dc9f3048ab9b35621ca4fce5116e418f16b3`
+- [ ] Consume canonical Core squash `a77f72572d0e1ff7c40ce07028b7b88dc3b541d2`
   so the preserved PR131 target can use an exact cached materialized driver
   product before any network probe during automatic repair. The reviewed Core
-  tree `19c4f661147b29482d5a835a6926221563ecefca` validates the closed product
+  tree `2b73a2d703b3f5ab7b5fa73e4bbf3b5bffa670b7` validates the closed product
   identity, target, inventory, ownership, modes, sizes, hashes, and canonical
   checksum; malformed cache objects fail closed while true absence retains the
   existing network path, and the canonical 118-entry bundle includes the local
   installer executed by cached repair plus the reviewed exact SteamOS 3.8.16,
   kernel 6.16.12-valve24.5, NVIDIA 575.64.05 plan. Its generated manifest has
-  SHA-256 `a70f5846dae7dba5cb4c741beaff517b9d5930c88c62a21cee6b7828040df5b3`.
+  SHA-256 `4d495fa534b563e890f9f715370e87b04f190546a5b872660cc16b4f197b6c1f`.
   The reviewed cached-heal correction passes the already exact-validated NVIDIA
   target into the local installer and permits `retry_scheduled` to re-enter
   `installing` only after the same cache validation. Its executable regression
   proves two automatic cached attempts reach the real installer, persist
   attempt 2 then 4 bounded retry state, and perform no network acquisition.
+  The follow-up correction makes both backup ownership operations independent
+  of the system service's absent interactive `USER` environment by using the
+  effective numeric UID/GID; its executable regression retries from
+  `retry_scheduled`, installs and retains all five exact modules, reaches an
+  inactive `restored` terminal state, and performs no network acquisition.
   This EXE batch advances only the ordinary Core pin and workflow fixtures. The
   focused pinned-installer regression passes 1/1; all 55 literal file pins match
   the authenticated canonical GitHub checkout byte-for-byte, the two unchanged

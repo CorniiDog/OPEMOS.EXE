@@ -13,7 +13,7 @@ concurrency:
 
 env:
   OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-  OPEMOS_CORE_COMMIT: ec32dc9f3048ab9b35621ca4fce5116e418f16b3
+  OPEMOS_CORE_COMMIT: a77f72572d0e1ff7c40ce07028b7b88dc3b541d2
   RUST_TOOLCHAIN: 1.98.1
   NODE_VERSION: 22.23.2
   RUSTFLAGS: -C target-feature=+crt-static
@@ -45,7 +45,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: CorniiDog/OPEMOS
-          ref: ec32dc9f3048ab9b35621ca4fce5116e418f16b3
+          ref: a77f72572d0e1ff7c40ce07028b7b88dc3b541d2
           path: opemos-core-contracts
           fetch-depth: 1
           persist-credentials: false
@@ -92,7 +92,7 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib windows_
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
-          OPEMOS_CORE_EXPECTED_COMMIT: ec32dc9f3048ab9b35621ca4fce5116e418f16b3
+          OPEMOS_CORE_EXPECTED_COMMIT: a77f72572d0e1ff7c40ce07028b7b88dc3b541d2
           RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\scripts\windows-test-v6.manifest
 
       - name: Build unsigned verified runtime bundle
