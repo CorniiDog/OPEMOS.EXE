@@ -92,16 +92,17 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
-- [ ] Consume canonical Core squash `bd6ad2e5c7431fb94c3e5ed41efdec19789f8ef3`
+- [ ] Consume canonical Core squash `f4c1e977bd8b6cbff8ae9aa76059590ac48e4df7`
   so the preserved PR131 target can use an exact cached materialized driver
   product before any network probe during automatic repair. The reviewed Core
-  tree `894e7ace1a7884c083133e8077dcfbd7bacff17c` validates the closed product
+  tree `f0938e7702cdb7972c3898cf647346c03314c8c9` validates the closed product
   identity, target, inventory, ownership, modes, sizes, hashes, and canonical
   checksum; malformed cache objects fail closed while true absence retains the
-  existing network path, and the canonical 118-entry bundle now includes the
-  local installer executed by cached repair. This EXE batch advances only the
-  ordinary Core pin, workflow fixtures, and exact added/changed installer file
-  identities. The
+  existing network path, and the canonical 118-entry bundle includes the local
+  installer executed by cached repair plus the reviewed exact SteamOS 3.8.16,
+  kernel 6.16.12-valve24.5, NVIDIA 575.64.05 plan. Its generated manifest has
+  SHA-256 `7e282c7d30b1cc3cee6aaf60a425fd496a8f172a4c56a98b71627021ea57e8af`.
+  This EXE batch advances only the ordinary Core pin and workflow fixtures. The
   focused pinned-installer regression passes 1/1; all 55 literal file pins match
   the authenticated canonical GitHub checkout byte-for-byte, the two unchanged
   trust-policy pins retain their governed constants, and the 57-file total is
@@ -109,6 +110,19 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   `heavy.sh`. Native Windows build/startup, exact Core review, protected squash
   merge, materialization/staging, and the failed-stage-only automatic-heal
   acceptance remain.
+
+- [x] Consume canonical Core squash `bd6ad2e5c7431fb94c3e5ed41efdec19789f8ef3`
+  and its reviewed tree `894e7ace1a7884c083133e8077dcfbd7bacff17c`
+  for the closed cached-repair validator, local installer closure, and exact
+  changed installer identities. The focused pin regression passed 1/1; all 55
+  literal file pins matched authenticated canonical GitHub bytes, modes, sizes,
+  and hashes; the 57-file total was 708,650 bytes; formatting, warnings-denied
+  all-target Clippy, all nine required checks, native Windows build/startup, and
+  exact-head Core review passed. EXE PR #133 reviewed head
+  `ae66baeccf4c4f4cd76422d68b067eb0c05656d9` squash-merged to protected main
+  as `38ba475a48a58a3f42b741030919f3631108536e`; its reviewed and merge trees
+  match exactly. The accepted Windows artifact was 2,237,090,385 bytes with
+  SHA-256 `33d757fcad23ccc9f827dcd974a8cae5cf246312a4090faa06c4b6aad5c4313d`.
 
 - [x] Consume canonical Core squash `5cb6c751bc192be1c12f43b05e2147e5b5ef9299`
   so the demonstrated PR131 Valve-update deadlock is corrected by Core's exact
