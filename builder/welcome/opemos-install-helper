@@ -5,6 +5,7 @@ set -euo pipefail
 readonly MINIMUM_INSTALL_BYTES=$((12 * 1024 * 1024 * 1024))
 readonly REPAIR_DEVICE=/usr/lib/opemos-install-media/repair_device.sh
 readonly SUPPORT_ROOT=/usr/lib/opemos-install-media/support
+readonly MAINTAINER_ROOT=/usr/lib/opemos-install-media/maintainer
 readonly SUPPORT_REVISION_FILE=/usr/lib/opemos-install-media/support-revision
 readonly NVIDIA_VERSION_FILE=/usr/lib/opemos-install-media/nvidia-version
 readonly LOCK_DIRECTORY=/run/lock
@@ -245,6 +246,73 @@ verify_guardian_slot() {
     die "could not clean the guardian verification workspace"
 }
 
+restore_maintainer_home() {
+  local device=$1 root_device home_device workspace root_mount home_mount deck_id deck_uid deck_gid source destination
+  root_device=$(partition_by_label "$device" rootfs-A) ||
+    die "installed SteamOS rootfs-A partition is missing or duplicated"
+  home_device=$(partition_by_label "$device" home) ||
+    die "installed SteamOS home partition is missing or duplicated"
+  [[ -d "$MAINTAINER_ROOT" && ! -L "$MAINTAINER_ROOT" ]] ||
+    die "the pinned Maintainer home payload is unavailable"
+  for source in opemos-rollback-last-update open-opemos-welcome Open-OPEMOS.desktop opemos.svg; do
+    [[ -f "$MAINTAINER_ROOT/$source" && ! -L "$MAINTAINER_ROOT/$source" ]] ||
+      die "the pinned Maintainer home payload is incomplete"
+  done
+  workspace=$(mktemp -d "$LOCK_DIRECTORY/opemos-maintainer-home.XXXXXX") ||
+    die "could not create the Maintainer home workspace"
+  chmod 0700 "$workspace"
+  root_mount=$workspace/root
+  home_mount=$workspace/home
+  mkdir -m 0700 "$root_mount" "$home_mount"
+  (
+    set -e
+    cleanup_maintainer_home() {
+      mountpoint -q "$home_mount" && umount "$home_mount" || true
+      mountpoint -q "$root_mount" && umount "$root_mount" || true
+    }
+    trap cleanup_maintainer_home EXIT INT TERM
+    mount -o ro "$root_device" "$root_mount"
+    mount -o rw "$home_device" "$home_mount"
+    [[ "$(findmnt -nro SOURCE -T "$root_mount")" == "$root_device" ]]
+    [[ "$(findmnt -nro SOURCE -T "$home_mount")" == "$home_device" ]]
+    deck_id=$(awk -F: '$1 == "deck" {print $3 ":" $4}' "$root_mount/etc/passwd")
+    [[ "$deck_id" =~ ^[0-9]+:[0-9]+$ ]]
+    deck_uid=${deck_id%:*}
+    deck_gid=${deck_id#*:}
+    for destination in \
+      "$home_mount/deck/tools" \
+      "$home_mount/deck/Desktop" \
+      "$home_mount/deck/.config/autostart" \
+      "$home_mount/deck/.local/share/icons/hicolor/scalable/apps"; do
+      install -d -o "$deck_uid" -g "$deck_gid" -m 0755 "$destination"
+    done
+    install -o "$deck_uid" -g "$deck_gid" -m 0755 "$MAINTAINER_ROOT/opemos-rollback-last-update" "$home_mount/deck/tools/opemos-rollback-last-update"
+    install -o "$deck_uid" -g "$deck_gid" -m 0755 "$MAINTAINER_ROOT/open-opemos-welcome" "$home_mount/deck/tools/open-opemos-welcome"
+    install -o "$deck_uid" -g "$deck_gid" -m 0755 "$MAINTAINER_ROOT/Open-OPEMOS.desktop" "$home_mount/deck/Desktop/Open-OPEMOS.desktop"
+    install -o "$deck_uid" -g "$deck_gid" -m 0644 "$MAINTAINER_ROOT/Open-OPEMOS.desktop" "$home_mount/deck/.config/autostart/Open-OPEMOS.desktop"
+    install -o "$deck_uid" -g "$deck_gid" -m 0644 "$MAINTAINER_ROOT/opemos.svg" "$home_mount/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg"
+    for source in \
+      opemos-rollback-last-update \
+      open-opemos-welcome \
+      Open-OPEMOS.desktop \
+      opemos.svg; do
+      case "$source" in
+        opemos-rollback-last-update|open-opemos-welcome) destination=$home_mount/deck/tools/$source ;;
+        Open-OPEMOS.desktop) destination=$home_mount/deck/Desktop/$source ;;
+        opemos.svg) destination=$home_mount/deck/.local/share/icons/hicolor/scalable/apps/$source ;;
+      esac
+      [[ "$(sha256sum "$destination" | awk '{print $1}')" == "$(sha256sum "$MAINTAINER_ROOT/$source" | awk '{print $1}')" ]]
+    done
+    [[ "$(sha256sum "$home_mount/deck/.config/autostart/Open-OPEMOS.desktop" | awk '{print $1}')" == "$(sha256sum "$MAINTAINER_ROOT/Open-OPEMOS.desktop" | awk '{print $1}')" ]]
+    sync
+  ) || {
+    rmdir "$root_mount" "$home_mount" "$workspace" 2>/dev/null || true
+    die "could not restore Maintainer functionality to the installed home partition"
+  }
+  rmdir "$root_mount" "$home_mount" "$workspace" ||
+    die "could not clean the Maintainer home workspace"
+}
+
 install_guardian_slot() {
   local device=$1 slot=$2 support_revision=$3 nvidia_version=$4
   local root_device home_device var_device workspace root_mount home_mount var_mount etc_root
@@ -377,6 +445,8 @@ install_to_disk() {
     "$REPAIR_DEVICE" "$mode"
 
   ui_stage "Valve installation finished. Preparing offline and delayed-network recovery."
+  ui_stage "Restoring Maintainer functionality to the installed home partition."
+  restore_maintainer_home "$device"
   for slot in A B; do
     ui_stage "Installing the recovery guardian into rootfs-$slot."
     install_guardian_slot "$device" "$slot" "$support_revision" "$nvidia_version"

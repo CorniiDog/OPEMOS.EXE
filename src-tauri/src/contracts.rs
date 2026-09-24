@@ -1993,6 +1993,7 @@ pub(crate) fn marker_build_manifest(data: MarkerManifestData<'_>) -> serde_json:
             "/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg",
             "/usr/lib/opemos-install-media/opemos-install-helper",
             "/usr/lib/opemos-install-media/welcome_server.py",
+            "/usr/lib/opemos-install-media/maintainer",
             "/usr/lib/opemos-install-media/repair_device.sh",
             "/usr/lib/opemos-install-media/support",
             "/usr/lib/opemos-install-media/support-revision",

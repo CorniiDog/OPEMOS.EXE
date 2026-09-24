@@ -2880,7 +2880,31 @@ Bundle ID: 225a5c08ebfb77b3e2ba61aa92c678ba59a13321185f3b6766194e97bf8318fa
   property, unmounting it before guardian installation, and rolling the
   property back to read-only if the owned unmount fails. Focused validation,
   rebuilt exact-head Windows artifact, rerun of the failed install stage,
-  update/persistence/self-heal proof, and cleanup remain pending.
+  update/persistence/self-heal proof, and cleanup remain pending. PR #130 then
+  passed all nine required jobs and exact-head Core review and squash-merged
+  through protected main as
+  `02022b3ce3bf0aa18c401cd3dd787040ce7027a5`. Windows run
+  `35930564023`/job `107415860136` produced exact artifact `10780763830`;
+  its 2,237,081,682-byte archive has SHA-256
+  `88b592347eee54f75aa15254a9df45d2a708a498e23d97977023a24dd47205a9`.
+  The exact 8,120,172,544-byte constructed image has SHA-256
+  `eb7df2d3b9bc37cac553980f183fa178ffd97a916f18e6eaa13fc5e9a22da28a`.
+  Its disposable KVM-B install completed both A/B copies, Btrfs checks,
+  GRUB/EFI, and guardian installation and verification in both slots, then
+  booted rootfs-B to an active graphical target with no failed units and an
+  active repair timer. The same installed boot exposed the next exact gap:
+  Valve installation formats the persistent home partition, so the installed
+  system lacked the retained Maintainer launcher, rollback tool, desktop and
+  autostart entries, and icon even though those assets were present in the
+  source image. The active bounded correction retains those four immutable
+  assets under the install-media root, validates their hashes and modes, and
+  restores them with the installed deck account identity only after Valve
+  formats home. The helper mounts rootfs-A read-only and home read-write in an
+  owned workspace, verifies every copied byte, syncs, and fails closed on
+  cleanup. Focused retained-payload and manifest tests pass 2/2; shell syntax,
+  formatting, warnings-denied validation, changed-head Windows artifact,
+  exact-head Core review, and rerun of only the failed persistence/update/
+  self-heal stage remain pending.
 - [ ] Fix the demonstrated native Windows maintainer-workspace refusal after
   enabling automated NVIDIA release. Protected-main executable
   `ea7b3bd75f9ffead79eb94e37a6596eb87b36a9eff21ca73cd9c69811f9a27b8`

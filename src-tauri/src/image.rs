@@ -1449,6 +1449,21 @@ test -f "$ROOT/usr/lib/opemos-install-media/welcome_server.py"
 test ! -L "$ROOT/usr/lib/opemos-install-media/welcome_server.py"
 test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/welcome_server.py" | awk '{{print $1}}')" = "{}"
 test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/welcome_server.py")" = 755:0:0
+for MAINTAINER_ASSET in \
+  "opemos-rollback-last-update:{}:755" \
+  "open-opemos-welcome:{}:755" \
+  "Open-OPEMOS.desktop:{}:644" \
+  "opemos.svg:{}:644"; do
+  MAINTAINER_NAME=${{MAINTAINER_ASSET%%:*}}
+  MAINTAINER_REST=${{MAINTAINER_ASSET#*:}}
+  MAINTAINER_SHA=${{MAINTAINER_REST%%:*}}
+  MAINTAINER_MODE=${{MAINTAINER_REST##*:}}
+  MAINTAINER_PATH="$ROOT/usr/lib/opemos-install-media/maintainer/$MAINTAINER_NAME"
+  test -f "$MAINTAINER_PATH"
+  test ! -L "$MAINTAINER_PATH"
+  test "$(sha256sum "$MAINTAINER_PATH" | awk '{{print $1}}')" = "$MAINTAINER_SHA"
+  test "$(stat -c '%a:%u:%g' "$MAINTAINER_PATH")" = "$MAINTAINER_MODE:0:0"
+done
 test -f "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 test ! -L "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/repair_device.sh")" = 755:0:0
@@ -1500,6 +1515,10 @@ trap - EXIT INT TERM"#,
         welcome_icon_sha256,
         welcome_helper_sha256,
         welcome_server_sha256,
+        recovery_script_sha256,
+        welcome_sha256,
+        welcome_desktop_sha256,
+        welcome_icon_sha256,
         installation.support_commit,
         installation.nvidia_version,
         welcome_gtk_css_sha256,
