@@ -50,7 +50,9 @@ fn sha256_bytes(bytes: &[u8]) -> String {
 
 pub(crate) fn install_media_welcome_revision() -> String {
     let mut digest = Sha256::new();
-    digest.update(b"opemos-welcome-contract-v2;desktop-mode=0755;autostart-mode=0644");
+    digest.update(
+        b"opemos-welcome-contract-v3;desktop-mode=0755;autostart-mode=0644;installed-home-restored",
+    );
     for bytes in [
         INSTALL_MEDIA_WELCOME,
         INSTALL_MEDIA_WELCOME_SERVER,
@@ -3567,6 +3569,7 @@ if test -e "$ROOT/usr/lib/opemos-install-media"; then
   test ! -L "$ROOT/usr/lib/opemos-install-media"
 fi
 sudo install -d -m 0755 -o root -g root "$ROOT/usr/lib/opemos-install-media"
+sudo install -d -m 0755 -o root -g root "$ROOT/usr/lib/opemos-install-media/maintainer"
 if test -e "$ROOT/usr/lib/opemos-install-media/support"; then
   test -d "$ROOT/usr/lib/opemos-install-media/support"
   test ! -L "$ROOT/usr/lib/opemos-install-media/support"
@@ -3584,6 +3587,10 @@ for DIRECTORY in "$ROOT/usr/share" "$ROOT/usr/share/opemos-install-media" "$ROOT
 done
 sudo install -m 0755 -o root -g root /tmp/opemos-install-helper "$ROOT/usr/lib/opemos-install-media/opemos-install-helper"
 sudo install -m 0755 -o root -g root /tmp/welcome_server.py "$ROOT/usr/lib/opemos-install-media/welcome_server.py"
+sudo install -m 0755 -o root -g root /tmp/opemos-rollback-last-update "$ROOT/usr/lib/opemos-install-media/maintainer/opemos-rollback-last-update"
+sudo install -m 0755 -o root -g root /tmp/open-opemos-welcome "$ROOT/usr/lib/opemos-install-media/maintainer/open-opemos-welcome"
+sudo install -m 0644 -o root -g root /tmp/Open-OPEMOS.desktop "$ROOT/usr/lib/opemos-install-media/maintainer/Open-OPEMOS.desktop"
+sudo install -m 0644 -o root -g root /tmp/opemos.svg "$ROOT/usr/lib/opemos-install-media/maintainer/opemos.svg"
 sudo python3 /tmp/patch_repair_device.py "$ROOT/home/deck/tools/repair_device.sh" "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 sudo chown root:root "$ROOT/usr/lib/opemos-install-media/repair_device.sh"
 sudo chmod 0755 "$ROOT/usr/lib/opemos-install-media/repair_device.sh"

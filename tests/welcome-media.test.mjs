@@ -95,6 +95,23 @@ test("guardian installation binds persistent home and slot-matched etc overlays 
   assert.match(helper, /install_guardian_slot "\$device" "\$slot" "\$support_revision" "\$nvidia_version"/);
 });
 
+test("installation restores Maintainer launchers after Valve formats persistent home", () => {
+  const restoration = helper.match(/restore_maintainer_home\(\) \{[\s\S]*?\n\}\n\ninstall_guardian_slot/)?.[0] || "";
+  assert.match(restoration, /partition_by_label "\$device" rootfs-A/);
+  assert.match(restoration, /partition_by_label "\$device" home/);
+  assert.match(restoration, /mount -o ro "\$root_device" "\$root_mount"/);
+  assert.match(restoration, /mount -o rw "\$home_device" "\$home_mount"/);
+  assert.match(restoration, /awk -F: '\$1 == "deck" \{print \$3 ":" \$4\}'/);
+  assert.match(restoration, /MAINTAINER_ROOT\/opemos-rollback-last-update/);
+  assert.match(restoration, /MAINTAINER_ROOT\/open-opemos-welcome/);
+  assert.match(restoration, /MAINTAINER_ROOT\/Open-OPEMOS\.desktop/);
+  assert.match(restoration, /MAINTAINER_ROOT\/opemos\.svg/);
+  assert.match(restoration, /\.config\/autostart\/Open-OPEMOS\.desktop/);
+  assert.match(restoration, /sha256sum "\$destination"/);
+  assert.match(restoration, /trap cleanup_maintainer_home EXIT INT TERM/);
+  assert.match(helper, /restore_maintainer_home "\$device"[\s\S]*for slot in A B/);
+});
+
 test("guardian verification reads shared payload and both slot-matched persistent etc overlays", () => {
   const verification = helper.match(/verify_guardian_slot\(\) \{[\s\S]*?\n\}\n\ninstall_guardian_slot/)?.[0] || "";
   assert.match(verification, /partition_by_label "\$device" home/);

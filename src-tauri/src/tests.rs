@@ -4366,6 +4366,9 @@ esac
         assert!(include_str!("installer.rs").contains(
             "sudo install -m 0755 /tmp/Open-OPEMOS.desktop"
         ));
+        assert!(include_str!("installer.rs").contains(
+            "$ROOT/usr/lib/opemos-install-media/maintainer/open-opemos-welcome"
+        ));
         assert!(welcome.contains("SteamOS with NVIDIA drivers"));
         assert!(welcome.contains("Maintained by OPEMOS"));
         assert!(welcome.contains("Install SteamOS with NVIDIA drivers"));
@@ -6465,6 +6468,11 @@ esac
             .unwrap()
             .iter()
             .any(|path| path == "/home/deck/tools/open-opemos-welcome"));
+        assert!(nvidia_manifest["integration"]["modifiedPaths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == "/usr/lib/opemos-install-media/maintainer"));
         assert_eq!(
             nvidia_manifest["integration"]["nvidiaSourcePolicy"]["mode"],
             "pinned"
