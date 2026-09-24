@@ -92,7 +92,25 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
-- [ ] Consume canonical Core squash `5cb6c751bc192be1c12f43b05e2147e5b5ef9299`
+- [ ] Consume canonical Core squash `bd6ad2e5c7431fb94c3e5ed41efdec19789f8ef3`
+  so the preserved PR131 target can use an exact cached materialized driver
+  product before any network probe during automatic repair. The reviewed Core
+  tree `894e7ace1a7884c083133e8077dcfbd7bacff17c` validates the closed product
+  identity, target, inventory, ownership, modes, sizes, hashes, and canonical
+  checksum; malformed cache objects fail closed while true absence retains the
+  existing network path, and the canonical 118-entry bundle now includes the
+  local installer executed by cached repair. This EXE batch advances only the
+  ordinary Core pin, workflow fixtures, and exact added/changed installer file
+  identities. The
+  focused pinned-installer regression passes 1/1; all 55 literal file pins match
+  the authenticated canonical GitHub checkout byte-for-byte, the two unchanged
+  trust-policy pins retain their governed constants, and the 57-file total is
+  708,650 bytes. Formatting and warnings-denied all-target Clippy pass through
+  `heavy.sh`. Native Windows build/startup, exact Core review, protected squash
+  merge, materialization/staging, and the failed-stage-only automatic-heal
+  acceptance remain.
+
+- [x] Consume canonical Core squash `5cb6c751bc192be1c12f43b05e2147e5b5ef9299`
   so the demonstrated PR131 Valve-update deadlock is corrected by Core's exact
   legacy guardian keep-list migration. The reviewed Core tree
   `e407098b70063532a08b9d8aa03a6205f639231f` moves the immutable keep-list
@@ -104,7 +122,11 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   `heavy.sh`; local Node is unavailable, so frontend/workflow validation, native
   Windows build/startup, exact Core review, protected squash merge, and the
   failed-stage-only headless Valve update/reboot/Maintainer/controlled-self-heal
-  acceptance remain.
+  acceptance remained. EXE PR #132 passed all nine required checks, received
+  exact-head Core approval, and squash-merged to protected main as
+  `c66d7fb4fcfa937a6024d49b9ab66019745b47e1`; the normal Valve update then
+  committed successfully and preserved Maintainer/guardian state, exposing the
+  exact cached-product automatic-heal dependency now addressed above.
 
 - [x] Replace implicit packaged-Windows AppData reuse with bundle-local,
   versioned application state before the final native candidate run. The

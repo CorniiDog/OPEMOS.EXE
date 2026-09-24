@@ -276,7 +276,7 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 55] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 57] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
         sha256: "55854918a14facc1924c2aed834759c9f9324115d252c540c389d93a6c5beda2",
@@ -284,9 +284,15 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 55] = [
         executable: true,
     },
     PinnedInstallerFile {
+        path: "bootstrap/install.sh",
+        sha256: "1fa43924f86edc19871761019553ade97c6a1457277180ac3b80c446b3d546a0",
+        bytes: 10_914,
+        executable: true,
+    },
+    PinnedInstallerFile {
         path: "bootstrap/install_recovery_guardian_to_root.sh",
-        sha256: "c45c23e67f3779b6baf909f4df77dc401e231a4e203a4245e30495254ae92e4c",
-        bytes: 10_950,
+        sha256: "f05436bf0f9d8aa70af4c809a6337d99344aa7b3302a3c0b44ccd2bc74ba8bb8",
+        bytes: 11_271,
         executable: true,
     },
     PinnedInstallerFile {
@@ -309,8 +315,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 55] = [
     },
     PinnedInstallerFile {
         path: "bootstrap/recoveryctl.sh",
-        sha256: "88b3df118161ab8c9ad5da39f5503961ea956e2ad326cf879de538f51a257461",
-        bytes: 21_343,
+        sha256: "f3f2006e727288aa19064ebad7d80bdd5b6ca70f09b62306f92ca78a070355d4",
+        bytes: 22_948,
         executable: true,
     },
     PinnedInstallerFile {
@@ -389,6 +395,12 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 55] = [
         path: "lib/recovery_release_plan.py",
         sha256: "6e4d04badb5dc8310731c9ed49e4e49ce5ab02f3230a38d732ebf0b777649677",
         bytes: 13_124,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/recovery_cached_product.py",
+        sha256: "40fb898a9816a6766b7dc44f36d34110620ddd4e86fa5550e74c2c3c33106a5a",
+        bytes: 10_770,
         executable: true,
     },
     PinnedInstallerFile {
