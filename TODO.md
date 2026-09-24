@@ -92,6 +92,20 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
+- [ ] Consume canonical Core squash `5cb6c751bc192be1c12f43b05e2147e5b5ef9299`
+  so the demonstrated PR131 Valve-update deadlock is corrected by Core's exact
+  legacy guardian keep-list migration. The reviewed Core tree
+  `e407098b70063532a08b9d8aa03a6205f639231f` moves the immutable keep-list
+  into each slot root and removes the old `/var`-backed upper-layer file only
+  after exact type, mode, content, and closed-directory validation. This EXE
+  batch advances the ordinary Core-consumption pin, exact workflow fixtures,
+  and the changed installer-script size/SHA-256. Formatting, the focused pinned
+  installer contract (1/1), and warnings-denied all-target Clippy pass through
+  `heavy.sh`; local Node is unavailable, so frontend/workflow validation, native
+  Windows build/startup, exact Core review, protected squash merge, and the
+  failed-stage-only headless Valve update/reboot/Maintainer/controlled-self-heal
+  acceptance remain.
+
 - [x] Replace implicit packaged-Windows AppData reuse with bundle-local,
   versioned application state before the final native candidate run. The
   approved implementation derives `state/` from the executable's Desktop
