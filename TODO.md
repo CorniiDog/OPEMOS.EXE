@@ -92,14 +92,16 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
-- [ ] Consume canonical Core squash `01b85f13bddfa2aa3ba196bc8f35cadc14e11a3b`
+- [ ] Consume canonical Core squash `bd6ad2e5c7431fb94c3e5ed41efdec19789f8ef3`
   so the preserved PR131 target can use an exact cached materialized driver
   product before any network probe during automatic repair. The reviewed Core
-  tree `f0def71474db67f843519965b5ce50a85b99ab4b` validates the closed product
+  tree `894e7ace1a7884c083133e8077dcfbd7bacff17c` validates the closed product
   identity, target, inventory, ownership, modes, sizes, hashes, and canonical
   checksum; malformed cache objects fail closed while true absence retains the
-  existing network path. This EXE batch advances only the ordinary Core pin,
-  workflow fixtures, and exact added/changed installer file identities. The
+  existing network path, and the canonical 118-entry bundle now includes the
+  local installer executed by cached repair. This EXE batch advances only the
+  ordinary Core pin, workflow fixtures, and exact added/changed installer file
+  identities. The
   focused pinned-installer regression passes 1/1; all 55 literal file pins match
   the authenticated canonical GitHub checkout byte-for-byte, the two unchanged
   trust-policy pins retain their governed constants, and the 57-file total is
