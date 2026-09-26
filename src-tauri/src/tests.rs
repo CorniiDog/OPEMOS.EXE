@@ -3880,7 +3880,7 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 710_107);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 710_182);
         assert_eq!(PINNED_INSTALLER_FILES.len(), 57);
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "lib/diagnostic_safety.py" && !file.executable
