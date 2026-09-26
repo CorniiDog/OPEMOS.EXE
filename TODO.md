@@ -92,16 +92,16 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
-- [ ] Consume canonical Core squash `6f6b33917669ec14ef9a567308e6f9bcd28b4295`
+- [ ] Consume canonical Core squash `30e2550895245729314a6ab91cc1753d5fbc7c15`
   so the preserved PR131 target can use an exact cached materialized driver
   product before any network probe during automatic repair. The reviewed Core
-  tree `6cbd501a7c427674d93874c2fe383960fe2466a6` validates the closed product
+  tree `0d4d47ad35a155fa0b647fd8417301ab9620be47` validates the closed product
   identity, target, inventory, ownership, modes, sizes, hashes, and canonical
   checksum; malformed cache objects fail closed while true absence retains the
   existing network path, and the canonical 118-entry bundle includes the local
   installer executed by cached repair plus the reviewed exact SteamOS 3.8.16,
   kernel 6.16.12-valve24.5, NVIDIA 575.64.05 plan. Its generated manifest has
-  SHA-256 `e78870b8ff7d3e3fcb8ebbe420aeb285ba32c74a297f51b5e9924310be0a3bf3`.
+  SHA-256 `bb3cfeb5dda706e89a481e19dc5c811eb2b43adfe90962b1821f804784ec2ead`.
   The reviewed cached-heal correction passes the already exact-validated NVIDIA
   target into the local installer and permits `retry_scheduled` to re-enter
   `installing` only after the same cache validation. Its executable regression
@@ -124,11 +124,16 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   is incomplete. Its real cached-repair regression starts from immutable empty
   HOME and read-only state, then restores all five exact valve24.5 modules
   without curl or online installation while leaving HOME untouched.
+  The missing-target correction performs the read-only space preflight against
+  the nearest existing ancestor when the kernel `updates` parent and target
+  directory are absent. Its real cached-repair regression begins from that
+  exact driver-absent layout and restores all five valve24.5 modules without
+  curl or online installation.
   This EXE batch advances only the ordinary Core pin and workflow fixtures. The
   focused pinned-installer regression passes 1/1; all 55 literal file pins match
   the authenticated canonical GitHub checkout byte-for-byte, the two unchanged
   trust-policy pins retain their governed constants, and the 57-file total is
-  709,826 bytes. Formatting and warnings-denied all-target Clippy pass through
+  710,107 bytes. Formatting and warnings-denied all-target Clippy pass through
   `heavy.sh`. Native Windows build/startup, exact Core review, protected squash
   merge, materialization/staging, and the failed-stage-only automatic-heal
   acceptance remain.

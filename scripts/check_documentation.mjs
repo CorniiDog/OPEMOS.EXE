@@ -162,7 +162,7 @@ assert.match(linuxTesting, /\.\/test_welcome_linux\.sh/);
 assert.match(linuxTesting, /OPEMOS_GRAPHICAL_TEST_PRINT_ONLY=1/);
 
 const checks = await read(".github/workflows/checks.yml");
-const coreContractCommit = "6f6b33917669ec14ef9a567308e6f9bcd28b4295";
+const coreContractCommit = "30e2550895245729314a6ab91cc1753d5fbc7c15";
 assert.match(checks, /^name: Checks$/m);
 assert.match(checks, /npm run test:frontend/);
 assert.match(checks, /cargo clippy --manifest-path src-tauri\/Cargo\.toml/);
@@ -178,7 +178,7 @@ assert.equal(
 );
 assert.match(
   checks,
-  /ref: 6f6b33917669ec14ef9a567308e6f9bcd28b4295\n          path: opemos-core-contracts\n          fetch-depth: 182\n          persist-credentials: false/,
+  /ref: 30e2550895245729314a6ab91cc1753d5fbc7c15\n          path: opemos-core-contracts\n          fetch-depth: 183\n          persist-credentials: false/,
 );
 assert.doesNotMatch(checks, /82241699497fb605b3d8b3fbc0015ec952f81ef3/);
 assert.match(checks, /persist-credentials: false/);
