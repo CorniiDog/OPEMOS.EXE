@@ -285,8 +285,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 57] = [
     },
     PinnedInstallerFile {
         path: "bootstrap/install.sh",
-        sha256: "70a9a497cada9df5da6fa7c62f4cec48007f99432518de4977c7bda6088cf799",
-        bytes: 11_278,
+        sha256: "e7315660478dc36306e2e631c744f3320ad20be1446f27aba6394c17765f8031",
+        bytes: 12_005,
         executable: true,
     },
     PinnedInstallerFile {
