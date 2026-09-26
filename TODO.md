@@ -92,16 +92,16 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
-- [ ] Consume canonical Core squash `124ea7c18b977974138015d050c31db245a81f33`
+- [ ] Consume canonical Core squash `6f6b33917669ec14ef9a567308e6f9bcd28b4295`
   so the preserved PR131 target can use an exact cached materialized driver
   product before any network probe during automatic repair. The reviewed Core
-  tree `2bffcc8f19914957855a35ba615af32d54079e99` validates the closed product
+  tree `6cbd501a7c427674d93874c2fe383960fe2466a6` validates the closed product
   identity, target, inventory, ownership, modes, sizes, hashes, and canonical
   checksum; malformed cache objects fail closed while true absence retains the
   existing network path, and the canonical 118-entry bundle includes the local
   installer executed by cached repair plus the reviewed exact SteamOS 3.8.16,
   kernel 6.16.12-valve24.5, NVIDIA 575.64.05 plan. Its generated manifest has
-  SHA-256 `0a78d4e122713c3c277f43fc52dc83c572bfa7ae7e3266d888c76de752958147`.
+  SHA-256 `e78870b8ff7d3e3fcb8ebbe420aeb285ba32c74a297f51b5e9924310be0a3bf3`.
   The reviewed cached-heal correction passes the already exact-validated NVIDIA
   target into the local installer and permits `retry_scheduled` to re-enter
   `installing` only after the same cache validation. Its executable regression
@@ -118,11 +118,17 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   starts from a failed cached attempt with an immutable simulated `/root`, then
   restores all five exact modules on the network-free automatic retry, returns
   to read-only mode and inactive `restored`, and leaves no temporary data.
+  The final reviewed correction places installer rollback generations under the
+  existing privileged service-state tree, removes failed-attempt state only
+  after a complete rollback, and preserves the exact generation when rollback
+  is incomplete. Its real cached-repair regression starts from immutable empty
+  HOME and read-only state, then restores all five exact valve24.5 modules
+  without curl or online installation while leaving HOME untouched.
   This EXE batch advances only the ordinary Core pin and workflow fixtures. The
   focused pinned-installer regression passes 1/1; all 55 literal file pins match
   the authenticated canonical GitHub checkout byte-for-byte, the two unchanged
   trust-policy pins retain their governed constants, and the 57-file total is
-  709,099 bytes. Formatting and warnings-denied all-target Clippy pass through
+  709,826 bytes. Formatting and warnings-denied all-target Clippy pass through
   `heavy.sh`. Native Windows build/startup, exact Core review, protected squash
   merge, materialization/staging, and the failed-stage-only automatic-heal
   acceptance remain.
