@@ -92,6 +92,20 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
+- [ ] Preserve a writable native SteamOS desktop by enforcing the exact numeric
+  deck identity `1000:1000` on the four existing user-home directory roots that
+  the installer consumes: `/home/deck`, `.config`, `.local`, and `.local/share`.
+  The correction is deliberately non-recursive so it preserves every file,
+  byte, mode, log, and all other ownership. A focused installer regression must
+  require the exact identity, the closed four-directory set, post-change owner
+  verification, and the absence of recursive ownership changes. That focused
+  regression passes 1/1 (rather than a filtered-zero invocation); formatting
+  and warnings-denied all-target/all-feature Clippy also pass through
+  `heavy.sh`. Apply the same bounded correction to the retained PR131 test
+  image, then prove a writable rendered Desktop Mode session and repeat only
+  the post-reboot strict NVIDIA, Maintainer, guardian, timer, read-only, and
+  cleanup checks.
+
 - [ ] Consume canonical Core squash `9d458d784a0d7d189189829885b416a9eb38d0eb`
   so the preserved PR131 target can use an exact cached materialized driver
   product before any network probe during automatic repair. The reviewed Core

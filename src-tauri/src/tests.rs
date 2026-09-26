@@ -4378,6 +4378,15 @@ esac
         assert!(include_str!("installer.rs").contains(
             "$ROOT/usr/lib/opemos-install-media/maintainer/open-opemos-welcome"
         ));
+        let installer = include_str!("installer.rs");
+        assert!(installer.contains(r#"test "$DECK_ID" = 1000:1000"#));
+        assert!(installer.contains(
+            r#"for DIRECTORY in "$ROOT/home/deck" "$ROOT/home/deck/.config" "$ROOT/home/deck/.local" "$ROOT/home/deck/.local/share"; do
+  sudo chown "$DECK_ID" "$DIRECTORY"
+  test "$(stat -c '%u:%g' "$DIRECTORY")" = "$DECK_ID"
+done"#
+        ));
+        assert!(!installer.contains(r#"sudo chown -R "$DECK_ID" "$DIRECTORY""#));
         assert!(welcome.contains("SteamOS with NVIDIA drivers"));
         assert!(welcome.contains("Maintained by OPEMOS"));
         assert!(welcome.contains("Install SteamOS with NVIDIA drivers"));

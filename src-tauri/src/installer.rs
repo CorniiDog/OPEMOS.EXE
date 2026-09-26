@@ -3545,6 +3545,7 @@ DECK_ID=$(awk -F: '$1 == "deck" {{print $3 ":" $4}}' "$ROOT/etc/passwd")
 test -n "$DECK_ID"
 test "$(printf '%s\n' "$DECK_ID" | wc -l | tr -d ' ')" = 1
 case "$DECK_ID" in *[!0-9:]*) echo 'The SteamOS deck account has an unsafe numeric identity.' >&2; exit 1;; esac
+test "$DECK_ID" = 1000:1000
 test -d "$ROOT/home/deck"
 test ! -L "$ROOT/home/deck"
 DECK_UID=${{DECK_ID%:*}}
@@ -3556,6 +3557,10 @@ for DIRECTORY in "$ROOT/home/deck/tools" "$ROOT/home/deck/Desktop" "$ROOT/home/d
   else
     sudo install -d -m 0755 -o "$DECK_UID" -g "$DECK_GID" "$DIRECTORY"
   fi
+done
+for DIRECTORY in "$ROOT/home/deck" "$ROOT/home/deck/.config" "$ROOT/home/deck/.local" "$ROOT/home/deck/.local/share"; do
+  sudo chown "$DECK_ID" "$DIRECTORY"
+  test "$(stat -c '%u:%g' "$DIRECTORY")" = "$DECK_ID"
 done
 test -e "$ROOT/home/deck/tools/repair_device.sh"
 test -f "$ROOT/home/deck/tools/repair_device.sh"
