@@ -3880,8 +3880,8 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 710_182);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 57);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 717_893);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 58);
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "lib/diagnostic_safety.py" && !file.executable
         }));
@@ -3894,8 +3894,8 @@ esac
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "bootstrap/install_recovery_guardian_to_root.sh"
                 && file.sha256
-                    == "f05436bf0f9d8aa70af4c809a6337d99344aa7b3302a3c0b44ccd2bc74ba8bb8"
-                && file.bytes == 11_271
+                    == "d8dca93b0a41caf33da66662ded194b060cd2e201af0f25719c66dc4f8205ab0"
+                && file.bytes == 11_400
                 && file.executable
         }));
         assert!(PINNED_INSTALLER_FILES
@@ -3909,6 +3909,7 @@ esac
             "lib/recovery_fallback_state.py",
             "lib/validate_github_meta.py",
             "lib/recovery_cached_product.py",
+            "lib/recovery_cached_receipt.py",
         ] {
             assert!(PINNED_INSTALLER_FILES
                 .iter()

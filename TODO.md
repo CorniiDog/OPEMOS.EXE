@@ -92,16 +92,18 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
-- [ ] Consume canonical Core squash `9df9e4f9871f463f565a9ffd3ec41003a4a100f0`
+- [ ] Consume canonical Core squash `9d458d784a0d7d189189829885b416a9eb38d0eb`
   so the preserved PR131 target can use an exact cached materialized driver
   product before any network probe during automatic repair. The reviewed Core
-  tree `c26c490a6bebbe15795d49b1e1a8f3f20e6b0355` validates the closed product
+  tree `8ff05ab771053b42efe40024251ed72c0005ef3f` validates the closed product
   identity, target, inventory, ownership, modes, sizes, hashes, and canonical
   checksum; malformed cache objects fail closed while true absence retains the
-  existing network path, and the canonical 118-entry bundle includes the local
+  existing network path, and the canonical 119-entry bundle includes the local
   installer executed by cached repair plus the reviewed exact SteamOS 3.8.16,
   kernel 6.16.12-valve24.5, NVIDIA 575.64.05 plan. Its generated manifest has
-  SHA-256 `7dff566285f1bfc045e95e3ef2d0f06938698f296a5f51dca0b41fc15285a66e`.
+  SHA-256 `85d376a62a4fa61bd1c4edf3fab91175ad04979e22066f1507145a9259eea080`
+  and bundle ID
+  `683cad2f1e8fc56bf1124bf3accf80a3d88aedf96f95b29c9fb0cb192b117aca`.
   The reviewed cached-heal correction passes the already exact-validated NVIDIA
   target into the local installer and permits `retry_scheduled` to re-enter
   `installing` only after the same cache validation. Its executable regression
@@ -134,11 +136,17 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   Its real cached-repair regression runs under umask `077`, proves unprivileged
   exact `modinfo` verification, restores all five valve24.5 modules, and reaches
   terminal restored state without curl or online installation.
+  The cached-receipt correction commits a strict receipt binding the exact
+  Core/source/target, archive, provenance, build-info, and five byte-identical
+  installed compressed modules. Its fallback-active driver-absent regression
+  proves strict receipt verification, rejects post-receipt module mutation,
+  clears fallback, reaches terminal restored state, restores read-only mode,
+  and invokes neither curl nor the online installer.
   This EXE batch advances only the ordinary Core pin and workflow fixtures. The
   focused pinned-installer regression passes 1/1; all 55 literal file pins match
   the authenticated canonical GitHub checkout byte-for-byte, the two unchanged
   trust-policy pins retain their governed constants, and the 57-file total is
-  710,182 bytes. Formatting and warnings-denied all-target Clippy pass through
+  717,893 bytes. Formatting and warnings-denied all-target Clippy pass through
   `heavy.sh`. Native Windows build/startup, exact Core review, protected squash
   merge, materialization/staging, and the failed-stage-only automatic-heal
   acceptance remain.
