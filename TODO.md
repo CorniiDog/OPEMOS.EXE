@@ -104,7 +104,22 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   `heavy.sh`. Apply the same bounded correction to the retained PR131 test
   image, then prove a writable rendered Desktop Mode session and repeat only
   the post-reboot strict NVIDIA, Maintainer, guardian, timer, read-only, and
-  cleanup checks.
+  cleanup checks. The retained-image manifest covered all 24 entries under
+  `/home/deck`: only the approved four directory UID/GID pairs changed from
+  `0:0` to `1000:1000`, while all other metadata and every regular-file hash
+  remained identical. A disposable forced-Current-A boot then proved the exact
+  valve24.5 kernel, strict `healthy`/`exact_nvidia_ready`, inactive restored
+  transaction with `exact_nvidia_restored`, cleared fallback, all five exact
+  `575.64.05` modules, enabled/active repair timer, enabled guardian with a
+  successful completed oneshot, active SDDM, graphical default, and read-only
+  mode. Plasma Desktop rendered at 1280x800; the same live session verified all
+  five Maintainer assets and completed write/read/delete probes under the fixed
+  home roots. The rendered PPM SHA-256 is
+  `81e4a28e3b2c92a94f4a732bee47800f7c327b410fd201232f2d58977f1f9d59`.
+  Cleanup left the retained qcow2 clean, offline and detached at 12,583,239,680
+  bytes with no QEMU, image, NBD, mount, overlay or tmpfs artifact. Protected
+  required checks, exact changed-head Core review, squash merge, and final
+  authenticated handoff remain.
 
 - [ ] Consume canonical Core squash `9d458d784a0d7d189189829885b416a9eb38d0eb`
   so the preserved PR131 target can use an exact cached materialized driver
