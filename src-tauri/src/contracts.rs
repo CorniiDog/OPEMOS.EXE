@@ -276,7 +276,7 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 57] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 58] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
         sha256: "55854918a14facc1924c2aed834759c9f9324115d252c540c389d93a6c5beda2",
@@ -291,8 +291,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 57] = [
     },
     PinnedInstallerFile {
         path: "bootstrap/install_recovery_guardian_to_root.sh",
-        sha256: "f05436bf0f9d8aa70af4c809a6337d99344aa7b3302a3c0b44ccd2bc74ba8bb8",
-        bytes: 11_271,
+        sha256: "d8dca93b0a41caf33da66662ded194b060cd2e201af0f25719c66dc4f8205ab0",
+        bytes: 11_400,
         executable: true,
     },
     PinnedInstallerFile {
@@ -315,8 +315,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 57] = [
     },
     PinnedInstallerFile {
         path: "bootstrap/recoveryctl.sh",
-        sha256: "be4dd03f0fe36d388f5140b55d3a70cc90149d401328683e783d7eb0151f409c",
-        bytes: 23_005,
+        sha256: "481d63a3e9163f4976cd986e4063378e8dc376ed203922968aaf6c6f865cd158",
+        bytes: 23_648,
         executable: true,
     },
     PinnedInstallerFile {
@@ -345,8 +345,8 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 57] = [
     },
     PinnedInstallerFile {
         path: "lib/recovery_status.py",
-        sha256: "752cc19913d35f0ab61143d3ede1227128ceabe4bacb2021e6c56394b729a7c5",
-        bytes: 20_395,
+        sha256: "aff51aefd3a776be46f3378e8dce03bed12b6f3f20d60c1d8594542f634bdf2c",
+        bytes: 20_938,
         executable: true,
     },
     PinnedInstallerFile {
@@ -401,6 +401,12 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 57] = [
         path: "lib/recovery_cached_product.py",
         sha256: "40fb898a9816a6766b7dc44f36d34110620ddd4e86fa5550e74c2c3c33106a5a",
         bytes: 10_770,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/recovery_cached_receipt.py",
+        sha256: "5e6d5247863e9c66b7dcfdfedb300a643238cc2d4467ce82404022234505bd79",
+        bytes: 6_396,
         executable: true,
     },
     PinnedInstallerFile {
