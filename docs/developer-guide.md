@@ -142,6 +142,9 @@ Before handing off a portable candidate, verify all of the following on Windows:
 
 - the executable SHA-256 and byte size match `bundle-provenance.json` and
   `SHA256SUMS.txt`;
+- deployment tooling writes `bundle-provenance.json` as UTF-8 without a BOM;
+  startup tolerates one PowerShell-style leading UTF-8 BOM but retains the
+  bounded-file, strict-schema, hash, size, platform, and source checks;
 - `runtime/runtime-manifest.json` matches the provenance digest;
 - first launch creates `state/cache-v1/cache-manifest.json` with the exact
   executable and runtime-manifest hashes;
