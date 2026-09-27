@@ -548,9 +548,13 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
         main_frame = exactly_one_role(app, "OPEMOS EXE — Experimental Linux Test", "frame")
         validate_linux_unavailable_controls(main_frame, focusable_state, focused_state)
     invoke(exactly_one_action(app, "Choose Image…"))
-    chooser = wait(lambda: exactly_one_role(app, "Open File", "file chooser"),
-                   "the native recovery-image chooser")
-    invoke(validate_open_image_chooser(chooser, enabled_state))
+    chooser = wait(
+        lambda: validate_open_image_chooser(
+            exactly_one_role(app, "Open File", "file chooser"), enabled_state
+        ),
+        "the complete native recovery-image chooser",
+    )
+    invoke(chooser)
     wait(lambda: validate_closed_image_chooser(app, focused_state),
          "image chooser cancellation and focus restoration")
     invoke(exactly_one_action(app, "Open settings"))
@@ -585,9 +589,13 @@ def exercise_accessibility(desktop, deadline: float, expected_pid: int,
     validate_compatibility_safety_text(dialog, accessible_text)
     validate_empty_result(dialog)
     invoke(exactly_one_action(dialog, "Open a local resolver JSON file (up to 1 MiB)"))
-    chooser = wait(lambda: exactly_one_role(app, "Open File", "file chooser"),
-                   "the native resolver JSON chooser")
-    invoke(validate_open_resolver_chooser(chooser, enabled_state))
+    chooser = wait(
+        lambda: validate_open_resolver_chooser(
+            exactly_one_role(app, "Open File", "file chooser"), enabled_state
+        ),
+        "the complete native resolver JSON chooser",
+    )
+    invoke(chooser)
     wait(lambda: validate_closed_resolver_chooser(app, focused_state),
          "resolver chooser cancellation and focus restoration")
     invoke(exactly_one_action(dialog, "Inspect pasted result"))
