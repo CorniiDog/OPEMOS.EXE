@@ -953,11 +953,6 @@ elements.buildButton.addEventListener("click", async () => {
     progressWindow = windows.find((window) => window.label === "build-progress");
     if (!progressWindow) throw new Error("The build progress window is unavailable.");
     await waitForProgressWindow(progressWindow);
-    await progressWindow.show();
-    await progressWindow.setFocus();
-    if (!await progressWindow.isVisible()) {
-      throw new Error("The build progress window could not be made visible.");
-    }
     setCompanionMode("build-progress");
     elements.resultMessage.textContent = "Build progress is open in a separate window.";
     const preview = await invoke("preview_image_output", {
@@ -981,9 +976,13 @@ elements.buildButton.addEventListener("click", async () => {
     if (progressWindow) {
       try {
         await progressWindow.emit("build-start-failed", { message: String(error) });
-        await progressWindow.hide();
       } catch {
-        // Preserve the original build-start failure if companion cleanup also fails.
+        // Preserve the original build-start failure if its companion notice fails.
+      }
+      try {
+        await invoke("hide_progress_window");
+      } catch {
+        // Preserve the original build-start failure if native cleanup also fails.
       }
     }
     activeBuildContext = null;
