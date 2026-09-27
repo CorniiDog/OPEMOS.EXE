@@ -40,6 +40,20 @@ The packaged application deliberately resolves required commands only from its
 verified runtime bundle. This failure is therefore a packaging error rather than
 a missing end-user dependency.
 
+## Windows refuses USB-writer elevation
+
+The Windows security option **User Account Control: Only elevate executables
+that are signed and validated** rejects an unsigned portable OPEMOS candidate
+before the bounded USB writer can start. Windows reports native error 8235 as
+`A referral was returned from the server`.
+
+OPEMOS checks that policy and the current executable's Authenticode trust before
+requesting elevation. When the policy is enabled and the candidate is unsigned
+or untrusted, the app stops without opening the Windows referral dialog and
+without changing the selected USB. Use a reviewed, trusted Authenticode-signed
+OPEMOS build. Do not disable the policy or route the writer through a signed
+system interpreter to bypass it.
+
 ## Apparently stalled stages
 
 Source hashing, emulated x86_64 boot, package measurement, pacman hooks, and

@@ -4267,6 +4267,7 @@ fn launch_exact_elevated_writer(
     parameters: &str,
     owner_window: isize,
 ) -> Result<WindowsProcessHandle, String> {
+    verify_windows_elevation_candidate(executable)?;
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStrExt as _;
     #[repr(C)]
@@ -4336,6 +4337,158 @@ fn launch_exact_elevated_writer(
         );
     }
     Ok(WindowsProcessHandle(info.process))
+}
+
+#[cfg(target_os = "windows")]
+fn verify_windows_elevation_candidate(executable: &Path) -> Result<(), String> {
+    use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt as _;
+
+    #[repr(C)]
+    struct Guid {
+        data1: u32,
+        data2: u16,
+        data3: u16,
+        data4: [u8; 8],
+    }
+
+    #[repr(C)]
+    struct WinTrustFileInfo {
+        size: u32,
+        file_path: *const u16,
+        file_handle: *mut c_void,
+        known_subject: *const Guid,
+    }
+
+    #[repr(C)]
+    struct WinTrustData {
+        size: u32,
+        policy_callback_data: *mut c_void,
+        sip_client_data: *mut c_void,
+        ui_choice: u32,
+        revocation_checks: u32,
+        union_choice: u32,
+        file: *mut WinTrustFileInfo,
+        state_action: u32,
+        state_data: *mut c_void,
+        url_reference: *const u16,
+        provider_flags: u32,
+        ui_context: u32,
+        signature_settings: *mut c_void,
+    }
+
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn RegGetValueW(
+            key: *mut c_void,
+            sub_key: *const u16,
+            value: *const u16,
+            flags: u32,
+            value_type: *mut u32,
+            data: *mut c_void,
+            data_size: *mut u32,
+        ) -> i32;
+    }
+    #[link(name = "wintrust")]
+    extern "system" {
+        fn WinVerifyTrust(window: *mut c_void, action: *const Guid, data: *mut WinTrustData)
+            -> i32;
+    }
+
+    const HKEY_LOCAL_MACHINE: *mut c_void = 0x8000_0002usize as *mut c_void;
+    const RRF_RT_REG_DWORD: u32 = 0x0000_0010;
+    const ERROR_FILE_NOT_FOUND: i32 = 2;
+    const WINTRUST_ACTION_GENERIC_VERIFY_V2: Guid = Guid {
+        data1: 0x00aa_c56b,
+        data2: 0xcd44,
+        data3: 0x11d0,
+        data4: [0x8c, 0xc2, 0x00, 0xc0, 0x4f, 0xc2, 0x95, 0xee],
+    };
+    const WTD_UI_NONE: u32 = 2;
+    const WTD_CHOICE_FILE: u32 = 1;
+    const WTD_STATEACTION_VERIFY: u32 = 1;
+    const WTD_STATEACTION_CLOSE: u32 = 2;
+
+    let sub_key = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System\0"
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    let value_name = "ValidateAdminCodeSignatures\0"
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    let mut policy = 0_u32;
+    let mut policy_size = std::mem::size_of::<u32>() as u32;
+    let registry_status = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            sub_key.as_ptr(),
+            value_name.as_ptr(),
+            RRF_RT_REG_DWORD,
+            std::ptr::null_mut(),
+            (&mut policy as *mut u32).cast(),
+            &mut policy_size,
+        )
+    };
+    if registry_status == ERROR_FILE_NOT_FOUND {
+        return Ok(());
+    }
+    if registry_status != 0 {
+        return Err(format!(
+            "Windows elevation policy could not be inspected safely (system error {registry_status}); the USB writer was not started."
+        ));
+    }
+    if policy == 0 {
+        return Ok(());
+    }
+
+    let path = executable
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let mut file = WinTrustFileInfo {
+        size: std::mem::size_of::<WinTrustFileInfo>() as u32,
+        file_path: path.as_ptr(),
+        file_handle: std::ptr::null_mut(),
+        known_subject: std::ptr::null(),
+    };
+    let mut trust = WinTrustData {
+        size: std::mem::size_of::<WinTrustData>() as u32,
+        policy_callback_data: std::ptr::null_mut(),
+        sip_client_data: std::ptr::null_mut(),
+        ui_choice: WTD_UI_NONE,
+        revocation_checks: 0,
+        union_choice: WTD_CHOICE_FILE,
+        file: &mut file,
+        state_action: WTD_STATEACTION_VERIFY,
+        state_data: std::ptr::null_mut(),
+        url_reference: std::ptr::null(),
+        provider_flags: 0,
+        ui_context: 0,
+        signature_settings: std::ptr::null_mut(),
+    };
+    let invalid_window = usize::MAX as *mut c_void;
+    let trust_status = unsafe {
+        WinVerifyTrust(
+            invalid_window,
+            &WINTRUST_ACTION_GENERIC_VERIFY_V2,
+            &mut trust,
+        )
+    };
+    trust.state_action = WTD_STATEACTION_CLOSE;
+    unsafe {
+        WinVerifyTrust(
+            invalid_window,
+            &WINTRUST_ACTION_GENERIC_VERIFY_V2,
+            &mut trust,
+        );
+    }
+    if trust_status != 0 {
+        return Err(
+            "Windows is configured to elevate only trusted Authenticode-signed executables, but this OPEMOS build is unsigned or its signature is not trusted. Install a trusted signed OPEMOS build before writing a USB. The writer was not started and the selected USB was not changed."
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]

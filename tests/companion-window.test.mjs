@@ -43,6 +43,8 @@ test("Windows image commands stay hidden and elevation belongs to the main windo
   assert.match(image, /get_webview_window\("main"\)/);
   assert.match(image, /\.and_then\(\|window\| window\.hwnd\(\)\.ok\(\)\)/);
   assert.match(image, /launch_elevated_windows_usb_writer\([\s\S]*owner_window/);
+  assert.match(image, /fn launch_exact_elevated_writer\([\s\S]*verify_windows_elevation_candidate\(executable\)\?;[\s\S]*ShellExecuteExW/);
+  assert.match(image, /fn verify_windows_elevation_candidate\([\s\S]*ValidateAdminCodeSignatures[\s\S]*WinVerifyTrust[\s\S]*trusted Authenticode-signed executables[\s\S]*selected USB was not changed/);
   assert.match(image, /ShellExecuteInfoW \{[\s\S]*hwnd: owner_window as \*mut c_void/);
   assert.match(image, /mask: 0x0000_0040,[\s\S]*show: 1,/);
   assert.match(image, /GetLastError[\s\S]*1223 =>[\s\S]*8235 =>[\s\S]*signed and validated[\s\S]*system error \{error\}/);
