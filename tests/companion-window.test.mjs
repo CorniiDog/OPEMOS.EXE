@@ -8,6 +8,8 @@ const main = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const build = await readFile(new URL("../src/build.js", import.meta.url), "utf8");
 const maintainer = await readFile(new URL("../src/maintainer.js", import.meta.url), "utf8");
 const nativeWindows = await readFile(new URL("../src-tauri/src/windows.rs", import.meta.url), "utf8");
+const nativeApp = await readFile(new URL("../src-tauri/src/app.rs", import.meta.url), "utf8");
+const mainCapability = JSON.parse(await readFile(new URL("../src-tauri/capabilities/default.json", import.meta.url), "utf8"));
 
 test("companion windows remain native children of the main window", () => {
   assert.match(nativeWindows, /pub\(crate\) async fn open_progress_window/);
@@ -16,6 +18,15 @@ test("companion windows remain native children of the main window", () => {
   assert.match(nativeWindows, /fn center_over_parent[\s\S]*\.outer_position\(\)[\s\S]*\.set_position/);
   assert.equal([...nativeWindows.matchAll(/center_over_parent\(&(?:progress|window), &main\)\?/g)].length, 4);
   assert.doesNotMatch(nativeWindows, /always_on_top/);
+});
+
+test("main window leaves companion visibility to native commands instead of denied ACL calls", () => {
+  assert.doesNotMatch(main, /progressWindow\.(?:show|isVisible|hide)\(\)/);
+  assert.match(main, /invoke\("open_progress_window"\)/);
+  assert.match(main, /invoke\("hide_progress_window"\)/);
+  assert.match(nativeWindows, /pub\(crate\) fn hide_progress_window[\s\S]*get_webview_window\("build-progress"\)[\s\S]*\.hide\(\)/);
+  assert.match(nativeApp, /windows::open_progress_window,[\s\S]*windows::hide_progress_window,/);
+  assert.doesNotMatch(mainCapability.permissions.join("\n"), /core:window:allow-(?:show|is-visible|hide)/);
 });
 
 test("Windows image commands stay hidden and elevation belongs to the main window", async () => {

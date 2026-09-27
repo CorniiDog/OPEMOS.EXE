@@ -23,9 +23,10 @@ test("main workflow gives output destination the full build width", () => {
 test("packaged Windows actions expose visible outcomes instead of silent clicks", () => {
   assert.match(script, /openValve\.addEventListener\("click", async \(\) => \{[\s\S]*invoke\("open_valve_download_page"\)[\s\S]*default browser[\s\S]*catch \(error\)/);
   assert.doesNotMatch(script, /plugin:opener\|open_url/);
-  assert.match(script, /Opening build progress…[\s\S]*invoke\("open_progress_window"\);[\s\S]*waitForProgressWindow\(progressWindow\)[\s\S]*progressWindow\.show\(\)[\s\S]*progressWindow\.setFocus\(\)[\s\S]*progressWindow\.isVisible\(\)[\s\S]*setCompanionMode\("build-progress"\)[\s\S]*Build progress is open in a separate window[\s\S]*invoke\("preview_image_output"/);
+  assert.match(script, /Opening build progress…[\s\S]*invoke\("open_progress_window"\);[\s\S]*waitForProgressWindow\(progressWindow\)[\s\S]*setCompanionMode\("build-progress"\)[\s\S]*Build progress is open in a separate window[\s\S]*invoke\("preview_image_output"/);
+  assert.doesNotMatch(script, /progressWindow\.(?:show|isVisible|hide)\(\)/);
   assert.doesNotMatch(script, /Build progress opened in a separate window/);
-  assert.match(script, /if \(progressWindow\) \{[\s\S]*progressWindow\.emit\("build-start-failed"[\s\S]*progressWindow\.hide\(\)/);
+  assert.match(script, /if \(progressWindow\) \{[\s\S]*progressWindow\.emit\("build-start-failed"[\s\S]*invoke\("hide_progress_window"\)[\s\S]*activeCompanion === "build-progress"[\s\S]*setCompanionMode\(\)/);
   assert.match(script, /buildButton\.addEventListener\("click", async \(\) => \{[\s\S]*const admission = admitBuildStart\(currentBuildSnapshot\(\)\);[\s\S]*Build cannot start: \$\{admission\.blocker\}/);
   const progressWindow = tauriConfig.app.windows.find(({ label }) => label === "build-progress");
   assert.equal(progressWindow, undefined);

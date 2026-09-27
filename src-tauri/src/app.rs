@@ -179,6 +179,7 @@ pub fn run() {
             write_image_to_usb,
             windows::open_valve_download_page,
             windows::open_progress_window,
+            windows::hide_progress_window,
             windows::open_maintainer_window,
         ])
         .build(tauri::generate_context!())
