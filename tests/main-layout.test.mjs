@@ -8,13 +8,14 @@ const chromeCss = await readFile(new URL("../src/window-chrome.css", import.meta
 const script = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
-test("main workflow keeps readiness compact and balances output and source columns", () => {
+test("main workflow gives output destination the full build width", () => {
   assert.match(html, /id="readiness-grid"[\s\S]*class="environment-card"[\s\S]*id="selection-card"[\s\S]*id="drop-zone"/);
   assert.match(html, /class="build-options-grid"[\s\S]*class="source-choice export-choice"[\s\S]*class="build-side-column"[\s\S]*for="nvidia-source"[\s\S]*id="summary-output"[\s\S]*id="usb-picker"[\s\S]*id="usb-target"[\s\S]*id="build-button"/);
   assert.match(css, /\.readiness-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/);
   assert.match(css, /\.build-options-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.12fr\) minmax\(0, \.88fr\);/);
-  assert.match(css, /\.build-side-column \.build-summary\s*\{[^}]*grid-template-columns:\s*1fr;/);
-  assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*width:\s*100%;[^}]*justify-self:\s*stretch;/);
+  assert.match(css, /\.build-side-column \.build-summary\s*\{[^}]*grid-column:\s*2;[^}]*grid-row:\s*1;[^}]*grid-template-columns:\s*1fr;/);
+  assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*grid-column:\s*1 \/ -1;[^}]*width:\s*100%;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*justify-content:\s*stretch;[^}]*justify-self:\s*stretch;/);
+  assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*1 \/ -1;[^}]*grid-template-columns:\s*minmax\(0, 1\.12fr\) minmax\(0, \.88fr\);/);
   assert.match(css, /\.build-options-grid \.export-choice,[\s\S]*\.output-destination\s*\{\s*box-sizing:\s*border-box;/);
   assert.match(css, /\.output-destination\s*\{[^}]*width:\s*100%;/);
 });
@@ -22,7 +23,9 @@ test("main workflow keeps readiness compact and balances output and source colum
 test("packaged Windows actions expose visible outcomes instead of silent clicks", () => {
   assert.match(script, /openValve\.addEventListener\("click", async \(\) => \{[\s\S]*invoke\("open_valve_download_page"\)[\s\S]*default browser[\s\S]*catch \(error\)/);
   assert.doesNotMatch(script, /plugin:opener\|open_url/);
-  assert.match(script, /invoke\("open_progress_window"\);[\s\S]*waitForProgressWindow\(progressWindow\)[\s\S]*progressWindow\.show\(\)[\s\S]*progressWindow\.setFocus\(\)[\s\S]*progressWindow\.isVisible\(\)[\s\S]*setCompanionMode\("build-progress"\)[\s\S]*Build progress is open in a separate window/);
+  assert.match(script, /Opening build progress…[\s\S]*invoke\("open_progress_window"\);[\s\S]*waitForProgressWindow\(progressWindow\)[\s\S]*progressWindow\.show\(\)[\s\S]*progressWindow\.setFocus\(\)[\s\S]*progressWindow\.isVisible\(\)[\s\S]*setCompanionMode\("build-progress"\)[\s\S]*Build progress is open in a separate window[\s\S]*invoke\("preview_image_output"/);
+  assert.doesNotMatch(script, /Build progress opened in a separate window/);
+  assert.match(script, /if \(progressWindow\) \{[\s\S]*progressWindow\.emit\("build-start-failed"[\s\S]*progressWindow\.hide\(\)/);
   assert.match(script, /buildButton\.addEventListener\("click", async \(\) => \{[\s\S]*const admission = admitBuildStart\(currentBuildSnapshot\(\)\);[\s\S]*Build cannot start: \$\{admission\.blocker\}/);
   const progressWindow = tauriConfig.app.windows.find(({ label }) => label === "build-progress");
   assert.equal(progressWindow, undefined);

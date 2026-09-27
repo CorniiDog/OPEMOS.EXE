@@ -45,7 +45,7 @@ pub(crate) fn open_valve_download_page(app: tauri::AppHandle) -> Result<(), Stri
 }
 
 #[tauri::command]
-pub(crate) fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) async fn open_progress_window(app: tauri::AppHandle) -> Result<(), String> {
     let main = app
         .get_webview_window("main")
         .ok_or("The main application window is unavailable.")?;

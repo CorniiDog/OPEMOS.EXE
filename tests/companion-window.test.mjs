@@ -10,6 +10,7 @@ const maintainer = await readFile(new URL("../src/maintainer.js", import.meta.ur
 const nativeWindows = await readFile(new URL("../src-tauri/src/windows.rs", import.meta.url), "utf8");
 
 test("companion windows remain native children of the main window", () => {
+  assert.match(nativeWindows, /pub\(crate\) async fn open_progress_window/);
   assert.equal([...nativeWindows.matchAll(/\.parent\(&main\)/g)].length, 2);
   assert.equal([...nativeWindows.matchAll(/\.set_focus\(\)/g)].length, 4);
   assert.match(nativeWindows, /fn center_over_parent[\s\S]*\.outer_position\(\)[\s\S]*\.set_position/);

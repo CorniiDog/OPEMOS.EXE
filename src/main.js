@@ -945,18 +945,12 @@ elements.buildButton.addEventListener("click", async () => {
   elements.allowUpstreamBuild.disabled = true;
   elements.usbTarget.disabled = true;
   elements.refreshUsbTargets.disabled = true;
-  elements.resultMessage.textContent = "Build progress opened in a separate window.";
+  elements.resultMessage.textContent = "Opening build progress…";
+  let progressWindow = null;
   try {
-    const preview = await invoke("preview_image_output", {
-      path: buildContext.inputPath,
-      outputDirectory: buildContext.outputDirectory,
-    });
-    plannedOutput = preview.output_path;
-    elements.summaryOutput.textContent = displayPath(plannedOutput);
-    elements.summaryOutput.title = displayPath(plannedOutput);
     await invoke("open_progress_window");
     const windows = await getAllWebviewWindows();
-    const progressWindow = windows.find((window) => window.label === "build-progress");
+    progressWindow = windows.find((window) => window.label === "build-progress");
     if (!progressWindow) throw new Error("The build progress window is unavailable.");
     await waitForProgressWindow(progressWindow);
     await progressWindow.show();
@@ -966,6 +960,13 @@ elements.buildButton.addEventListener("click", async () => {
     }
     setCompanionMode("build-progress");
     elements.resultMessage.textContent = "Build progress is open in a separate window.";
+    const preview = await invoke("preview_image_output", {
+      path: buildContext.inputPath,
+      outputDirectory: buildContext.outputDirectory,
+    });
+    plannedOutput = preview.output_path;
+    elements.summaryOutput.textContent = displayPath(plannedOutput);
+    elements.summaryOutput.title = displayPath(plannedOutput);
     await progressWindow.emit("build-requested", {
       requestId: buildContext.requestId,
       path: buildContext.inputPath,
@@ -977,6 +978,14 @@ elements.buildButton.addEventListener("click", async () => {
     });
   } catch (error) {
     if (!operationContextMatches(buildContext, activeBuildContext || {})) return;
+    if (progressWindow) {
+      try {
+        await progressWindow.emit("build-start-failed", { message: String(error) });
+        await progressWindow.hide();
+      } catch {
+        // Preserve the original build-start failure if companion cleanup also fails.
+      }
+    }
     activeBuildContext = null;
     if (activeCompanion === "build-progress") setCompanionMode();
     elements.resultMessage.textContent = String(error);

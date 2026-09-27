@@ -71,7 +71,10 @@ pub fn run() {
             {
                 #[cfg(all(debug_assertions, target_os = "linux"))]
                 if linux_gui_smoke_companion() == Some("build-progress") {
-                    let _ = windows::open_progress_window(webview.app_handle().clone());
+                    let app = webview.app_handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = windows::open_progress_window(app).await;
+                    });
                 }
             }
         })
