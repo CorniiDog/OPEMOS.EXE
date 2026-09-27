@@ -5,6 +5,7 @@ import argparse, os, signal, stat, subprocess, sys, time
 from pathlib import Path
 
 EMPTY_DOCUMENT_ERROR = "Choose or paste a Core resolver JSON document no larger than 1 MiB."
+IMAGE_FILTER_LABEL = "SteamOS or completed NVIDIA image"
 
 RESULT_SENTINEL_LABELS = [
     "Unverified Core result",
@@ -467,8 +468,8 @@ def validate_open_image_chooser(chooser, enabled_state):
         raise RuntimeError("Native recovery-image chooser enabled Open without a selection.")
     if not cancel_button.get_state_set().contains(enabled_state):
         raise RuntimeError("Native recovery-image chooser disabled Cancel.")
-    exactly_one_role(chooser, "SteamOS recovery image", "combo box")
-    exactly_one_role(chooser, "SteamOS recovery image", "menu item")
+    exactly_one_role(chooser, IMAGE_FILTER_LABEL, "combo box")
+    exactly_one_role(chooser, IMAGE_FILTER_LABEL, "menu item")
     require_absent(chooser, ["All files", "All Files"])
     return cancel_button
 

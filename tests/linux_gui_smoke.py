@@ -488,13 +488,15 @@ class GuiSmokeTests(unittest.TestCase):
 
     def test_open_image_chooser_requires_filter_disabled_open_and_enabled_cancel(self):
         enabled = "enabled"
+        main_source = (Path(__file__).resolve().parent.parent / "src/main.js").read_text()
+        self.assertIn(f'name: "{smoke.IMAGE_FILTER_LABEL}"', main_source)
         open_button = FakeNode("Open", actionable=True, role="push button")
         cancel = FakeNode("Cancel", actionable=True, role="push button", states={enabled})
         chooser = FakeNode(children=[
             open_button,
             cancel,
-            FakeNode("SteamOS recovery image", role="combo box"),
-            FakeNode("SteamOS recovery image", role="menu item"),
+            FakeNode(smoke.IMAGE_FILTER_LABEL, role="combo box"),
+            FakeNode(smoke.IMAGE_FILTER_LABEL, role="menu item"),
         ])
         self.assertIs(smoke.validate_open_image_chooser(chooser, enabled), cancel)
         open_button.states = {enabled}
