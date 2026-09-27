@@ -31,11 +31,39 @@ fn cleanup_managed_workers(app: &tauri::AppHandle) {
     }
 }
 
+fn native_no_activate_proof() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var("OPEMOS_NATIVE_NO_ACTIVATE_PROOF").as_deref() == Ok("1")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
+#[tauri::command]
+fn main_window_ready(app: tauri::AppHandle) -> Result<(), String> {
+    if native_no_activate_proof() {
+        return Ok(());
+    }
+    let main = app
+        .get_webview_window("main")
+        .ok_or("The main application window is unavailable.")?;
+    main.show()
+        .map_err(|error| format!("Could not show the main application window: {error}"))?;
+    main.set_focus()
+        .map_err(|error| format!("Could not focus the main application window: {error}"))?;
+    if let Some(splash) = app.get_webview_window("splashscreen") {
+        splash
+            .close()
+            .map_err(|error| format!("Could not close the startup window: {error}"))?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    #[cfg(target_os = "windows")]
-    let native_no_activate_proof =
-        std::env::var("OPEMOS_NATIVE_NO_ACTIVATE_PROOF").as_deref() == Ok("1");
     let app = tauri::Builder::default()
         .on_page_load(|webview, payload| {
             if webview.label() == "main"
@@ -43,7 +71,10 @@ pub fn run() {
             {
                 #[cfg(all(debug_assertions, target_os = "linux"))]
                 if linux_gui_smoke_companion() == Some("build-progress") {
-                    let _ = windows::open_progress_window(webview.app_handle().clone());
+                    let app = webview.app_handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = windows::open_progress_window(app).await;
+                    });
                 }
             }
         })
@@ -51,7 +82,16 @@ pub fn run() {
         .manage(Mutex::new(NvidiaBuildManager::default()))
         .manage(Mutex::new(UsbPreparationManager::default()))
         .manage(Mutex::new(MaintainerReleaseManager::default()))
-        .setup(move |app| {
+        .setup(|app| {
+            if !native_no_activate_proof() {
+                if let Some(splash) = app.get_webview_window("splashscreen") {
+                    splash.show().map_err(std::io::Error::other)?;
+                }
+            } else {
+                if let Some(splash) = app.get_webview_window("splashscreen") {
+                    splash.hide().map_err(std::io::Error::other)?;
+                }
+            }
             migrate_legacy_settings(app.handle()).map_err(std::io::Error::other)?;
             cleanup_abandoned_runtimes().map_err(std::io::Error::other)?;
             cleanup_abandoned_nvidia_build_runtimes().map_err(std::io::Error::other)?;
@@ -61,21 +101,15 @@ pub fn run() {
                     "configured main window is unavailable during setup",
                 )
             })?;
-            #[cfg(target_os = "windows")]
-            if !native_no_activate_proof {
-                main.show().map_err(std::io::Error::other)?;
-                main.set_focus().map_err(std::io::Error::other)?;
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                main.show().map_err(std::io::Error::other)?;
-                main.set_focus().map_err(std::io::Error::other)?;
-            }
+            // The hidden main webview loads behind the splash. The frontend
+            // readiness command activates it after its event handlers exist.
+            let _ = main;
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            main_window_ready,
             crate::compatibility_preview::preview_core_compatibility,
             check_builder_environment,
             check_nvidia_build_environment,

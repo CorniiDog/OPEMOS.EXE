@@ -4,8 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
-    <style>html, body { background: rgba(11, 17, 24, .64); color: #f5f7fb; }</style>
-    <script>if (navigator.platform.startsWith("Mac") || navigator.userAgent.includes("Macintosh")) document.documentElement.classList.add("platform-macos");</script>
+    <style>html, body { background: #0b1118; color: #f5f7fb; }</style>
+    <script>
+        if (navigator.platform.startsWith("Mac") || navigator.userAgent.includes("Macintosh")) document.documentElement.classList.add("platform-macos");
+        if (navigator.platform.startsWith("Win") || navigator.userAgent.includes("Windows")) document.documentElement.classList.add("platform-windows");
+    </script>
     <title>Build Progress</title>
     <link rel="stylesheet" href="/build.css">
     <link rel="stylesheet" href="/window-chrome.css">
@@ -40,17 +43,13 @@
 
         <section id="diagnostics-card" class="logs-card">
             <div class="logs-heading">
-                <button id="diagnostics-toggle" class="diagnostics-toggle" type="button"
-                        aria-expanded="false" aria-controls="diagnostics-panel">
+                <div class="diagnostics-heading-copy">
                     <span>Advanced diagnostics</span>
-                    <span id="diagnostics-toggle-state" aria-hidden="true">Show</span>
-                </button>
-            </div>
-            <div id="diagnostics-panel" class="diagnostics-panel" hidden>
-                <div class="log-tools">
-                    <button id="copy-diagnostic-log" class="log-tool" type="button" disabled>Copy Diagnostic Log</button>
-                    <button id="log-follow" class="log-follow" type="button">Following live output</button>
+                    <small>Live output · following latest</small>
                 </div>
+                <button id="copy-diagnostic-log" class="log-tool" type="button" disabled>Copy Diagnostic Log</button>
+            </div>
+            <div id="diagnostics-panel" class="diagnostics-panel">
                 <pre id="build-log" tabindex="0" aria-label="Selectable build log">Waiting for the build to start…</pre>
             </div>
         </section>

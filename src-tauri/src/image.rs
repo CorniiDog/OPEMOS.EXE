@@ -1099,7 +1099,7 @@ pub(crate) fn convert_working_image(
     progress: Option<&ProgressCallback<'_>>,
     cancel: Option<&AtomicBool>,
 ) -> Result<(), String> {
-    let mut child = Command::new(qemu_img)
+    let mut child = child_command(qemu_img)
         .args(["convert", "-p", "-f", "qcow2", "-O", "raw"])
         .arg(source)
         .arg(destination)
@@ -1836,7 +1836,7 @@ pub(crate) fn export_marker_image_blocking(
         manifest_guard.armed = false;
         #[cfg(target_os = "macos")]
         if _reveal_in_finder {
-            let _ = Command::new("open").arg("-R").arg(&final_path).spawn();
+            let _ = child_command("open").arg("-R").arg(&final_path).spawn();
         }
         Ok(ExportedImage {
             path: final_path.to_string_lossy().into_owned(),
@@ -1901,19 +1901,19 @@ pub(crate) fn reveal_completed_image(path: String) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     let mut command = {
-        let mut command = Command::new("open");
+        let mut command = child_command("open");
         command.arg("-R").arg(&output);
         command
     };
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = Command::new("explorer.exe");
+        let mut command = child_command("explorer.exe");
         command.arg(format!("/select,{}", output.display()));
         command
     };
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let mut command = {
-        let mut command = Command::new("xdg-open");
+        let mut command = child_command("xdg-open");
         command.arg(
             output
                 .parent()
@@ -2719,7 +2719,7 @@ pub(crate) fn copy_and_verify_usb_image(
     if let Err(error) = target.durable_flush() {
         #[cfg(target_os = "macos")]
         if error.raw_os_error() == Some(25) {
-            let status = Command::new("/bin/sync").status().map_err(|sync_error| {
+            let status = child_command("/bin/sync").status().map_err(|sync_error| {
                 format!("Could not flush the selected USB device: {sync_error}")
             })?;
             if !status.success() {
@@ -2806,7 +2806,7 @@ fn plist_command_json(
             "Could not {description}; diskutil returned more than 4 MiB of metadata."
         ));
     }
-    let mut child = Command::new("/usr/bin/plutil")
+    let mut child = child_command("/usr/bin/plutil")
         .args(["-convert", "json", "-o", "-", "--", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -2831,7 +2831,7 @@ fn plist_command_json(
 
 #[cfg(target_os = "macos")]
 fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
-    let mut list_command = Command::new("/usr/sbin/diskutil");
+    let mut list_command = child_command("/usr/sbin/diskutil");
     list_command.args(DISKUTIL_EXTERNAL_PHYSICAL_LIST_ARGS);
     let list = plist_command_json(list_command, "list external physical disks")?;
     let identifiers = list
@@ -2852,7 +2852,7 @@ fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, Str
         {
             continue;
         }
-        let mut info_command = Command::new("/usr/sbin/diskutil");
+        let mut info_command = child_command("/usr/sbin/diskutil");
         info_command.args(["info", "-plist", identifier]);
         let info = plist_command_json(info_command, "inspect an external disk")?;
         if let Some(target) = usb_candidate_from_diskutil_info(&info, image_bytes, Some(identifier))
@@ -2872,7 +2872,7 @@ fn revalidate_usb_target(identifier: &str, image_bytes: u64) -> Result<UsbTarget
     {
         return Err("The selected device identifier is invalid.".into());
     }
-    let mut info_command = Command::new("/usr/sbin/diskutil");
+    let mut info_command = child_command("/usr/sbin/diskutil");
     info_command.args(["info", "-plist", identifier]);
     let info = plist_command_json(info_command, "revalidate the selected external disk")?;
     usb_candidate_from_diskutil_info(&info, image_bytes, Some(identifier)).ok_or_else(|| {
@@ -3006,9 +3006,18 @@ fn usb_candidates_from_windows_json_state(
 }
 
 #[cfg(target_os = "windows")]
+fn hidden_windows_command(program: &str) -> Command {
+    use std::os::windows::process::CommandExt as _;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut command = child_command(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+#[cfg(target_os = "windows")]
 fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
     let script = "Get-Disk | ForEach-Object { $d=$_; $w=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number) -ErrorAction Stop; [pscustomobject]@{Index=$d.Number;FriendlyName=$d.FriendlyName;BusType=[string]$d.BusType;Size=[uint64]$d.Size;BytesPerSector=[uint64]$d.LogicalSectorSize;UniqueId=[string]$d.UniqueId;SerialNumber=[string]$w.SerialNumber;MediaType=[string]$w.MediaType;IsBoot=[bool]$d.IsBoot;IsSystem=[bool]$d.IsSystem;IsReadOnly=[bool]$d.IsReadOnly;IsOffline=[bool]$d.IsOffline} } | ConvertTo-Json -Compress";
-    let output = Command::new("powershell.exe")
+    let output = hidden_windows_command("powershell.exe")
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -3052,7 +3061,7 @@ fn windows_disk_number(identifier: &str) -> Result<u32, String> {
 
 #[cfg(target_os = "windows")]
 fn windows_powershell(script: &str, description: &str) -> Result<Vec<u8>, String> {
-    let output = Command::new("powershell.exe")
+    let output = hidden_windows_command("powershell.exe")
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -3083,7 +3092,7 @@ fn windows_powershell(script: &str, description: &str) -> Result<Vec<u8>, String
 #[cfg(target_os = "windows")]
 fn windows_process_is_elevated() -> bool {
     let script = "if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 0 } else { exit 1 }";
-    Command::new("powershell.exe")
+    hidden_windows_command("powershell.exe")
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -3622,7 +3631,7 @@ pub(crate) fn get_usb_write_preflight_status(
 
 #[cfg(target_os = "macos")]
 fn unmount_usb_target(identifier: &str) -> Result<(), String> {
-    let output = Command::new("/usr/sbin/diskutil")
+    let output = child_command("/usr/sbin/diskutil")
         .args(["unmountDisk", identifier])
         .output()
         .map_err(|error| {
@@ -3636,7 +3645,7 @@ fn unmount_usb_target(identifier: &str) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn eject_usb_target(identifier: &str) -> bool {
-    Command::new("/usr/sbin/diskutil")
+    child_command("/usr/sbin/diskutil")
         .args(["eject", identifier])
         .status()
         .is_ok_and(|status| status.success())
@@ -3644,7 +3653,7 @@ fn eject_usb_target(identifier: &str) -> bool {
 
 #[cfg(target_os = "macos")]
 fn remount_usb_target(identifier: &str) -> bool {
-    Command::new("/usr/sbin/diskutil")
+    child_command("/usr/sbin/diskutil")
         .args(["mountDisk", identifier])
         .status()
         .is_ok_and(|status| status.success())
@@ -3768,7 +3777,7 @@ pub(crate) fn authorized_open_path(path: &Path, cancel: &AtomicBool) -> Result<F
         .set_nonblocking(true)
         .map_err(|error| format!("Could not prepare macOS authorization polling: {error}"))?;
     let child_output: OwnedFd = child_socket.into();
-    let mut child = Command::new("/usr/libexec/authopen")
+    let mut child = child_command("/usr/libexec/authopen")
         .args(["-stdoutpipe", "-o", "2"])
         .arg(path)
         .stdin(Stdio::null())
@@ -4256,6 +4265,7 @@ impl Drop for WindowsProcessHandle {
 fn launch_exact_elevated_writer(
     executable: &Path,
     parameters: &str,
+    owner_window: isize,
 ) -> Result<WindowsProcessHandle, String> {
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStrExt as _;
@@ -4281,6 +4291,10 @@ fn launch_exact_elevated_writer(
     extern "system" {
         fn ShellExecuteExW(info: *mut ShellExecuteInfoW) -> i32;
     }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetLastError() -> u32;
+    }
     let verb = "runas\0".encode_utf16().collect::<Vec<_>>();
     let file = executable
         .as_os_str()
@@ -4290,13 +4304,13 @@ fn launch_exact_elevated_writer(
     let args = parameters.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
     let mut info = ShellExecuteInfoW {
         size: std::mem::size_of::<ShellExecuteInfoW>() as u32,
-        mask: 0x0000_0040 | 0x0000_0400,
-        hwnd: std::ptr::null_mut(),
+        mask: 0x0000_0040,
+        hwnd: owner_window as *mut c_void,
         verb: verb.as_ptr(),
         file: file.as_ptr(),
         parameters: args.as_ptr(),
         directory: std::ptr::null(),
-        show: 0,
+        show: 1,
         instance: std::ptr::null_mut(),
         id_list: std::ptr::null_mut(),
         class: std::ptr::null(),
@@ -4305,9 +4319,19 @@ fn launch_exact_elevated_writer(
         icon_or_monitor: std::ptr::null_mut(),
         process: std::ptr::null_mut(),
     };
-    if unsafe { ShellExecuteExW(&mut info) } == 0 || info.process.is_null() {
+    if unsafe { ShellExecuteExW(&mut info) } == 0 {
+        let error = unsafe { GetLastError() };
+        return Err(match error {
+            1223 => "Windows authorization was cancelled before the bounded USB writer started."
+                .into(),
+            8235 => "Windows policy requires elevated executables to be signed and validated. This unsigned candidate cannot start the USB writer; use an Authenticode-signed OPEMOS build from a trusted publisher."
+                .into(),
+            _ => format!("Windows could not open its authorization prompt (system error {error})."),
+        });
+    }
+    if info.process.is_null() {
         return Err(
-            "Windows elevation was cancelled or failed before the bounded USB writer started."
+            "Windows authorized the request but did not return the bounded USB writer process."
                 .into(),
         );
     }
@@ -4343,6 +4367,7 @@ fn launch_elevated_windows_usb_writer(
     image_bytes: u64,
     image_sha256: &str,
     target: &UsbTargetCandidate,
+    owner_window: isize,
     cancel: &AtomicBool,
     mut progress: impl FnMut(UsbWriteProgress),
 ) -> Result<UsbWriteResult, String> {
@@ -4420,7 +4445,7 @@ fn launch_elevated_windows_usb_writer(
         bytes_total: image_bytes,
         message: "Waiting for Windows authorization for the exact selected USB operation.".into(),
     });
-    let child = launch_exact_elevated_writer(&executable, &parameters)?;
+    let child = launch_exact_elevated_writer(&executable, &parameters, owner_window)?;
     #[link(name = "kernel32")]
     extern "system" {
         fn WaitForSingleObject(handle: *mut std::ffi::c_void, milliseconds: u32) -> u32;
@@ -5111,6 +5136,12 @@ pub(crate) async fn write_image_to_usb(
             .ok_or("The USB intent session is no longer available for writing.")?
     };
     let app_for_progress = app.clone();
+    #[cfg(target_os = "windows")]
+    let elevation_owner = app
+        .get_webview_window("main")
+        .and_then(|window| window.hwnd().ok())
+        .map(|handle| handle.0 as isize)
+        .unwrap_or_default();
     let device_identifier = target.device_identifier.clone();
     let device_node = target.device_node.clone();
     let expected_sha256 = image_sha256.clone();
@@ -5122,6 +5153,7 @@ pub(crate) async fn write_image_to_usb(
                 image_bytes,
                 &expected_sha256,
                 &target,
+                elevation_owner,
                 &cancel,
                 |progress| {
                     let _ = app_for_progress.emit("usb-write-progress", progress);

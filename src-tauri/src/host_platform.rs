@@ -191,7 +191,7 @@ pub(crate) fn seed_iso_command(
     source: &Path,
     destination: &Path,
 ) -> Result<Command, String> {
-    let mut command = Command::new(binary);
+    let mut command = crate::child_command(binary);
     match os {
         "macos" => {
             command.args([
@@ -559,7 +559,7 @@ mod tests {
     #[test]
     fn runtime_environment_gates_are_isolated_per_process() {
         for (enabled, mode) in [("0", "tcg"), ("1", "auto"), ("1", "tcg")] {
-            let output = Command::new(std::env::current_exe().unwrap())
+            let output = crate::child_command(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
                     "host_platform::tests::runtime_environment_worker",
@@ -639,14 +639,14 @@ mod tests {
         let overlay = root.0.join("disposable overlay.qcow2");
         let qemu_img = find_binary("qemu-img").unwrap();
         run_checked(
-            Command::new(&qemu_img)
+            crate::child_command(&qemu_img)
                 .args(["create", "-q", "-f", "qcow2", "-F", "raw", "-b"])
                 .arg(&base)
                 .arg(&overlay),
             "create test overlay",
         )
         .unwrap();
-        let output = Command::new(qemu_img)
+        let output = crate::child_command(qemu_img)
             .args(["info", "--output=json"])
             .arg(&overlay)
             .output()

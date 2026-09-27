@@ -25,6 +25,21 @@ after the authoritative failure.
 | QEMU remains after close | App | Report diagnostics; lifecycle cleanup is an invariant |
 | Unsupported USB target | User | Select a whole external physical removable drive |
 
+## Windows reports a missing packaged prerequisite
+
+If a portable Windows candidate reports `Windows host prerequisite is missing:
+qemu-img` while `runtime/qemu/qemu-img.exe` exists, do not install QEMU globally
+or add an arbitrary directory to `PATH`. The executable was built without the
+runtime-manifest pin, or its portable bundle identity is inconsistent. Rebuild
+with `bundle_windows.ps1`, verify the staged provenance and manifest hashes, and
+launch from that complete directory. On first successful launch, the generated
+`state/cache-v1/cache-manifest.json` must bind the exact executable hash and
+runtime-manifest hash.
+
+The packaged application deliberately resolves required commands only from its
+verified runtime bundle. This failure is therefore a packaging error rather than
+a missing end-user dependency.
+
 ## Apparently stalled stages
 
 Source hashing, emulated x86_64 boot, package measurement, pacman hooks, and

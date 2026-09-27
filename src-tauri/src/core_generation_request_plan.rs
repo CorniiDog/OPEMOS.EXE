@@ -553,7 +553,7 @@ mod tests {
             assert!(!required, "configured immutable Core repository is absent");
             return None;
         }
-        let mut command = Command::new(git_program);
+        let mut command = crate::child_command(git_program);
         command
             .args(["cat-file", "-e", &format!("{CONTRACT_COMMIT}^{{commit}}")])
             .current_dir(&repository);
@@ -603,7 +603,7 @@ mod tests {
             "lib/userspace_lock_bootstrap_contract.py",
             "lib/userspace_lock_generation_contract.py",
         ] {
-            let mut command = Command::new("git");
+            let mut command = crate::child_command("git");
             command
                 .args(["show", &format!("{CONTRACT_COMMIT}:{relative}")])
                 .current_dir(repository);
@@ -724,7 +724,7 @@ mod tests {
     }
 
     fn run_generator_with_timeout(path: &Path, timeout: Duration) -> Vec<u8> {
-        let mut command = Command::new("python3");
+        let mut command = crate::child_command("python3");
         command
             .arg(path)
             .current_dir("/")

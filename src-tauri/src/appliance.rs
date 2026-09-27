@@ -166,7 +166,7 @@ pub(crate) fn detect_guest_resources(build_worker: bool) -> Result<GuestResource
     } else if cfg!(target_os = "windows") {
         windows_physical_memory_bytes()?
     } else {
-        let output = Command::new("sysctl")
+        let output = child_command("sysctl")
             .args(["-n", "hw.memsize"])
             .output()
             .map_err(|error| format!("Could not detect host RAM with sysctl: {error}"))?;
@@ -360,7 +360,7 @@ pub(crate) fn kill_owned_process_group(child: &Child) {
     }
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
+        let _ = child_command("taskkill")
             .args(["/PID", &child.id().to_string(), "/T", "/F"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -387,7 +387,7 @@ pub(crate) fn spawn_qemu_watchdog(qemu_pid: u32) -> Result<QemuWatchdog, String>
     let (reader, writer) = UnixStream::pair()
         .map_err(|error| format!("Could not create the QEMU lifecycle watchdog: {error}"))?;
     let reader: OwnedFd = reader.into();
-    let mut command = Command::new("/bin/sh");
+    let mut command = child_command("/bin/sh");
     command
         .args([
             "-c",
@@ -824,7 +824,7 @@ pub(crate) fn process_is_alive(pid: u32) -> bool {
     }
     #[cfg(not(windows))]
     {
-        Command::new("kill")
+        child_command("kill")
             .args(["-0", &pid.to_string()])
             .status()
             .map(|status| status.success())
@@ -1057,7 +1057,7 @@ pub(crate) fn find_binary(binary: &str) -> Option<PathBuf> {
     if cfg!(windows) {
         return None;
     }
-    let from_path = Command::new("which")
+    let from_path = child_command("which")
         .arg(binary)
         .output()
         .ok()
@@ -1080,7 +1080,7 @@ pub(crate) fn find_qemu() -> Option<PathBuf> {
 }
 
 pub(crate) fn qemu_version(path: &Path) -> Option<String> {
-    let output = Command::new(path).arg("--version").output().ok()?;
+    let output = child_command(path).arg("--version").output().ok()?;
     output.status.success().then(|| {
         String::from_utf8_lossy(&output.stdout)
             .lines()
@@ -1175,7 +1175,7 @@ pub(crate) fn smoke_test_qemu(path: &Path) -> Result<(), String> {
     } else {
         None
     };
-    let mut command = Command::new(path);
+    let mut command = child_command(path);
     command
         .args([
             "-machine",
@@ -1269,7 +1269,7 @@ pub(crate) fn copy_new_file(
 
 pub(crate) fn homebrew_qemu_share() -> Result<PathBuf, String> {
     let brew = find_binary("brew").ok_or("Homebrew is required to locate QEMU firmware.")?;
-    let output = Command::new(brew)
+    let output = child_command(brew)
         .args(["--prefix", "qemu"])
         .output()
         .map_err(|e| format!("Could not locate the QEMU Homebrew prefix: {e}"))?;
@@ -1566,7 +1566,7 @@ pub(crate) fn normalize_bzip2_parallel(
     let workers = thread::available_parallelism()
         .map(|count| count.get().saturating_sub(2).clamp(1, 6))
         .unwrap_or(1);
-    let mut command = Command::new(binary);
+    let mut command = child_command(binary);
     match tool {
         ParallelBzip2Tool::SevenZip => {
             command
@@ -1741,7 +1741,7 @@ pub(crate) fn prepare_session_with_output(
 
     let ssh_key = runtime_dir.join("builder_key");
     run_checked(
-        Command::new(ssh_keygen)
+        child_command(ssh_keygen)
             .args(["-q", "-t", "ed25519", "-N", "", "-f"])
             .arg(&ssh_key),
         "Could not generate the runtime SSH identity",
@@ -1772,7 +1772,7 @@ pub(crate) fn prepare_session_with_output(
 
     let runtime_disk = runtime_dir.join("session.qcow2");
     run_checked(
-        Command::new(&qemu_img)
+        child_command(&qemu_img)
             .args(["create", "-f", "qcow2", "-F", "qcow2", "-b"])
             .arg(&appliance)
             .arg(&runtime_disk),
@@ -1899,7 +1899,7 @@ pub(crate) fn prepare_session_with_output(
     };
     let working_image = runtime_dir.join("user-working.qcow2");
     run_checked(
-        Command::new(&qemu_img)
+        child_command(&qemu_img)
             .args(["create", "-q", "-f", "qcow2", "-F", "raw", "-b"])
             .arg(&attached_image)
             .arg(&working_image),
@@ -1943,7 +1943,7 @@ pub(crate) fn prepare_session_with_output(
 
     let guest_vcpus = resources.guest_vcpus.to_string();
     let guest_memory_mib = resources.guest_memory_mib.to_string();
-    let mut command = Command::new(qemu);
+    let mut command = child_command(qemu);
     command
         .args([
             "-name",
@@ -2114,7 +2114,7 @@ pub(crate) fn prepare_nvidia_build_session(
             }
             let path = fs::canonicalize(path)
                 .map_err(|e| format!("Could not resolve the handoff working image: {e}"))?;
-            let output = Command::new(&qemu_img)
+            let output = child_command(&qemu_img)
                 .args(["info", "--output=json"])
                 .arg(&path)
                 .output()
@@ -2152,7 +2152,7 @@ pub(crate) fn prepare_nvidia_build_session(
 
     let ssh_key = runtime_dir.join("builder_key");
     run_checked(
-        Command::new(ssh_keygen)
+        child_command(ssh_keygen)
             .args(["-q", "-t", "ed25519", "-N", "", "-f"])
             .arg(&ssh_key),
         "Could not generate the x86 build-appliance SSH identity",
@@ -2183,7 +2183,7 @@ pub(crate) fn prepare_nvidia_build_session(
 
     let runtime_disk = runtime_dir.join("session.qcow2");
     run_checked(
-        Command::new(qemu_img)
+        child_command(qemu_img)
             .args(["create", "-f", "qcow2", "-F", "qcow2", "-b"])
             .arg(&appliance)
             .arg(&runtime_disk),
@@ -2217,7 +2217,7 @@ pub(crate) fn prepare_nvidia_build_session(
 
     let guest_vcpus = resources.guest_vcpus.to_string();
     let guest_memory_mib = resources.guest_memory_mib.to_string();
-    let mut qemu_command = Command::new(qemu);
+    let mut qemu_command = child_command(qemu);
     qemu_command
         .args([
             "-name",
@@ -2378,7 +2378,7 @@ pub(crate) fn ssh_command_with_client_log(
     client_log: Option<&Path>,
 ) -> Result<Command, String> {
     let ssh = find_binary("ssh").ok_or("ssh is required for the guest handshake.")?;
-    let mut command = Command::new(ssh);
+    let mut command = child_command(ssh);
     command
         .arg("-p")
         .arg(session.ssh_port().to_string())
@@ -3120,7 +3120,7 @@ done"#;
 
 pub(crate) fn scp_command(session: &impl GuestConnection) -> Result<Command, String> {
     let scp = find_binary("scp").ok_or("scp is required for controlled guest file transfer.")?;
-    let mut command = Command::new(scp);
+    let mut command = child_command(scp);
     configure_scp_command(&mut command, session);
     Ok(command)
 }

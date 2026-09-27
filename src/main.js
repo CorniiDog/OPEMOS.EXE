@@ -33,6 +33,10 @@ import {
   admitUsbWriteProgress,
   admitUsbWriteStart,
 } from "./usb-write-state.js";
+import {
+  usbConfirmationForBackend,
+  usbConfirmationMatches,
+} from "./usb-confirmation.js";
 import { installWindowDrag } from "./window-drag.js";
 import { installPageZoom } from "./zoom.js";
 import { installLocale } from "./locale.js";
@@ -111,7 +115,9 @@ let usbWriting = false;
 let usbWriteProgress = null;
 let buildRunning = false;
 let activeExportMode = "image";
-let pendingBuildFinished = null;
+let pendingUsbReview = false;
+let pendingUsbReviewTarget = null;
+let usbImagingRefreshPath = null;
 let buildContextGeneration = 0;
 let activeBuildContext = null;
 let acceptedNvidiaSource = elements.nvidiaSource.value;
@@ -175,12 +181,32 @@ await mainWindow.onFocusChanged(({ payload: focused }) => {
 await mainWindow.listen("companion-window-hidden", ({ payload }) => {
   if (payload?.label !== activeCompanion) return;
   setCompanionMode();
-  if (payload.label === "build-progress" && pendingBuildFinished) {
-    const completion = pendingBuildFinished;
-    pendingBuildFinished = null;
-    void applyBuildFinished(completion);
+  if (payload.label === "build-progress" && pendingUsbReview) {
+    pendingUsbReview = false;
+    const preferredTarget = pendingUsbReviewTarget;
+    pendingUsbReviewTarget = null;
+    void revealUsbImaging({ preferredTarget });
+    void mainWindow.setFocus().catch(() => {});
   }
 });
+
+async function revealUsbImaging({ focus = true, preferredTarget = null } = {}) {
+  if (!completedOutput?.path) return false;
+  const outputPath = completedOutput.path;
+  elements.usbPicker.classList.remove("hidden");
+  elements.usbPicker.scrollIntoView({ behavior: "smooth", block: "center" });
+  let restored = false;
+  if (usbImagingRefreshPath !== outputPath) {
+    usbImagingRefreshPath = outputPath;
+    restored = await refreshUsbTargets(preferredTarget);
+    if (completedOutput?.path !== outputPath) return false;
+  }
+  if (focus) {
+    const target = elements.usbTarget.disabled ? elements.refreshUsbTargets : elements.usbTarget;
+    requestAnimationFrame(() => target.focus());
+  }
+  return restored;
+}
 
 async function waitForProgressWindow(progressWindow) {
   progressReady = false;
@@ -269,7 +295,7 @@ function renderUsbConfirmationPhase(prepared = Boolean(usbPreflightSession)) {
   elements.writeUsbImage.classList.toggle("hidden", !prepared || !usbPreflightSession?.writesAllowed);
   elements.cancelUsbPreflight.classList.toggle("hidden", !prepared);
   elements.armUsbPreflight.disabled = usbArmPending
-    || elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
+    || !usbConfirmationMatches(elements.usbConfirmation.value);
 }
 
 function renderSourceWarning() {
@@ -300,18 +326,13 @@ function renderSourceWarning() {
 }
 
 function applyCompletedOutput(output, imported = false) {
-  const selectedUsb = elements.usbTarget.selectedOptions[0];
-  const preferredUsbTarget = selectedUsb?.value
-    ? Object.freeze({
-      deviceIdentifier: selectedUsb.value,
-      identityToken: selectedUsb.dataset.identityToken,
-    })
-    : null;
   completedOutput = output;
   completedOutputImported = imported;
+  usbImagingRefreshPath = null;
   plannedOutput = output.path;
   elements.buildCard.classList.add("completed-output-selected");
   elements.appShell.classList.add("completed-output-selected");
+  elements.usbPicker.classList.remove("hidden");
   elements.exportImage.checked = true;
   elements.exportImage.disabled = true;
   elements.chooseOutputFolder.disabled = true;
@@ -333,7 +354,6 @@ function applyCompletedOutput(output, imported = false) {
   renderSourceWarning();
   renderUsbTargetSelection();
   renderExportMode();
-  if (preferredUsbTarget) void refreshUsbTargets(preferredUsbTarget);
 }
 
 function waitForPaint() {
@@ -563,6 +583,7 @@ async function selectImage(path) {
   usbPreflightSession = null;
   completedOutput = null;
   completedOutputImported = false;
+  usbImagingRefreshPath = null;
   currentImage = null;
   currentImageName = null;
   plannedOutput = null;
@@ -570,6 +591,7 @@ async function selectImage(path) {
   elements.buildCard.classList.remove("completed-output-selected");
   elements.buildCard.classList.add("hidden");
   elements.appShell.classList.remove("completed-output-selected");
+  elements.usbPicker.classList.add("hidden");
   elements.exportImage.checked = true;
   elements.exportImage.disabled = false;
   elements.chooseOutputFolder.disabled = false;
@@ -683,14 +705,14 @@ async function selectImage(path) {
   }
   updateBuildButton();
   renderExportMode();
-  if (currentImage) elements.refreshUsbTargets.click();
+  if (completedOutput?.path) void revealUsbImaging({ focus: false });
 }
 
 elements.chooseImage.addEventListener("click", async () => {
   if (!admitImageSelection(currentBuildSnapshot()).accepted) return;
   const chooserGeneration = imageChooserGate.begin();
   const selectionGeneration = imageSelectionGeneration;
-  const selected = await open({ multiple: false, directory: false, filters: [{ name: "SteamOS recovery image", extensions: ["img", "bz2", "gz", "xz"] }] });
+  const selected = await open({ multiple: false, directory: false, filters: [{ name: "SteamOS or completed NVIDIA image", extensions: ["img", "raw", "bz2", "gz", "xz"] }] });
   if (!imageChooserGate.isCurrent(chooserGeneration)
     || selectionGeneration !== imageSelectionGeneration) return;
   if (typeof selected === "string") await selectImage(selected);
@@ -923,8 +945,21 @@ elements.buildButton.addEventListener("click", async () => {
   elements.allowUpstreamBuild.disabled = true;
   elements.usbTarget.disabled = true;
   elements.refreshUsbTargets.disabled = true;
-  elements.resultMessage.textContent = "Build progress opened in a separate window.";
+  elements.resultMessage.textContent = "Opening build progress…";
+  let progressWindow = null;
   try {
+    await invoke("open_progress_window");
+    const windows = await getAllWebviewWindows();
+    progressWindow = windows.find((window) => window.label === "build-progress");
+    if (!progressWindow) throw new Error("The build progress window is unavailable.");
+    await waitForProgressWindow(progressWindow);
+    await progressWindow.show();
+    await progressWindow.setFocus();
+    if (!await progressWindow.isVisible()) {
+      throw new Error("The build progress window could not be made visible.");
+    }
+    setCompanionMode("build-progress");
+    elements.resultMessage.textContent = "Build progress is open in a separate window.";
     const preview = await invoke("preview_image_output", {
       path: buildContext.inputPath,
       outputDirectory: buildContext.outputDirectory,
@@ -932,13 +967,6 @@ elements.buildButton.addEventListener("click", async () => {
     plannedOutput = preview.output_path;
     elements.summaryOutput.textContent = displayPath(plannedOutput);
     elements.summaryOutput.title = displayPath(plannedOutput);
-    await invoke("open_progress_window");
-    setCompanionMode("build-progress");
-    elements.resultMessage.textContent = "Build progress is opening in a separate window…";
-    const windows = await getAllWebviewWindows();
-    const progressWindow = windows.find((window) => window.label === "build-progress");
-    if (!progressWindow) throw new Error("The build progress window is unavailable.");
-    await waitForProgressWindow(progressWindow);
     await progressWindow.emit("build-requested", {
       requestId: buildContext.requestId,
       path: buildContext.inputPath,
@@ -950,6 +978,14 @@ elements.buildButton.addEventListener("click", async () => {
     });
   } catch (error) {
     if (!operationContextMatches(buildContext, activeBuildContext || {})) return;
+    if (progressWindow) {
+      try {
+        await progressWindow.emit("build-start-failed", { message: String(error) });
+        await progressWindow.hide();
+      } catch {
+        // Preserve the original build-start failure if companion cleanup also fails.
+      }
+    }
     activeBuildContext = null;
     if (activeCompanion === "build-progress") setCompanionMode();
     elements.resultMessage.textContent = String(error);
@@ -978,7 +1014,7 @@ async function revealCompletedImage(path) {
   }
 }
 
-async function applyBuildFinished(completion) {
+async function applyBuildFinished(completion, { openUsbReview = true } = {}) {
   const { state, message, output, inputPath } = completion;
   const buildContext = activeBuildContext;
   if (!admitBuildCompletion(currentBuildSnapshot()).accepted
@@ -996,31 +1032,24 @@ async function applyBuildFinished(completion) {
       || buildContext.selectionGeneration !== imageSelectionGeneration
       || inputPath !== currentImage) return;
     applyCompletedOutput(completed || output);
-    if (activeExportMode === "image") {
-      await revealCompletedImage(output.path);
-    } else {
-      const preferredTarget = pendingUsbTarget;
-      pendingUsbTarget = null;
-      elements.resultMessage.textContent = "The image is complete. Revalidating the exported bytes and matching the previously selected USB drive…";
-      elements.resultMessage.className = "result-message";
-      elements.usbMessage.textContent = "Revalidating the completed image and selected USB drive before destructive confirmation…";
-      elements.usbMessage.className = "result-message";
-      setUsbMenuOpen(true);
-      elements.usbDialogTarget.textContent = preferredTarget
-        ? `Revalidating ${preferredTarget.deviceIdentifier}…`
-        : "Refreshing removable drives…";
-      await mainWindow.setFocus().catch(() => {});
-      const restored = await refreshUsbTargets(preferredTarget);
+    const preferredTarget = pendingUsbTarget;
+    pendingUsbTarget = null;
+    elements.resultMessage.textContent = "The image is complete. Choose the removable USB destination for the validated output.";
+    elements.resultMessage.className = "result-message success";
+    pendingUsbReview = !openUsbReview;
+    pendingUsbReviewTarget = pendingUsbReview ? preferredTarget : null;
+    if (openUsbReview) {
+      const restored = await revealUsbImaging({ preferredTarget });
       if (restored) {
-        setUsbMenuOpen(true);
+        elements.usbPickerMessage.textContent = "Select the intended removable drive, then choose Review & Write Selected USB.";
       } else {
-        elements.usbDialogTarget.textContent = "Select the removable drive again";
-        elements.resultMessage.textContent = "The image is complete, but the previously selected USB drive could not be matched exactly. The USB review remains open so you can refresh and select it again.";
-        elements.resultMessage.className = "result-message error";
-        if (!elements.usbMessage.classList.contains("error")) {
-          elements.usbMessage.textContent = "The earlier USB identity is no longer an exact match. Nothing was written. Refresh and select the intended whole removable drive again.";
-          elements.usbMessage.className = "result-message error";
-        }
+        elements.usbDialogTarget.textContent = preferredTarget
+          ? "Select the removable drive again"
+          : "Select a removable drive";
+        elements.usbMessage.textContent = preferredTarget
+          ? "The earlier USB identity is no longer an exact match. Nothing was written. Refresh and select the intended whole removable drive again."
+          : "No eligible removable drive is selected. Connect one, refresh the list, and select it here.";
+        elements.usbMessage.className = preferredTarget ? "result-message error" : "result-message";
         renderUsbConfirmationPhase(false);
       }
     }
@@ -1044,12 +1073,9 @@ async function applyBuildFinished(completion) {
 
 await mainWindow.listen("build-finished", async (event) => {
   if (!buildCompletionMatches(event.payload, activeBuildContext)) return;
-  if (activeCompanion === "build-progress") {
-    if (pendingBuildFinished) return;
-    pendingBuildFinished = event.payload;
-    return;
-  }
-  await applyBuildFinished(event.payload);
+  await applyBuildFinished(event.payload, {
+    openUsbReview: activeCompanion !== "build-progress",
+  });
 });
 
 async function refreshUsbTargets(preferredTarget = null) {
@@ -1155,7 +1181,7 @@ function renderUsbTargetSelection() {
   const canConfirm = Boolean(identifier && completedOutput?.path);
   renderUsbConfirmationPhase(false);
   elements.usbConfirmationHelp.textContent = canConfirm
-    ? `Type ERASE ${identifier} exactly. A final warning still appears before writing.`
+    ? `Type ERASE exactly to confirm ${identifier}. A final warning still appears before writing.`
     : "Select a target first.";
   elements.usbTargetDetail.textContent = elements.usbTarget.selectedOptions[0]?.dataset.detail
     || "Connect a USB drive, then refresh.";
@@ -1203,7 +1229,7 @@ elements.usbConfirmation.addEventListener("input", () => {
     return;
   }
   elements.armUsbPreflight.disabled = usbArmPending
-    || elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
+    || !usbConfirmationMatches(elements.usbConfirmation.value);
 });
 
 elements.armUsbPreflight.addEventListener("click", async () => {
@@ -1212,14 +1238,15 @@ elements.armUsbPreflight.addEventListener("click", async () => {
     armPending: usbArmPending,
     hasTarget: Boolean(option?.value),
     hasIdentityToken: Boolean(option?.dataset.identityToken),
-    confirmationMatches: elements.usbConfirmation.value === "ERASE " + option?.value,
+    confirmationMatches: usbConfirmationMatches(elements.usbConfirmation.value),
   });
   if (!admission.accepted) return;
   const generation = usbContextGeneration;
   const imagePath = completedOutput.path;
   const deviceIdentifier = option.value;
   const identityToken = option.dataset.identityToken;
-  const confirmation = elements.usbConfirmation.value;
+  const typedConfirmation = elements.usbConfirmation.value;
+  const confirmation = usbConfirmationForBackend(deviceIdentifier, typedConfirmation);
   usbArmPending = true;
   elements.armUsbPreflight.disabled = true;
   elements.armUsbPreflight.setAttribute("aria-busy", "true");
@@ -1235,7 +1262,7 @@ elements.armUsbPreflight.addEventListener("click", async () => {
     });
     const currentOption = elements.usbTarget.selectedOptions[0];
     if (!operationContextMatches(
-      { generation, imagePath, deviceIdentifier, identityToken, confirmation },
+      { generation, imagePath, deviceIdentifier, identityToken, confirmation: typedConfirmation },
       {
         generation: usbContextGeneration,
         imagePath: completedOutput?.path,
@@ -1263,7 +1290,7 @@ elements.armUsbPreflight.addEventListener("click", async () => {
     elements.armUsbPreflight.removeAttribute("aria-busy");
     elements.armUsbPreflight.textContent = "Confirm & Prepare USB";
     if (generation === usbContextGeneration) {
-      elements.armUsbPreflight.disabled = elements.usbConfirmation.value !== `ERASE ${elements.usbTarget.value}`;
+      elements.armUsbPreflight.disabled = !usbConfirmationMatches(elements.usbConfirmation.value);
     }
   }
 });
@@ -1347,7 +1374,7 @@ installKeyboardBindings([
     allowInEditable: true,
     when: () => !elements.usbCard.classList.contains("hidden")
       && document.activeElement === elements.usbConfirmation
-      && elements.usbConfirmation.value === `ERASE ${elements.usbTarget.value}`,
+      && usbConfirmationMatches(elements.usbConfirmation.value),
     run: () => runKeyboardDefaultAction(elements.armUsbPreflight),
   },
   {
@@ -1409,7 +1436,7 @@ elements.writeUsbImage.addEventListener("click", async () => {
   elements.refreshUsbTargets.disabled = true;
   elements.closeUsbMenu.disabled = true;
   elements.buildButton.disabled = true;
-  elements.usbMessage.textContent = "Unmounting and revalidating the selected removable disk…";
+  elements.usbMessage.textContent = "Windows authorization will appear next. Approve it to open only the selected removable disk, then OPEMOS will write and verify every byte.";
   try {
     const result = await invoke("write_image_to_usb", {
       sessionToken: writeContext.sessionToken,
@@ -1461,6 +1488,7 @@ await mainWindow.onDragDropEvent(async (event) => {
   }
 });
 
+await invoke("main_window_ready");
 await checkEnvironment();
 await loadSettings();
 await loadNvidiaSourceBranches();

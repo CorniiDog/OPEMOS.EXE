@@ -177,33 +177,22 @@ test("support contract failures outrank unrelated appliance cleanup output", () 
   );
 });
 
-test("advanced diagnostics start collapsed and expose bounded log tools on request", async () => {
+test("advanced diagnostics stay expanded, bounded, and follow live output", async () => {
   const [html, css, script] = await Promise.all([
     readFile(new URL("../src/build.html", import.meta.url), "utf8"),
     readFile(new URL("../src/build.css", import.meta.url), "utf8"),
     readFile(new URL("../src/build.js", import.meta.url), "utf8"),
   ]);
-  assert.match(html, /id="diagnostics-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="diagnostics-panel"/);
-  const panel = html.match(/<div id="diagnostics-panel" class="diagnostics-panel" hidden>([\s\S]*?)<\/div>\s*<\/section>/)?.[1] || "";
-  assert.match(panel, /id="copy-diagnostic-log"/);
-  assert.match(panel, /id="log-follow"/);
+  assert.doesNotMatch(html, /id="diagnostics-toggle"|id="log-follow"|diagnostics-panel" hidden/);
+  assert.match(html, /Advanced diagnostics[\s\S]*Live output · following latest/);
+  assert.match(html, /id="copy-diagnostic-log"/);
+  const panel = html.match(/<div id="diagnostics-panel" class="diagnostics-panel">([\s\S]*?)<\/div>\s*<\/section>/)?.[1] || "";
   assert.match(panel, /id="build-log"/);
-  assert.ok(panel.indexOf("copy-diagnostic-log") < panel.indexOf("log-follow"));
   assert.match(css, /\.actions\s*\{[^}]*min-height:\s*41px/s);
-  assert.match(css, /\.logs-card\s*\{[^}]*align-self:\s*start/s);
-  assert.match(css, /\.logs-card\.diagnostics-open\s*\{[^}]*height:\s*100%/s);
-  assert.match(css, /\.diagnostics-panel\[hidden\]\s*\{[^}]*display:\s*none/s);
-  const disclosure = script.match(/function setDiagnosticsExpanded\(expanded\) \{([\s\S]*?)\n\}/)?.[1] || "";
-  assert.match(disclosure, /setAttribute\("aria-expanded", String\(expanded\)\)/);
-  assert.match(disclosure, /diagnosticsPanel\.hidden\s*=\s*!expanded/);
-  assert.match(disclosure, /classList\.toggle\("diagnostics-open", expanded\)/);
-  assert.match(script, /setDiagnosticsExpanded\(false\);[\s\S]*buildLog\.replaceChildren\(\)/);
-  const resume = script.match(/function resumeLogFollowing\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
-  assert.match(resume, /followingLogs\s*=\s*true/);
-  assert.match(resume, /flushPendingLogs\(\)/);
-  assert.match(resume, /buildLog\.scrollTop\s*=\s*elements\.buildLog\.scrollHeight/);
-  assert.match(resume, /logFollow\.textContent\s*=\s*"Following live output"/);
-  assert.match(resume, /logFollow\.classList\.remove\("paused"\)/);
+  assert.match(css, /\.logs-card\s*\{[^}]*height:\s*100%;[^}]*align-self:\s*stretch/s);
+  assert.doesNotMatch(css, /diagnostics-open|diagnostics-panel\[hidden\]|log-follow/);
+  assert.doesNotMatch(script, /setDiagnosticsExpanded|followingLogs|pauseLogFollowing|resumeLogFollowing|logFollow/);
+  assert.match(script, /function flushPendingLogs\(\)[\s\S]*buildLog\.scrollTop = elements\.buildLog\.scrollHeight/);
 });
 
 test("progress-window title starts below the macOS separator", async () => {
@@ -218,11 +207,11 @@ test("progress-window title starts below the macOS separator", async () => {
 test("progress window reflows at narrow effective width or high zoom", async () => {
   const css = await readFile(new URL("../src/build.css", import.meta.url), "utf8");
   const responsive = css.match(/@media \(max-width: 760px\), \(max-height: 760px\) \{([\s\S]*?)\n\}/)?.[1] || "";
-  assert.match(responsive, /html,[\s\S]*body\s*\{[^}]*min-width:\s*0;[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;/);
-  assert.match(responsive, /\.progress-shell\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*100%;[^}]*overflow:\s*visible;[^}]*grid-template-rows:\s*auto auto 16px auto auto auto;/s);
+  assert.match(responsive, /html,[\s\S]*body\s*\{[^}]*min-width:\s*0;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/);
+  assert.match(responsive, /\.progress-shell\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;[^}]*grid-template-rows:\s*auto auto 16px minmax\(0, 1fr\) auto auto;/s);
   assert.match(responsive, /\.status-card\s*\{[^}]*flex-wrap:\s*wrap;/);
   assert.match(responsive, /#status-message,[\s\S]*\.input-name\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/);
-  assert.match(responsive, /\.logs-card\.diagnostics-open\s*\{[^}]*min-height:\s*260px;/);
+  assert.match(responsive, /\.logs-card\s*\{[^}]*min-height:\s*0;/);
   assert.match(responsive, /\.actions button\s*\{[^}]*flex:\s*1 1 140px;/);
 });
 

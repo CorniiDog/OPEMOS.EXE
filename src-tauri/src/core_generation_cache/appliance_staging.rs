@@ -4655,9 +4655,9 @@ mod tests {
     }
 
     fn spawn_handoff_worker(fixture: &PreparedFixture, mode: &str, phase: &str) -> HandoffWorker {
-        use std::process::{Command, Stdio};
+        use std::process::Stdio;
         HandoffWorker(
-            Command::new(std::env::current_exe().unwrap())
+            crate::child_command(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
                     "core_generation_cache::appliance_staging::tests::handoff_sigkill_worker",

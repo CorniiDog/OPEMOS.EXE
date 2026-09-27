@@ -1833,7 +1833,7 @@ mod tests {
     use super::*;
     use std::io::BufRead;
     use std::os::unix::process::ExitStatusExt;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
     const TEST_IMAGE: &[u8] = b"finished-image";
 
@@ -3925,7 +3925,7 @@ mod tests {
             fs::set_permissions(&foreign_private, fs::Permissions::from_mode(0o600)).unwrap();
             let (authority, nonce) = publication_worker_authority(&fixture);
             let mut child = WorkerGuard::new(
-                Command::new(std::env::current_exe().unwrap())
+                crate::child_command(std::env::current_exe().unwrap())
                     .args([
                         "--exact",
                         "output_transaction::tests::publication_sigkill_worker",
@@ -4009,7 +4009,7 @@ mod tests {
         let fixture = Fixture::new("process");
         let executable = std::env::current_exe().unwrap();
         let ready = fixture.0.join("worker-ready");
-        let mut child = Command::new(executable)
+        let mut child = crate::child_command(executable)
             .args([
                 "--exact",
                 "output_transaction::tests::reservation_worker",
@@ -4071,7 +4071,7 @@ mod tests {
         let mut children = Vec::new();
         for (index, source) in ["source-a.img", "source-b.img"].iter().enumerate() {
             let result = fixture.0.join(format!("race-result-{index}"));
-            let child = Command::new(std::env::current_exe().unwrap())
+            let child = crate::child_command(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
                     "output_transaction::tests::reservation_race_worker",
@@ -4121,7 +4121,7 @@ mod tests {
     #[test]
     fn restrictive_umask_cannot_poison_new_lock_or_record_modes() {
         let fixture = Fixture::new("umask");
-        let status = Command::new(std::env::current_exe().unwrap())
+        let status = crate::child_command(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "output_transaction::tests::reservation_worker",

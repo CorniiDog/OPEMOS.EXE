@@ -5213,7 +5213,7 @@ mod tests {
     }
 
     fn run_test_worker_bounded(test_name: &str, environment: &str) {
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        let mut child = crate::child_command(std::env::current_exe().unwrap())
             .arg("--exact")
             .arg(test_name)
             .arg("--nocapture")
@@ -5851,7 +5851,7 @@ mod tests {
 
     #[test]
     fn state_publication_repairs_restrictive_umask() {
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
+        let status = crate::child_command(std::env::current_exe().unwrap())
             .arg("--exact")
             .arg("core_generation_cache::tests::state_publication_repairs_restrictive_umask_worker")
             .arg("--nocapture")

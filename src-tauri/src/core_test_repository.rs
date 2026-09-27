@@ -1,6 +1,6 @@
 //! Test-only access to an exact Core checkout obtained from canonical GitHub.
 
-use std::{path::PathBuf, process::Command};
+use std::path::PathBuf;
 
 const CANONICAL_CORE_REMOTE: &str =
     "https://github.com/CorniiDog/open-gpu-kernel-modules-steamos-support";
@@ -60,7 +60,7 @@ fn github_core_repository(required_commit: &str) -> PathBuf {
 }
 
 fn git_output(repository: &PathBuf, arguments: &[&str]) -> String {
-    let output = Command::new("git")
+    let output = crate::child_command("git")
         .args(arguments)
         .current_dir(repository)
         .output()

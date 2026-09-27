@@ -3649,7 +3649,7 @@ mod tests {
                         .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
                 "configured Core fixture commit is invalid"
             );
-            let output = Command::new("git")
+            let output = crate::child_command("git")
                 .args(["rev-parse", "HEAD"])
                 .current_dir(&candidate)
                 .output()
@@ -3786,7 +3786,7 @@ mod tests {
         };
         let generator = repository.join("lib/generate_installer_result_fixtures.py");
         let generate = || {
-            let output = Command::new("python3")
+            let output = crate::child_command("python3")
                 .arg(&generator)
                 .current_dir(&repository)
                 .output()
@@ -3945,7 +3945,7 @@ mod tests {
         };
         let generator = repository.join("lib/generate_installer_validation_fixtures.py");
         let generate = || {
-            let output = Command::new("python3")
+            let output = crate::child_command("python3")
                 .arg(&generator)
                 .current_dir(&repository)
                 .output()
@@ -4041,7 +4041,7 @@ mod tests {
         };
         let generator = repository.join("lib/generate_installer_module_verification_fixtures.py");
         let generate = || {
-            let output = Command::new("python3")
+            let output = crate::child_command("python3")
                 .arg(&generator)
                 .current_dir(&repository)
                 .output()
@@ -4155,7 +4155,7 @@ mod tests {
         let generator =
             repository.join("lib/generate_installer_userspace_verification_fixtures.py");
         let generate = || {
-            let output = Command::new("python3")
+            let output = crate::child_command("python3")
                 .arg(&generator)
                 .current_dir(&repository)
                 .output()
@@ -4261,7 +4261,7 @@ mod tests {
         let generator =
             repository.join("lib/generate_installer_initramfs_verification_fixtures.py");
         let generate = || {
-            let output = Command::new("python3")
+            let output = crate::child_command("python3")
                 .arg(&generator)
                 .current_dir(&repository)
                 .output()
@@ -4353,7 +4353,7 @@ mod tests {
         };
         let generator = repository.join("lib/generate_installer_payload_receipt_fixtures.py");
         let generate = || {
-            let output = Command::new("python3")
+            let output = crate::child_command("python3")
                 .arg(&generator)
                 .current_dir(&repository)
                 .output()
@@ -4447,7 +4447,7 @@ mod tests {
         };
         let generator = repository.join("lib/generate_installer_initramfs_workspace_fixtures.py");
         let generate = || {
-            let output = Command::new("python3")
+            let output = crate::child_command("python3")
                 .arg(&generator)
                 .current_dir(&repository)
                 .output()
@@ -4556,7 +4556,7 @@ mod tests {
         };
         let generator = repository.join("lib/generate_installer_gaming_payload_fixtures.py");
         let generate = || {
-            let output = Command::new("python3")
+            let output = crate::child_command("python3")
                 .arg(&generator)
                 .current_dir(&repository)
                 .output()
@@ -4717,7 +4717,7 @@ mod tests {
         };
         let generator = repository.join("lib/generate_installer_progress_fixtures.py");
         let generate = || {
-            let output = Command::new("python3")
+            let output = crate::child_command("python3")
                 .arg(&generator)
                 .current_dir(&repository)
                 .output()
@@ -4779,7 +4779,7 @@ mod tests {
     }
 
     fn extract_core_file(repository: &Path, root: &Path, path: &str) {
-        let output = Command::new("git")
+        let output = crate::child_command("git")
             .arg("-C")
             .arg(repository)
             .args([
@@ -4815,7 +4815,7 @@ mod tests {
         ));
         fs::create_dir(&root).unwrap();
         extract_core_file(&repository, &root, "lib/installer_bundle_manifest.py");
-        let output = Command::new(find_binary("python3").unwrap())
+        let output = crate::child_command(find_binary("python3").unwrap())
             .arg(root.join("lib/installer_bundle_manifest.py"))
             .args([
                 "create",
@@ -4869,7 +4869,7 @@ mod tests {
             &cancel,
             &|_, _, _| {},
             |file| {
-                let output = Command::new("git")
+                let output = crate::child_command("git")
                     .arg("-C")
                     .arg(&repository)
                     .args([

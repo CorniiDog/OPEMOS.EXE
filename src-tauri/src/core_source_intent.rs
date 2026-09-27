@@ -839,7 +839,6 @@ mod tests {
         fs,
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
-        process::Command,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -877,7 +876,7 @@ mod tests {
     }
 
     fn export(repository: &Path, root: &Path, relative: &str) {
-        let output = Command::new("git")
+        let output = crate::child_command("git")
             .args(["show", &format!("{CORE_SOURCE_INTENT_COMMIT}:{relative}")])
             .current_dir(repository)
             .output()
@@ -889,7 +888,7 @@ mod tests {
     }
 
     fn run_python(script: &Path, arguments: &[&OsStr], root: &Path) -> std::process::Output {
-        Command::new("python3")
+        crate::child_command("python3")
             .arg(script)
             .args(arguments)
             .current_dir(root)
@@ -1042,7 +1041,7 @@ mod tests {
     #[ignore = "requires the exact unpublished Core development generation"]
     fn exact_core_source_intent_matrix_matches_rust_contract() {
         let repository = core_repository();
-        let present = Command::new("git")
+        let present = crate::child_command("git")
             .args([
                 "cat-file",
                 "-e",

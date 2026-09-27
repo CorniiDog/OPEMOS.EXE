@@ -89,11 +89,16 @@ fn expected_manifest(executable: &Path, runtime: &Path) -> Result<CacheManifest,
     {
         return Err("Packaged build provenance must be a bounded regular file.".into());
     }
-    let provenance: BundleProvenance = serde_json::from_slice(
-        &fs::read(&provenance_path)
-            .map_err(|error| format!("Could not read packaged build provenance: {error}"))?,
-    )
-    .map_err(|error| format!("Packaged build provenance is invalid: {error}"))?;
+    let provenance_bytes = fs::read(&provenance_path)
+        .map_err(|error| format!("Could not read packaged build provenance: {error}"))?;
+    // Windows PowerShell 5 writes a UTF-8 BOM by default. Accept exactly one
+    // leading BOM while preserving the bounded-file and strict JSON/schema
+    // checks below so a metadata-only deployment cannot prevent startup.
+    let provenance_json = provenance_bytes
+        .strip_prefix(b"\xef\xbb\xbf")
+        .unwrap_or(&provenance_bytes);
+    let provenance: BundleProvenance = serde_json::from_slice(provenance_json)
+        .map_err(|error| format!("Packaged build provenance is invalid: {error}"))?;
     let filename = executable
         .file_name()
         .and_then(|name| name.to_str())
@@ -357,6 +362,23 @@ mod tests {
         assert_eq!(
             fs::read(cache.join("maintainer-worktrees/kept")).unwrap(),
             b"same-version"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn windows_powershell_utf8_bom_does_not_prevent_startup() {
+        let (root, executable) = fixture("powershell-bom");
+        let provenance_path = root.join("bundle-provenance.json");
+        let provenance = fs::read(&provenance_path).unwrap();
+        let mut powershell_utf8 = b"\xef\xbb\xbf".to_vec();
+        powershell_utf8.extend_from_slice(&provenance);
+        fs::write(&provenance_path, powershell_utf8).unwrap();
+
+        let manifest = expected_manifest(&executable, &root.join("runtime")).unwrap();
+        assert_eq!(
+            manifest.source_commit,
+            "0123456789abcdef0123456789abcdef01234567"
         );
         fs::remove_dir_all(root).unwrap();
     }
