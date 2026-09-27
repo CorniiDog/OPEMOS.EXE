@@ -150,7 +150,8 @@ Before handing off a portable candidate, verify all of the following on Windows:
   centered main window and closes.
 
 The progress companion is created only when a build begins, remains coupled to
-the main window, keeps Advanced diagnostics expanded with an internally
+the main window, and must finish loading, show, focus, and report visible before
+the main UI claims that it is open. It keeps Advanced diagnostics expanded with an internally
 scrollable auto-following log, and reveals USB Imaging after a completed or
 imported NVIDIA image. The first reveal refreshes removable devices. Destructive
 confirmation accepts the visible word `ERASE`, while the backend still receives

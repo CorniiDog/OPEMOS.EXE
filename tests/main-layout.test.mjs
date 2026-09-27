@@ -22,7 +22,7 @@ test("main workflow keeps readiness compact and balances output and source colum
 test("packaged Windows actions expose visible outcomes instead of silent clicks", () => {
   assert.match(script, /openValve\.addEventListener\("click", async \(\) => \{[\s\S]*invoke\("open_valve_download_page"\)[\s\S]*default browser[\s\S]*catch \(error\)/);
   assert.doesNotMatch(script, /plugin:opener\|open_url/);
-  assert.match(script, /invoke\("open_progress_window"\);[\s\S]*Build progress is opening in a separate window/);
+  assert.match(script, /invoke\("open_progress_window"\);[\s\S]*waitForProgressWindow\(progressWindow\)[\s\S]*progressWindow\.show\(\)[\s\S]*progressWindow\.setFocus\(\)[\s\S]*progressWindow\.isVisible\(\)[\s\S]*setCompanionMode\("build-progress"\)[\s\S]*Build progress is open in a separate window/);
   assert.match(script, /buildButton\.addEventListener\("click", async \(\) => \{[\s\S]*const admission = admitBuildStart\(currentBuildSnapshot\(\)\);[\s\S]*Build cannot start: \$\{admission\.blocker\}/);
   const progressWindow = tauriConfig.app.windows.find(({ label }) => label === "build-progress");
   assert.equal(progressWindow, undefined);
@@ -34,6 +34,8 @@ test("narrow effective widths and high zoom reflow without horizontal clipping",
   assert.match(css, /\.app-shell\s*\{[^}]*width:\s*calc\(100% - 24px\);[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/s);
   assert.match(css, /\.readiness-grid,[\s\S]*\.build-options-grid,[\s\S]*\.download-card\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\);/);
   assert.match(css, /\.output-destination-actions\s*\{[^}]*width:\s*100%;[^}]*flex-wrap:\s*wrap;/s);
+  assert.match(css, /\.output-destination\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
+  assert.match(css, /\.output-destination-actions button\s*\{[^}]*flex:\s*1 1 0/s);
   assert.match(css, /\.path,[\s\S]*\.output-destination small,[\s\S]*\.build-summary strong\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/s);
 });
 
@@ -47,7 +49,7 @@ test("image output folder selection is explicit, reversible, and build-bound", a
   assert.match(html, /id="output-folder-label">Alongside the source image/);
   assert.match(html, /id="reset-output-folder"[^>]*hidden[^>]*>Use Source Folder/);
   assert.match(html, /id="choose-output-folder"[^>]*>Choose…/);
-  assert.match(css, /\.output-destination\s*\{[^}]*min-width:\s*0;[^}]*display:\s*flex/s);
+  assert.match(css, /\.output-destination\s*\{[^}]*min-width:\s*0;[^}]*display:\s*grid/s);
   assert.match(script, /open\(\{\s*multiple:\s*false,\s*directory:\s*true\s*\}\)/);
   const selection = script.match(/async function selectOutputDirectory\(directory\) \{([\s\S]*?)\n\}/)?.[1] || "";
   assert.match(selection, /outputDirectory:\s*directory/);

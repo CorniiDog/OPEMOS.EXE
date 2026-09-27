@@ -955,12 +955,17 @@ elements.buildButton.addEventListener("click", async () => {
     elements.summaryOutput.textContent = displayPath(plannedOutput);
     elements.summaryOutput.title = displayPath(plannedOutput);
     await invoke("open_progress_window");
-    setCompanionMode("build-progress");
-    elements.resultMessage.textContent = "Build progress is opening in a separate window…";
     const windows = await getAllWebviewWindows();
     const progressWindow = windows.find((window) => window.label === "build-progress");
     if (!progressWindow) throw new Error("The build progress window is unavailable.");
     await waitForProgressWindow(progressWindow);
+    await progressWindow.show();
+    await progressWindow.setFocus();
+    if (!await progressWindow.isVisible()) {
+      throw new Error("The build progress window could not be made visible.");
+    }
+    setCompanionMode("build-progress");
+    elements.resultMessage.textContent = "Build progress is open in a separate window.";
     await progressWindow.emit("build-requested", {
       requestId: buildContext.requestId,
       path: buildContext.inputPath,
