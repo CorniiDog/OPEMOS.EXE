@@ -133,7 +133,15 @@ cargo build --manifest-path src-tauri/Cargo.toml --release --locked
 pwsh -File .\test_welcome_windows.ps1
 ```
 
-The unsigned portable executable is
+The direct `cargo build` output is a developer build that discovers prerequisites
+from the host. It must not be copied into a portable bundle. Build a portable
+Windows candidate with `bundle_windows.ps1`; that entry point compiles the exact
+runtime-manifest SHA-256 into the executable and stages the matching runtime and
+provenance beside it. A portable executable built without that pin will reject
+the bundle and can report a missing prerequisite such as `qemu-img` even when
+the file is present.
+
+The unsigned developer executable is
 `src-tauri/target/release/steamos-nvidia-image-builder.exe`. Contained Windows
 validation installs and seals Windows once, preserves that immutable base, and
 uses a disposable overlay for every normal build or test run. The executable

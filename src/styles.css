@@ -52,6 +52,7 @@ body::after {
   background: linear-gradient(to left, rgba(118, 185, 0, .08), transparent 8%);
   box-shadow: inset 0 0 0 1px rgba(220, 239, 249, .12), inset 0 1px 0 rgba(255, 255, 255, .15), inset -14px 0 28px -24px rgba(150, 214, 66, .38);
 }
+.platform-windows body::after { border-radius: 0 0 10px 10px; }
 
 .companion-scrim {
   position: fixed;
@@ -70,6 +71,7 @@ body::after {
   display: grid;
   place-items: end center;
 }
+.platform-windows .companion-scrim { border-radius: 0 0 10px 10px; }
 .companion-scrim span {
   margin-bottom: 18px;
   padding: 7px 11px;
@@ -387,6 +389,7 @@ footer p { color: #aab4c5; }
   white-space: nowrap;
 }
 .app-shell.completed-output-selected .result-message { margin-top: 4px; }
+.app-shell.completed-output-selected { overflow-y: auto; scrollbar-gutter: stable; }
 .source-choice { margin-bottom: 9px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .source-choice span { min-width: 0; }
 .source-choice strong { display: block; font-size: 14px; }

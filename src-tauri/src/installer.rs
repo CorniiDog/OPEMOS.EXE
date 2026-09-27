@@ -809,7 +809,7 @@ pub(crate) async fn publish_on_demand_nvidia_release(
         if sha256_file(&archive)? != artifact.archive_sha256 {
             return Err("Release archive changed after on-demand validation.".into());
         }
-        let archived_build_info = Command::new("tar")
+        let archived_build_info = crate::child_command("tar")
             .args(["-xOzf"])
             .arg(&archive)
             .arg("BUILD-INFO.txt")
@@ -3087,7 +3087,7 @@ pub(crate) fn validate_nvidia_install_handoff_blocking(
     let validation_result = (|| -> Result<NvidiaInstallHandoffResult, String> {
         let installer_archive = connection.runtime_dir.join("offline-installer.tar.gz");
         run_checked(
-            Command::new("tar")
+            crate::child_command("tar")
                 .env("COPYFILE_DISABLE", "1")
                 .args(["--no-xattrs", "-czf"])
                 .arg(&installer_archive)

@@ -1,0 +1,14 @@
+:root { font-family: "Segoe UI", system-ui, sans-serif; color: #f5f7fb; background: transparent; }
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+body { display: grid; place-items: center; border-radius: 18px; background: rgba(11, 17, 24, .72); }
+main { width: 100%; padding: 34px; display: flex; align-items: center; gap: 24px; }
+.mark { width: 72px; height: 72px; flex: none; border: 1px solid rgba(102, 192, 244, .38); border-radius: 20px; background: linear-gradient(145deg, rgba(26, 159, 255, .2), rgba(118, 185, 0, .16)); display: grid; place-items: center; }
+.mark span { width: 28px; height: 28px; border: 4px solid rgba(245, 247, 251, .2); border-top-color: #66c0f4; border-right-color: #76b900; border-radius: 50%; animation: spin .9s linear infinite; }
+p { margin: 0 0 5px; color: #66c0f4; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+h1 { margin: 0 0 20px; font-size: 22px; font-weight: 650; }
+.progress { width: 230px; height: 4px; overflow: hidden; border-radius: 999px; background: #25313c; }
+.progress span { width: 38%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #66c0f4, #76b900); animation: travel 1.25s ease-in-out infinite; display: block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes travel { from { transform: translateX(-110%); } to { transform: translateX(290%); } }
+@media (prefers-reduced-motion: reduce) { .mark span, .progress span { animation-duration: 2.4s; } }

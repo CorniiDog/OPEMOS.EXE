@@ -10,7 +10,10 @@
     <style>
         html, body { background: rgba(11, 17, 24, .64); color: #f5f7fb; }
     </style>
-    <script>if (navigator.platform.startsWith("Mac") || navigator.userAgent.includes("Macintosh")) document.documentElement.classList.add("platform-macos");</script>
+    <script>
+        if (navigator.platform.startsWith("Mac") || navigator.userAgent.includes("Macintosh")) document.documentElement.classList.add("platform-macos");
+        if (navigator.platform.startsWith("Win") || navigator.userAgent.includes("Windows")) document.documentElement.classList.add("platform-windows");
+    </script>
 
     <link rel="stylesheet" href="/compatibility-preview.css">
     <title>SteamOS NVIDIA Builder</title>
@@ -153,7 +156,7 @@
             </div>
             <label id="usb-confirmation-row" class="source-choice hidden" for="usb-confirmation">
                 <span><strong>Destructive-intent phrase</strong><small id="usb-confirmation-help">Select a target first.</small></span>
-                <input id="usb-confirmation" type="text" autocomplete="off" spellcheck="false">
+                <input id="usb-confirmation" type="text" autocomplete="off" spellcheck="false" placeholder="ERASE" aria-describedby="usb-confirmation-help">
             </label>
             <div class="usb-dialog-actions">
                 <button id="arm-usb-preflight" class="primary hidden" type="button" disabled>Confirm &amp; Prepare USB</button>
@@ -343,10 +346,10 @@
                     </div>
                 </div>
 
-                <div id="usb-picker" class="usb-picker is-empty" role="group" aria-labelledby="usb-destination-title">
+                <div id="usb-picker" class="usb-picker is-empty hidden" role="group" aria-labelledby="usb-destination-title">
                     <div class="usb-picker-heading">
                         <span>
-                            <strong id="usb-destination-title">Optional USB destination</strong>
+                            <strong id="usb-destination-title">USB Imaging</strong>
                             <span class="usb-detail-line">
                                 <small id="usb-target-detail">Connect a removable drive, then refresh the list.</small>
                             </span>

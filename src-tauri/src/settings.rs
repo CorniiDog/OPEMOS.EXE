@@ -45,7 +45,7 @@ pub(crate) fn bounded_command_output_with_limits(
     let deadline = Instant::now()
         .checked_add(timeout)
         .ok_or("The GitHub command deadline overflowed.")?;
-    let mut command = Command::new(binary);
+    let mut command = crate::child_command(binary);
     command
         .args(arguments)
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -678,7 +678,7 @@ pub(crate) fn windows_github_login_command(gh: &Path) -> Command {
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
-    let mut command = Command::new(gh);
+    let mut command = crate::child_command(gh);
     command
         .args([
             "auth",
@@ -731,7 +731,7 @@ tell application "Terminal"
     do script (item 1 of argv)
 end tell
 end run"#;
-            let status = Command::new("/usr/bin/osascript")
+            let status = crate::child_command("/usr/bin/osascript")
                 .args(["-e", apple_script, "--", &terminal_command])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())

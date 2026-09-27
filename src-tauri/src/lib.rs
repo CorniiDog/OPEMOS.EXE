@@ -26,6 +26,20 @@ use std::{
 };
 use tauri::{Emitter, Manager};
 
+#[cfg(target_os = "windows")]
+pub(crate) fn child_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    use std::os::windows::process::CommandExt as _;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn child_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    Command::new(program)
+}
+
 mod app;
 mod appliance;
 mod compatibility_preview;

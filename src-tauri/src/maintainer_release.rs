@@ -372,7 +372,7 @@ fn core_materializer_command(
     asset_dir: &Path,
     output_dir: &Path,
 ) -> Command {
-    let mut command = Command::new(python);
+    let mut command = crate::child_command(python);
     let library = support_root.join("lib");
     let script = library.join("materialize_driver_product.py");
     append_core_script_args(&mut command, &library, &script);
@@ -644,7 +644,7 @@ fn core_session_command(
 ) -> Command {
     let library = runtime.support_root.join("lib");
     let script = library.join("release_operation_session.py");
-    let mut process = Command::new(python);
+    let mut process = crate::child_command(python);
     append_core_script_args(&mut process, &library, &script);
     process.arg(command).arg("--state").arg(&runtime.state);
     if command == "execute" || command == "reconcile" {
@@ -917,7 +917,7 @@ mod tests {
         let python = find_binary("python3")
             .or_else(|| find_binary("python"))
             .expect("Python 3 is required for the isolated materializer regression");
-        let mut command = Command::new(python);
+        let mut command = crate::child_command(python);
         command.arg("-I");
         append_core_script_args(&mut command, &library, &script);
         command.arg("--help");

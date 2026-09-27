@@ -879,7 +879,7 @@ pub(crate) fn git_output_bytes(
     description: &str,
     limit: usize,
 ) -> Result<Vec<u8>, String> {
-    let mut child = Command::new("git")
+    let mut child = child_command("git")
         .arg("-C")
         .arg(path)
         .args([
@@ -940,7 +940,7 @@ pub(crate) fn bounded_git_mutation(
     limit: usize,
     description: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut command = Command::new(binary);
+    let mut command = child_command(binary);
     command
         .arg("-C")
         .arg(path)
@@ -1390,7 +1390,7 @@ pub(crate) async fn open_maintainer_worktree_in_vscode(
         let code = vscode_binary().ok_or(
             "VS Code's command-line launcher is unavailable. Install VS Code or add the 'code' command to PATH.",
         )?;
-        Command::new(code)
+        child_command(code)
             .arg("--reuse-window")
             .arg(&worktree.path)
             .spawn()
@@ -1476,7 +1476,7 @@ pub(crate) fn contains_sensitive_patch_content(patch: &str) -> bool {
 }
 
 fn staged_patch(path: &Path) -> Result<(String, String), String> {
-    let mut child = Command::new("git")
+    let mut child = child_command("git")
         .arg("-C")
         .arg(path)
         .args([
@@ -1790,7 +1790,7 @@ pub(crate) async fn execute_maintainer_checkout(
         if review.current_head != expected_head || review.target_commit != expected_target_commit {
             return Err("The current or target branch changed after review. Review the branch change again.".into());
         }
-        let output = Command::new("git")
+        let output = child_command("git")
             .arg("-C")
             .arg(&review.path)
             .args([
@@ -1885,7 +1885,7 @@ fn review_push_blocking(path: String, repository: String) -> Result<MaintainerPu
     }
     let remote_head = remote_branch_head(Path::new(&worktree.path), &branch)?;
     if let Some(remote) = remote_head.as_deref() {
-        let status = Command::new("git")
+        let status = child_command("git")
             .arg("-C")
             .arg(&worktree.path)
             .args(["merge-base", "--is-ancestor", remote, &worktree.head])
@@ -4504,7 +4504,7 @@ pub(crate) fn support_publisher_command(
     build_info: &Path,
     provenance: &Path,
 ) -> Command {
-    let mut command = Command::new("bash");
+    let mut command = child_command("bash");
     #[cfg(windows)]
     {
         command.args([
@@ -5074,7 +5074,7 @@ pub(crate) fn build_nvidia_for_target_from_source(
     if let Some(support_repository) = local_support_repository.as_ref() {
         let transfer_archive = session.runtime_dir().join("support-repository.tar.gz");
         run_checked(
-            Command::new("tar")
+            child_command("tar")
                 // Prevent macOS tar from adding AppleDouble/xattr headers that GNU tar
                 // reports as unknown while unpacking the checkout in Fedora.
                 .env("COPYFILE_DISABLE", "1")
@@ -5198,7 +5198,7 @@ pub(crate) fn build_nvidia_for_target_from_source(
     if archive_sha256 != result_artifact.sha256.to_ascii_lowercase() {
         return Err("NVIDIA build-result hash does not match the returned archive.".into());
     }
-    let listing = Command::new("tar")
+    let listing = child_command("tar")
         .args(["-tzf"])
         .arg(&staged_archive)
         .output()
@@ -5243,7 +5243,7 @@ pub(crate) fn build_nvidia_for_target_from_source(
     }
     let build_info = fs::read_to_string(&staged_build_info)
         .map_err(|e| format!("Could not read generated NVIDIA build metadata: {e}"))?;
-    let archived_build_info = Command::new("tar")
+    let archived_build_info = child_command("tar")
         .args(["-xOzf"])
         .arg(&staged_archive)
         .arg("BUILD-INFO.txt")
@@ -5274,7 +5274,7 @@ pub(crate) fn build_nvidia_for_target_from_source(
     }
     let provenance_bytes = fs::read(&staged_provenance)
         .map_err(|e| format!("Could not read generated NVIDIA provenance: {e}"))?;
-    let archived_provenance = Command::new("tar")
+    let archived_provenance = child_command("tar")
         .args(["-xOzf"])
         .arg(&staged_archive)
         .arg("PROVENANCE.json")
@@ -5301,7 +5301,7 @@ pub(crate) fn build_nvidia_for_target_from_source(
         );
     }
     for module in &provenance.modules {
-        let archived_module = Command::new("tar")
+        let archived_module = child_command("tar")
             .args(["-xOzf"])
             .arg(&staged_archive)
             .arg(format!("modules/{}", module.name))

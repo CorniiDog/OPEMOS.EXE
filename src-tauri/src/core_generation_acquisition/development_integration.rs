@@ -22,7 +22,6 @@ use std::{
     io::{Cursor, Read},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -97,7 +96,7 @@ fn export_core_sources(repository: &Path, destination: &Path) {
         "lib/userspace_lock_generation_contract.py",
         "lib/userspace_lock_verifier_evidence.py",
     ] {
-        let output = Command::new("git")
+        let output = crate::child_command("git")
             .args(["show", &format!("{DEVELOPMENT_HANDOFF_COMMIT}:{relative}")])
             .current_dir(repository)
             .output()
@@ -113,7 +112,7 @@ fn export_core_sources(repository: &Path, destination: &Path) {
 }
 
 fn run_python(arguments: &[&OsStr], source_root: &Path) -> std::process::Output {
-    Command::new("python3")
+    crate::child_command("python3")
         .args(arguments)
         .current_dir(source_root)
         .env("PYTHONDONTWRITEBYTECODE", "1")

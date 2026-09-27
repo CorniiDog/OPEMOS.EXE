@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 fn main() {
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
     match steamos_nvidia_image_builder_lib::run_windows_usb_writer_helper(&arguments) {

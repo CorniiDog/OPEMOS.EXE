@@ -12,7 +12,28 @@ const nativeWindows = await readFile(new URL("../src-tauri/src/windows.rs", impo
 test("companion windows remain native children of the main window", () => {
   assert.equal([...nativeWindows.matchAll(/\.parent\(&main\)/g)].length, 2);
   assert.equal([...nativeWindows.matchAll(/\.set_focus\(\)/g)].length, 4);
+  assert.match(nativeWindows, /fn center_over_parent[\s\S]*\.outer_position\(\)[\s\S]*\.set_position/);
+  assert.equal([...nativeWindows.matchAll(/center_over_parent\(&(?:progress|window), &main\)\?/g)].length, 4);
   assert.doesNotMatch(nativeWindows, /always_on_top/);
+});
+
+test("Windows image commands stay hidden and elevation belongs to the main window", async () => {
+  const image = await readFile(new URL("../src-tauri/src/image.rs", import.meta.url), "utf8");
+  const appliance = await readFile(new URL("../src-tauri/src/appliance.rs", import.meta.url), "utf8");
+  const nvidia = await readFile(new URL("../src-tauri/src/nvidia.rs", import.meta.url), "utf8");
+  const library = await readFile(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
+  assert.match(library, /fn child_command[\s\S]*CREATE_NO_WINDOW[\s\S]*creation_flags/);
+  assert.doesNotMatch(appliance, /Command::new\(/);
+  assert.doesNotMatch(nvidia, /Command::new\(/);
+  assert.match(image, /fn hidden_windows_command[\s\S]*CREATE_NO_WINDOW[\s\S]*creation_flags/);
+  assert.equal([...image.matchAll(/hidden_windows_command\("powershell\.exe"\)/g)].length, 3);
+  assert.doesNotMatch(image, /Command::new\("powershell\.exe"\)/);
+  assert.match(image, /get_webview_window\("main"\)/);
+  assert.match(image, /\.and_then\(\|window\| window\.hwnd\(\)\.ok\(\)\)/);
+  assert.match(image, /launch_elevated_windows_usb_writer\([\s\S]*owner_window/);
+  assert.match(image, /ShellExecuteInfoW \{[\s\S]*hwnd: owner_window as \*mut c_void/);
+  assert.match(image, /mask: 0x0000_0040,[\s\S]*show: 1,/);
+  assert.match(image, /GetLastError[\s\S]*1223 =>[\s\S]*8235 =>[\s\S]*signed and validated[\s\S]*system error \{error\}/);
 });
 
 test("the rear main window is dimmed and inert while a companion is active", () => {
@@ -30,20 +51,24 @@ test("both companion close paths release the rear-window interaction lock", () =
   assert.match(main, /listen\("companion-window-hidden"/);
 });
 
-test("image-only completion waits for the progress window before changing the main workflow", () => {
-  assert.match(main, /if \(activeCompanion === "build-progress"\) \{\s*if \(pendingBuildFinished\) return;\s*pendingBuildFinished = event\.payload;\s*return;/);
-  assert.match(main, /payload\.label === "build-progress" && pendingBuildFinished/);
+test("completion commits before the progress window closes into USB review", () => {
+  assert.match(main, /applyBuildFinished\(event\.payload, \{\s*openUsbReview: activeCompanion !== "build-progress",\s*\}\)/);
+  assert.match(main, /pendingUsbReview = !openUsbReview;/);
+  assert.match(main, /payload\.label === "build-progress" && pendingUsbReview/);
   assert.match(build, /export_marker_image", \{ revealInFinder: false \}/);
-  assert.match(main, /if \(activeExportMode === "image"\) \{\s*await revealCompletedImage\(output\.path\);/);
+  assert.match(main, /payload\.label === "build-progress" && pendingUsbReview[\s\S]*revealUsbImaging\(\{ preferredTarget \}\)/);
+  assert.doesNotMatch(main, /event\.payload\?\.state === "complete"[\s\S]*progressWindow\?\.hide\(\)/);
 });
 
 test("USB builds reselect only the exact pre-build device and defer Finder until verified", () => {
-  assert.match(build, /await finish\("complete",[\s\S]*if \(usbRequested\) \{\s*await hideProgressWindow\(\)\.catch/);
-  assert.match(build, /ready for USB review/);
+  assert.match(build, /await finish\("complete",/);
+  assert.doesNotMatch(build, /if \(usbRequested\) \{\s*await hideProgressWindow\(\)\.catch/);
+  assert.match(build, /ready for USB Imaging/);
   assert.match(main, /deviceIdentifier: selectedUsb\.value,[\s\S]*identityToken: selectedUsb\.dataset\.identityToken/);
   assert.match(main, /option\.value === preferredTarget\.deviceIdentifier[\s\S]*option\.dataset\.identityToken === preferredTarget\.identityToken/);
-  assert.match(main, /setUsbMenuOpen\(true\);[\s\S]*await mainWindow\.setFocus\(\)\.catch[\s\S]*const restored = await refreshUsbTargets\(preferredTarget\);/);
-  assert.match(main, /if \(restored\) \{\s*setUsbMenuOpen\(true\);[\s\S]*The USB review remains open/);
+  assert.match(main, /async function revealUsbImaging[\s\S]*usbImagingRefreshPath !== outputPath[\s\S]*refreshUsbTargets\(preferredTarget\)/);
+  assert.match(main, /pendingUsbReview = !openUsbReview;[\s\S]*if \(openUsbReview\)[\s\S]*revealUsbImaging\(\{ preferredTarget \}\)/);
+  assert.doesNotMatch(main, /if \(openUsbReview\) setUsbMenuOpen\(true\)/);
   assert.doesNotMatch(main, /if \(!finalUsbReady\) setUsbMenuOpen\(false\);/);
   assert.match(main, /preferred\.selected = true;\s*renderUsbTargetSelection\(\);\s*return true;/);
   assert.doesNotMatch(main, /preferred\.selected = true;\s*elements\.usbTarget\.dispatchEvent/);

@@ -850,7 +850,6 @@ mod tests {
         collections::HashMap,
         fs,
         path::{Path, PathBuf},
-        process::Command,
         sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -1162,7 +1161,7 @@ mod tests {
             assert!(!required, "configured immutable Core repository is absent");
             return None;
         }
-        let output = Command::new("git")
+        let output = crate::child_command("git")
             .args(["cat-file", "-e", &format!("{CONTRACT_COMMIT}^{{commit}}")])
             .current_dir(&repository)
             .output()
@@ -1190,7 +1189,7 @@ mod tests {
             "lib/generate_openpgp_status_fixtures.py",
             "lib/userspace_lock_generation_contract.py",
         ] {
-            let output = Command::new("git")
+            let output = crate::child_command("git")
                 .args(["show", &format!("{CONTRACT_COMMIT}:{relative}")])
                 .current_dir(repository)
                 .output()
@@ -1207,7 +1206,7 @@ mod tests {
     }
 
     fn run_fixture_generator(path: &Path) -> Vec<u8> {
-        let output = Command::new("python3")
+        let output = crate::child_command("python3")
             .arg(path)
             .current_dir("/")
             .env("PYTHONDONTWRITEBYTECODE", "1")

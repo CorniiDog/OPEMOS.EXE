@@ -129,6 +129,33 @@ documentation changes on `main` deploy automatically.
 Screenshot capture instructions live in the
 [screenshot asset guide](assets/screenshots/README.md).
 
+## Windows portable candidate checks
+
+Use `bundle_windows.ps1` for every portable Windows candidate. The script hashes
+the closed runtime manifest, supplies that digest through
+`OPEMOS_RUNTIME_MANIFEST_SHA256` while compiling, and stages the executable,
+runtime, and provenance as one identity-bound directory. A direct `cargo build`
+is suitable for development against host-installed prerequisites, but its output
+must not replace the executable in a portable directory.
+
+Before handing off a portable candidate, verify all of the following on Windows:
+
+- the executable SHA-256 and byte size match `bundle-provenance.json` and
+  `SHA256SUMS.txt`;
+- `runtime/runtime-manifest.json` matches the provenance digest;
+- first launch creates `state/cache-v1/cache-manifest.json` with the exact
+  executable and runtime-manifest hashes;
+- the bundled `runtime/qemu/qemu-img.exe --version` runs successfully; and
+- normal startup leaves no console window, while the splash hands off to the
+  centered main window and closes.
+
+The progress companion is created only when a build begins, remains coupled to
+the main window, keeps Advanced diagnostics expanded with an internally
+scrollable auto-following log, and reveals USB Imaging after a completed or
+imported NVIDIA image. The first reveal refreshes removable devices. Destructive
+confirmation accepts the visible word `ERASE`, while the backend still receives
+and validates the exact selected device identity.
+
 ## Windows imaging validation modes
 
 Windows imaging validation selects exactly one machine-readable mode: `short`,

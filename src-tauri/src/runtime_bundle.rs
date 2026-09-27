@@ -205,7 +205,6 @@ fn verify_runtime_bundle(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
 
     fn fixture() -> (PathBuf, String) {
         let root = std::env::temp_dir().join(format!(
@@ -395,7 +394,7 @@ mod tests {
         } else {
             "python3"
         };
-        let output = Command::new(python)
+        let output = crate::child_command(python)
             .arg(repository.join("scripts/stage_runtime_bundle.py"))
             .args(["--platform", std::env::consts::OS])
             .arg("--runtime-root")

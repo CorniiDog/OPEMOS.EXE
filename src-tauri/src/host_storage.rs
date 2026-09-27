@@ -181,7 +181,7 @@ pub(crate) fn admit_measured_storage(
 
 #[cfg(target_os = "macos")]
 fn host_allocation_pool_id(path: &Path, _device: u64) -> Result<String, String> {
-    let output = Command::new("/usr/sbin/diskutil")
+    let output = crate::child_command("/usr/sbin/diskutil")
         .args(["info", "-plist"])
         .arg(path)
         .output();

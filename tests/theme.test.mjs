@@ -29,8 +29,13 @@ test("every application surface shares the Steam glass material tokens", async (
 test("preload and native window backgrounds preserve translucent dark fallback", async () => {
   for (const name of htmlFiles) {
     const html = await readFile(new URL(`../src/${name}`, import.meta.url), "utf8");
-    assert.match(html, /html, body \{ background: rgba\(11, 17, 24, \.64\);/, `${name} can flash an un-tinted transparent canvas`);
+    if (name === "build.html") {
+      assert.match(html, /html, body \{ background: #0b1118;/, `${name} can flash a transparent canvas`);
+    } else {
+      assert.match(html, /html, body \{ background: rgba\(11, 17, 24, \.64\);/, `${name} can flash an un-tinted transparent canvas`);
+    }
     assert.match(html, /navigator\.platform\.startsWith\("Mac"\).*navigator\.userAgent\.includes\("Macintosh"\)/, `${name} cannot detect macOS robustly`);
+    assert.match(html, /navigator\.platform\.startsWith\("Win"\).*navigator\.userAgent\.includes\("Windows"\)/, `${name} cannot detect Windows chrome`);
     assert.match(html, /<header[^>]*data-tauri-drag-region/, `${name} cannot drag its overlay title bar`);
     assert.match(html, /class="window-drag-region" data-tauri-drag-region/, `${name} is missing its top-edge drag target`);
     assert.match(html, /href="\/window-chrome\.css"/, `${name} does not load the shared window chrome`);
@@ -39,7 +44,7 @@ test("preload and native window backgrounds preserve translucent dark fallback",
 
   const config = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
   const main = config.app.windows[0];
-  assert.equal(main.visible, true);
+  assert.equal(main.visible, false);
   assert.equal(config.app.macOSPrivateApi, true);
   assert.equal(main.transparent, true);
   assert.equal(main.titleBarStyle, "Overlay");
@@ -58,20 +63,44 @@ test("preload and native window backgrounds preserve translucent dark fallback",
   ]);
 
   const app = await readFile(new URL("../src-tauri/src/app.rs", import.meta.url), "utf8");
-  assert.match(app, /\.setup\(move \|app\|[\s\S]*get_webview_window\("main"\)[\s\S]*main\.show\(\)\.map_err\(std::io::Error::other\)\?[\s\S]*main\.set_focus\(\)\.map_err\(std::io::Error::other\)\?/);
-  assert.doesNotMatch(app, /let _ = webview\.window\(\)\.show\(\)/);
+  assert.match(app, /fn main_window_ready[\s\S]*if native_no_activate_proof\(\)[\s\S]*get_webview_window\("main"\)[\s\S]*main\.show\(\)[\s\S]*main\.set_focus\(\)[\s\S]*get_webview_window\("splashscreen"\)[\s\S]*splash[\s\S]*\.close\(\)/);
+  assert.match(await readFile(new URL("../src/main.js", import.meta.url), "utf8"), /await invoke\("main_window_ready"\);\s*await checkEnvironment\(\);/);
 
   const buildScript = await readFile(new URL("../src-tauri/build.rs", import.meta.url), "utf8");
   assert.match(buildScript, /cargo:rerun-if-changed=icons\/icon\.png/);
   assert.match(buildScript, /cargo:rerun-if-changed=icons\/icon\.icns/);
 
   const windows = await readFile(new URL("../src-tauri/src/windows.rs", import.meta.url), "utf8");
-  assert.equal([...windows.matchAll(/\.transparent\(true\)/g)].length, 2);
-  assert.equal([...windows.matchAll(/\.effects\(glass_window_effects\(\)\)/g)].length, 2);
-  assert.equal([...windows.matchAll(/\.shadow\(false\)/g)].length, 2);
+  assert.equal([...windows.matchAll(/\.transparent\(true\)/g)].length, 1);
+  assert.equal([...windows.matchAll(/\.effects\(glass_window_effects\(\)\)/g)].length, 1);
+  assert.equal([...windows.matchAll(/\.shadow\(false\)/g)].length, 1);
+  assert.match(windows, /"build-progress"[\s\S]*\.transparent\(false\)[\s\S]*\.background_color\(Color\(11, 17, 24, 255\)\)[\s\S]*\.shadow\(true\)/);
   assert.equal([...windows.matchAll(/\.title_bar_style\(tauri::TitleBarStyle::Overlay\)/g)].length, 2);
   assert.match(windows, /\.radius\(10\.0\)/);
   assert.match(windows, /Effect::UnderWindowBackground, Effect::Acrylic/);
+
+  const progress = config.app.windows.find(({ label }) => label === "build-progress");
+  assert.equal(progress, undefined);
+  assert.match(windows, /"build-progress"[\s\S]*\.visible\(false\)[\s\S]*\.parent\(&main\)[\s\S]*center_over_parent\(&progress, &main\)[\s\S]*progress[\s\S]*\.show\(\)/);
+  const splash = config.app.windows.find(({ label }) => label === "splashscreen");
+  assert.deepEqual(splash && {
+    visible: splash.visible,
+    decorations: splash.decorations,
+    alwaysOnTop: splash.alwaysOnTop,
+    skipTaskbar: splash.skipTaskbar,
+  }, { visible: true, decorations: false, alwaysOnTop: true, skipTaskbar: true });
+  assert.equal(splash.shadow, false);
+  assert.equal(splash.closable, true);
+  assert.equal(main.center, true);
+  assert.equal(splash.transparent, true);
+  assert.deepEqual(splash.backgroundColor, [11, 17, 24, 0]);
+  assert.deepEqual(splash.windowEffects.effects, ["underWindowBackground", "acrylic"]);
+  const splashCss = await readFile(new URL("../src/splash.css", import.meta.url), "utf8");
+  assert.doesNotMatch(splashCss, /body\s*\{[^}]*border:/);
+  assert.doesNotMatch(splashCss, /body\s*\{[^}]*box-shadow:/);
+
+  const entrypoint = await readFile(new URL("../src-tauri/src/main.rs", import.meta.url), "utf8");
+  assert.match(entrypoint, /^#!\[cfg_attr\(not\(debug_assertions\), windows_subsystem = "windows"\)\]/);
 
   const dragScript = await readFile(new URL("../src/window-drag.js", import.meta.url), "utf8");
   assert.match(dragScript, /pointerdown/);

@@ -24,9 +24,8 @@ const elements = {
   inputName: $("#input-name"), statusTitle: $("#status-title"), statusMessage: $("#status-message"),
   statusBadge: $("#status-badge"), progressTrack: $("#progress-track"), progressBar: $("#progress-bar"),
   stepProgressTrack: $("#step-progress-track"), stepProgressBar: $("#step-progress-bar"), buildLog: $("#build-log"),
-  diagnosticsCard: $("#diagnostics-card"), diagnosticsToggle: $("#diagnostics-toggle"),
-  diagnosticsToggleState: $("#diagnostics-toggle-state"), diagnosticsPanel: $("#diagnostics-panel"),
-  logFollow: $("#log-follow"), cancelBuild: $("#cancel-build"), copyDiagnosticLog: $("#copy-diagnostic-log"), closeWindow: $("#close-window"),
+  diagnosticsCard: $("#diagnostics-card"), diagnosticsPanel: $("#diagnostics-panel"),
+  cancelBuild: $("#cancel-build"), copyDiagnosticLog: $("#copy-diagnostic-log"), closeWindow: $("#close-window"),
   releaseDialog: $("#release-dialog"), releaseSummary: $("#release-summary"),
   releaseCancel: $("#release-cancel"), releaseConfirm: $("#release-confirm"),
 };
@@ -40,7 +39,6 @@ let lastApplianceLog = "";
 let lastNvidiaApplianceLog = "";
 let pendingLogChunks = [];
 let diagnosticLog = "";
-let followingLogs = true;
 let refreshingLogs = false;
 let nvidiaBuildSubphase = "Preparing the isolated build environment";
 let nvidiaMilestoneProgress = 30;
@@ -52,6 +50,7 @@ let validationStartedAt = null;
 let visibleLogCharacters = 0;
 let cancellationTask = null;
 let releaseConfirmationCancel = null;
+let completionAction = "Close";
 
 const MAX_VISIBLE_LOG_CHARACTERS = 1_000_000;
 const RETAIN_VISIBLE_LOG_CHARACTERS = 750_000;
@@ -95,13 +94,6 @@ function setStatus(state, title, message, progress, activity = "Working", indete
   elements.progressTrack.classList.toggle("indeterminate", indeterminate);
   elements.progressBar.style.width = `${currentProgress}%`;
   setStepProgress(state, `${activity}:${title}`, stepProgress);
-}
-
-function setDiagnosticsExpanded(expanded) {
-  elements.diagnosticsToggle.setAttribute("aria-expanded", String(expanded));
-  elements.diagnosticsToggleState.textContent = expanded ? "Hide" : "Show";
-  elements.diagnosticsPanel.hidden = !expanded;
-  elements.diagnosticsCard.classList.toggle("diagnostics-open", expanded);
 }
 
 function formatElapsed(milliseconds) {
@@ -261,7 +253,7 @@ function showNvidiaResolutionProgress(progress) {
 }
 
 function flushPendingLogs() {
-  if (!pendingLogChunks.length || !followingLogs) return;
+  if (!pendingLogChunks.length) return;
   const content = pendingLogChunks.join("");
   pendingLogChunks = [];
   const fragment = document.createDocumentFragment();
@@ -286,8 +278,6 @@ function flushPendingLogs() {
     }
   }
   elements.buildLog.scrollTop = elements.buildLog.scrollHeight;
-  elements.logFollow.textContent = "Following live output";
-  elements.logFollow.classList.remove("paused");
 }
 
 function queueLogChunk(content) {
@@ -298,11 +288,6 @@ function queueLogChunk(content) {
   }
   elements.copyDiagnosticLog.disabled = false;
   pendingLogChunks.push(content);
-  if (!followingLogs) {
-    elements.logFollow.textContent = "New output · Jump to latest";
-    elements.logFollow.classList.add("paused");
-    return;
-  }
   flushPendingLogs();
 }
 
@@ -415,24 +400,6 @@ function renderLogs(applianceLog, source = "native") {
   queueLogChunk(delta);
 }
 
-function pauseLogFollowing() {
-  if (!followingLogs) return;
-  followingLogs = false;
-  elements.logFollow.textContent = "Scroll paused";
-  elements.logFollow.classList.add("paused");
-}
-
-function resumeLogFollowing() {
-  followingLogs = true;
-  flushPendingLogs();
-  // There may be no queued output when the user clicks "Scroll paused".
-  // Jump independently of flushing so the control always returns to the live
-  // edge and restores its truthful state.
-  elements.buildLog.scrollTop = elements.buildLog.scrollHeight;
-  elements.logFollow.textContent = "Following live output";
-  elements.logFollow.classList.remove("paused");
-}
-
 async function refreshLogs() {
   if (refreshingLogs) return;
   refreshingLogs = true;
@@ -452,6 +419,7 @@ async function finish(state, message, output = null) {
   elements.cancelBuild.disabled = true;
   elements.cancelBuild.classList.add("hidden");
   elements.closeWindow.classList.remove("hidden");
+  elements.closeWindow.textContent = state === "complete" ? completionAction : "Close";
   await progressWindow.emitTo("main", "build-finished", {
     state, message, output, inputPath: activeRequestPath, requestId: activeRequestId,
   });
@@ -516,6 +484,7 @@ async function runBuild(request) {
     throw new Error("Build request omitted its operation identity.");
   }
   running = true;
+  completionAction = "Continue to USB Imaging";
   activeRequestPath = request.path;
   activeRequestId = request.requestId;
   cancelling = false;
@@ -531,11 +500,7 @@ async function runBuild(request) {
   currentProgress = 0;
   lastInstallerProgressKey = "";
   validationStartedAt = null;
-  followingLogs = true;
-  setDiagnosticsExpanded(false);
   elements.buildLog.replaceChildren();
-  elements.logFollow.textContent = "Following live output";
-  elements.logFollow.classList.remove("paused");
   elements.closeWindow.classList.add("hidden");
   elements.cancelBuild.classList.remove("hidden");
   elements.copyDiagnosticLog.disabled = true;
@@ -824,21 +789,12 @@ async function runBuild(request) {
     addStageLog(`Export validation: marker=${output.markerPath}; SHA256 ${output.sha256}.`);
     addStageLog(`Source safety: original SHA256 ${output.sourceSha256}; unchanged=true.`);
     const usbRequested = request.exportMode === "usb" || request.exportMode === "both";
-    const completionMessage = usbRequested
-      ? "Validated staging image ready. Opening the USB identity and destructive-write review now."
-      : "Validated raw image ready. Return to the main window to reveal it in Finder.";
-    const completionTitle = usbRequested
-      ? "NVIDIA image ready for USB review"
-      : "NVIDIA mutation complete";
+    const completionMessage = "Validated image ready. Continue to choose a removable drive in USB Imaging.";
+    const completionTitle = "NVIDIA image ready for USB Imaging";
     setStatus("complete", completionTitle, completionMessage, 100);
     await finish("complete", usbRequested
       ? `NVIDIA-mutated image is ready for USB export: ${output.path}`
       : `NVIDIA-mutated image created: ${output.path}`, output);
-    if (usbRequested) {
-      await hideProgressWindow().catch((error) => {
-        addStageLog(`The image is ready, but the USB review could not open automatically: ${error}`);
-      });
-    }
   } catch (error) {
     if (cancelling) return;
     addStageLog(`ERROR: ${error}`);
@@ -861,26 +817,9 @@ async function runBuild(request) {
   }
 }
 
-elements.diagnosticsToggle.addEventListener("click", () => {
-  setDiagnosticsExpanded(elements.diagnosticsToggle.getAttribute("aria-expanded") !== "true");
-});
 elements.cancelBuild.addEventListener("click", () => { void cancelBuild(); });
 elements.copyDiagnosticLog.addEventListener("click", copyDiagnosticLog);
 elements.closeWindow.addEventListener("click", () => { void hideProgressWindow(); });
-elements.logFollow.addEventListener("click", resumeLogFollowing);
-elements.buildLog.addEventListener("wheel", (event) => {
-  if (event.deltaY < 0) pauseLogFollowing();
-}, { passive: true });
-elements.buildLog.addEventListener("scroll", () => {
-  const distanceFromBottom = elements.buildLog.scrollHeight
-    - elements.buildLog.clientHeight
-    - elements.buildLog.scrollTop;
-  if (distanceFromBottom > 24) {
-    pauseLogFollowing();
-  } else if (!followingLogs) {
-    resumeLogFollowing();
-  }
-}, { passive: true });
 installKeyboardBindings([
   {
     key: "a",

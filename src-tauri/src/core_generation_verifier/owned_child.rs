@@ -13,7 +13,7 @@ use std::{
         process::CommandExt as _,
     },
     path::{Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
+    process::{Child, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc,
@@ -441,7 +441,7 @@ where
     }
     hook(OwnedChildHookPoint::BeforeLaunchValidation, snapshot);
     snapshot.require_bound()?;
-    let mut command = Command::new(snapshot.executable_path());
+    let mut command = crate::child_command(snapshot.executable_path());
     command
         .args(arguments)
         .current_dir("/")
@@ -1023,7 +1023,7 @@ mod tests {
             let source = root.join("helper.rs");
             let executable = root.join("helper");
             fs::write(&source, HELPER_SOURCE).unwrap();
-            let output = Command::new("rustc")
+            let output = crate::child_command("rustc")
                 .args(["--edition", "2021"])
                 .arg(&source)
                 .arg("-o")
@@ -1265,7 +1265,7 @@ mod tests {
 
     fn run_worker_with_watchdog(worker: &str) {
         let test_name = format!("core_generation_verifier::owned_child::tests::{worker}");
-        let mut command = Command::new(std::env::current_exe().unwrap());
+        let mut command = crate::child_command(std::env::current_exe().unwrap());
         command
             .arg("--exact")
             .arg(&test_name)
