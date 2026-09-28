@@ -381,10 +381,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def authorized(self):
-        return (
-            self.headers.get("X-OPEMOS-Token") == self.controller.token
-            and self.headers.get("Origin") == self.controller.origin
-        )
+        if self.headers.get("X-OPEMOS-Token") != self.controller.token:
+            return False
+        origin = self.headers.get("Origin")
+        if origin == self.controller.origin:
+            return True
+        # Browsers do not normally send Origin for same-origin GET requests.
+        # Those endpoints are read-only and still require the unguessable token
+        # injected into the loopback-served page. Mutations remain origin-bound.
+        return self.command == "GET" and origin is None
 
     def do_GET(self):
         path = urlsplit(self.path).path
