@@ -33,6 +33,32 @@ production trust. Later VM operations remain serialized through the shared
 `heavy.sh` wrapper and must retain loopback-only SSH, no host-disk passthrough,
 and local closed compatibility inputs.
 
+## Required removable-USB writer gate
+
+Any Windows change that affects physical USB discovery, authorization, locking,
+raw writing, verification, or recovery must pass the removable-USB VM gate
+before it can be called complete. A file-backed copy or a fixed virtual disk is
+not sufficient evidence for this workflow.
+
+The gate boots a disposable Windows overlay under headless QEMU with WHPX and
+attaches a dedicated raw backing file through QEMU's `usb-storage` device with
+removable media enabled. The Windows guest must independently report the exact
+guarded device as `BusType=USB` and `MediaType=Removable Media`, with a unique
+`OPEMOS-VM-` serial. It must reproduce Windows refusing
+`Set-Disk -IsOffline` for that removable device while leaving it online. The
+test then runs the exact packaged `windows-usb-writer-helper`, requires its
+success receipt, hashes the written bytes again through the raw physical-drive
+handle, proves the source image stayed unchanged, and verifies the target was
+returned online.
+
+The accepted evidence is checked by
+`scripts/windows-usb-removable-vm-evidence.mjs`. It also requires proof that the
+VM used a snapshot source and that QEMU, the overlay, USB backing file, launch
+task, and other exact harness-owned resources were cleaned. The source Windows
+disk must retain its original hash. Evidence from a fixed disk, an ordinary
+file copy, an interactive desktop session, or a run that omits the actual
+offline-refusal condition is rejected.
+
 
 ## Bind official evaluation media
 

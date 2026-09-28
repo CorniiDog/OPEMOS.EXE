@@ -5215,7 +5215,12 @@ fn open_usb_raw_device(
         if !number_ok
             || !length_ok
             || opened_number.device_number != number
-            || opened_number.partition_number != u32::MAX
+            // Windows reports zero for a whole removable-media handle on
+            // some USB devices, including QEMU usb-storage. The direct
+            // PhysicalDrive path, exact device number, full capacity, USB
+            // bus, removable flag, and stable serial remain independently
+            // bound below.
+            || !matches!(opened_number.partition_number, 0 | u32::MAX)
             || u64::try_from(opened_length.length).ok() != Some(target.bytes)
             || !descriptor_ok
             || descriptor[10] == 0

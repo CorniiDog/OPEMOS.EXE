@@ -22,7 +22,8 @@
     "build:debian12-test": "node scripts/linux-test.mjs build-debian12",
     "test:package-linux": "python3 tests/linux_packaging.py && python3 tests/debian_package_install.py && python3 tests/linux_gui_smoke.py && python3 scripts/check_linux_packaging.py",
     "test:package-linux-gui": "python3 scripts/linux_gui_smoke.py",
-    "test:virtual-usb-media": "node --test tests/virtual-usb-media.test.mjs"
+    "test:virtual-usb-media": "node --test tests/virtual-usb-media.test.mjs",
+    "test:windows-usb-removable-vm-evidence": "node --test tests/windows-usb-removable-vm-evidence.test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

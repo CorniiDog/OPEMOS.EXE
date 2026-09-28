@@ -161,6 +161,16 @@ assert.match(linuxTesting, /No translation service,\nnetwork request, Core-field
 assert.match(linuxTesting, /\.\/test_welcome_linux\.sh/);
 assert.match(linuxTesting, /OPEMOS_GRAPHICAL_TEST_PRINT_ONLY=1/);
 
+const windowsVmTesting = await read("docs/windows-vm-testing.md");
+assert.match(windowsVmTesting, /Required removable-USB writer gate/);
+assert.match(windowsVmTesting, /BusType=USB/);
+assert.match(windowsVmTesting, /MediaType=Removable Media/);
+assert.match(windowsVmTesting, /Set-Disk -IsOffline/);
+assert.match(windowsVmTesting, /windows-usb-removable-vm-evidence\.mjs/);
+await access(path.join(root, "scripts", "windows-usb-removable-vm-guest.ps1"));
+await access(path.join(root, "scripts", "windows-usb-removable-vm-evidence.mjs"));
+await access(path.join(root, "tests", "windows-usb-removable-vm-evidence.test.mjs"));
+
 const checks = await read(".github/workflows/checks.yml");
 const coreContractCommit = "9d458d784a0d7d189189829885b416a9eb38d0eb";
 assert.match(checks, /^name: Checks$/m);
