@@ -57,7 +57,10 @@ VM used a snapshot source and that QEMU, the overlay, USB backing file, launch
 task, and other exact harness-owned resources were cleaned. The source Windows
 disk must retain its original hash. Evidence from a fixed disk, an ordinary
 file copy, an interactive desktop session, or a run that omits the actual
-offline-refusal condition is rejected.
+offline-refusal condition is rejected. The exact removable target must also be
+successfully removed through Windows Plug-and-Play safe ejection and disappear
+from the guest disk inventory; a verified write that merely returns the disk
+online does not pass this gate.
 
 
 ## Bind official evaluation media
