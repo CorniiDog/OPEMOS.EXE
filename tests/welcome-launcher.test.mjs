@@ -30,10 +30,12 @@ runtime = pathlib.Path(sys.argv[sys.argv.index("--runtime") + 1])
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 while True: time.sleep(0.1)
 `, { mode: 0o755 });
-  writeFileSync(join(bin, "chromium"), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
-  writeFileSync(join(bin, "chromium-browser"), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
-  writeFileSync(join(bin, "google-chrome-stable"), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
-  writeFileSync(join(bin, "firefox"), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
+  for (const browser of [
+    "chromium", "chromium-browser", "google-chrome", "google-chrome-stable",
+    "firefox", "firefox-esr",
+  ]) {
+    writeFileSync(join(bin, browser), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
+  }
   writeFileSync(join(bin, "zenity"), `#!/bin/sh
 printf '%s\\n' "$*" >>${JSON.stringify(visible)}
 case " $* " in *" --list "*) exit 1;; esac
