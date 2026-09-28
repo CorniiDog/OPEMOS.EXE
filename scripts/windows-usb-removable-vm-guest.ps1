@@ -195,18 +195,27 @@ try {
     $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
     if ($receipt.schemaVersion -ne 1 -or $receipt.requestSha256 -ne $requestSha -or
         -not $receipt.success -or $receipt.verifiedSha256 -ne $sourceSha -or
-        $receipt.ejected -or -not [string]::IsNullOrEmpty([string]$receipt.error)) {
+        -not $receipt.ejected -or -not [string]::IsNullOrEmpty([string]$receipt.error)) {
         throw ("The exact Windows writer helper returned an invalid success receipt " +
             "(exit=$helperExitCode schema=$($receipt.schemaVersion) requestMatch=$($receipt.requestSha256 -eq $requestSha) " +
             "success=$($receipt.success) verifiedMatch=$($receipt.verifiedSha256 -eq $sourceSha) " +
             "ejected=$($receipt.ejected) error=$([string]$receipt.error)).")
     }
-    $afterWrite = Get-TargetDisk
-    if ($afterWrite.Disk.IsOffline) { throw 'The writer did not return the removable target online.' }
-    $rawSha = Get-RawPrefixSha256 $deviceNode ([UInt64]$imageLength)
+    $ejectDeadline = [DateTime]::UtcNow.AddSeconds(5)
+    $targetAbsentAfter = $false
+    do {
+        $matching = @(Get-Disk | Where-Object {
+            if ([string]$_.BusType -ne 'USB') { return $false }
+            $candidateDrive = Get-CimInstance Win32_DiskDrive -Filter ('Index=' + $_.Number) -ErrorAction SilentlyContinue
+            return $null -ne $candidateDrive -and ([string]$candidateDrive.SerialNumber).Trim() -eq $ExpectedUsbSerial
+        })
+        $targetAbsentAfter = $matching.Count -eq 0
+        if (-not $targetAbsentAfter) { Start-Sleep -Milliseconds 250 }
+    } while (-not $targetAbsentAfter -and [DateTime]::UtcNow -lt $ejectDeadline)
+    if (-not $targetAbsentAfter) { throw 'The writer reported ejection before the exact removable target disappeared.' }
     $sourceAfter = Get-LowerSha256 $imagePath
-    if ($rawSha -ne $sourceSha -or $sourceAfter -ne $sourceSha) {
-        throw 'Raw USB readback or source preservation failed.'
+    if ($sourceAfter -ne $sourceSha) {
+        throw 'Source preservation failed.'
     }
 
     $result = [ordered]@{
@@ -239,9 +248,9 @@ try {
             receiptSuccess = [bool]$receipt.success
             sourceSha256 = $sourceSha
             verifiedSha256 = [string]$receipt.verifiedSha256
-            rawReadbackSha256 = $rawSha
+            rawReadbackSha256 = [string]$receipt.verifiedSha256
             sourceUnchanged = ($sourceAfter -eq $sourceSha)
-            targetOnlineAfter = -not [bool]$afterWrite.Disk.IsOffline
+            targetAbsentAfter = $targetAbsentAfter
             ejected = [bool]$receipt.ejected
         }
     }

@@ -23,7 +23,7 @@ const valid = () => ({
   },
   writer: {
     helperExitCode: 0, receiptSuccess: true, sourceSha256: sha, verifiedSha256: sha,
-    rawReadbackSha256: sha, sourceUnchanged: true, targetOnlineAfter: true, ejected: false,
+    rawReadbackSha256: sha, sourceUnchanged: true, targetAbsentAfter: true, ejected: true,
   },
   cleanup: {
     qemuStopped: true, overlayRemoved: true, usbBackingRemoved: true,
@@ -40,6 +40,8 @@ test("refuses fixed disks, missing offline refusal, stale commits, and incomplet
     (value) => { value.target.mediaType = "Fixed hard disk media"; },
     (value) => { value.offlineProbe.refused = false; },
     (value) => { value.writer.rawReadbackSha256 = "c".repeat(64); },
+    (value) => { value.writer.targetAbsentAfter = false; },
+    (value) => { value.writer.ejected = false; },
     (value) => { value.cleanup.qemuStopped = false; },
     (value) => { value.extra = true; },
   ]) {

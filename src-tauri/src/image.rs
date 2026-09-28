@@ -4733,13 +4733,116 @@ fn unmount_usb_target(identifier: &str) -> Result<(), String> {
 #[cfg(target_os = "windows")]
 fn eject_usb_target(identifier: &str) -> bool {
     use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt as _;
     use std::os::windows::fs::OpenOptionsExt as _;
     use std::os::windows::io::AsRawHandle as _;
 
     let Ok(number) = windows_disk_number(identifier) else {
         return false;
     };
-    if revalidate_windows_usb_target_state(identifier, 0, true).is_err() {
+    let offline = revalidate_windows_usb_target_state(identifier, 0, true).is_ok();
+    if !offline && revalidate_windows_usb_target_state(identifier, 0, false).is_err() {
+        return false;
+    }
+
+    // Set-Disk refuses IsOffline for many real removable USB devices. Request
+    // removal from the exact disk's Plug-and-Play devnode in that case (and as
+    // the preferred path for offline disks too), which is the same bounded
+    // device-removal mechanism used by Windows' safe-removal workflow.
+    let pnp_device_id = windows_powershell(
+        &format!("$w=Get-CimInstance Win32_DiskDrive -Filter 'Index={number}' -ErrorAction Stop; [Console]::Out.Write(([string]$w.PNPDeviceID).Trim())"),
+        "resolve the selected Windows disk's Plug-and-Play identity for safe ejection",
+    )
+    .ok()
+    .and_then(|bytes| String::from_utf8(bytes).ok())
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty());
+    if let Some(pnp_device_id) = pnp_device_id {
+        #[link(name = "cfgmgr32")]
+        extern "system" {
+            fn CM_Locate_DevNodeW(device: *mut u32, device_id: *mut u16, flags: u32) -> u32;
+            fn CM_Get_Parent(parent: *mut u32, device: u32, flags: u32) -> u32;
+            fn CM_Get_DevNode_Registry_PropertyW(
+                device: u32,
+                property: u32,
+                value_type: *mut u32,
+                buffer: *mut c_void,
+                length: *mut u32,
+                flags: u32,
+            ) -> u32;
+            fn CM_Request_Device_EjectW(
+                device: u32,
+                veto_type: *mut u32,
+                veto_name: *mut u16,
+                veto_name_length: u32,
+                flags: u32,
+            ) -> u32;
+        }
+        const CR_SUCCESS: u32 = 0;
+        const CM_DRP_CAPABILITIES: u32 = 0x0000_000f;
+        const CM_DEVCAP_EJECTSUPPORTED: u32 = 0x0000_0002;
+        const CM_DEVCAP_REMOVABLE: u32 = 0x0000_0004;
+
+        let mut wide = std::ffi::OsStr::new(&pnp_device_id)
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let mut device = 0_u32;
+        if unsafe { CM_Locate_DevNodeW(&mut device, wide.as_mut_ptr(), 0) } == CR_SUCCESS {
+            let mut candidates = Vec::new();
+            for _ in 0..16 {
+                let mut capabilities = 0_u32;
+                let mut value_type = 0_u32;
+                let mut length = std::mem::size_of::<u32>() as u32;
+                let capabilities_ok = unsafe {
+                    CM_Get_DevNode_Registry_PropertyW(
+                        device,
+                        CM_DRP_CAPABILITIES,
+                        &mut value_type,
+                        (&mut capabilities as *mut u32).cast(),
+                        &mut length,
+                        0,
+                    )
+                } == CR_SUCCESS;
+                if capabilities_ok
+                    && capabilities & (CM_DEVCAP_EJECTSUPPORTED | CM_DEVCAP_REMOVABLE) != 0
+                {
+                    candidates.push(device);
+                }
+                let mut parent = 0_u32;
+                if unsafe { CM_Get_Parent(&mut parent, device, 0) } != CR_SUCCESS {
+                    break;
+                }
+                device = parent;
+            }
+            for candidate in candidates {
+                let mut veto_type = 0_u32;
+                let mut veto_name = [0_u16; 260];
+                if unsafe {
+                    CM_Request_Device_EjectW(
+                        candidate,
+                        &mut veto_type,
+                        veto_name.as_mut_ptr(),
+                        veto_name.len() as u32,
+                        0,
+                    )
+                } == CR_SUCCESS
+                {
+                    // Device removal is asynchronous. Do not report safe
+                    // ejection until the selected disk actually disappears
+                    // from the storage inventory.
+                    for _ in 0..20 {
+                        if windows_disk_inventory(number).is_err() {
+                            return true;
+                        }
+                        thread::sleep(Duration::from_millis(250));
+                    }
+                }
+            }
+        }
+    }
+
+    if !offline {
         return false;
     }
     let Ok(file) = OpenOptions::new()
@@ -4828,11 +4931,11 @@ fn recover_windows_usb_target(target: &UsbTargetCandidate) -> Result<bool, Strin
     if !windows_usb_recovery_identity_is_unchanged(target, &current) {
         return Err("The selected Windows disk identity drifted during the operation; it was not remounted or ejected and requires manual handling.".into());
     }
-    if !offline {
-        return Ok(false);
-    }
     if eject_usb_target(&target.device_identifier) {
         return Ok(true);
+    }
+    if !offline {
+        return Ok(false);
     }
     if remount_usb_target(&target.device_identifier) {
         return Ok(false);

@@ -69,15 +69,15 @@ export function validateWindowsUsbRemovableVmEvidence(value, expectedCommit) {
 
   exactObject(value.writer, [
     "helperExitCode", "receiptSuccess", "sourceSha256", "verifiedSha256",
-    "rawReadbackSha256", "sourceUnchanged", "targetOnlineAfter", "ejected",
+    "rawReadbackSha256", "sourceUnchanged", "targetAbsentAfter", "ejected",
   ], "writer");
   if (value.writer.helperExitCode !== 0 || value.writer.receiptSuccess !== true
       || !SHA256.test(value.writer.sourceSha256)
       || value.writer.verifiedSha256 !== value.writer.sourceSha256
       || value.writer.rawReadbackSha256 !== value.writer.sourceSha256
-      || value.writer.sourceUnchanged !== true || value.writer.targetOnlineAfter !== true
-      || value.writer.ejected !== false) {
-    fail("The exact Windows writer did not complete write, readback, and online recovery.");
+      || value.writer.sourceUnchanged !== true || value.writer.targetAbsentAfter !== true
+      || value.writer.ejected !== true) {
+    fail("The exact Windows writer did not complete write, readback, and verified safe ejection.");
   }
 
   exactObject(value.cleanup, [
