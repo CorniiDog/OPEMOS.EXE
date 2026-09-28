@@ -60,7 +60,8 @@ if ! flock -n 8; then
 fi
 
 launch_fullscreen_welcome() {
-  local browser runtime server_pid browser_pid port url browser_status started_at elapsed
+  local browser candidate runtime server_pid browser_pid port url browser_status started_at elapsed
+  local -a browsers=()
   [[ -x "$WELCOME_SERVER" && ! -L "$WELCOME_SERVER" && -d "$WELCOME_UI" && ! -L "$WELCOME_UI" ]] || {
     printf 'The protected graphical installer bundle is missing or unsafe.\n'
     return 1
@@ -69,11 +70,10 @@ launch_fullscreen_welcome() {
     printf 'Python 3 is unavailable for the graphical installer.\n'
     return 1
   }
-  for browser in chromium chromium-browser google-chrome-stable firefox; do
-    command -v "$browser" >/dev/null 2>&1 && break
-    browser=""
+  for candidate in chromium chromium-browser google-chrome-stable firefox; do
+    command -v "$candidate" >/dev/null 2>&1 && browsers+=("$candidate")
   done
-  [[ -n "$browser" ]] || {
+  (( ${#browsers[@]} > 0 )) || {
     printf 'No supported browser is installed for the graphical installer.\n'
     return 1
   }
@@ -99,38 +99,42 @@ launch_fullscreen_welcome() {
   port=$(tr -d '[:space:]' <"$runtime/port")
   [[ "$port" =~ ^[0-9]+$ ]] || { cleanup_graphical; trap - EXIT INT TERM; return 1; }
   url="http://127.0.0.1:$port/"
-  while kill -0 "$server_pid" 2>/dev/null; do
-    rm -f "$runtime/ui-ready"
-    started_at=$SECONDS
-    if [[ "$browser" == firefox ]]; then
-      [[ -d "$runtime/firefox-profile" ]] || mkdir -m 0700 "$runtime/firefox-profile"
-      "$browser" --no-remote --profile "$runtime/firefox-profile" --kiosk "$url" &
-    else
-      [[ -d "$runtime/chromium-profile" ]] || mkdir -m 0700 "$runtime/chromium-profile"
-      "$browser" --user-data-dir="$runtime/chromium-profile" --app="$url" \
-        --start-fullscreen --start-maximized --no-first-run --no-default-browser-check \
-        --disable-session-crashed-bubble --disable-translate &
-    fi
-    browser_pid=$!
-    printf '%s\n' "$browser_pid" >"$runtime/browser.pid"
-    chmod 0600 "$runtime/browser.pid"
-    browser_status=0
-    wait "$browser_pid" || browser_status=$?
-    elapsed=$((SECONDS - started_at))
-    browser_pid=""
-    if (( browser_status != 0 )) || [[ ! -f "$runtime/ui-ready" || "$elapsed" -lt 2 ]]; then
-      printf 'The graphical installer browser (%s) exited with status %s after %s second(s) before a stable window opened.\n' \
-        "$browser" "$browser_status" "$elapsed"
-      cleanup_graphical
-      trap - EXIT INT TERM
-      return 1
-    fi
-    [[ -e "$runtime/operation-running" ]] || break
-    sleep 0.2
+  for browser in "${browsers[@]}"; do
+    while kill -0 "$server_pid" 2>/dev/null; do
+      rm -f "$runtime/ui-ready"
+      started_at=$SECONDS
+      if [[ "$browser" == firefox ]]; then
+        [[ -d "$runtime/firefox-profile" ]] || mkdir -m 0700 "$runtime/firefox-profile"
+        "$browser" --no-remote --profile "$runtime/firefox-profile" --kiosk "$url" &
+      else
+        [[ -d "$runtime/$browser-profile" ]] || mkdir -m 0700 "$runtime/$browser-profile"
+        "$browser" --user-data-dir="$runtime/$browser-profile" --app="$url" \
+          --start-fullscreen --start-maximized --no-first-run --no-default-browser-check \
+          --disable-session-crashed-bubble --disable-translate &
+      fi
+      browser_pid=$!
+      printf '%s\n' "$browser_pid" >"$runtime/browser.pid"
+      chmod 0600 "$runtime/browser.pid"
+      browser_status=0
+      wait "$browser_pid" || browser_status=$?
+      elapsed=$((SECONDS - started_at))
+      browser_pid=""
+      if (( browser_status != 0 )) || [[ ! -f "$runtime/ui-ready" || "$elapsed" -lt 2 ]]; then
+        printf 'The graphical installer browser (%s) exited with status %s after %s second(s) before a stable window opened; trying the next supported runtime.\n' \
+          "$browser" "$browser_status" "$elapsed"
+        break
+      fi
+      if [[ ! -e "$runtime/operation-running" ]]; then
+        cleanup_graphical
+        trap - EXIT INT TERM
+        return 0
+      fi
+      sleep 0.2
+    done
   done
   cleanup_graphical
   trap - EXIT INT TERM
-  return 0
+  return 1
 }
 
 # The root-owned full-screen bundle is the normal interface. Zenity below is a
@@ -176,6 +180,7 @@ choose_action() {
     --title="SteamOS with NVIDIA drivers" \
     --text="SteamOS with NVIDIA drivers\nMaintained by OPEMOS\n${summary:+$summary\n}\nChoose what you want to do on this computer." \
     --column="" --column="Action" --column="What it does" \
+    --hide-header \
     --hide-column=2 --print-column=2 \
     --width=760 --height=390 \
     TRUE install "Install SteamOS with NVIDIA drivers — erase one selected disk and install this image" \
@@ -212,7 +217,7 @@ show_diagnostics() {
       if "$HELPER" inventory-report >"$inventory" && [[ -s "$inventory" ]]; then
         awk -F '\t' '{ printf "  %s  %.1f GB  %s  [%s]\n", $1, $2 / 1000000000, $3, $4 }' "$inventory"
       else
-        printf '  None. The boot media, mounted/read-only media, and disks below 12 GiB are excluded.\n'
+        printf '  None. The boot media, read-only media, swap-active disks, and disks below 12 GiB are excluded.\n'
       fi
     else
       printf '\nMedia readiness validation failed.\n'
@@ -252,14 +257,15 @@ choose_disk() {
   done <"$inventory"
   (( ${#rows[@]} > 0 )) || {
     rm -f "$inventory"
-    failure "No eligible target disk was found.\n\nThe installer excludes the booted installation media, mounted disks, read-only disks, and disks smaller than 12 GiB. Reinstall also requires one exact SteamOS A/B layout."
+    failure "No eligible target disk was found.\n\nThe installer excludes the booted installation media, read-only disks, swap-active disks, and disks smaller than 12 GiB. Reinstall also requires one exact SteamOS A/B layout. Open Diagnostics to see the reason reported for every detected disk."
     return 1
   }
   selection=$(opemos_zenity --list --radiolist \
     --title="Select installation disk" \
-    --text="Choose the whole physical disk the installer may use. The installation media is excluded automatically." \
+    --text="Choose the whole physical disk the installer may use. The installation media is excluded automatically. Mounted filesystems on the confirmed target are released only after final confirmation." \
     --column="" --column="Device" --column="Capacity" --column="Model" --column="Serial" --column="Bus" --column="Identity" \
     --hide-column=7 --print-column=7 \
+    --hide-header \
     --width=920 --height=430 "${rows[@]}") || {
       rm -f "$inventory"
       return 1
@@ -311,6 +317,7 @@ run_install() {
       --title="SteamOS NVIDIA installation complete" \
       --text="SteamOS with NVIDIA drivers and its A/B recovery guardian were verified. Maintained by OPEMOS.\n\nShut Down is recommended. Remove the installation USB after power-off, then boot from $device. If you restart, remove the USB as the screen turns off or select the installed disk from the boot menu." \
       --column="" --column="Action" --column="What happens next" \
+      --hide-header \
       --hide-column=2 --print-column=2 --width=720 --height=340 \
       TRUE shutdown "Shut down safely, then remove the installation USB" \
       FALSE restart "Restart now; remove the USB during restart or use the boot menu" \

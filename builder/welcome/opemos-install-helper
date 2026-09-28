@@ -23,9 +23,12 @@ need() {
   command -v "$1" >/dev/null 2>&1 || die "required recovery tool is missing: $1"
 }
 
-for tool in awk blockdev btrfs findmnt flock install lsblk mktemp mount mountpoint readlink sed sha256sum steamos-chroot umount; do
-  need "$tool"
-done
+require_tools() {
+  local tool
+  for tool in awk blockdev btrfs cut findmnt flock install lsblk mktemp mount mountpoint readlink sed sha256sum sort steamos-chroot umount; do
+    need "$tool"
+  done
+}
 
 clean_field() {
   printf '%s' "$1" | tr '\t\r\n' '   ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//'
@@ -58,11 +61,34 @@ mounted_child() {
     while IFS= read -r mountpoint; do
       [[ -n "$mountpoint" ]] && return 0
     done < <(lsblk -nrpo MOUNTPOINTS "$child" 2>/dev/null | sed '/^[[:space:]]*$/d')
+  done < <(lsblk -nrpo PATH "$device" 2>/dev/null)
+  return 1
+}
+
+active_swap_child() {
+  local device=$1 child
+  while IFS= read -r child; do
+    [[ -n "$child" ]] || continue
     if awk -v wanted="$child" 'NR > 1 && $1 == wanted { found=1 } END { exit !found }' /proc/swaps 2>/dev/null; then
       return 0
     fi
   done < <(lsblk -nrpo PATH "$device" 2>/dev/null)
   return 1
+}
+
+unmount_target_children() {
+  local device=$1 child target index
+  local -a children=()
+  mapfile -t children < <(lsblk -nrpo PATH "$device" 2>/dev/null)
+  for ((index=${#children[@]} - 1; index >= 0; index--)); do
+    child=${children[$index]}
+    [[ -n "$child" ]] || continue
+    while IFS= read -r target; do
+      [[ -n "$target" ]] || continue
+      umount "$target" || return 1
+    done < <(findmnt -rn -S "$child" -o TARGET 2>/dev/null | awk '{ print length($0) "\t" $0 }' | sort -rn | cut -f2-)
+  done
+  ! mounted_child "$device"
 }
 
 canonical_whole_disk() {
@@ -109,7 +135,7 @@ disk_status() {
   bytes=$(disk_bytes "$device")
   [[ "$bytes" =~ ^[0-9]+$ ]] || { printf 'capacity-unavailable\n'; return 0; }
   (( bytes >= MINIMUM_INSTALL_BYTES )) || { printf 'too-small\n'; return 0; }
-  mounted_child "$device" && { printf 'mounted-or-swap-active\n'; return 0; }
+  active_swap_child "$device" && { printf 'swap-active\n'; return 0; }
   printf 'eligible\n'
 }
 
@@ -397,7 +423,7 @@ install_to_disk() {
   case "$mode" in all|system) ;; *) die "unsupported installation mode" ;; esac
   [[ "$expected_identity" =~ ^[0-9a-f]{64}$ ]] || die "selected disk identity is malformed"
   device=$(canonical_whole_disk "$requested") || die "selected target is no longer a whole physical disk"
-  eligible_disk "$device" || die "selected disk is mounted, read-only, too small, missing, or is the recovery medium"
+  eligible_disk "$device" || die "selected disk is read-only, too small, missing, swap-active, or is the recovery medium"
   [[ "$mode" != system ]] || has_exact_steamos_layout "$device" ||
     die "reinstall requires one exact recognized SteamOS A/B partition layout"
   current_identity=$(disk_identity "$device")
@@ -421,6 +447,11 @@ install_to_disk() {
   eligible_disk "$device" || die "selected disk changed immediately before installation"
   [[ "$(disk_identity "$device")" == "$expected_identity" ]] ||
     die "selected disk identity changed immediately before installation"
+  ui_stage "Unmounting filesystems on the confirmed target disk."
+  unmount_target_children "$device" ||
+    die "the confirmed target still has a mounted filesystem; close it and retry"
+  [[ "$(disk_identity "$device")" == "$expected_identity" ]] ||
+    die "selected disk identity changed while its filesystems were released"
 
   local support_revision nvidia_version slot
   [[ -f "$SUPPORT_REVISION_FILE" && ! -L "$SUPPORT_REVISION_FILE" ]] ||
@@ -459,31 +490,38 @@ install_to_disk() {
   ui_stage "Installation and A/B recovery verification completed."
 }
 
-case "${1:-}" in
-  inventory)
-    [[ $# -eq 1 ]] || die "inventory takes no arguments"
-    inventory
-    ;;
-  inventory-report)
-    [[ $# -eq 1 ]] || die "inventory-report takes no arguments"
-    inventory_report
-    ;;
-  media-info)
-    [[ $# -eq 1 ]] || die "media-info takes no arguments"
-    media_info
-    ;;
-  identity)
-    [[ $# -eq 2 ]] || die "identity requires one device"
-    device=$(canonical_whole_disk "$2") || die "target is not a whole physical disk"
-    eligible_disk "$device" || die "target is not currently eligible"
-    disk_identity "$device"
-    ;;
-  install)
-    [[ $# -eq 6 && $5 == --confirm ]] ||
-      die "install requires MODE DEVICE IDENTITY --confirm PHRASE"
-    install_to_disk "$2" "$3" "$4" "$6"
-    ;;
-  *)
-    die "usage: $0 media-info | inventory | inventory-report | identity DEVICE | install MODE DEVICE IDENTITY --confirm PHRASE"
-    ;;
-esac
+main() {
+  require_tools
+  case "${1:-}" in
+    inventory)
+      [[ $# -eq 1 ]] || die "inventory takes no arguments"
+      inventory
+      ;;
+    inventory-report)
+      [[ $# -eq 1 ]] || die "inventory-report takes no arguments"
+      inventory_report
+      ;;
+    media-info)
+      [[ $# -eq 1 ]] || die "media-info takes no arguments"
+      media_info
+      ;;
+    identity)
+      [[ $# -eq 2 ]] || die "identity requires one device"
+      device=$(canonical_whole_disk "$2") || die "target is not a whole physical disk"
+      eligible_disk "$device" || die "target is not currently eligible"
+      disk_identity "$device"
+      ;;
+    install)
+      [[ $# -eq 6 && $5 == --confirm ]] ||
+        die "install requires MODE DEVICE IDENTITY --confirm PHRASE"
+      install_to_disk "$2" "$3" "$4" "$6"
+      ;;
+    *)
+      die "usage: $0 media-info | inventory | inventory-report | identity DEVICE | install MODE DEVICE IDENTITY --confirm PHRASE"
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
