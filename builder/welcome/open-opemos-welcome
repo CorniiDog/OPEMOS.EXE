@@ -9,6 +9,7 @@ readonly UI_CONFIG=/usr/share/opemos-install-media/ui
 readonly WELCOME_UI=/usr/share/opemos-install-media/ui/welcome
 readonly WELCOME_QML="$WELCOME_UI/opemos-welcome.qml"
 readonly WELCOME_SERVER=/usr/lib/opemos-install-media/welcome_server.py
+readonly QT6_QMLSCENE=/usr/lib/qt6/bin/qmlscene
 readonly STATE_DIRECTORY=/home/deck/.local/state/open-opemos
 readonly LAST_LOG_FILE="$STATE_DIRECTORY/last-install-log"
 readonly STARTUP_LOG_FILE="$STATE_DIRECTORY/welcome-startup.log"
@@ -71,8 +72,8 @@ launch_fullscreen_welcome() {
     printf 'Python 3 is unavailable for the graphical installer.\n'
     return 1
   }
-  if [[ -f "$WELCOME_QML" && ! -L "$WELCOME_QML" ]] && command -v qmlscene >/dev/null 2>&1; then
-    browsers+=(qmlscene)
+  if [[ -f "$WELCOME_QML" && ! -L "$WELCOME_QML" && -x "$QT6_QMLSCENE" && ! -L "$QT6_QMLSCENE" ]]; then
+    browsers+=("$QT6_QMLSCENE")
   fi
   for candidate in chromium chromium-browser google-chrome google-chrome-stable firefox firefox-esr; do
     command -v "$candidate" >/dev/null 2>&1 && browsers+=("$candidate")
@@ -107,7 +108,7 @@ launch_fullscreen_welcome() {
     while kill -0 "$server_pid" 2>/dev/null; do
       rm -f "$runtime/ui-ready"
       started_at=$SECONDS
-      if [[ "$browser" == qmlscene ]]; then
+      if [[ "$browser" == "$QT6_QMLSCENE" ]]; then
         sed "s|__OPEMOS_INSTALLER_URL__|$url|g" "$WELCOME_QML" >"$runtime/opemos-welcome.qml"
         chmod 0600 "$runtime/opemos-welcome.qml"
         "$browser" "$runtime/opemos-welcome.qml" &

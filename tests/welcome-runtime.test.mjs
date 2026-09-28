@@ -47,9 +47,19 @@ test("mock welcome controller serves and completes the real UI contract safely",
 
   const unauthorized = await fetch(`${origin}/api/bootstrap`);
   assert.equal(unauthorized.status, 403);
-  const bootstrap = await (await fetch(`${origin}/api/bootstrap`, { headers })).json();
+  const readHeaders = {
+    "Content-Type": "application/json",
+    "X-OPEMOS-Token": JSON.parse(token),
+  };
+  const bootstrap = await (await fetch(`${origin}/api/bootstrap`, { headers: readHeaders })).json();
   assert.equal(bootstrap.mode, "simulation");
   assert.equal(bootstrap.disks.length, 1);
+
+  const originlessMutation = await fetch(`${origin}/api/install`, {
+    method: "POST", headers: readHeaders,
+    body: JSON.stringify({ mode: "all", device: "/dev/vda", identity: "1".repeat(64), confirmation: "ERASE vda" }),
+  });
+  assert.equal(originlessMutation.status, 403);
 
   const rejected = await fetch(`${origin}/api/install`, {
     method: "POST", headers,

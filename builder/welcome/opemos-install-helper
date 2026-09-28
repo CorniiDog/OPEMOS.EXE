@@ -25,7 +25,7 @@ need() {
 
 require_inventory_tools() {
   local tool
-  for tool in awk blockdev findmnt lsblk readlink sed sha256sum tr; do
+  for tool in awk findmnt lsblk readlink sed sha256sum tr; do
     need "$tool"
   done
 }
@@ -113,7 +113,8 @@ canonical_whole_disk() {
 }
 
 disk_bytes() {
-  blockdev --getsize64 "$1" 2>/dev/null
+  lsblk -bdnro SIZE "$1" 2>/dev/null |
+    awk 'NF == 1 && $1 ~ /^[0-9]+$/ { count++; bytes=$1 } END { if (count == 1) print bytes; else exit 1 }'
 }
 
 disk_identity() {
