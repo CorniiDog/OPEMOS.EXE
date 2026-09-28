@@ -4779,7 +4779,7 @@ fn eject_usb_target(identifier: &str) -> bool {
             ) -> u32;
         }
         const CR_SUCCESS: u32 = 0;
-        const CM_DRP_REMOVAL_POLICY: u32 = 0x0000_001f;
+        const CM_DRP_REMOVAL_POLICY: u32 = 0x0000_0020;
         const CM_REMOVAL_POLICY_EXPECT_ORDERLY_REMOVAL: u32 = 2;
         const CM_REMOVAL_POLICY_EXPECT_SURPRISE_REMOVAL: u32 = 3;
 
