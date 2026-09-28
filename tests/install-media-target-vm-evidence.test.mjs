@@ -22,7 +22,7 @@ const valid = () => ({
   },
   cleanup: {
     diskDetached: true, vhdxRemoved: true, guestStageRemoved: true,
-    vmRemainedRunning: true, systemDiskUnchanged: true,
+    vmRemainedRunning: true, systemDiskAttachmentUnchanged: true,
   },
 });
 

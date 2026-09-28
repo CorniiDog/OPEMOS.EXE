@@ -59,7 +59,7 @@ export function validateInstallMediaTargetVmEvidence(value, expectedCommit) {
     fail("The confirmed target was not safely released with stable identity.");
   }
   exactObject(value.cleanup, [
-    "diskDetached", "vhdxRemoved", "guestStageRemoved", "vmRemainedRunning", "systemDiskUnchanged",
+    "diskDetached", "vhdxRemoved", "guestStageRemoved", "vmRemainedRunning", "systemDiskAttachmentUnchanged",
   ], "cleanup");
   if (Object.values(value.cleanup).some((entry) => entry !== true)) {
     fail("The disposable VM cleanup proof is incomplete.");
