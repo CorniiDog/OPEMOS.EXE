@@ -17,10 +17,12 @@ function fixture(context) {
   mkdirSync(ui);
   const helper = join(root, "helper");
   const server = join(root, "server.py");
+  const qml = join(ui, "opemos-welcome.qml");
   const launcher = join(root, "open-opemos-welcome");
   const lock = join(root, "welcome.lock");
   const visible = join(root, "visible.log");
   writeFileSync(helper, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  writeFileSync(qml, 'import QtQuick\nItem { property string url: "__OPEMOS_INSTALLER_URL__" }\n');
   writeFileSync(server, `#!/usr/bin/env python3
 import pathlib, signal, sys, time
 runtime = pathlib.Path(sys.argv[sys.argv.index("--runtime") + 1])
@@ -43,6 +45,7 @@ exit 0
     .replace("readonly HELPER=/usr/lib/opemos-install-media/opemos-install-helper", `readonly HELPER=${helper}`)
     .replace("readonly UI_CONFIG=/usr/share/opemos-install-media/ui", `readonly UI_CONFIG=${ui}`)
     .replace("readonly WELCOME_UI=/usr/share/opemos-install-media/ui/welcome", `readonly WELCOME_UI=${ui}`)
+    .replace('readonly WELCOME_QML="$WELCOME_UI/opemos-welcome.qml"', `readonly WELCOME_QML=${qml}`)
     .replace("readonly WELCOME_SERVER=/usr/lib/opemos-install-media/welcome_server.py", `readonly WELCOME_SERVER=${server}`)
     .replace("readonly STATE_DIRECTORY=/home/deck/.local/state/open-opemos", `readonly STATE_DIRECTORY=${state}`)
     .replace("exec 8>/tmp/open-opemos-welcome.lock", `exec 8>${lock}`);
@@ -50,6 +53,22 @@ exit 0
   chmodSync(launcher, 0o755);
   return { bin, launcher, lock, state, visible };
 }
+
+test("the recovery image Qt WebEngine shell is the primary fullscreen runtime", (context) => {
+  const { bin, launcher, visible } = fixture(context);
+  writeFileSync(join(bin, "qmlscene"), `#!/bin/sh
+qml=$1
+grep -q 'http://127.0.0.1:43210/' "$qml" || exit 8
+touch "$(dirname "$qml")/ui-ready"
+sleep 2.1
+exit 0
+`, { mode: 0o755 });
+  const result = spawnSync("bash", [launcher], {
+    encoding: "utf8", env: testEnvironment(bin), timeout: 5000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.throws(() => readFileSync(visible, "utf8"), { code: "ENOENT" });
+});
 
 function testEnvironment(bin) {
   return {

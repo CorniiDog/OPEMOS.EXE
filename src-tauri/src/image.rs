@@ -1271,6 +1271,7 @@ pub(crate) fn verify_nvidia_from_validation_overlay(
         ("index.html", INSTALL_MEDIA_WELCOME_HTML),
         ("app.css", INSTALL_MEDIA_WELCOME_CSS),
         ("app.js", INSTALL_MEDIA_WELCOME_JS),
+        ("opemos-welcome.qml", INSTALL_MEDIA_WELCOME_QML),
         ("opemos.svg", INSTALL_MEDIA_ICON),
         ("assets/install.svg", INSTALL_MEDIA_WELCOME_INSTALL_ART),
         ("assets/recovery.svg", INSTALL_MEDIA_WELCOME_RECOVERY_ART),

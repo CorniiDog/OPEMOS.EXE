@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { validateInstallMediaTargetVmEvidence } from "../scripts/install-media-target-vm-evidence.mjs";
+import { readFileSync } from "node:fs";
+
+const guestGate = readFileSync("scripts/install-media-target-vm-guest.sh", "utf8");
 
 const commit = "7".repeat(40);
 const identity = "a".repeat(64);
@@ -28,6 +31,8 @@ const valid = () => ({
 
 test("accepts exact unallocated and mounted target VM evidence", () => {
   assert.equal(validateInstallMediaTargetVmEvidence(valid(), commit).sourceCommit, commit);
+  assert.match(guestGate, /unallocated_inventory=\$\("\$helper" inventory\)/);
+  assert.match(guestGate, /OPEMOS_EXPECTED_INVENTORY_DISKS/);
 });
 
 test("refuses hidden targets, unstable identities, stale commits, and incomplete cleanup", () => {

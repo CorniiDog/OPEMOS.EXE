@@ -7,6 +7,7 @@ readonly ROLLBACK=/home/deck/tools/opemos-rollback-last-update
 readonly ICON=/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg
 readonly UI_CONFIG=/usr/share/opemos-install-media/ui
 readonly WELCOME_UI=/usr/share/opemos-install-media/ui/welcome
+readonly WELCOME_QML="$WELCOME_UI/opemos-welcome.qml"
 readonly WELCOME_SERVER=/usr/lib/opemos-install-media/welcome_server.py
 readonly STATE_DIRECTORY=/home/deck/.local/state/open-opemos
 readonly LAST_LOG_FILE="$STATE_DIRECTORY/last-install-log"
@@ -70,7 +71,10 @@ launch_fullscreen_welcome() {
     printf 'Python 3 is unavailable for the graphical installer.\n'
     return 1
   }
-  for candidate in chromium chromium-browser google-chrome-stable firefox; do
+  if [[ -f "$WELCOME_QML" && ! -L "$WELCOME_QML" ]] && command -v qmlscene >/dev/null 2>&1; then
+    browsers+=(qmlscene)
+  fi
+  for candidate in chromium chromium-browser google-chrome google-chrome-stable firefox firefox-esr; do
     command -v "$candidate" >/dev/null 2>&1 && browsers+=("$candidate")
   done
   (( ${#browsers[@]} > 0 )) || {
@@ -103,7 +107,11 @@ launch_fullscreen_welcome() {
     while kill -0 "$server_pid" 2>/dev/null; do
       rm -f "$runtime/ui-ready"
       started_at=$SECONDS
-      if [[ "$browser" == firefox ]]; then
+      if [[ "$browser" == qmlscene ]]; then
+        sed "s|__OPEMOS_INSTALLER_URL__|$url|g" "$WELCOME_QML" >"$runtime/opemos-welcome.qml"
+        chmod 0600 "$runtime/opemos-welcome.qml"
+        "$browser" "$runtime/opemos-welcome.qml" &
+      elif [[ "$browser" == firefox || "$browser" == firefox-esr ]]; then
         [[ -d "$runtime/firefox-profile" ]] || mkdir -m 0700 "$runtime/firefox-profile"
         "$browser" --no-remote --profile "$runtime/firefox-profile" --kiosk "$url" &
       else
@@ -207,15 +215,20 @@ last_log() {
 }
 
 show_diagnostics() {
-  local report inventory latest
+  local report inventory inventory_error latest
   report=$(mktemp /tmp/open-opemos-diagnostics.XXXXXX)
   inventory=$(mktemp /tmp/open-opemos-diagnostic-inventory.XXXXXX)
+  inventory_error=$(mktemp /tmp/open-opemos-diagnostic-inventory-error.XXXXXX)
   {
     printf 'SteamOS with NVIDIA drivers installation-media diagnostics\nMaintained by OPEMOS\n\n'
     if "$HELPER" media-info; then
       printf '\nEligible whole physical disks\n'
-      if "$HELPER" inventory-report >"$inventory" && [[ -s "$inventory" ]]; then
+      if "$HELPER" inventory-report >"$inventory" 2>"$inventory_error" && [[ -s "$inventory" ]]; then
         awk -F '\t' '{ printf "  %s  %.1f GB  %s  [%s]\n", $1, $2 / 1000000000, $3, $4 }' "$inventory"
+      elif [[ -s "$inventory_error" ]]; then
+        printf '  Disk inspection failed: '
+        tr '\r\n\t' '   ' <"$inventory_error" | sed 's/[[:space:]][[:space:]]*/ /g; s/ $//'
+        printf '\n'
       else
         printf '  None. The boot media, read-only media, swap-active disks, and disks below 12 GiB are excluded.\n'
       fi
@@ -238,18 +251,21 @@ show_diagnostics() {
         --filename="$latest" --ok-label="Back" || true
     fi
   fi
-  rm -f "$report" "$inventory"
+  rm -f "$report" "$inventory" "$inventory_error"
 }
 
 choose_disk() {
-  local mode=$1 inventory line device bytes token model serial transport layout selection
+  local mode=$1 inventory inventory_error detail line device bytes token model serial transport layout selection
   local -a rows=()
   inventory=$(mktemp /tmp/open-opemos-inventory.XXXXXX)
-  if ! "$HELPER" inventory >"$inventory"; then
-    rm -f "$inventory"
-    failure "The installer could not inspect the available physical disks. No disk was changed."
+  inventory_error=$(mktemp /tmp/open-opemos-inventory-error.XXXXXX)
+  if ! "$HELPER" inventory >"$inventory" 2>"$inventory_error"; then
+    detail=$(tr '\r\n\t' '   ' <"$inventory_error" | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//' | cut -c1-500)
+    rm -f "$inventory" "$inventory_error"
+    failure "The installer could not inspect the available physical disks. No disk was changed.\n\n${detail:-The protected disk helper returned no diagnostic detail.}"
     return 1
   fi
+  rm -f "$inventory_error"
   while IFS=$'\t' read -r device bytes token model serial transport layout; do
     [[ -n "$device" && -n "$token" ]] || continue
     [[ "$mode" != system || "$layout" == steamos ]] || continue

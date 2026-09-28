@@ -12,6 +12,8 @@ pub(crate) const INSTALL_MEDIA_WELCOME_HTML: &[u8] =
     include_bytes!("../../builder/welcome/index.html");
 pub(crate) const INSTALL_MEDIA_WELCOME_CSS: &[u8] = include_bytes!("../../builder/welcome/app.css");
 pub(crate) const INSTALL_MEDIA_WELCOME_JS: &[u8] = include_bytes!("../../builder/welcome/app.js");
+pub(crate) const INSTALL_MEDIA_WELCOME_QML: &[u8] =
+    include_bytes!("../../builder/welcome/opemos-welcome.qml");
 pub(crate) const INSTALL_MEDIA_WELCOME_INSTALL_ART: &[u8] =
     include_bytes!("../../builder/welcome/assets/install.svg");
 pub(crate) const INSTALL_MEDIA_WELCOME_RECOVERY_ART: &[u8] =
@@ -39,6 +41,7 @@ struct InstallMediaWelcomeDigests {
     html: String,
     css: String,
     javascript: String,
+    qml: String,
     install_art: String,
     recovery_art: String,
     gaming_art: String,
@@ -51,7 +54,7 @@ fn sha256_bytes(bytes: &[u8]) -> String {
 pub(crate) fn install_media_welcome_revision() -> String {
     let mut digest = Sha256::new();
     digest.update(
-        b"opemos-welcome-contract-v3;desktop-mode=0755;autostart-mode=0644;installed-home-restored",
+        b"opemos-welcome-contract-v4;desktop-mode=0755;autostart-mode=0644;installed-home-restored;qt-webengine-shell",
     );
     for bytes in [
         INSTALL_MEDIA_WELCOME,
@@ -59,6 +62,7 @@ pub(crate) fn install_media_welcome_revision() -> String {
         INSTALL_MEDIA_WELCOME_HTML,
         INSTALL_MEDIA_WELCOME_CSS,
         INSTALL_MEDIA_WELCOME_JS,
+        INSTALL_MEDIA_WELCOME_QML,
         INSTALL_MEDIA_WELCOME_INSTALL_ART,
         INSTALL_MEDIA_WELCOME_RECOVERY_ART,
         INSTALL_MEDIA_WELCOME_GAMING_ART,
@@ -94,6 +98,7 @@ fn stage_install_media_welcome_assets(
         ("welcome-index.html", INSTALL_MEDIA_WELCOME_HTML),
         ("welcome-app.css", INSTALL_MEDIA_WELCOME_CSS),
         ("welcome-app.js", INSTALL_MEDIA_WELCOME_JS),
+        ("welcome-app.qml", INSTALL_MEDIA_WELCOME_QML),
         ("welcome-install.svg", INSTALL_MEDIA_WELCOME_INSTALL_ART),
         ("welcome-recovery.svg", INSTALL_MEDIA_WELCOME_RECOVERY_ART),
         ("welcome-gaming.svg", INSTALL_MEDIA_WELCOME_GAMING_ART),
@@ -116,6 +121,7 @@ fn stage_install_media_welcome_assets(
         html: sha256_bytes(INSTALL_MEDIA_WELCOME_HTML),
         css: sha256_bytes(INSTALL_MEDIA_WELCOME_CSS),
         javascript: sha256_bytes(INSTALL_MEDIA_WELCOME_JS),
+        qml: sha256_bytes(INSTALL_MEDIA_WELCOME_QML),
         install_art: sha256_bytes(INSTALL_MEDIA_WELCOME_INSTALL_ART),
         recovery_art: sha256_bytes(INSTALL_MEDIA_WELCOME_RECOVERY_ART),
         gaming_art: sha256_bytes(INSTALL_MEDIA_WELCOME_GAMING_ART),
@@ -3538,6 +3544,7 @@ test "$(sha256sum /tmp/welcome_server.py | awk '{{print $1}}')" = "{welcome_serv
 test "$(sha256sum /tmp/welcome-index.html | awk '{{print $1}}')" = "{welcome_html_sha256}"
 test "$(sha256sum /tmp/welcome-app.css | awk '{{print $1}}')" = "{welcome_css_sha256}"
 test "$(sha256sum /tmp/welcome-app.js | awk '{{print $1}}')" = "{welcome_javascript_sha256}"
+test "$(sha256sum /tmp/welcome-app.qml | awk '{{print $1}}')" = "{welcome_qml_sha256}"
 test "$(sha256sum /tmp/welcome-install.svg | awk '{{print $1}}')" = "{welcome_install_art_sha256}"
 test "$(sha256sum /tmp/welcome-recovery.svg | awk '{{print $1}}')" = "{welcome_recovery_art_sha256}"
 test "$(sha256sum /tmp/welcome-gaming.svg | awk '{{print $1}}')" = "{welcome_gaming_art_sha256}"
@@ -3608,6 +3615,7 @@ sudo install -m 0644 -o root -g root /tmp/gtk.css "$ROOT/usr/share/opemos-instal
 sudo install -m 0644 -o root -g root /tmp/welcome-index.html "$ROOT/usr/share/opemos-install-media/ui/welcome/index.html"
 sudo install -m 0644 -o root -g root /tmp/welcome-app.css "$ROOT/usr/share/opemos-install-media/ui/welcome/app.css"
 sudo install -m 0644 -o root -g root /tmp/welcome-app.js "$ROOT/usr/share/opemos-install-media/ui/welcome/app.js"
+sudo install -m 0644 -o root -g root /tmp/welcome-app.qml "$ROOT/usr/share/opemos-install-media/ui/welcome/opemos-welcome.qml"
 sudo install -m 0644 -o root -g root /tmp/opemos.svg "$ROOT/usr/share/opemos-install-media/ui/welcome/opemos.svg"
 sudo install -m 0644 -o root -g root /tmp/welcome-install.svg "$ROOT/usr/share/opemos-install-media/ui/welcome/assets/install.svg"
 sudo install -m 0644 -o root -g root /tmp/welcome-recovery.svg "$ROOT/usr/share/opemos-install-media/ui/welcome/assets/recovery.svg"
@@ -3651,6 +3659,7 @@ for WELCOME_ASSET in \
   "index.html:{welcome_html_sha256}" \
   "app.css:{welcome_css_sha256}" \
   "app.js:{welcome_javascript_sha256}" \
+  "opemos-welcome.qml:{welcome_qml_sha256}" \
   "opemos.svg:{welcome_icon_sha256}" \
   "assets/install.svg:{welcome_install_art_sha256}" \
   "assets/recovery.svg:{welcome_recovery_art_sha256}" \
@@ -3714,6 +3723,7 @@ trap - EXIT INT TERM"#,
             welcome_html_sha256 = welcome_digests.html,
             welcome_css_sha256 = welcome_digests.css,
             welcome_javascript_sha256 = welcome_digests.javascript,
+            welcome_qml_sha256 = welcome_digests.qml,
             welcome_install_art_sha256 = welcome_digests.install_art,
             welcome_recovery_art_sha256 = welcome_digests.recovery_art,
             welcome_gaming_art_sha256 = welcome_digests.gaming_art,

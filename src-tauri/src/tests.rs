@@ -4354,6 +4354,7 @@ esac
         let server = std::str::from_utf8(INSTALL_MEDIA_WELCOME_SERVER).unwrap();
         let html = std::str::from_utf8(INSTALL_MEDIA_WELCOME_HTML).unwrap();
         let javascript = std::str::from_utf8(INSTALL_MEDIA_WELCOME_JS).unwrap();
+        let qml = std::str::from_utf8(INSTALL_MEDIA_WELCOME_QML).unwrap();
 
         for (name, bytes) in [
             ("open-opemos-welcome", INSTALL_MEDIA_WELCOME),
@@ -4401,6 +4402,7 @@ done"#
         assert!(welcome.contains("restart) systemctl reboot"));
         assert!(welcome.contains("remove the USB as the screen turns off"));
         assert!(welcome.contains("--start-fullscreen"));
+        assert!(welcome.contains("qmlscene"));
         assert!(welcome.contains("WELCOME_SERVER"));
         assert!(!welcome.contains("eval "));
         assert!(server.contains("ThreadingHTTPServer((\"127.0.0.1\", 0)"));
@@ -4408,6 +4410,9 @@ done"#
         assert!(!server.contains("shell=True"));
         assert!(html.contains("close-app"));
         assert!(javascript.contains("/api/install"));
+        assert!(qml.contains("visibility: Window.FullScreen"));
+        assert!(qml.contains("offTheRecord: true"));
+        assert!(qml.contains("__OPEMOS_INSTALLER_URL__"));
         assert!(gtk_css.contains("@define-color opemos_blue"));
         assert!(gtk_css.contains("linear-gradient(to right, @opemos_blue, @opemos_green)"));
 

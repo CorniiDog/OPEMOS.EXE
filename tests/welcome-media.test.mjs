@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -72,6 +72,21 @@ test("install helper binds and revalidates a physical device identity", () => {
   assert.match(helper, /\$payload\/lib\/payload_receipt\.py/);
   assert.match(helper, /\$payload\/lib\/atomic_output\.py/);
   assert.match(helper, /ui_stage "Installing the recovery guardian into rootfs-\$slot/);
+});
+
+test("read-only disk discovery does not require install-only recovery tools", (context) => {
+  const directory = mkdtempSync(join(tmpdir(), "opemos-inventory-tools-"));
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  for (const tool of ["bash", "awk", "blockdev", "findmnt", "lsblk", "readlink", "sed", "sha256sum", "tr"]) {
+    const source = execFileSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim();
+    symlinkSync(source, join(directory, tool));
+  }
+  const result = spawnSync("builder/welcome/opemos-install-helper", ["inventory"], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: directory },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stderr, /btrfs|steamos-chroot/);
 });
 
 test("guardian installation binds persistent home and slot-matched etc overlays with owned cleanup", () => {

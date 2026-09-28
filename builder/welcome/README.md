@@ -7,10 +7,11 @@ application owned by the support repository.
 
 The normal frontend is the same full-screen frosted-glass HTML/CSS/JavaScript
 bundle used by the macOS simulation. `open-opemos-welcome` starts a random-port,
-loopback-only Python controller and opens an installed browser in application or
-kiosk mode. A per-session secret plus exact-Origin checks protect every API
+loopback-only Python controller and opens the Qt 6 WebEngine runtime already
+present in Valve's recovery image. Installed browsers remain secondary runtimes.
+A per-session secret plus exact-Origin checks protect every API
 call. Zenity remains a guaranteed-runtime fallback only when neither a supported
-browser nor Python is available; its bundled GTK stylesheet retains the same
+graphical runtime nor Python is available; its bundled GTK stylesheet retains the same
 blue/green language with an opaque compositor fallback.
 
 Only one welcome instance can run in a recovery session. Its diagnostics view
@@ -46,6 +47,11 @@ revalidates its identity under a per-device lock does the helper unmount that
 target's child filesystems. It then revalidates identity again before invoking
 Valve's installer. Reinstall also requires the standard labels at exact
 partition indices 1 through 8.
+
+Disk discovery performs only its own read-only tool preflight; install-only
+requirements such as Btrfs and `steamos-chroot` are checked only after the user
+selects and confirms a target. Helper failures remain visible instead of being
+reported as an empty eligible-disk list.
 
 Changes to installation-target discovery or target filesystem release must
 also pass the disposable installation-target VM gate. The gate sources the
