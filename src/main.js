@@ -37,6 +37,10 @@ import {
   usbConfirmationForBackend,
   usbConfirmationMatches,
 } from "./usb-confirmation.js";
+import {
+  acceptedUsbInventoryPath,
+  usbInventoryNeedsRefresh,
+} from "./usb-inventory-state.js";
 import { installWindowDrag } from "./window-drag.js";
 import { installPageZoom } from "./zoom.js";
 import { installLocale } from "./locale.js";
@@ -196,10 +200,13 @@ async function revealUsbImaging({ focus = true, preferredTarget = null } = {}) {
   elements.usbPicker.classList.remove("hidden");
   elements.usbPicker.scrollIntoView({ behavior: "smooth", block: "center" });
   let restored = false;
-  if (usbImagingRefreshPath !== outputPath) {
-    usbImagingRefreshPath = outputPath;
-    restored = await refreshUsbTargets(preferredTarget);
+  if (usbInventoryNeedsRefresh(outputPath, usbImagingRefreshPath, hasUsbTargets() ? 1 : 0)) {
+    const outcome = await refreshUsbTargets(preferredTarget);
     if (completedOutput?.path !== outputPath) return false;
+    if (outcome.completed) {
+      usbImagingRefreshPath = acceptedUsbInventoryPath(outputPath, outcome);
+    }
+    restored = outcome.preferredTargetRestored;
   }
   if (focus) {
     const target = elements.usbTarget.disabled ? elements.refreshUsbTargets : elements.usbTarget;
@@ -1086,7 +1093,9 @@ await mainWindow.listen("build-finished", async (event) => {
 });
 
 async function refreshUsbTargets(preferredTarget = null) {
-  if (!completedOutput?.path && !currentImage) return;
+  if (!completedOutput?.path && !currentImage) {
+    return { completed: false, targetCount: 0, preferredTargetRestored: false };
+  }
   usbContextGeneration += 1;
   const generation = usbContextGeneration;
   const imagePath = completedOutput?.path || currentImage;
@@ -1104,13 +1113,17 @@ async function refreshUsbTargets(preferredTarget = null) {
   renderUsbConfirmationPhase(false);
   if (previousSession?.sessionToken) {
     await invoke("cancel_usb_write_preflight", { sessionToken: previousSession.sessionToken }).catch(() => {});
-    if (generation !== usbContextGeneration) return;
+    if (generation !== usbContextGeneration) {
+      return { completed: false, targetCount: 0, preferredTargetRestored: false };
+    }
   }
   try {
     const preflight = completedOutput?.path
       ? await invoke("inspect_usb_targets", { imagePath })
       : await invoke("inspect_usb_targets_for_build", { inputPath: imagePath });
-    if (generation !== usbContextGeneration || (completedOutput?.path || currentImage) !== imagePath) return;
+    if (generation !== usbContextGeneration || (completedOutput?.path || currentImage) !== imagePath) {
+      return { completed: false, targetCount: 0, preferredTargetRestored: false };
+    }
     elements.usbTarget.replaceChildren();
     const placeholder = document.createElement("option");
     placeholder.value = "";
@@ -1141,12 +1154,22 @@ async function refreshUsbTargets(preferredTarget = null) {
       if (preferred) {
         preferred.selected = true;
         renderUsbTargetSelection();
-        return true;
+        return {
+          completed: true,
+          targetCount: preflight.targets.length,
+          preferredTargetRestored: true,
+        };
       }
     }
-    return false;
+    return {
+      completed: true,
+      targetCount: preflight.targets.length,
+      preferredTargetRestored: false,
+    };
   } catch (error) {
-    if (generation !== usbContextGeneration) return;
+    if (generation !== usbContextGeneration) {
+      return { completed: false, targetCount: 0, preferredTargetRestored: false };
+    }
     const placeholder = document.createElement("option");
     placeholder.value = "";
     placeholder.textContent = "Refresh to inspect removable drives…";
@@ -1170,7 +1193,7 @@ async function refreshUsbTargets(preferredTarget = null) {
       elements.usbPicker.classList.remove("is-loading");
     }
   }
-  return false;
+  return { completed: true, targetCount: 0, preferredTargetRestored: false };
 }
 
 elements.refreshUsbTargets.addEventListener("click", async () => {

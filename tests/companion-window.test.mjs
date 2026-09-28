@@ -38,7 +38,8 @@ test("Windows image commands stay hidden and elevation belongs to the main windo
   assert.doesNotMatch(appliance, /Command::new\(/);
   assert.doesNotMatch(nvidia, /Command::new\(/);
   assert.match(image, /fn hidden_windows_command[\s\S]*CREATE_NO_WINDOW[\s\S]*creation_flags/);
-  assert.equal([...image.matchAll(/hidden_windows_command\("powershell\.exe"\)/g)].length, 3);
+  assert.equal([...image.matchAll(/hidden_windows_command\("powershell\.exe"\)/g)].length, 2);
+  assert.match(image, /fn discover_usb_targets[\s\S]*bounded_command_output_with_limits\([\s\S]*Path::new\("powershell\.exe"\)/);
   assert.doesNotMatch(image, /Command::new\("powershell\.exe"\)/);
   assert.match(image, /get_webview_window\("main"\)/);
   assert.match(image, /\.and_then\(\|window\| window\.hwnd\(\)\.ok\(\)\)/);
@@ -88,11 +89,18 @@ test("USB builds reselect only the exact pre-build device and defer Finder until
   assert.match(build, /ready for USB Imaging/);
   assert.match(main, /deviceIdentifier: selectedUsb\.value,[\s\S]*identityToken: selectedUsb\.dataset\.identityToken/);
   assert.match(main, /option\.value === preferredTarget\.deviceIdentifier[\s\S]*option\.dataset\.identityToken === preferredTarget\.identityToken/);
-  assert.match(main, /async function revealUsbImaging[\s\S]*usbImagingRefreshPath !== outputPath[\s\S]*refreshUsbTargets\(preferredTarget\)/);
+  assert.match(main, /async function revealUsbImaging[\s\S]*usbInventoryNeedsRefresh\(outputPath, usbImagingRefreshPath,[\s\S]*refreshUsbTargets\(preferredTarget\)[\s\S]*if \(outcome\.completed\) \{\s*usbImagingRefreshPath = acceptedUsbInventoryPath\(outputPath, outcome\)/);
   assert.match(main, /revealCompletedUsbReview = openUsbReview \|\| activeCompanion !== "build-progress";[\s\S]*if \(revealCompletedUsbReview\)[\s\S]*revealUsbImaging\(\{ preferredTarget: completedUsbPreferredTarget \}\)/);
   assert.doesNotMatch(main, /if \(openUsbReview\) setUsbMenuOpen\(true\)/);
   assert.doesNotMatch(main, /if \(!finalUsbReady\) setUsbMenuOpen\(false\);/);
-  assert.match(main, /preferred\.selected = true;\s*renderUsbTargetSelection\(\);\s*return true;/);
+  assert.match(main, /preferred\.selected = true;\s*renderUsbTargetSelection\(\);\s*return \{\s*completed: true,[\s\S]*preferredTargetRestored: true,/);
   assert.doesNotMatch(main, /preferred\.selected = true;\s*elements\.usbTarget\.dispatchEvent/);
   assert.match(main, /if \(activeExportMode === "both" && !completedOutputImported\) \{\s*const revealed = await revealCompletedImage\(completedOutput\.path\);/);
+});
+
+test("an unusable automatic USB scan releases controls and remains retryable", async () => {
+  const image = await readFile(new URL("../src-tauri/src/image.rs", import.meta.url), "utf8");
+  assert.match(image, /fn discover_usb_targets[\s\S]*bounded_command_output_with_limits\([\s\S]*Duration::from_secs\(20\)/);
+  assert.match(main, /finally \{[\s\S]*elements\.refreshUsbTargets\.disabled = false;[\s\S]*elements\.usbPicker\.classList\.remove\("is-loading"\)/);
+  assert.match(main, /acceptedUsbInventoryPath\(outputPath, outcome\)/);
 });
