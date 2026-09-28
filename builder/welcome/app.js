@@ -72,7 +72,7 @@ function chooseDisk(mode) {
     <div class="panel">
       <span class="label">${mode === "all" ? "Fresh installation" : "System reinstall"}</span>
       <h2>Select a whole physical disk</h2>
-      <p class="lead">${disks.length ? "Only eligible targets are listed." : "No eligible target is currently available."}</p>
+      <p class="lead">${disks.length ? "Only eligible whole physical disks are listed. Mounted filesystems on the confirmed target are released only after final confirmation." : "No eligible target is currently available. Open Diagnostics to see why each detected disk was excluded."}</p>
       <div class="disks">${disks.map((disk, index) => `
         <button class="disk" data-disk="${index}"><span><strong>${escapeHtml(disk.model)}</strong><small>${escapeHtml(disk.device)} · ${formatBytes(disk.bytes)} · ${escapeHtml(disk.transport)} · ${disk.layout === "steamos" ? "recognized SteamOS" : "blank or replaceable"}</small></span><span class="status">Eligible</span></button>`).join("")}</div>
       <div class="actions">${button("Back", "home", "secondary")}${button("Refresh disks", "refresh", "secondary")}${button("Continue", "confirm", "primary")}</div>

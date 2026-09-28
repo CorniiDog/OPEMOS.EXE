@@ -29,6 +29,9 @@ signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 while True: time.sleep(0.1)
 `, { mode: 0o755 });
   writeFileSync(join(bin, "chromium"), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
+  writeFileSync(join(bin, "chromium-browser"), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
+  writeFileSync(join(bin, "google-chrome-stable"), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
+  writeFileSync(join(bin, "firefox"), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
   writeFileSync(join(bin, "zenity"), `#!/bin/sh
 printf '%s\\n' "$*" >>${JSON.stringify(visible)}
 case " $* " in *" --list "*) exit 1;; esac
@@ -64,6 +67,26 @@ test("browser instant exit is logged and opens the existing fallback", (context)
   const log = readFileSync(join(state, "welcome-startup.log"), "utf8");
   assert.match(log, /browser \(chromium\) exited with status 7/);
   assert.match(readFileSync(visible, "utf8"), /full-screen installer could not open/);
+});
+
+test("a failed Chromium runtime tries Firefox before opening the fallback", (context) => {
+  const { bin, launcher, visible } = fixture(context);
+  writeFileSync(join(bin, "firefox"), `#!/bin/sh
+for argument in "$@"; do
+  case "$argument" in
+    --profile) profile_next=1;;
+    *) if [ "\${profile_next:-0}" = 1 ]; then profile=$argument; profile_next=0; fi;;
+  esac
+done
+touch "$(dirname "$profile")/ui-ready"
+sleep 2.1
+exit 0
+`, { mode: 0o755 });
+  const result = spawnSync("bash", [launcher], {
+    encoding: "utf8", env: testEnvironment(bin), timeout: 5000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.throws(() => readFileSync(visible, "utf8"), { code: "ENOENT" });
 });
 
 test("a second launch reports the held singleton instead of silently succeeding", async (context) => {

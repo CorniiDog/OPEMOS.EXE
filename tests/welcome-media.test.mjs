@@ -27,7 +27,9 @@ test("installation-media UI delegates only bounded operations", () => {
   assert.match(welcome, /welcome-startup\.log/);
   assert.match(welcome, /installer is already running/);
   assert.match(welcome, /before a stable window opened/);
+  assert.match(welcome, /trying the next supported runtime/);
   assert.match(welcome, /--start-fullscreen/);
+  assert.match(welcome, /--hide-header/);
   assert.match(welcome, /welcome_server\.py/);
   assert.match(welcome, /TRUE shutdown/);
   assert.match(welcome, /FALSE restart/);
@@ -47,6 +49,9 @@ test("install helper binds and revalidates a physical device identity", () => {
   assert.match(helper, /is_recovery_disk "\$device"/);
   assert.match(helper, /lsblk -snrpo PATH,TYPE "\$resolved"/);
   assert.match(helper, /mounted_child "\$device"/);
+  assert.match(helper, /active_swap_child "\$device"/);
+  assert.match(helper, /unmount_target_children "\$device"/);
+  assert.match(helper, /selected disk identity changed while its filesystems were released/);
   assert.match(helper, /blockdev --getsize64/);
   assert.match(helper, /disk_identity "\$device"/);
   assert.match(helper, /selected disk identity changed immediately before installation/);
