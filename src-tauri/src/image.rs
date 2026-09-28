@@ -4779,9 +4779,9 @@ fn eject_usb_target(identifier: &str) -> bool {
             ) -> u32;
         }
         const CR_SUCCESS: u32 = 0;
-        const CM_DRP_CAPABILITIES: u32 = 0x0000_000f;
-        const CM_DEVCAP_EJECTSUPPORTED: u32 = 0x0000_0002;
-        const CM_DEVCAP_REMOVABLE: u32 = 0x0000_0004;
+        const CM_DRP_REMOVAL_POLICY: u32 = 0x0000_001f;
+        const CM_REMOVAL_POLICY_EXPECT_ORDERLY_REMOVAL: u32 = 2;
+        const CM_REMOVAL_POLICY_EXPECT_SURPRISE_REMOVAL: u32 = 3;
 
         let mut wide = std::ffi::OsStr::new(&pnp_device_id)
             .encode_wide()
@@ -4791,23 +4791,34 @@ fn eject_usb_target(identifier: &str) -> bool {
         if unsafe { CM_Locate_DevNodeW(&mut device, wide.as_mut_ptr(), 0) } == CR_SUCCESS {
             let mut candidates = Vec::new();
             for _ in 0..16 {
-                let mut capabilities = 0_u32;
+                let mut removal_policy = 0_u32;
                 let mut value_type = 0_u32;
                 let mut length = std::mem::size_of::<u32>() as u32;
-                let capabilities_ok = unsafe {
+                let policy_ok = unsafe {
                     CM_Get_DevNode_Registry_PropertyW(
                         device,
-                        CM_DRP_CAPABILITIES,
+                        CM_DRP_REMOVAL_POLICY,
                         &mut value_type,
-                        (&mut capabilities as *mut u32).cast(),
+                        (&mut removal_policy as *mut u32).cast(),
                         &mut length,
                         0,
                     )
                 } == CR_SUCCESS;
-                if capabilities_ok
-                    && capabilities & (CM_DEVCAP_EJECTSUPPORTED | CM_DEVCAP_REMOVABLE) != 0
+                if policy_ok
+                    && matches!(
+                        removal_policy,
+                        CM_REMOVAL_POLICY_EXPECT_ORDERLY_REMOVAL
+                            | CM_REMOVAL_POLICY_EXPECT_SURPRISE_REMOVAL
+                    )
                 {
                     candidates.push(device);
+                } else if !candidates.is_empty() {
+                    // Never walk beyond the first non-removable ancestor (for
+                    // example a root hub or PCI controller). Some USB storage
+                    // stacks omit CM_DEVCAP_REMOVABLE even though their removal
+                    // policy explicitly permits removal, so capabilities alone
+                    // cannot safely identify the ejectable parent devnode.
+                    break;
                 }
                 let mut parent = 0_u32;
                 if unsafe { CM_Get_Parent(&mut parent, device, 0) } != CR_SUCCESS {
