@@ -3861,7 +3861,7 @@ pub(crate) fn authorized_open_path(path: &Path, cancel: &AtomicBool) -> Result<F
 fn open_usb_raw_device(
     target: &UsbTargetCandidate,
     cancel: &AtomicBool,
-) -> Result<(File, Vec<File>), String> {
+) -> Result<(File, Vec<File>, bool), String> {
     use std::os::unix::fs::MetadataExt as _;
 
     let raw_node = PathBuf::from(format!("/dev/r{}", target.device_identifier));
@@ -3887,7 +3887,7 @@ fn open_usb_raw_device(
                 .into(),
         );
     }
-    Ok((file, Vec::new()))
+    Ok((file, Vec::new(), false))
 }
 
 #[cfg(target_os = "windows")]
@@ -4067,20 +4067,23 @@ fn perform_windows_usb_write(
         message: "Locking and dismounting every selected-disk volume.".into(),
     });
     unmount_usb_target(&target.device_identifier)?;
-    let (mut device, volume_locks) = open_usb_raw_device(&target, cancel)?;
-    let opened =
-        match revalidate_windows_usb_target_state(&target.device_identifier, image_bytes, true) {
-            Ok(opened) => opened,
-            Err(error) => {
-                drop(device);
-                drop(volume_locks);
-                return Err(match recover_windows_usb_target(&target) {
-                    Ok(true) => format!("{error} The unchanged target was safely ejected."),
-                    Ok(false) => format!("{error} The unchanged target was returned online."),
-                    Err(recovery) => format!("{error} {recovery}"),
-                });
-            }
-        };
+    let (mut device, volume_locks, disk_is_offline) = open_usb_raw_device(&target, cancel)?;
+    let opened = match revalidate_windows_usb_target_state(
+        &target.device_identifier,
+        image_bytes,
+        disk_is_offline,
+    ) {
+        Ok(opened) => opened,
+        Err(error) => {
+            drop(device);
+            drop(volume_locks);
+            return Err(match recover_windows_usb_target(&target) {
+                Ok(true) => format!("{error} The unchanged target was safely ejected."),
+                Ok(false) => format!("{error} The unchanged target was returned online."),
+                Err(recovery) => format!("{error} {recovery}"),
+            });
+        }
+    };
     if opened.identity_token != target.identity_token {
         drop(device);
         drop(volume_locks);
@@ -4267,6 +4270,7 @@ fn launch_exact_elevated_writer(
     parameters: &str,
     owner_window: isize,
 ) -> Result<WindowsProcessHandle, String> {
+    verify_windows_elevation_candidate(executable)?;
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStrExt as _;
     #[repr(C)]
@@ -4336,6 +4340,158 @@ fn launch_exact_elevated_writer(
         );
     }
     Ok(WindowsProcessHandle(info.process))
+}
+
+#[cfg(target_os = "windows")]
+fn verify_windows_elevation_candidate(executable: &Path) -> Result<(), String> {
+    use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt as _;
+
+    #[repr(C)]
+    struct Guid {
+        data1: u32,
+        data2: u16,
+        data3: u16,
+        data4: [u8; 8],
+    }
+
+    #[repr(C)]
+    struct WinTrustFileInfo {
+        size: u32,
+        file_path: *const u16,
+        file_handle: *mut c_void,
+        known_subject: *const Guid,
+    }
+
+    #[repr(C)]
+    struct WinTrustData {
+        size: u32,
+        policy_callback_data: *mut c_void,
+        sip_client_data: *mut c_void,
+        ui_choice: u32,
+        revocation_checks: u32,
+        union_choice: u32,
+        file: *mut WinTrustFileInfo,
+        state_action: u32,
+        state_data: *mut c_void,
+        url_reference: *const u16,
+        provider_flags: u32,
+        ui_context: u32,
+        signature_settings: *mut c_void,
+    }
+
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn RegGetValueW(
+            key: *mut c_void,
+            sub_key: *const u16,
+            value: *const u16,
+            flags: u32,
+            value_type: *mut u32,
+            data: *mut c_void,
+            data_size: *mut u32,
+        ) -> i32;
+    }
+    #[link(name = "wintrust")]
+    extern "system" {
+        fn WinVerifyTrust(window: *mut c_void, action: *const Guid, data: *mut WinTrustData)
+            -> i32;
+    }
+
+    const HKEY_LOCAL_MACHINE: *mut c_void = 0x8000_0002usize as *mut c_void;
+    const RRF_RT_REG_DWORD: u32 = 0x0000_0010;
+    const ERROR_FILE_NOT_FOUND: i32 = 2;
+    const WINTRUST_ACTION_GENERIC_VERIFY_V2: Guid = Guid {
+        data1: 0x00aa_c56b,
+        data2: 0xcd44,
+        data3: 0x11d0,
+        data4: [0x8c, 0xc2, 0x00, 0xc0, 0x4f, 0xc2, 0x95, 0xee],
+    };
+    const WTD_UI_NONE: u32 = 2;
+    const WTD_CHOICE_FILE: u32 = 1;
+    const WTD_STATEACTION_VERIFY: u32 = 1;
+    const WTD_STATEACTION_CLOSE: u32 = 2;
+
+    let sub_key = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System\0"
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    let value_name = "ValidateAdminCodeSignatures\0"
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    let mut policy = 0_u32;
+    let mut policy_size = std::mem::size_of::<u32>() as u32;
+    let registry_status = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            sub_key.as_ptr(),
+            value_name.as_ptr(),
+            RRF_RT_REG_DWORD,
+            std::ptr::null_mut(),
+            (&mut policy as *mut u32).cast(),
+            &mut policy_size,
+        )
+    };
+    if registry_status == ERROR_FILE_NOT_FOUND {
+        return Ok(());
+    }
+    if registry_status != 0 {
+        return Err(format!(
+            "Windows elevation policy could not be inspected safely (system error {registry_status}); the USB writer was not started."
+        ));
+    }
+    if policy == 0 {
+        return Ok(());
+    }
+
+    let path = executable
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let mut file = WinTrustFileInfo {
+        size: std::mem::size_of::<WinTrustFileInfo>() as u32,
+        file_path: path.as_ptr(),
+        file_handle: std::ptr::null_mut(),
+        known_subject: std::ptr::null(),
+    };
+    let mut trust = WinTrustData {
+        size: std::mem::size_of::<WinTrustData>() as u32,
+        policy_callback_data: std::ptr::null_mut(),
+        sip_client_data: std::ptr::null_mut(),
+        ui_choice: WTD_UI_NONE,
+        revocation_checks: 0,
+        union_choice: WTD_CHOICE_FILE,
+        file: &mut file,
+        state_action: WTD_STATEACTION_VERIFY,
+        state_data: std::ptr::null_mut(),
+        url_reference: std::ptr::null(),
+        provider_flags: 0,
+        ui_context: 0,
+        signature_settings: std::ptr::null_mut(),
+    };
+    let invalid_window = usize::MAX as *mut c_void;
+    let trust_status = unsafe {
+        WinVerifyTrust(
+            invalid_window,
+            &WINTRUST_ACTION_GENERIC_VERIFY_V2,
+            &mut trust,
+        )
+    };
+    trust.state_action = WTD_STATEACTION_CLOSE;
+    unsafe {
+        WinVerifyTrust(
+            invalid_window,
+            &WINTRUST_ACTION_GENERIC_VERIFY_V2,
+            &mut trust,
+        );
+    }
+    if trust_status != 0 {
+        return Err(
+            "Windows is configured to elevate only trusted Authenticode-signed executables, but this OPEMOS build is unsigned or its signature is not trusted. Install a trusted signed OPEMOS build before writing a USB. The writer was not started and the selected USB was not changed."
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -4885,7 +5041,7 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
 fn open_usb_raw_device(
     target: &UsbTargetCandidate,
     _cancel: &AtomicBool,
-) -> Result<(File, Vec<File>), String> {
+) -> Result<(File, Vec<File>, bool), String> {
     use std::ffi::c_void;
     use std::os::windows::fs::OpenOptionsExt as _;
     use std::os::windows::io::AsRawHandle as _;
@@ -4949,32 +5105,59 @@ fn open_usb_raw_device(
         return Err("The selected Windows removable disk changed before raw open.".into());
     }
     let volume_locks = lock_windows_disk_volumes(number)?;
-    let opened = (|| -> Result<File, String> {
-        windows_powershell(
-        &format!("$d=Get-Disk -Number {number} -ErrorAction Stop; if ($d.BusType -ne 'USB' -or $d.IsBoot -or $d.IsSystem -or $d.IsReadOnly -or $d.IsOffline) {{ throw 'disk safety guard refused' }}; Set-Disk -Number {number} -IsOffline $true -ErrorAction Stop; if (-not (Get-Disk -Number {number}).IsOffline) {{ throw 'disk did not become offline' }}"),
-        "take only the locked selected Windows removable disk offline",
-    )?;
-        let offline = revalidate_windows_usb_target_state(&target.device_identifier, 0, true)?;
-        if offline.identity_token != target.identity_token {
+    let opened = (|| -> Result<(File, bool), String> {
+        let offline_attempt = windows_powershell(
+            &format!("$d=Get-Disk -Number {number} -ErrorAction Stop; if ($d.BusType -ne 'USB' -or $d.IsBoot -or $d.IsSystem -or $d.IsReadOnly -or $d.IsOffline) {{ throw 'disk safety guard refused' }}; Set-Disk -Number {number} -IsOffline $true -ErrorAction Stop; if (-not (Get-Disk -Number {number}).IsOffline) {{ throw 'disk did not become offline' }}"),
+            "take only the locked selected Windows removable disk offline",
+        );
+        let (isolated, disk_is_offline) = match offline_attempt {
+            Ok(_) => (
+                revalidate_windows_usb_target_state(&target.device_identifier, 0, true)?,
+                true,
+            ),
+            Err(offline_error) => {
+                match revalidate_windows_usb_target_state(&target.device_identifier, 0, true) {
+                    Ok(offline) => (offline, true),
+                    Err(_) => {
+                        // Windows StorageWMI refuses Set-Disk -IsOffline for some genuine
+                        // removable-media devices. The fallback remains limited to the exact
+                        // eligible USB identity after every selected-disk volume is locked and
+                        // dismounted; the raw whole-disk handle below must also open exclusively.
+                        let online = revalidate_windows_usb_target_state(
+                            &target.device_identifier,
+                            0,
+                            false,
+                        )
+                        .map_err(|online_error| {
+                            format!(
+                                "{offline_error} The locked target could not be revalidated online for the removable-media fallback: {online_error}"
+                            )
+                        })?;
+                        (online, false)
+                    }
+                }
+            }
+        };
+        if isolated.identity_token != target.identity_token {
             return Err("The selected Windows removable disk changed while it was locked.".into());
         }
         const GENERIC_READ: u32 = 0x8000_0000;
         const GENERIC_WRITE: u32 = 0x4000_0000;
         const FILE_FLAG_WRITE_THROUGH: u32 = 0x8000_0000;
         let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .access_mode(GENERIC_READ | GENERIC_WRITE)
-        .share_mode(0)
-        .custom_flags(FILE_FLAG_WRITE_THROUGH)
-        .open(&target.device_node)
-        .map_err(|error| {
-            if error.kind() == io::ErrorKind::PermissionDenied {
-                "Windows denied exclusive raw-disk access. Run OPEMOS as administrator and close programs using the USB drive.".into()
-            } else {
-                format!("Could not exclusively open the selected Windows raw disk: {error}")
-            }
-        })?;
+            .read(true)
+            .write(true)
+            .access_mode(GENERIC_READ | GENERIC_WRITE)
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_WRITE_THROUGH)
+            .open(&target.device_node)
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::PermissionDenied {
+                    "Windows denied exclusive raw-disk access. Run OPEMOS as administrator and close programs using the USB drive.".into()
+                } else {
+                    format!("Could not exclusively open the selected Windows raw disk: {error}")
+                }
+            })?;
         const IOCTL_STORAGE_GET_DEVICE_NUMBER: u32 = 0x002d_1080;
         const IOCTL_DISK_GET_LENGTH_INFO: u32 = 0x0007_405c;
         let mut opened_number = StorageDeviceNumber {
@@ -5024,15 +5207,20 @@ fn open_usb_raw_device(
             String::new()
         };
         let inventory_serial = windows_powershell(
-        &format!("$w=Get-CimInstance Win32_DiskDrive -Filter 'Index={number}' -ErrorAction Stop; [Console]::Out.Write(([string]$w.SerialNumber).Trim())"),
-        "bind the opened Windows raw disk to its stable serial identity",
-    )?;
+            &format!("$w=Get-CimInstance Win32_DiskDrive -Filter 'Index={number}' -ErrorAction Stop; [Console]::Out.Write(([string]$w.SerialNumber).Trim())"),
+            "bind the opened Windows raw disk to its stable serial identity",
+        )?;
         let inventory_serial = String::from_utf8(inventory_serial)
             .map_err(|_| "Windows returned an invalid selected-disk serial identity.")?;
         if !number_ok
             || !length_ok
             || opened_number.device_number != number
-            || opened_number.partition_number != u32::MAX
+            // Windows reports zero for a whole removable-media handle on
+            // some USB devices, including QEMU usb-storage. The direct
+            // PhysicalDrive path, exact device number, full capacity, USB
+            // bus, removable flag, and stable serial remain independently
+            // bound below.
+            || !matches!(opened_number.partition_number, 0 | u32::MAX)
             || u64::try_from(opened_length.length).ok() != Some(target.bytes)
             || !descriptor_ok
             || descriptor[10] == 0
@@ -5042,10 +5230,10 @@ fn open_usb_raw_device(
         {
             return Err("The opened Windows raw handle does not identify the exact selected whole disk and capacity.".into());
         }
-        Ok(file)
+        Ok((file, disk_is_offline))
     })();
     match opened {
-        Ok(file) => Ok((file, volume_locks)),
+        Ok((file, disk_is_offline)) => Ok((file, volume_locks, disk_is_offline)),
         Err(error) => {
             drop(volume_locks);
             let disposition = recover_windows_usb_target(target)
@@ -5082,7 +5270,7 @@ fn remount_usb_target(_identifier: &str) -> bool {
 fn open_usb_raw_device(
     _target: &UsbTargetCandidate,
     _cancel: &AtomicBool,
-) -> Result<(File, Vec<File>), String> {
+) -> Result<(File, Vec<File>, bool), String> {
     Err("USB writing is currently implemented only for macOS.".into())
 }
 
@@ -5183,7 +5371,8 @@ pub(crate) async fn write_image_to_usb(
                 message: usb_write_permission_message().into(),
             },
         );
-        let (mut device, volume_locks) = match open_usb_raw_device(&revalidated, &cancel) {
+        let (mut device, volume_locks, disk_is_offline) =
+            match open_usb_raw_device(&revalidated, &cancel) {
             Ok(device) => device,
             Err(error) => {
                 #[cfg(target_os = "windows")]
@@ -5193,12 +5382,14 @@ pub(crate) async fn write_image_to_usb(
                 #[cfg(not(target_os = "windows"))]
                 return Err(error);
             }
-        };
+            };
+        #[cfg(not(target_os = "windows"))]
+        let _ = disk_is_offline;
         #[cfg(target_os = "windows")]
         let opened_result = revalidate_windows_usb_target_state(
             &revalidated.device_identifier,
             image_bytes,
-            true,
+            disk_is_offline,
         );
         #[cfg(not(target_os = "windows"))]
         let opened_result = revalidate_usb_target(&revalidated.device_identifier, image_bytes);

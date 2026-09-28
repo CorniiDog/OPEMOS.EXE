@@ -181,7 +181,7 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /function applyCompletedOutput[\s\S]*usbPicker\.classList\.remove\("hidden"\)/);
   assert.match(script, /selectImage[\s\S]*usbPicker\.classList\.add\("hidden"\)/);
   assert.doesNotMatch(script, /if \(currentImage\) \{\s*await refreshUsbTargets\(\)/);
-  assert.match(script, /const preferredTarget = pendingUsbTarget;[\s\S]*await revealUsbImaging\(\{ preferredTarget \}\)/);
+  assert.match(script, /const preferredTarget = pendingUsbTarget;[\s\S]*completedUsbPreferredTarget = preferredTarget;[\s\S]*await revealUsbImaging\(\{ preferredTarget: completedUsbPreferredTarget \}\)/);
   assert.match(script, /elements\.resultMessage\.title = installedIdentity;/);
   assert.match(script, /Verified existing NVIDIA.*No rebuild needed; select a USB drive/);
   assert.doesNotMatch(script, /Existing NVIDIA output and adjacent manifest match byte-for-byte/);
@@ -268,7 +268,8 @@ test("stale build completions cannot overwrite a newer build context", () => {
   assert.match(script, /if \(!buildCompletionMatches\(event\.payload, activeBuildContext\)\) return;/);
   assert.match(script, /async function applyBuildFinished[\s\S]*if \(!admitBuildCompletion\(currentBuildSnapshot\(\)\)\.accepted[\s\S]*buildCompletionMatches\(completion, buildContext\)/);
   assert.match(script, /applyBuildFinished\(event\.payload, \{\s*openUsbReview: activeCompanion !== "build-progress",\s*\}\)/);
-  assert.match(script, /pendingUsbReview = !openUsbReview;/);
+  assert.match(script, /revealCompletedUsbReview = openUsbReview \|\| activeCompanion !== "build-progress";/);
+  assert.match(script, /pendingUsbReview = !revealCompletedUsbReview;/);
   assert.match(script, /selectionGeneration: imageSelectionGeneration/);
   assert.match(script, /activeBuildContext = null;[\s\S]*buildRunning = false;/);
 });

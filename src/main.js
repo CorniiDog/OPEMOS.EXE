@@ -1021,6 +1021,8 @@ async function applyBuildFinished(completion, { openUsbReview = true } = {}) {
     || buildContext.selectionGeneration !== imageSelectionGeneration) return;
   elements.resultMessage.textContent = message;
   elements.resultMessage.className = `result-message ${state === "complete" ? "success" : state === "failed" ? "error" : ""}`;
+  let revealCompletedUsbReview = false;
+  let completedUsbPreferredTarget = null;
   if (state === "complete" && output?.path && inputPath === currentImage) {
     usbContextGeneration += 1;
     const completed = await invoke("inspect_completed_nvidia_image", {
@@ -1035,23 +1037,14 @@ async function applyBuildFinished(completion, { openUsbReview = true } = {}) {
     pendingUsbTarget = null;
     elements.resultMessage.textContent = "The image is complete. Choose the removable USB destination for the validated output.";
     elements.resultMessage.className = "result-message success";
-    pendingUsbReview = !openUsbReview;
+    // inspect_completed_nvidia_image can take long enough for the user to close
+    // the progress companion before this handler reaches the handoff. Recheck
+    // the companion's current state instead of relying only on the visibility
+    // snapshot captured when build-finished was first received.
+    revealCompletedUsbReview = openUsbReview || activeCompanion !== "build-progress";
+    completedUsbPreferredTarget = preferredTarget;
+    pendingUsbReview = !revealCompletedUsbReview;
     pendingUsbReviewTarget = pendingUsbReview ? preferredTarget : null;
-    if (openUsbReview) {
-      const restored = await revealUsbImaging({ preferredTarget });
-      if (restored) {
-        elements.usbPickerMessage.textContent = "Select the intended removable drive, then choose Review & Write Selected USB.";
-      } else {
-        elements.usbDialogTarget.textContent = preferredTarget
-          ? "Select the removable drive again"
-          : "Select a removable drive";
-        elements.usbMessage.textContent = preferredTarget
-          ? "The earlier USB identity is no longer an exact match. Nothing was written. Refresh and select the intended whole removable drive again."
-          : "No eligible removable drive is selected. Connect one, refresh the list, and select it here.";
-        elements.usbMessage.className = preferredTarget ? "result-message error" : "result-message";
-        renderUsbConfirmationPhase(false);
-      }
-    }
   } else {
     pendingUsbTarget = null;
   }
@@ -1068,6 +1061,21 @@ async function applyBuildFinished(completion, { openUsbReview = true } = {}) {
   elements.usbTarget.disabled = !hasUsbTargets();
   elements.refreshUsbTargets.disabled = false;
   updateBuildButton();
+  if (revealCompletedUsbReview) {
+    const restored = await revealUsbImaging({ preferredTarget: completedUsbPreferredTarget });
+    if (restored) {
+      elements.usbPickerMessage.textContent = "Select the intended removable drive, then choose Review & Write Selected USB.";
+    } else {
+      elements.usbDialogTarget.textContent = completedUsbPreferredTarget
+        ? "Select the removable drive again"
+        : "Select a removable drive";
+      elements.usbMessage.textContent = completedUsbPreferredTarget
+        ? "The earlier USB identity is no longer an exact match. Nothing was written. Refresh and select the intended whole removable drive again."
+        : "No eligible removable drive is selected. Connect one, refresh the list, and select it here.";
+      elements.usbMessage.className = completedUsbPreferredTarget ? "result-message error" : "result-message";
+      renderUsbConfirmationPhase(false);
+    }
+  }
 }
 
 await mainWindow.listen("build-finished", async (event) => {
