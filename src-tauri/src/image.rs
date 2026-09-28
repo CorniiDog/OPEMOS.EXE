@@ -3861,7 +3861,7 @@ pub(crate) fn authorized_open_path(path: &Path, cancel: &AtomicBool) -> Result<F
 fn open_usb_raw_device(
     target: &UsbTargetCandidate,
     cancel: &AtomicBool,
-) -> Result<(File, Vec<File>), String> {
+) -> Result<(File, Vec<File>, bool), String> {
     use std::os::unix::fs::MetadataExt as _;
 
     let raw_node = PathBuf::from(format!("/dev/r{}", target.device_identifier));
@@ -3887,7 +3887,7 @@ fn open_usb_raw_device(
                 .into(),
         );
     }
-    Ok((file, Vec::new()))
+    Ok((file, Vec::new(), false))
 }
 
 #[cfg(target_os = "windows")]
@@ -4067,20 +4067,23 @@ fn perform_windows_usb_write(
         message: "Locking and dismounting every selected-disk volume.".into(),
     });
     unmount_usb_target(&target.device_identifier)?;
-    let (mut device, volume_locks) = open_usb_raw_device(&target, cancel)?;
-    let opened =
-        match revalidate_windows_usb_target_state(&target.device_identifier, image_bytes, true) {
-            Ok(opened) => opened,
-            Err(error) => {
-                drop(device);
-                drop(volume_locks);
-                return Err(match recover_windows_usb_target(&target) {
-                    Ok(true) => format!("{error} The unchanged target was safely ejected."),
-                    Ok(false) => format!("{error} The unchanged target was returned online."),
-                    Err(recovery) => format!("{error} {recovery}"),
-                });
-            }
-        };
+    let (mut device, volume_locks, disk_is_offline) = open_usb_raw_device(&target, cancel)?;
+    let opened = match revalidate_windows_usb_target_state(
+        &target.device_identifier,
+        image_bytes,
+        disk_is_offline,
+    ) {
+        Ok(opened) => opened,
+        Err(error) => {
+            drop(device);
+            drop(volume_locks);
+            return Err(match recover_windows_usb_target(&target) {
+                Ok(true) => format!("{error} The unchanged target was safely ejected."),
+                Ok(false) => format!("{error} The unchanged target was returned online."),
+                Err(recovery) => format!("{error} {recovery}"),
+            });
+        }
+    };
     if opened.identity_token != target.identity_token {
         drop(device);
         drop(volume_locks);
@@ -5038,7 +5041,7 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
 fn open_usb_raw_device(
     target: &UsbTargetCandidate,
     _cancel: &AtomicBool,
-) -> Result<(File, Vec<File>), String> {
+) -> Result<(File, Vec<File>, bool), String> {
     use std::ffi::c_void;
     use std::os::windows::fs::OpenOptionsExt as _;
     use std::os::windows::io::AsRawHandle as _;
@@ -5102,32 +5105,59 @@ fn open_usb_raw_device(
         return Err("The selected Windows removable disk changed before raw open.".into());
     }
     let volume_locks = lock_windows_disk_volumes(number)?;
-    let opened = (|| -> Result<File, String> {
-        windows_powershell(
-        &format!("$d=Get-Disk -Number {number} -ErrorAction Stop; if ($d.BusType -ne 'USB' -or $d.IsBoot -or $d.IsSystem -or $d.IsReadOnly -or $d.IsOffline) {{ throw 'disk safety guard refused' }}; Set-Disk -Number {number} -IsOffline $true -ErrorAction Stop; if (-not (Get-Disk -Number {number}).IsOffline) {{ throw 'disk did not become offline' }}"),
-        "take only the locked selected Windows removable disk offline",
-    )?;
-        let offline = revalidate_windows_usb_target_state(&target.device_identifier, 0, true)?;
-        if offline.identity_token != target.identity_token {
+    let opened = (|| -> Result<(File, bool), String> {
+        let offline_attempt = windows_powershell(
+            &format!("$d=Get-Disk -Number {number} -ErrorAction Stop; if ($d.BusType -ne 'USB' -or $d.IsBoot -or $d.IsSystem -or $d.IsReadOnly -or $d.IsOffline) {{ throw 'disk safety guard refused' }}; Set-Disk -Number {number} -IsOffline $true -ErrorAction Stop; if (-not (Get-Disk -Number {number}).IsOffline) {{ throw 'disk did not become offline' }}"),
+            "take only the locked selected Windows removable disk offline",
+        );
+        let (isolated, disk_is_offline) = match offline_attempt {
+            Ok(_) => (
+                revalidate_windows_usb_target_state(&target.device_identifier, 0, true)?,
+                true,
+            ),
+            Err(offline_error) => {
+                match revalidate_windows_usb_target_state(&target.device_identifier, 0, true) {
+                    Ok(offline) => (offline, true),
+                    Err(_) => {
+                        // Windows StorageWMI refuses Set-Disk -IsOffline for some genuine
+                        // removable-media devices. The fallback remains limited to the exact
+                        // eligible USB identity after every selected-disk volume is locked and
+                        // dismounted; the raw whole-disk handle below must also open exclusively.
+                        let online = revalidate_windows_usb_target_state(
+                            &target.device_identifier,
+                            0,
+                            false,
+                        )
+                        .map_err(|online_error| {
+                            format!(
+                                "{offline_error} The locked target could not be revalidated online for the removable-media fallback: {online_error}"
+                            )
+                        })?;
+                        (online, false)
+                    }
+                }
+            }
+        };
+        if isolated.identity_token != target.identity_token {
             return Err("The selected Windows removable disk changed while it was locked.".into());
         }
         const GENERIC_READ: u32 = 0x8000_0000;
         const GENERIC_WRITE: u32 = 0x4000_0000;
         const FILE_FLAG_WRITE_THROUGH: u32 = 0x8000_0000;
         let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .access_mode(GENERIC_READ | GENERIC_WRITE)
-        .share_mode(0)
-        .custom_flags(FILE_FLAG_WRITE_THROUGH)
-        .open(&target.device_node)
-        .map_err(|error| {
-            if error.kind() == io::ErrorKind::PermissionDenied {
-                "Windows denied exclusive raw-disk access. Run OPEMOS as administrator and close programs using the USB drive.".into()
-            } else {
-                format!("Could not exclusively open the selected Windows raw disk: {error}")
-            }
-        })?;
+            .read(true)
+            .write(true)
+            .access_mode(GENERIC_READ | GENERIC_WRITE)
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_WRITE_THROUGH)
+            .open(&target.device_node)
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::PermissionDenied {
+                    "Windows denied exclusive raw-disk access. Run OPEMOS as administrator and close programs using the USB drive.".into()
+                } else {
+                    format!("Could not exclusively open the selected Windows raw disk: {error}")
+                }
+            })?;
         const IOCTL_STORAGE_GET_DEVICE_NUMBER: u32 = 0x002d_1080;
         const IOCTL_DISK_GET_LENGTH_INFO: u32 = 0x0007_405c;
         let mut opened_number = StorageDeviceNumber {
@@ -5177,9 +5207,9 @@ fn open_usb_raw_device(
             String::new()
         };
         let inventory_serial = windows_powershell(
-        &format!("$w=Get-CimInstance Win32_DiskDrive -Filter 'Index={number}' -ErrorAction Stop; [Console]::Out.Write(([string]$w.SerialNumber).Trim())"),
-        "bind the opened Windows raw disk to its stable serial identity",
-    )?;
+            &format!("$w=Get-CimInstance Win32_DiskDrive -Filter 'Index={number}' -ErrorAction Stop; [Console]::Out.Write(([string]$w.SerialNumber).Trim())"),
+            "bind the opened Windows raw disk to its stable serial identity",
+        )?;
         let inventory_serial = String::from_utf8(inventory_serial)
             .map_err(|_| "Windows returned an invalid selected-disk serial identity.")?;
         if !number_ok
@@ -5195,10 +5225,10 @@ fn open_usb_raw_device(
         {
             return Err("The opened Windows raw handle does not identify the exact selected whole disk and capacity.".into());
         }
-        Ok(file)
+        Ok((file, disk_is_offline))
     })();
     match opened {
-        Ok(file) => Ok((file, volume_locks)),
+        Ok((file, disk_is_offline)) => Ok((file, volume_locks, disk_is_offline)),
         Err(error) => {
             drop(volume_locks);
             let disposition = recover_windows_usb_target(target)
@@ -5235,7 +5265,7 @@ fn remount_usb_target(_identifier: &str) -> bool {
 fn open_usb_raw_device(
     _target: &UsbTargetCandidate,
     _cancel: &AtomicBool,
-) -> Result<(File, Vec<File>), String> {
+) -> Result<(File, Vec<File>, bool), String> {
     Err("USB writing is currently implemented only for macOS.".into())
 }
 
@@ -5336,7 +5366,8 @@ pub(crate) async fn write_image_to_usb(
                 message: usb_write_permission_message().into(),
             },
         );
-        let (mut device, volume_locks) = match open_usb_raw_device(&revalidated, &cancel) {
+        let (mut device, volume_locks, disk_is_offline) =
+            match open_usb_raw_device(&revalidated, &cancel) {
             Ok(device) => device,
             Err(error) => {
                 #[cfg(target_os = "windows")]
@@ -5346,12 +5377,14 @@ pub(crate) async fn write_image_to_usb(
                 #[cfg(not(target_os = "windows"))]
                 return Err(error);
             }
-        };
+            };
+        #[cfg(not(target_os = "windows"))]
+        let _ = disk_is_offline;
         #[cfg(target_os = "windows")]
         let opened_result = revalidate_windows_usb_target_state(
             &revalidated.device_identifier,
             image_bytes,
-            true,
+            disk_is_offline,
         );
         #[cfg(not(target_os = "windows"))]
         let opened_result = revalidate_usb_target(&revalidated.device_identifier, image_bytes);
