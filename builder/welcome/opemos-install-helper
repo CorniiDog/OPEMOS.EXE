@@ -23,9 +23,17 @@ need() {
   command -v "$1" >/dev/null 2>&1 || die "required recovery tool is missing: $1"
 }
 
-require_tools() {
+require_inventory_tools() {
   local tool
-  for tool in awk blockdev btrfs cut findmnt flock install lsblk mktemp mount mountpoint readlink sed sha256sum sort steamos-chroot umount; do
+  for tool in awk blockdev findmnt lsblk readlink sed sha256sum tr; do
+    need "$tool"
+  done
+}
+
+require_install_tools() {
+  local tool
+  require_inventory_tools
+  for tool in btrfs cut flock grep install mktemp mount mountpoint sort steamos-chroot sync umount; do
     need "$tool"
   done
 }
@@ -491,14 +499,15 @@ install_to_disk() {
 }
 
 main() {
-  require_tools
   case "${1:-}" in
     inventory)
       [[ $# -eq 1 ]] || die "inventory takes no arguments"
+      require_inventory_tools
       inventory
       ;;
     inventory-report)
       [[ $# -eq 1 ]] || die "inventory-report takes no arguments"
+      require_inventory_tools
       inventory_report
       ;;
     media-info)
@@ -507,6 +516,7 @@ main() {
       ;;
     identity)
       [[ $# -eq 2 ]] || die "identity requires one device"
+      require_inventory_tools
       device=$(canonical_whole_disk "$2") || die "target is not a whole physical disk"
       eligible_disk "$device" || die "target is not currently eligible"
       disk_identity "$device"
@@ -514,6 +524,7 @@ main() {
     install)
       [[ $# -eq 6 && $5 == --confirm ]] ||
         die "install requires MODE DEVICE IDENTITY --confirm PHRASE"
+      require_install_tools
       install_to_disk "$2" "$3" "$4" "$6"
       ;;
     *)

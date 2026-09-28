@@ -15,9 +15,11 @@ device=$(readlink -f -- "$2")
 expected_bytes=$3
 source_commit=$4
 result=$(readlink -m -- "$5")
+expected_inventory_disks=${OPEMOS_EXPECTED_INVENTORY_DISKS:-1}
 
 [[ -f "$helper" && ! -L "$helper" ]] || die "the staged production helper is missing or unsafe"
 [[ "$expected_bytes" =~ ^[0-9]+$ ]] || die "the expected disk size is malformed"
+[[ "$expected_inventory_disks" =~ ^[1-9][0-9]*$ ]] || die "the expected inventory count is malformed"
 [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || die "the source commit is malformed"
 [[ "$device" == /dev/sd? ]] || die "the disposable target must be one whole Hyper-V SCSI disk"
 [[ -b "$device" && "$(lsblk -dnro TYPE "$device")" == disk ]] || die "the target is not a whole disk"
@@ -42,14 +44,23 @@ helper_sha256=$(sha256sum "$helper" | awk '{print $1}')
 model=$(lsblk -dnro MODEL "$device" | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//')
 serial=$(lsblk -dnro SERIAL "$device" | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//')
 
+# Exercise the installed command boundary before sourcing helper functions. This
+# catches discovery regressions caused by install-only prerequisites that are
+# absent from an otherwise valid recovery environment.
+unallocated_inventory=$("$helper" inventory) ||
+  die "the production helper command could not inspect the unallocated virtual disk"
+inventory_count=$(awk -F '\t' '$1 ~ /^\/dev\// && $7 == "fresh" { count++ } END { print count+0 }' \
+  <<<"$unallocated_inventory")
+[[ "$inventory_count" == "$expected_inventory_disks" ]] ||
+  die "the production helper listed $inventory_count fresh target(s), expected $expected_inventory_disks"
+awk -F '\t' -v wanted="$device" '$1 == wanted && $7 == "fresh" { found++ } END { exit found != 1 }' \
+  <<<"$unallocated_inventory" || die "inventory did not list the unallocated virtual disk exactly once"
+
 # shellcheck source=/dev/null
 source "$helper"
 
 unallocated_status=$(disk_status "$device")
 [[ "$unallocated_status" == eligible ]] || die "the unallocated virtual disk was not eligible"
-unallocated_inventory=$(inventory)
-awk -F '\t' -v wanted="$device" '$1 == wanted && $7 == "fresh" { found++ } END { exit found != 1 }' \
-  <<<"$unallocated_inventory" || die "inventory did not list the unallocated virtual disk exactly once"
 
 printf 'label: gpt\n,14G,L\n' | sfdisk --wipe always "$device" >/dev/null
 partprobe "$device"
