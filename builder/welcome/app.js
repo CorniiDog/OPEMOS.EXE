@@ -131,16 +131,27 @@ function phaseArtwork(phase) {
 function renderProgress(operation) {
   const [image, title, copy] = phaseArtwork(operation.phase || "");
   const progress = Math.max(0, Math.min(100, Number(operation.progress) || 0));
-  view.innerHTML = `
-    <div class="panel progress-layout">
+  if (!view.querySelector("[data-progress-view]")) {
+    view.innerHTML = `
+    <div class="panel progress-layout" data-progress-view>
       <div><span class="label">${state.bootstrap.mode === "simulation" ? "Safe simulation" : "Protected installation"}</span>
-        <h2>${escapeHtml((operation.phase || "working").replaceAll("-", " "))}</h2>
+        <h2 id="progress-phase"></h2>
         <p class="lead warning">Do not power off the computer or disconnect either drive.</p>
-        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><i style="--progress:${progress}%"></i></div>
-        <p class="lead">${escapeHtml(operation.message || "Working…")}</p>
+        <div id="progress-meter" class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="progress-fill" style="--progress:0%"></i></div>
+        <p id="progress-message" class="lead"></p>
       </div>
-      <aside class="slide"><img src="${image}" alt="Installation progress illustration"><strong>${title}</strong><span>${copy}</span></aside>
+      <aside class="slide"><img id="progress-artwork" alt="Installation progress illustration"><strong id="progress-title"></strong><span id="progress-copy"></span></aside>
     </div>`;
+  }
+  view.querySelector("#progress-phase").textContent = (operation.phase || "working").replaceAll("-", " ");
+  const meter = view.querySelector("#progress-meter");
+  meter.setAttribute("aria-valuenow", String(progress));
+  view.querySelector("#progress-fill").style.setProperty("--progress", `${progress}%`);
+  view.querySelector("#progress-message").textContent = operation.message || "Working…";
+  const artwork = view.querySelector("#progress-artwork");
+  if (artwork.getAttribute("src") !== image) artwork.setAttribute("src", image);
+  view.querySelector("#progress-title").textContent = title;
+  view.querySelector("#progress-copy").textContent = copy;
   setSafe(operation.terminal ? operation.message : "Installation is active. Keep the target and installation media connected.");
 }
 

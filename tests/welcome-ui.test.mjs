@@ -69,6 +69,70 @@ test("shared welcome UI covers the workflow and clearly labels synthetic state",
   assert.match(illustrations[2], /<use id="controller-knockout" href="#controller-shape"/);
 });
 
+test("status polling preserves the mounted progress DOM and unchanged artwork", () => {
+  const phaseArtworkSource = javascript.match(/function phaseArtwork\(phase\) \{[\s\S]*?\n\}/)?.[0];
+  const renderProgressSource = javascript.match(/function renderProgress\(operation\) \{[\s\S]*?\n\}\n\nfunction failureScreen/)?.[0]
+    ?.replace(/\n\nfunction failureScreen$/, "");
+  assert.ok(phaseArtworkSource);
+  assert.ok(renderProgressSource);
+
+  class Element {
+    constructor() {
+      this.attributes = new Map();
+      this.attributeWrites = new Map();
+      this.style = { setProperty: (name, value) => this.attributes.set(`style:${name}`, value) };
+      this.textContent = "";
+    }
+    getAttribute(name) { return this.attributes.get(name) ?? null; }
+    setAttribute(name, value) {
+      this.attributes.set(name, String(value));
+      this.attributeWrites.set(name, (this.attributeWrites.get(name) || 0) + 1);
+    }
+  }
+
+  const elements = new Map();
+  let htmlWrites = 0;
+  const view = {
+    querySelector(selector) {
+      if (selector === "[data-progress-view]") return elements.get("progress-root") || null;
+      return elements.get(selector.slice(1)) || null;
+    },
+    set innerHTML(markup) {
+      htmlWrites += 1;
+      assert.match(markup, /data-progress-view/);
+      for (const id of ["progress-root", "progress-phase", "progress-meter", "progress-fill", "progress-message", "progress-artwork", "progress-title", "progress-copy"])
+        elements.set(id, new Element());
+    },
+  };
+  const safeMessages = [];
+  const renderProgress = Function("view", "state", "setSafe", `
+    ${phaseArtworkSource}
+    ${renderProgressSource}
+    return renderProgress;
+  `)(view, { bootstrap: { mode: "production" } }, (message) => safeMessages.push(message));
+
+  renderProgress({ phase: "installing", progress: 10, message: "Writing rootfs." });
+  const artwork = elements.get("progress-artwork");
+  assert.equal(htmlWrites, 1);
+  assert.equal(artwork.getAttribute("src"), "assets/gaming.svg");
+  assert.equal(artwork.attributeWrites.get("src"), 1);
+
+  renderProgress({ phase: "installing", progress: 25, message: "Writing home." });
+  assert.equal(htmlWrites, 1, "a status poll must not replace the mounted progress view");
+  assert.equal(elements.get("progress-artwork"), artwork);
+  assert.equal(artwork.attributeWrites.get("src"), 1, "unchanged artwork must not reload");
+  assert.equal(elements.get("progress-meter").getAttribute("aria-valuenow"), "25");
+  assert.equal(elements.get("progress-fill").attributes.get("style:--progress"), "25%");
+  assert.equal(elements.get("progress-message").textContent, "Writing home.");
+
+  renderProgress({ phase: "complete", progress: 100, message: "Ready.", terminal: true });
+  assert.equal(htmlWrites, 1, "a phase transition must update the existing view in place");
+  assert.equal(elements.get("progress-artwork"), artwork);
+  assert.equal(artwork.getAttribute("src"), "assets/recovery.svg");
+  assert.equal(artwork.attributeWrites.get("src"), 2);
+  assert.equal(safeMessages.at(-1), "Ready.");
+});
+
 function numericAttribute(element, name) {
   const match = element.match(new RegExp(`\\b${name}="([0-9.]+)"`));
   assert.ok(match, `expected ${name} on ${element}`);

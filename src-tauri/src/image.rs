@@ -3018,18 +3018,21 @@ fn hidden_windows_command(program: &str) -> Command {
 #[cfg(target_os = "windows")]
 fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
     let script = "Get-Disk | ForEach-Object { $d=$_; $w=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number) -ErrorAction Stop; [pscustomobject]@{Index=$d.Number;FriendlyName=$d.FriendlyName;BusType=[string]$d.BusType;Size=[uint64]$d.Size;BytesPerSector=[uint64]$d.LogicalSectorSize;UniqueId=[string]$d.UniqueId;SerialNumber=[string]$w.SerialNumber;MediaType=[string]$w.MediaType;IsBoot=[bool]$d.IsBoot;IsSystem=[bool]$d.IsSystem;IsReadOnly=[bool]$d.IsReadOnly;IsOffline=[bool]$d.IsOffline} } | ConvertTo-Json -Compress";
-    let output = hidden_windows_command("powershell.exe")
-        .args([
+    let (status, stdout, stderr) = bounded_command_output_with_limits(
+        Path::new("powershell.exe"),
+        &[
             "-NoLogo",
             "-NoProfile",
             "-NonInteractive",
             "-Command",
             script,
-        ])
-        .output()
-        .map_err(|error| format!("Could not start Windows removable-drive inspection: {error}"))?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr)
+        ],
+        "inspect Windows removable drives",
+        Duration::from_secs(20),
+        4 * 1024 * 1024,
+    )?;
+    if !status.success() {
+        let detail = String::from_utf8_lossy(&stderr)
             .chars()
             .take(500)
             .collect::<String>();
@@ -3042,7 +3045,7 @@ fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, Str
             }
         ));
     }
-    usb_candidates_from_windows_json(&output.stdout, image_bytes)
+    usb_candidates_from_windows_json(&stdout, image_bytes)
 }
 
 #[cfg(any(target_os = "windows", test))]
