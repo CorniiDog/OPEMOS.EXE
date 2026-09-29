@@ -276,7 +276,7 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 58] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 59] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
         sha256: "ab9883af206b96cf5e3df3765842dba6f6a6e3c1bcfcf1f2f7fa370643134517",
@@ -473,6 +473,12 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 58] = [
         path: "lib/capture_bounded_command.py",
         sha256: "a0d2290d1df62a07b546e182035bd651802b4b0762f262e7e6f6cbf13d158659",
         bytes: 2_965,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/configure_display_initramfs.py",
+        sha256: "00e381292be36629da3e5077544729cbc16e6a7b516db3ff65540b0dc6b64dfa",
+        bytes: 3_547,
         executable: true,
     },
     PinnedInstallerFile {

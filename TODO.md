@@ -92,7 +92,7 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
-- [ ] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
+- [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.
   The protected PR153 executable correctly failed closed during integrated
   image construction because its pre-squash 60,578-byte/SHA-256
@@ -102,9 +102,25 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   `ab9883af206b96cf5e3df3765842dba6f6a6e3c1bcfcf1f2f7fa370643134517`.
   The focused contract regression now binds that exact tuple and the resulting
   717,628-byte closed installer set. Canonical-byte verification and diff
-  hygiene pass locally; protected compilation, native Windows artifact/startup,
-  exact Core review, squash merge, and failed-stage-only integrated image and
-  visible installed graphical-boot acceptance remain.
+  hygiene passed locally. All nine required checks, native Windows
+  artifact/startup, independent artifact-manifest validation, and exact Core
+  review passed. PR #154 squash-merged to protected main as
+  `93648366e0bb5d357272fc15f77e0a4e21329678`, whose tree exactly equals the
+  approved head tree. Failed-stage-only integrated image acceptance then passed
+  source hashing and normalization and reached the real offline mutation before
+  exposing the next closed-set omission below.
+
+- [ ] Include Core's exact executable `lib/configure_display_initramfs.py` in
+  the closed offline installer support set. The failed-stage-only PR154 run
+  reached the real second-pass offline mutation and then failed module
+  verification because `install_to_root.sh` invoked that unstaged file. The
+  canonical GitHub object at Core `4b676dc4efed50dac446a59475b5fadf83722176`
+  is 3,547 bytes with SHA-256
+  `00e381292be36629da3e5077544729cbc16e6a7b516db3ff65540b0dc6b64dfa`
+  and executable mode `100755`. The focused regression binds the exact tuple,
+  59-file count, and 721,175-byte aggregate. Protected compilation, Windows
+  artifact/startup, exact Core review, squash merge, and the failed-stage-only
+  integrated image/visible installed graphical-boot acceptance remain.
 
 - [ ] Preserve a writable native SteamOS desktop by enforcing the exact numeric
   deck identity `1000:1000` on the four existing user-home directory roots that
