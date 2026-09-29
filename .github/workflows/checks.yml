@@ -48,7 +48,7 @@ jobs:
           repository: CorniiDog/OPEMOS
           ref: 4b676dc4efed50dac446a59475b5fadf83722176
           path: opemos-core-contracts
-          fetch-depth: 185
+          fetch-depth: 186
           persist-credentials: false
 
       - name: Verify bundled maintainer workflow against exact Core output
