@@ -24,6 +24,17 @@ and a browser that exits before presenting a stable window advances to the next
 installed supported browser. The existing Zenity recovery interface opens only
 after every available full-screen runtime fails.
 
+The Qt 6 runtime records its selected renderer policy plus bounded Qt WebEngine
+and scene-graph backend diagnostics in that startup log. On Intel-display plus
+NVIDIA-render hybrid systems it keeps Qt Quick and Chromium on the default DRI
+device and the same OpenGL path instead of
+allowing Chromium's NVIDIA-specific Vulkan override to diverge from Qt. Other
+systems retain Qt's automatic accelerated selection. If the accelerated runtime
+exits or cannot report a ready UI within 20 seconds, the launcher gives its
+exact owned process two seconds to stop and then forces cleanup before retrying
+Qt Quick and Chromium together in software mode. Installed browsers and the
+existing Zenity interface remain the final fallbacks.
+
 The visible Desktop launcher is installed as a deck-owned executable desktop
 entry so KDE treats it as trusted before the recovery session appears. The
 matching autostart entry remains non-executable because it is configuration,

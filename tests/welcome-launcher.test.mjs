@@ -13,8 +13,10 @@ function fixture(context) {
   const bin = join(root, "bin");
   const state = join(root, "state");
   const ui = join(root, "ui");
+  const pci = join(root, "pci");
   mkdirSync(bin);
   mkdirSync(ui);
+  mkdirSync(pci);
   const helper = join(root, "helper");
   const server = join(root, "server.py");
   const qt6Qmlscene = join(bin, "qt6-qmlscene");
@@ -51,11 +53,23 @@ exit 0
     .replace('readonly WELCOME_QML="$WELCOME_UI/opemos-welcome.qml"', `readonly WELCOME_QML=${qml}`)
     .replace("readonly WELCOME_SERVER=/usr/lib/opemos-install-media/welcome_server.py", `readonly WELCOME_SERVER=${server}`)
     .replace("readonly QT6_QMLSCENE=/usr/lib/qt6/bin/qmlscene", `readonly QT6_QMLSCENE=${qt6Qmlscene}`)
+    .replace("readonly PCI_DEVICES_ROOT=/sys/bus/pci/devices", `readonly PCI_DEVICES_ROOT=${pci}`)
+    .replace("readonly GRAPHICAL_READY_TIMEOUT_SECONDS=20", "readonly GRAPHICAL_READY_TIMEOUT_SECONDS=1")
+    .replace("readonly GRAPHICAL_TERMINATION_GRACE_SECONDS=2", "readonly GRAPHICAL_TERMINATION_GRACE_SECONDS=1")
     .replace("readonly STATE_DIRECTORY=/home/deck/.local/state/open-opemos", `readonly STATE_DIRECTORY=${state}`)
     .replace("exec 8>/tmp/open-opemos-welcome.lock", `exec 8>${lock}`);
   writeFileSync(launcher, source);
   chmodSync(launcher, 0o755);
-  return { bin, launcher, lock, qt6Qmlscene, state, visible };
+  return { bin, launcher, lock, pci, qt6Qmlscene, state, visible };
+}
+
+function addGraphicsDevice(pci, address, vendor, { bootVga = "0", driver = "" } = {}) {
+  const device = join(pci, address);
+  mkdirSync(device);
+  writeFileSync(join(device, "class"), "0x030000\n");
+  writeFileSync(join(device, "vendor"), `${vendor}\n`);
+  writeFileSync(join(device, "boot_vga"), `${bootVga}\n`);
+  if (driver) writeFileSync(join(device, "driver-name"), driver);
 }
 
 test("the recovery image Qt WebEngine shell is the primary fullscreen runtime", (context) => {
@@ -72,6 +86,87 @@ exit 0
   });
   assert.equal(result.status, 0, result.stderr);
   assert.throws(() => readFileSync(visible, "utf8"), { code: "ENOENT" });
+});
+
+test("an Intel display and NVIDIA render hybrid uses one OpenGL device path and records both devices", (context) => {
+  const { bin, launcher, pci, qt6Qmlscene, state } = fixture(context);
+  addGraphicsDevice(pci, "0000:00:02.0", "0x8086", { bootVga: "1" });
+  addGraphicsDevice(pci, "0000:01:00.0", "0x10de");
+  writeFileSync(qt6Qmlscene, `#!/bin/sh
+test "$QSG_RHI_BACKEND" = opengl || exit 20
+test "$QSG_INFO" = 1 || exit 21
+test "$DRI_PRIME" = 0 || exit 26
+case "$QTWEBENGINE_CHROMIUM_FLAGS" in
+  *--use-gl=angle*--use-angle=gl*--disable-features=Vulkan*) ;;
+  *) exit 22;;
+esac
+case "$QT_LOGGING_RULES" in *qt.webenginecontext.debug=true*) ;; *) exit 23;; esac
+touch "$(dirname "$1")/ui-ready"
+sleep 2.1
+`, { mode: 0o755 });
+  const result = spawnSync("bash", [launcher], {
+    encoding: "utf8", env: testEnvironment(bin), timeout: 5000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const log = readFileSync(join(state, "welcome-startup.log"), "utf8");
+  assert.match(log, /Intel display\/NVIDIA render hybrid coherent OpenGL/);
+  assert.match(log, /pci=0000:00:02\.0 vendor=0x8086/);
+  assert.match(log, /pci=0000:01:00\.0 vendor=0x10de/);
+});
+
+test("an NVIDIA boot display does not force the Intel-display hybrid policy", (context) => {
+  const { bin, launcher, pci, qt6Qmlscene, state } = fixture(context);
+  addGraphicsDevice(pci, "0000:00:02.0", "0x8086");
+  addGraphicsDevice(pci, "0000:01:00.0", "0x10de", { bootVga: "1" });
+  writeFileSync(qt6Qmlscene, `#!/bin/sh
+test -z "\${QSG_RHI_BACKEND:-}" || exit 27
+test -z "\${QTWEBENGINE_CHROMIUM_FLAGS:-}" || exit 28
+touch "$(dirname "$1")/ui-ready"
+sleep 2.1
+`, { mode: 0o755 });
+  const result = spawnSync("bash", [launcher], {
+    encoding: "utf8", env: testEnvironment(bin), timeout: 5000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const log = readFileSync(join(state, "welcome-startup.log"), "utf8");
+  assert.match(log, /automatic accelerated backend/);
+});
+
+test("a failed accelerated Qt launch retries with coherent software rendering", (context) => {
+  const { bin, launcher, qt6Qmlscene, state } = fixture(context);
+  writeFileSync(qt6Qmlscene, `#!/bin/sh
+if [ "\${QT_QUICK_BACKEND:-}" != software ]; then exit 24; fi
+test "$QTWEBENGINE_CHROMIUM_FLAGS" = --disable-gpu || exit 25
+touch "$(dirname "$1")/ui-ready"
+sleep 2.1
+`, { mode: 0o755 });
+  const result = spawnSync("bash", [launcher], {
+    encoding: "utf8", env: testEnvironment(bin), timeout: 5000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const log = readFileSync(join(state, "welcome-startup.log"), "utf8");
+  assert.match(log, /qt:auto\) exited with status 24/);
+  assert.match(log, /software fallback/);
+});
+
+test("a hung accelerated renderer is bounded before the software retry", (context) => {
+  const { bin, launcher, qt6Qmlscene, state } = fixture(context);
+  writeFileSync(qt6Qmlscene, `#!/bin/sh
+if [ "\${QT_QUICK_BACKEND:-}" != software ]; then
+  trap '' TERM
+  while :; do sleep 0.1; done
+fi
+touch "$(dirname "$1")/ui-ready"
+sleep 2.1
+`, { mode: 0o755 });
+  const result = spawnSync("bash", [launcher], {
+    encoding: "utf8", env: testEnvironment(bin), timeout: 6000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const log = readFileSync(join(state, "welcome-startup.log"), "utf8");
+  assert.match(log, /did not report a ready interface within 1 seconds/);
+  assert.match(log, /resisted TERM for 1 seconds; forcing exact owned-process cleanup/);
+  assert.match(log, /software fallback/);
 });
 
 test("a PATH Qt 5 qmlscene is not mistaken for the recovery image Qt 6 runtime", (context) => {

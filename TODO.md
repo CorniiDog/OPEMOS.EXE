@@ -3338,7 +3338,7 @@ must be reported; a default-suite pass does not imply hardware certification.
   closed. Authenticated handoff SHA-256 is
   `50b7d8bea24b34a7ba2e9d657217f0028faceaaefe72ef2d2ced89aa02d25052`.
 
-- [ ] Correct the user-reproduced protected-main live transition in which the
+- [x] Correct the user-reproduced protected-main live transition in which the
   native build-progress window is hidden after a completed NVIDIA build but the
   main window can retain stale companion state, leaving the application shell
   inert and indefinitely deferring the USB inventory handoff until restart.
@@ -3365,8 +3365,38 @@ must be reported; a default-suite pass does not imply hardware certification.
   replacement, elevation, write, flush, readback, eject, and refusal guards
   remain. Focused UI/state checks pass 30/30 and the Rust regression proves an
   accepted write remains active when time advances beyond twice the TTL while
-  the same consumed session cannot be reused. Changed-head CI, artifact,
-  disposable KVM acceptance, and exact Core review remain pending.
+  the same consumed session cannot be reused. Exact head
+  `b6e4815f965beddf428b0122b30bcd3d82af358c` passed all nine checks,
+  disposable KVM genuine-pointer acceptance, and exact Core review, then
+  squash-merged as protected main
+  `449d38bc8a860fd81efaf7edac4aa986b962c439` with identical tree
+  `b93a00e652fd449e042baf9cc266fc248eae4792`. Artifact `11031082190`
+  independently validated at 2,237,271,121 bytes with ZIP SHA-256
+  `1cd58433050cf4b398a659e1532baea28268ad04e47e177adfef57e6c5d8d204`
+  and executable SHA-256
+  `88affc407a1899df725e3e56c24db893b2b239c8117144f7f19f109a2796c104`.
+  Guarded headless deployment completed at
+  `Current-449d38bc-2026-09-29`, preserving prior folders and leaving the app
+  closed. Authenticated handoff SHA-256 is
+  `cb99d098641625ff1da86af68bb8de33bc93ab65bd215964d31823f30c64c17e`.
+
+- [ ] Correct the user-reported slow fullscreen installation-media UI on an
+  Intel/RTX hybrid laptop without duplicating Core's installed-system display
+  work. The active fresh branch makes Qt Quick and Chromium use one OpenGL path
+  on detected Intel-display/NVIDIA-render hybrid graphics, leaves other hardware on Qt's
+  automatic accelerated selection, and records PCI plus Qt/WebEngine backend
+  diagnostics. An accelerated runtime that exits or cannot report readiness in
+  20 seconds gets a bounded two-second TERM grace and exact owned-PID KILL,
+  then retries with both Qt Quick and Chromium in software mode before
+  the existing browser and Zenity fallbacks. Focused launcher regressions prove
+  hybrid selection, diagnostics, immediate failure fallback, and bounded hung-
+  renderer fallback; disposable-VM UI evidence, required CI, and exact Core
+  review remain pending. Core's separately owned hybrid installed-boot
+  correction passed exact EXE counterpart review and squash-merged as
+  `4b676dc4efed50dac446a59475b5fadf83722176`; the same active PR now consumes
+  that exact canonical GitHub commit as the ordinary Core dependency pin.
+  The final milestone still requires proving a visible installed graphical
+  session on the physical hybrid panel.
 
 ### Alpha
 

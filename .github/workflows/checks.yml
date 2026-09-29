@@ -46,9 +46,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: CorniiDog/OPEMOS
-          ref: 9d458d784a0d7d189189829885b416a9eb38d0eb
+          ref: 4b676dc4efed50dac446a59475b5fadf83722176
           path: opemos-core-contracts
-          fetch-depth: 185
+          fetch-depth: 186
           persist-credentials: false
 
       - name: Verify bundled maintainer workflow against exact Core output
@@ -79,7 +79,7 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
-          OPEMOS_CORE_EXPECTED_COMMIT: 9d458d784a0d7d189189829885b416a9eb38d0eb
+          OPEMOS_CORE_EXPECTED_COMMIT: 4b676dc4efed50dac446a59475b5fadf83722176
 
   linux-integration:
     runs-on: ubuntu-24.04
