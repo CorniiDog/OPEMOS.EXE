@@ -12,6 +12,7 @@ readonly WELCOME_SERVER=/usr/lib/opemos-install-media/welcome_server.py
 readonly QT6_QMLSCENE=/usr/lib/qt6/bin/qmlscene
 readonly PCI_DEVICES_ROOT=/sys/bus/pci/devices
 readonly GRAPHICAL_READY_TIMEOUT_SECONDS=20
+readonly GRAPHICAL_TERMINATION_GRACE_SECONDS=2
 readonly STATE_DIRECTORY=/home/deck/.local/state/open-opemos
 readonly LAST_LOG_FILE="$STATE_DIRECTORY/last-install-log"
 readonly STARTUP_LOG_FILE="$STATE_DIRECTORY/welcome-startup.log"
@@ -115,6 +116,22 @@ log_graphics_devices() {
   done
 }
 
+stop_graphical_process() {
+  local pid=${1:-} label=${2:-process} deadline
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+  kill -TERM "$pid" >/dev/null 2>&1 || true
+  deadline=$((SECONDS + GRAPHICAL_TERMINATION_GRACE_SECONDS))
+  while kill -0 "$pid" 2>/dev/null && (( SECONDS < deadline )); do
+    sleep 0.1
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    printf 'The graphical installer %s (pid %s) resisted TERM for %s seconds; forcing exact owned-process cleanup.\n' \
+      "$label" "$pid" "$GRAPHICAL_TERMINATION_GRACE_SECONDS"
+    kill -KILL "$pid" >/dev/null 2>&1 || true
+  fi
+}
+
 launch_fullscreen_welcome() {
   local browser candidate runtime server_pid browser_pid port url browser_status started_at elapsed qt_policy ready_deadline
   local -a browsers=()
@@ -139,8 +156,8 @@ launch_fullscreen_welcome() {
   runtime=$(mktemp -d /tmp/open-opemos-welcome.XXXXXX) || return 1
   chmod 0700 "$runtime"
   cleanup_graphical() {
-    [[ -z "${browser_pid:-}" ]] || kill -TERM "$browser_pid" >/dev/null 2>&1 || true
-    [[ -z "${server_pid:-}" ]] || kill -TERM "$server_pid" >/dev/null 2>&1 || true
+    stop_graphical_process "${browser_pid:-}" browser
+    stop_graphical_process "${server_pid:-}" controller
     [[ -z "${server_pid:-}" ]] || wait "$server_pid" >/dev/null 2>&1 || true
     rm -rf "$runtime"
   }
@@ -206,7 +223,7 @@ launch_fullscreen_welcome() {
       if kill -0 "$browser_pid" 2>/dev/null && [[ ! -f "$runtime/ui-ready" ]]; then
         printf 'The graphical installer browser (%s) did not report a ready interface within %s seconds; terminating it and trying the next supported runtime.\n' \
           "$browser" "$GRAPHICAL_READY_TIMEOUT_SECONDS"
-        kill -TERM "$browser_pid" >/dev/null 2>&1 || true
+        stop_graphical_process "$browser_pid" browser
       fi
       browser_status=0
       wait "$browser_pid" || browser_status=$?

@@ -55,6 +55,7 @@ exit 0
     .replace("readonly QT6_QMLSCENE=/usr/lib/qt6/bin/qmlscene", `readonly QT6_QMLSCENE=${qt6Qmlscene}`)
     .replace("readonly PCI_DEVICES_ROOT=/sys/bus/pci/devices", `readonly PCI_DEVICES_ROOT=${pci}`)
     .replace("readonly GRAPHICAL_READY_TIMEOUT_SECONDS=20", "readonly GRAPHICAL_READY_TIMEOUT_SECONDS=1")
+    .replace("readonly GRAPHICAL_TERMINATION_GRACE_SECONDS=2", "readonly GRAPHICAL_TERMINATION_GRACE_SECONDS=1")
     .replace("readonly STATE_DIRECTORY=/home/deck/.local/state/open-opemos", `readonly STATE_DIRECTORY=${state}`)
     .replace("exec 8>/tmp/open-opemos-welcome.lock", `exec 8>${lock}`);
   writeFileSync(launcher, source);
@@ -152,7 +153,7 @@ test("a hung accelerated renderer is bounded before the software retry", (contex
   const { bin, launcher, qt6Qmlscene, state } = fixture(context);
   writeFileSync(qt6Qmlscene, `#!/bin/sh
 if [ "\${QT_QUICK_BACKEND:-}" != software ]; then
-  trap 'exit 0' TERM
+  trap '' TERM
   while :; do sleep 0.1; done
 fi
 touch "$(dirname "$1")/ui-ready"
@@ -164,6 +165,7 @@ sleep 2.1
   assert.equal(result.status, 0, result.stderr);
   const log = readFileSync(join(state, "welcome-startup.log"), "utf8");
   assert.match(log, /did not report a ready interface within 1 seconds/);
+  assert.match(log, /resisted TERM for 1 seconds; forcing exact owned-process cleanup/);
   assert.match(log, /software fallback/);
 });
 

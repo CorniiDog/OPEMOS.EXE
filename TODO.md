@@ -3386,7 +3386,8 @@ must be reported; a default-suite pass does not imply hardware certification.
   on detected Intel-display/NVIDIA-render hybrid graphics, leaves other hardware on Qt's
   automatic accelerated selection, and records PCI plus Qt/WebEngine backend
   diagnostics. An accelerated runtime that exits or cannot report readiness in
-  20 seconds retries with both Qt Quick and Chromium in software mode before
+  20 seconds gets a bounded two-second TERM grace and exact owned-PID KILL,
+  then retries with both Qt Quick and Chromium in software mode before
   the existing browser and Zenity fallbacks. Focused launcher regressions prove
   hybrid selection, diagnostics, immediate failure fallback, and bounded hung-
   renderer fallback; disposable-VM UI evidence, required CI, and exact Core

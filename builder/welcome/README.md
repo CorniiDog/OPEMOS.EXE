@@ -30,9 +30,10 @@ NVIDIA-render hybrid systems it keeps Qt Quick and Chromium on the default DRI
 device and the same OpenGL path instead of
 allowing Chromium's NVIDIA-specific Vulkan override to diverge from Qt. Other
 systems retain Qt's automatic accelerated selection. If the accelerated runtime
-exits or cannot report a ready UI within 20 seconds, the launcher retries Qt
-Quick and Chromium together in software mode before trying installed browsers
-and the existing Zenity fallback.
+exits or cannot report a ready UI within 20 seconds, the launcher gives its
+exact owned process two seconds to stop and then forces cleanup before retrying
+Qt Quick and Chromium together in software mode. Installed browsers and the
+existing Zenity interface remain the final fallbacks.
 
 The visible Desktop launcher is installed as a deck-owned executable desktop
 entry so KDE treats it as trusted before the recovery session appears. The
