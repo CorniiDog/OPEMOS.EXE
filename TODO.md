@@ -3351,9 +3351,22 @@ must be reported; a default-suite pass does not imply hardware certification.
   suite passes 32/32 through `heavy.sh`; formatting and warnings-denied
   all-target/all-feature Rust checking pass. The broad frontend probe has only
   two unrelated host-state fixture failures in this execution environment; the
-  changed stale-completion assertion now passes. Mandatory disposable-Windows
-  reproduction with an actual build, attached virtual USB, and genuine pointer
-  actions remains required before commit/push/PR.
+  changed stale-completion assertion now passes. Disposable-Windows genuine-
+  pointer evidence subsequently proved the exact packaged NVIDIA build returns
+  to usable USB Imaging and a separately attached 32-GiB QEMU USB device is
+  immediately selectable without restarting. That acceptance also reproduced
+  a second live-path defect: the two-button-plus-browser-confirmation flow let
+  the required 8.12-GB image rehash outlive the 60-second armed-session TTL
+  before the backend began the write. The current bounded follow-up exposes one
+  explicit `Write & Verify USB` action after typed `ERASE`, immediately starts
+  the write command after preflight, atomically consumes/activates the one-time
+  session before slow image and device revalidation, and leaves it consumed on
+  every failure so `ERASE` must be retyped. All hash, device identity,
+  replacement, elevation, write, flush, readback, eject, and refusal guards
+  remain. Focused UI/state checks pass 30/30 and the Rust regression proves an
+  accepted write remains active when time advances beyond twice the TTL while
+  the same consumed session cannot be reused. Changed-head CI, artifact,
+  disposable KVM acceptance, and exact Core review remain pending.
 
 ### Alpha
 

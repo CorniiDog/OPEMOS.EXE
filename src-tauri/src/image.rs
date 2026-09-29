@@ -2513,30 +2513,34 @@ impl UsbPreparationManager {
         self.active_token.as_deref() == Some(session_token)
     }
 
-    fn armed(&mut self, session_token: &str, now: Instant) -> Option<ArmedUsbPreflight> {
+    fn begin_write(
+        &mut self,
+        session_token: &str,
+        now: Instant,
+    ) -> Option<(ArmedUsbPreflight, Arc<AtomicBool>)> {
         if self
             .armed
             .as_ref()
             .is_some_and(|armed| now >= armed.expires_at)
         {
             self.armed = None;
+            return None;
         }
-        self.armed
+        if !self
+            .armed
             .as_ref()
-            .filter(|armed| armed.session_token == session_token)
-            .cloned()
-    }
-
-    fn begin_write(&mut self, session_token: &str, now: Instant) -> Option<Arc<AtomicBool>> {
-        self.armed(session_token, now)?;
+            .is_some_and(|armed| armed.session_token == session_token)
+        {
+            return None;
+        }
+        let armed = self.armed.take()?;
         if self.active_token.is_some() {
             return None;
         }
-        self.armed = None;
         let cancel = Arc::new(AtomicBool::new(false));
         self.active_token = Some(session_token.into());
         self.cancel_write = Some(cancel.clone());
-        Some(cancel)
+        Some((armed, cancel))
     }
 
     fn finish_write(&mut self, session_token: &str) {
@@ -2644,6 +2648,12 @@ impl UsbPreparationManager {
         now: Instant,
     ) -> Option<Arc<AtomicBool>> {
         self.begin_write(session_token, now)
+            .map(|(_armed, cancel)| cancel)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn finish_write_for_test(&mut self, session_token: &str) {
+        self.finish_write(session_token);
     }
 }
 
@@ -5409,39 +5419,32 @@ pub(crate) async fn write_image_to_usb(
         return Err("The USB intent session token is invalid.".into());
     }
     let manager_state = app.state::<Mutex<UsbPreparationManager>>();
-    let armed = {
+    let (armed, cancel) = {
         let mut manager = manager_state
             .lock()
             .map_err(|_| "USB preparation state is unavailable.")?;
-        manager.armed(&session_token, Instant::now()).ok_or(
+        manager.begin_write(&session_token, Instant::now()).ok_or(
             "The USB intent session expired or was replaced. Revalidate the image and device.",
         )?
     };
-    let (image, image_bytes, image_sha256) =
-        tauri::async_runtime::spawn_blocking(move || validate_usb_image_identity(&image_path))
-            .await
-            .map_err(|error| format!("USB image revalidation worker failed: {error}"))??;
-    if image_sha256 != armed.image_sha256 {
-        return Err("The completed image identity changed after USB confirmation.".into());
-    }
-    let target_identifier = armed.device_identifier.clone();
-    let target = tauri::async_runtime::spawn_blocking(move || {
-        revalidate_usb_target(&target_identifier, image_bytes)
-    })
-    .await
-    .map_err(|error| format!("USB device revalidation worker failed: {error}"))??;
-    if target.identity_token != armed.identity_token {
-        return Err("The selected removable device was replaced after confirmation.".into());
-    }
-    let cancel = {
-        let mut manager = manager_state
-            .lock()
-            .map_err(|_| "USB preparation state is unavailable.")?;
-        manager
-            .begin_write(&session_token, Instant::now())
-            .ok_or("The USB intent session is no longer available for writing.")?
-    };
-    let app_for_progress = app.clone();
+    let outcome = async {
+        let (image, image_bytes, image_sha256) =
+            tauri::async_runtime::spawn_blocking(move || validate_usb_image_identity(&image_path))
+                .await
+                .map_err(|error| format!("USB image revalidation worker failed: {error}"))??;
+        if image_sha256 != armed.image_sha256 {
+            return Err("The completed image identity changed after USB confirmation.".into());
+        }
+        let target_identifier = armed.device_identifier.clone();
+        let target = tauri::async_runtime::spawn_blocking(move || {
+            revalidate_usb_target(&target_identifier, image_bytes)
+        })
+        .await
+        .map_err(|error| format!("USB device revalidation worker failed: {error}"))??;
+        if target.identity_token != armed.identity_token {
+            return Err("The selected removable device was replaced after confirmation.".into());
+        }
+        let app_for_progress = app.clone();
     #[cfg(target_os = "windows")]
     let elevation_owner = app
         .get_webview_window("main")
@@ -5451,7 +5454,7 @@ pub(crate) async fn write_image_to_usb(
     let device_identifier = target.device_identifier.clone();
     let device_node = target.device_node.clone();
     let expected_sha256 = image_sha256.clone();
-    let worker = tauri::async_runtime::spawn_blocking(move || {
+        let worker = tauri::async_runtime::spawn_blocking(move || {
         #[cfg(target_os = "windows")]
         if !windows_process_is_elevated() {
             return launch_elevated_windows_usb_writer(
@@ -5593,12 +5596,15 @@ pub(crate) async fn write_image_to_usb(
             }
             .into(),
         })
-    })
+        })
+        .await;
+        worker.map_err(|error| format!("USB writer worker failed: {error}"))?
+    }
     .await;
     if let Ok(mut manager) = manager_state.lock() {
         manager.finish_write(&session_token);
     }
-    worker.map_err(|error| format!("USB writer worker failed: {error}"))?
+    outcome
 }
 
 #[cfg(test)]

@@ -110,6 +110,9 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(script, /usbTarget\.addEventListener\("change"[\s\S]*usbPreflightSession = null;\s*renderUsbTargetSelection\(\);[\s\S]*cancel_usb_write_preflight/);
   assert.match(css, /\.usb-picker\.is-loading #refresh-usb-targets::before\s*\{[^}]*animation:\s*glass-control-spin \.8s linear infinite;/);
   assert.doesNotMatch(html, /Check Preparation Status/);
+  assert.match(html, /id="arm-usb-preflight"[^>]*>Write &amp; Verify USB<\/button>/);
+  assert.doesNotMatch(html, /id="write-usb-image"/);
+  assert.doesNotMatch(script, /window\.confirm|FINAL WARNING/);
   assert.match(script, /function renderUsbConfirmationPhase\(prepared = Boolean\(usbPreflightSession\)\)/);
   assert.match(script, /usbConfirmation\.addEventListener\("input"[\s\S]*admitUsbConfirmationEdit\(currentBuildSnapshot\(\), \{[\s\S]*hasPreflightSession: Boolean\(usbPreflightSession\?\.sessionToken\)[\s\S]*if \(!admission\.accepted\)[\s\S]*usbConfirmation\.value = "";[\s\S]*armUsbPreflight\.disabled = true;/);
   assert.match(script, /const admission = admitUsbPreflightStart\(currentBuildSnapshot\(\), \{[\s\S]*confirmationMatches: usbConfirmationMatches\(elements\.usbConfirmation\.value\)/);
@@ -117,6 +120,8 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(script, /if \(!admission\.accepted\) return;/);
   assert.doesNotMatch(script, /if \(usbArmPending \|\| !completedOutput\?\.path \|\| !option\?\.value/);
   assert.match(script, /renderUsbConfirmationPhase\(true\)/);
+  assert.match(script, /armUsbPreflight\.addEventListener\("click", async \(\) => \{[\s\S]*invoke\("arm_usb_write_preflight"[\s\S]*usbPreflightSession = session;[\s\S]*await writePreparedUsb\(\)/);
+  assert.match(script, /async function writePreparedUsb\(\)[\s\S]*invoke\("write_image_to_usb"[\s\S]*catch \(error\) \{[\s\S]*usbPreflightSession = null;[\s\S]*usbConfirmation\.value = "";[\s\S]*renderUsbConfirmationPhase\(false\)/);
   assert.match(script, /async function dismissUsbMenu\(\)[\s\S]*usbContextGeneration \+= 1;[\s\S]*cancel_usb_write_preflight/);
   assert.match(script, /const admission = admitUsbPreflightCancel\(currentBuildSnapshot\(\), \{[\s\S]*cancelPending: usbCancelPending,[\s\S]*hasPreflightSession: Boolean\(usbPreflightSession\?\.sessionToken\)/);
   assert.match(script, /usbTarget\.addEventListener\("change"[\s\S]*admitUsbTargetSelection\(currentBuildSnapshot\(\)\)\.accepted/);
@@ -235,7 +240,8 @@ test("image selection is transactional across plain and completed outputs", () =
   assert.doesNotMatch(script, /if \(buildRunning \|\| usbWriting\)/);
   assert.match(script, /buildRunning = true;[\s\S]*elements\.chooseImage\.disabled = true;/);
   assert.match(script, /const admission = admitUsbWriteStart\(currentBuildSnapshot\(\), \{[\s\S]*hasPreflightSession: Boolean\(usbPreflightSession\?\.sessionToken\)/);
-  assert.match(script, /if \(!admission\.accepted\) return;[\s\S]*window\.confirm/);
+  assert.match(script, /if \(!admission\.accepted\) return;[\s\S]*invoke\("write_image_to_usb"/);
+  assert.doesNotMatch(script, /window\.confirm/);
   assert.doesNotMatch(script, /if \(usbWriting \|\| !usbPreflightSession\?\.sessionToken \|\| !completedOutput\?\.path\) return;/);
   assert.match(script, /usbWriting = true;[\s\S]*elements\.chooseImage\.disabled = true;/);
   assert.match(script, /elements\.nvidiaSource\.disabled = true;[\s\S]*elements\.allowUpstreamBuild\.disabled = true;/);
