@@ -169,6 +169,13 @@ function setCompanionMode(label = null) {
 async function focusActiveCompanion() {
   if (!activeCompanion) return;
   const label = activeCompanion;
+  if (label === "build-progress") {
+    const visible = await invoke("is_progress_window_visible").catch(() => true);
+    if (!visible && label === activeCompanion) {
+      completeBuildProgressDismissal();
+      return;
+    }
+  }
   const windows = await getAllWebviewWindows();
   const companion = windows.find((window) => window.label === label);
   if (!companion || label !== activeCompanion) {
@@ -178,20 +185,24 @@ async function focusActiveCompanion() {
   await companion.setFocus();
 }
 
+function completeBuildProgressDismissal() {
+  if (activeCompanion === "build-progress") setCompanionMode();
+  if (!pendingUsbReview) return;
+  pendingUsbReview = false;
+  const preferredTarget = pendingUsbReviewTarget;
+  pendingUsbReviewTarget = null;
+  void revealUsbImaging({ preferredTarget });
+  void mainWindow.setFocus().catch(() => {});
+}
+
 elements.companionScrim.addEventListener("click", () => { void focusActiveCompanion(); });
 await mainWindow.onFocusChanged(({ payload: focused }) => {
   if (focused && activeCompanion) void focusActiveCompanion();
 });
 await mainWindow.listen("companion-window-hidden", ({ payload }) => {
   if (payload?.label !== activeCompanion) return;
-  setCompanionMode();
-  if (payload.label === "build-progress" && pendingUsbReview) {
-    pendingUsbReview = false;
-    const preferredTarget = pendingUsbReviewTarget;
-    pendingUsbReviewTarget = null;
-    void revealUsbImaging({ preferredTarget });
-    void mainWindow.setFocus().catch(() => {});
-  }
+  if (payload.label === "build-progress") completeBuildProgressDismissal();
+  else setCompanionMode();
 });
 
 async function revealUsbImaging({ focus = true, preferredTarget = null } = {}) {
@@ -1048,7 +1059,12 @@ async function applyBuildFinished(completion, { openUsbReview = true } = {}) {
     // the progress companion before this handler reaches the handoff. Recheck
     // the companion's current state instead of relying only on the visibility
     // snapshot captured when build-finished was first received.
-    revealCompletedUsbReview = openUsbReview || activeCompanion !== "build-progress";
+    let progressVisible = activeCompanion === "build-progress";
+    if (progressVisible) {
+      progressVisible = await invoke("is_progress_window_visible").catch(() => true);
+      if (!progressVisible) completeBuildProgressDismissal();
+    }
+    revealCompletedUsbReview = openUsbReview || !progressVisible;
     completedUsbPreferredTarget = preferredTarget;
     pendingUsbReview = !revealCompletedUsbReview;
     pendingUsbReviewTarget = pendingUsbReview ? preferredTarget : null;

@@ -268,7 +268,7 @@ test("stale build completions cannot overwrite a newer build context", () => {
   assert.match(script, /if \(!buildCompletionMatches\(event\.payload, activeBuildContext\)\) return;/);
   assert.match(script, /async function applyBuildFinished[\s\S]*if \(!admitBuildCompletion\(currentBuildSnapshot\(\)\)\.accepted[\s\S]*buildCompletionMatches\(completion, buildContext\)/);
   assert.match(script, /applyBuildFinished\(event\.payload, \{\s*openUsbReview: activeCompanion !== "build-progress",\s*\}\)/);
-  assert.match(script, /revealCompletedUsbReview = openUsbReview \|\| activeCompanion !== "build-progress";/);
+  assert.match(script, /progressVisible = await invoke\("is_progress_window_visible"\)[\s\S]*revealCompletedUsbReview = openUsbReview \|\| !progressVisible;/);
   assert.match(script, /pendingUsbReview = !revealCompletedUsbReview;/);
   assert.match(script, /selectionGeneration: imageSelectionGeneration/);
   assert.match(script, /activeBuildContext = null;[\s\S]*buildRunning = false;/);

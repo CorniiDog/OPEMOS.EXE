@@ -24,8 +24,10 @@ test("main window leaves companion visibility to native commands instead of deni
   assert.doesNotMatch(main, /progressWindow\.(?:show|isVisible|hide)\(\)/);
   assert.match(main, /invoke\("open_progress_window"\)/);
   assert.match(main, /invoke\("hide_progress_window"\)/);
+  assert.match(main, /invoke\("is_progress_window_visible"\)/);
   assert.match(nativeWindows, /pub\(crate\) fn hide_progress_window[\s\S]*get_webview_window\("build-progress"\)[\s\S]*\.hide\(\)/);
-  assert.match(nativeApp, /windows::open_progress_window,[\s\S]*windows::hide_progress_window,/);
+  assert.match(nativeWindows, /pub\(crate\) fn is_progress_window_visible[\s\S]*get_webview_window\("build-progress"\)[\s\S]*\.is_visible\(\)/);
+  assert.match(nativeApp, /windows::open_progress_window,[\s\S]*windows::hide_progress_window,[\s\S]*windows::is_progress_window_visible,/);
   assert.doesNotMatch(mainCapability.permissions.join("\n"), /core:window:allow-(?:show|is-visible|hide)/);
 });
 
@@ -64,23 +66,29 @@ test("both companion close paths release the rear-window interaction lock", () =
   assert.match(build, /emitTo\("main", "companion-window-hidden", \{ label: "build-progress" \}\)/);
   assert.match(maintainer, /emitTo\("main", "companion-window-hidden", \{ label: "maintainer-workspace" \}\)/);
   assert.match(main, /listen\("companion-window-hidden"/);
+  assert.match(main, /function completeBuildProgressDismissal\(\)[\s\S]*setCompanionMode\(\)[\s\S]*pendingUsbReview = false;[\s\S]*revealUsbImaging/);
 });
 
 test("completion commits before the progress window closes into USB review", () => {
   assert.match(main, /applyBuildFinished\(event\.payload, \{\s*openUsbReview: activeCompanion !== "build-progress",\s*\}\)/);
-  assert.match(main, /revealCompletedUsbReview = openUsbReview \|\| activeCompanion !== "build-progress";/);
+  assert.match(main, /revealCompletedUsbReview = openUsbReview \|\| !progressVisible;/);
   assert.match(main, /pendingUsbReview = !revealCompletedUsbReview;/);
-  assert.match(main, /payload\.label === "build-progress" && pendingUsbReview/);
+  assert.match(main, /if \(!pendingUsbReview\) return;/);
   assert.match(build, /export_marker_image", \{ revealInFinder: false \}/);
-  assert.match(main, /payload\.label === "build-progress" && pendingUsbReview[\s\S]*revealUsbImaging\(\{ preferredTarget \}\)/);
+  assert.match(main, /function completeBuildProgressDismissal\(\)[\s\S]*revealUsbImaging\(\{ preferredTarget \}\)/);
   assert.doesNotMatch(main, /event\.payload\?\.state === "complete"[\s\S]*progressWindow\?\.hide\(\)/);
 });
 
 test("USB review survives the progress-close versus completed-image inspection race", () => {
-  assert.match(main, /revealCompletedUsbReview = openUsbReview \|\| activeCompanion !== "build-progress";/);
+  assert.match(main, /progressVisible = await invoke\("is_progress_window_visible"\)[\s\S]*if \(!progressVisible\) completeBuildProgressDismissal\(\);[\s\S]*revealCompletedUsbReview = openUsbReview \|\| !progressVisible;/);
   assert.match(main, /pendingUsbReview = !revealCompletedUsbReview;/);
   assert.match(main, /activeBuildContext = null;[\s\S]*buildRunning = false;[\s\S]*elements\.refreshUsbTargets\.disabled = false;[\s\S]*if \(revealCompletedUsbReview\) \{[\s\S]*await revealUsbImaging/);
   assert.doesNotMatch(main, /pendingUsbReview = !openUsbReview;/);
+});
+
+test("a natively hidden progress window cannot leave the main controls inert", () => {
+  assert.match(main, /async function focusActiveCompanion\(\)[\s\S]*invoke\("is_progress_window_visible"\)[\s\S]*if \(!visible && label === activeCompanion\) \{[\s\S]*completeBuildProgressDismissal\(\);[\s\S]*return;/);
+  assert.match(main, /function completeBuildProgressDismissal\(\)[\s\S]*activeCompanion === "build-progress"[\s\S]*setCompanionMode\(\)/);
 });
 
 test("USB builds reselect only the exact pre-build device and defer Finder until verified", () => {
@@ -90,7 +98,7 @@ test("USB builds reselect only the exact pre-build device and defer Finder until
   assert.match(main, /deviceIdentifier: selectedUsb\.value,[\s\S]*identityToken: selectedUsb\.dataset\.identityToken/);
   assert.match(main, /option\.value === preferredTarget\.deviceIdentifier[\s\S]*option\.dataset\.identityToken === preferredTarget\.identityToken/);
   assert.match(main, /async function revealUsbImaging[\s\S]*usbInventoryNeedsRefresh\(outputPath, usbImagingRefreshPath,[\s\S]*refreshUsbTargets\(preferredTarget\)[\s\S]*if \(outcome\.completed\) \{\s*usbImagingRefreshPath = acceptedUsbInventoryPath\(outputPath, outcome\)/);
-  assert.match(main, /revealCompletedUsbReview = openUsbReview \|\| activeCompanion !== "build-progress";[\s\S]*if \(revealCompletedUsbReview\)[\s\S]*revealUsbImaging\(\{ preferredTarget: completedUsbPreferredTarget \}\)/);
+  assert.match(main, /revealCompletedUsbReview = openUsbReview \|\| !progressVisible;[\s\S]*if \(revealCompletedUsbReview\)[\s\S]*revealUsbImaging\(\{ preferredTarget: completedUsbPreferredTarget \}\)/);
   assert.doesNotMatch(main, /if \(openUsbReview\) setUsbMenuOpen\(true\)/);
   assert.doesNotMatch(main, /if \(!finalUsbReady\) setUsbMenuOpen\(false\);/);
   assert.match(main, /preferred\.selected = true;\s*renderUsbTargetSelection\(\);\s*return \{\s*completed: true,[\s\S]*preferredTargetRestored: true,/);
