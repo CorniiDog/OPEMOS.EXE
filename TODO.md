@@ -110,7 +110,7 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   source hashing and normalization and reached the real offline mutation before
   exposing the next closed-set omission below.
 
-- [ ] Include Core's exact executable `lib/configure_display_initramfs.py` in
+- [x] Include Core's exact executable `lib/configure_display_initramfs.py` in
   the closed offline installer support set. The failed-stage-only PR154 run
   reached the real second-pass offline mutation and then failed module
   verification because `install_to_root.sh` invoked that unstaged file. The
@@ -120,7 +120,27 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   and executable mode `100755`. The focused regression binds the exact tuple,
   59-file count, and 721,175-byte aggregate. Protected compilation, Windows
   artifact/startup, exact Core review, squash merge, and the failed-stage-only
-  integrated image/visible installed graphical-boot acceptance remain.
+  integrated image construction, genuine-pointer fullscreen install, media
+  detachment, and cleanup passed from PR #155, squash-merged as
+  `8562f1d23bd4f9c1c592693e18deb30528ce6893`. The installed target reached
+  SDDM and started the deck Gamescope session, then exposed the separate
+  Core-owned Vulkan fallback gap recorded below; visible graphical output was
+  not claimed.
+
+- [ ] Consume canonical Core squash
+  `d55c1aabcb198d281202bb051b573c06ffb7b1e7` for the reviewed installed-session
+  fallback. The ordinary EXE pin update must stage Core's exact executable
+  `lib/configure_gamescope_fallback.py` (4,250 bytes, SHA-256
+  `026c0796d21a20f3cab02e7d69fd1a7ebe0dfe8e08898a34c58cffe92576d4e8`) and
+  `lib/gamescope_visible_fallback.py` (3,676 bytes, SHA-256
+  `a6cb14f0fde5c3b98200b835f71ad455623afecd1a16feac15ad82179087ad44`),
+  plus the updated 60,539-byte `bootstrap/install_to_root.sh` at SHA-256
+  `b787ce4f182d2966f1d98437f4a6857461711156ed23a7d88e221c2446516f21`.
+  The resulting closed installer set is 61 files and 729,327 bytes. Required
+  checks, exact Core counterpart review, squash merge, exact integrated image
+  rebuild, genuine-pointer install to a fresh disposable blank target, source
+  detachment, and visible installed graphical output remain; service-level
+  graphical state alone does not satisfy acceptance.
 
 - [ ] Preserve a writable native SteamOS desktop by enforcing the exact numeric
   deck identity `1000:1000` on the four existing user-home directory roots that

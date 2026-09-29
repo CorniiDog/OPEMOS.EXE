@@ -3899,8 +3899,8 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 721_175);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 59);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 729_327);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 61);
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "lib/diagnostic_safety.py" && !file.executable
         }));
@@ -3915,10 +3915,24 @@ esac
                 && file.executable
         }));
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "lib/configure_gamescope_fallback.py"
+                && file.sha256
+                    == "026c0796d21a20f3cab02e7d69fd1a7ebe0dfe8e08898a34c58cffe92576d4e8"
+                && file.bytes == 4_250
+                && file.executable
+        }));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "lib/gamescope_visible_fallback.py"
+                && file.sha256
+                    == "a6cb14f0fde5c3b98200b835f71ad455623afecd1a16feac15ad82179087ad44"
+                && file.bytes == 3_676
+                && file.executable
+        }));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "bootstrap/install_to_root.sh"
                 && file.sha256
-                    == "ab9883af206b96cf5e3df3765842dba6f6a6e3c1bcfcf1f2f7fa370643134517"
-                && file.bytes == 60_313
+                    == "b787ce4f182d2966f1d98437f4a6857461711156ed23a7d88e221c2446516f21"
+                && file.bytes == 60_539
                 && file.executable
         }));
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {

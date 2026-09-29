@@ -276,11 +276,11 @@ pub(crate) struct PinnedInstallerFile {
     pub(crate) executable: bool,
 }
 
-pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 59] = [
+pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 61] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "ab9883af206b96cf5e3df3765842dba6f6a6e3c1bcfcf1f2f7fa370643134517",
-        bytes: 60_313,
+        sha256: "b787ce4f182d2966f1d98437f4a6857461711156ed23a7d88e221c2446516f21",
+        bytes: 60_539,
         executable: true,
     },
     PinnedInstallerFile {
@@ -479,6 +479,18 @@ pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 59] = [
         path: "lib/configure_display_initramfs.py",
         sha256: "00e381292be36629da3e5077544729cbc16e6a7b516db3ff65540b0dc6b64dfa",
         bytes: 3_547,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/configure_gamescope_fallback.py",
+        sha256: "026c0796d21a20f3cab02e7d69fd1a7ebe0dfe8e08898a34c58cffe92576d4e8",
+        bytes: 4_250,
+        executable: true,
+    },
+    PinnedInstallerFile {
+        path: "lib/gamescope_visible_fallback.py",
+        sha256: "a6cb14f0fde5c3b98200b835f71ad455623afecd1a16feac15ad82179087ad44",
+        bytes: 3_676,
         executable: true,
     },
     PinnedInstallerFile {

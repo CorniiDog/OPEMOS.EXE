@@ -550,7 +550,7 @@ const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/OPEMOS";
-const NVIDIA_SUPPORT_COMMIT: &str = "4b676dc4efed50dac446a59475b5fadf83722176";
+const NVIDIA_SUPPORT_COMMIT: &str = "d55c1aabcb198d281202bb051b573c06ffb7b1e7";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 // Compatibility target only. This does not become the production installer pin
