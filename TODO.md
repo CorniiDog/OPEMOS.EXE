@@ -3317,6 +3317,18 @@ must be reported; a default-suite pass does not imply hardware certification.
   review, merge, and any newly authorized native execution remain pending.
   No release, tag, asset, or beta publication occurred.
 
+- [ ] Complete the bounded PR #150 follow-up for the real-hardware post-build
+  experience. The branch now retains a retryable exact-device USB inventory
+  refresh after construction and updates the already-mounted recovery progress
+  view in place, so the 350 ms status poll cannot recreate or reload unchanged
+  artwork. A disposable Ubuntu VM executed the real renderer regression plus
+  the coupled USB-inventory and companion-window checks at 18/18 passing;
+  documentation and repository-hygiene contracts also pass. Its broader Node
+  18 log-suite probe reached 352 passes/one skip and stopped only at two
+  pre-existing Node-20 `toReversed` launcher tests. Exact-head required CI,
+  Core counterpart review, protected squash, artifact validation, and guarded
+  headless Desktop deployment remain required.
+
 ### Alpha
 
 - [ ] One fresh official image builds, writes to USB, installs to the intended
