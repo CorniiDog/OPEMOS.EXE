@@ -86,7 +86,7 @@ const elements = {
   usbMessage: $("#usb-message"), usbConfirmationRow: $("#usb-confirmation-row"),
   usbConfirmation: $("#usb-confirmation"), usbConfirmationHelp: $("#usb-confirmation-help"),
   armUsbPreflight: $("#arm-usb-preflight"), cancelUsbPreflight: $("#cancel-usb-preflight"),
-  writeUsbImage: $("#write-usb-image"), usbActiveWarning: $("#usb-active-warning"),
+  usbActiveWarning: $("#usb-active-warning"),
   closeUsbMenu: $("#close-usb-menu"), reviewUsbTarget: $("#review-usb-target"),
   environmentMessage: $("#environment-message"), environmentDetails: $("#environment-details"),
   environmentStatus: $("#environment-status"),
@@ -169,6 +169,13 @@ function setCompanionMode(label = null) {
 async function focusActiveCompanion() {
   if (!activeCompanion) return;
   const label = activeCompanion;
+  if (label === "build-progress") {
+    const visible = await invoke("is_progress_window_visible").catch(() => true);
+    if (!visible && label === activeCompanion) {
+      completeBuildProgressDismissal();
+      return;
+    }
+  }
   const windows = await getAllWebviewWindows();
   const companion = windows.find((window) => window.label === label);
   if (!companion || label !== activeCompanion) {
@@ -178,20 +185,24 @@ async function focusActiveCompanion() {
   await companion.setFocus();
 }
 
+function completeBuildProgressDismissal() {
+  if (activeCompanion === "build-progress") setCompanionMode();
+  if (!pendingUsbReview) return;
+  pendingUsbReview = false;
+  const preferredTarget = pendingUsbReviewTarget;
+  pendingUsbReviewTarget = null;
+  void revealUsbImaging({ preferredTarget });
+  void mainWindow.setFocus().catch(() => {});
+}
+
 elements.companionScrim.addEventListener("click", () => { void focusActiveCompanion(); });
 await mainWindow.onFocusChanged(({ payload: focused }) => {
   if (focused && activeCompanion) void focusActiveCompanion();
 });
 await mainWindow.listen("companion-window-hidden", ({ payload }) => {
   if (payload?.label !== activeCompanion) return;
-  setCompanionMode();
-  if (payload.label === "build-progress" && pendingUsbReview) {
-    pendingUsbReview = false;
-    const preferredTarget = pendingUsbReviewTarget;
-    pendingUsbReviewTarget = null;
-    void revealUsbImaging({ preferredTarget });
-    void mainWindow.setFocus().catch(() => {});
-  }
+  if (payload.label === "build-progress") completeBuildProgressDismissal();
+  else setCompanionMode();
 });
 
 async function revealUsbImaging({ focus = true, preferredTarget = null } = {}) {
@@ -299,7 +310,6 @@ function renderUsbConfirmationPhase(prepared = Boolean(usbPreflightSession)) {
   const canConfirm = Boolean(elements.usbTarget.value && completedOutput?.path);
   elements.usbConfirmationRow.classList.toggle("hidden", !canConfirm || prepared);
   elements.armUsbPreflight.classList.toggle("hidden", !canConfirm || prepared);
-  elements.writeUsbImage.classList.toggle("hidden", !prepared || !usbPreflightSession?.writesAllowed);
   elements.cancelUsbPreflight.classList.toggle("hidden", !prepared);
   elements.armUsbPreflight.disabled = usbArmPending
     || !usbConfirmationMatches(elements.usbConfirmation.value);
@@ -623,7 +633,6 @@ async function selectImage(path) {
   elements.usbConfirmationRow.classList.add("hidden");
   elements.armUsbPreflight.classList.add("hidden");
   elements.cancelUsbPreflight.classList.add("hidden");
-  elements.writeUsbImage.classList.add("hidden");
   elements.dropZone.classList.add("processing");
   elements.chooseImage.disabled = true;
   elements.nvidiaSource.disabled = true;
@@ -1048,7 +1057,12 @@ async function applyBuildFinished(completion, { openUsbReview = true } = {}) {
     // the progress companion before this handler reaches the handoff. Recheck
     // the companion's current state instead of relying only on the visibility
     // snapshot captured when build-finished was first received.
-    revealCompletedUsbReview = openUsbReview || activeCompanion !== "build-progress";
+    let progressVisible = activeCompanion === "build-progress";
+    if (progressVisible) {
+      progressVisible = await invoke("is_progress_window_visible").catch(() => true);
+      if (!progressVisible) completeBuildProgressDismissal();
+    }
+    revealCompletedUsbReview = openUsbReview || !progressVisible;
     completedUsbPreferredTarget = preferredTarget;
     pendingUsbReview = !revealCompletedUsbReview;
     pendingUsbReviewTarget = pendingUsbReview ? preferredTarget : null;
@@ -1203,7 +1217,6 @@ elements.refreshUsbTargets.addEventListener("click", async () => {
 
 function renderUsbTargetSelection() {
   elements.cancelUsbPreflight.classList.add("hidden");
-  elements.writeUsbImage.classList.add("hidden");
   elements.usbConfirmation.value = "";
   elements.usbMessage.removeAttribute("title");
   const identifier = elements.usbTarget.value;
@@ -1211,7 +1224,7 @@ function renderUsbTargetSelection() {
   const canConfirm = Boolean(identifier && completedOutput?.path);
   renderUsbConfirmationPhase(false);
   elements.usbConfirmationHelp.textContent = canConfirm
-    ? `Type ERASE exactly to confirm ${identifier}. A final warning still appears before writing.`
+    ? `Type ERASE exactly to confirm ${identifier}. The single write action revalidates the image and drive before Windows authorization.`
     : "Select a target first.";
   elements.usbTargetDetail.textContent = elements.usbTarget.selectedOptions[0]?.dataset.detail
     || "Connect a USB drive, then refresh.";
@@ -1262,6 +1275,62 @@ elements.usbConfirmation.addEventListener("input", () => {
     || !usbConfirmationMatches(elements.usbConfirmation.value);
 });
 
+async function writePreparedUsb() {
+  const admission = admitUsbWriteStart(currentBuildSnapshot(), {
+    hasPreflightSession: Boolean(usbPreflightSession?.sessionToken),
+  });
+  if (!admission.accepted) return;
+  const writeContext = Object.freeze({
+    sessionToken: usbPreflightSession.sessionToken,
+    imagePath: completedOutput.path,
+    deviceIdentifier: usbPreflightSession.deviceIdentifier,
+    deviceNode: usbPreflightSession.deviceNode,
+    imageSha256: usbPreflightSession.imageSha256,
+  });
+  usbWriting = true;
+  usbWriteProgress = null;
+  elements.chooseImage.disabled = true;
+  elements.usbActiveWarning.classList.remove("hidden");
+  elements.refreshUsbTargets.disabled = true;
+  elements.closeUsbMenu.disabled = true;
+  elements.buildButton.disabled = true;
+  elements.usbMessage.textContent = "Revalidating the exact image and removable drive. Windows authorization will appear next for only that selected disk.";
+  try {
+    const result = await invoke("write_image_to_usb", {
+      sessionToken: writeContext.sessionToken,
+      imagePath: writeContext.imagePath,
+    });
+    if (!admitUsbWriteCompletion(currentBuildSnapshot(), result, writeContext).accepted) {
+      throw new Error("USB writing returned an invalid verification result.");
+    }
+    usbPreflightSession = null;
+    elements.usbMessage.textContent = result.message;
+    elements.usbMessage.className = `result-message ${result.ejected ? "success" : "error"}`;
+    elements.cancelUsbPreflight.classList.add("hidden");
+    // An imported image already exists at a user-selected path. Revealing it
+    // after a USB-only operation falsely implies that this run exported it.
+    if (activeExportMode === "both" && !completedOutputImported) {
+      const revealed = await revealCompletedImage(completedOutput.path);
+      if (revealed) elements.usbMessage.textContent = `${result.message} Finder opened the retained image.`;
+    }
+  } catch (error) {
+    usbPreflightSession = null;
+    elements.usbConfirmation.value = "";
+    elements.usbMessage.textContent = String(error);
+    elements.usbMessage.className = "result-message error";
+    elements.usbMessage.removeAttribute("title");
+    renderUsbConfirmationPhase(false);
+  } finally {
+    usbWriting = false;
+    usbWriteProgress = null;
+    elements.chooseImage.disabled = false;
+    elements.usbActiveWarning.classList.add("hidden");
+    elements.refreshUsbTargets.disabled = false;
+    elements.closeUsbMenu.disabled = false;
+    updateBuildButton();
+  }
+}
+
 elements.armUsbPreflight.addEventListener("click", async () => {
   const option = elements.usbTarget.selectedOptions[0];
   const admission = admitUsbPreflightStart(currentBuildSnapshot(), {
@@ -1306,10 +1375,12 @@ elements.armUsbPreflight.addEventListener("click", async () => {
     }
     usbPreflightSession = session;
     elements.usbMessage.title = usbPreflightSession.message;
-    elements.usbMessage.textContent = usbPreflightSession.writesAllowed
-      ? "Image and drive identity confirmed. Continue when you are ready to erase and write the selected USB drive."
-      : usbPreflightSession.message;
     renderUsbConfirmationPhase(true);
+    if (!usbPreflightSession.writesAllowed) {
+      elements.usbMessage.textContent = usbPreflightSession.message;
+      return;
+    }
+    await writePreparedUsb();
   } catch (error) {
     if (generation !== usbContextGeneration) return;
     usbPreflightSession = null;
@@ -1318,7 +1389,7 @@ elements.armUsbPreflight.addEventListener("click", async () => {
   } finally {
     usbArmPending = false;
     elements.armUsbPreflight.removeAttribute("aria-busy");
-    elements.armUsbPreflight.textContent = "Confirm & Prepare USB";
+    elements.armUsbPreflight.textContent = "Write & Verify USB";
     if (generation === usbContextGeneration) {
       elements.armUsbPreflight.disabled = !usbConfirmationMatches(elements.usbConfirmation.value);
     }
@@ -1443,65 +1514,6 @@ await mainWindow.listen("usb-write-progress", (event) => {
   const ratio = progress.bytesCompleted / progress.bytesTotal;
   elements.usbMessage.textContent = `${progress.message} ${(ratio * 100).toFixed(1)}%`;
   elements.usbMessage.className = "result-message";
-});
-
-elements.writeUsbImage.addEventListener("click", async () => {
-  const admission = admitUsbWriteStart(currentBuildSnapshot(), {
-    hasPreflightSession: Boolean(usbPreflightSession?.sessionToken),
-  });
-  if (!admission.accepted) return;
-  const writeContext = Object.freeze({
-    sessionToken: usbPreflightSession.sessionToken,
-    imagePath: completedOutput.path,
-    deviceIdentifier: usbPreflightSession.deviceIdentifier,
-    deviceNode: usbPreflightSession.deviceNode,
-    imageSha256: usbPreflightSession.imageSha256,
-  });
-  if (!window.confirm(`FINAL WARNING\n\nErase ${writeContext.deviceNode} and write the validated SteamOS image?\n\nEvery existing partition and file on this device will be destroyed.`)) return;
-  usbWriting = true;
-  usbWriteProgress = null;
-  elements.chooseImage.disabled = true;
-  elements.usbActiveWarning.classList.remove("hidden");
-  elements.writeUsbImage.disabled = true;
-  elements.refreshUsbTargets.disabled = true;
-  elements.closeUsbMenu.disabled = true;
-  elements.buildButton.disabled = true;
-  elements.usbMessage.textContent = "Windows authorization will appear next. Approve it to open only the selected removable disk, then OPEMOS will write and verify every byte.";
-  try {
-    const result = await invoke("write_image_to_usb", {
-      sessionToken: writeContext.sessionToken,
-      imagePath: writeContext.imagePath,
-    });
-    if (!admitUsbWriteCompletion(currentBuildSnapshot(), result, writeContext).accepted) {
-      throw new Error("USB writing returned an invalid verification result.");
-    }
-    usbPreflightSession = null;
-    elements.usbMessage.textContent = result.message;
-    elements.usbMessage.className = `result-message ${result.ejected ? "success" : "error"}`;
-    elements.writeUsbImage.classList.add("hidden");
-    elements.cancelUsbPreflight.classList.add("hidden");
-    // An imported image already exists at a user-selected path. Revealing it
-    // after a USB-only operation falsely implies that this run exported it.
-    if (activeExportMode === "both" && !completedOutputImported) {
-      const revealed = await revealCompletedImage(completedOutput.path);
-      if (revealed) elements.usbMessage.textContent = `${result.message} Finder opened the retained image.`;
-    }
-  } catch (error) {
-    usbPreflightSession = null;
-    elements.usbMessage.textContent = String(error);
-    elements.usbMessage.className = "result-message error";
-    elements.usbMessage.removeAttribute("title");
-    renderUsbConfirmationPhase(false);
-  } finally {
-    usbWriting = false;
-    usbWriteProgress = null;
-    elements.chooseImage.disabled = false;
-    elements.usbActiveWarning.classList.add("hidden");
-    elements.writeUsbImage.disabled = false;
-    elements.refreshUsbTargets.disabled = false;
-    elements.closeUsbMenu.disabled = false;
-    updateBuildButton();
-  }
 });
 
 await mainWindow.onDragDropEvent(async (event) => {

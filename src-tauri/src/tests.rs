@@ -2275,9 +2275,28 @@ esac
         let cancellation = manager
             .begin_write_for_test("drop-active", now)
             .expect("begin synthetic USB write");
+        let after_ttl = manager.status("drop-active", now + USB_PREFLIGHT_TTL * 2);
+        assert_eq!(after_ttl.status, "writing");
+        assert!(after_ttl.active);
+        assert!(!manager.is_armed());
+        manager.finish_write_for_test("drop-active");
+        assert_eq!(
+            manager.status("drop-active", now + USB_PREFLIGHT_TTL * 2).status,
+            "not-armed"
+        );
+        assert!(
+            manager
+                .begin_write_for_test("drop-active", now + USB_PREFLIGHT_TTL * 2)
+                .is_none(),
+            "a consumed session cannot be reused after revalidation or failure"
+        );
         assert!(!cancellation.load(Ordering::Relaxed));
+        arm(&mut manager, "drop-cancels-active");
+        let drop_cancellation = manager
+            .begin_write_for_test("drop-cancels-active", now)
+            .expect("begin active USB write for teardown");
         drop(manager);
-        assert!(cancellation.load(Ordering::Relaxed));
+        assert!(drop_cancellation.load(Ordering::Relaxed));
     }
 
     #[test]

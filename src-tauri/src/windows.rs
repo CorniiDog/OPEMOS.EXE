@@ -102,6 +102,16 @@ pub(crate) fn hide_progress_window(app: tauri::AppHandle) -> Result<(), String> 
 }
 
 #[tauri::command]
+pub(crate) fn is_progress_window_visible(app: tauri::AppHandle) -> Result<bool, String> {
+    let Some(progress) = app.get_webview_window("build-progress") else {
+        return Ok(false);
+    };
+    progress
+        .is_visible()
+        .map_err(|error| format!("Could not inspect the build progress window: {error}"))
+}
+
+#[tauri::command]
 pub(crate) async fn open_maintainer_window(app: tauri::AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(require_maintainer_authorization)
         .await

@@ -3317,17 +3317,56 @@ must be reported; a default-suite pass does not imply hardware certification.
   review, merge, and any newly authorized native execution remain pending.
   No release, tag, asset, or beta publication occurred.
 
-- [ ] Complete the bounded PR #150 follow-up for the real-hardware post-build
-  experience. The branch now retains a retryable exact-device USB inventory
+- [x] Complete the bounded PR #150 follow-up for the real-hardware post-build
+  experience. The merged change retains a retryable exact-device USB inventory
   refresh after construction and updates the already-mounted recovery progress
   view in place, so the 350 ms status poll cannot recreate or reload unchanged
   artwork. A disposable Ubuntu VM executed the real renderer regression plus
   the coupled USB-inventory and companion-window checks at 18/18 passing;
   documentation and repository-hygiene contracts also pass. Its broader Node
   18 log-suite probe reached 352 passes/one skip and stopped only at two
-  pre-existing Node-20 `toReversed` launcher tests. Exact-head required CI,
-  Core counterpart review, protected squash, artifact validation, and guarded
-  headless Desktop deployment remain required.
+  pre-existing Node-20 `toReversed` launcher tests. Exact head
+  `1bac8856f3a47ba77d6d4f515a0ab1037eca5307` passed all nine required checks
+  and Core counterpart review, then squash-merged as protected main
+  `149c97f10b9d337e6772d53e0f3bef4f66613fc9` with identical tree
+  `e1c24486d2eb91109fb83f469d80169f8a213206`. Artifact `11011391254`
+  independently validated 5,671 runtime entries, three appliance entries,
+  5,680 total files, and zero reparse points; executable SHA-256 is
+  `6912d037796f41ba099552320b81bc36df5bd7532e5c2e51f6324a0bca45f624`.
+  Guarded headless deployment completed at
+  `Current-149c97f1-2026-09-29`, preserving prior folders and leaving the app
+  closed. Authenticated handoff SHA-256 is
+  `50b7d8bea24b34a7ba2e9d657217f0028faceaaefe72ef2d2ced89aa02d25052`.
+
+- [ ] Correct the user-reproduced protected-main live transition in which the
+  native build-progress window is hidden after a completed NVIDIA build but the
+  main window can retain stale companion state, leaving the application shell
+  inert and indefinitely deferring the USB inventory handoff until restart.
+  The active fresh branch asks the existing native window owner for actual
+  progress visibility at completion and whenever the main window regains focus,
+  then idempotently releases the interaction lock and runs the already-bounded
+  exact-target refresh. It changes no disk enumeration, target identity,
+  confirmation, write, flush, readback, eject, trust, boundary, or governance
+  guard. Focused frontend regressions pass 38/38 and the coupled main/companion
+  suite passes 32/32 through `heavy.sh`; formatting and warnings-denied
+  all-target/all-feature Rust checking pass. The broad frontend probe has only
+  two unrelated host-state fixture failures in this execution environment; the
+  changed stale-completion assertion now passes. Disposable-Windows genuine-
+  pointer evidence subsequently proved the exact packaged NVIDIA build returns
+  to usable USB Imaging and a separately attached 32-GiB QEMU USB device is
+  immediately selectable without restarting. That acceptance also reproduced
+  a second live-path defect: the two-button-plus-browser-confirmation flow let
+  the required 8.12-GB image rehash outlive the 60-second armed-session TTL
+  before the backend began the write. The current bounded follow-up exposes one
+  explicit `Write & Verify USB` action after typed `ERASE`, immediately starts
+  the write command after preflight, atomically consumes/activates the one-time
+  session before slow image and device revalidation, and leaves it consumed on
+  every failure so `ERASE` must be retyped. All hash, device identity,
+  replacement, elevation, write, flush, readback, eject, and refusal guards
+  remain. Focused UI/state checks pass 30/30 and the Rust regression proves an
+  accepted write remains active when time advances beyond twice the TTL while
+  the same consumed session cannot be reused. Changed-head CI, artifact,
+  disposable KVM acceptance, and exact Core review remain pending.
 
 ### Alpha
 

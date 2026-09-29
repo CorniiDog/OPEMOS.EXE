@@ -180,6 +180,7 @@ pub fn run() {
             windows::open_valve_download_page,
             windows::open_progress_window,
             windows::hide_progress_window,
+            windows::is_progress_window_visible,
             windows::open_maintainer_window,
         ])
         .build(tauri::generate_context!())
