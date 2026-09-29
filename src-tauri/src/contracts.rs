@@ -279,8 +279,8 @@ pub(crate) struct PinnedInstallerFile {
 pub(crate) const PINNED_INSTALLER_FILES: [PinnedInstallerFile; 58] = [
     PinnedInstallerFile {
         path: "bootstrap/install_to_root.sh",
-        sha256: "55854918a14facc1924c2aed834759c9f9324115d252c540c389d93a6c5beda2",
-        bytes: 60_578,
+        sha256: "ab9883af206b96cf5e3df3765842dba6f6a6e3c1bcfcf1f2f7fa370643134517",
+        bytes: 60_313,
         executable: true,
     },
     PinnedInstallerFile {
