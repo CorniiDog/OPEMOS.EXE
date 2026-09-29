@@ -28,6 +28,7 @@ test("installation-media UI delegates only bounded operations", () => {
   assert.match(welcome, /installer is already running/);
   assert.match(welcome, /before a stable window opened/);
   assert.match(welcome, /trying the next supported runtime/);
+  assert.match(welcome, /QT6_QMLSCENE=\/usr\/lib\/qt6\/bin\/qmlscene/);
   assert.match(welcome, /--start-fullscreen/);
   assert.match(welcome, /--hide-header/);
   assert.match(welcome, /welcome_server\.py/);
@@ -52,7 +53,7 @@ test("install helper binds and revalidates a physical device identity", () => {
   assert.match(helper, /active_swap_child "\$device"/);
   assert.match(helper, /unmount_target_children "\$device"/);
   assert.match(helper, /selected disk identity changed while its filesystems were released/);
-  assert.match(helper, /blockdev --getsize64/);
+  assert.match(helper, /lsblk -bdnro SIZE/);
   assert.match(helper, /disk_identity "\$device"/);
   assert.match(helper, /selected disk identity changed immediately before installation/);
   assert.match(helper, /flock -n 9/);
@@ -77,7 +78,7 @@ test("install helper binds and revalidates a physical device identity", () => {
 test("read-only disk discovery does not require install-only recovery tools", (context) => {
   const directory = mkdtempSync(join(tmpdir(), "opemos-inventory-tools-"));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
-  for (const tool of ["bash", "awk", "blockdev", "findmnt", "lsblk", "readlink", "sed", "sha256sum", "tr"]) {
+  for (const tool of ["bash", "awk", "findmnt", "lsblk", "readlink", "sed", "sha256sum", "tr"]) {
     const source = execFileSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim();
     symlinkSync(source, join(directory, tool));
   }

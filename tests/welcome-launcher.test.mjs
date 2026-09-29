@@ -17,6 +17,7 @@ function fixture(context) {
   mkdirSync(ui);
   const helper = join(root, "helper");
   const server = join(root, "server.py");
+  const qt6Qmlscene = join(bin, "qt6-qmlscene");
   const qml = join(ui, "opemos-welcome.qml");
   const launcher = join(root, "open-opemos-welcome");
   const lock = join(root, "welcome.lock");
@@ -49,16 +50,17 @@ exit 0
     .replace("readonly WELCOME_UI=/usr/share/opemos-install-media/ui/welcome", `readonly WELCOME_UI=${ui}`)
     .replace('readonly WELCOME_QML="$WELCOME_UI/opemos-welcome.qml"', `readonly WELCOME_QML=${qml}`)
     .replace("readonly WELCOME_SERVER=/usr/lib/opemos-install-media/welcome_server.py", `readonly WELCOME_SERVER=${server}`)
+    .replace("readonly QT6_QMLSCENE=/usr/lib/qt6/bin/qmlscene", `readonly QT6_QMLSCENE=${qt6Qmlscene}`)
     .replace("readonly STATE_DIRECTORY=/home/deck/.local/state/open-opemos", `readonly STATE_DIRECTORY=${state}`)
     .replace("exec 8>/tmp/open-opemos-welcome.lock", `exec 8>${lock}`);
   writeFileSync(launcher, source);
   chmodSync(launcher, 0o755);
-  return { bin, launcher, lock, state, visible };
+  return { bin, launcher, lock, qt6Qmlscene, state, visible };
 }
 
 test("the recovery image Qt WebEngine shell is the primary fullscreen runtime", (context) => {
-  const { bin, launcher, visible } = fixture(context);
-  writeFileSync(join(bin, "qmlscene"), `#!/bin/sh
+  const { bin, launcher, qt6Qmlscene, visible } = fixture(context);
+  writeFileSync(qt6Qmlscene, `#!/bin/sh
 qml=$1
 grep -q 'http://127.0.0.1:43210/' "$qml" || exit 8
 touch "$(dirname "$qml")/ui-ready"
@@ -70,6 +72,16 @@ exit 0
   });
   assert.equal(result.status, 0, result.stderr);
   assert.throws(() => readFileSync(visible, "utf8"), { code: "ENOENT" });
+});
+
+test("a PATH Qt 5 qmlscene is not mistaken for the recovery image Qt 6 runtime", (context) => {
+  const { bin, launcher, visible } = fixture(context);
+  writeFileSync(join(bin, "qmlscene"), "#!/bin/sh\nexit 99\n", { mode: 0o755 });
+  const result = spawnSync("bash", [launcher], {
+    encoding: "utf8", env: testEnvironment(bin), timeout: 5000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readFileSync(visible, "utf8"), /full-screen installer could not open/);
 });
 
 function testEnvironment(bin) {
