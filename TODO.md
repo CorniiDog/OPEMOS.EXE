@@ -3390,9 +3390,12 @@ must be reported; a default-suite pass does not imply hardware certification.
   the existing browser and Zenity fallbacks. Focused launcher regressions prove
   hybrid selection, diagnostics, immediate failure fallback, and bounded hung-
   renderer fallback; disposable-VM UI evidence, required CI, and exact Core
-  review remain pending. The final milestone still requires consuming Core's
-  separately owned hybrid installed-boot correction and proving a visible
-  installed graphical session.
+  review remain pending. Core's separately owned hybrid installed-boot
+  correction passed exact EXE counterpart review and squash-merged as
+  `4b676dc4efed50dac446a59475b5fadf83722176`; the same active PR now consumes
+  that exact canonical GitHub commit as the ordinary Core dependency pin.
+  The final milestone still requires proving a visible installed graphical
+  session on the physical hybrid panel.
 
 ### Alpha
 
