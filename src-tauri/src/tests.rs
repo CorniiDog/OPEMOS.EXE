@@ -3899,13 +3899,20 @@ esac
 
     #[test]
     fn pinned_installer_contract_is_safe_and_versioned() {
-        assert_eq!(validate_pinned_installer_contract().unwrap(), 717_628);
-        assert_eq!(PINNED_INSTALLER_FILES.len(), 58);
+        assert_eq!(validate_pinned_installer_contract().unwrap(), 721_175);
+        assert_eq!(PINNED_INSTALLER_FILES.len(), 59);
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "lib/diagnostic_safety.py" && !file.executable
         }));
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "lib/run_opaque_operation.py" && file.executable
+        }));
+        assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
+            file.path == "lib/configure_display_initramfs.py"
+                && file.sha256
+                    == "00e381292be36629da3e5077544729cbc16e6a7b516db3ff65540b0dc6b64dfa"
+                && file.bytes == 3_547
+                && file.executable
         }));
         assert!(PINNED_INSTALLER_FILES.iter().any(|file| {
             file.path == "bootstrap/install_to_root.sh"
