@@ -92,6 +92,20 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
+- [ ] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
+  canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.
+  The protected PR153 executable correctly failed closed during integrated
+  image construction because its pre-squash 60,578-byte/SHA-256
+  `55854918a14facc1924c2aed834759c9f9324115d252c540c389d93a6c5beda2`
+  pin no longer matched canonical GitHub. The authenticated immutable object is
+  60,313 bytes with SHA-256
+  `ab9883af206b96cf5e3df3765842dba6f6a6e3c1bcfcf1f2f7fa370643134517`.
+  The focused contract regression now binds that exact tuple and the resulting
+  717,628-byte closed installer set. Canonical-byte verification and diff
+  hygiene pass locally; protected compilation, native Windows artifact/startup,
+  exact Core review, squash merge, and failed-stage-only integrated image and
+  visible installed graphical-boot acceptance remain.
+
 - [ ] Preserve a writable native SteamOS desktop by enforcing the exact numeric
   deck identity `1000:1000` on the four existing user-home directory roots that
   the installer consumes: `/home/deck`, `.config`, `.local`, and `.local/share`.
