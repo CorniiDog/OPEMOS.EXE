@@ -18,9 +18,20 @@ def load_lock(path):
     if not isinstance(sources,list) or tuple(item.get("component") for item in sources)!=EXPECTED: fail("Windows runtime source lock must contain the exact component closure")
     names=set()
     for item in sources:
-        if set(item)!={"component","version","url","file","size","sha256"} or not all(isinstance(item[k],str) and item[k] for k in ("component","version","url","file","sha256")) or not item["url"].startswith("https://") or Path(item["file"]).name!=item["file"] or item["file"] in names or not isinstance(item["size"],int) or item["size"]<=0 or not re.fullmatch(r"[0-9a-f]{64}",item["sha256"]): fail("Windows runtime source lock contains an invalid archive")
+        expected={"component","version","url","file","size","sha256"}
+        if item.get("component")=="qemu": expected.add("authenticode_thumbprint")
+        if set(item)!=expected or not all(isinstance(item[k],str) and item[k] for k in ("component","version","url","file","sha256")) or not item["url"].startswith("https://") or Path(item["file"]).name!=item["file"] or item["file"] in names or not isinstance(item["size"],int) or item["size"]<=0 or not re.fullmatch(r"[0-9a-f]{64}",item["sha256"]): fail("Windows runtime source lock contains an invalid archive")
+        if item["component"]=="qemu" and not re.fullmatch(r"[0-9A-F]{40}",item["authenticode_thumbprint"]): fail("Windows QEMU source lock contains an invalid Authenticode publisher")
         names.add(item["file"])
     return raw
+def verify_authenticode(path, expected_thumbprint, runner=subprocess.run):
+    command=("$s=Get-AuthenticodeSignature -LiteralPath $args[0];"
+             "[pscustomobject]@{Status=$s.Status.ToString();Thumbprint=if($s.SignerCertificate){$s.SignerCertificate.Thumbprint}else{''}}|ConvertTo-Json -Compress")
+    result=runner(["powershell.exe","-NoProfile","-NonInteractive","-Command",command,str(path)],capture_output=True,text=True,check=False)
+    if result.returncode: fail("Pinned Windows QEMU Authenticode inspection failed")
+    try: signature=json.loads(result.stdout)
+    except json.JSONDecodeError: fail("Pinned Windows QEMU Authenticode result is invalid")
+    if signature != {"Status":"Valid","Thumbprint":expected_thumbprint}: fail("Pinned Windows QEMU publisher identity is not valid")
 def acquire_source(item,cache,downloader=urllib.request.urlretrieve):
     target=cache/item["file"]
     if exact(target,item): return target
@@ -78,7 +89,7 @@ def construct(output,cache,lock_path):
         validate_base(output)
         if current_lock_matches(output,lock): return output
         fail("Existing Windows runtime does not match the current source lock")
-    sources={item["component"]:acquire_source(item,cache) for item in lock["sources"]}; output.parent.mkdir(parents=True,exist_ok=True); staging=Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-",dir=output.parent))
+    sources={item["component"]:acquire_source(item,cache) for item in lock["sources"]}; qemu_item=next(item for item in lock["sources"] if item["component"]=="qemu"); verify_authenticode(sources["qemu"],qemu_item["authenticode_thumbprint"]); output.parent.mkdir(parents=True,exist_ok=True); staging=Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-",dir=output.parent))
     try:
         git=staging/"git"; run([str(sources["git-for-windows"]),"-y",f"-o{git}"],"PortableGit extraction")
         for path in (git/"usr/share",git/"mingw64/share"):
@@ -95,7 +106,7 @@ def construct(output,cache,lock_path):
         remove_empty_files(staging)
         for relative in COMMANDS.values():
             if not (staging/relative).is_file(): fail(f"Pinned Windows runtime command is unavailable: {relative}")
-        licenses={"git-for-windows":("2.55.0.windows.5",["git/LICENSE.txt"]),"python":("3.13.15",["python/LICENSE.txt"]),"github-cli":("2.100.0",["gh/LICENSE"]),"qemu":("11.1.0",["qemu/COPYING","qemu/COPYING.LIB"]),"cdrtools":("3.02a09",["cdrtools/COPYING"])}; components=[]
+        licenses={"git-for-windows":("2.55.0.windows.5",["git/LICENSE.txt"]),"python":("3.13.15",["python/LICENSE.txt"]),"github-cli":("2.100.0",["gh/LICENSE"]),"qemu":("8.1.0",["qemu/COPYING","qemu/COPYING.LIB"]),"cdrtools":("3.02a09",["cdrtools/COPYING"])}; components=[]
         for name,(version,files) in licenses.items():
             if any(not (staging/path).is_file() for path in files): fail(f"Pinned Windows runtime license is unavailable: {name}")
             components.append({"name":name,"version":version,"license_files":files})

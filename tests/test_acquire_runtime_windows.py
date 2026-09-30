@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from scripts.acquire_runtime_windows import acquire_source, current_lock_matches, load_lock, move_tree, remove_empty_files
+from scripts.acquire_runtime_windows import acquire_source, current_lock_matches, load_lock, move_tree, remove_empty_files, verify_authenticode
 
 
 class WindowsRuntimeAcquisitionTests(unittest.TestCase):
@@ -19,6 +19,19 @@ class WindowsRuntimeAcquisitionTests(unittest.TestCase):
         entry = (root / "bundle_windows.ps1").read_text()
         self.assertIn("scripts/acquire_runtime_windows.py", entry)
         self.assertIn("build/runtime/windows", entry)
+        qemu = next(item for item in lock["sources"] if item["component"] == "qemu")
+        self.assertEqual(qemu["version"], "8.1.0")
+        self.assertEqual(qemu["sha256"], "92fa6d148ec3fc25f875cbcbde2a5edc1fc5413ac44a9c77344ce7cbea0764d7")
+        self.assertEqual(qemu["authenticode_thumbprint"], "2F92CB990D57719BDCCA2D72134378614A040D9B")
+
+    def test_qemu_authenticode_requires_valid_exact_publisher(self):
+        valid = mock.Mock(return_value=mock.Mock(returncode=0, stdout='{"Status":"Valid","Thumbprint":"ABCDEF"}'))
+        verify_authenticode(Path("qemu.exe"), "ABCDEF", valid)
+        with self.assertRaisesRegex(SystemExit, "publisher identity is not valid"):
+            verify_authenticode(Path("qemu.exe"), "DIFFERENT", valid)
+        expired = mock.Mock(return_value=mock.Mock(returncode=0, stdout='{"Status":"UnknownError","Thumbprint":"ABCDEF"}'))
+        with self.assertRaisesRegex(SystemExit, "publisher identity is not valid"):
+            verify_authenticode(Path("qemu.exe"), "ABCDEF", expired)
 
     def test_cache_reuses_exact_and_replaces_tamper_without_partial_file(self):
         with tempfile.TemporaryDirectory() as temporary:

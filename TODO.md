@@ -13,6 +13,8 @@ route until its replacement passes equivalent unit, integration, cancellation,
 and failure tests. Any deliberate behavior change must be called out in the
 commit that introduces it.
 
+- [ ] Restore the native Windows Desktop bundle under enforced Smart App Control. The bounded compatibility change replaces the rejected QEMU 11.1 runtime with existing-source QEMU 8.1.0 installer `qemu-w64-setup-20230822.exe`, exact size `158876152`, SHA-256 `92fa6d148ec3fc25f875cbcbde2a5edc1fc5413ac44a9c77344ce7cbea0764d7`, and Authenticode publisher thumbprint `2F92CB990D57719BDCCA2D72134378614A040D9B`. Acquisition now requires both the locked archive identity and a currently `Valid` exact publisher before extraction. Focused acquisition/packaging tests pass 21/21 with only the canonical-Core-backed zstd case skipped locally; Python compilation and diff hygiene pass through `heavy.sh`. Native Windows artifact construction, exact Smart App Control interactive app/build validation, counterpart review, fresh versioned Desktop deployment, and merge remain pending.
+
 Required dependency direction:
 
 ```text
