@@ -1967,15 +1967,11 @@ pub(crate) fn prepare_session_with_output(
         ))
         .arg("-qmp")
         .arg(format!("tcp:127.0.0.1:{qmp_port},server=on,wait=off"))
-        .arg("-drive")
-        .arg(format!(
-            "file={},if=pflash,format=raw,readonly=on",
-            uefi_code.display()
-        ))
-        .arg("-drive")
-        .arg(format!(
-            "file={},if=pflash,format=raw",
-            vars_image.display()
+        .args(host_qemu_firmware_arguments(
+            std::env::consts::OS,
+            acceleration,
+            &uefi_code,
+            &vars_image,
         ))
         .args(native_appliance_qemu_arguments(acceleration, &runtime_disk)?)
         .arg("-drive")
@@ -2243,15 +2239,11 @@ pub(crate) fn prepare_nvidia_build_session(
             std::env::consts::OS,
             acceleration,
         ))
-        .arg("-drive")
-        .arg(format!(
-            "file={},if=pflash,format=raw,readonly=on",
-            uefi_code.display()
-        ))
-        .arg("-drive")
-        .arg(format!(
-            "file={},if=pflash,format=raw",
-            vars_image.display()
+        .args(host_qemu_firmware_arguments(
+            std::env::consts::OS,
+            acceleration,
+            &uefi_code,
+            &vars_image,
         ))
         .arg("-drive")
         .arg(format!(

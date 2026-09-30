@@ -1,5 +1,6 @@
 //! EXE-owned host adapters. Experimental Linux support never supplies Core policy.
 use std::{
+    ffi::OsString,
     fs::File,
     io::Read,
     path::{Path, PathBuf},
@@ -44,6 +45,26 @@ pub(crate) fn host_qemu_acceleration_arguments(os: &str, acceleration: &str) -> 
     } else {
         Vec::new()
     }
+}
+
+pub(crate) fn host_qemu_firmware_arguments(
+    os: &str,
+    acceleration: &str,
+    code: &Path,
+    vars: &Path,
+) -> Vec<OsString> {
+    if os == "windows" && acceleration == "whpx" {
+        return vec![OsString::from("-bios"), code.as_os_str().to_owned()];
+    }
+    vec![
+        OsString::from("-drive"),
+        OsString::from(format!(
+            "file={},if=pflash,format=raw,readonly=on",
+            code.display()
+        )),
+        OsString::from("-drive"),
+        OsString::from(format!("file={},if=pflash,format=raw", vars.display())),
+    ]
 }
 
 pub(crate) fn bounded_host_text(path: &Path) -> Result<String, String> {
@@ -477,6 +498,27 @@ mod tests {
         );
         assert!(host_qemu_acceleration_arguments("windows", "tcg").is_empty());
         assert!(host_qemu_acceleration_arguments("linux", "whpx").is_empty());
+    }
+
+    #[test]
+    fn windows_whpx_uses_bios_firmware_to_avoid_the_pflash_mmio_failure() {
+        let code = Path::new(r"C:\runtime\edk2-x86_64-code.fd");
+        let vars = Path::new(r"C:\runtime\uefi-vars.fd");
+        assert_eq!(
+            host_qemu_firmware_arguments("windows", "whpx", code, vars),
+            [OsString::from("-bios"), code.as_os_str().to_owned()]
+        );
+        assert_eq!(
+            host_qemu_firmware_arguments("linux", "kvm", code, vars),
+            [
+                OsString::from("-drive"),
+                OsString::from(
+                    r"file=C:\runtime\edk2-x86_64-code.fd,if=pflash,format=raw,readonly=on"
+                ),
+                OsString::from("-drive"),
+                OsString::from(r"file=C:\runtime\uefi-vars.fd,if=pflash,format=raw")
+            ]
+        );
     }
     #[test]
     fn distribution_and_memory_reports_are_bounded_and_fail_closed() {
