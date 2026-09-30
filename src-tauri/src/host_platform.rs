@@ -21,7 +21,7 @@ pub(crate) fn plan_host_qemu(
         ("macos", "aarch64", "aarch64") => Ok(("hvf", "virt,accel=hvf", "host")),
         ("macos", "x86_64", "x86_64") => Ok(("hvf", "q35,accel=hvf", "host")),
         ("macos", "aarch64", "x86_64") => Ok(("tcg", "q35,accel=tcg", "max")),
-        ("windows", "x86_64", "x86_64") => Ok(("whpx", "q35", "max")),
+        ("windows", "x86_64", "x86_64") => Ok(("whpx", "q35", "qemu64")),
         ("linux", "x86_64", "x86_64") => {
             if !enabled {
                 return Err("Experimental Linux testing is disabled. Set OPEMOS_EXPERIMENTAL_LINUX=1 to opt in.".into());
@@ -480,10 +480,10 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn windows_x86_64_plan_requires_whpx_without_software_fallback() {
+    fn windows_x86_64_plan_uses_whpx_and_qemu64_without_software_fallback() {
         assert_eq!(
             plan_host_qemu("windows", "x86_64", "x86_64", false, "", false).unwrap(),
-            ("whpx", "q35", "max")
+            ("whpx", "q35", "qemu64")
         );
         for (host, guest) in [("aarch64", "x86_64"), ("x86_64", "aarch64")] {
             assert!(plan_host_qemu("windows", host, guest, false, "", false).is_err());
