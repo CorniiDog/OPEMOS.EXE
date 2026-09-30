@@ -25,8 +25,9 @@ def load_lock(path):
         names.add(item["file"])
     return raw
 def verify_authenticode(path, expected_thumbprint, runner=subprocess.run):
-    command=("$s=Get-AuthenticodeSignature -LiteralPath $args[0];"
-             "[pscustomobject]@{Status=$s.Status.ToString();Thumbprint=if($s.SignerCertificate){$s.SignerCertificate.Thumbprint}else{''}}|ConvertTo-Json -Compress")
+    command=("$s=Get-AuthenticodeSignature -LiteralPath $args[0];$thumbprint='';"
+             "if($null -ne $s.SignerCertificate){$thumbprint=$s.SignerCertificate.Thumbprint};"
+             "[pscustomobject]@{Status=$s.Status.ToString();Thumbprint=$thumbprint}|ConvertTo-Json -Compress")
     result=runner(["powershell.exe","-NoProfile","-NonInteractive","-Command",command,str(path)],capture_output=True,text=True,check=False)
     if result.returncode: fail("Pinned Windows QEMU Authenticode inspection failed")
     try: signature=json.loads(result.stdout)
