@@ -54,7 +54,7 @@ pub(crate) fn host_qemu_firmware_arguments(
     vars: &Path,
 ) -> Vec<OsString> {
     if os == "windows" && acceleration == "whpx" {
-        return vec![OsString::from("-bios"), code.as_os_str().to_owned()];
+        return Vec::new();
     }
     vec![
         OsString::from("-drive"),
@@ -501,13 +501,10 @@ mod tests {
     }
 
     #[test]
-    fn windows_whpx_uses_bios_firmware_to_avoid_the_pflash_mmio_failure() {
+    fn windows_whpx_uses_builtin_bios_to_avoid_the_pflash_mmio_failure() {
         let code = Path::new(r"C:\runtime\edk2-x86_64-code.fd");
         let vars = Path::new(r"C:\runtime\uefi-vars.fd");
-        assert_eq!(
-            host_qemu_firmware_arguments("windows", "whpx", code, vars),
-            [OsString::from("-bios"), code.as_os_str().to_owned()]
-        );
+        assert!(host_qemu_firmware_arguments("windows", "whpx", code, vars).is_empty());
         assert_eq!(
             host_qemu_firmware_arguments("linux", "kvm", code, vars),
             [
