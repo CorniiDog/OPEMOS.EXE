@@ -32,7 +32,9 @@ def verify_authenticode(path, expected_thumbprint, runner=subprocess.run):
              "[pscustomobject]@{Status=$s.Status.ToString();Thumbprint=$thumbprint}|ConvertTo-Json -Compress")
     encoded_command=base64.b64encode(command.encode("utf-16le")).decode("ascii")
     result=runner(["powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded_command],capture_output=True,text=True,check=False)
-    if result.returncode: fail("Pinned Windows QEMU Authenticode inspection failed")
+    if result.returncode:
+        detail=" ".join(result.stderr.strip().split())[-1000:] or "no diagnostic"
+        fail(f"Pinned Windows QEMU Authenticode inspection failed ({result.returncode}): {detail}")
     try: signature=json.loads(result.stdout)
     except json.JSONDecodeError: fail("Pinned Windows QEMU Authenticode result is invalid")
     if signature != {"Status":"Valid","Thumbprint":expected_thumbprint}: fail("Pinned Windows QEMU publisher identity is not valid")

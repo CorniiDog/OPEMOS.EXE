@@ -38,6 +38,9 @@ class WindowsRuntimeAcquisitionTests(unittest.TestCase):
         expired = mock.Mock(return_value=mock.Mock(returncode=0, stdout='{"Status":"UnknownError","Thumbprint":"ABCDEF"}'))
         with self.assertRaisesRegex(SystemExit, "publisher identity is not valid"):
             verify_authenticode(Path("qemu.exe"), "ABCDEF", expired)
+        failed = mock.Mock(return_value=mock.Mock(returncode=7, stderr="signature command failed\nwith detail"))
+        with self.assertRaisesRegex(SystemExit, r"inspection failed \(7\): signature command failed with detail"):
+            verify_authenticode(Path("qemu.exe"), "ABCDEF", failed)
 
     def test_cache_reuses_exact_and_replaces_tamper_without_partial_file(self):
         with tempfile.TemporaryDirectory() as temporary:
