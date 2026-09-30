@@ -31,6 +31,7 @@ class WindowsRuntimeAcquisitionTests(unittest.TestCase):
         command = valid.call_args.args[0]
         self.assertEqual(command[:4], ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand"])
         decoded = base64.b64decode(command[4]).decode("utf-16le")
+        self.assertIn(r"Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1", decoded)
         self.assertIn(base64.b64encode(b"qemu.exe").decode("ascii"), decoded)
         self.assertNotIn("qemu.exe", decoded)
         with self.assertRaisesRegex(SystemExit, "publisher identity is not valid"):

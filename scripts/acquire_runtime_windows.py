@@ -26,7 +26,8 @@ def load_lock(path):
     return raw
 def verify_authenticode(path, expected_thumbprint, runner=subprocess.run):
     encoded_path=base64.b64encode(os.fsencode(path)).decode("ascii")
-    command=(f"$path=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded_path}'));"
+    command=("Import-Module -Name (Join-Path $env:WINDIR 'System32\\WindowsPowerShell\\v1.0\\Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -Force;"
+             f"$path=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded_path}'));"
              "$s=Get-AuthenticodeSignature -LiteralPath $path;$thumbprint='';"
              "if($null -ne $s.SignerCertificate){$thumbprint=$s.SignerCertificate.Thumbprint};"
              "[pscustomobject]@{Status=$s.Status.ToString();Thumbprint=$thumbprint}|ConvertTo-Json -Compress")
