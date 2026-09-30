@@ -1192,7 +1192,11 @@ pub(crate) fn smoke_test_qemu(path: &Path) -> Result<(), String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    if let Some((_, _, cpu)) = spec {
+    if let Some((acceleration, _, cpu)) = spec {
+        command.args(host_qemu_acceleration_arguments(
+            std::env::consts::OS,
+            acceleration,
+        ));
         command.args(["-cpu", cpu, "-m", "64", "-smp", "1", "-nic", "none"]);
     }
     isolate_process_group(&mut command);
@@ -1957,6 +1961,10 @@ pub(crate) fn prepare_session_with_output(
             "-m",
             &guest_memory_mib,
         ])
+        .args(host_qemu_acceleration_arguments(
+            std::env::consts::OS,
+            acceleration,
+        ))
         .arg("-qmp")
         .arg(format!("tcp:127.0.0.1:{qmp_port},server=on,wait=off"))
         .arg("-drive")
@@ -2231,6 +2239,10 @@ pub(crate) fn prepare_nvidia_build_session(
             "-m",
             &guest_memory_mib,
         ])
+        .args(host_qemu_acceleration_arguments(
+            std::env::consts::OS,
+            acceleration,
+        ))
         .arg("-drive")
         .arg(format!(
             "file={},if=pflash,format=raw,readonly=on",
