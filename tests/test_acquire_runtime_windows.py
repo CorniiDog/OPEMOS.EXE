@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -27,6 +28,11 @@ class WindowsRuntimeAcquisitionTests(unittest.TestCase):
     def test_qemu_authenticode_requires_valid_exact_publisher(self):
         valid = mock.Mock(return_value=mock.Mock(returncode=0, stdout='{"Status":"Valid","Thumbprint":"ABCDEF"}'))
         verify_authenticode(Path("qemu.exe"), "ABCDEF", valid)
+        command = valid.call_args.args[0]
+        self.assertEqual(command[:4], ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand"])
+        decoded = base64.b64decode(command[4]).decode("utf-16le")
+        self.assertIn(base64.b64encode(b"qemu.exe").decode("ascii"), decoded)
+        self.assertNotIn("qemu.exe", decoded)
         with self.assertRaisesRegex(SystemExit, "publisher identity is not valid"):
             verify_authenticode(Path("qemu.exe"), "DIFFERENT", valid)
         expired = mock.Mock(return_value=mock.Mock(returncode=0, stdout='{"Status":"UnknownError","Thumbprint":"ABCDEF"}'))

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Acquire the pinned x86_64 Windows runtime used by the application bundle."""
-import argparse, hashlib, json, os, platform, re, shutil, subprocess, tarfile, tempfile, urllib.request, zipfile
+import argparse, base64, hashlib, json, os, platform, re, shutil, subprocess, tarfile, tempfile, urllib.request, zipfile
 from pathlib import Path
 EXPECTED=("git-for-windows","github-cli","python","qemu","cdrtools-binary","cdrtools-source")
 COMMANDS={"git":"git/cmd/git.exe","python":"python/python.exe","qemu-img":"qemu/qemu-img.exe","qemu-system-x86_64":"qemu/qemu-system-x86_64.exe","mkisofs":"cdrtools/mkisofs.exe","ssh":"git/usr/bin/ssh.exe","scp":"git/usr/bin/scp.exe","ssh-keygen":"git/usr/bin/ssh-keygen.exe","gh":"gh/bin/gh.exe","bash":"git/bin/bash.exe","tar":"git/usr/bin/tar.exe"}
@@ -25,10 +25,13 @@ def load_lock(path):
         names.add(item["file"])
     return raw
 def verify_authenticode(path, expected_thumbprint, runner=subprocess.run):
-    command=("$s=Get-AuthenticodeSignature -LiteralPath $args[0];$thumbprint='';"
+    encoded_path=base64.b64encode(os.fsencode(path)).decode("ascii")
+    command=(f"$path=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded_path}'));"
+             "$s=Get-AuthenticodeSignature -LiteralPath $path;$thumbprint='';"
              "if($null -ne $s.SignerCertificate){$thumbprint=$s.SignerCertificate.Thumbprint};"
              "[pscustomobject]@{Status=$s.Status.ToString();Thumbprint=$thumbprint}|ConvertTo-Json -Compress")
-    result=runner(["powershell.exe","-NoProfile","-NonInteractive","-Command",command,str(path)],capture_output=True,text=True,check=False)
+    encoded_command=base64.b64encode(command.encode("utf-16le")).decode("ascii")
+    result=runner(["powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded_command],capture_output=True,text=True,check=False)
     if result.returncode: fail("Pinned Windows QEMU Authenticode inspection failed")
     try: signature=json.loads(result.stdout)
     except json.JSONDecodeError: fail("Pinned Windows QEMU Authenticode result is invalid")
