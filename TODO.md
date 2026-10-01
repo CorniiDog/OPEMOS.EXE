@@ -3497,7 +3497,13 @@ must be reported; a default-suite pass does not imply hardware certification.
   independently rechecks the cache file against the current lock before use;
   every other component retains normal pinned acquisition. This is transient
   same-run cache transport, not a new endpoint, trust input, public runtime
-  publication, or durable source replacement.
+  publication, or durable source replacement. The first run through that route
+  passed QEMU restore and every pre-build Windows gate, then the Windows runner
+  independently failed on the first remaining lock entry, Git for Windows,
+  with HTTP 523. The failed-stage correction adds only that demonstrated
+  source to the same one-day same-run seed; Ubuntu still downloads both files
+  from their existing locked URLs and the Windows constructor still enforces
+  each existing size and SHA-256 before extraction.
   Focused JavaScript
   execution initially depended on CI because this host has no Node binary; the
   corrected exact-head frontend job passes, while Python, shell syntax, hygiene,

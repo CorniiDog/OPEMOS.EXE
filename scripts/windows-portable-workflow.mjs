@@ -43,9 +43,11 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\\scripts\\windows-test-v6.manifest", "the test-only Common Controls v6 activation manifest");
   requireText(text, "runs-on: ubuntu-latest", "the alternate runtime-seed network lane");
   requireText(text, "needs: seed-runtime-source", "the runtime-seed dependency");
+  requireText(text, "python3 scripts/acquire_runtime_windows.py --component git-for-windows --cache build/runtime-cache/windows", "exact locked Git for Windows seed acquisition");
   requireText(text, "python3 scripts/acquire_runtime_windows.py --component qemu --cache build/runtime-cache/windows", "exact locked QEMU seed acquisition");
-  requireText(text, "name: windows-qemu-source-${{ env.OPEMOS_EXE_COMMIT }}", "exact-head QEMU seed identity");
-  requireText(text, "path: build/runtime-cache/windows/qemu-w64-setup-20260811.exe", "closed QEMU seed upload");
+  requireText(text, "name: windows-runtime-source-${{ env.OPEMOS_EXE_COMMIT }}", "exact-head runtime seed identity");
+  requireText(text, "build/runtime-cache/windows/PortableGit-2.55.0.5-64-bit.7z.exe", "closed Git for Windows seed upload");
+  requireText(text, "build/runtime-cache/windows/qemu-w64-setup-20260811.exe", "closed QEMU seed upload");
   requireText(text, "path: build/runtime-cache/windows", "closed QEMU cache restore");
   requireText(text, "run: .\\bundle_windows.ps1 -CoreRoot opemos-core-contracts", "verified Windows bundle build");
   requireText(bundle, "scripts/acquire_appliance_windows.py", "exact Fedora appliance acquisition");

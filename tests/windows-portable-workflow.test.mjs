@@ -26,6 +26,7 @@ for (const [name, mutate, expected] of [
   ["long artifact retention", text => text.replace("retention-days: 1", "retention-days: 90"), /one-day artifact retention/],
   ["missing hidden runtime files", text => text.replace("include-hidden-files: true", "include-hidden-files: false"), /declared hidden runtime files/],
   ["mutable runtime seed action", text => text.replace("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093", "actions/download-artifact@v4"), /download-artifact action/],
+  ["missing exact Git for Windows seed", text => text.replace("python3 scripts/acquire_runtime_windows.py --component git-for-windows --cache build/runtime-cache/windows", "echo skipped"), /locked Git for Windows seed acquisition/],
   ["missing exact QEMU seed", text => text.replace("python3 scripts/acquire_runtime_windows.py --component qemu --cache build/runtime-cache/windows", "echo skipped"), /locked QEMU seed acquisition/],
   ["missing runtime seed dependency", text => text.replace("needs: seed-runtime-source", "needs: []"), /runtime-seed dependency/],
   ["missing verified bundle build", text => text.replace("run: .\\bundle_windows.ps1 -CoreRoot opemos-core-contracts", "run: Write-Host skipped"), /verified Windows bundle build/],
