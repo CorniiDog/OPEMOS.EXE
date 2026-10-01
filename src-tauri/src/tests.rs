@@ -1949,6 +1949,7 @@ mod tests {
         let binary = root.0.join("git");
         fs::write(&binary, r#"#!/bin/sh
 mode=$(cat "$2/mode")
+if [ "$mode" != broken-pipe ]; then cat >/dev/null; fi
 case "$mode" in
   overflow) dd if=/dev/zero bs=1024 count=2 2>/dev/null ;;
   stderr-overflow) dd if=/dev/zero bs=1024 count=2 1>&2 2>/dev/null ;;

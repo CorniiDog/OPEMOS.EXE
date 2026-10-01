@@ -6,7 +6,7 @@ import unittest
 from unittest import mock
 import urllib.error
 
-from scripts.acquire_runtime_windows import acquire_source, current_lock_matches, load_lock, move_tree, remove_empty_files
+from scripts.acquire_runtime_windows import RANGE_BYTES, acquire_source, current_lock_matches, download_locked_ranges, load_lock, move_tree, remove_empty_files
 
 
 class WindowsRuntimeAcquisitionTests(unittest.TestCase):
@@ -48,37 +48,37 @@ class WindowsRuntimeAcquisitionTests(unittest.TestCase):
             self.assertTrue(current_lock_matches(root, lock))
             self.assertFalse(current_lock_matches(root, dict(lock, architecture="arm64")))
 
-    def test_transient_522_retries_are_bounded_and_clean_partial_bytes(self):
+    def test_same_endpoint_ranges_resume_522_and_require_exact_response_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
-            cache = Path(temporary)
-            payload = b"pinned Windows archive"
-            item = {"component":"fixture","version":"1","url":"https://example.invalid/a.zip","file":"a.zip","size":len(payload),"sha256":hashlib.sha256(payload).hexdigest()}
-            attempts = []
+            partial = Path(temporary) / "archive.part"
+            payload = b"a" * RANGE_BYTES + b"final"
+            requests = []
             sleeps = []
-            def downloader(url, partial):
-                attempts.append(url)
-                Path(partial).write_bytes(b"partial")
-                if len(attempts) < 3:
-                    raise urllib.error.HTTPError(url, 522, "transient", {}, None)
-                Path(partial).write_bytes(payload)
-            target = acquire_source(item, cache, downloader, sleeps.append)
-            self.assertEqual(target.read_bytes(), payload)
-            self.assertEqual(attempts, [item["url"]] * 3)
-            self.assertEqual(sleeps, [10, 30])
-            self.assertEqual(list(cache.glob(".*.part")), [])
+            class Response:
+                def __init__(self, body, content_range): self.body=body; self.offset=0; self.status=206; self.headers={"Content-Range":content_range}
+                def __enter__(self): return self
+                def __exit__(self,*_args): return False
+                def read(self,amount):
+                    amount=min(amount,777_777); block=self.body[self.offset:self.offset+amount]; self.offset+=len(block); return block
+            def opener(request,timeout):
+                requests.append((request.full_url,request.headers["Range"],timeout))
+                if len(requests)==1: raise urllib.error.HTTPError(request.full_url,522,"transient",{},None)
+                start,end=map(int,request.headers["Range"].removeprefix("bytes=").split("-"))
+                return Response(payload[start:end+1],f"bytes {start}-{end}/{len(payload)}")
+            download_locked_ranges("https://example.invalid/a.zip",partial,len(payload),opener,sleeps.append)
+            self.assertEqual(partial.read_bytes(),payload)
+            self.assertEqual([request[1] for request in requests],[f"bytes=0-{RANGE_BYTES-1}",f"bytes=0-{RANGE_BYTES-1}",f"bytes={RANGE_BYTES}-{len(payload)-1}"])
+            self.assertEqual(sleeps,[10])
 
-            attempts.clear()
+            def invalid_response(request,timeout): return Response(b"wrong","bytes 0-4/5")
+            with self.assertRaisesRegex(SystemExit,"range response is invalid"):
+                download_locked_ranges("https://example.invalid/a.zip",partial,6,invalid_response,sleeps.append)
+
             sleeps.clear()
-            target.unlink()
+            def unavailable(request,timeout): raise urllib.error.HTTPError(request.full_url,522,"transient",{},None)
             with self.assertRaises(urllib.error.HTTPError):
-                acquire_source(
-                    item, cache,
-                    lambda url, partial: (_ for _ in ()).throw(urllib.error.HTTPError(url, 522, "transient", {}, None)),
-                    sleeps.append,
-                )
-            self.assertEqual(sleeps, [10, 30, 60, 120, 180])
-            self.assertFalse(target.exists())
-            self.assertEqual(list(cache.glob(".*.part")), [])
+                download_locked_ranges("https://example.invalid/a.zip",partial,6,unavailable,sleeps.append)
+            self.assertEqual(sleeps,[10,30,60,120,180,300,300])
 
     def test_archive_root_move_does_not_delete_an_already_moved_temporary_tree(self):
         with tempfile.TemporaryDirectory() as temporary:
