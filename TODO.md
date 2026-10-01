@@ -3441,8 +3441,9 @@ must be reported; a default-suite pass does not imply hardware certification.
   diff (`ec62a446a6f16f7c189c2c326ea68a864c5016a8e96cec674c762fc102dad99d`),
   with same-author GitHub refusal recorded through the authenticated handoff.
   It squash-merged as exact Core main
-  `10cf3a84805b04bf63eb01cc142af75b8119b9fa`; EXE now consumes that commit
-  across its runtime, maintainer, CI, and Windows artifact pins. A canonical
+  `10cf3a84805b04bf63eb01cc142af75b8119b9fa`; EXE consumed that intermediate
+  commit while Core completed the separately reviewed firmware-display batch.
+  A canonical
   dry-run from the authenticated GitHub checkout produced the 122-file bundle
   manifest SHA-256
   `7bc83956f75d65428538e65772d6dffdd74bf6fa8480702808ed8f22120a6cc4`
@@ -3451,7 +3452,19 @@ must be reported; a default-suite pass does not imply hardware certification.
   Core then published that exact create-only release after explicit user
   approval. Independent download verifies the sole 22,408-byte asset is
   byte-identical to the reviewed manifest and the immutable tag resolves
-  directly to `10cf3a84805b04bf63eb01cc142af75b8119b9fa`. Focused JavaScript
+  directly to `10cf3a84805b04bf63eb01cc142af75b8119b9fa`. Core PR #62 then
+  restricted the recovery renderer to firmware-selected `simpledrm` and
+  preserved the existing console/headless fallback; its exact reviewed head
+  `98ddf0d1a9a5ab89c343db4dc37fbc2d23379a7d` squash-merged as
+  `6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6`. The final create-only release
+  tag resolves directly to that squash commit, and its sole 22,408-byte
+  122-file manifest has SHA-256
+  `4508bcba4eca8f7973a437034de2f049ff8e719e48559b5595ae221e4f778ffc`
+  and bundle ID
+  `7588afab9bef375d9ef8e58586d6228e58604b2714271417a3908731af8013ac`;
+  an independent download is byte-identical to Core's prepared manifest. EXE
+  now consumes that final squash across runtime, maintainer, CI, and Windows
+  artifact pins. Focused JavaScript
   execution initially depended on CI because this host has no Node binary; the
   corrected exact-head frontend job passes, while Python, shell syntax, hygiene,
   and diff checks pass locally. The first pinned-Core Rust run usefully exposed

@@ -3,7 +3,7 @@ import test from "node:test";
 import { CORE_MAINTAINER_WORKFLOW, CORE_MAINTAINER_WORKFLOW_COMMIT, installMaintainerReleaseWorkflow, validateMaintainerReleaseWorkflow } from "../src/maintainer-release-workflow.js";
 const clone = () => JSON.parse(JSON.stringify(CORE_MAINTAINER_WORKFLOW));
 test("bundles the exact canonical Core target and ordered non-remote phases", () => {
-  assert.equal(CORE_MAINTAINER_WORKFLOW_COMMIT, "10cf3a84805b04bf63eb01cc142af75b8119b9fa");
+  assert.equal(CORE_MAINTAINER_WORKFLOW_COMMIT, "6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6");
   assert.equal(validateMaintainerReleaseWorkflow(clone()), true);
   assert.deepEqual(CORE_MAINTAINER_WORKFLOW.steps.map(({ id }) => id), ["resolve", "build", "package", "bundle", "validate", "release-dry-run"]);
   assert.ok(CORE_MAINTAINER_WORKFLOW.steps.every(({ mutatesRemote }) => mutatesRemote === false));

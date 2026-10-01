@@ -550,16 +550,16 @@ const NVIDIA_DEPENDENCY_LIMIT: usize = 16;
 const ARCH_PACKAGE_SIGNATURE_LIMIT: u64 = 16 * 1024;
 const MAX_NORMALIZED_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const NVIDIA_SUPPORT_REPOSITORY: &str = "CorniiDog/OPEMOS";
-const NVIDIA_SUPPORT_COMMIT: &str = "10cf3a84805b04bf63eb01cc142af75b8119b9fa";
+const NVIDIA_SUPPORT_COMMIT: &str = "6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6";
 const NVIDIA_INSTALLER_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
 const NVIDIA_SUPPORT_BUILD_COMMIT: &str = NVIDIA_SUPPORT_COMMIT;
-// Compatibility target only. This does not become the production installer pin
-// until its canonical manifest is published through an immutable channel.
-const OPEMOS_CORE_COMPATIBILITY_COMMIT: &str = "10cf3a84805b04bf63eb01cc142af75b8119b9fa";
+// The compatibility and production installer pins share the exact immutable
+// Core commit only after its canonical manifest is published.
+const OPEMOS_CORE_COMPATIBILITY_COMMIT: &str = "6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6";
 const OPEMOS_CORE_COMPATIBILITY_MANIFEST_SHA256: &str =
-    "7bc83956f75d65428538e65772d6dffdd74bf6fa8480702808ed8f22120a6cc4";
+    "4508bcba4eca8f7973a437034de2f049ff8e719e48559b5595ae221e4f778ffc";
 const OPEMOS_CORE_COMPATIBILITY_BUNDLE_ID: &str =
-    "06aa82ff2564ad6ecc1711e8227ec9f38fadf25815b7389b5a137bbb8cad17d1";
+    "7588afab9bef375d9ef8e58586d6228e58604b2714271417a3908731af8013ac";
 #[cfg(test)]
 const NVIDIA_UTILS_SIGNER: &str = "05C7775A9E8B977407FE08E69D4C5AA15426DA0A";
 #[cfg(test)]
