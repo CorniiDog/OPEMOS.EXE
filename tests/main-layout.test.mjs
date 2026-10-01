@@ -83,8 +83,7 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(html, /id="review-usb-target"[^>]*aria-haspopup="dialog"[^>]*aria-controls="usb-card"[^>]*aria-expanded="false"/);
   assert.match(script, /function setUsbMenuOpen\(opened\)/);
   assert.match(script, /function selectedExportMode\(\)[\s\S]*if \(image && usb\) return "both";/);
-  assert.match(script, /if \(completedOutput\?\.path\) void revealUsbImaging\(\{ focus: false \}\);/);
-  assert.doesNotMatch(script, /if \(currentImage\) \{\s*await refreshUsbTargets\(\)/);
+  assert.match(script, /if \(currentImage\) \{\s*elements\.usbPicker\.classList\.remove\("hidden"\);\s*await refreshUsbTargets\(\);/);
   assert.match(html, /id="usb-target" size="3" disabled[^>]*>[\s\S]*Connect a USB drive, then refresh…[\s\S]*<\/select>/);
   assert.match(html, /id="usb-target-detail"[\s\S]*class="usb-picker-actions"[\s\S]*id="clear-usb-target"[\s\S]*id="refresh-usb-targets"/);
   assert.doesNotMatch(script, /Select a removable drive for review/);
