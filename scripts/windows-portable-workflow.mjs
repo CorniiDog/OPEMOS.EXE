@@ -56,7 +56,7 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "} while (($process.MainWindowHandle -eq 0 -or $process.MainWindowTitle -cne \"SteamOS NVIDIA Builder\") -and [DateTime]::UtcNow -lt $deadline)", "bounded native UI readiness polling");
   requireText(text, "if ($process.MainWindowHandle -eq 0) {", "a visible native main-window gate");
   requireText(text, "if ($process.MainWindowTitle -cne \"SteamOS NVIDIA Builder\") {", "the expected Windows UI title");
-  requireText(text, "finally {", "unconditional smoke-test cleanup");
+  requireText(text, "finally {\n            if (-not $process.HasExited)", "unconditional smoke-test cleanup");
   requireText(text, "Stop-Process -Id $process.Id", "bounded smoke-test process cleanup");
   requireText(text, '$qemuBefore = @(Get-Process -Name "qemu-system-*"', "the pre-start QEMU identity inventory");
   requireText(text, '$qemuDeadline = [DateTime]::UtcNow.AddSeconds(5)', "the bounded post-close QEMU check");
