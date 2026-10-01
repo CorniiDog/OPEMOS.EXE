@@ -44,10 +44,18 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "runs-on: ubuntu-latest", "the alternate runtime-seed network lane");
   requireText(text, "needs: seed-runtime-source", "the runtime-seed dependency");
   requireText(text, "python3 scripts/acquire_runtime_windows.py --component git-for-windows --cache build/runtime-cache/windows", "exact locked Git for Windows seed acquisition");
+  requireText(text, "python3 scripts/acquire_runtime_windows.py --component github-cli --cache build/runtime-cache/windows", "exact locked GitHub CLI seed acquisition");
+  requireText(text, "python3 scripts/acquire_runtime_windows.py --component python --cache build/runtime-cache/windows", "exact locked Python seed acquisition");
   requireText(text, "python3 scripts/acquire_runtime_windows.py --component qemu --cache build/runtime-cache/windows", "exact locked QEMU seed acquisition");
+  requireText(text, "python3 scripts/acquire_runtime_windows.py --component cdrtools-binary --cache build/runtime-cache/windows", "exact locked cdrtools binary seed acquisition");
+  requireText(text, "python3 scripts/acquire_runtime_windows.py --component cdrtools-source --cache build/runtime-cache/windows", "exact locked cdrtools source seed acquisition");
   requireText(text, "name: windows-runtime-source-${{ env.OPEMOS_EXE_COMMIT }}", "exact-head runtime seed identity");
   requireText(text, "build/runtime-cache/windows/PortableGit-2.55.0.5-64-bit.7z.exe", "closed Git for Windows seed upload");
+  requireText(text, "build/runtime-cache/windows/gh_2.100.0_windows_amd64.zip", "closed GitHub CLI seed upload");
+  requireText(text, "build/runtime-cache/windows/python-3.13.15-embeddable-amd64.zip", "closed Python seed upload");
   requireText(text, "build/runtime-cache/windows/qemu-w64-setup-20260811.exe", "closed QEMU seed upload");
+  requireText(text, "build/runtime-cache/windows/schily-cdrtools-3.02a09.7z", "closed cdrtools binary seed upload");
+  requireText(text, "build/runtime-cache/windows/cdrtools-3.02a09.tar.gz", "closed cdrtools source seed upload");
   requireText(text, "path: build/runtime-cache/windows", "closed QEMU cache restore");
   requireText(text, "run: .\\bundle_windows.ps1 -CoreRoot opemos-core-contracts", "verified Windows bundle build");
   requireText(bundle, "scripts/acquire_appliance_windows.py", "exact Fedora appliance acquisition");

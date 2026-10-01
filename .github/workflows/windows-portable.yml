@@ -36,7 +36,11 @@ jobs:
       - name: Acquire exact locked Windows runtime sources blocked on Windows
         run: |
           python3 scripts/acquire_runtime_windows.py --component git-for-windows --cache build/runtime-cache/windows
+          python3 scripts/acquire_runtime_windows.py --component github-cli --cache build/runtime-cache/windows
+          python3 scripts/acquire_runtime_windows.py --component python --cache build/runtime-cache/windows
           python3 scripts/acquire_runtime_windows.py --component qemu --cache build/runtime-cache/windows
+          python3 scripts/acquire_runtime_windows.py --component cdrtools-binary --cache build/runtime-cache/windows
+          python3 scripts/acquire_runtime_windows.py --component cdrtools-source --cache build/runtime-cache/windows
 
       - name: Upload short-lived exact Windows runtime source seed
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -44,7 +48,11 @@ jobs:
           name: windows-runtime-source-${{ env.OPEMOS_EXE_COMMIT }}
           path: |
             build/runtime-cache/windows/PortableGit-2.55.0.5-64-bit.7z.exe
+            build/runtime-cache/windows/gh_2.100.0_windows_amd64.zip
+            build/runtime-cache/windows/python-3.13.15-embeddable-amd64.zip
             build/runtime-cache/windows/qemu-w64-setup-20260811.exe
+            build/runtime-cache/windows/schily-cdrtools-3.02a09.7z
+            build/runtime-cache/windows/cdrtools-3.02a09.tar.gz
           if-no-files-found: error
           retention-days: 1
           compression-level: 0

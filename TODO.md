@@ -3501,9 +3501,12 @@ must be reported; a default-suite pass does not imply hardware certification.
   passed QEMU restore and every pre-build Windows gate, then the Windows runner
   independently failed on the first remaining lock entry, Git for Windows,
   with HTTP 523. The failed-stage correction adds only that demonstrated
-  source to the same one-day same-run seed; Ubuntu still downloads both files
-  from their existing locked URLs and the Windows constructor still enforces
-  each existing size and SHA-256 before extraction.
+  source to the same one-day same-run seed. Per the authenticated resolver
+  correction, the final lane seeds the complete existing six-file lock closure
+  so Windows CI does not depend on intermittent egress to any remaining origin;
+  Ubuntu downloads every file from its existing locked URL and the Windows
+  constructor still enforces every existing name, size, and SHA-256 before
+  extraction.
   Focused JavaScript
   execution initially depended on CI because this host has no Node binary; the
   corrected exact-head frontend job passes, while Python, shell syntax, hygiene,
