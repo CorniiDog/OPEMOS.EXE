@@ -22,11 +22,14 @@ test("mock welcome controller serves and completes the real UI contract safely",
 
   let port;
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { port = readFileSync(join(runtime, "port"), "utf8").trim(); break; }
+    try {
+      port = readFileSync(join(runtime, "port"), "utf8").trim();
+      if (/^\d+$/.test(port)) break;
+    }
     catch {
       if (child.exitCode !== null) break;
-      await pause(20);
     }
+    await pause(20);
   }
   if (!port && /PermissionError: \[Errno 1\] Operation not permitted/.test(stderr)) {
     context.skip("sandbox does not permit an ephemeral loopback listener");
