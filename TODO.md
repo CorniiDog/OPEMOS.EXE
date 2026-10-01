@@ -3440,9 +3440,20 @@ must be reported; a default-suite pass does not imply hardware certification.
   exact head `ac36e11294cd6e9e576ab818cb22489d7f97c04e` and canonical 6,302-byte
   diff (`ec62a446a6f16f7c189c2c326ea68a864c5016a8e96cec674c762fc102dad99d`),
   with same-author GitHub refusal recorded through the authenticated handoff.
-  Focused JavaScript execution is pending because this host has no Node binary;
-  available Python and shell syntax checks pass. Required CI, exact Core merge
-  consumption, counterpart review, and genuine-click VM build/parse/USB/install/
+  It squash-merged as exact Core main
+  `10cf3a84805b04bf63eb01cc142af75b8119b9fa`; EXE now consumes that commit
+  across its runtime, maintainer, CI, and Windows artifact pins. A canonical
+  dry-run from the authenticated GitHub checkout produced the 122-file bundle
+  manifest SHA-256
+  `7bc83956f75d65428538e65772d6dffdd74bf6fa8480702808ed8f22120a6cc4`
+  and bundle ID
+  `06aa82ff2564ad6ecc1711e8227ec9f38fadf25815b7389b5a137bbb8cad17d1`;
+  its immutable release is not yet published, so production retrieval remains
+  gated and a concrete Core handoff request is recorded. Focused JavaScript
+  execution initially depended on CI because this host has no Node binary; the
+  corrected exact-head frontend job passes, while Python, shell syntax, hygiene,
+  and diff checks pass locally. Remaining required checks, exact Core counterpart
+  review, bundle availability, and genuine-click VM build/parse/USB/install/
   detach/visible-installed-boot acceptance remain pending.
 
 ### Alpha
