@@ -3486,21 +3486,18 @@ must be reported; a default-suite pass does not imply hardware certification.
   shared heavy wrapper. A separate exact-head Rust failure was a fixture race;
   only the fake child now consumes intended stdin before producing its bounded
   output, while the production mutation runner is unchanged.
-  Because the GitHub-hosted Windows route then exhausted every bounded request
-  shape, the failed-stage CI correction uses unexpired same-repository artifact
-  `11116649587` only as an operational runtime seed. It binds source head
-  `d31d5487cfd357d0e32b27d901ce6cc0977a550b`, run `36756192338`, artifact
-  metadata, and ZIP digest
-  `a25ad52d7aa59a6542a56912ed92ad73b65605b230b4afa5bbd2a0bef3edeb6d`;
-  extracts only the closed `runtime/` subtree; and verifies every declared file,
-  exact current source-provenance lock, and current Core zstd contract before
-  rebuilding the current application. The ZIP is removed in the same guarded
-  step. This is a time-bounded same-repository cache, not a new endpoint, trust
-  input, public runtime publication, or durable replacement for pinned source
-  acquisition. Extraction/acquisition regressions pass 8/8, and full validation
-  of a retained identical runtime against a fresh canonical GitHub checkout of
-  Core `6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6` passes with runtime-manifest
-  SHA-256 `05015c53a38401d660afa078fbafb8465737b770a5d2a74b42781eda1c66b87a`.
+  An attempted same-repository cache reuse correctly failed closed: artifact
+  `11116649587` was authenticated but its source provenance binds QEMU 8.1,
+  while this candidate requires QEMU 11.1. No provenance gate was weakened.
+  The narrower failed-stage correction now gives the same workflow a bounded
+  Ubuntu seed job which downloads only the current locked QEMU 11.1 installer
+  through the same acquisition code, exact URL, size, and SHA-256, uploads that
+  single file as a one-day exact-head workflow artifact with compression
+  disabled, and restores it into the Windows runtime cache. The Windows builder
+  independently rechecks the cache file against the current lock before use;
+  every other component retains normal pinned acquisition. This is transient
+  same-run cache transport, not a new endpoint, trust input, public runtime
+  publication, or durable source replacement.
   Focused JavaScript
   execution initially depended on CI because this host has no Node binary; the
   corrected exact-head frontend job passes, while Python, shell syntax, hygiene,

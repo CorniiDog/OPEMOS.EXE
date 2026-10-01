@@ -140,5 +140,10 @@ def construct(output,cache,lock_path):
         if staging.exists(): shutil.rmtree(staging)
     return output
 def main():
-    root=Path(__file__).resolve().parent.parent; parser=argparse.ArgumentParser(); parser.add_argument("--output",type=Path,default=root/"build/runtime/windows"); parser.add_argument("--cache",type=Path,default=root/"build/runtime-cache/windows"); parser.add_argument("--lock",type=Path,default=root/"runtime/windows-x86_64.sources.json"); args=parser.parse_args(); print(construct(args.output,args.cache,args.lock))
+    root=Path(__file__).resolve().parent.parent; parser=argparse.ArgumentParser(); parser.add_argument("--output",type=Path,default=root/"build/runtime/windows"); parser.add_argument("--cache",type=Path,default=root/"build/runtime-cache/windows"); parser.add_argument("--lock",type=Path,default=root/"runtime/windows-x86_64.sources.json"); parser.add_argument("--component"); args=parser.parse_args()
+    if args.component:
+        lock=load_lock(args.lock); matches=[item for item in lock["sources"] if item["component"]==args.component]
+        if len(matches)!=1: fail("Requested Windows runtime component is not uniquely locked")
+        print(acquire_source(matches[0],args.cache)); return
+    print(construct(args.output,args.cache,args.lock))
 if __name__=="__main__": main()

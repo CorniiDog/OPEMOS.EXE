@@ -20,7 +20,33 @@ env:
   RUSTFLAGS: -C target-feature=+crt-static
 
 jobs:
+  seed-runtime-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact EXE source for runtime seed
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.OPEMOS_EXE_COMMIT }}
+          persist-credentials: false
+
+      - name: Verify immutable seed source identity
+        run: test "$(git rev-parse HEAD)" = "$OPEMOS_EXE_COMMIT"
+
+      - name: Acquire exact locked QEMU source
+        run: python3 scripts/acquire_runtime_windows.py --component qemu --cache build/runtime-cache/windows
+
+      - name: Upload short-lived exact QEMU source seed
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-qemu-source-${{ env.OPEMOS_EXE_COMMIT }}
+          path: build/runtime-cache/windows/qemu-w64-setup-20260811.exe
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
   build:
+    needs: seed-runtime-source
     runs-on: windows-latest
     timeout-minutes: 120
     steps:
@@ -96,37 +122,15 @@ jobs:
           OPEMOS_CORE_EXPECTED_COMMIT: 6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6
           RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\scripts\windows-test-v6.manifest
 
-      - name: Restore exact same-repository Windows runtime seed
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          $artifactId = 11116649587
-          $expectedName = "OPEMOS.EXE-windows-x86_64-unsigned-d31d5487cfd357d0e32b27d901ce6cc0977a550b"
-          $expectedRun = 36756192338
-          $expectedHead = "d31d5487cfd357d0e32b27d901ce6cc0977a550b"
-          $expectedSize = 1942268278
-          $expectedDigest = "sha256:a25ad52d7aa59a6542a56912ed92ad73b65605b230b4afa5bbd2a0bef3edeb6d"
-          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = "application/vnd.github+json"; "X-GitHub-Api-Version" = "2022-11-28" }
-          $metadata = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/CorniiDog/OPEMOS.EXE/actions/artifacts/$artifactId"
-          if ($metadata.id -ne $artifactId -or $metadata.name -cne $expectedName -or $metadata.expired -or $metadata.size_in_bytes -ne $expectedSize -or $metadata.digest -cne $expectedDigest -or $metadata.workflow_run.id -ne $expectedRun -or $metadata.workflow_run.head_sha -cne $expectedHead) {
-            throw "Windows runtime seed artifact identity changed."
-          }
-          $archive = Join-Path $env:RUNNER_TEMP "opemos-windows-runtime-seed.zip"
-          try {
-            Invoke-WebRequest -Headers $headers -Uri $metadata.archive_download_url -OutFile $archive
-            $actualDigest = "sha256:" + (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($actualDigest -cne $expectedDigest) { throw "Windows runtime seed archive digest changed: $actualDigest" }
-            python scripts/extract_windows_runtime_cache.py --archive $archive --output build/runtime-seed/windows
-            if ($LASTEXITCODE -ne 0) { throw "Windows runtime seed extraction failed." }
-          }
-          finally {
-            if (Test-Path -LiteralPath $archive -PathType Leaf) { Remove-Item -LiteralPath $archive -Force }
-          }
+      - name: Restore exact same-run QEMU source seed
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: windows-qemu-source-${{ env.OPEMOS_EXE_COMMIT }}
+          path: build/runtime-cache/windows
 
       - name: Build unsigned verified runtime bundle
         shell: pwsh
-        run: .\bundle_windows.ps1 -CoreRoot opemos-core-contracts -PreparedRuntimeRoot build/runtime-seed/windows
+        run: .\bundle_windows.ps1 -CoreRoot opemos-core-contracts
 
       - name: Smoke-test portable executable startup
         shell: pwsh
