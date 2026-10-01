@@ -28,15 +28,16 @@ def acquire_source(item,cache,downloader=urllib.request.urlretrieve,sleeper=time
     cache.mkdir(parents=True,exist_ok=True); partial=cache/f".{item['file']}.part"
     if partial.exists() or partial.is_symlink(): partial.unlink()
     try:
-        for attempt in range(4):
+        retry_delays=(10,30,60,120,180)
+        for attempt in range(len(retry_delays)+1):
             try:
                 downloader(item["url"],partial)
                 break
             except urllib.error.HTTPError as error:
-                if error.code != 522 or attempt == 3:
+                if error.code != 522 or attempt == len(retry_delays):
                     raise
                 if partial.exists() or partial.is_symlink(): partial.unlink()
-                sleeper((5,15,30)[attempt])
+                sleeper(retry_delays[attempt])
         if not exact(partial,item): fail(f"Pinned Windows archive identity mismatch: {item['component']}")
         os.replace(partial,target)
     finally:

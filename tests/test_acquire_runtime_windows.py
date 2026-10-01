@@ -64,7 +64,7 @@ class WindowsRuntimeAcquisitionTests(unittest.TestCase):
             target = acquire_source(item, cache, downloader, sleeps.append)
             self.assertEqual(target.read_bytes(), payload)
             self.assertEqual(attempts, [item["url"]] * 3)
-            self.assertEqual(sleeps, [5, 15])
+            self.assertEqual(sleeps, [10, 30])
             self.assertEqual(list(cache.glob(".*.part")), [])
 
             attempts.clear()
@@ -76,7 +76,7 @@ class WindowsRuntimeAcquisitionTests(unittest.TestCase):
                     lambda url, partial: (_ for _ in ()).throw(urllib.error.HTTPError(url, 522, "transient", {}, None)),
                     sleeps.append,
                 )
-            self.assertEqual(sleeps, [5, 15, 30])
+            self.assertEqual(sleeps, [10, 30, 60, 120, 180])
             self.assertFalse(target.exists())
             self.assertEqual(list(cache.glob(".*.part")), [])
 
