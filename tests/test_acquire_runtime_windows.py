@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
+import urllib.error
 
 from scripts.acquire_runtime_windows import acquire_source, current_lock_matches, load_lock, move_tree, remove_empty_files
 
@@ -46,6 +47,38 @@ class WindowsRuntimeAcquisitionTests(unittest.TestCase):
             (root / "source-provenance.json").write_text(json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n")
             self.assertTrue(current_lock_matches(root, lock))
             self.assertFalse(current_lock_matches(root, dict(lock, architecture="arm64")))
+
+    def test_transient_522_retries_are_bounded_and_clean_partial_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary)
+            payload = b"pinned Windows archive"
+            item = {"component":"fixture","version":"1","url":"https://example.invalid/a.zip","file":"a.zip","size":len(payload),"sha256":hashlib.sha256(payload).hexdigest()}
+            attempts = []
+            sleeps = []
+            def downloader(url, partial):
+                attempts.append(url)
+                Path(partial).write_bytes(b"partial")
+                if len(attempts) < 3:
+                    raise urllib.error.HTTPError(url, 522, "transient", {}, None)
+                Path(partial).write_bytes(payload)
+            target = acquire_source(item, cache, downloader, sleeps.append)
+            self.assertEqual(target.read_bytes(), payload)
+            self.assertEqual(attempts, [item["url"]] * 3)
+            self.assertEqual(sleeps, [5, 15])
+            self.assertEqual(list(cache.glob(".*.part")), [])
+
+            attempts.clear()
+            sleeps.clear()
+            target.unlink()
+            with self.assertRaises(urllib.error.HTTPError):
+                acquire_source(
+                    item, cache,
+                    lambda url, partial: (_ for _ in ()).throw(urllib.error.HTTPError(url, 522, "transient", {}, None)),
+                    sleeps.append,
+                )
+            self.assertEqual(sleeps, [5, 15, 30])
+            self.assertFalse(target.exists())
+            self.assertEqual(list(cache.glob(".*.part")), [])
 
     def test_archive_root_move_does_not_delete_an_already_moved_temporary_tree(self):
         with tempfile.TemporaryDirectory() as temporary:

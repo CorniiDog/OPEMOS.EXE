@@ -3464,7 +3464,13 @@ must be reported; a default-suite pass does not imply hardware certification.
   `7588afab9bef375d9ef8e58586d6228e58604b2714271417a3908731af8013ac`;
   an independent download is byte-identical to Core's prepared manifest. EXE
   now consumes that final squash across runtime, maintainer, CI, and Windows
-  artifact pins. Focused JavaScript
+  artifact pins. The final-head Windows job then reproduced the same HTTP 522
+  twice while acquiring an existing pinned runtime archive, before compilation.
+  The acquisition path now retries only HTTP 522 at bounded 5/15/30-second
+  intervals, deletes its exact managed partial between attempts, retains the
+  existing URL/size/SHA-256 gate, and propagates the fourth failure. Its focused
+  success-after-two-errors, exhaustion, and cleanup regression passes 6/6.
+  Focused JavaScript
   execution initially depended on CI because this host has no Node binary; the
   corrected exact-head frontend job passes, while Python, shell syntax, hygiene,
   and diff checks pass locally. The first pinned-Core Rust run usefully exposed

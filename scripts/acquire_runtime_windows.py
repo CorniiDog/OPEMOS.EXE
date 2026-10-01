@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Acquire the pinned x86_64 Windows runtime used by the application bundle."""
-import argparse, hashlib, json, os, platform, re, shutil, subprocess, tarfile, tempfile, urllib.request, zipfile
+import argparse, hashlib, json, os, platform, re, shutil, subprocess, tarfile, tempfile, time, urllib.error, urllib.request, zipfile
 from pathlib import Path
 EXPECTED=("git-for-windows","github-cli","python","qemu","cdrtools-binary","cdrtools-source")
 COMMANDS={"git":"git/cmd/git.exe","python":"python/python.exe","qemu-img":"qemu/qemu-img.exe","qemu-system-x86_64":"qemu/qemu-system-x86_64.exe","mkisofs":"cdrtools/mkisofs.exe","ssh":"git/usr/bin/ssh.exe","scp":"git/usr/bin/scp.exe","ssh-keygen":"git/usr/bin/ssh-keygen.exe","gh":"gh/bin/gh.exe","bash":"git/bin/bash.exe","tar":"git/usr/bin/tar.exe"}
@@ -21,14 +21,22 @@ def load_lock(path):
         if set(item)!={"component","version","url","file","size","sha256"} or not all(isinstance(item[k],str) and item[k] for k in ("component","version","url","file","sha256")) or not item["url"].startswith("https://") or Path(item["file"]).name!=item["file"] or item["file"] in names or not isinstance(item["size"],int) or item["size"]<=0 or not re.fullmatch(r"[0-9a-f]{64}",item["sha256"]): fail("Windows runtime source lock contains an invalid archive")
         names.add(item["file"])
     return raw
-def acquire_source(item,cache,downloader=urllib.request.urlretrieve):
+def acquire_source(item,cache,downloader=urllib.request.urlretrieve,sleeper=time.sleep):
     target=cache/item["file"]
     if exact(target,item): return target
     if target.exists() or target.is_symlink(): target.unlink()
     cache.mkdir(parents=True,exist_ok=True); partial=cache/f".{item['file']}.part"
     if partial.exists() or partial.is_symlink(): partial.unlink()
     try:
-        downloader(item["url"],partial)
+        for attempt in range(4):
+            try:
+                downloader(item["url"],partial)
+                break
+            except urllib.error.HTTPError as error:
+                if error.code != 522 or attempt == 3:
+                    raise
+                if partial.exists() or partial.is_symlink(): partial.unlink()
+                sleeper((5,15,30)[attempt])
         if not exact(partial,item): fail(f"Pinned Windows archive identity mismatch: {item['component']}")
         os.replace(partial,target)
     finally:
