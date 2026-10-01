@@ -3515,9 +3515,18 @@ must be reported; a default-suite pass does not imply hardware certification.
   the former 55-file count, and a resolver fixture missing the now-bundled exact-
   target policy. The focused correction binds the unified production installer
   identity, expects all 122 authenticated files, and stages that policy for the
-  behavioral resolver comparison. Remaining required checks, exact Core
-  counterpart review, and genuine-click VM build/parse/USB/install/
-  detach/visible-installed-boot acceptance remain pending.
+  behavioral resolver comparison. Exact-head construction, 32-GiB
+  write/flush/readback, fresh-target installation, media detach, and visible
+  installed Plasma boot then passed, but final Core review localized the KDE
+  configuration warnings to an installer ownership regression: nested
+  `install -d -o deck` calls owned only their leaf directories, leaving newly
+  created `/home/deck`, `.config`, `.local`, and `.local/share` ancestors owned
+  by root. The bounded correction explicitly owns every required ancestor in
+  parent-before-child order without recursively changing unrelated home data;
+  a focused regression requires that complete ordered closure. Exact Windows
+  execution, changed-head checks, failed installed-home/visible-boot stage,
+  one clean final full pass, and exact changed-head Core counterpart review
+  remain pending.
 
 ### Alpha
 

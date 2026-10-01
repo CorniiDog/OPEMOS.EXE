@@ -315,9 +315,16 @@ restore_maintainer_home() {
     deck_uid=${deck_id%:*}
     deck_gid=${deck_id#*:}
     for destination in \
+      "$home_mount/deck" \
       "$home_mount/deck/tools" \
       "$home_mount/deck/Desktop" \
+      "$home_mount/deck/.config" \
       "$home_mount/deck/.config/autostart" \
+      "$home_mount/deck/.local" \
+      "$home_mount/deck/.local/share" \
+      "$home_mount/deck/.local/share/icons" \
+      "$home_mount/deck/.local/share/icons/hicolor" \
+      "$home_mount/deck/.local/share/icons/hicolor/scalable" \
       "$home_mount/deck/.local/share/icons/hicolor/scalable/apps"; do
       install -d -o "$deck_uid" -g "$deck_gid" -m 0755 "$destination"
     done

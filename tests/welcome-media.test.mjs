@@ -127,6 +127,26 @@ test("installation restores Maintainer launchers after Valve formats persistent 
   assert.match(restoration, /MAINTAINER_ROOT\/open-opemos-welcome/);
   assert.match(restoration, /MAINTAINER_ROOT\/Open-OPEMOS\.desktop/);
   assert.match(restoration, /MAINTAINER_ROOT\/opemos\.svg/);
+  const ownedDirectories = [
+    '"$home_mount/deck"',
+    '"$home_mount/deck/tools"',
+    '"$home_mount/deck/Desktop"',
+    '"$home_mount/deck/.config"',
+    '"$home_mount/deck/.config/autostart"',
+    '"$home_mount/deck/.local"',
+    '"$home_mount/deck/.local/share"',
+    '"$home_mount/deck/.local/share/icons"',
+    '"$home_mount/deck/.local/share/icons/hicolor"',
+    '"$home_mount/deck/.local/share/icons/hicolor/scalable"',
+    '"$home_mount/deck/.local/share/icons/hicolor/scalable/apps"',
+  ];
+  let previousOffset = -1;
+  for (const directory of ownedDirectories) {
+    const offset = restoration.indexOf(directory);
+    assert.ok(offset > previousOffset, `${directory} must be explicitly owned before its descendants`);
+    previousOffset = offset;
+  }
+  assert.match(restoration, /install -d -o "\$deck_uid" -g "\$deck_gid" -m 0755 "\$destination"/);
   assert.match(restoration, /\.config\/autostart\/Open-OPEMOS\.desktop/);
   assert.match(restoration, /sha256sum "\$destination"/);
   assert.match(restoration, /trap cleanup_maintainer_home EXIT INT TERM/);
