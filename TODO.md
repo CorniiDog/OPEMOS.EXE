@@ -3427,6 +3427,23 @@ must be reported; a default-suite pass does not imply hardware certification.
   that exact canonical GitHub commit as the ordinary Core dependency pin.
   The final milestone still requires proving a visible installed graphical
   session on the physical hybrid panel.
+  The 2026-09-30 integrated correction additionally removes the redundant USB
+  dialog Back control while preserving X/Escape cancellation, refreshes the
+  removable-drive inventory immediately after successful image parsing,
+  shortens the selected-target summary, and renders exact completed/total bytes
+  during USB writing. The installation-media frontend now presents an explicit
+  startup/close loader, returns its close response before stopping its loopback
+  controller, and records a bounded ephemeral completion marker so a graphical
+  runtime that closes after success still gives a completion notice unless an
+  explicit restart or shutdown is already pending. Core PR #61 supplies the
+  separately owned connected-Intel-panel initramfs correction; EXE reviewed its
+  exact head `ac36e11294cd6e9e576ab818cb22489d7f97c04e` and canonical 6,302-byte
+  diff (`ec62a446a6f16f7c189c2c326ea68a864c5016a8e96cec674c762fc102dad99d`),
+  with same-author GitHub refusal recorded through the authenticated handoff.
+  Focused JavaScript execution is pending because this host has no Node binary;
+  available Python and shell syntax checks pass. Required CI, exact Core merge
+  consumption, counterpart review, and genuine-click VM build/parse/USB/install/
+  detach/visible-installed-boot acceptance remain pending.
 
 ### Alpha
 

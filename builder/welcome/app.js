@@ -221,8 +221,11 @@ async function power(action) {
 
 async function closeApplication() {
   if (state.running) { setError("The installer cannot close while disk mutation is active."); return; }
+  view.innerHTML = `<div class="panel startup-loader" role="status"><span class="loader-ring" aria-hidden="true"></span><div><span class="label">Closing installer</span><h2>Closing safely…</h2><p class="lead">No installation is active.</p></div></div>`;
   try { await api("/api/close", { method: "POST", body: "{}" }); }
-  catch (error) { setError(error); }
+  catch (error) {
+    if (!String(error).includes("Failed to fetch")) setError(error);
+  }
 }
 
 view.addEventListener("click", (event) => {
@@ -246,6 +249,7 @@ document.querySelector("#close-app").addEventListener("click", closeApplication)
 async function initialize() {
   try {
     state.bootstrap = await api("/api/bootstrap");
+    view.setAttribute("aria-busy", "false");
     document.querySelector("#nvidia-version").textContent = state.bootstrap.nvidiaVersion;
     document.querySelector("#support-revision").textContent = state.bootstrap.supportRevision;
     document.querySelector("#environment").textContent = state.bootstrap.environment;

@@ -164,3 +164,6 @@ footer.error .safe-dot { background: #ff796c; box-shadow: 0 0 12px rgba(255,121,
   .choice { grid-template-columns: 1fr; gap: 4px; }
   #environment-badge { display: none; }
 }
+.startup-loader { min-height: 220px; display: flex; align-items: center; justify-content: center; gap: 22px; }
+.loader-ring { width: 42px; height: 42px; flex: none; border: 4px solid rgba(87, 196, 251, .2); border-top-color: #57c4fb; border-radius: 50%; animation: loader-spin .8s linear infinite; }
+@keyframes loader-spin { to { transform: rotate(360deg); } }

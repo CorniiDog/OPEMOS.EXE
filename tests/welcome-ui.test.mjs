@@ -31,6 +31,8 @@ test("macOS graphical test selects the same frontend through a safe mock control
   assert.match(server, /Synthetic SteamOS target/);
   assert.match(server, /except subprocess\.TimeoutExpired:[\s\S]*signal\.SIGKILL/);
   assert.match(server, /finally:\s*self\.operation_marker\.unlink\(missing_ok=True\)/);
+  assert.match(server, /mark_runtime_state\("operation-complete"\)/);
+  assert.match(server, /mark_runtime_state\("power-requested"\)/);
   assert.doesNotMatch(javascript, /\bsudo\b|qemu-system|diskutil|lsblk|blockdev/);
 });
 
@@ -52,6 +54,9 @@ test("shared welcome UI covers the workflow and clearly labels synthetic state",
   assert.match(javascript, /power\("shutdown"\)/);
   assert.match(javascript, /\/api\/install/);
   assert.match(javascript, /\/api\/close/);
+  assert.match(html, /class="panel startup-loader"[\s\S]*Checking installation media/);
+  assert.match(javascript, /Closing safely…[\s\S]*\/api\/close/);
+  assert.match(css, /\.loader-ring[\s\S]*animation:\s*loader-spin/);
   assert.match(javascript, /assets\/install\.svg/);
   assert.match(javascript, /assets\/recovery\.svg/);
   assert.match(javascript, /assets\/gaming\.svg/);

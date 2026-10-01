@@ -86,4 +86,13 @@ test("mock welcome controller serves and completes the real UI contract safely",
   assert.equal(operation.progress, 100);
   const diagnostics = await (await fetch(`${origin}/api/diagnostics`, { headers })).json();
   assert.match(diagnostics.text, /No disks, privileges, or installers are reachable/);
+  const close = await fetch(`${origin}/api/close`, {
+    method: "POST", headers, body: "{}",
+  });
+  assert.equal(close.status, 200, "close must return before loopback shutdown");
+  assert.equal((await close.json()).status, "closing");
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("welcome controller did not close")), 2500);
+    child.once("exit", () => { clearTimeout(timeout); resolve(); });
+  });
 });
