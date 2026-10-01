@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: windows-portable-${{ github.workflow }}-${{ github.ref }}
@@ -95,9 +96,37 @@ jobs:
           OPEMOS_CORE_EXPECTED_COMMIT: 6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6
           RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\scripts\windows-test-v6.manifest
 
+      - name: Restore exact same-repository Windows runtime seed
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $artifactId = 11116649587
+          $expectedName = "OPEMOS.EXE-windows-x86_64-unsigned-d31d5487cfd357d0e32b27d901ce6cc0977a550b"
+          $expectedRun = 36756192338
+          $expectedHead = "d31d5487cfd357d0e32b27d901ce6cc0977a550b"
+          $expectedSize = 1942268278
+          $expectedDigest = "sha256:a25ad52d7aa59a6542a56912ed92ad73b65605b230b4afa5bbd2a0bef3edeb6d"
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = "application/vnd.github+json"; "X-GitHub-Api-Version" = "2022-11-28" }
+          $metadata = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/CorniiDog/OPEMOS.EXE/actions/artifacts/$artifactId"
+          if ($metadata.id -ne $artifactId -or $metadata.name -cne $expectedName -or $metadata.expired -or $metadata.size_in_bytes -ne $expectedSize -or $metadata.digest -cne $expectedDigest -or $metadata.workflow_run.id -ne $expectedRun -or $metadata.workflow_run.head_sha -cne $expectedHead) {
+            throw "Windows runtime seed artifact identity changed."
+          }
+          $archive = Join-Path $env:RUNNER_TEMP "opemos-windows-runtime-seed.zip"
+          try {
+            Invoke-WebRequest -Headers $headers -Uri $metadata.archive_download_url -OutFile $archive
+            $actualDigest = "sha256:" + (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualDigest -cne $expectedDigest) { throw "Windows runtime seed archive digest changed: $actualDigest" }
+            python scripts/extract_windows_runtime_cache.py --archive $archive --output build/runtime-seed/windows
+            if ($LASTEXITCODE -ne 0) { throw "Windows runtime seed extraction failed." }
+          }
+          finally {
+            if (Test-Path -LiteralPath $archive -PathType Leaf) { Remove-Item -LiteralPath $archive -Force }
+          }
+
       - name: Build unsigned verified runtime bundle
         shell: pwsh
-        run: .\bundle_windows.ps1 -CoreRoot opemos-core-contracts
+        run: .\bundle_windows.ps1 -CoreRoot opemos-core-contracts -PreparedRuntimeRoot build/runtime-seed/windows
 
       - name: Smoke-test portable executable startup
         shell: pwsh

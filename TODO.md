@@ -3466,10 +3466,11 @@ must be reported; a default-suite pass does not imply hardware certification.
   now consumes that final squash across runtime, maintainer, CI, and Windows
   artifact pins. The final-head Windows job then reproduced the same HTTP 522
   twice while acquiring an existing pinned runtime archive, before compilation.
-  The acquisition path now retries only HTTP 522 at bounded 5/15/30-second
-  intervals, deletes its exact managed partial between attempts, retains the
-  existing URL/size/SHA-256 gate, and propagates the fourth failure. Its focused
-  success-after-two-errors, exhaustion, and cleanup regression passes 6/6.
+  The initial acquisition correction retried only HTTP 522 at bounded
+  5/15/30-second intervals, deleted its exact managed partial between attempts,
+  retained the existing URL/size/SHA-256 gate, and propagated the fourth
+  failure. Its focused success-after-two-errors, exhaustion, and cleanup
+  regression passed 6/6 before later runner evidence superseded that strategy.
   A later exact-head run proved that whole-file retries were insufficient, and
   a strict 8 MiB same-endpoint range implementation then exhausted its seven
   bounded HTTP 522 retries on the GitHub Windows runner even though an
@@ -3485,6 +3486,21 @@ must be reported; a default-suite pass does not imply hardware certification.
   shared heavy wrapper. A separate exact-head Rust failure was a fixture race;
   only the fake child now consumes intended stdin before producing its bounded
   output, while the production mutation runner is unchanged.
+  Because the GitHub-hosted Windows route then exhausted every bounded request
+  shape, the failed-stage CI correction uses unexpired same-repository artifact
+  `11116649587` only as an operational runtime seed. It binds source head
+  `d31d5487cfd357d0e32b27d901ce6cc0977a550b`, run `36756192338`, artifact
+  metadata, and ZIP digest
+  `a25ad52d7aa59a6542a56912ed92ad73b65605b230b4afa5bbd2a0bef3edeb6d`;
+  extracts only the closed `runtime/` subtree; and verifies every declared file,
+  exact current source-provenance lock, and current Core zstd contract before
+  rebuilding the current application. The ZIP is removed in the same guarded
+  step. This is a time-bounded same-repository cache, not a new endpoint, trust
+  input, public runtime publication, or durable replacement for pinned source
+  acquisition. Extraction/acquisition regressions pass 8/8, and full validation
+  of a retained identical runtime against a fresh canonical GitHub checkout of
+  Core `6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6` passes with runtime-manifest
+  SHA-256 `05015c53a38401d660afa078fbafb8465737b770a5d2a74b42781eda1c66b87a`.
   Focused JavaScript
   execution initially depended on CI because this host has no Node binary; the
   corrected exact-head frontend job passes, while Python, shell syntax, hygiene,

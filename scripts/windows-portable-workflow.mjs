@@ -18,7 +18,7 @@ export function validateWindowsPortableWorkflow(text) {
   text = text.replace(/\r\n/g, "\n");
   requireText(text, "runs-on: windows-latest", "the Windows runner");
   requireText(text, "timeout-minutes: 120", "the bounded Windows artifact job budget");
-  requireText(text, "permissions:\n  contents: read", "read-only permissions");
+  requireText(text, "permissions:\n  contents: read\n  actions: read", "read-only permissions");
   requireText(text, "OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}", "the exact EXE source identity");
   if ((text.match(new RegExp(CHECKOUT, "g")) || []).length !== 2) throw new Error("Windows workflow must use the exact checkout action twice.");
   requireText(text, SETUP_NODE, "the immutable setup-node action");
@@ -39,7 +39,13 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "run: node scripts/check_core_maintainer_workflow.mjs", "exact Core maintainer workflow parity check");
   requireText(text, "cargo test --manifest-path src-tauri/Cargo.toml --locked --lib windows_", "locked library-only Windows Rust tests");
   requireText(text, "RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\\scripts\\windows-test-v6.manifest", "the test-only Common Controls v6 activation manifest");
-  requireText(text, "run: .\\bundle_windows.ps1 -CoreRoot opemos-core-contracts", "verified Windows bundle build");
+  requireText(text, "$artifactId = 11116649587", "the exact same-repository runtime seed artifact");
+  requireText(text, '$expectedDigest = "sha256:a25ad52d7aa59a6542a56912ed92ad73b65605b230b4afa5bbd2a0bef3edeb6d"', "the runtime seed archive digest");
+  requireText(text, '$metadata.workflow_run.head_sha -cne $expectedHead', "the runtime seed source-head gate");
+  requireText(text, "scripts/extract_windows_runtime_cache.py", "closed runtime seed extraction");
+  requireText(text, "Get-FileHash -LiteralPath $archive -Algorithm SHA256", "runtime seed archive verification");
+  requireText(text, "Remove-Item -LiteralPath $archive -Force", "runtime seed archive cleanup");
+  requireText(text, "run: .\\bundle_windows.ps1 -CoreRoot opemos-core-contracts -PreparedRuntimeRoot build/runtime-seed/windows", "verified Windows bundle build");
   requireText(bundle, "scripts/acquire_appliance_windows.py", "exact Fedora appliance acquisition");
   requireText(bundle, "--deadline-seconds 4500", "the bounded Fedora appliance acquisition deadline");
   requireText(bundle, 'dist/windows/appliance', "portable Fedora appliance placement");
