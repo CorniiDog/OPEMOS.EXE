@@ -4966,7 +4966,7 @@ mod tests {
     }
 
     #[test]
-    fn pinned_core_resolver_matches_legacy_exact_release_decision() {
+    fn pinned_core_resolver_matches_exact_release_and_closes_unreviewed_build_plan() {
         let Some(repository) = core_repository() else {
             eprintln!("skipping local pinned-Core integration: sibling repository is absent");
             return;
@@ -5057,40 +5057,9 @@ mod tests {
         let core_missing = invoke_core_resolver(&root, &root, &missing_target, &releases).unwrap();
         assert_eq!(
             core_missing.reason.as_deref(),
-            Some("no_compatible_release")
+            Some("no_reviewed_exact_target_build_plan")
         );
-        assert!(core_missing.next_action.is_some());
-        let baseline = select_nvidia_build_baseline(&missing_target, &releases)
-            .unwrap()
-            .expect("legacy resolver finds an exact-build baseline");
-        let build_plan = NvidiaOnDemandBuildPlan {
-            steamos_version: missing_target.steamos_version.clone().unwrap(),
-            kernel_version: missing_target.kernel_version.clone().unwrap(),
-            nvidia_version: baseline.nvidia_version.clone(),
-            baseline_release: baseline.tag,
-            support_commit: NVIDIA_SUPPORT_BUILD_COMMIT.into(),
-            expected_trust: "locally-built-verified".into(),
-            source_origin: "project".into(),
-            source_repository: NVIDIA_SOURCE_REPOSITORY.into(),
-            source_branch: format!("nvidia/{}", baseline.nvidia_version),
-            source_commit: String::new(),
-            core_authorization: None,
-        };
-        let legacy_build = NvidiaPublishedResolution {
-            schema_version: 2,
-            status: "build_required".into(),
-            reason: "exact_kernel_artifact_missing".into(),
-            message: "fixture".into(),
-            compatibility: Some("on_demand_exact_kernel".into()),
-            target: missing_target,
-            publication: None,
-            artifact: None,
-            build_plan: Some(build_plan),
-        };
-        compare_core_and_legacy_resolver(&core_missing, &legacy_build).unwrap();
-        let mut wrong_kernel = legacy_build;
-        wrong_kernel.build_plan.as_mut().unwrap().kernel_version = "wrong".into();
-        assert!(compare_core_and_legacy_resolver(&core_missing, &wrong_kernel).is_err());
+        assert!(core_missing.next_action.is_none());
 
         let mut incomplete_releases = releases.clone();
         incomplete_releases[0].assets.clear();
