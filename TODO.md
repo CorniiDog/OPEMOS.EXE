@@ -3448,12 +3448,19 @@ must be reported; a default-suite pass does not imply hardware certification.
   `7bc83956f75d65428538e65772d6dffdd74bf6fa8480702808ed8f22120a6cc4`
   and bundle ID
   `06aa82ff2564ad6ecc1711e8227ec9f38fadf25815b7389b5a137bbb8cad17d1`;
-  its immutable release is not yet published, so production retrieval remains
-  gated and a concrete Core handoff request is recorded. Focused JavaScript
+  Core then published that exact create-only release after explicit user
+  approval. Independent download verifies the sole 22,408-byte asset is
+  byte-identical to the reviewed manifest and the immutable tag resolves
+  directly to `10cf3a84805b04bf63eb01cc142af75b8119b9fa`. Focused JavaScript
   execution initially depended on CI because this host has no Node binary; the
   corrected exact-head frontend job passes, while Python, shell syntax, hygiene,
-  and diff checks pass locally. Remaining required checks, exact Core counterpart
-  review, bundle availability, and genuine-click VM build/parse/USB/install/
+  and diff checks pass locally. The first pinned-Core Rust run usefully exposed
+  three stale migration expectations: the former split compatibility identity,
+  the former 55-file count, and a resolver fixture missing the now-bundled exact-
+  target policy. The focused correction binds the unified production installer
+  identity, expects all 122 authenticated files, and stages that policy for the
+  behavioral resolver comparison. Remaining required checks, exact Core
+  counterpart review, and genuine-click VM build/parse/USB/install/
   detach/visible-installed-boot acceptance remain pending.
 
 ### Alpha
