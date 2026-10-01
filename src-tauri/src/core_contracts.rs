@@ -3627,10 +3627,10 @@ mod tests {
     }
 
     #[test]
-    fn supplied_core_manifest_digest_is_scoped_to_the_compatibility_commit() {
+    fn supplied_core_manifest_digest_is_bound_to_the_production_installer_commit() {
         assert_eq!(OPEMOS_CORE_COMPATIBILITY_COMMIT.len(), 40);
         assert_eq!(OPEMOS_CORE_COMPATIBILITY_MANIFEST_SHA256.len(), 64);
-        assert_ne!(OPEMOS_CORE_COMPATIBILITY_COMMIT, NVIDIA_INSTALLER_COMMIT);
+        assert_eq!(OPEMOS_CORE_COMPATIBILITY_COMMIT, NVIDIA_INSTALLER_COMMIT);
     }
 
     fn core_repository() -> Option<PathBuf> {
@@ -4842,7 +4842,7 @@ mod tests {
             OPEMOS_CORE_COMPATIBILITY_COMMIT,
         )
         .expect("consume canonical pinned Core manifest");
-        assert_eq!(manifest.files.len(), 55);
+        assert_eq!(manifest.files.len(), 122);
         assert_eq!(manifest.bundle_id, OPEMOS_CORE_COMPATIBILITY_BUNDLE_ID);
         assert!(manifest.files.iter().any(|file| {
             file.path == "lib/resolve_target.py" && file.role == "resolver" && file.mode == "0755"
@@ -4885,7 +4885,7 @@ mod tests {
             },
         )
         .expect("stage the complete authenticated Core tree");
-        assert_eq!(staged.manifest.files.len(), 55);
+        assert_eq!(staged.manifest.files.len(), 122);
         validate_core_bundle_tree(&staged.root, &staged.manifest).unwrap();
 
         let cancelled_staging = root.join("cancelled-staging");
@@ -4921,7 +4921,7 @@ mod tests {
             "authenticated_core_bundle_verified"
         );
         assert_eq!(installer.report.commit, OPEMOS_CORE_COMPATIBILITY_COMMIT);
-        assert_eq!(installer.report.files.len(), 55);
+        assert_eq!(installer.report.files.len(), 122);
         assert_eq!(
             installer
                 .core_manifest
@@ -4966,7 +4966,7 @@ mod tests {
     }
 
     #[test]
-    fn pinned_core_resolver_matches_legacy_exact_release_decision() {
+    fn pinned_core_resolver_matches_exact_release_and_closes_unreviewed_build_plan() {
         let Some(repository) = core_repository() else {
             eprintln!("skipping local pinned-Core integration: sibling repository is absent");
             return;
@@ -4984,6 +4984,7 @@ mod tests {
             "lib/resolve_target.py",
             "lib/select_release.py",
             "lib/gaming_payload_profiles.py",
+            "policies/exact-target-builds-v1.json",
             "profiles/gaming/reviewed-policy-v1.json",
         ] {
             extract_core_file(&repository, &root, path);
@@ -5056,40 +5057,9 @@ mod tests {
         let core_missing = invoke_core_resolver(&root, &root, &missing_target, &releases).unwrap();
         assert_eq!(
             core_missing.reason.as_deref(),
-            Some("no_compatible_release")
+            Some("no_reviewed_exact_target_build_plan")
         );
-        assert!(core_missing.next_action.is_some());
-        let baseline = select_nvidia_build_baseline(&missing_target, &releases)
-            .unwrap()
-            .expect("legacy resolver finds an exact-build baseline");
-        let build_plan = NvidiaOnDemandBuildPlan {
-            steamos_version: missing_target.steamos_version.clone().unwrap(),
-            kernel_version: missing_target.kernel_version.clone().unwrap(),
-            nvidia_version: baseline.nvidia_version.clone(),
-            baseline_release: baseline.tag,
-            support_commit: NVIDIA_SUPPORT_BUILD_COMMIT.into(),
-            expected_trust: "locally-built-verified".into(),
-            source_origin: "project".into(),
-            source_repository: NVIDIA_SOURCE_REPOSITORY.into(),
-            source_branch: format!("nvidia/{}", baseline.nvidia_version),
-            source_commit: String::new(),
-            core_authorization: None,
-        };
-        let legacy_build = NvidiaPublishedResolution {
-            schema_version: 2,
-            status: "build_required".into(),
-            reason: "exact_kernel_artifact_missing".into(),
-            message: "fixture".into(),
-            compatibility: Some("on_demand_exact_kernel".into()),
-            target: missing_target,
-            publication: None,
-            artifact: None,
-            build_plan: Some(build_plan),
-        };
-        compare_core_and_legacy_resolver(&core_missing, &legacy_build).unwrap();
-        let mut wrong_kernel = legacy_build;
-        wrong_kernel.build_plan.as_mut().unwrap().kernel_version = "wrong".into();
-        assert!(compare_core_and_legacy_resolver(&core_missing, &wrong_kernel).is_err());
+        assert!(core_missing.next_action.is_none());
 
         let mut incomplete_releases = releases.clone();
         incomplete_releases[0].assets.clear();

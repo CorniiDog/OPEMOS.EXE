@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: windows-portable-${{ github.workflow }}-${{ github.ref }}
@@ -13,13 +14,51 @@ concurrency:
 
 env:
   OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-  OPEMOS_CORE_COMMIT: 4b676dc4efed50dac446a59475b5fadf83722176
+  OPEMOS_CORE_COMMIT: 6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6
   RUST_TOOLCHAIN: 1.98.1
   NODE_VERSION: 22.23.2
   RUSTFLAGS: -C target-feature=+crt-static
 
 jobs:
+  seed-runtime-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact EXE source for runtime seed
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.OPEMOS_EXE_COMMIT }}
+          persist-credentials: false
+
+      - name: Verify immutable seed source identity
+        run: test "$(git rev-parse HEAD)" = "$OPEMOS_EXE_COMMIT"
+
+      - name: Acquire exact locked Windows runtime sources blocked on Windows
+        run: |
+          python3 scripts/acquire_runtime_windows.py --component git-for-windows --cache build/runtime-cache/windows
+          python3 scripts/acquire_runtime_windows.py --component github-cli --cache build/runtime-cache/windows
+          python3 scripts/acquire_runtime_windows.py --component python --cache build/runtime-cache/windows
+          python3 scripts/acquire_runtime_windows.py --component qemu --cache build/runtime-cache/windows
+          python3 scripts/acquire_runtime_windows.py --component cdrtools-binary --cache build/runtime-cache/windows
+          python3 scripts/acquire_runtime_windows.py --component cdrtools-source --cache build/runtime-cache/windows
+
+      - name: Upload short-lived exact Windows runtime source seed
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-runtime-source-${{ env.OPEMOS_EXE_COMMIT }}
+          path: |
+            build/runtime-cache/windows/PortableGit-2.55.0.5-64-bit.7z.exe
+            build/runtime-cache/windows/gh_2.100.0_windows_amd64.zip
+            build/runtime-cache/windows/python-3.13.15-embeddable-amd64.zip
+            build/runtime-cache/windows/qemu-w64-setup-20260811.exe
+            build/runtime-cache/windows/schily-cdrtools-3.02a09.7z
+            build/runtime-cache/windows/cdrtools-3.02a09.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
   build:
+    needs: seed-runtime-source
     runs-on: windows-latest
     timeout-minutes: 120
     steps:
@@ -45,7 +84,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: CorniiDog/OPEMOS
-          ref: 4b676dc4efed50dac446a59475b5fadf83722176
+          ref: 6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6
           path: opemos-core-contracts
           fetch-depth: 1
           persist-credentials: false
@@ -92,8 +131,14 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib windows_
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
-          OPEMOS_CORE_EXPECTED_COMMIT: 4b676dc4efed50dac446a59475b5fadf83722176
+          OPEMOS_CORE_EXPECTED_COMMIT: 6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6
           RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\scripts\windows-test-v6.manifest
+
+      - name: Restore exact same-run Windows runtime source seed
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: windows-runtime-source-${{ env.OPEMOS_EXE_COMMIT }}
+          path: build/runtime-cache/windows
 
       - name: Build unsigned verified runtime bundle
         shell: pwsh

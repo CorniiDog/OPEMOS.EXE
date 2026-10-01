@@ -19,6 +19,14 @@ ui_stage() {
   printf '# %s\n' "$*" >&2
 }
 
+require_real_directory_or_absent() {
+  local destination=$1
+  [[ ! -L "$destination" ]] ||
+    die "refusing a symlinked Maintainer home destination: $destination"
+  [[ ! -e "$destination" || -d "$destination" ]] ||
+    die "refusing a non-directory Maintainer home destination: $destination"
+}
+
 need() {
   command -v "$1" >/dev/null 2>&1 || die "required recovery tool is missing: $1"
 }
@@ -315,10 +323,18 @@ restore_maintainer_home() {
     deck_uid=${deck_id%:*}
     deck_gid=${deck_id#*:}
     for destination in \
+      "$home_mount/deck" \
       "$home_mount/deck/tools" \
       "$home_mount/deck/Desktop" \
+      "$home_mount/deck/.config" \
       "$home_mount/deck/.config/autostart" \
+      "$home_mount/deck/.local" \
+      "$home_mount/deck/.local/share" \
+      "$home_mount/deck/.local/share/icons" \
+      "$home_mount/deck/.local/share/icons/hicolor" \
+      "$home_mount/deck/.local/share/icons/hicolor/scalable" \
       "$home_mount/deck/.local/share/icons/hicolor/scalable/apps"; do
+      require_real_directory_or_absent "$destination"
       install -d -o "$deck_uid" -g "$deck_gid" -m 0755 "$destination"
     done
     install -o "$deck_uid" -g "$deck_gid" -m 0755 "$MAINTAINER_ROOT/opemos-rollback-last-update" "$home_mount/deck/tools/opemos-rollback-last-update"

@@ -4,8 +4,9 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
+import urllib.error
 
-from scripts.acquire_runtime_windows import acquire_source, current_lock_matches, load_lock, move_tree, remove_empty_files
+from scripts.acquire_runtime_windows import MIN_RANGE_BYTES, RANGE_BYTES, acquire_source, current_lock_matches, download_locked_ranges, load_lock, move_tree, remove_empty_files
 
 
 class WindowsRuntimeAcquisitionTests(unittest.TestCase):
@@ -46,6 +47,48 @@ class WindowsRuntimeAcquisitionTests(unittest.TestCase):
             (root / "source-provenance.json").write_text(json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n")
             self.assertTrue(current_lock_matches(root, lock))
             self.assertFalse(current_lock_matches(root, dict(lock, architecture="arm64")))
+
+    def test_same_endpoint_ranges_resume_522_and_require_exact_response_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            partial = Path(temporary) / "archive.part"
+            payload = b"a" * RANGE_BYTES + b"final"
+            requests = []
+            sleeps = []
+            class Response:
+                def __init__(self, body, content_range): self.body=body; self.offset=0; self.status=206; self.headers={"Content-Range":content_range}
+                def __enter__(self): return self
+                def __exit__(self,*_args): return False
+                def read(self,amount):
+                    amount=min(amount,777_777); block=self.body[self.offset:self.offset+amount]; self.offset+=len(block); return block
+            def opener(request,timeout):
+                requests.append((request.full_url,request.headers["Range"],timeout,request.get_header("Accept-encoding"),request.get_header("User-agent")))
+                if len(requests)==1: raise urllib.error.HTTPError(request.full_url,522,"transient",{},None)
+                start,end=map(int,request.headers["Range"].removeprefix("bytes=").split("-"))
+                return Response(payload[start:end+1],f"bytes {start}-{end}/{len(payload)}")
+            download_locked_ranges("https://example.invalid/a.zip",partial,len(payload),opener,sleeps.append)
+            self.assertEqual(partial.read_bytes(),payload)
+            self.assertEqual([request[1] for request in requests],[f"bytes=0-{RANGE_BYTES-1}",f"bytes=0-{RANGE_BYTES//2-1}",f"bytes={RANGE_BYTES//2}-{RANGE_BYTES-1}",f"bytes={RANGE_BYTES}-{len(payload)-1}"])
+            self.assertTrue(all(request[3:]==("identity","OPEMOS.EXE-runtime-acquisition/1") for request in requests))
+            self.assertEqual(sleeps,[10])
+
+            def invalid_response(request,timeout): return Response(b"wrong","bytes 0-4/5")
+            with self.assertRaisesRegex(SystemExit,"range response is invalid"):
+                download_locked_ranges("https://example.invalid/a.zip",partial,6,invalid_response,sleeps.append)
+
+            sleeps.clear()
+            def unavailable(request,timeout): raise urllib.error.HTTPError(request.full_url,522,"transient",{},None)
+            with self.assertRaises(urllib.error.HTTPError):
+                download_locked_ranges("https://example.invalid/a.zip",partial,6,unavailable,sleeps.append)
+            self.assertEqual(sleeps,[10,30,60,120,180,300,300])
+
+            attempted=[]
+            def shrinking_ranges(request,timeout):
+                attempted.append(request.headers["Range"])
+                if len(attempted)<5: raise urllib.error.HTTPError(request.full_url,522,"transient",{},None)
+                start,end=map(int,request.headers["Range"].removeprefix("bytes=").split("-"))
+                return Response(b"x"*(end-start+1),f"bytes {start}-{end}/{RANGE_BYTES}")
+            download_locked_ranges("https://example.invalid/a.zip",partial,RANGE_BYTES,shrinking_ranges,lambda _delay: None)
+            self.assertEqual(attempted[:5],[f"bytes=0-{RANGE_BYTES-1}",f"bytes=0-{RANGE_BYTES//2-1}",f"bytes=0-{RANGE_BYTES//4-1}",f"bytes=0-{RANGE_BYTES//8-1}",f"bytes=0-{MIN_RANGE_BYTES-1}"])
 
     def test_archive_root_move_does_not_delete_an_already_moved_temporary_tree(self):
         with tempfile.TemporaryDirectory() as temporary:

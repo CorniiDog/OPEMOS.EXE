@@ -138,6 +138,11 @@ class Controller:
         with self.lock:
             self.operation = {**self.operation, **values}
 
+    def mark_runtime_state(self, name):
+        marker = self.runtime / name
+        descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        os.close(descriptor)
+
     def operation_status(self):
         with self.lock:
             return dict(self.operation)
@@ -206,6 +211,7 @@ class Controller:
                 status="complete", phase="complete", progress=100,
                 message="Synthetic installation and A/B verification completed.", terminal=True,
             )
+            self.mark_runtime_state("operation-complete")
         except Exception as error:
             self.update_operation(
                 status="failed", phase="failed", progress=100,
@@ -269,6 +275,7 @@ class Controller:
                 status="complete", phase="complete", progress=100,
                 message="Installation and A/B recovery verification completed.", terminal=True,
             )
+            self.mark_runtime_state("operation-complete")
             self.operation_marker.unlink(missing_ok=True)
         except Exception as error:
             if process is not None and process.poll() is None:
@@ -319,6 +326,7 @@ class Controller:
             raise ValueError("The requested completion action is unsupported.")
         if self.mock or action == "stay":
             return {"schemaVersion": 1, "status": "simulated" if self.mock else "ready", "action": action}
+        self.mark_runtime_state("power-requested")
         subprocess.Popen(
             ["systemctl", "reboot" if action == "restart" else "poweroff"],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -345,10 +353,10 @@ class Controller:
         try:
             value = browser_pid.read_text(encoding="ascii").strip()
             if value.isdigit() and int(value) > 1:
-                threading.Timer(0.15, lambda: os.kill(int(value), signal.SIGTERM)).start()
+                threading.Timer(0.75, lambda: os.kill(int(value), signal.SIGTERM)).start()
         except (OSError, ValueError, ProcessLookupError):
             pass
-        threading.Timer(0.25, self.httpd.shutdown).start()
+        threading.Timer(1.0, self.httpd.shutdown).start()
 
 
 def shutil_which(name):

@@ -3427,6 +3427,113 @@ must be reported; a default-suite pass does not imply hardware certification.
   that exact canonical GitHub commit as the ordinary Core dependency pin.
   The final milestone still requires proving a visible installed graphical
   session on the physical hybrid panel.
+  The 2026-09-30 integrated correction additionally removes the redundant USB
+  dialog Back control while preserving X/Escape cancellation, refreshes the
+  removable-drive inventory immediately after successful image parsing,
+  shortens the selected-target summary, and renders exact completed/total bytes
+  during USB writing. The installation-media frontend now presents an explicit
+  startup/close loader, returns its close response before stopping its loopback
+  controller, and records a bounded ephemeral completion marker so a graphical
+  runtime that closes after success still gives a completion notice unless an
+  explicit restart or shutdown is already pending. Core PR #61 supplies the
+  separately owned connected-Intel-panel initramfs correction; EXE reviewed its
+  exact head `ac36e11294cd6e9e576ab818cb22489d7f97c04e` and canonical 6,302-byte
+  diff (`ec62a446a6f16f7c189c2c326ea68a864c5016a8e96cec674c762fc102dad99d`),
+  with same-author GitHub refusal recorded through the authenticated handoff.
+  It squash-merged as exact Core main
+  `10cf3a84805b04bf63eb01cc142af75b8119b9fa`; EXE consumed that intermediate
+  commit while Core completed the separately reviewed firmware-display batch.
+  A canonical
+  dry-run from the authenticated GitHub checkout produced the 122-file bundle
+  manifest SHA-256
+  `7bc83956f75d65428538e65772d6dffdd74bf6fa8480702808ed8f22120a6cc4`
+  and bundle ID
+  `06aa82ff2564ad6ecc1711e8227ec9f38fadf25815b7389b5a137bbb8cad17d1`;
+  Core then published that exact create-only release after explicit user
+  approval. Independent download verifies the sole 22,408-byte asset is
+  byte-identical to the reviewed manifest and the immutable tag resolves
+  directly to `10cf3a84805b04bf63eb01cc142af75b8119b9fa`. Core PR #62 then
+  restricted the recovery renderer to firmware-selected `simpledrm` and
+  preserved the existing console/headless fallback; its exact reviewed head
+  `98ddf0d1a9a5ab89c343db4dc37fbc2d23379a7d` squash-merged as
+  `6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6`. The final create-only release
+  tag resolves directly to that squash commit, and its sole 22,408-byte
+  122-file manifest has SHA-256
+  `4508bcba4eca8f7973a437034de2f049ff8e719e48559b5595ae221e4f778ffc`
+  and bundle ID
+  `7588afab9bef375d9ef8e58586d6228e58604b2714271417a3908731af8013ac`;
+  an independent download is byte-identical to Core's prepared manifest. EXE
+  now consumes that final squash across runtime, maintainer, CI, and Windows
+  artifact pins. The final-head Windows job then reproduced the same HTTP 522
+  twice while acquiring an existing pinned runtime archive, before compilation.
+  The initial acquisition correction retried only HTTP 522 at bounded
+  5/15/30-second intervals, deleted its exact managed partial between attempts,
+  retained the existing URL/size/SHA-256 gate, and propagated the fourth
+  failure. Its focused success-after-two-errors, exhaustion, and cleanup
+  regression passed 6/6 before later runner evidence superseded that strategy.
+  A later exact-head run proved that whole-file retries were insufficient, and
+  a strict 8 MiB same-endpoint range implementation then exhausted its seven
+  bounded HTTP 522 retries on the GitHub Windows runner even though an
+  independent reconstruction produced the exact 206,615,928-byte QEMU source
+  with SHA-256
+  `f98a8aeb5f7faea9765b6dee28316c266cd179d80354a2fed8e50176f9a2e59f`.
+  The failed-stage correction keeps that URL, size, and digest unchanged,
+  requires exact HTTP 206 and `Content-Range`, requests identity encoding, and
+  adaptively halves only the failing range from 8 MiB to a 512 KiB floor while
+  retaining the same global seven-retry budget, partial cleanup, final fsync,
+  and atomic replacement. Its focused short-read, adaptive-range, malformed-
+  response, exhaustion, identity, and cleanup regressions pass 6/6 through the
+  shared heavy wrapper. A separate exact-head Rust failure was a fixture race;
+  only the fake child now consumes intended stdin before producing its bounded
+  output, while the production mutation runner is unchanged.
+  An attempted same-repository cache reuse correctly failed closed: artifact
+  `11116649587` was authenticated but its source provenance binds QEMU 8.1,
+  while this candidate requires QEMU 11.1. No provenance gate was weakened.
+  The narrower failed-stage correction now gives the same workflow a bounded
+  Ubuntu seed job which downloads only the current locked QEMU 11.1 installer
+  through the same acquisition code, exact URL, size, and SHA-256, uploads that
+  single file as a one-day exact-head workflow artifact with compression
+  disabled, and restores it into the Windows runtime cache. The Windows builder
+  independently rechecks the cache file against the current lock before use;
+  every other component retains normal pinned acquisition. This is transient
+  same-run cache transport, not a new endpoint, trust input, public runtime
+  publication, or durable source replacement. The first run through that route
+  passed QEMU restore and every pre-build Windows gate, then the Windows runner
+  independently failed on the first remaining lock entry, Git for Windows,
+  with HTTP 523. The failed-stage correction adds only that demonstrated
+  source to the same one-day same-run seed. Per the authenticated resolver
+  correction, the final lane seeds the complete existing six-file lock closure
+  so Windows CI does not depend on intermittent egress to any remaining origin;
+  Ubuntu downloads every file from its existing locked URL and the Windows
+  constructor still enforces every existing name, size, and SHA-256 before
+  extraction.
+  Focused JavaScript
+  execution initially depended on CI because this host has no Node binary; the
+  corrected exact-head frontend job passes, while Python, shell syntax, hygiene,
+  and diff checks pass locally. The first pinned-Core Rust run usefully exposed
+  three stale migration expectations: the former split compatibility identity,
+  the former 55-file count, and a resolver fixture missing the now-bundled exact-
+  target policy. The focused correction binds the unified production installer
+  identity, expects all 122 authenticated files, and stages that policy for the
+  behavioral resolver comparison. Exact-head construction, 32-GiB
+  write/flush/readback, fresh-target installation, media detach, and visible
+  installed Plasma boot then passed, but final Core review localized the KDE
+  configuration warnings to an installer ownership regression: nested
+  `install -d -o deck` calls owned only their leaf directories, leaving newly
+  created `/home/deck`, `.config`, `.local`, and `.local/share` ancestors owned
+  by root. The bounded correction explicitly owns every required ancestor in
+  parent-before-child order without recursively changing unrelated home data;
+  a focused regression requires that complete ordered closure. Exact head
+  `2ca03ba09b028a272f3e24884e59fd1cc1f9d4f4` then passed all ten checks,
+  exact Windows execution, a 32-GiB write/flush/readback/cleanup, fresh install,
+  media detach, and visible installed Plasma boot without the former KDE
+  unwritable warnings. Final Core review nevertheless reproduced one remaining
+  preserved-home safety gap: GNU `install -d` follows a symlinked directory
+  ancestor. The bounded follow-up now refuses every destination unless it is
+  absent or a real directory before any ownership/mode change or descendant
+  write; its executable regression proves a symlink refusal leaves the
+  referent mode unchanged. Changed-head checks, failed-stage acceptance, one
+  clean final full pass, and exact changed-head Core counterpart review remain.
 
 ### Alpha
 

@@ -235,6 +235,9 @@ launch_fullscreen_welcome() {
         break
       fi
       if [[ ! -e "$runtime/operation-running" ]]; then
+        if [[ -e "$runtime/operation-complete" && ! -e "$runtime/power-requested" ]]; then
+          show_startup_message info "SteamOS with NVIDIA drivers finished installing. Shut down, remove the installation USB, then boot from the installed drive."
+        fi
         cleanup_graphical
         trap - EXIT INT TERM
         return 0

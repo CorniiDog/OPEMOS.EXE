@@ -88,6 +88,21 @@ exit 0
   assert.throws(() => readFileSync(visible, "utf8"), { code: "ENOENT" });
 });
 
+test("a graphical runtime that exits after completion presents a final notice", (context) => {
+  const { bin, launcher, qt6Qmlscene, visible } = fixture(context);
+  writeFileSync(qt6Qmlscene, `#!/bin/sh
+runtime=$(dirname "$1")
+touch "$runtime/ui-ready" "$runtime/operation-complete"
+sleep 2.1
+exit 0
+`, { mode: 0o755 });
+  const result = spawnSync("bash", [launcher], {
+    encoding: "utf8", env: testEnvironment(bin), timeout: 5000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readFileSync(visible, "utf8"), /finished installing/);
+});
+
 test("an Intel display and NVIDIA render hybrid uses one OpenGL device path and records both devices", (context) => {
   const { bin, launcher, pci, qt6Qmlscene, state } = fixture(context);
   addGraphicsDevice(pci, "0000:00:02.0", "0x8086", { bootVga: "1" });

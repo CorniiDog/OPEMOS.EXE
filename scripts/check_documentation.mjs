@@ -172,7 +172,7 @@ await access(path.join(root, "scripts", "windows-usb-removable-vm-evidence.mjs")
 await access(path.join(root, "tests", "windows-usb-removable-vm-evidence.test.mjs"));
 
 const checks = await read(".github/workflows/checks.yml");
-const coreContractCommit = "4b676dc4efed50dac446a59475b5fadf83722176";
+const coreContractCommit = "6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6";
 assert.match(checks, /^name: Checks$/m);
 assert.match(checks, /npm run test:frontend/);
 assert.match(checks, /cargo clippy --manifest-path src-tauri\/Cargo\.toml/);
@@ -188,7 +188,7 @@ assert.equal(
 );
 assert.match(
   checks,
-  /ref: 4b676dc4efed50dac446a59475b5fadf83722176\n          path: opemos-core-contracts\n          fetch-depth: 186\n          persist-credentials: false/,
+  /ref: 6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6\n          path: opemos-core-contracts\n          fetch-depth: 186\n          persist-credentials: false/,
 );
 assert.doesNotMatch(checks, /82241699497fb605b3d8b3fbc0015ec952f81ef3/);
 assert.match(checks, /persist-credentials: false/);

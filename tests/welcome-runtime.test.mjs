@@ -22,11 +22,14 @@ test("mock welcome controller serves and completes the real UI contract safely",
 
   let port;
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { port = readFileSync(join(runtime, "port"), "utf8").trim(); break; }
+    try {
+      port = readFileSync(join(runtime, "port"), "utf8").trim();
+      if (/^\d+$/.test(port)) break;
+    }
     catch {
       if (child.exitCode !== null) break;
-      await pause(20);
     }
+    await pause(20);
   }
   if (!port && /PermissionError: \[Errno 1\] Operation not permitted/.test(stderr)) {
     context.skip("sandbox does not permit an ephemeral loopback listener");
@@ -86,4 +89,13 @@ test("mock welcome controller serves and completes the real UI contract safely",
   assert.equal(operation.progress, 100);
   const diagnostics = await (await fetch(`${origin}/api/diagnostics`, { headers })).json();
   assert.match(diagnostics.text, /No disks, privileges, or installers are reachable/);
+  const close = await fetch(`${origin}/api/close`, {
+    method: "POST", headers, body: "{}",
+  });
+  assert.equal(close.status, 200, "close must return before loopback shutdown");
+  assert.equal((await close.json()).status, "closing");
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("welcome controller did not close")), 2500);
+    child.once("exit", () => { clearTimeout(timeout); resolve(); });
+  });
 });

@@ -25,7 +25,12 @@
       <div><span>Environment</span><strong id="environment">Checking…</strong></div>
     </section>
 
-    <section id="view" class="content" aria-live="polite"></section>
+    <section id="view" class="content" aria-live="polite" aria-busy="true">
+      <div class="panel startup-loader" role="status">
+        <span class="loader-ring" aria-hidden="true"></span>
+        <div><span class="label">Protected installer</span><h2>Checking installation media…</h2><p class="lead">Loading the disk-safety controller and exact media identity.</p></div>
+      </div>
+    </section>
 
     <footer>
       <span class="safe-dot"></span>
