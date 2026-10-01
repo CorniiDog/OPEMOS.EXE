@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -147,10 +147,30 @@ test("installation restores Maintainer launchers after Valve formats persistent 
     previousOffset = offset;
   }
   assert.match(restoration, /install -d -o "\$deck_uid" -g "\$deck_gid" -m 0755 "\$destination"/);
+  assert.match(restoration, /require_real_directory_or_absent "\$destination"/);
   assert.match(restoration, /\.config\/autostart\/Open-OPEMOS\.desktop/);
   assert.match(restoration, /sha256sum "\$destination"/);
   assert.match(restoration, /trap cleanup_maintainer_home EXIT INT TERM/);
   assert.match(helper, /restore_maintainer_home "\$device"[\s\S]*for slot in A B/);
+});
+
+test("Maintainer home restoration refuses a preserved ancestor symlink without mutating its referent", (context) => {
+  const directory = mkdtempSync(join(tmpdir(), "opemos-maintainer-home-symlink-"));
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const referent = join(directory, "referent");
+  const redirected = join(directory, "deck");
+  mkdirSync(referent);
+  chmodSync(referent, 0o700);
+  symlinkSync(referent, redirected, "dir");
+
+  const result = spawnSync(
+    "bash",
+    ["-c", 'source builder/welcome/opemos-install-helper; require_real_directory_or_absent "$1"', "opemos-test", redirected],
+    { encoding: "utf8" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /refusing a symlinked Maintainer home destination/);
+  assert.equal(statSync(referent).mode & 0o777, 0o700);
 });
 
 test("guardian verification reads shared payload and both slot-matched persistent etc overlays", () => {

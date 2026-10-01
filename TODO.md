@@ -3523,10 +3523,17 @@ must be reported; a default-suite pass does not imply hardware certification.
   created `/home/deck`, `.config`, `.local`, and `.local/share` ancestors owned
   by root. The bounded correction explicitly owns every required ancestor in
   parent-before-child order without recursively changing unrelated home data;
-  a focused regression requires that complete ordered closure. Exact Windows
-  execution, changed-head checks, failed installed-home/visible-boot stage,
-  one clean final full pass, and exact changed-head Core counterpart review
-  remain pending.
+  a focused regression requires that complete ordered closure. Exact head
+  `2ca03ba09b028a272f3e24884e59fd1cc1f9d4f4` then passed all ten checks,
+  exact Windows execution, a 32-GiB write/flush/readback/cleanup, fresh install,
+  media detach, and visible installed Plasma boot without the former KDE
+  unwritable warnings. Final Core review nevertheless reproduced one remaining
+  preserved-home safety gap: GNU `install -d` follows a symlinked directory
+  ancestor. The bounded follow-up now refuses every destination unless it is
+  absent or a real directory before any ownership/mode change or descendant
+  write; its executable regression proves a symlink refusal leaves the
+  referent mode unchanged. Changed-head checks, failed-stage acceptance, one
+  clean final full pass, and exact changed-head Core counterpart review remain.
 
 ### Alpha
 
