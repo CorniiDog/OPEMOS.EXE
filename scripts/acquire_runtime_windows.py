@@ -5,6 +5,7 @@ from pathlib import Path
 EXPECTED=("git-for-windows","github-cli","python","qemu","cdrtools-binary","cdrtools-source")
 COMMANDS={"git":"git/cmd/git.exe","python":"python/python.exe","qemu-img":"qemu/qemu-img.exe","qemu-system-x86_64":"qemu/qemu-system-x86_64.exe","mkisofs":"cdrtools/mkisofs.exe","ssh":"git/usr/bin/ssh.exe","scp":"git/usr/bin/scp.exe","ssh-keygen":"git/usr/bin/ssh-keygen.exe","gh":"gh/bin/gh.exe","bash":"git/bin/bash.exe","tar":"git/usr/bin/tar.exe"}
 RANGE_BYTES=8*1024*1024
+MIN_RANGE_BYTES=512*1024
 RANGE_RETRY_DELAYS=(10,30,60,120,180,300,300)
 def fail(message): raise SystemExit(message)
 def digest(path):
@@ -24,26 +25,32 @@ def load_lock(path):
         names.add(item["file"])
     return raw
 def download_locked_ranges(url,partial,size,opener=urllib.request.urlopen,sleeper=time.sleep):
-    offset=0; failures=0
+    offset=0; range_bytes=RANGE_BYTES; failures=0
     with partial.open("wb") as destination:
         while offset<size:
-            end=min(offset+RANGE_BYTES,size)-1
-            request=urllib.request.Request(url,headers={"Range":f"bytes={offset}-{end}"})
-            try:
-                with opener(request,timeout=60) as response:
-                    expected=f"bytes {offset}-{end}/{size}"
-                    if response.status!=206 or response.headers.get("Content-Range")!=expected: fail("Pinned Windows archive range response is invalid")
-                    expected_bytes=end-offset+1; chunks=[]; received=0
-                    while received<=expected_bytes:
-                        chunk=response.read(min(1024*1024,expected_bytes+1-received))
-                        if not chunk: break
-                        chunks.append(chunk); received+=len(chunk)
-                    block=b"".join(chunks)
-                    if len(block)!=expected_bytes: raise OSError("Pinned Windows archive range length is invalid")
-            except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,OSError) as error:
-                if isinstance(error,urllib.error.HTTPError) and error.code!=522: raise
-                if failures==len(RANGE_RETRY_DELAYS): raise
-                sleeper(RANGE_RETRY_DELAYS[failures]); failures+=1; continue
+            end=min(offset+range_bytes,size)-1
+            request=urllib.request.Request(url,headers={"Range":f"bytes={offset}-{end}","Accept-Encoding":"identity","User-Agent":"OPEMOS.EXE-runtime-acquisition/1"})
+            while True:
+                try:
+                    with opener(request,timeout=60) as response:
+                        expected=f"bytes {offset}-{end}/{size}"
+                        if response.status!=206 or response.headers.get("Content-Range")!=expected: fail("Pinned Windows archive range response is invalid")
+                        expected_bytes=end-offset+1; chunks=[]; received=0
+                        while received<=expected_bytes:
+                            chunk=response.read(min(1024*1024,expected_bytes+1-received))
+                            if not chunk: break
+                            chunks.append(chunk); received+=len(chunk)
+                        block=b"".join(chunks)
+                        if len(block)!=expected_bytes: raise OSError("Pinned Windows archive range length is invalid")
+                    break
+                except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,OSError) as error:
+                    if isinstance(error,urllib.error.HTTPError) and error.code!=522: raise
+                    if failures==len(RANGE_RETRY_DELAYS): raise
+                    sleeper(RANGE_RETRY_DELAYS[failures]); failures+=1
+                    if range_bytes>MIN_RANGE_BYTES:
+                        range_bytes=max(MIN_RANGE_BYTES,range_bytes//2)
+                        end=min(offset+range_bytes,size)-1
+                        request=urllib.request.Request(url,headers={"Range":f"bytes={offset}-{end}","Accept-Encoding":"identity","User-Agent":"OPEMOS.EXE-runtime-acquisition/1"})
             destination.write(block); offset=end+1
         destination.flush(); os.fsync(destination.fileno())
 def acquire_source(item,cache,downloader=None,sleeper=time.sleep):

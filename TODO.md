@@ -3470,6 +3470,21 @@ must be reported; a default-suite pass does not imply hardware certification.
   intervals, deletes its exact managed partial between attempts, retains the
   existing URL/size/SHA-256 gate, and propagates the fourth failure. Its focused
   success-after-two-errors, exhaustion, and cleanup regression passes 6/6.
+  A later exact-head run proved that whole-file retries were insufficient, and
+  a strict 8 MiB same-endpoint range implementation then exhausted its seven
+  bounded HTTP 522 retries on the GitHub Windows runner even though an
+  independent reconstruction produced the exact 206,615,928-byte QEMU source
+  with SHA-256
+  `f98a8aeb5f7faea9765b6dee28316c266cd179d80354a2fed8e50176f9a2e59f`.
+  The failed-stage correction keeps that URL, size, and digest unchanged,
+  requires exact HTTP 206 and `Content-Range`, requests identity encoding, and
+  adaptively halves only the failing range from 8 MiB to a 512 KiB floor while
+  retaining the same global seven-retry budget, partial cleanup, final fsync,
+  and atomic replacement. Its focused short-read, adaptive-range, malformed-
+  response, exhaustion, identity, and cleanup regressions pass 6/6 through the
+  shared heavy wrapper. A separate exact-head Rust failure was a fixture race;
+  only the fake child now consumes intended stdin before producing its bounded
+  output, while the production mutation runner is unchanged.
   Focused JavaScript
   execution initially depended on CI because this host has no Node binary; the
   corrected exact-head frontend job passes, while Python, shell syntax, hygiene,
