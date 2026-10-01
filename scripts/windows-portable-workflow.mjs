@@ -74,7 +74,9 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, `"source_commit=$env:OPEMOS_EXE_COMMIT"`, "exact-head provenance");
   requireText(text, `"crt_static=true"`, "static-runtime provenance");
   requireText(text, "unsigned-${{ env.OPEMOS_EXE_COMMIT }}", "exact-head artifact identity");
-  requireText(text, "retention-days: 1", "one-day artifact retention");
+  if ((text.match(/retention-days:\s*1\b/g) || []).length !== 2 || /retention-days:\s*(?!1\b)\d+/i.test(text)) {
+    throw new Error("Windows workflow must preserve one-day artifact retention for both uploads.");
+  }
   requireText(text, "if-no-files-found: error", "missing-artifact failure");
   requireText(text, "include-hidden-files: true", "declared hidden runtime files in the artifact");
   if (/uses:\s*[^\s@]+@(v\d+|main|master|stable)\b/i.test(text)) throw new Error("Windows workflow actions must use immutable commits.");
