@@ -3693,6 +3693,26 @@ fn windows_volume_belongs_exclusively_to_disk(
     Ok(disks.iter().all(|disk| *disk == selected))
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn windows_removable_volume_device_number_fallback(
+    drive_type: u32,
+    device_type: u32,
+    device_number: u32,
+    selected: u32,
+) -> Result<bool, String> {
+    const DRIVE_REMOVABLE: u32 = 2;
+    const FILE_DEVICE_DISK: u32 = 7;
+    if drive_type != DRIVE_REMOVABLE {
+        return Err(
+            "Windows disk-extents fallback is limited to removable volume GUID objects.".into(),
+        );
+    }
+    if device_type != FILE_DEVICE_DISK {
+        return Ok(false);
+    }
+    Ok(device_number == selected)
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn validate_system_authopen() -> Result<(), String> {
     use std::os::unix::fs::MetadataExt as _;
@@ -5012,13 +5032,23 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
             unsafe { FindVolumeClose(self.0) };
         }
     }
+    #[repr(C)]
+    struct StorageDeviceNumber {
+        device_type: u32,
+        device_number: u32,
+        partition_number: u32,
+    }
     const INVALID_HANDLE_VALUE: *mut c_void = -1_isize as *mut c_void;
     const ERROR_NO_MORE_FILES: u32 = 18;
+    const ERROR_INVALID_FUNCTION: u32 = 1;
+    const ERROR_NOT_SUPPORTED: u32 = 50;
     const ERROR_MORE_DATA: u32 = 234;
+    const DRIVE_REMOVABLE: u32 = 2;
     const DRIVE_CDROM: u32 = 5;
     const FILE_SHARE_READ: u32 = 0x0000_0001;
     const FILE_SHARE_WRITE: u32 = 0x0000_0002;
     const IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS: u32 = 0x0056_0000;
+    const IOCTL_STORAGE_GET_DEVICE_NUMBER: u32 = 0x002d_1080;
     const FSCTL_LOCK_VOLUME: u32 = 0x0009_0018;
     const FSCTL_DISMOUNT_VOLUME: u32 = 0x0009_0020;
     let mut name = vec![0_u16; 1024];
@@ -5034,7 +5064,8 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
         let end = name.iter().position(|value| *value == 0).ok_or(
             "Windows returned an unterminated volume GUID while locking the selected disk.",
         )?;
-        if unsafe { GetDriveTypeW(name.as_ptr()) } == DRIVE_CDROM {
+        let drive_type = unsafe { GetDriveTypeW(name.as_ptr()) };
+        if drive_type == DRIVE_CDROM {
             name.fill(0);
             if unsafe { FindNextVolumeW(find.0, name.as_mut_ptr(), name.len() as u32) } == 0 {
                 if unsafe { GetLastError() } == ERROR_NO_MORE_FILES {
@@ -5064,6 +5095,7 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
                 )
             })?;
         let mut extents = vec![0_u8; 4096];
+        let mut fallback_selected = None;
         let returned = loop {
             let mut returned = 0_u32;
             let ok = unsafe {
@@ -5081,7 +5113,45 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
             if ok {
                 break returned as usize;
             }
-            if unsafe { GetLastError() } != ERROR_MORE_DATA || extents.len() >= 1024 * 1024 {
+            let error = unsafe { GetLastError() };
+            if drive_type == DRIVE_REMOVABLE
+                && matches!(error, ERROR_INVALID_FUNCTION | ERROR_NOT_SUPPORTED)
+            {
+                let mut storage = StorageDeviceNumber {
+                    device_type: 0,
+                    device_number: 0,
+                    partition_number: 0,
+                };
+                let mut storage_bytes = 0_u32;
+                if unsafe {
+                    DeviceIoControl(
+                        inspect.as_raw_handle(),
+                        IOCTL_STORAGE_GET_DEVICE_NUMBER,
+                        std::ptr::null_mut(),
+                        0,
+                        (&mut storage as *mut StorageDeviceNumber).cast(),
+                        std::mem::size_of::<StorageDeviceNumber>() as u32,
+                        &mut storage_bytes,
+                        std::ptr::null_mut(),
+                    )
+                } != 0
+                    && storage_bytes as usize >= std::mem::size_of::<StorageDeviceNumber>()
+                {
+                    fallback_selected = Some(
+                        windows_removable_volume_device_number_fallback(
+                            drive_type,
+                            storage.device_type,
+                            storage.device_number,
+                            number,
+                        )
+                        .map_err(|fallback_error| {
+                            format!("{fallback_error} Volume GUID: {}", path.display())
+                        })?,
+                    );
+                    break 0;
+                }
+            }
+            if error != ERROR_MORE_DATA || extents.len() >= 1024 * 1024 {
                 return Err(format!(
                     "Could not obtain disk extents for Windows volume GUID {}.",
                     path.display()
@@ -5089,34 +5159,38 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
             }
             extents.resize(extents.len() * 2, 0);
         };
-        if returned < 8 {
-            return Err(format!(
-                "Windows returned truncated disk extents for volume GUID {}.",
-                path.display()
-            ));
-        }
-        let count = u32::from_le_bytes(extents[0..4].try_into().unwrap_or_default()) as usize;
-        let required = 8_usize
-            .checked_add(
-                count
-                    .checked_mul(24)
-                    .ok_or("Windows volume extent count overflowed.")?,
-            )
-            .ok_or("Windows volume extent size overflowed.")?;
-        if count == 0 || returned < required {
-            return Err(format!(
-                "Windows returned invalid disk extents for volume GUID {}.",
-                path.display()
-            ));
-        }
-        let disks = (0..count)
-            .map(|index| {
-                let offset = 8 + index * 24;
-                u32::from_le_bytes(extents[offset..offset + 4].try_into().unwrap_or_default())
-            })
-            .collect::<Vec<_>>();
-        let selected_volume = windows_volume_belongs_exclusively_to_disk(&disks, number)
-            .map_err(|error| format!("{error} Volume GUID: {}", path.display()))?;
+        let selected_volume = if let Some(selected) = fallback_selected {
+            selected
+        } else {
+            if returned < 8 {
+                return Err(format!(
+                    "Windows returned truncated disk extents for volume GUID {}.",
+                    path.display()
+                ));
+            }
+            let count = u32::from_le_bytes(extents[0..4].try_into().unwrap_or_default()) as usize;
+            let required = 8_usize
+                .checked_add(
+                    count
+                        .checked_mul(24)
+                        .ok_or("Windows volume extent count overflowed.")?,
+                )
+                .ok_or("Windows volume extent size overflowed.")?;
+            if count == 0 || returned < required {
+                return Err(format!(
+                    "Windows returned invalid disk extents for volume GUID {}.",
+                    path.display()
+                ));
+            }
+            let disks = (0..count)
+                .map(|index| {
+                    let offset = 8 + index * 24;
+                    u32::from_le_bytes(extents[offset..offset + 4].try_into().unwrap_or_default())
+                })
+                .collect::<Vec<_>>();
+            windows_volume_belongs_exclusively_to_disk(&disks, number)
+                .map_err(|error| format!("{error} Volume GUID: {}", path.display()))?
+        };
         drop(inspect);
         if selected_volume {
             let volume = OpenOptions::new()
@@ -5750,6 +5824,43 @@ mod windows_usb_inventory_tests {
         assert_eq!(selected_names, ["lettered-data", "unlettered-efi"]);
         assert!(windows_volume_belongs_exclusively_to_disk(&[selected, 0], selected).is_err());
         assert!(windows_volume_belongs_exclusively_to_disk(&[], selected).is_err());
+    }
+
+    #[test]
+    fn removable_volume_device_number_fallback_is_exact_and_never_broadens_fixed_disks() {
+        const DRIVE_REMOVABLE: u32 = 2;
+        const DRIVE_FIXED: u32 = 3;
+        const FILE_DEVICE_DISK: u32 = 7;
+        const FILE_DEVICE_CD_ROM: u32 = 2;
+        let selected = 7;
+        assert!(windows_removable_volume_device_number_fallback(
+            DRIVE_REMOVABLE,
+            FILE_DEVICE_DISK,
+            selected,
+            selected,
+        )
+        .unwrap());
+        assert!(!windows_removable_volume_device_number_fallback(
+            DRIVE_REMOVABLE,
+            FILE_DEVICE_DISK,
+            0,
+            selected,
+        )
+        .unwrap());
+        assert!(!windows_removable_volume_device_number_fallback(
+            DRIVE_REMOVABLE,
+            FILE_DEVICE_CD_ROM,
+            selected,
+            selected,
+        )
+        .unwrap());
+        assert!(windows_removable_volume_device_number_fallback(
+            DRIVE_FIXED,
+            FILE_DEVICE_DISK,
+            selected,
+            selected,
+        )
+        .is_err());
     }
 
     #[cfg(target_os = "windows")]

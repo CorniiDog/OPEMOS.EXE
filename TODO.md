@@ -133,6 +133,22 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   This host has no JavaScript runtime, so remote required CI is the first
   executable frontend validation for the changed head; the recovered disposable
   Windows stage remains authenticated and preserved for the required partial.
+  Exact candidate `0501ab3` then passed all ten CI checks and, in the recovered
+  Windows VM, genuinely selected and adopted the authenticated 8,120,172,544-byte
+  NVIDIA output, hid the completed-output destination controls, and listed the
+  32-GiB virtual USB on its first display without manual Refresh. The first
+  guarded write reached elevation but failed before opening or writing the
+  target because an unrelated empty removable `A:` volume returned
+  `ERROR_INVALID_FUNCTION` for `IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS`; parent
+  and helper settled, the exchange was consumed, and the virtual-USB backing
+  file remained at zero allocated blocks. The bounded correction uses
+  `IOCTL_STORAGE_GET_DEVICE_NUMBER` only for removable volume GUIDs that report
+  disk-extents unsupported, selects only an exact matching disk-device number,
+  skips foreign/non-disk removable devices, and preserves refusal for fixed,
+  ambiguous, or uninspectable volumes. Focused exact-selected, foreign-disk,
+  non-disk, fixed-disk-refusal, multi-extent, and empty-extent regressions pass
+  through `heavy.sh`; changed-head Windows compilation/CI and genuine-click
+  write/dismiss/reopen acceptance remain.
 
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.
