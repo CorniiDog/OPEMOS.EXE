@@ -35,7 +35,7 @@ export function admitUsbPreflightCancel(snapshot, capability) {
   const { cancelPending, hasPreflightSession } = capability;
   requireBoolean("cancelPending", cancelPending);
   requireBoolean("hasPreflightSession", hasPreflightSession);
-  const blocker = admission.phase !== "complete" && admission.phase !== "usb-writing"
+  const blocker = admission.phase !== "complete"
     ? "no-completed-output"
     : cancelPending
       ? "cancellation-pending"
