@@ -38,6 +38,7 @@ import {
 } from "./usb-confirmation.js";
 import {
   acceptedUsbInventoryPath,
+  usbFirstShowRetryDelay,
   usbInventoryNeedsRefresh,
 } from "./usb-inventory-state.js";
 import { installWindowDrag } from "./window-drag.js";
@@ -120,6 +121,7 @@ let activeExportMode = "image";
 let pendingUsbReview = false;
 let pendingUsbReviewTarget = null;
 let usbImagingRefreshPath = null;
+let usbImagingAutoRetryPath = null;
 let buildContextGeneration = 0;
 let activeBuildContext = null;
 let acceptedNvidiaSource = elements.nvidiaSource.value;
@@ -210,12 +212,21 @@ async function revealUsbImaging({ focus = true, preferredTarget = null } = {}) {
   elements.usbPicker.scrollIntoView({ behavior: "smooth", block: "center" });
   let restored = false;
   if (usbInventoryNeedsRefresh(outputPath, usbImagingRefreshPath, hasUsbTargets() ? 1 : 0)) {
-    const outcome = await refreshUsbTargets(preferredTarget);
-    if (completedOutput?.path !== outputPath) return false;
-    if (outcome.completed) {
-      usbImagingRefreshPath = acceptedUsbInventoryPath(outputPath, outcome);
+    const firstShow = usbImagingAutoRetryPath !== outputPath;
+    for (let attempt = 1; attempt <= (firstShow ? 3 : 1); attempt += 1) {
+      const outcome = await refreshUsbTargets(preferredTarget);
+      if (completedOutput?.path !== outputPath) return false;
+      if (outcome.completed) {
+        usbImagingRefreshPath = acceptedUsbInventoryPath(outputPath, outcome);
+      }
+      restored = outcome.preferredTargetRestored;
+      const retryDelay = firstShow ? usbFirstShowRetryDelay(attempt, outcome) : null;
+      if (retryDelay === null) break;
+      elements.usbPickerMessage.textContent = `No removable drive found yet. Retrying automatically (${attempt + 1} of 3)…`;
+      await new Promise((resolve) => setTimeout(resolve, retryDelay));
+      if (completedOutput?.path !== outputPath) return false;
     }
-    restored = outcome.preferredTargetRestored;
+    if (firstShow) usbImagingAutoRetryPath = outputPath;
   }
   if (focus) {
     const target = elements.usbTarget.disabled ? elements.refreshUsbTargets : elements.usbTarget;
@@ -352,6 +363,9 @@ function applyCompletedOutput(output, imported = false) {
   completedOutput = output;
   completedOutputImported = imported;
   usbImagingRefreshPath = null;
+  usbImagingAutoRetryPath = null;
+  currentImage = output.path;
+  currentImageName = output.path.split(/[\\/]/).pop();
   plannedOutput = output.path;
   elements.buildCard.classList.add("completed-output-selected");
   elements.appShell.classList.add("completed-output-selected");
@@ -360,6 +374,12 @@ function applyCompletedOutput(output, imported = false) {
   elements.exportImage.disabled = true;
   elements.chooseOutputFolder.disabled = true;
   elements.resetOutputFolder.disabled = true;
+  elements.selectedName.textContent = currentImageName;
+  elements.selectedName.title = currentImageName;
+  elements.selectedPath.textContent = displayPath(output.path);
+  elements.selectedPath.title = displayPath(output.path);
+  elements.summaryInput.textContent = displayPath(output.path);
+  elements.summaryInput.title = displayPath(output.path);
   elements.summaryOutput.textContent = displayPath(output.path);
   elements.summaryOutput.title = displayPath(output.path);
   elements.selectionStatus.textContent = output.nvidiaVersion
@@ -607,6 +627,7 @@ async function selectImage(path) {
   completedOutput = null;
   completedOutputImported = false;
   usbImagingRefreshPath = null;
+  usbImagingAutoRetryPath = null;
   currentImage = null;
   currentImageName = null;
   plannedOutput = null;

@@ -114,6 +114,25 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   32-GiB virtual-USB partial/genuine-click Windows acceptance, exact Core
   review, squash merge, exact artifact validation, and a fresh preserved-folder
   native deployment remain.
+  User-driven native validation of PR159 head `f0905e2e` subsequently confirmed
+  that ordinary-source selection now keeps USB Imaging hidden, and exposed three
+  remaining exact-head gaps before final acceptance: a verified build output was
+  not adopted as the Builder's selected image, completed-output mode retained
+  irrelevant output-destination/planned-output controls, and the first removable
+  inventory could require repeated manual refresh plus reinsertion. The coherent
+  remediation adopts only the manifest/hash-validated output path as the current
+  image, hides only those completed-output controls, and performs at most three
+  context-bound first-show scans (1s then 2s delay) while preserving manual
+  Refresh and exact identifier/identity-token restoration. Analysis pass 1
+  traced ordinary, imported-complete, and build-complete state transitions;
+  pass 2 traced supersession, empty/error inventory, retry exhaustion, and exact
+  target restoration; pass 3 confirmed write admission, destructive phrase,
+  identity, capacity, helper progress, dismiss/reopen, receipt, and eject gates
+  are unchanged. Focused state/layout tests cover bounded retry stop conditions,
+  exact selected-output adoption, completed-output layout, and manual Refresh.
+  This host has no JavaScript runtime, so remote required CI is the first
+  executable frontend validation for the changed head; the recovered disposable
+  Windows stage remains authenticated and preserved for the required partial.
 
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.

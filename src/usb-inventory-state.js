@@ -26,3 +26,21 @@ export function acceptedUsbInventoryPath(outputPath, outcome) {
   }
   return outcome.completed && outcome.targetCount > 0 ? outputPath : null;
 }
+
+export function usbFirstShowRetryDelay(attempt, outcome) {
+  if (!Number.isSafeInteger(attempt) || attempt < 1 || attempt > 3) {
+    throw new TypeError("USB first-show attempt must be an integer from 1 through 3");
+  }
+  if (!outcome || typeof outcome !== "object" || Array.isArray(outcome)) {
+    throw new TypeError("USB inventory outcome must be an object");
+  }
+  if (typeof outcome.completed !== "boolean") {
+    throw new TypeError("USB inventory completed must be boolean");
+  }
+  if (!Number.isSafeInteger(outcome.targetCount) || outcome.targetCount < 0) {
+    throw new TypeError("USB inventory targetCount must be a non-negative safe integer");
+  }
+  return outcome.completed && outcome.targetCount === 0 && attempt < 3
+    ? attempt * 1000
+    : null;
+}

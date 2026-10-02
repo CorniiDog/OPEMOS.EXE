@@ -188,6 +188,7 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /option\.dataset\.nvidiaVersion = branch\.version/);
   assert.match(script, /NVIDIA \$\{output\.nvidiaVersion\}, SteamOS \$\{output\.steamosVersion\}, kernel \$\{output\.kernelVersion\}, trust \$\{output\.trust\}/);
   assert.match(script, /function applyCompletedOutput\(output, imported = false\)/);
+  assert.match(script, /function applyCompletedOutput[\s\S]*currentImage = output\.path;[\s\S]*currentImageName = output\.path\.split[\s\S]*selectedName\.textContent = currentImageName;[\s\S]*summaryInput\.textContent = displayPath\(output\.path\)/);
   assert.match(script, /function applyCompletedOutput[\s\S]*renderUsbTargetSelection\(\);[\s\S]*renderExportMode\(\);/);
   assert.match(script, /function applyCompletedOutput[\s\S]*usbPicker\.classList\.remove\("hidden"\)/);
   assert.match(script, /selectImage[\s\S]*usbPicker\.classList\.add\("hidden"\)/);
@@ -224,6 +225,7 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /async function applyBuildFinished[\s\S]*const hasCompletedOutput = Boolean\(completedOutput\?\.path\);[\s\S]*exportImage\.disabled = hasCompletedOutput;[\s\S]*chooseOutputFolder\.disabled = hasCompletedOutput;[\s\S]*resetOutputFolder\.disabled = hasCompletedOutput;[\s\S]*chooseImage\.disabled = false;[\s\S]*nvidiaSource\.disabled = hasCompletedOutput;[\s\S]*allowUpstreamBuild\.disabled = hasCompletedOutput;/);
   assert.doesNotMatch(script, /completedOutput\?\.path \|\| !currentImage \|\| !hostReady/);
   assert.match(css, /\.build-card\.completed-output-selected \.nvidia-choice,[\s\S]*#build-button\s*\{\s*display:\s*none;/);
+  assert.match(css, /\.build-card\.completed-output-selected \.export-choice,[\s\S]*\.build-summary > div:nth-child\(2\),/);
   assert.doesNotMatch(css, /\.build-card\.completed-output-selected \.build-side-column,[\s\S]{0,100}display:\s*none;/);
   assert.match(script, /elements\.appShell\.classList\.add\("completed-output-selected"\)/);
   assert.match(script, /elements\.appShell\.classList\.remove\("completed-output-selected"\)/);
@@ -233,6 +235,11 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /let completedOutputImported = false;/);
   assert.match(script, /completedOutputImported = imported;/);
   assert.match(script, /activeExportMode === "both" && !completedOutputImported/);
+});
+
+test("first-show USB inventory retries are bounded and preserve manual refresh", () => {
+  assert.match(script, /const firstShow = usbImagingAutoRetryPath !== outputPath;[\s\S]*attempt <= \(firstShow \? 3 : 1\)[\s\S]*usbFirstShowRetryDelay\(attempt, outcome\)[\s\S]*Retrying automatically[\s\S]*usbImagingAutoRetryPath = outputPath/);
+  assert.match(script, /refreshUsbTargets\.addEventListener\("click", async \(\) => \{[\s\S]*await refreshUsbTargets\(\);/);
 });
 
 test("image selection is transactional across plain and completed outputs", () => {

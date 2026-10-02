@@ -392,6 +392,8 @@ footer p { color: #aab4c5; }
 .build-card.completed-output-selected { min-height: 188px; }
 .build-card.completed-output-selected .nvidia-choice,
 .build-card.completed-output-selected .source-warning,
+.build-card.completed-output-selected .export-choice,
+.build-card.completed-output-selected .build-summary > div:nth-child(2),
 .build-card.completed-output-selected #build-button { display: none; }
 .build-card.completed-output-selected .build-options-grid { margin-bottom: 5px; }
 .build-card.completed-output-selected .build-side-column { min-height: 100%; }
