@@ -314,6 +314,22 @@ test("USB write progress accepts bounded forward movement only during writing", 
   assert.equal(admitUsbWriteProgress(writing, {
     ...base, phase: "verifying", bytesCompleted: 0,
   }, base).accepted, true);
+  const helperPhases = [
+    ["authorizing", 0],
+    ["locking", 0],
+    ["writing", 4],
+    ["flushing", 16],
+    ["verifying", 0],
+    ["releasing", 16],
+    ["finalizing", 16],
+    ["completed", 16],
+  ];
+  let previous = null;
+  for (const [phase, bytesCompleted] of helperPhases) {
+    const progress = { phase, bytesCompleted, bytesTotal: 16, message: `${phase}.` };
+    assert.equal(admitUsbWriteProgress(writing, progress, previous).accepted, true, phase);
+    previous = progress;
+  }
   assert.equal(admitUsbWriteProgress(writing, { ...base, bytesCompleted: 3 }, base).blocker, "regressing-progress");
   assert.equal(admitUsbWriteProgress(writing, { ...base, bytesTotal: 17 }, base).blocker, "regressing-progress");
   assert.equal(admitUsbWriteProgress(writing, { ...base, phase: "authorizing", bytesCompleted: 0 }, base).blocker, "regressing-progress");
@@ -327,6 +343,7 @@ test("USB write progress accepts bounded forward movement only during writing", 
     { ...base, message: "" },
     { ...base, message: "x".repeat(8193) },
     { ...base, phase: "unmounting", bytesCompleted: 1 },
+    { ...base, phase: "locking", bytesCompleted: 1 },
   ]) {
     assert.equal(admitUsbWriteProgress(writing, progress).blocker, "malformed-progress");
   }
@@ -504,8 +521,8 @@ test("USB review opens only for a completed image with a selected target", () =>
     "no-completed-output",
   );
   assert.equal(
-    admitUsbReviewOpen({ ...ready, hasCompletedOutput: true, usbWriting: true, exportMode: "both" }, { hasTarget: true }).blocker,
-    "no-completed-output",
+    admitUsbReviewOpen({ ...ready, hasCompletedOutput: true, usbWriting: true, exportMode: "both" }, { hasTarget: true }).accepted,
+    true,
   );
   assert.throws(() => admitUsbReviewOpen(complete, null), /capability must be an object/);
   assert.throws(
@@ -514,7 +531,7 @@ test("USB review opens only for a completed image with a selected target", () =>
   );
 });
 
-test("USB review dismissal remains available until destructive writing starts", () => {
+test("USB review dismissal remains available during destructive writing", () => {
   const cases = [
     [{ hasImage: false }, "empty"],
     [{}, "selected"],
@@ -527,7 +544,7 @@ test("USB review dismissal remains available until destructive writing starts", 
     });
   }
   assert.deepEqual(admitUsbReviewDismiss({ ...ready, hasCompletedOutput: true, usbWriting: true, exportMode: "both" }), {
-    accepted: false, phase: "usb-writing", blocker: "usb-writing",
+    accepted: true, phase: "usb-writing", blocker: null,
   });
   assert.throws(() => admitUsbReviewDismiss({
     ...ready, buildRunning: true, usbWriting: true,

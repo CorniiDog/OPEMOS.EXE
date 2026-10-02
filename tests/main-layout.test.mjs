@@ -83,7 +83,9 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(html, /id="review-usb-target"[^>]*aria-haspopup="dialog"[^>]*aria-controls="usb-card"[^>]*aria-expanded="false"/);
   assert.match(script, /function setUsbMenuOpen\(opened\)/);
   assert.match(script, /function selectedExportMode\(\)[\s\S]*if \(image && usb\) return "both";/);
-  assert.match(script, /if \(currentImage\) \{\s*elements\.usbPicker\.classList\.remove\("hidden"\);\s*await refreshUsbTargets\(\);/);
+  assert.match(script, /reviewUsbTarget\.disabled = !finalUsbReady;[\s\S]*usbWriting[\s\S]*View USB Write Progress/);
+  assert.match(script, /if \(completedOutput\?\.path\) \{\s*await revealUsbImaging\(\{ focus: false \}\);/);
+  assert.doesNotMatch(script, /if \(currentImage\) \{[\s\S]{0,180}refreshUsbTargets/);
   assert.match(html, /id="usb-target" size="3" disabled[^>]*>[\s\S]*Connect a USB drive, then refresh…[\s\S]*<\/select>/);
   assert.match(html, /id="usb-target-detail"[\s\S]*class="usb-picker-actions"[\s\S]*id="clear-usb-target"[\s\S]*id="refresh-usb-targets"/);
   assert.doesNotMatch(script, /Select a removable drive for review/);
@@ -134,7 +136,9 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.doesNotMatch(script, /exportImage\.addEventListener\("change", renderExportMode\)/);
   assert.doesNotMatch(script, /if \(currentImage && completedOutput\?\.path && elements\.usbTarget\.value\)/);
   assert.match(script, /async function dismissUsbMenu\(\) \{[\s\S]*admitUsbReviewDismiss\(currentBuildSnapshot\(\)\)\.accepted/);
+  assert.match(script, /async function dismissUsbMenu\(\) \{[\s\S]*if \(usbWriting\) \{[\s\S]*setUsbMenuOpen\(false\);[\s\S]*return;[\s\S]*cancel_usb_write_preflight/);
   assert.doesNotMatch(script, /async function dismissUsbMenu\(\) \{\s*if \(usbWriting\) return;/);
+  assert.doesNotMatch(script, /closeUsbMenu\.disabled = true/);
   assert.match(script, /installKeyboardBindings[\s\S]*keepKeyboardFocusInside[\s\S]*runKeyboardDefaultAction[\s\S]*from "\.\/keyboard\.js";/);
   assert.match(script, /installKeyboardBindings\(\[[\s\S]*key: "Enter"[\s\S]*usbConfirmationMatches\(elements\.usbConfirmation\.value\)[\s\S]*runKeyboardDefaultAction\(elements\.armUsbPreflight\)[\s\S]*key: "Tab"[\s\S]*keepKeyboardFocusInside[\s\S]*key: "Escape"[\s\S]*dismissUsbMenu\(\)[\s\S]*key: "Escape"[\s\S]*setSettingsOpen\(false\)/);
   assert.match(script, /const wasOpen = !elements\.usbCard\.classList\.contains\("hidden"\);[\s\S]*else if \(wasOpen/);
@@ -143,6 +147,8 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(html, /id="usb-active-warning"[^>]*role="alert"[\s\S]*Do not disconnect the USB drive/);
   assert.match(script, /usbWriting = true;[\s\S]*usbActiveWarning\.classList\.remove\("hidden"\)[\s\S]*usbWriting = false;[\s\S]*usbActiveWarning\.classList\.add\("hidden"\)/);
   assert.match(script, /usb-write-progress[\s\S]*admitUsbWriteProgress\(currentBuildSnapshot\(\), progress, usbWriteProgress\)[\s\S]*if \(!admission\.accepted\) return;[\s\S]*usbWriteProgress = progress/);
+  assert.match(script, /usbWriteProgress = progress;[\s\S]*usbMessage\.textContent = status;[\s\S]*usbPickerMessage\.textContent = status/);
+  assert.match(script, /usb-write-close-refused[\s\S]*application must remain open until the active USB write settles/);
   assert.match(script, /formatBytes\(progress\.bytesCompleted\)[\s\S]*formatBytes\(progress\.bytesTotal\)/);
   assert.match(script, /usbWriting = true;\s*usbWriteProgress = null;[\s\S]*finally \{\s*usbWriting = false;\s*usbWriteProgress = null;/);
   assert.match(script, /const writeContext = Object\.freeze\(\{[\s\S]*sessionToken: usbPreflightSession\.sessionToken,[\s\S]*deviceIdentifier: usbPreflightSession\.deviceIdentifier,[\s\S]*deviceNode: usbPreflightSession\.deviceNode,[\s\S]*imageSha256: usbPreflightSession\.imageSha256/);
@@ -185,7 +191,8 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /function applyCompletedOutput[\s\S]*renderUsbTargetSelection\(\);[\s\S]*renderExportMode\(\);/);
   assert.match(script, /function applyCompletedOutput[\s\S]*usbPicker\.classList\.remove\("hidden"\)/);
   assert.match(script, /selectImage[\s\S]*usbPicker\.classList\.add\("hidden"\)/);
-  assert.match(script, /if \(currentImage\) \{[\s\S]*usbPicker\.classList\.remove\("hidden"\);[\s\S]*await refreshUsbTargets\(\)/);
+  assert.match(script, /if \(completedOutput\?\.path\) \{[\s\S]*await revealUsbImaging\(\{ focus: false \}\)/);
+  assert.match(script, /if \(!completed\) \{[\s\S]*USB Imaging remains unavailable[\s\S]*} else \{[\s\S]*applyCompletedOutput\(completed\)/);
   assert.match(script, /const preferredTarget = pendingUsbTarget;[\s\S]*completedUsbPreferredTarget = preferredTarget;[\s\S]*await revealUsbImaging\(\{ preferredTarget: completedUsbPreferredTarget \}\)/);
   assert.match(script, /elements\.resultMessage\.title = installedIdentity;/);
   assert.match(script, /Verified existing NVIDIA.*No rebuild needed; select a USB drive/);

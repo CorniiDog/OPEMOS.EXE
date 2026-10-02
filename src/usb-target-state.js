@@ -13,7 +13,7 @@ export function admitUsbPreflightStart(snapshot, capability) {
   for (const [name, value] of Object.entries({
     armPending, hasTarget, hasIdentityToken, confirmationMatches,
   })) requireBoolean(name, value);
-  const blocker = admission.phase !== "complete"
+  const blocker = admission.phase !== "complete" && admission.phase !== "usb-writing"
     ? "no-completed-output"
     : armPending
       ? "preflight-pending"
@@ -86,11 +86,10 @@ export function admitUsbReviewOpen(snapshot, capability) {
 
 export function admitUsbReviewDismiss(snapshot) {
   const admission = deriveBuildAdmission(snapshot);
-  const accepted = admission.phase !== "usb-writing";
   return Object.freeze({
-    accepted,
+    accepted: true,
     phase: admission.phase,
-    blocker: accepted ? null : "usb-writing",
+    blocker: null,
   });
 }
 

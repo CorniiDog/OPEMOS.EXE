@@ -92,6 +92,29 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
+- [ ] Correct the PR158 native USB lifecycle regression reported on
+  `Current-df6c24e5-2026-10-01`. Ordinary SteamOS source selection must keep
+  USB Imaging hidden and perform no drive scan; only an independently
+  manifest/hash-validated NVIDIA output may reveal it. Build completion must
+  refresh against that exact output and restore a prior target only when both
+  identifier and identity token still match. Windows helper phases `locking`,
+  `writing`, `flushing`, `verifying`, `releasing`, `finalizing`, and
+  `completed` must advance monotonically in both the modal and persistent
+  inline status. Dismissing the modal during an active write must neither
+  cancel nor hide progress, and a native main-window close request must be
+  refused until the managed write settles so its receipt can be consumed.
+  Read-only native evidence from user-started exchange
+  `opemos-usb-writer-20232-1790908871181504100` showed the elevated helper
+  continued after parent PID 20232 disappeared, completed 8,120,172,544 bytes,
+  verified SHA-256
+  `6bd43e747392edf007194502f2a64e6e5ddb3a1ce6b71bcd3837641a1a25cdb6`,
+  and safely ejected the device, but left its success receipt unconsumed.
+  Nothing interrupted, cancelled, or wrote that user-started physical device.
+  Focused JS/Rust tests, three analysis passes, required CI, a disposable
+  32-GiB virtual-USB partial/genuine-click Windows acceptance, exact Core
+  review, squash merge, exact artifact validation, and a fresh preserved-folder
+  native deployment remain.
+
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.
   The protected PR153 executable correctly failed closed during integrated

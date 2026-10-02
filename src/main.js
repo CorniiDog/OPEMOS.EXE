@@ -268,10 +268,12 @@ function renderExportMode() {
   const completedImageReady = Boolean(completedOutput?.path);
   const finalUsbReady = Boolean(completedImageReady && elements.usbTarget.value);
   elements.reviewUsbTarget.classList.toggle("hidden", !completedImageReady);
-  elements.reviewUsbTarget.disabled = !finalUsbReady || usbWriting;
-  elements.reviewUsbTarget.textContent = finalUsbReady
-    ? "Review & Write Selected USB…"
-    : "Select a USB Drive to Continue";
+  elements.reviewUsbTarget.disabled = !finalUsbReady;
+  elements.reviewUsbTarget.textContent = usbWriting
+    ? "View USB Write Progress…"
+    : finalUsbReady
+      ? "Review & Write Selected USB…"
+      : "Select a USB Drive to Continue";
   renderSourceWarning();
 }
 
@@ -294,6 +296,13 @@ function setUsbMenuOpen(opened) {
 
 async function dismissUsbMenu() {
   if (!admitUsbReviewDismiss(currentBuildSnapshot()).accepted) return;
+  if (usbWriting) {
+    setUsbMenuOpen(false);
+    elements.usbPickerMessage.textContent = usbWriteProgress
+      ? `${usbWriteProgress.message} ${formatBytes(usbWriteProgress.bytesCompleted)} of ${formatBytes(usbWriteProgress.bytesTotal)}.`
+      : "The authorized USB write is continuing. Reopen USB Imaging to see its current progress.";
+    return;
+  }
   usbContextGeneration += 1;
   const session = usbPreflightSession;
   usbPreflightSession = null;
@@ -717,9 +726,8 @@ async function selectImage(path) {
   }
   updateBuildButton();
   renderExportMode();
-  if (currentImage) {
-    elements.usbPicker.classList.remove("hidden");
-    await refreshUsbTargets();
+  if (completedOutput?.path) {
+    await revealUsbImaging({ focus: false });
   }
 }
 
@@ -1047,24 +1055,31 @@ async function applyBuildFinished(completion, { openUsbReview = true } = {}) {
     if (!operationContextMatches(buildContext, activeBuildContext || {})
       || buildContext.selectionGeneration !== imageSelectionGeneration
       || inputPath !== currentImage) return;
-    applyCompletedOutput(completed || output);
-    const preferredTarget = pendingUsbTarget;
-    pendingUsbTarget = null;
-    elements.resultMessage.textContent = "The image is complete. Choose the removable USB destination for the validated output.";
-    elements.resultMessage.className = "result-message success";
-    // inspect_completed_nvidia_image can take long enough for the user to close
-    // the progress companion before this handler reaches the handoff. Recheck
-    // the companion's current state instead of relying only on the visibility
-    // snapshot captured when build-finished was first received.
-    let progressVisible = activeCompanion === "build-progress";
-    if (progressVisible) {
-      progressVisible = await invoke("is_progress_window_visible").catch(() => true);
-      if (!progressVisible) completeBuildProgressDismissal();
+    if (!completed) {
+      pendingUsbTarget = null;
+      elements.usbPicker.classList.add("hidden");
+      elements.resultMessage.textContent = "The build finished, but the generated image did not pass completed-output manifest and hash validation. USB Imaging remains unavailable.";
+      elements.resultMessage.className = "result-message error";
+    } else {
+      applyCompletedOutput(completed);
+      const preferredTarget = pendingUsbTarget;
+      pendingUsbTarget = null;
+      elements.resultMessage.textContent = "The image is complete. Choose the removable USB destination for the validated output.";
+      elements.resultMessage.className = "result-message success";
+      // inspect_completed_nvidia_image can take long enough for the user to close
+      // the progress companion before this handler reaches the handoff. Recheck
+      // the companion's current state instead of relying only on the visibility
+      // snapshot captured when build-finished was first received.
+      let progressVisible = activeCompanion === "build-progress";
+      if (progressVisible) {
+        progressVisible = await invoke("is_progress_window_visible").catch(() => true);
+        if (!progressVisible) completeBuildProgressDismissal();
+      }
+      revealCompletedUsbReview = openUsbReview || !progressVisible;
+      completedUsbPreferredTarget = preferredTarget;
+      pendingUsbReview = !revealCompletedUsbReview;
+      pendingUsbReviewTarget = pendingUsbReview ? preferredTarget : null;
     }
-    revealCompletedUsbReview = openUsbReview || !progressVisible;
-    completedUsbPreferredTarget = preferredTarget;
-    pendingUsbReview = !revealCompletedUsbReview;
-    pendingUsbReviewTarget = pendingUsbReview ? preferredTarget : null;
   } else {
     pendingUsbTarget = null;
   }
@@ -1286,12 +1301,13 @@ async function writePreparedUsb() {
   });
   usbWriting = true;
   usbWriteProgress = null;
+  renderExportMode();
   elements.chooseImage.disabled = true;
   elements.usbActiveWarning.classList.remove("hidden");
   elements.refreshUsbTargets.disabled = true;
-  elements.closeUsbMenu.disabled = true;
   elements.buildButton.disabled = true;
   elements.usbMessage.textContent = "Revalidating the exact image and removable drive. Windows authorization will appear next for only that selected disk.";
+  elements.usbPickerMessage.textContent = elements.usbMessage.textContent;
   try {
     const result = await invoke("write_image_to_usb", {
       sessionToken: writeContext.sessionToken,
@@ -1303,6 +1319,7 @@ async function writePreparedUsb() {
     usbPreflightSession = null;
     elements.usbMessage.textContent = result.message;
     elements.usbMessage.className = `result-message ${result.ejected ? "success" : "error"}`;
+    elements.usbPickerMessage.textContent = result.message;
     // An imported image already exists at a user-selected path. Revealing it
     // after a USB-only operation falsely implies that this run exported it.
     if (activeExportMode === "both" && !completedOutputImported) {
@@ -1314,6 +1331,7 @@ async function writePreparedUsb() {
     elements.usbConfirmation.value = "";
     elements.usbMessage.textContent = String(error);
     elements.usbMessage.className = "result-message error";
+    elements.usbPickerMessage.textContent = String(error);
     elements.usbMessage.removeAttribute("title");
     renderUsbConfirmationPhase(false);
   } finally {
@@ -1322,7 +1340,7 @@ async function writePreparedUsb() {
     elements.chooseImage.disabled = false;
     elements.usbActiveWarning.classList.add("hidden");
     elements.refreshUsbTargets.disabled = false;
-    elements.closeUsbMenu.disabled = false;
+    renderExportMode();
     updateBuildButton();
   }
 }
@@ -1453,8 +1471,17 @@ await mainWindow.listen("usb-write-progress", (event) => {
   if (!admission.accepted) return;
   usbWriteProgress = progress;
   const ratio = progress.bytesCompleted / progress.bytesTotal;
-  elements.usbMessage.textContent = `${progress.message} ${formatBytes(progress.bytesCompleted)} of ${formatBytes(progress.bytesTotal)} (${(ratio * 100).toFixed(1)}%)`;
+  const status = `${progress.message} ${formatBytes(progress.bytesCompleted)} of ${formatBytes(progress.bytesTotal)} (${(ratio * 100).toFixed(1)}%)`;
+  elements.usbMessage.textContent = status;
+  elements.usbPickerMessage.textContent = status;
   elements.usbMessage.className = "result-message";
+});
+
+await mainWindow.listen("usb-write-close-refused", () => {
+  elements.usbPickerMessage.textContent = "The application must remain open until the active USB write settles. You can dismiss and reopen the USB Imaging panel without interrupting it.";
+  if (!elements.usbCard.classList.contains("hidden")) {
+    elements.usbMessage.textContent = elements.usbPickerMessage.textContent;
+  }
 });
 
 await mainWindow.onDragDropEvent(async (event) => {

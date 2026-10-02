@@ -2459,6 +2459,10 @@ pub(crate) struct UsbPreparationManager {
 }
 
 impl UsbPreparationManager {
+    pub(crate) fn has_active_write(&self) -> bool {
+        self.active_token.is_some()
+    }
+
     pub(crate) fn cancel_all(&mut self) {
         self.armed = None;
         if let Some(cancel) = self.cancel_write.take() {

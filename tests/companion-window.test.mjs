@@ -112,3 +112,10 @@ test("an unusable automatic USB scan releases controls and remains retryable", a
   assert.match(main, /finally \{[\s\S]*elements\.refreshUsbTargets\.disabled = false;[\s\S]*elements\.usbPicker\.classList\.remove\("is-loading"\)/);
   assert.match(main, /acceptedUsbInventoryPath\(outputPath, outcome\)/);
 });
+
+test("native close is refused while the exact USB writer remains active", () => {
+  assert.match(nativeApp, /CloseRequested \{ api, \.\. \}/);
+  assert.match(nativeApp, /manager\.has_active_write\(\)/);
+  assert.match(nativeApp, /if usb_write_active \{[\s\S]*api\.prevent_close\(\);[\s\S]*usb-write-close-refused[\s\S]*return;/);
+  assert.match(nativeApp, /cleanup_managed_workers\(app_handle\);\s*app_handle\.exit\(0\);/);
+});
