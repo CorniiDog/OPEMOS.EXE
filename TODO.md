@@ -147,7 +147,15 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   skips foreign/non-disk removable devices, and preserves refusal for fixed,
   ambiguous, or uninspectable volumes. Focused exact-selected, foreign-disk,
   non-disk, fixed-disk-refusal, multi-extent, and empty-extent regressions pass
-  through `heavy.sh`; changed-head Windows compilation/CI and genuine-click
+  through `heavy.sh`. Changed-head Windows compilation and bundle startup then
+  passed, but smoke-test teardown reproduced a bounded WebView shutdown race:
+  a newly created WebView process still held its owned cache journal when state
+  cleanup began. The failed-stage correction inventories pre-existing WebView
+  identities, requires every candidate-created WebView process to drain within
+  15 seconds after application shutdown, and retries only the verified real
+  bundle-local state-directory removal for 10 seconds while Windows releases
+  the final handle. It never terminates an unrelated process and retains the
+  no-orphan and post-cleanup absence gates. Changed-head CI and genuine-click
   write/dismiss/reopen acceptance remain.
 
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
