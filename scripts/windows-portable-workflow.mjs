@@ -75,6 +75,7 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, 'Where-Object { $_ -notin $qemuBefore }', "new-QEMU identity comparison");
   requireText(text, 'if ($qemuAfter.Count -ne 0) {', "the no-orphan QEMU gate");
   requireText(text, '$webviewBefore = @(Get-Process -Name "msedgewebview2"', "the pre-start WebView identity inventory");
+  requireText(text, 'ForEach-Object { try { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" } catch {} }', "race-safe WebView identity capture");
   requireText(text, '$webviewDeadline = [DateTime]::UtcNow.AddSeconds(15)', "the bounded post-close WebView check");
   requireText(text, 'Where-Object { $_ -notin $webviewBefore }', "new-WebView identity comparison");
   requireText(text, 'if ($webviewAfter.Count -ne 0) {', "the no-orphan WebView gate");

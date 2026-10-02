@@ -149,7 +149,7 @@ jobs:
         run: |
           $source = "dist/windows/OPEMOS.EXE-windows-x86_64-unsigned.exe"
           $qemuBefore = @(Get-Process -Name "qemu-system-*" -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" })
-          $webviewBefore = @(Get-Process -Name "msedgewebview2" -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" })
+          $webviewBefore = @(Get-Process -Name "msedgewebview2" -ErrorAction SilentlyContinue | ForEach-Object { try { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" } catch {} })
           $process = Start-Process -FilePath $source -PassThru
           try {
             $deadline = [DateTime]::UtcNow.AddSeconds(30)
@@ -186,7 +186,7 @@ jobs:
           }
           $webviewDeadline = [DateTime]::UtcNow.AddSeconds(15)
           do {
-            $webviewAfter = @(Get-Process -Name "msedgewebview2" -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" } | Where-Object { $_ -notin $webviewBefore })
+            $webviewAfter = @(Get-Process -Name "msedgewebview2" -ErrorAction SilentlyContinue | ForEach-Object { try { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" } catch {} } | Where-Object { $_ -notin $webviewBefore })
             if ($webviewAfter.Count -eq 0) {
               break
             }

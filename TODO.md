@@ -156,7 +156,10 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   bundle-local state-directory removal for 10 seconds while Windows releases
   the final handle. It never terminates an unrelated process and retains the
   no-orphan and post-cleanup absence gates. Changed-head CI and genuine-click
-  write/dismiss/reopen acceptance remain.
+  write/dismiss/reopen acceptance remain. The first corrected workflow run
+  reached the new WebView drain, where a child exited between process discovery
+  and `StartTime` access. Identity capture now ignores only that vanished
+  process-object race; live identities remain compared by PID plus start ticks.
 
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.

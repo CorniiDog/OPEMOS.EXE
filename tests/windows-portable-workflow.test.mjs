@@ -49,6 +49,7 @@ for (const [name, mutate, expected] of [
   ["missing new-QEMU identity comparison", text => text.replace('Where-Object { $_ -notin $qemuBefore }', 'Where-Object { $false }'), /new-QEMU identity comparison/],
   ["missing no-orphan QEMU gate", text => text.replace('if ($qemuAfter.Count -ne 0) {', 'if ($false) {'), /no-orphan QEMU gate/],
   ["missing pre-start WebView inventory", text => text.replace('$webviewBefore = @(Get-Process -Name "msedgewebview2"', '$webviewBefore = @($null #'), /pre-start WebView identity inventory/],
+  ["racy WebView identity capture", text => text.replaceAll('ForEach-Object { try { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" } catch {} }', 'ForEach-Object { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" }'), /race-safe WebView identity capture/],
   ["unbounded post-close WebView check", text => text.replace('$webviewDeadline = [DateTime]::UtcNow.AddSeconds(15)', '$webviewDeadline = [DateTime]::MaxValue'), /bounded post-close WebView check/],
   ["missing new-WebView identity comparison", text => text.replace('Where-Object { $_ -notin $webviewBefore }', 'Where-Object { $false }'), /new-WebView identity comparison/],
   ["missing no-orphan WebView gate", text => text.replace('if ($webviewAfter.Count -ne 0) {', 'if ($false) {'), /no-orphan WebView gate/],
