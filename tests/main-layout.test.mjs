@@ -102,7 +102,7 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(script, /elements\.usbPicker\.classList\.add\("is-empty", "is-loading"\)/);
   assert.match(script, /elements\.usbPicker\.classList\.toggle\("is-empty", !preflight\.targets\.length\)/);
   assert.match(script, /placeholder\.textContent = "Select a removable drive…";/);
-  assert.match(script, /elements\.reviewUsbTarget\.textContent = finalUsbReady[\s\S]*Select a USB Drive to Continue/);
+  assert.match(script, /elements\.reviewUsbTarget\.textContent = usbWriting[\s\S]*View USB Write Progress[\s\S]*finalUsbReady[\s\S]*Select a USB Drive to Continue/);
   assert.match(script, /elements\.refreshUsbTargets\.textContent = "Scanning…";/);
   assert.match(script, /elements\.refreshUsbTargets\.textContent = "Refresh Drives";/);
   assert.match(script, /Drive inspection failed:[\s\S]*renderUsbConfirmationPhase\(false\);[\s\S]*renderExportMode\(\);/);

@@ -13,7 +13,7 @@ export function admitUsbPreflightStart(snapshot, capability) {
   for (const [name, value] of Object.entries({
     armPending, hasTarget, hasIdentityToken, confirmationMatches,
   })) requireBoolean(name, value);
-  const blocker = admission.phase !== "complete" && admission.phase !== "usb-writing"
+  const blocker = admission.phase !== "complete"
     ? "no-completed-output"
     : armPending
       ? "preflight-pending"
@@ -35,7 +35,7 @@ export function admitUsbPreflightCancel(snapshot, capability) {
   const { cancelPending, hasPreflightSession } = capability;
   requireBoolean("cancelPending", cancelPending);
   requireBoolean("hasPreflightSession", hasPreflightSession);
-  const blocker = admission.phase !== "complete"
+  const blocker = admission.phase !== "complete" && admission.phase !== "usb-writing"
     ? "no-completed-output"
     : cancelPending
       ? "cancellation-pending"
@@ -76,7 +76,7 @@ export function admitUsbReviewOpen(snapshot, capability) {
     throw new TypeError("USB review capability must be an object");
   }
   requireBoolean("hasTarget", capability.hasTarget);
-  const blocker = admission.phase !== "complete"
+  const blocker = admission.phase !== "complete" && admission.phase !== "usb-writing"
     ? "no-completed-output"
     : !capability.hasTarget
       ? "no-usb-target"
