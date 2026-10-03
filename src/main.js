@@ -30,6 +30,7 @@ import {
   admitUsbWriteStart,
   pollUsbWriteProgress,
 } from "./usb-write-state.js";
+import { renderUsbWriteProgressView } from "./usb-progress-view.js";
 import {
   usbConfirmationForBackend,
   usbConfirmationMatches,
@@ -85,6 +86,16 @@ const elements = {
   usbConfirmation: $("#usb-confirmation"), usbConfirmationHelp: $("#usb-confirmation-help"),
   armUsbPreflight: $("#arm-usb-preflight"),
   usbActiveWarning: $("#usb-active-warning"),
+  usbInlineProgress: $("#usb-inline-progress"),
+  usbInlineProgressPhase: $("#usb-inline-progress-phase"),
+  usbInlineProgressPercent: $("#usb-inline-progress-percent"),
+  usbInlineProgressBar: $("#usb-inline-progress-bar"),
+  usbInlineProgressDetail: $("#usb-inline-progress-detail"),
+  usbDialogProgress: $("#usb-dialog-progress"),
+  usbDialogProgressPhase: $("#usb-dialog-progress-phase"),
+  usbDialogProgressPercent: $("#usb-dialog-progress-percent"),
+  usbDialogProgressBar: $("#usb-dialog-progress-bar"),
+  usbDialogProgressDetail: $("#usb-dialog-progress-detail"),
   closeUsbMenu: $("#close-usb-menu"), reviewUsbTarget: $("#review-usb-target"),
   environmentMessage: $("#environment-message"), environmentDetails: $("#environment-details"),
   environmentStatus: $("#environment-status"),
@@ -1257,6 +1268,7 @@ async function writePreparedUsb() {
   elements.buildButton.disabled = true;
   elements.usbMessage.textContent = "Revalidating the exact image and removable drive. Windows authorization will appear next for only that selected disk.";
   elements.usbPickerMessage.textContent = elements.usbMessage.textContent;
+  renderUsbWriteProgress(null);
   const pollGeneration = ++usbProgressPollGeneration;
   const pollProgress = async () => {
     if (!usbWriting || pollGeneration !== usbProgressPollGeneration) return;
@@ -1307,6 +1319,8 @@ async function writePreparedUsb() {
     usbProgressPollGeneration += 1;
     usbWriting = false;
     usbWriteProgress = null;
+    elements.usbInlineProgress.classList.add("hidden");
+    elements.usbDialogProgress.classList.add("hidden");
     elements.chooseImage.disabled = false;
     elements.usbActiveWarning.classList.add("hidden");
     elements.refreshUsbTargets.disabled = false;
@@ -1426,6 +1440,26 @@ installKeyboardBindings([
   },
 ]);
 
+function renderUsbWriteProgress(progress) {
+  const displays = [
+    {
+      container: elements.usbInlineProgress,
+      phase: elements.usbInlineProgressPhase,
+      percent: elements.usbInlineProgressPercent,
+      bar: elements.usbInlineProgressBar,
+      detail: elements.usbInlineProgressDetail,
+    },
+    {
+      container: elements.usbDialogProgress,
+      phase: elements.usbDialogProgressPhase,
+      percent: elements.usbDialogProgressPercent,
+      bar: elements.usbDialogProgressBar,
+      detail: elements.usbDialogProgressDetail,
+    },
+  ];
+  renderUsbWriteProgressView(displays, progress, formatBytes);
+}
+
 function applyUsbWriteProgress(progress) {
   const admission = admitUsbWriteProgress(currentBuildSnapshot(), progress, usbWriteProgress);
   if (!admission.accepted) return;
@@ -1435,6 +1469,7 @@ function applyUsbWriteProgress(progress) {
   elements.usbMessage.textContent = status;
   elements.usbPickerMessage.textContent = status;
   elements.usbMessage.className = "result-message";
+  renderUsbWriteProgress(progress);
 }
 
 await mainWindow.listen("usb-write-progress", (event) => {

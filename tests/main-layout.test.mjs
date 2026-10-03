@@ -8,14 +8,14 @@ const chromeCss = await readFile(new URL("../src/window-chrome.css", import.meta
 const script = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
-test("main workflow gives output destination the full build width", () => {
+test("main workflow groups output destination beside the NVIDIA controls", () => {
   assert.match(html, /id="readiness-grid"[\s\S]*class="environment-card"[\s\S]*id="selection-card"[\s\S]*id="drop-zone"/);
   assert.match(html, /class="build-options-grid"[\s\S]*class="source-choice export-choice"[\s\S]*class="build-side-column"[\s\S]*for="nvidia-source"[\s\S]*id="summary-output"[\s\S]*id="usb-picker"[\s\S]*id="usb-target"[\s\S]*id="build-button"/);
   assert.match(css, /\.readiness-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/);
   assert.match(css, /\.build-options-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.12fr\) minmax\(0, \.88fr\);/);
-  assert.match(css, /\.build-side-column \.build-summary\s*\{[^}]*grid-column:\s*2;[^}]*grid-row:\s*1;[^}]*grid-template-columns:\s*1fr;/);
-  assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*grid-column:\s*1 \/ -1;[^}]*width:\s*100%;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*justify-content:\s*stretch;[^}]*justify-self:\s*stretch;/);
-  assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*1 \/ -1;[^}]*grid-template-columns:\s*minmax\(0, 1\.12fr\) minmax\(0, \.88fr\);/);
+  assert.match(css, /\.build-side-column \.build-summary\s*\{[^}]*grid-column:\s*1;[^}]*grid-row:\s*auto;[^}]*grid-template-columns:\s*1fr;/);
+  assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*grid-column:\s*1;[^}]*width:\s*100%;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*justify-content:\s*stretch;[^}]*justify-self:\s*stretch;/);
+  assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*2;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
   assert.match(css, /\.build-options-grid \.export-choice,[\s\S]*\.output-destination\s*\{\s*box-sizing:\s*border-box;/);
   assert.match(css, /\.output-destination\s*\{[^}]*width:\s*100%;/);
 });
@@ -169,6 +169,20 @@ test("output folder is the top-level destination heading without a duplicate nes
   assert.match(html, /id="output-options-title" class="control-group-title">Output folder<\/h3>/);
   assert.doesNotMatch(html, /Output destinations/);
   assert.doesNotMatch(html, /<strong>Output folder<\/strong>/);
+});
+
+test("output folder and NVIDIA source share the wide layout and stack responsively", () => {
+  assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*grid-column:\s*1;/);
+  assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*2;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.build-options-grid \.export-choice,[\s\S]*\.build-side-column[\s\S]*grid-column:\s*1;/);
+});
+
+test("USB Imaging renders persistent inline and dialog progress surfaces", () => {
+  assert.match(html, /id="usb-dialog-progress"[^>]*role="status"[\s\S]*id="usb-dialog-progress-bar"/);
+  assert.match(html, /id="usb-inline-progress"[^>]*role="status"[\s\S]*id="usb-inline-progress-bar"/);
+  assert.match(script, /renderUsbWriteProgress\(null\);[\s\S]*pollUsbWriteProgress/);
+  assert.match(script, /function applyUsbWriteProgress[\s\S]*renderUsbWriteProgress\(progress\);/);
+  assert.match(css, /\.usb-write-progress progress\s*\{[^}]*width:\s*100%;[^}]*accent-color:/);
 });
 
 test("USB disconnect warning spans every accepted destructive progress phase", () => {

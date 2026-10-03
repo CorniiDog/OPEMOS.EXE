@@ -307,7 +307,7 @@ footer p { color: #aab4c5; }
 }
 .build-options-grid .nvidia-choice { grid-column: 1; }
 .build-options-grid .export-choice {
-  grid-column: 1 / -1;
+  grid-column: 1;
   width: 100%;
   height: 100%;
   grid-template-columns: minmax(0, 1fr);
@@ -319,17 +319,17 @@ footer p { color: #aab4c5; }
 .output-destination { box-sizing: border-box; }
 .control-group-title { margin: 0; color: #dce5ff; font-size: 12px; letter-spacing: .02em; }
 .build-side-column {
-  grid-column: 1 / -1;
+  grid-column: 2;
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 9px 12px;
 }
 .build-side-column .source-choice,
 .build-side-column .source-warning,
 .build-side-column .build-summary { width: 100%; margin: 0; }
 .build-side-column .source-warning { grid-column: 1 / -1; }
-.build-side-column .build-summary { grid-column: 2; grid-row: 1; grid-template-columns: 1fr; align-content: start; }
+.build-side-column .build-summary { grid-column: 1; grid-row: auto; grid-template-columns: 1fr; align-content: start; }
 .build-side-column .build-summary p { grid-column: 1; }
 .usb-picker { grid-column: 1 / -1; width: 100%; min-width: 0; padding: 10px; border: 1px solid var(--glass-border); border-radius: 10px; background: rgba(12, 25, 35, .4); box-sizing: border-box; display: grid; gap: 7px; }
 .usb-picker-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
@@ -386,6 +386,12 @@ footer p { color: #aab4c5; }
 .usb-picker.is-empty select { opacity: .7; }
 .usb-picker.is-loading .usb-picker-message { color: #a7bfd0; }
 .usb-picker-message { min-height: 15px; margin: 0; color: #8490a3; font-size: 10px; line-height: 1.35; }
+.usb-write-progress { padding: 9px 10px; border: 1px solid rgba(67, 170, 230, .38); border-radius: 10px; background: rgba(5, 34, 52, .46); display: grid; gap: 6px; }
+.usb-write-progress-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.usb-write-progress-heading strong { color: #dce5ff; font-size: 12px; }
+.usb-write-progress-heading span { color: #9fc9e1; font-size: 11px; font-variant-numeric: tabular-nums; }
+.usb-write-progress progress { width: 100%; height: 9px; accent-color: #4db7e8; }
+.usb-write-progress small { margin: 0; color: #a7bfd0; font-size: 10px; line-height: 1.35; }
 #review-usb-target { width: 100%; min-height: 35px; margin-top: 1px; }
 .build-card.completed-output-selected { min-height: 188px; }
 .build-card.completed-output-selected .nvidia-choice,

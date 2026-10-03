@@ -210,7 +210,21 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   both Win32 errors if it cannot establish the exact disk number. Its focused
   Rust regression passes 1/1 and the explicit local Node workflow suite passes
   24/24 through `heavy.sh`. Changed-head CI/artifact and failed-stage disposable
-  virtual-USB acceptance remain.
+  virtual-USB acceptance remain. Native testing of the later desktop candidate
+  proved that helper checkpoints could advance to `writing` while the existing
+  text-only USB view still appeared stuck at `Revalidating`. The current
+  correction adds explicit persistent-inline and dismissible-dialog progress
+  surfaces with an honest indeterminate preparation state, then renders every
+  admitted byte-backed checkpoint as phase, copied/total bytes, percentage, and
+  a visible progress bar. It also places the top-level Output folder and NVIDIA
+  source groups side by side at wide widths and stacks them at the existing
+  narrow-window breakpoint. The executable fake-DOM regression proves both
+  progress surfaces transition from indeterminate to the exact observed
+  2,990,538,752/8,120,172,544-byte writing state; workflow/layout tests pass
+  51/51 through `heavy.sh` with the explicit local Node runtime. Required CI,
+  authenticated Windows artifact, a new preserved-folder desktop candidate,
+  and genuine-pointer disposable virtual-USB proof of visibly advancing
+  progress remain before this correction may be called fixed.
 
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.
