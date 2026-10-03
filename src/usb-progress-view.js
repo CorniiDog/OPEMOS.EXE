@@ -1,3 +1,12 @@
+export function formatUsbProgressBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 1024) return `${bytes} B`;
+  const units = ["KiB", "MiB", "GiB", "TiB"];
+  let value = bytes;
+  let unit = -1;
+  do { value /= 1024; unit += 1; } while (value >= 1024 && unit < units.length - 1);
+  return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[unit]}`;
+}
+
 export function renderUsbWriteProgressView(displays, progress, formatBytes) {
   const phase = progress?.phase
     ? progress.phase.replace(/(^|-)([a-z])/g, (_match, separator, letter) => `${separator}${letter.toUpperCase()}`)

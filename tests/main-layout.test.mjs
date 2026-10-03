@@ -154,7 +154,7 @@ test("retained output folder and later USB imaging are independent controls", ()
   assert.match(script, /usb-write-close-refused[\s\S]*application must remain open until the active USB write settles/);
   assert.match(script, /onCloseRequested[\s\S]*if \(!usbWriting\) return;[\s\S]*preventDefault\(\)[\s\S]*progress remains visible here/);
   assert.match(script, /No eligible removable drive is visible\. Windows may still have a previously written drive safely ejected; reconnect it, then choose Refresh Drives\./);
-  assert.match(script, /formatBytes\(progress\.bytesCompleted\)[\s\S]*formatBytes\(progress\.bytesTotal\)/);
+  assert.match(script, /formatUsbProgressBytes\(progress\.bytesCompleted\)[\s\S]*formatUsbProgressBytes\(progress\.bytesTotal\)/);
   assert.match(script, /usbWriting = true;\s*usbWriteProgress = null;[\s\S]*finally \{[\s\S]*usbWriting = false;\s*usbWriteProgress = null;/);
   assert.match(script, /const writeContext = Object\.freeze\(\{[\s\S]*sessionToken: usbPreflightSession\.sessionToken,[\s\S]*deviceIdentifier: usbPreflightSession\.deviceIdentifier,[\s\S]*deviceNode: usbPreflightSession\.deviceNode,[\s\S]*imageSha256: usbPreflightSession\.imageSha256/);
   assert.match(script, /invoke\("write_image_to_usb", \{[\s\S]*sessionToken: writeContext\.sessionToken,[\s\S]*imagePath: writeContext\.imagePath[\s\S]*admitUsbWriteCompletion\(currentBuildSnapshot\(\), result, writeContext\)\.accepted/);

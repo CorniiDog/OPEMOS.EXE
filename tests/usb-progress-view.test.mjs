@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { renderUsbWriteProgressView } from "../src/usb-progress-view.js";
+import {
+  formatUsbProgressBytes,
+  renderUsbWriteProgressView,
+} from "../src/usb-progress-view.js";
 
 function display() {
   const classes = new Set(["hidden"]);
@@ -48,4 +51,10 @@ test("USB progress renders honest indeterminate and byte-backed states in both v
     assert.equal(view.bar.value, progress.bytesCompleted / progress.bytesTotal * 100);
     assert.equal(view.detail.textContent, "Writing the verified image. 2990538752 bytes of 8120172544 bytes.");
   }
+});
+
+test("USB progress byte formatter is available to the main-window runtime", () => {
+  assert.equal(formatUsbProgressBytes(0), "0 B");
+  assert.equal(formatUsbProgressBytes(1_048_576), "1.00 MiB");
+  assert.equal(formatUsbProgressBytes(8_120_172_544), "7.56 GiB");
 });

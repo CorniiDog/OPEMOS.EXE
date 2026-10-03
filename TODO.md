@@ -224,7 +224,26 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   51/51 through `heavy.sh` with the explicit local Node runtime. Required CI,
   authenticated Windows artifact, a new preserved-folder desktop candidate,
   and genuine-pointer disposable virtual-USB proof of visibly advancing
-  progress remain before this correction may be called fixed.
+  progress remain before this correction may be called fixed. Exact head
+  `5d5e2166` then passed all ten checks, consumed the authenticated Core
+  `bf882ba8` bundle, and produced the 21,562,368-byte Windows executable at
+  SHA-256
+  `cceddcb6f5688354f9c988be8dae7e759b3c51417247b8b50bf894aceb927a8c`.
+  Genuine-pointer VM acceptance selected and manifest/hash-validated the
+  preserved NVIDIA image, discovered the exact disposable 32-GiB USB on first
+  display, selected it, typed `ERASE`, and invoked the single write action.
+  Before any helper, exchange directory, or device write began, the new view
+  raised `ReferenceError: formatBytes is not defined`; the virtual target
+  remained unmodified at zero allocated blocks and both overlays verified
+  clean after graceful application/guest shutdown. Analysis pass 1 traced the
+  exception to the main-window module calling a formatter scoped only to the
+  separate build companion; pass 2 verified the progress renderer, admission,
+  session, identity, and writer guards require no change; pass 3 exercised the
+  shared exported USB formatter and both progress surfaces, including exact
+  GiB formatting. The minimal correction imports that formatter into the
+  main-window runtime. Focused workflow/layout/progress tests pass 52/52 through
+  `heavy.sh`; changed-head CI/artifact, corrected candidate deployment, and the
+  failed-stage genuine-pointer disposable-write acceptance remain.
 
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.

@@ -30,7 +30,10 @@ import {
   admitUsbWriteStart,
   pollUsbWriteProgress,
 } from "./usb-write-state.js";
-import { renderUsbWriteProgressView } from "./usb-progress-view.js";
+import {
+  formatUsbProgressBytes,
+  renderUsbWriteProgressView,
+} from "./usb-progress-view.js";
 import {
   usbConfirmationForBackend,
   usbConfirmationMatches,
@@ -306,7 +309,7 @@ async function dismissUsbMenu() {
   if (usbWriting) {
     setUsbMenuOpen(false);
     elements.usbPickerMessage.textContent = usbWriteProgress
-      ? `${usbWriteProgress.message} ${formatBytes(usbWriteProgress.bytesCompleted)} of ${formatBytes(usbWriteProgress.bytesTotal)}.`
+      ? `${usbWriteProgress.message} ${formatUsbProgressBytes(usbWriteProgress.bytesCompleted)} of ${formatUsbProgressBytes(usbWriteProgress.bytesTotal)}.`
       : "The authorized USB write is continuing. Reopen USB Imaging to see its current progress.";
     return;
   }
@@ -1457,7 +1460,7 @@ function renderUsbWriteProgress(progress) {
       detail: elements.usbDialogProgressDetail,
     },
   ];
-  renderUsbWriteProgressView(displays, progress, formatBytes);
+  renderUsbWriteProgressView(displays, progress, formatUsbProgressBytes);
 }
 
 function applyUsbWriteProgress(progress) {
@@ -1465,7 +1468,7 @@ function applyUsbWriteProgress(progress) {
   if (!admission.accepted) return;
   usbWriteProgress = progress;
   const ratio = progress.bytesCompleted / progress.bytesTotal;
-  const status = `${progress.message} ${formatBytes(progress.bytesCompleted)} of ${formatBytes(progress.bytesTotal)} (${(ratio * 100).toFixed(1)}%)`;
+  const status = `${progress.message} ${formatUsbProgressBytes(progress.bytesCompleted)} of ${formatUsbProgressBytes(progress.bytesTotal)} (${(ratio * 100).toFixed(1)}%)`;
   elements.usbMessage.textContent = status;
   elements.usbPickerMessage.textContent = status;
   elements.usbMessage.className = "result-message";
