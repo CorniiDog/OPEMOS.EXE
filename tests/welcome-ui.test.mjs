@@ -110,11 +110,12 @@ test("status polling preserves the mounted progress DOM and unchanged artwork", 
     },
   };
   const safeMessages = [];
+  const renderState = { bootstrap: { mode: "production" }, renderedProgress: 0 };
   const renderProgress = Function("view", "state", "setSafe", `
     ${phaseArtworkSource}
     ${renderProgressSource}
     return renderProgress;
-  `)(view, { bootstrap: { mode: "production" } }, (message) => safeMessages.push(message));
+  `)(view, renderState, (message) => safeMessages.push(message));
 
   renderProgress({ phase: "installing", progress: 10, message: "Writing rootfs." });
   const artwork = elements.get("progress-artwork");
@@ -130,11 +131,16 @@ test("status polling preserves the mounted progress DOM and unchanged artwork", 
   assert.equal(elements.get("progress-fill").attributes.get("style:--progress"), "25%");
   assert.equal(elements.get("progress-message").textContent, "Writing home.");
 
+  renderProgress({ phase: "preparing", progress: 18, message: "Formatting a later partition." });
+  assert.equal(elements.get("progress-meter").getAttribute("aria-valuenow"), "25", "a later stage must not move the visible bar backward");
+  assert.equal(elements.get("progress-fill").attributes.get("style:--progress"), "25%");
+  assert.equal(elements.get("progress-message").textContent, "Formatting a later partition.");
+
   renderProgress({ phase: "complete", progress: 100, message: "Ready.", terminal: true });
   assert.equal(htmlWrites, 1, "a phase transition must update the existing view in place");
   assert.equal(elements.get("progress-artwork"), artwork);
   assert.equal(artwork.getAttribute("src"), "assets/recovery.svg");
-  assert.equal(artwork.attributeWrites.get("src"), 2);
+  assert.equal(artwork.attributeWrites.get("src"), 3);
   assert.equal(safeMessages.at(-1), "Ready.");
 });
 

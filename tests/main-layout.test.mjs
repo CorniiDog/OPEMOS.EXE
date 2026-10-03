@@ -33,7 +33,8 @@ test("packaged Windows actions expose visible outcomes instead of silent clicks"
 });
 
 test("narrow effective widths and high zoom reflow without horizontal clipping", () => {
-  assert.match(css, /@media \(max-width: 760px\), \(max-height: 760px\)/);
+  assert.match(css, /@media \(max-width: 680px\)/);
+  assert.doesNotMatch(css, /@media[^\{]*max-height/);
   assert.match(css, /body\s*\{\s*min-width:\s*0;\s*min-height:\s*0;/);
   assert.match(css, /\.app-shell\s*\{[^}]*width:\s*calc\(100% - 24px\);[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/s);
   assert.match(css, /\.readiness-grid,[\s\S]*\.build-options-grid,[\s\S]*\.download-card\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\);/);
@@ -150,7 +151,7 @@ test("retained output folder and later USB imaging are independent controls", ()
   assert.match(script, /await pollUsbWriteProgress[\s\S]*setTimeout\(\(\) => \{ void pollProgress\(\); \}, 250\)/);
   assert.match(script, /let current = true;[\s\S]*catch \{[\s\S]*transient IPC failure must not stop[\s\S]*if \(current && usbWriting/);
   assert.match(script, /finally \{[\s\S]*clearTimeout\(usbProgressPollTimer\);[\s\S]*usbProgressPollGeneration \+= 1;[\s\S]*usbWriting = false/);
-  assert.match(script, /usbWriteProgress = progress;[\s\S]*usbMessage\.textContent = status;[\s\S]*usbPickerMessage\.textContent = status/);
+  assert.match(script, /usbWriteProgress = progress;[\s\S]*usbMessage\.textContent = "";[\s\S]*usbPickerMessage\.textContent = status/);
   assert.match(script, /usb-write-close-refused[\s\S]*application must remain open until the active USB write settles/);
   assert.match(script, /onCloseRequested[\s\S]*if \(!usbWriting\) return;[\s\S]*preventDefault\(\)[\s\S]*progress remains visible here/);
   assert.match(script, /No eligible removable drive is visible\. Windows may still have a previously written drive safely ejected; reconnect it, then choose Refresh Drives\./);
@@ -172,9 +173,13 @@ test("output folder is the top-level destination heading without a duplicate nes
 });
 
 test("output folder and NVIDIA source share the wide layout and stack responsively", () => {
+  const mainWindow = tauriConfig.app.windows.find((window) => window.label === "main");
   assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*grid-column:\s*1;/);
   assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*2;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
-  assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.build-options-grid \.export-choice,[\s\S]*\.build-side-column[\s\S]*grid-column:\s*1;/);
+  const breakpoint = Number(css.match(/@media \(max-width: (\d+)px\)[\s\S]*\.build-options-grid \.export-choice,[\s\S]*\.build-side-column[\s\S]*grid-column:\s*1;/)?.[1]);
+  assert.ok(Number.isFinite(breakpoint));
+  assert.ok(breakpoint < mainWindow.width, "the default main window must render the groups side by side");
+  assert.doesNotMatch(css, /@media[^\{]*max-height[^\{]*\{[\s\S]*?\.build-side-column/);
 });
 
 test("USB Imaging renders persistent inline and dialog progress surfaces", () => {

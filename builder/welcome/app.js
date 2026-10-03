@@ -3,7 +3,14 @@
 const view = document.querySelector("#view");
 const safetyMessage = document.querySelector("#safety-message");
 const sessionToken = window.__OPEMOS_SESSION_TOKEN__;
-const state = { bootstrap: null, mode: null, disk: null, polling: false, running: false };
+const state = {
+  bootstrap: null,
+  mode: null,
+  disk: null,
+  polling: false,
+  running: false,
+  renderedProgress: 0,
+};
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
@@ -107,6 +114,7 @@ async function begin() {
   const confirmation = view.querySelector("#phrase")?.value || "";
   if (confirmation !== required) { setError(`Confirmation did not match. Type ${required} exactly; nothing was changed.`); return; }
   state.running = true;
+  state.renderedProgress = 0;
   renderProgress({ progress: 2, phase: "starting", message: "Starting protected installation." });
   try {
     await api("/api/install", { method: "POST", body: JSON.stringify({
@@ -130,7 +138,11 @@ function phaseArtwork(phase) {
 
 function renderProgress(operation) {
   const [image, title, copy] = phaseArtwork(operation.phase || "");
-  const progress = Math.max(0, Math.min(100, Number(operation.progress) || 0));
+  const requestedProgress = Math.max(0, Math.min(100, Number(operation.progress) || 0));
+  const progress = operation.terminal
+    ? requestedProgress
+    : Math.max(state.renderedProgress, requestedProgress);
+  state.renderedProgress = progress;
   if (!view.querySelector("[data-progress-view]")) {
     view.innerHTML = `
     <div class="panel progress-layout" data-progress-view>

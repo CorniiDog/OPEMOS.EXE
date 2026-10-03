@@ -58,3 +58,12 @@ test("USB progress byte formatter is available to the main-window runtime", () =
   assert.equal(formatUsbProgressBytes(1_048_576), "1.00 MiB");
   assert.equal(formatUsbProgressBytes(8_120_172_544), "7.56 GiB");
 });
+
+test("the USB dialog does not repeat its detailed progress message below the bar", async () => {
+  const script = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../src/main.js", import.meta.url), "utf8"));
+  const handler = script.match(/function applyUsbWriteProgress\(progress\) \{[\s\S]*?\n\}/)?.[0] || "";
+  assert.match(handler, /usbMessage\.textContent = ""/);
+  assert.match(handler, /usbPickerMessage\.textContent = status/);
+  assert.match(handler, /renderUsbWriteProgress\(progress\)/);
+  assert.doesNotMatch(handler, /usbMessage\.textContent = status/);
+});
