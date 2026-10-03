@@ -174,7 +174,23 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   unrelated harness-environment failures because child scripts could not find
   `node` in the wrapper PATH; its changed Builder/USB tests passed. Updated
   Windows CI artifact, preserved-folder native candidate deployment, disposable
-  virtual-USB acceptance, exact Core review, and merge remain.
+  virtual-USB acceptance, exact Core review, and merge remain. User testing of
+  deployed `1820c660` then reproduced two narrower gaps: Windows could retain a
+  stale removable inventory until physical reconnection, and the exact elevated
+  helper advanced to `writing` at 3,833,593,856/8,120,172,544 bytes while the
+  frontend remained at `Revalidating`. The current correction refreshes the
+  existing Windows storage cache before the unchanged guarded disk inventory,
+  gives a clear reconnect instruction when a previously safely-ejected drive is
+  genuinely absent, and checkpoints each monotonic helper update against the
+  exact active preflight token. A single-flight, generation-and-token-checked
+  frontend poll consumes that checkpoint through the existing status command;
+  events remain the immediate path, stale delayed responses cannot enter a later
+  write, and native plus frontend close refusal remain in force with visible
+  dismiss-without-cancel guidance. The requested top-level `Output folder`
+  heading also replaces the redundant nested label. The targeted Rust
+  event/checkpoint/receipt regression passes 1/1 through `heavy.sh`; executable
+  frontend CI, authenticated Windows artifact, new absent preserved-folder
+  candidate deployment, then disposable virtual-USB acceptance remain.
 
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.

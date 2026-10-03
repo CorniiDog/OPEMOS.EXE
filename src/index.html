@@ -161,7 +161,7 @@
             <div class="usb-dialog-actions">
                 <button id="arm-usb-preflight" class="primary hidden" type="button" disabled>Write &amp; Verify USB</button>
             </div>
-            <p id="usb-active-warning" class="usb-active-warning hidden" role="alert"><strong>Do not disconnect the USB drive.</strong> Keep it connected until writing, read-back verification, flushing, and safe ejection are complete.</p>
+            <p id="usb-active-warning" class="usb-active-warning hidden" role="alert"><strong>Do not disconnect the USB drive or close OPEMOS.</strong> You may dismiss this panel; progress remains visible in the Builder until writing, read-back verification, flushing, and safe ejection are complete.</p>
             <p id="usb-message" class="result-message"></p>
         </section>
 
@@ -288,10 +288,9 @@
         >
             <div class="build-options-grid">
                 <div class="source-choice export-choice" role="group" aria-labelledby="output-options-title">
-                    <h3 id="output-options-title" class="control-group-title">Output destinations</h3>
+                    <h3 id="output-options-title" class="control-group-title">Output folder</h3>
                     <div class="output-destination">
                         <span>
-                            <strong>Output folder</strong>
                             <small id="output-folder-label">Alongside the source image</small>
                         </span>
                         <span class="output-destination-actions">

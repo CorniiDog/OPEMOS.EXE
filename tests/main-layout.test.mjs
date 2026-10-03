@@ -146,10 +146,15 @@ test("retained output folder and later USB imaging are independent controls", ()
   assert.match(html, /id="usb-active-warning"[^>]*role="alert"[\s\S]*Do not disconnect the USB drive/);
   assert.match(script, /usbWriting = true;[\s\S]*usbActiveWarning\.classList\.remove\("hidden"\)[\s\S]*usbWriting = false;[\s\S]*usbActiveWarning\.classList\.add\("hidden"\)/);
   assert.match(script, /usb-write-progress[\s\S]*admitUsbWriteProgress\(currentBuildSnapshot\(\), progress, usbWriteProgress\)[\s\S]*if \(!admission\.accepted\) return;[\s\S]*usbWriteProgress = progress/);
+  assert.match(script, /pollUsbWriteProgress\(\{[\s\S]*get_usb_write_preflight_status[\s\S]*generation === usbProgressPollGeneration[\s\S]*sessionToken === writeContext\.sessionToken/);
+  assert.match(script, /await pollUsbWriteProgress[\s\S]*setTimeout\(\(\) => \{ void pollProgress\(\); \}, 250\)/);
+  assert.match(script, /finally \{[\s\S]*clearTimeout\(usbProgressPollTimer\);[\s\S]*usbProgressPollGeneration \+= 1;[\s\S]*usbWriting = false/);
   assert.match(script, /usbWriteProgress = progress;[\s\S]*usbMessage\.textContent = status;[\s\S]*usbPickerMessage\.textContent = status/);
   assert.match(script, /usb-write-close-refused[\s\S]*application must remain open until the active USB write settles/);
+  assert.match(script, /onCloseRequested[\s\S]*if \(!usbWriting\) return;[\s\S]*preventDefault\(\)[\s\S]*progress remains visible here/);
+  assert.match(script, /No eligible removable drive is visible\. Windows may still have a previously written drive safely ejected; reconnect it, then choose Refresh Drives\./);
   assert.match(script, /formatBytes\(progress\.bytesCompleted\)[\s\S]*formatBytes\(progress\.bytesTotal\)/);
-  assert.match(script, /usbWriting = true;\s*usbWriteProgress = null;[\s\S]*finally \{\s*usbWriting = false;\s*usbWriteProgress = null;/);
+  assert.match(script, /usbWriting = true;\s*usbWriteProgress = null;[\s\S]*finally \{[\s\S]*usbWriting = false;\s*usbWriteProgress = null;/);
   assert.match(script, /const writeContext = Object\.freeze\(\{[\s\S]*sessionToken: usbPreflightSession\.sessionToken,[\s\S]*deviceIdentifier: usbPreflightSession\.deviceIdentifier,[\s\S]*deviceNode: usbPreflightSession\.deviceNode,[\s\S]*imageSha256: usbPreflightSession\.imageSha256/);
   assert.match(script, /invoke\("write_image_to_usb", \{[\s\S]*sessionToken: writeContext\.sessionToken,[\s\S]*imagePath: writeContext\.imagePath[\s\S]*admitUsbWriteCompletion\(currentBuildSnapshot\(\), result, writeContext\)\.accepted/);
   assert.match(script, /usbMessage\.className = `result-message \$\{result\.ejected \? "success" : "error"\}`/);
@@ -157,6 +162,12 @@ test("retained output folder and later USB imaging are independent controls", ()
   assert.match(css, /\.usb-active-warning\s*\{[^}]*border:[^}]*color:\s*#f4d08b;/);
   assert.match(css, /#usb-card > \.result-message\s*\{[^}]*max-height:\s*5em;[^}]*overflow:\s*auto;/);
   assert.match(css, /\.primary:disabled,[\s\S]*\.secondary:disabled\s*\{[^}]*cursor:\s*not-allowed;/);
+});
+
+test("output folder is the top-level destination heading without a duplicate nested label", () => {
+  assert.match(html, /id="output-options-title" class="control-group-title">Output folder<\/h3>/);
+  assert.doesNotMatch(html, /Output destinations/);
+  assert.doesNotMatch(html, /<strong>Output folder<\/strong>/);
 });
 
 test("USB disconnect warning spans every accepted destructive progress phase", () => {

@@ -104,6 +104,7 @@ test("USB builds reselect only the exact pre-build device and defer Finder until
 
 test("an unusable automatic USB scan releases controls and remains retryable", async () => {
   const image = await readFile(new URL("../src-tauri/src/image.rs", import.meta.url), "utf8");
+  assert.match(image, /Update-HostStorageCache -ErrorAction SilentlyContinue; Get-Disk/);
   assert.match(image, /fn discover_usb_targets[\s\S]*bounded_command_output_with_limits\([\s\S]*Duration::from_secs\(20\)/);
   assert.match(main, /finally \{[\s\S]*elements\.refreshUsbTargets\.disabled = false;[\s\S]*elements\.usbPicker\.classList\.remove\("is-loading"\)/);
   assert.match(main, /acceptedUsbInventoryPath\(outputPath, outcome\)/);
@@ -113,5 +114,13 @@ test("native close is refused while the exact USB writer remains active", () => 
   assert.match(nativeApp, /CloseRequested \{ api, \.\. \}/);
   assert.match(nativeApp, /manager\.has_active_write\(\)/);
   assert.match(nativeApp, /if usb_write_active \{[\s\S]*api\.prevent_close\(\);[\s\S]*usb-write-close-refused[\s\S]*return;/);
+  assert.match(nativeApp, /app_handle\.emit\(\s*"usb-write-close-refused"/);
   assert.match(nativeApp, /cleanup_managed_workers\(app_handle\);\s*app_handle\.exit\(0\);/);
+});
+
+test("writer progress targets the main frontend event label", async () => {
+  const image = await readFile(new URL("../src-tauri/src/image.rs", import.meta.url), "utf8");
+  assert.match(image, /fn emit_usb_write_progress[\s\S]*emit_to\("main", "usb-write-progress", progress\)/);
+  assert.match(main, /await mainWindow\.listen\("usb-write-progress"/);
+  assert.match(main, /await mainWindow\.listen\("usb-write-close-refused"/);
 });

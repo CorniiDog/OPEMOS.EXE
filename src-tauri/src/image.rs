@@ -2456,6 +2456,7 @@ pub(crate) struct UsbPreparationManager {
     armed: Option<ArmedUsbPreflight>,
     active_token: Option<String>,
     cancel_write: Option<Arc<AtomicBool>>,
+    progress: Option<UsbWriteProgress>,
 }
 
 impl UsbPreparationManager {
@@ -2469,6 +2470,7 @@ impl UsbPreparationManager {
             cancel.store(true, Ordering::Relaxed);
         }
         self.active_token = None;
+        self.progress = None;
     }
 
     pub(crate) fn arm(
@@ -2544,6 +2546,7 @@ impl UsbPreparationManager {
         let cancel = Arc::new(AtomicBool::new(false));
         self.active_token = Some(session_token.into());
         self.cancel_write = Some(cancel.clone());
+        self.progress = None;
         Some((armed, cancel))
     }
 
@@ -2551,11 +2554,31 @@ impl UsbPreparationManager {
         if self.active_token.as_deref() == Some(session_token) {
             self.active_token = None;
             self.cancel_write = None;
+            self.progress = None;
+        }
+    }
+
+    fn update_progress(&mut self, session_token: &str, progress: UsbWriteProgress) {
+        if self.active_token.as_deref() == Some(session_token) {
+            self.progress = Some(progress);
         }
     }
 
     pub(crate) fn status(&mut self, session_token: &str, now: Instant) -> UsbWritePreflightStatus {
-        if self.active_token.as_deref() == Some(session_token) {
+        if self.active_token.is_some() {
+            if self.active_token.as_deref() != Some(session_token) {
+                return UsbWritePreflightStatus {
+                    status: "stale-token".into(),
+                    active: false,
+                    expires_in_ms: 0,
+                    writes_allowed: false,
+                    device_identifier: None,
+                    image_sha256: None,
+                    identity_token: None,
+                    progress: None,
+                    message: "This USB intent token does not identify the active write.".into(),
+                };
+            }
             return UsbWritePreflightStatus {
                 status: "writing".into(),
                 active: true,
@@ -2564,6 +2587,7 @@ impl UsbPreparationManager {
                 device_identifier: None,
                 image_sha256: None,
                 identity_token: None,
+                progress: self.progress.clone(),
                 message: "A USB writer operation is active.".into(),
             };
         }
@@ -2586,6 +2610,7 @@ impl UsbPreparationManager {
                     device_identifier: identity.as_ref().map(|value| value.0.clone()),
                     image_sha256: identity.as_ref().map(|value| value.1.clone()),
                     identity_token: identity.map(|value| value.2),
+                    progress: None,
                     message: if matching_token {
                         "The USB intent session expired. Revalidate the image and target before confirming again."
                     } else {
@@ -2603,6 +2628,7 @@ impl UsbPreparationManager {
                     device_identifier: None,
                     image_sha256: None,
                     identity_token: None,
+                    progress: None,
                     message: "This USB intent token does not identify the active session.".into(),
                 };
             }
@@ -2614,6 +2640,7 @@ impl UsbPreparationManager {
                 device_identifier: Some(armed.device_identifier.clone()),
                 image_sha256: Some(armed.image_sha256.clone()),
                 identity_token: Some(armed.identity_token.clone()),
+                progress: None,
                 message: if physical_usb_writes_allowed() {
                     usb_write_permission_message()
                 } else if cfg!(target_os = "windows") {
@@ -2632,6 +2659,7 @@ impl UsbPreparationManager {
             device_identifier: None,
             image_sha256: None,
             identity_token: None,
+            progress: None,
             message: "No USB intent session is active.".into(),
         }
     }
@@ -3031,7 +3059,7 @@ fn hidden_windows_command(program: &str) -> Command {
 
 #[cfg(target_os = "windows")]
 fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
-    let script = "Get-Disk | ForEach-Object { $d=$_; $w=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number) -ErrorAction Stop; [pscustomobject]@{Index=$d.Number;FriendlyName=$d.FriendlyName;BusType=[string]$d.BusType;Size=[uint64]$d.Size;BytesPerSector=[uint64]$d.LogicalSectorSize;UniqueId=[string]$d.UniqueId;SerialNumber=[string]$w.SerialNumber;MediaType=[string]$w.MediaType;IsBoot=[bool]$d.IsBoot;IsSystem=[bool]$d.IsSystem;IsReadOnly=[bool]$d.IsReadOnly;IsOffline=[bool]$d.IsOffline} } | ConvertTo-Json -Compress";
+    let script = "Update-HostStorageCache -ErrorAction SilentlyContinue; Get-Disk | ForEach-Object { $d=$_; $w=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number) -ErrorAction Stop; [pscustomobject]@{Index=$d.Number;FriendlyName=$d.FriendlyName;BusType=[string]$d.BusType;Size=[uint64]$d.Size;BytesPerSector=[uint64]$d.LogicalSectorSize;UniqueId=[string]$d.UniqueId;SerialNumber=[string]$w.SerialNumber;MediaType=[string]$w.MediaType;IsBoot=[bool]$d.IsBoot;IsSystem=[bool]$d.IsSystem;IsReadOnly=[bool]$d.IsReadOnly;IsOffline=[bool]$d.IsOffline} } | ConvertTo-Json -Compress";
     let (status, stdout, stderr) = bounded_command_output_with_limits(
         Path::new("powershell.exe"),
         &[
@@ -5482,8 +5510,12 @@ fn open_usb_raw_device(
 
 fn emit_usb_write_progress<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
+    session_token: &str,
     progress: UsbWriteProgress,
 ) {
+    if let Ok(mut manager) = app.state::<Mutex<UsbPreparationManager>>().lock() {
+        manager.update_progress(session_token, progress.clone());
+    }
     let _ = app.emit_to("main", "usb-write-progress", progress);
 }
 
@@ -5530,6 +5562,7 @@ pub(crate) async fn write_image_to_usb(
             return Err("The selected removable device was replaced after confirmation.".into());
         }
         let app_for_progress = app.clone();
+        let session_for_progress = session_token.clone();
     #[cfg(target_os = "windows")]
     let elevation_owner = app
         .get_webview_window("main")
@@ -5550,11 +5583,11 @@ pub(crate) async fn write_image_to_usb(
                 elevation_owner,
                 &cancel,
                 |progress| {
-                    emit_usb_write_progress(&app_for_progress, progress);
+                    emit_usb_write_progress(&app_for_progress, &session_for_progress, progress);
                 },
             );
         }
-        emit_usb_write_progress(&app_for_progress, UsbWriteProgress {
+        emit_usb_write_progress(&app_for_progress, &session_for_progress, UsbWriteProgress {
                 phase: "unmounting".into(),
                 bytes_completed: 0,
                 bytes_total: image_bytes,
@@ -5565,7 +5598,7 @@ pub(crate) async fn write_image_to_usb(
         if revalidated.identity_token != target.identity_token {
             return Err("The selected removable device changed while it was being unmounted.".into());
         }
-        emit_usb_write_progress(&app_for_progress, UsbWriteProgress {
+        emit_usb_write_progress(&app_for_progress, &session_for_progress, UsbWriteProgress {
                 phase: "authorizing".into(),
                 bytes_completed: 0,
                 bytes_total: image_bytes,
@@ -5630,7 +5663,7 @@ pub(crate) async fn write_image_to_usb(
             &expected_sha256,
             &cancel,
             |progress| {
-                emit_usb_write_progress(&app_for_progress, progress);
+                emit_usb_write_progress(&app_for_progress, &session_for_progress, progress);
             },
         );
         drop(device);
@@ -5695,23 +5728,23 @@ mod windows_usb_inventory_tests {
         use tauri::Listener as _;
 
         let app = tauri::test::mock_app();
+        app.manage(Mutex::new(UsbPreparationManager::default()));
+        let session_token = "a".repeat(64);
+        app.state::<Mutex<UsbPreparationManager>>()
+            .lock()
+            .unwrap()
+            .active_token = Some(session_token.clone());
         let main = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
             .build()
             .expect("main mock webview");
-        let other = tauri::WebviewWindowBuilder::new(&app, "build-progress", Default::default())
-            .build()
-            .expect("companion mock webview");
-        let (main_sender, main_receiver) = std::sync::mpsc::channel();
-        let (other_sender, other_receiver) = std::sync::mpsc::channel();
+        let (sender, receiver) = std::sync::mpsc::channel();
         main.listen("usb-write-progress", move |event| {
-            main_sender.send(event.payload().to_string()).unwrap();
-        });
-        other.listen("usb-write-progress", move |event| {
-            other_sender.send(event.payload().to_string()).unwrap();
+            sender.send(event.payload().to_string()).unwrap();
         });
 
         emit_usb_write_progress(
             app.handle(),
+            &session_token,
             UsbWriteProgress {
                 phase: "writing".into(),
                 bytes_completed: 6_941_573_120,
@@ -5720,16 +5753,39 @@ mod windows_usb_inventory_tests {
             },
         );
         let delivered: serde_json::Value = serde_json::from_str(
-            &main_receiver
+            &receiver
                 .recv_timeout(Duration::from_secs(1))
                 .expect("main window must receive writer progress"),
         )
         .expect("progress payload JSON");
         assert_eq!(delivered["phase"], "writing");
         assert_eq!(delivered["bytesCompleted"], 6_941_573_120u64);
-        assert!(other_receiver
-            .recv_timeout(Duration::from_millis(25))
-            .is_err());
+        let stored = app
+            .state::<Mutex<UsbPreparationManager>>()
+            .lock()
+            .unwrap()
+            .progress
+            .clone()
+            .expect("active write checkpoint");
+        assert_eq!(stored.phase, "writing");
+        assert_eq!(stored.bytes_completed, 6_941_573_120);
+        let status = app
+            .state::<Mutex<UsbPreparationManager>>()
+            .lock()
+            .unwrap()
+            .status(&session_token, Instant::now());
+        assert_eq!(status.status, "writing");
+        assert_eq!(
+            status.progress.expect("pollable progress").bytes_completed,
+            6_941_573_120
+        );
+        let stale = app
+            .state::<Mutex<UsbPreparationManager>>()
+            .lock()
+            .unwrap()
+            .status(&"b".repeat(64), Instant::now());
+        assert_eq!(stale.status, "stale-token");
+        assert!(stale.progress.is_none());
 
         let request_sha256 = "1".repeat(64);
         let image_sha256 = "a".repeat(64);

@@ -109,3 +109,16 @@ export function admitUsbWriteProgress(snapshot, progress, previous = null) {
     blocker: regressed ? "regressing-progress" : null,
   });
 }
+
+export async function pollUsbWriteProgress({
+  generation,
+  sessionToken,
+  readStatus,
+  isCurrent,
+  applyProgress,
+}) {
+  const status = await readStatus(sessionToken);
+  if (!isCurrent(generation, sessionToken)) return false;
+  if (status?.progress) applyProgress(status.progress);
+  return true;
+}

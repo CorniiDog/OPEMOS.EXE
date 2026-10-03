@@ -28,6 +28,7 @@ import {
   admitUsbWriteCompletion,
   admitUsbWriteProgress,
   admitUsbWriteStart,
+  pollUsbWriteProgress,
 } from "../src/usb-write-state.js";
 
 const ready = {
@@ -340,6 +341,41 @@ test("USB write progress rejects corrupted retained history", () => {
   ]) {
     assert.equal(admitUsbWriteProgress(writing, progress, previous).blocker, "malformed-progress");
   }
+});
+
+test("progress polling renders a checkpoint without events and rejects a delayed prior session", async () => {
+  let generation = 7;
+  let sessionToken = "session-new";
+  let rendered = "Revalidating";
+  const current = (candidateGeneration, candidateToken) => candidateGeneration === generation
+    && candidateToken === sessionToken;
+  const progress = {
+    phase: "writing", bytesCompleted: 6_941_573_120, bytesTotal: 8_120_172_544,
+    message: "Writing the verified image.",
+  };
+  assert.equal(await pollUsbWriteProgress({
+    generation,
+    sessionToken,
+    readStatus: async () => ({ status: "writing", progress }),
+    isCurrent: current,
+    applyProgress: (value) => { rendered = `${value.phase}:${value.bytesCompleted}`; },
+  }), true);
+  assert.equal(rendered, "writing:6941573120");
+
+  let resolveOld;
+  const oldResponse = new Promise((resolve) => { resolveOld = resolve; });
+  const oldPoll = pollUsbWriteProgress({
+    generation,
+    sessionToken,
+    readStatus: async () => oldResponse,
+    isCurrent: current,
+    applyProgress: () => { rendered = "stale response rendered"; },
+  });
+  generation += 1;
+  sessionToken = "session-next";
+  resolveOld({ status: "writing", progress });
+  assert.equal(await oldPoll, false);
+  assert.equal(rendered, "writing:6941573120");
 });
 
 test("output directory changes require the selected non-mutating phase", () => {

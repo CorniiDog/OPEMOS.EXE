@@ -28,6 +28,7 @@ import {
   admitUsbWriteCompletion,
   admitUsbWriteProgress,
   admitUsbWriteStart,
+  pollUsbWriteProgress,
 } from "./usb-write-state.js";
 import {
   usbConfirmationForBackend,
@@ -112,6 +113,8 @@ let usbContextGeneration = 0;
 let usbArmPending = false;
 let usbWriting = false;
 let usbWriteProgress = null;
+let usbProgressPollTimer = null;
+let usbProgressPollGeneration = 0;
 let buildRunning = false;
 let usbImagingRefreshPath = null;
 let usbImagingAutoRetryPath = null;
@@ -215,6 +218,10 @@ async function revealUsbImaging({ focus = true, preferredTarget = null } = {}) {
       if (completedOutput?.path !== outputPath) return false;
     }
     if (firstShow) usbImagingAutoRetryPath = outputPath;
+    if (!hasUsbTargets()) {
+      elements.usbPickerMessage.textContent = "No eligible removable drive is visible. Windows may still have a previously written drive safely ejected; reconnect it, then choose Refresh Drives.";
+      elements.usbMessage.textContent = elements.usbPickerMessage.textContent;
+    }
   }
   if (focus) {
     const target = elements.usbTarget.disabled ? elements.refreshUsbTargets : elements.usbTarget;
@@ -1250,6 +1257,29 @@ async function writePreparedUsb() {
   elements.buildButton.disabled = true;
   elements.usbMessage.textContent = "Revalidating the exact image and removable drive. Windows authorization will appear next for only that selected disk.";
   elements.usbPickerMessage.textContent = elements.usbMessage.textContent;
+  const pollGeneration = ++usbProgressPollGeneration;
+  const pollProgress = async () => {
+    if (!usbWriting || pollGeneration !== usbProgressPollGeneration) return;
+    let current = false;
+    try {
+      current = await pollUsbWriteProgress({
+        generation: pollGeneration,
+        sessionToken: writeContext.sessionToken,
+        readStatus: (sessionToken) => invoke("get_usb_write_preflight_status", { sessionToken }),
+        isCurrent: (generation, sessionToken) => usbWriting
+          && generation === usbProgressPollGeneration
+          && sessionToken === writeContext.sessionToken,
+        applyProgress: applyUsbWriteProgress,
+      });
+    } catch {
+      // The pending write invocation remains authoritative. A later poll or its
+      // terminal result can still update the UI without changing write state.
+    }
+    if (current && usbWriting && pollGeneration === usbProgressPollGeneration) {
+      usbProgressPollTimer = window.setTimeout(() => { void pollProgress(); }, 250);
+    }
+  };
+  usbProgressPollTimer = window.setTimeout(() => { void pollProgress(); }, 0);
   try {
     const result = await invoke("write_image_to_usb", {
       sessionToken: writeContext.sessionToken,
@@ -1271,6 +1301,9 @@ async function writePreparedUsb() {
     elements.usbMessage.removeAttribute("title");
     renderUsbConfirmationPhase(false);
   } finally {
+    window.clearTimeout(usbProgressPollTimer);
+    usbProgressPollTimer = null;
+    usbProgressPollGeneration += 1;
     usbWriting = false;
     usbWriteProgress = null;
     elements.chooseImage.disabled = false;
@@ -1392,8 +1425,7 @@ installKeyboardBindings([
   },
 ]);
 
-await mainWindow.listen("usb-write-progress", (event) => {
-  const progress = event.payload;
+function applyUsbWriteProgress(progress) {
   const admission = admitUsbWriteProgress(currentBuildSnapshot(), progress, usbWriteProgress);
   if (!admission.accepted) return;
   usbWriteProgress = progress;
@@ -1402,10 +1434,23 @@ await mainWindow.listen("usb-write-progress", (event) => {
   elements.usbMessage.textContent = status;
   elements.usbPickerMessage.textContent = status;
   elements.usbMessage.className = "result-message";
+}
+
+await mainWindow.listen("usb-write-progress", (event) => {
+  applyUsbWriteProgress(event.payload);
 });
 
 await mainWindow.listen("usb-write-close-refused", () => {
   elements.usbPickerMessage.textContent = "The application must remain open until the active USB write settles. You can dismiss and reopen the USB Imaging panel without interrupting it.";
+  if (!elements.usbCard.classList.contains("hidden")) {
+    elements.usbMessage.textContent = elements.usbPickerMessage.textContent;
+  }
+});
+
+await mainWindow.onCloseRequested((event) => {
+  if (!usbWriting) return;
+  event.preventDefault();
+  elements.usbPickerMessage.textContent = "The application must remain open until the active USB write settles. Dismiss USB Imaging to keep working while progress remains visible here.";
   if (!elements.usbCard.classList.contains("hidden")) {
     elements.usbMessage.textContent = elements.usbPickerMessage.textContent;
   }
