@@ -1260,7 +1260,7 @@ async function writePreparedUsb() {
   const pollGeneration = ++usbProgressPollGeneration;
   const pollProgress = async () => {
     if (!usbWriting || pollGeneration !== usbProgressPollGeneration) return;
-    let current = false;
+    let current = true;
     try {
       current = await pollUsbWriteProgress({
         generation: pollGeneration,
@@ -1273,7 +1273,8 @@ async function writePreparedUsb() {
       });
     } catch {
       // The pending write invocation remains authoritative. A later poll or its
-      // terminal result can still update the UI without changing write state.
+      // terminal result can still update the UI without changing write state,
+      // so a transient IPC failure must not stop this exact write's poll loop.
     }
     if (current && usbWriting && pollGeneration === usbProgressPollGeneration) {
       usbProgressPollTimer = window.setTimeout(() => { void pollProgress(); }, 250);

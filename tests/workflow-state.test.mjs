@@ -362,6 +362,28 @@ test("progress polling renders a checkpoint without events and rejects a delayed
   }), true);
   assert.equal(rendered, "writing:6941573120");
 
+  let attempts = 0;
+  const transientReader = async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("transient IPC failure");
+    return { status: "writing", progress: { ...progress, bytesCompleted: 7_000_000_000 } };
+  };
+  await assert.rejects(pollUsbWriteProgress({
+    generation,
+    sessionToken,
+    readStatus: transientReader,
+    isCurrent: current,
+    applyProgress: () => { rendered = "unexpected first response"; },
+  }), /transient IPC failure/);
+  assert.equal(await pollUsbWriteProgress({
+    generation,
+    sessionToken,
+    readStatus: transientReader,
+    isCurrent: current,
+    applyProgress: (value) => { rendered = `${value.phase}:${value.bytesCompleted}`; },
+  }), true);
+  assert.equal(rendered, "writing:7000000000");
+
   let resolveOld;
   const oldResponse = new Promise((resolve) => { resolveOld = resolve; });
   const oldPoll = pollUsbWriteProgress({

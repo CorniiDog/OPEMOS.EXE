@@ -143,11 +143,12 @@ test("retained output folder and later USB imaging are independent controls", ()
   assert.match(script, /const wasOpen = !elements\.usbCard\.classList\.contains\("hidden"\);[\s\S]*else if \(wasOpen/);
   assert.match(script, /armUsbPreflight\.setAttribute\("aria-busy", "true"\)[\s\S]*armUsbPreflight\.textContent = "Revalidating…"/);
   assert.doesNotMatch(script, /cancelUsbPreflight|usbCancelPending|admitUsbPreflightCancel/);
-  assert.match(html, /id="usb-active-warning"[^>]*role="alert"[\s\S]*Do not disconnect the USB drive/);
+  assert.match(html, /id="usb-active-warning"[^>]*role="alert"[\s\S]*Do not disconnect the USB drive or close OPEMOS/);
   assert.match(script, /usbWriting = true;[\s\S]*usbActiveWarning\.classList\.remove\("hidden"\)[\s\S]*usbWriting = false;[\s\S]*usbActiveWarning\.classList\.add\("hidden"\)/);
-  assert.match(script, /usb-write-progress[\s\S]*admitUsbWriteProgress\(currentBuildSnapshot\(\), progress, usbWriteProgress\)[\s\S]*if \(!admission\.accepted\) return;[\s\S]*usbWriteProgress = progress/);
+  assert.match(script, /function applyUsbWriteProgress\(progress\)[\s\S]*admitUsbWriteProgress\(currentBuildSnapshot\(\), progress, usbWriteProgress\)[\s\S]*if \(!admission\.accepted\) return;[\s\S]*usbWriteProgress = progress/);
   assert.match(script, /pollUsbWriteProgress\(\{[\s\S]*get_usb_write_preflight_status[\s\S]*generation === usbProgressPollGeneration[\s\S]*sessionToken === writeContext\.sessionToken/);
   assert.match(script, /await pollUsbWriteProgress[\s\S]*setTimeout\(\(\) => \{ void pollProgress\(\); \}, 250\)/);
+  assert.match(script, /let current = true;[\s\S]*catch \{[\s\S]*transient IPC failure must not stop[\s\S]*if \(current && usbWriting/);
   assert.match(script, /finally \{[\s\S]*clearTimeout\(usbProgressPollTimer\);[\s\S]*usbProgressPollGeneration \+= 1;[\s\S]*usbWriting = false/);
   assert.match(script, /usbWriteProgress = progress;[\s\S]*usbMessage\.textContent = status;[\s\S]*usbPickerMessage\.textContent = status/);
   assert.match(script, /usb-write-close-refused[\s\S]*application must remain open until the active USB write settles/);
