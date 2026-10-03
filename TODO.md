@@ -3598,7 +3598,20 @@ must be reported; a default-suite pass does not imply hardware certification.
   `7588afab9bef375d9ef8e58586d6228e58604b2714271417a3908731af8013ac`;
   an independent download is byte-identical to Core's prepared manifest. EXE
   now consumes that final squash across runtime, maintainer, CI, and Windows
-  artifact pins. The final-head Windows job then reproduced the same HTTP 522
+  artifact pins. The later reviewed Core PR64 interstitial correction
+  squash-merged directly atop that commit as protected main
+  `bf882ba8bbbd4d4a920de83a4d70102071a67804`, tree
+  `cf832843ac98a34e1ce47186e0e7d147583c1457`. Its authenticated create-only
+  release targets that exact commit and contains one independently downloaded
+  22,408-byte, 122-file manifest at SHA-256
+  `bc687864e7074066e44826c6ba340c5fa15a4e3da60a998baa9b0e35c566b758`
+  with bundle ID
+  `93647c9955cc4c2ef8a6e42f312c27b1defa2a6abf8cbd470d97b0a2f2cdfbd4`.
+  PR159 consumes that ordinary Core dependency across runtime, maintainer, CI,
+  and Windows artifact pins so its final Desktop candidate includes the
+  independently labeled overall/current-stage progress and monotonic overall
+  progress guard. PR63 remains separate and is not claimed included.
+  The final-head Windows job then reproduced the same HTTP 522
   twice while acquiring an existing pinned runtime archive, before compilation.
   The initial acquisition correction retried only HTTP 522 at bounded
   5/15/30-second intervals, deleted its exact managed partial between attempts,
