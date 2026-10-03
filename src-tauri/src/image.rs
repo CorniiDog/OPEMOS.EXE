@@ -3759,9 +3759,9 @@ fn windows_uninspectable_removable_volume_can_be_skipped(
 }
 
 #[cfg(any(target_os = "windows", test))]
-fn windows_mount_reports_no_media(ready: bool, error: u32) -> bool {
+fn windows_mount_reports_no_media(inspection_handle_open: bool, ready: bool, error: u32) -> bool {
     const ERROR_NOT_READY: u32 = 21;
-    !ready && error == ERROR_NOT_READY
+    !inspection_handle_open && !ready && error == ERROR_NOT_READY
 }
 
 #[cfg(target_os = "macos")]
@@ -5147,17 +5147,19 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
             volume_path = value.into();
             path = PathBuf::from(&volume_path);
         }
-        let inspect = OpenOptions::new()
-            .read(true)
-            .access_mode(0x8000_0000)
-            .share_mode(0x0000_0001 | 0x0000_0002)
-            .open(&path)
-            .map_err(|error| {
-                format!(
-                    "Could not inspect Windows volume GUID {}: {error}",
-                    path.display()
-                )
-            })?;
+        let mut inspect = Some(
+            OpenOptions::new()
+                .read(true)
+                .access_mode(0x8000_0000)
+                .share_mode(0x0000_0001 | 0x0000_0002)
+                .open(&path)
+                .map_err(|error| {
+                    format!(
+                        "Could not inspect Windows volume GUID {}: {error}",
+                        path.display()
+                    )
+                })?,
+        );
         let mut extents = vec![0_u8; 4096];
         let mut fallback_selected = None;
         let mut fallback_error = None;
@@ -5165,7 +5167,10 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
             let mut returned = 0_u32;
             let ok = unsafe {
                 DeviceIoControl(
-                    inspect.as_raw_handle(),
+                    inspect
+                        .as_ref()
+                        .expect("volume inspection handle")
+                        .as_raw_handle(),
                     IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
                     std::ptr::null_mut(),
                     0,
@@ -5189,7 +5194,10 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
                     let mut storage_bytes = 0_u32;
                     let storage_ok = unsafe {
                         DeviceIoControl(
-                            inspect.as_raw_handle(),
+                            inspect
+                                .as_ref()
+                                .expect("volume inspection handle")
+                                .as_raw_handle(),
                             IOCTL_STORAGE_GET_DEVICE_NUMBER,
                             std::ptr::null_mut(),
                             0,
@@ -5227,6 +5235,12 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
                 if fallback_selected.is_some() {
                     break 0;
                 }
+                // The readiness API returns ERROR_INVALID_PARAMETER for a
+                // no-media removable root while this volume GUID inspection
+                // handle remains open after the failed IOCTL sequence. Close
+                // only that read-only handle before independently asking the
+                // mounted root whether media is present.
+                drop(inspect.take());
                 let mut paths = vec![0_u16; 1024];
                 let mut required = 0_u32;
                 let paths_ok = unsafe {
@@ -5277,7 +5291,11 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
                             )
                         } != 0;
                         let readiness_error = unsafe { GetLastError() };
-                        if !windows_mount_reports_no_media(ready, readiness_error) {
+                        if !windows_mount_reports_no_media(
+                            inspect.is_some(),
+                            ready,
+                            readiness_error,
+                        ) {
                             every_mount_reports_no_media = false;
                             break;
                         }
@@ -5335,7 +5353,7 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
             windows_volume_belongs_exclusively_to_disk(&disks, number)
                 .map_err(|error| format!("{error} Volume GUID: {}", path.display()))?
         };
-        drop(inspect);
+        drop(inspect.take());
         if selected_volume {
             let volume = OpenOptions::new()
                 .read(true)
@@ -6129,10 +6147,11 @@ mod windows_usb_inventory_tests {
             1,
             true,
         ));
-        assert!(windows_mount_reports_no_media(false, 21));
-        assert!(!windows_mount_reports_no_media(true, 21));
-        assert!(!windows_mount_reports_no_media(false, 1));
-        assert!(!windows_mount_reports_no_media(false, 87));
+        assert!(windows_mount_reports_no_media(false, false, 21));
+        assert!(!windows_mount_reports_no_media(true, false, 21));
+        assert!(!windows_mount_reports_no_media(false, true, 21));
+        assert!(!windows_mount_reports_no_media(false, false, 1));
+        assert!(!windows_mount_reports_no_media(false, false, 87));
     }
 
     #[cfg(target_os = "windows")]

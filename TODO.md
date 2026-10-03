@@ -293,8 +293,25 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   for ready media and every error other than 21. The target remained
   34,359,738,368 bytes with zero allocated blocks, and both overlays passed
   `qemu-img check` after cleanup. The focused exact-admission regression passes
-  1/1 through `heavy.sh`; changed-head CI/artifact, a new preserved Desktop
-  candidate, and the same failed VM stage remain.
+  1/1 through `heavy.sh`. Exact head `cfbee21e` passed all eight source checks;
+  artifact `11275740983` is 2,237,343,826 bytes/SHA-256
+  `af950d0248bf5db4744b90c56ffc53de272663046bc035c207d6679f740e340c`
+  and contains the 21,566,976-byte EXE at SHA-256
+  `b5bed4e9524ca8b576bfae44af0171838d97aba05e2803417a4aec1834deab0e`.
+  Its authenticated closure passed before closed deployment to new preserved
+  folder `Test-PR159-cfbee21e-Buffered-NoMedia-Fix-2026-10-03`. The same
+  genuine-pointer failed stage disproved that buffer-only correction: it again
+  failed closed before opening disk 2. Exact native probes then isolated the
+  handle-lifetime cause. With the read-only volume-GUID inspection handle still
+  open after the failed extent/device-number sequence, the bounded readiness
+  call returned error 87; closing only that handle made the identical `A:\`
+  query return exact `ERROR_NOT_READY` (21). The current correction releases
+  that read-only inspection handle before the independent mounted-root query
+  and refuses admission while it remains open. The target again remained
+  34,359,738,368 bytes with zero allocated blocks, both overlays passed
+  `qemu-img check`, and the focused handle-closed/handle-open/ready/error
+  regression passes 1/1 through `heavy.sh`; changed-head CI/artifact, a new
+  preserved Desktop candidate, and the same failed VM stage remain.
 
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.
