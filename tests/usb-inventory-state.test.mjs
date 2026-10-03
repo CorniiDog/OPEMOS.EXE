@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   acceptedUsbInventoryPath,
+  usbFirstShowRetryDelay,
   usbInventoryNeedsRefresh,
 } from "../src/usb-inventory-state.js";
 
@@ -42,4 +43,14 @@ test("USB inventory state rejects malformed inputs", () => {
     completed: "yes",
     targetCount: 1,
   }), /completed/);
+});
+
+test("first-show USB inventory retries are bounded and stop on discovery", () => {
+  assert.equal(usbFirstShowRetryDelay(1, { completed: true, targetCount: 0 }), 1000);
+  assert.equal(usbFirstShowRetryDelay(2, { completed: true, targetCount: 0 }), 2000);
+  assert.equal(usbFirstShowRetryDelay(3, { completed: true, targetCount: 0 }), null);
+  assert.equal(usbFirstShowRetryDelay(1, { completed: true, targetCount: 1 }), null);
+  assert.equal(usbFirstShowRetryDelay(1, { completed: false, targetCount: 0 }), null);
+  assert.throws(() => usbFirstShowRetryDelay(0, { completed: true, targetCount: 0 }), /attempt/);
+  assert.throws(() => usbFirstShowRetryDelay(1, { completed: true, targetCount: -1 }), /targetCount/);
 });

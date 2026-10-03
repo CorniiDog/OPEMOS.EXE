@@ -2456,15 +2456,21 @@ pub(crate) struct UsbPreparationManager {
     armed: Option<ArmedUsbPreflight>,
     active_token: Option<String>,
     cancel_write: Option<Arc<AtomicBool>>,
+    progress: Option<UsbWriteProgress>,
 }
 
 impl UsbPreparationManager {
+    pub(crate) fn has_active_write(&self) -> bool {
+        self.active_token.is_some()
+    }
+
     pub(crate) fn cancel_all(&mut self) {
         self.armed = None;
         if let Some(cancel) = self.cancel_write.take() {
             cancel.store(true, Ordering::Relaxed);
         }
         self.active_token = None;
+        self.progress = None;
     }
 
     pub(crate) fn arm(
@@ -2540,6 +2546,7 @@ impl UsbPreparationManager {
         let cancel = Arc::new(AtomicBool::new(false));
         self.active_token = Some(session_token.into());
         self.cancel_write = Some(cancel.clone());
+        self.progress = None;
         Some((armed, cancel))
     }
 
@@ -2547,11 +2554,31 @@ impl UsbPreparationManager {
         if self.active_token.as_deref() == Some(session_token) {
             self.active_token = None;
             self.cancel_write = None;
+            self.progress = None;
+        }
+    }
+
+    fn update_progress(&mut self, session_token: &str, progress: UsbWriteProgress) {
+        if self.active_token.as_deref() == Some(session_token) {
+            self.progress = Some(progress);
         }
     }
 
     pub(crate) fn status(&mut self, session_token: &str, now: Instant) -> UsbWritePreflightStatus {
-        if self.active_token.as_deref() == Some(session_token) {
+        if self.active_token.is_some() {
+            if self.active_token.as_deref() != Some(session_token) {
+                return UsbWritePreflightStatus {
+                    status: "stale-token".into(),
+                    active: false,
+                    expires_in_ms: 0,
+                    writes_allowed: false,
+                    device_identifier: None,
+                    image_sha256: None,
+                    identity_token: None,
+                    progress: None,
+                    message: "This USB intent token does not identify the active write.".into(),
+                };
+            }
             return UsbWritePreflightStatus {
                 status: "writing".into(),
                 active: true,
@@ -2560,6 +2587,7 @@ impl UsbPreparationManager {
                 device_identifier: None,
                 image_sha256: None,
                 identity_token: None,
+                progress: self.progress.clone(),
                 message: "A USB writer operation is active.".into(),
             };
         }
@@ -2582,6 +2610,7 @@ impl UsbPreparationManager {
                     device_identifier: identity.as_ref().map(|value| value.0.clone()),
                     image_sha256: identity.as_ref().map(|value| value.1.clone()),
                     identity_token: identity.map(|value| value.2),
+                    progress: None,
                     message: if matching_token {
                         "The USB intent session expired. Revalidate the image and target before confirming again."
                     } else {
@@ -2599,6 +2628,7 @@ impl UsbPreparationManager {
                     device_identifier: None,
                     image_sha256: None,
                     identity_token: None,
+                    progress: None,
                     message: "This USB intent token does not identify the active session.".into(),
                 };
             }
@@ -2610,6 +2640,7 @@ impl UsbPreparationManager {
                 device_identifier: Some(armed.device_identifier.clone()),
                 image_sha256: Some(armed.image_sha256.clone()),
                 identity_token: Some(armed.identity_token.clone()),
+                progress: None,
                 message: if physical_usb_writes_allowed() {
                     usb_write_permission_message()
                 } else if cfg!(target_os = "windows") {
@@ -2628,6 +2659,7 @@ impl UsbPreparationManager {
             device_identifier: None,
             image_sha256: None,
             identity_token: None,
+            progress: None,
             message: "No USB intent session is active.".into(),
         }
     }
@@ -3027,7 +3059,7 @@ fn hidden_windows_command(program: &str) -> Command {
 
 #[cfg(target_os = "windows")]
 fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
-    let script = "Get-Disk | ForEach-Object { $d=$_; $w=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number) -ErrorAction Stop; [pscustomobject]@{Index=$d.Number;FriendlyName=$d.FriendlyName;BusType=[string]$d.BusType;Size=[uint64]$d.Size;BytesPerSector=[uint64]$d.LogicalSectorSize;UniqueId=[string]$d.UniqueId;SerialNumber=[string]$w.SerialNumber;MediaType=[string]$w.MediaType;IsBoot=[bool]$d.IsBoot;IsSystem=[bool]$d.IsSystem;IsReadOnly=[bool]$d.IsReadOnly;IsOffline=[bool]$d.IsOffline} } | ConvertTo-Json -Compress";
+    let script = "Update-HostStorageCache -ErrorAction SilentlyContinue; Get-Disk | ForEach-Object { $d=$_; $w=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number) -ErrorAction Stop; [pscustomobject]@{Index=$d.Number;FriendlyName=$d.FriendlyName;BusType=[string]$d.BusType;Size=[uint64]$d.Size;BytesPerSector=[uint64]$d.LogicalSectorSize;UniqueId=[string]$d.UniqueId;SerialNumber=[string]$w.SerialNumber;MediaType=[string]$w.MediaType;IsBoot=[bool]$d.IsBoot;IsSystem=[bool]$d.IsSystem;IsReadOnly=[bool]$d.IsReadOnly;IsOffline=[bool]$d.IsOffline} } | ConvertTo-Json -Compress";
     let (status, stdout, stderr) = bounded_command_output_with_limits(
         Path::new("powershell.exe"),
         &[
@@ -3687,6 +3719,49 @@ fn windows_volume_belongs_exclusively_to_disk(
         );
     }
     Ok(disks.iter().all(|disk| *disk == selected))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_removable_volume_device_number_fallback(
+    drive_type: u32,
+    device_type: u32,
+    device_number: u32,
+    selected: u32,
+) -> Result<bool, String> {
+    const DRIVE_REMOVABLE: u32 = 2;
+    const FILE_DEVICE_DISK: u32 = 7;
+    if drive_type != DRIVE_REMOVABLE {
+        return Err(
+            "Windows disk-extents fallback is limited to removable volume GUID objects.".into(),
+        );
+    }
+    if device_type != FILE_DEVICE_DISK {
+        return Ok(false);
+    }
+    Ok(device_number == selected)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_removable_volume_device_number_fallback_allowed(drive_type: u32, error: u32) -> bool {
+    const DRIVE_REMOVABLE: u32 = 2;
+    const ERROR_MORE_DATA: u32 = 234;
+    drive_type == DRIVE_REMOVABLE && error != ERROR_MORE_DATA
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_uninspectable_removable_volume_can_be_skipped(
+    drive_type: u32,
+    mount_path_count: usize,
+    every_mount_reports_no_media: bool,
+) -> bool {
+    const DRIVE_REMOVABLE: u32 = 2;
+    drive_type == DRIVE_REMOVABLE && mount_path_count > 0 && every_mount_reports_no_media
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_mount_reports_no_media(inspection_handle_open: bool, ready: bool, error: u32) -> bool {
+    const ERROR_NOT_READY: u32 = 21;
+    !inspection_handle_open && !ready && error == ERROR_NOT_READY
 }
 
 #[cfg(target_os = "macos")]
@@ -4990,6 +5065,22 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
         fn FindNextVolumeW(find: *mut c_void, name: *mut u16, length: u32) -> i32;
         fn FindVolumeClose(find: *mut c_void) -> i32;
         fn GetDriveTypeW(root_path: *const u16) -> u32;
+        fn GetVolumePathNamesForVolumeNameW(
+            volume_name: *const u16,
+            paths: *mut u16,
+            paths_bytes: u32,
+            required_bytes: *mut u32,
+        ) -> i32;
+        fn GetVolumeInformationW(
+            root_path: *const u16,
+            volume_name: *mut u16,
+            volume_name_size: u32,
+            volume_serial_number: *mut u32,
+            maximum_component_length: *mut u32,
+            file_system_flags: *mut u32,
+            file_system_name: *mut u16,
+            file_system_name_size: u32,
+        ) -> i32;
         fn GetLastError() -> u32;
         fn DeviceIoControl(
             device: *mut c_void,
@@ -5008,6 +5099,12 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
             unsafe { FindVolumeClose(self.0) };
         }
     }
+    #[repr(C)]
+    struct StorageDeviceNumber {
+        device_type: u32,
+        device_number: u32,
+        partition_number: u32,
+    }
     const INVALID_HANDLE_VALUE: *mut c_void = -1_isize as *mut c_void;
     const ERROR_NO_MORE_FILES: u32 = 18;
     const ERROR_MORE_DATA: u32 = 234;
@@ -5015,6 +5112,7 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
     const FILE_SHARE_READ: u32 = 0x0000_0001;
     const FILE_SHARE_WRITE: u32 = 0x0000_0002;
     const IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS: u32 = 0x0056_0000;
+    const IOCTL_STORAGE_GET_DEVICE_NUMBER: u32 = 0x002d_1080;
     const FSCTL_LOCK_VOLUME: u32 = 0x0009_0018;
     const FSCTL_DISMOUNT_VOLUME: u32 = 0x0009_0020;
     let mut name = vec![0_u16; 1024];
@@ -5030,7 +5128,8 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
         let end = name.iter().position(|value| *value == 0).ok_or(
             "Windows returned an unterminated volume GUID while locking the selected disk.",
         )?;
-        if unsafe { GetDriveTypeW(name.as_ptr()) } == DRIVE_CDROM {
+        let drive_type = unsafe { GetDriveTypeW(name.as_ptr()) };
+        if drive_type == DRIVE_CDROM {
             name.fill(0);
             if unsafe { FindNextVolumeW(find.0, name.as_mut_ptr(), name.len() as u32) } == 0 {
                 if unsafe { GetLastError() } == ERROR_NO_MORE_FILES {
@@ -5048,23 +5147,30 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
             volume_path = value.into();
             path = PathBuf::from(&volume_path);
         }
-        let inspect = OpenOptions::new()
-            .read(true)
-            .access_mode(0x8000_0000)
-            .share_mode(0x0000_0001 | 0x0000_0002)
-            .open(&path)
-            .map_err(|error| {
-                format!(
-                    "Could not inspect Windows volume GUID {}: {error}",
-                    path.display()
-                )
-            })?;
+        let mut inspect = Some(
+            OpenOptions::new()
+                .read(true)
+                .access_mode(0x8000_0000)
+                .share_mode(0x0000_0001 | 0x0000_0002)
+                .open(&path)
+                .map_err(|error| {
+                    format!(
+                        "Could not inspect Windows volume GUID {}: {error}",
+                        path.display()
+                    )
+                })?,
+        );
         let mut extents = vec![0_u8; 4096];
+        let mut fallback_selected = None;
+        let mut fallback_error = None;
         let returned = loop {
             let mut returned = 0_u32;
             let ok = unsafe {
                 DeviceIoControl(
-                    inspect.as_raw_handle(),
+                    inspect
+                        .as_ref()
+                        .expect("volume inspection handle")
+                        .as_raw_handle(),
                     IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
                     std::ptr::null_mut(),
                     0,
@@ -5077,43 +5183,177 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
             if ok {
                 break returned as usize;
             }
-            if unsafe { GetLastError() } != ERROR_MORE_DATA || extents.len() >= 1024 * 1024 {
+            let error = unsafe { GetLastError() };
+            if windows_removable_volume_device_number_fallback_allowed(drive_type, error) {
+                let mut storage = StorageDeviceNumber {
+                    device_type: 0,
+                    device_number: 0,
+                    partition_number: 0,
+                };
+                for attempt in 0..5 {
+                    let mut storage_bytes = 0_u32;
+                    let storage_ok = unsafe {
+                        DeviceIoControl(
+                            inspect
+                                .as_ref()
+                                .expect("volume inspection handle")
+                                .as_raw_handle(),
+                            IOCTL_STORAGE_GET_DEVICE_NUMBER,
+                            std::ptr::null_mut(),
+                            0,
+                            (&mut storage as *mut StorageDeviceNumber).cast(),
+                            std::mem::size_of::<StorageDeviceNumber>() as u32,
+                            &mut storage_bytes,
+                            std::ptr::null_mut(),
+                        )
+                    } != 0;
+                    if storage_ok
+                        && storage_bytes as usize >= std::mem::size_of::<StorageDeviceNumber>()
+                    {
+                        fallback_selected = Some(
+                            windows_removable_volume_device_number_fallback(
+                                drive_type,
+                                storage.device_type,
+                                storage.device_number,
+                                number,
+                            )
+                            .map_err(|fallback_error| {
+                                format!("{fallback_error} Volume GUID: {}", path.display())
+                            })?,
+                        );
+                        break;
+                    }
+                    fallback_error = Some(if storage_ok {
+                        format!("truncated device-number response ({storage_bytes} bytes)")
+                    } else {
+                        format!("Windows error {}", unsafe { GetLastError() })
+                    });
+                    if attempt < 4 {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
+                if fallback_selected.is_some() {
+                    break 0;
+                }
+                // The readiness API returns ERROR_INVALID_PARAMETER for a
+                // no-media removable root while this volume GUID inspection
+                // handle remains open after the failed IOCTL sequence. Close
+                // only that read-only handle before independently asking the
+                // mounted root whether media is present.
+                drop(inspect.take());
+                let mut paths = vec![0_u16; 1024];
+                let mut required = 0_u32;
+                let paths_ok = unsafe {
+                    GetVolumePathNamesForVolumeNameW(
+                        name.as_ptr(),
+                        paths.as_mut_ptr(),
+                        paths.len() as u32,
+                        &mut required,
+                    )
+                } != 0;
+                if paths_ok {
+                    let mut mount_path_count = 0_usize;
+                    let mut every_mount_reports_no_media = true;
+                    let mut start = 0_usize;
+                    while start < paths.len() && paths[start] != 0 {
+                        let relative_end = paths[start..]
+                            .iter()
+                            .position(|value| *value == 0)
+                            .unwrap_or(paths.len() - start);
+                        let end = start + relative_end;
+                        if end == paths.len() {
+                            every_mount_reports_no_media = false;
+                            break;
+                        }
+                        mount_path_count += 1;
+                        let mut serial = 0_u32;
+                        let mut maximum_component_length = 0_u32;
+                        let mut file_system_flags = 0_u32;
+                        let mut volume_name = vec![0_u16; 261];
+                        let mut file_system_name = vec![0_u16; 261];
+                        // A mounted root is skippable only when Windows' volume
+                        // readiness API independently identifies absent media.
+                        // Supplying bounded output buffers is material here:
+                        // after the failed volume IOCTL sequence, Windows 11
+                        // returns ERROR_INVALID_PARAMETER for null output
+                        // buffers even though the same no-media root reports
+                        // ERROR_NOT_READY with ordinary buffers.
+                        let ready = unsafe {
+                            GetVolumeInformationW(
+                                paths[start..].as_ptr(),
+                                volume_name.as_mut_ptr(),
+                                volume_name.len() as u32,
+                                &mut serial,
+                                &mut maximum_component_length,
+                                &mut file_system_flags,
+                                file_system_name.as_mut_ptr(),
+                                file_system_name.len() as u32,
+                            )
+                        } != 0;
+                        let readiness_error = unsafe { GetLastError() };
+                        if !windows_mount_reports_no_media(
+                            inspect.is_some(),
+                            ready,
+                            readiness_error,
+                        ) {
+                            every_mount_reports_no_media = false;
+                            break;
+                        }
+                        start = end + 1;
+                    }
+                    if windows_uninspectable_removable_volume_can_be_skipped(
+                        drive_type,
+                        mount_path_count,
+                        every_mount_reports_no_media,
+                    ) {
+                        fallback_selected = Some(false);
+                        break 0;
+                    }
+                }
+            }
+            if error != ERROR_MORE_DATA || extents.len() >= 1024 * 1024 {
                 return Err(format!(
-                    "Could not obtain disk extents for Windows volume GUID {}.",
-                    path.display()
+                    "Could not obtain disk extents for Windows volume GUID {} (Windows error {}; device-number fallback {}).",
+                    path.display(),
+                    error,
+                    fallback_error.as_deref().unwrap_or("was not eligible")
                 ));
             }
             extents.resize(extents.len() * 2, 0);
         };
-        if returned < 8 {
-            return Err(format!(
-                "Windows returned truncated disk extents for volume GUID {}.",
-                path.display()
-            ));
-        }
-        let count = u32::from_le_bytes(extents[0..4].try_into().unwrap_or_default()) as usize;
-        let required = 8_usize
-            .checked_add(
-                count
-                    .checked_mul(24)
-                    .ok_or("Windows volume extent count overflowed.")?,
-            )
-            .ok_or("Windows volume extent size overflowed.")?;
-        if count == 0 || returned < required {
-            return Err(format!(
-                "Windows returned invalid disk extents for volume GUID {}.",
-                path.display()
-            ));
-        }
-        let disks = (0..count)
-            .map(|index| {
-                let offset = 8 + index * 24;
-                u32::from_le_bytes(extents[offset..offset + 4].try_into().unwrap_or_default())
-            })
-            .collect::<Vec<_>>();
-        let selected_volume = windows_volume_belongs_exclusively_to_disk(&disks, number)
-            .map_err(|error| format!("{error} Volume GUID: {}", path.display()))?;
-        drop(inspect);
+        let selected_volume = if let Some(selected) = fallback_selected {
+            selected
+        } else {
+            if returned < 8 {
+                return Err(format!(
+                    "Windows returned truncated disk extents for volume GUID {}.",
+                    path.display()
+                ));
+            }
+            let count = u32::from_le_bytes(extents[0..4].try_into().unwrap_or_default()) as usize;
+            let required = 8_usize
+                .checked_add(
+                    count
+                        .checked_mul(24)
+                        .ok_or("Windows volume extent count overflowed.")?,
+                )
+                .ok_or("Windows volume extent size overflowed.")?;
+            if count == 0 || returned < required {
+                return Err(format!(
+                    "Windows returned invalid disk extents for volume GUID {}.",
+                    path.display()
+                ));
+            }
+            let disks = (0..count)
+                .map(|index| {
+                    let offset = 8 + index * 24;
+                    u32::from_le_bytes(extents[offset..offset + 4].try_into().unwrap_or_default())
+                })
+                .collect::<Vec<_>>();
+            windows_volume_belongs_exclusively_to_disk(&disks, number)
+                .map_err(|error| format!("{error} Volume GUID: {}", path.display()))?
+        };
+        drop(inspect.take());
         if selected_volume {
             let volume = OpenOptions::new()
                 .read(true)
@@ -5402,6 +5642,17 @@ fn open_usb_raw_device(
     Err("USB writing is currently implemented only for macOS.".into())
 }
 
+fn emit_usb_write_progress<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    session_token: &str,
+    progress: UsbWriteProgress,
+) {
+    if let Ok(mut manager) = app.state::<Mutex<UsbPreparationManager>>().lock() {
+        manager.update_progress(session_token, progress.clone());
+    }
+    let _ = app.emit_to("main", "usb-write-progress", progress);
+}
+
 #[tauri::command]
 pub(crate) async fn write_image_to_usb(
     app: tauri::AppHandle,
@@ -5445,6 +5696,7 @@ pub(crate) async fn write_image_to_usb(
             return Err("The selected removable device was replaced after confirmation.".into());
         }
         let app_for_progress = app.clone();
+        let session_for_progress = session_token.clone();
     #[cfg(target_os = "windows")]
     let elevation_owner = app
         .get_webview_window("main")
@@ -5465,33 +5717,27 @@ pub(crate) async fn write_image_to_usb(
                 elevation_owner,
                 &cancel,
                 |progress| {
-                    let _ = app_for_progress.emit("usb-write-progress", progress);
+                    emit_usb_write_progress(&app_for_progress, &session_for_progress, progress);
                 },
             );
         }
-        let _ = app_for_progress.emit(
-            "usb-write-progress",
-            UsbWriteProgress {
+        emit_usb_write_progress(&app_for_progress, &session_for_progress, UsbWriteProgress {
                 phase: "unmounting".into(),
                 bytes_completed: 0,
                 bytes_total: image_bytes,
                 message: "Unmounting the selected removable disk without writing to it.".into(),
-            },
-        );
+            });
         unmount_usb_target(&target.device_identifier)?;
         let revalidated = revalidate_usb_target(&target.device_identifier, image_bytes)?;
         if revalidated.identity_token != target.identity_token {
             return Err("The selected removable device changed while it was being unmounted.".into());
         }
-        let _ = app_for_progress.emit(
-            "usb-write-progress",
-            UsbWriteProgress {
+        emit_usb_write_progress(&app_for_progress, &session_for_progress, UsbWriteProgress {
                 phase: "authorizing".into(),
                 bytes_completed: 0,
                 bytes_total: image_bytes,
                 message: usb_write_permission_message().into(),
-            },
-        );
+            });
         let (mut device, volume_locks, disk_is_offline) =
             match open_usb_raw_device(&revalidated, &cancel) {
             Ok(device) => device,
@@ -5551,7 +5797,7 @@ pub(crate) async fn write_image_to_usb(
             &expected_sha256,
             &cancel,
             |progress| {
-                let _ = app_for_progress.emit("usb-write-progress", progress);
+                emit_usb_write_progress(&app_for_progress, &session_for_progress, progress);
             },
         );
         drop(device);
@@ -5610,6 +5856,88 @@ pub(crate) async fn write_image_to_usb(
 #[cfg(test)]
 mod windows_usb_inventory_tests {
     use super::*;
+
+    #[test]
+    fn usb_writer_progress_targets_main_window_and_receipt_closes_exact_write() {
+        use tauri::Listener as _;
+
+        let app = tauri::test::mock_app();
+        app.manage(Mutex::new(UsbPreparationManager::default()));
+        let session_token = "a".repeat(64);
+        app.state::<Mutex<UsbPreparationManager>>()
+            .lock()
+            .unwrap()
+            .active_token = Some(session_token.clone());
+        let main = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .expect("main mock webview");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        main.listen("usb-write-progress", move |event| {
+            sender.send(event.payload().to_string()).unwrap();
+        });
+
+        emit_usb_write_progress(
+            app.handle(),
+            &session_token,
+            UsbWriteProgress {
+                phase: "writing".into(),
+                bytes_completed: 6_941_573_120,
+                bytes_total: 8_120_172_544,
+                message: "Writing the verified image.".into(),
+            },
+        );
+        let delivered: serde_json::Value = serde_json::from_str(
+            &receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("main window must receive writer progress"),
+        )
+        .expect("progress payload JSON");
+        assert_eq!(delivered["phase"], "writing");
+        assert_eq!(delivered["bytesCompleted"], 6_941_573_120u64);
+        let stored = app
+            .state::<Mutex<UsbPreparationManager>>()
+            .lock()
+            .unwrap()
+            .progress
+            .clone()
+            .expect("active write checkpoint");
+        assert_eq!(stored.phase, "writing");
+        assert_eq!(stored.bytes_completed, 6_941_573_120);
+        let status = app
+            .state::<Mutex<UsbPreparationManager>>()
+            .lock()
+            .unwrap()
+            .status(&session_token, Instant::now());
+        assert_eq!(status.status, "writing");
+        assert_eq!(
+            status.progress.expect("pollable progress").bytes_completed,
+            6_941_573_120
+        );
+        let stale = app
+            .state::<Mutex<UsbPreparationManager>>()
+            .lock()
+            .unwrap()
+            .status(&"b".repeat(64), Instant::now());
+        assert_eq!(stale.status, "stale-token");
+        assert!(stale.progress.is_none());
+
+        let request_sha256 = "1".repeat(64);
+        let image_sha256 = "a".repeat(64);
+        let receipt = serde_json::to_vec(&WindowsUsbWriterReceipt {
+            schema_version: 1,
+            request_sha256: request_sha256.clone(),
+            success: true,
+            verified_sha256: image_sha256.clone(),
+            ejected: true,
+            error: String::new(),
+        })
+        .unwrap();
+        let accepted =
+            validate_windows_usb_writer_receipt(&receipt, 0, &request_sha256, &image_sha256)
+                .expect("exact completed helper receipt");
+        assert!(accepted.ejected);
+        assert_eq!(accepted.verified_sha256, image_sha256);
+    }
 
     #[test]
     fn accepts_only_exact_capacity_eligible_usb_physical_drives() {
@@ -5746,6 +6074,84 @@ mod windows_usb_inventory_tests {
         assert_eq!(selected_names, ["lettered-data", "unlettered-efi"]);
         assert!(windows_volume_belongs_exclusively_to_disk(&[selected, 0], selected).is_err());
         assert!(windows_volume_belongs_exclusively_to_disk(&[], selected).is_err());
+    }
+
+    #[test]
+    fn removable_volume_fallback_and_no_media_admission_are_exact_and_never_broaden_fixed_disks() {
+        const DRIVE_REMOVABLE: u32 = 2;
+        const DRIVE_FIXED: u32 = 3;
+        const FILE_DEVICE_DISK: u32 = 7;
+        const FILE_DEVICE_CD_ROM: u32 = 2;
+        let selected = 7;
+        assert!(windows_removable_volume_device_number_fallback(
+            DRIVE_REMOVABLE,
+            FILE_DEVICE_DISK,
+            selected,
+            selected,
+        )
+        .unwrap());
+        assert!(!windows_removable_volume_device_number_fallback(
+            DRIVE_REMOVABLE,
+            FILE_DEVICE_DISK,
+            0,
+            selected,
+        )
+        .unwrap());
+        assert!(!windows_removable_volume_device_number_fallback(
+            DRIVE_REMOVABLE,
+            FILE_DEVICE_CD_ROM,
+            selected,
+            selected,
+        )
+        .unwrap());
+        assert!(windows_removable_volume_device_number_fallback(
+            DRIVE_FIXED,
+            FILE_DEVICE_DISK,
+            selected,
+            selected,
+        )
+        .is_err());
+        assert!(windows_removable_volume_device_number_fallback_allowed(
+            DRIVE_REMOVABLE,
+            21,
+        ));
+        assert!(windows_removable_volume_device_number_fallback_allowed(
+            DRIVE_REMOVABLE,
+            5,
+        ));
+        assert!(!windows_removable_volume_device_number_fallback_allowed(
+            DRIVE_REMOVABLE,
+            234,
+        ));
+        assert!(!windows_removable_volume_device_number_fallback_allowed(
+            DRIVE_FIXED,
+            21,
+        ));
+        assert!(windows_uninspectable_removable_volume_can_be_skipped(
+            DRIVE_REMOVABLE,
+            1,
+            true,
+        ));
+        assert!(!windows_uninspectable_removable_volume_can_be_skipped(
+            DRIVE_REMOVABLE,
+            0,
+            true,
+        ));
+        assert!(!windows_uninspectable_removable_volume_can_be_skipped(
+            DRIVE_REMOVABLE,
+            1,
+            false,
+        ));
+        assert!(!windows_uninspectable_removable_volume_can_be_skipped(
+            DRIVE_FIXED,
+            1,
+            true,
+        ));
+        assert!(windows_mount_reports_no_media(false, false, 21));
+        assert!(!windows_mount_reports_no_media(true, false, 21));
+        assert!(!windows_mount_reports_no_media(false, true, 21));
+        assert!(!windows_mount_reports_no_media(false, false, 1));
+        assert!(!windows_mount_reports_no_media(false, false, 87));
     }
 
     #[cfg(target_os = "windows")]

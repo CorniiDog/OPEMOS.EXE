@@ -9,10 +9,7 @@ import {
   admitBuildCompletion,
   admitBuildStart,
 } from "../src/build-lifecycle-state.js";
-import {
-  admitExportModeSelection,
-  admitOutputDirectorySelection,
-} from "../src/output-state.js";
+import { admitOutputDirectorySelection } from "../src/output-state.js";
 import {
   admitBuildSourceRefresh,
   admitBuildSourceSelection,
@@ -31,6 +28,7 @@ import {
   admitUsbWriteCompletion,
   admitUsbWriteProgress,
   admitUsbWriteStart,
+  pollUsbWriteProgress,
 } from "../src/usb-write-state.js";
 
 const ready = {
@@ -39,7 +37,6 @@ const ready = {
   buildRunning: false,
   usbWriting: false,
   hostReady: true,
-  exportMode: "image",
   upstreamSelected: false,
   upstreamApproved: false,
 };
@@ -68,7 +65,6 @@ test("build admission rejects every independent readiness blocker", () => {
   const cases = [
     [{ hasImage: false }, "no-image"],
     [{ hostReady: false }, "host-unavailable"],
-    [{ exportMode: null }, "no-output"],
     [{ upstreamSelected: true, upstreamApproved: false }, "upstream-unapproved"],
   ];
   for (const [change, blocker] of cases) {
@@ -78,9 +74,6 @@ test("build admission rejects every independent readiness blocker", () => {
       blocker,
     });
   }
-  for (const exportMode of ["image", "usb", "both"]) {
-    assert.equal(deriveBuildAdmission({ ...ready, exportMode }).canBuild, true);
-  }
   assert.equal(deriveBuildAdmission({
     ...ready, upstreamSelected: true, upstreamApproved: true,
   }).canBuild, true);
@@ -89,7 +82,6 @@ test("build admission rejects every independent readiness blocker", () => {
 test("build admission fails closed for malformed and impossible snapshots", () => {
   assert.throws(() => deriveBuildAdmission(null), /snapshot must be an object/);
   assert.throws(() => deriveBuildAdmission({ ...ready, hasImage: "yes" }), /hasImage must be boolean/);
-  assert.throws(() => deriveBuildAdmission({ ...ready, exportMode: "disk" }), /exportMode is invalid/);
   assert.throws(() => deriveBuildAdmission({
     ...ready, buildRunning: true, usbWriting: true,
   }), /cannot run concurrently/);
@@ -100,31 +92,17 @@ test("build admission fails closed for malformed and impossible snapshots", () =
     ...ready, hasImage: false, buildRunning: true,
   }), /active build requires its selected image/);
   assert.throws(() => deriveBuildAdmission({
-    ...ready, buildRunning: true, exportMode: null,
-  }), /active build requires its output mode/);
-  assert.throws(() => deriveBuildAdmission({
     ...ready, buildRunning: true, upstreamSelected: true,
   }), /active upstream build requires explicit approval/);
   assert.throws(() => deriveBuildAdmission({
     ...ready, hasImage: false, hasCompletedOutput: true,
   }), /completed output requires its selected image/);
   assert.throws(() => deriveBuildAdmission({
-    ...ready, hasCompletedOutput: true, exportMode: null,
-  }), /completed output requires an output mode/);
-  assert.throws(() => deriveBuildAdmission({
     ...ready, usbWriting: true,
   }), /USB writing requires a completed output/);
   assert.throws(() => deriveBuildAdmission({
-    ...ready, hasCompletedOutput: true, usbWriting: true,
-  }), /USB writing requires a USB output mode/);
-  assert.throws(() => deriveBuildAdmission({
     ...ready, upstreamApproved: true,
   }), /upstream approval requires an upstream source/);
-  for (const exportMode of ["usb", "both"]) {
-    assert.throws(() => deriveBuildAdmission({
-      ...ready, hasImage: false, exportMode,
-    }), /USB output mode requires a selected image/);
-  }
 });
 
 test("build start uses the same fail-closed admission at the event boundary", () => {
@@ -134,7 +112,6 @@ test("build start uses the same fail-closed admission at the event boundary", ()
   for (const change of [
     { hasImage: false },
     { hostReady: false },
-    { exportMode: null },
     { upstreamSelected: true, upstreamApproved: false },
     { hasCompletedOutput: true },
     { hasCompletedOutput: true, usbWriting: true, exportMode: "both" },
@@ -314,6 +291,22 @@ test("USB write progress accepts bounded forward movement only during writing", 
   assert.equal(admitUsbWriteProgress(writing, {
     ...base, phase: "verifying", bytesCompleted: 0,
   }, base).accepted, true);
+  const helperPhases = [
+    ["authorizing", 0],
+    ["locking", 0],
+    ["writing", 4],
+    ["flushing", 16],
+    ["verifying", 0],
+    ["releasing", 16],
+    ["finalizing", 16],
+    ["completed", 16],
+  ];
+  let previous = null;
+  for (const [phase, bytesCompleted] of helperPhases) {
+    const progress = { phase, bytesCompleted, bytesTotal: 16, message: `${phase}.` };
+    assert.equal(admitUsbWriteProgress(writing, progress, previous).accepted, true, phase);
+    previous = progress;
+  }
   assert.equal(admitUsbWriteProgress(writing, { ...base, bytesCompleted: 3 }, base).blocker, "regressing-progress");
   assert.equal(admitUsbWriteProgress(writing, { ...base, bytesTotal: 17 }, base).blocker, "regressing-progress");
   assert.equal(admitUsbWriteProgress(writing, { ...base, phase: "authorizing", bytesCompleted: 0 }, base).blocker, "regressing-progress");
@@ -327,6 +320,7 @@ test("USB write progress accepts bounded forward movement only during writing", 
     { ...base, message: "" },
     { ...base, message: "x".repeat(8193) },
     { ...base, phase: "unmounting", bytesCompleted: 1 },
+    { ...base, phase: "locking", bytesCompleted: 1 },
   ]) {
     assert.equal(admitUsbWriteProgress(writing, progress).blocker, "malformed-progress");
   }
@@ -347,6 +341,63 @@ test("USB write progress rejects corrupted retained history", () => {
   ]) {
     assert.equal(admitUsbWriteProgress(writing, progress, previous).blocker, "malformed-progress");
   }
+});
+
+test("progress polling renders a checkpoint without events and rejects a delayed prior session", async () => {
+  let generation = 7;
+  let sessionToken = "session-new";
+  let rendered = "Revalidating";
+  const current = (candidateGeneration, candidateToken) => candidateGeneration === generation
+    && candidateToken === sessionToken;
+  const progress = {
+    phase: "writing", bytesCompleted: 6_941_573_120, bytesTotal: 8_120_172_544,
+    message: "Writing the verified image.",
+  };
+  assert.equal(await pollUsbWriteProgress({
+    generation,
+    sessionToken,
+    readStatus: async () => ({ status: "writing", progress }),
+    isCurrent: current,
+    applyProgress: (value) => { rendered = `${value.phase}:${value.bytesCompleted}`; },
+  }), true);
+  assert.equal(rendered, "writing:6941573120");
+
+  let attempts = 0;
+  const transientReader = async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("transient IPC failure");
+    return { status: "writing", progress: { ...progress, bytesCompleted: 7_000_000_000 } };
+  };
+  await assert.rejects(pollUsbWriteProgress({
+    generation,
+    sessionToken,
+    readStatus: transientReader,
+    isCurrent: current,
+    applyProgress: () => { rendered = "unexpected first response"; },
+  }), /transient IPC failure/);
+  assert.equal(await pollUsbWriteProgress({
+    generation,
+    sessionToken,
+    readStatus: transientReader,
+    isCurrent: current,
+    applyProgress: (value) => { rendered = `${value.phase}:${value.bytesCompleted}`; },
+  }), true);
+  assert.equal(rendered, "writing:7000000000");
+
+  let resolveOld;
+  const oldResponse = new Promise((resolve) => { resolveOld = resolve; });
+  const oldPoll = pollUsbWriteProgress({
+    generation,
+    sessionToken,
+    readStatus: async () => oldResponse,
+    isCurrent: current,
+    applyProgress: () => { rendered = "stale response rendered"; },
+  });
+  generation += 1;
+  sessionToken = "session-next";
+  resolveOld({ status: "writing", progress });
+  assert.equal(await oldPoll, false);
+  assert.equal(rendered, "writing:7000000000");
 });
 
 test("output directory changes require the selected non-mutating phase", () => {
@@ -504,8 +555,8 @@ test("USB review opens only for a completed image with a selected target", () =>
     "no-completed-output",
   );
   assert.equal(
-    admitUsbReviewOpen({ ...ready, hasCompletedOutput: true, usbWriting: true, exportMode: "both" }, { hasTarget: true }).blocker,
-    "no-completed-output",
+    admitUsbReviewOpen({ ...ready, hasCompletedOutput: true, usbWriting: true, exportMode: "both" }, { hasTarget: true }).accepted,
+    true,
   );
   assert.throws(() => admitUsbReviewOpen(complete, null), /capability must be an object/);
   assert.throws(
@@ -514,7 +565,7 @@ test("USB review opens only for a completed image with a selected target", () =>
   );
 });
 
-test("USB review dismissal remains available until destructive writing starts", () => {
+test("USB review dismissal remains available during destructive writing", () => {
   const cases = [
     [{ hasImage: false }, "empty"],
     [{}, "selected"],
@@ -527,36 +578,9 @@ test("USB review dismissal remains available until destructive writing starts", 
     });
   }
   assert.deepEqual(admitUsbReviewDismiss({ ...ready, hasCompletedOutput: true, usbWriting: true, exportMode: "both" }), {
-    accepted: false, phase: "usb-writing", blocker: "usb-writing",
+    accepted: true, phase: "usb-writing", blocker: null,
   });
   assert.throws(() => admitUsbReviewDismiss({
-    ...ready, buildRunning: true, usbWriting: true,
-  }), /cannot run concurrently/);
-});
-
-test("image export-mode changes only before build mutation begins", () => {
-  assert.deepEqual(admitExportModeSelection({ ...ready, hasImage: false }), {
-    accepted: true, phase: "empty", blocker: null,
-  });
-  assert.deepEqual(admitExportModeSelection(ready), {
-    accepted: true, phase: "selected", blocker: null,
-  });
-  assert.deepEqual(admitExportModeSelection({
-    ...ready, hasCompletedOutput: true, hostReady: false,
-  }), {
-    accepted: false, phase: "complete", blocker: "complete",
-  });
-  const cases = [
-    [{ hasCompletedOutput: true }, "complete", "complete"],
-    [{ buildRunning: true }, "building", "building"],
-    [{ hasCompletedOutput: true, usbWriting: true, exportMode: "both" }, "usb-writing", "usb-writing"],
-  ];
-  for (const [change, phase, blocker] of cases) {
-    assert.deepEqual(admitExportModeSelection({ ...ready, ...change }), {
-      accepted: false, phase, blocker,
-    });
-  }
-  assert.throws(() => admitExportModeSelection({
     ...ready, buildRunning: true, usbWriting: true,
   }), /cannot run concurrently/);
 });

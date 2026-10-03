@@ -788,13 +788,10 @@ async function runBuild(request) {
     addStageLog(`Build manifest: ${output.manifestPath}.`);
     addStageLog(`Export validation: marker=${output.markerPath}; SHA256 ${output.sha256}.`);
     addStageLog(`Source safety: original SHA256 ${output.sourceSha256}; unchanged=true.`);
-    const usbRequested = request.exportMode === "usb" || request.exportMode === "both";
     const completionMessage = "Validated image ready. Continue to choose a removable drive in USB Imaging.";
     const completionTitle = "NVIDIA image ready for USB Imaging";
     setStatus("complete", completionTitle, completionMessage, 100);
-    await finish("complete", usbRequested
-      ? `NVIDIA-mutated image is ready for USB export: ${output.path}`
-      : `NVIDIA-mutated image created: ${output.path}`, output);
+    await finish("complete", `NVIDIA-mutated image created and retained: ${output.path}`, output);
   } catch (error) {
     if (cancelling) return;
     addStageLog(`ERROR: ${error}`);

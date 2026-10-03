@@ -10,13 +10,3 @@ export function admitOutputDirectorySelection(snapshot) {
       : admission.phase;
   return Object.freeze({ accepted, phase: admission.phase, blocker });
 }
-
-export function admitExportModeSelection(snapshot) {
-  const admission = deriveBuildAdmission(snapshot);
-  const accepted = admission.phase === "empty" || admission.phase === "selected";
-  return Object.freeze({
-    accepted,
-    phase: admission.phase,
-    blocker: accepted ? null : admission.blocker,
-  });
-}

@@ -3,8 +3,15 @@ import { deriveBuildAdmission } from "./workflow-state.js";
 const USB_PROGRESS_PHASES = new Map([
   ["unmounting", 0],
   ["authorizing", 1],
-  ["writing", 2],
-  ["verifying", 3],
+  ["locking", 2],
+  ["writing", 3],
+  ["flushing", 4],
+  ["verifying", 5],
+  ["releasing", 6],
+  ["finalizing", 7],
+  ["completed", 8],
+  ["cancelled", 8],
+  ["failed", 8],
 ]);
 
 function requireBoolean(name, value) {
@@ -78,7 +85,7 @@ function validUsbProgress(progress) {
     && typeof progress.message === "string"
     && progress.message.length > 0
     && progress.message.length <= 8192
-    && ((progress.phase === "unmounting" || progress.phase === "authorizing")
+    && ((progress.phase === "unmounting" || progress.phase === "authorizing" || progress.phase === "locking")
       ? progress.bytesCompleted === 0
       : true));
 }
@@ -101,4 +108,17 @@ export function admitUsbWriteProgress(snapshot, progress, previous = null) {
     phase: admission.phase,
     blocker: regressed ? "regressing-progress" : null,
   });
+}
+
+export async function pollUsbWriteProgress({
+  generation,
+  sessionToken,
+  readStatus,
+  isCurrent,
+  applyProgress,
+}) {
+  const status = await readStatus(sessionToken);
+  if (!isCurrent(generation, sessionToken)) return false;
+  if (status?.progress) applyProgress(status.progress);
+  return true;
 }

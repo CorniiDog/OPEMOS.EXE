@@ -14,7 +14,7 @@ concurrency:
 
 env:
   OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-  OPEMOS_CORE_COMMIT: 6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6
+  OPEMOS_CORE_COMMIT: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00
   RUST_TOOLCHAIN: 1.98.1
   NODE_VERSION: 22.23.2
   RUSTFLAGS: -C target-feature=+crt-static
@@ -84,7 +84,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: CorniiDog/OPEMOS
-          ref: 6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6
+          ref: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00
           path: opemos-core-contracts
           fetch-depth: 1
           persist-credentials: false
@@ -131,7 +131,7 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib windows_
         env:
           OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
-          OPEMOS_CORE_EXPECTED_COMMIT: 6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6
+          OPEMOS_CORE_EXPECTED_COMMIT: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00
           RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\scripts\windows-test-v6.manifest
 
       - name: Restore exact same-run Windows runtime source seed
@@ -149,6 +149,7 @@ jobs:
         run: |
           $source = "dist/windows/OPEMOS.EXE-windows-x86_64-unsigned.exe"
           $qemuBefore = @(Get-Process -Name "qemu-system-*" -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" })
+          $webviewBefore = @(Get-Process -Name "msedgewebview2" -ErrorAction SilentlyContinue | ForEach-Object { try { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" } catch {} })
           $process = Start-Process -FilePath $source -PassThru
           try {
             $deadline = [DateTime]::UtcNow.AddSeconds(30)
@@ -183,6 +184,17 @@ jobs:
           if ($qemuAfter.Count -ne 0) {
             throw "Portable executable left new QEMU processes after bounded shutdown: $($qemuAfter -join ', ')"
           }
+          $webviewDeadline = [DateTime]::UtcNow.AddSeconds(15)
+          do {
+            $webviewAfter = @(Get-Process -Name "msedgewebview2" -ErrorAction SilentlyContinue | ForEach-Object { try { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" } catch {} } | Where-Object { $_ -notin $webviewBefore })
+            if ($webviewAfter.Count -eq 0) {
+              break
+            }
+            Start-Sleep -Milliseconds 250
+          } while ([DateTime]::UtcNow -lt $webviewDeadline)
+          if ($webviewAfter.Count -ne 0) {
+            throw "Portable executable left new WebView processes after bounded shutdown: $($webviewAfter -join ', ')"
+          }
           $bundleRoot = (Resolve-Path -LiteralPath "dist/windows").Path
           $state = Join-Path $bundleRoot "state"
           if (Test-Path -LiteralPath $state) {
@@ -190,7 +202,18 @@ jobs:
             if (-not $stateItem.PSIsContainer -or ($stateItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
               throw "Portable smoke-test state is not an owned real directory."
             }
-            Remove-Item -LiteralPath $state -Recurse -Force
+            $stateCleanupDeadline = [DateTime]::UtcNow.AddSeconds(10)
+            do {
+              try {
+                Remove-Item -LiteralPath $state -Recurse -Force -ErrorAction Stop
+              }
+              catch {
+                if ([DateTime]::UtcNow -ge $stateCleanupDeadline) {
+                  throw
+                }
+                Start-Sleep -Milliseconds 250
+              }
+            } while (Test-Path -LiteralPath $state)
           }
           if (Test-Path -LiteralPath $state) {
             throw "Portable smoke-test state survived cleanup."

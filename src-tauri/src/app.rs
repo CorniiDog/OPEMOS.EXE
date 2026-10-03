@@ -189,9 +189,22 @@ pub fn run() {
     app.run(|app_handle, event| match event {
         tauri::RunEvent::WindowEvent {
             label,
-            event: tauri::WindowEvent::CloseRequested { .. },
+            event: tauri::WindowEvent::CloseRequested { api, .. },
             ..
         } if label == "main" => {
+            let usb_write_active = app_handle
+                .state::<Mutex<UsbPreparationManager>>()
+                .lock()
+                .map(|manager| manager.has_active_write())
+                .unwrap_or(true);
+            if usb_write_active {
+                api.prevent_close();
+                let _ = app_handle.emit(
+                    "usb-write-close-refused",
+                    "The application must remain open until the active USB write settles.",
+                );
+                return;
+            }
             cleanup_managed_workers(app_handle);
             app_handle.exit(0);
         }
