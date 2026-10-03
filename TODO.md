@@ -92,6 +92,8 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
+- [ ] Restore the native Windows bundle under enforced Smart App Control on current main. The preserved PR157 route proved the exact user-approved QEMU 8.1.0 installer (`qemu-w64-setup-20230822.exe`, 158,876,152 bytes, SHA-256 `92fa6d148ec3fc25f875cbcbde2a5edc1fc5413ac44a9c77344ce7cbea0764d7`, Authenticode thumbprint `2F92CB990D57719BDCCA2D72134378614A040D9B`) loads without Code Integrity 3033/3077 or Application Popup 26 and functionally completes all QEMU construction phases when Windows/WHPX uses `kernel-irqchip=off`, built-in firmware, and the conservative `qemu64` CPU model. Its published branch now conflicts with protected main and its functional pass lost policy enforcement before final inspection, so it must not merge as-is. Fresh branch `codex/windows-sac-qemu81-current` reapplies only that bounded compatibility behavior to protected main `2be8470a`, preserving the current ranged acquisition, Core `01407aa`, USB lifecycle, maintainer, and UI work. Focused acquisition/host-plan tests, exact Windows artifact construction, an enforced-policy genuine-pointer build with post-build policy and event-log verification, exact Core review, squash merge, and a fresh preserved native Desktop deployment remain.
+
 - [ ] Correct the PR158 native USB lifecycle regression reported on
   `Current-df6c24e5-2026-10-01`. Ordinary SteamOS source selection must keep
   USB Imaging hidden and perform no drive scan; only an independently

@@ -1,5 +1,6 @@
 //! EXE-owned host adapters. Experimental Linux support never supplies Core policy.
 use std::{
+    ffi::OsString,
     fs::File,
     io::Read,
     path::{Path, PathBuf},
@@ -20,7 +21,7 @@ pub(crate) fn plan_host_qemu(
         ("macos", "aarch64", "aarch64") => Ok(("hvf", "virt,accel=hvf", "host")),
         ("macos", "x86_64", "x86_64") => Ok(("hvf", "q35,accel=hvf", "host")),
         ("macos", "aarch64", "x86_64") => Ok(("tcg", "q35,accel=tcg", "max")),
-        ("windows", "x86_64", "x86_64") => Ok(("whpx", "q35,accel=whpx", "max")),
+        ("windows", "x86_64", "x86_64") => Ok(("whpx", "q35", "qemu64")),
         ("linux", "x86_64", "x86_64") => {
             if !enabled {
                 return Err("Experimental Linux testing is disabled. Set OPEMOS_EXPERIMENTAL_LINUX=1 to opt in.".into());
@@ -36,6 +37,34 @@ pub(crate) fn plan_host_qemu(
             "Unsupported host/guest combination: {os}/{host}/{guest}."
         )),
     }
+}
+
+pub(crate) fn host_qemu_acceleration_arguments(os: &str, acceleration: &str) -> Vec<&'static str> {
+    if os == "windows" && acceleration == "whpx" {
+        vec!["-accel", "whpx,kernel-irqchip=off"]
+    } else {
+        Vec::new()
+    }
+}
+
+pub(crate) fn host_qemu_firmware_arguments(
+    os: &str,
+    acceleration: &str,
+    code: &Path,
+    vars: &Path,
+) -> Vec<OsString> {
+    if os == "windows" && acceleration == "whpx" {
+        return Vec::new();
+    }
+    vec![
+        OsString::from("-drive"),
+        OsString::from(format!(
+            "file={},if=pflash,format=raw,readonly=on",
+            code.display()
+        )),
+        OsString::from("-drive"),
+        OsString::from(format!("file={},if=pflash,format=raw", vars.display())),
+    ]
 }
 
 pub(crate) fn bounded_host_text(path: &Path) -> Result<String, String> {
@@ -451,14 +480,42 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn windows_x86_64_plan_requires_whpx_without_software_fallback() {
+    fn windows_x86_64_plan_uses_whpx_and_qemu64_without_software_fallback() {
         assert_eq!(
             plan_host_qemu("windows", "x86_64", "x86_64", false, "", false).unwrap(),
-            ("whpx", "q35,accel=whpx", "max")
+            ("whpx", "q35", "qemu64")
         );
         for (host, guest) in [("aarch64", "x86_64"), ("x86_64", "aarch64")] {
             assert!(plan_host_qemu("windows", host, guest, false, "", false).is_err());
         }
+    }
+
+    #[test]
+    fn windows_whpx_disables_the_kernel_irqchip_for_qemu_8_1() {
+        assert_eq!(
+            host_qemu_acceleration_arguments("windows", "whpx"),
+            ["-accel", "whpx,kernel-irqchip=off"]
+        );
+        assert!(host_qemu_acceleration_arguments("windows", "tcg").is_empty());
+        assert!(host_qemu_acceleration_arguments("linux", "whpx").is_empty());
+    }
+
+    #[test]
+    fn windows_whpx_uses_builtin_bios_to_avoid_the_pflash_mmio_failure() {
+        let code = Path::new(r"C:\runtime\edk2-x86_64-code.fd");
+        let vars = Path::new(r"C:\runtime\uefi-vars.fd");
+        assert!(host_qemu_firmware_arguments("windows", "whpx", code, vars).is_empty());
+        assert_eq!(
+            host_qemu_firmware_arguments("linux", "kvm", code, vars),
+            [
+                OsString::from("-drive"),
+                OsString::from(
+                    r"file=C:\runtime\edk2-x86_64-code.fd,if=pflash,format=raw,readonly=on"
+                ),
+                OsString::from("-drive"),
+                OsString::from(r"file=C:\runtime\uefi-vars.fd,if=pflash,format=raw")
+            ]
+        );
     }
     #[test]
     fn distribution_and_memory_reports_are_bounded_and_fail_closed() {
