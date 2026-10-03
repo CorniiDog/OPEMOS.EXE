@@ -5184,7 +5184,8 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
             if error != ERROR_MORE_DATA || extents.len() >= 1024 * 1024 {
                 return Err(format!(
                     "Could not obtain disk extents for Windows volume GUID {} (Windows error {}).",
-                    path.display(), error
+                    path.display(),
+                    error
                 ));
             }
             extents.resize(extents.len() * 2, 0);
