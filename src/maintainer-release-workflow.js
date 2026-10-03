@@ -1,4 +1,4 @@
-export const CORE_MAINTAINER_WORKFLOW_COMMIT = "bf882ba8bbbd4d4a920de83a4d70102071a67804";
+export const CORE_MAINTAINER_WORKFLOW_COMMIT = "01407aa6174b80e92cb7f3dcb534ade5cdd7bf00";
 const steps = [
   ["resolve", "bootstrap/build_for_target.sh", "build-plan-json", ["target", "source"]],
   ["build", "bootstrap/build_for_target.sh", "build-result-v1", ["target", "source", "authenticatedHeaders"]],

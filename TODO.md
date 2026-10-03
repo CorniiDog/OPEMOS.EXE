@@ -3698,6 +3698,21 @@ must be reported; a default-suite pass does not imply hardware certification.
   and Windows artifact pins so its final Desktop candidate includes the
   independently labeled overall/current-stage progress and monotonic overall
   progress guard. PR63 remains separate and is not claimed included.
+  Core PR63 subsequently squash-merged to protected main as
+  `01407aa6174b80e92cb7f3dcb534ade5cdd7bf00`, tree
+  `e9960c0f243d3fc68bd54dfe7870606b6ef151cf`. After the user's explicit
+  development-phase publication approval, canonical GitHub release
+  `402608289` published exact tag
+  `opemos-installer-bundle-01407aa6174b80e92cb7f3dcb534ade5cdd7bf00`
+  with sole asset `608189795`. Its independently downloaded 22,408-byte,
+  122-file manifest is byte-identical to the prepared input at SHA-256
+  `642b290fc4eff163248ef6861d25c3332eff6fa1155385507c5e1fffd66bc2a0`,
+  bundle ID
+  `93066636eb752184db3ce96cc13b009196e215370f335d04f1a5c75edfff67d5`,
+  and support commit `01407aa6174b80e92cb7f3dcb534ade5cdd7bf00`.
+  The changed PR159 head now consumes that exact ordinary Core dependency
+  across runtime, maintainer, CI, and Windows artifact pins; fresh checks,
+  exact Windows artifact/acceptance, and exact changed-head Core review remain.
   The final-head Windows job then reproduced the same HTTP 522
   twice while acquiring an existing pinned runtime archive, before compilation.
   The initial acquisition correction retried only HTTP 522 at bounded
