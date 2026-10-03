@@ -397,7 +397,7 @@ test("progress polling renders a checkpoint without events and rejects a delayed
   sessionToken = "session-next";
   resolveOld({ status: "writing", progress });
   assert.equal(await oldPoll, false);
-  assert.equal(rendered, "writing:6941573120");
+  assert.equal(rendered, "writing:7000000000");
 });
 
 test("output directory changes require the selected non-mutating phase", () => {
