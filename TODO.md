@@ -203,10 +203,14 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   device-number query mapped it exactly to selected disk 2. The bounded
   correction permits the existing exact device-number fallback for any
   non-resizable removable-volume extent failure; fixed volumes, foreign disk
-  numbers, non-disk devices, and multi-extent results remain refused. Its
-  focused Rust regression passes 1/1 and the explicit local Node workflow suite
-  passes 24/24 through `heavy.sh`. Changed-head CI/artifact and failed-stage
-  disposable virtual-USB acceptance remain.
+  numbers, non-disk devices, and multi-extent results remain refused. The first
+  changed-head VM retry exposed Windows error 1 plus a transient failure of that
+  read-only device-number query; the target remained unopened and unwritten.
+  The same guarded query now retries five times at 100-ms intervals and reports
+  both Win32 errors if it cannot establish the exact disk number. Its focused
+  Rust regression passes 1/1 and the explicit local Node workflow suite passes
+  24/24 through `heavy.sh`. Changed-head CI/artifact and failed-stage disposable
+  virtual-USB acceptance remain.
 
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.

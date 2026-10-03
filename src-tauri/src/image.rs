@@ -5128,6 +5128,7 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
             })?;
         let mut extents = vec![0_u8; 4096];
         let mut fallback_selected = None;
+        let mut fallback_error = None;
         let returned = loop {
             let mut returned = 0_u32;
             let ok = unsafe {
@@ -5152,40 +5153,55 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
                     device_number: 0,
                     partition_number: 0,
                 };
-                let mut storage_bytes = 0_u32;
-                if unsafe {
-                    DeviceIoControl(
-                        inspect.as_raw_handle(),
-                        IOCTL_STORAGE_GET_DEVICE_NUMBER,
-                        std::ptr::null_mut(),
-                        0,
-                        (&mut storage as *mut StorageDeviceNumber).cast(),
-                        std::mem::size_of::<StorageDeviceNumber>() as u32,
-                        &mut storage_bytes,
-                        std::ptr::null_mut(),
-                    )
-                } != 0
-                    && storage_bytes as usize >= std::mem::size_of::<StorageDeviceNumber>()
-                {
-                    fallback_selected = Some(
-                        windows_removable_volume_device_number_fallback(
-                            drive_type,
-                            storage.device_type,
-                            storage.device_number,
-                            number,
+                for attempt in 0..5 {
+                    let mut storage_bytes = 0_u32;
+                    let storage_ok = unsafe {
+                        DeviceIoControl(
+                            inspect.as_raw_handle(),
+                            IOCTL_STORAGE_GET_DEVICE_NUMBER,
+                            std::ptr::null_mut(),
+                            0,
+                            (&mut storage as *mut StorageDeviceNumber).cast(),
+                            std::mem::size_of::<StorageDeviceNumber>() as u32,
+                            &mut storage_bytes,
+                            std::ptr::null_mut(),
                         )
-                        .map_err(|fallback_error| {
-                            format!("{fallback_error} Volume GUID: {}", path.display())
-                        })?,
-                    );
+                    } != 0;
+                    if storage_ok
+                        && storage_bytes as usize >= std::mem::size_of::<StorageDeviceNumber>()
+                    {
+                        fallback_selected = Some(
+                            windows_removable_volume_device_number_fallback(
+                                drive_type,
+                                storage.device_type,
+                                storage.device_number,
+                                number,
+                            )
+                            .map_err(|fallback_error| {
+                                format!("{fallback_error} Volume GUID: {}", path.display())
+                            })?,
+                        );
+                        break;
+                    }
+                    fallback_error = Some(if storage_ok {
+                        format!("truncated device-number response ({storage_bytes} bytes)")
+                    } else {
+                        format!("Windows error {}", unsafe { GetLastError() })
+                    });
+                    if attempt < 4 {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
+                if fallback_selected.is_some() {
                     break 0;
                 }
             }
             if error != ERROR_MORE_DATA || extents.len() >= 1024 * 1024 {
                 return Err(format!(
-                    "Could not obtain disk extents for Windows volume GUID {} (Windows error {}).",
+                    "Could not obtain disk extents for Windows volume GUID {} (Windows error {}; device-number fallback {}).",
                     path.display(),
-                    error
+                    error,
+                    fallback_error.as_deref().unwrap_or("was not eligible")
                 ));
             }
             extents.resize(extents.len() * 2, 0);
