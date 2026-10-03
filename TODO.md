@@ -243,7 +243,27 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   GiB formatting. The minimal correction imports that formatter into the
   main-window runtime. Focused workflow/layout/progress tests pass 52/52 through
   `heavy.sh`; changed-head CI/artifact, corrected candidate deployment, and the
-  failed-stage genuine-pointer disposable-write acceptance remain.
+  failed-stage genuine-pointer disposable-write acceptance remain. Exact head
+  `7bd6c36c` passed all ten checks and produced artifact `11271360418`; its
+  2,237,339,218-byte archive has SHA-256
+  `aeb5c60e7b12afa2b9e4ddf3cb4009d62c31d3ceca99cc638a3ea2c46465b6b0`
+  and contains the 21,562,368-byte executable at SHA-256
+  `c6a1073e9eec4d36a2ba9e523d179ae45c91157aa3632437c09171df69ae6547`.
+  Full closure passed twice before the closed candidate was deployed to the new
+  preserved Desktop folder
+  `Test-PR159-7bd6c36c-USB-Progress-Fix-2026-10-03`. The failed-stage VM rerun
+  then visibly advanced through Revalidating and Authorizing, proving the
+  formatter correction, but failed closed before opening the disposable disk:
+  the guest's empty `A:` removable/no-media volume returned Windows error 1 for
+  both extent and device-number queries. The exact 32-GiB target remained at
+  zero allocated blocks and both overlays verified clean after graceful
+  shutdown. The bounded follow-up ignores only an uninspectable removable
+  volume that has at least one mount path and for which every mounted root
+  independently reports `ERROR_NOT_READY`; fixed volumes, present media,
+  unmounted volumes, ambiguous/truncated responses, and any other error remain
+  refused. Its focused removable/fixed/no-mount/present-media regression passes
+  1/1 through `heavy.sh`; changed-head CI/artifact and the failed-stage VM write
+  remain.
 
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.

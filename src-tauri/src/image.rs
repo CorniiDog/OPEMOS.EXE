@@ -3748,6 +3748,16 @@ fn windows_removable_volume_device_number_fallback_allowed(drive_type: u32, erro
     drive_type == DRIVE_REMOVABLE && error != ERROR_MORE_DATA
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn windows_uninspectable_removable_volume_can_be_skipped(
+    drive_type: u32,
+    mount_path_count: usize,
+    every_mount_reports_no_media: bool,
+) -> bool {
+    const DRIVE_REMOVABLE: u32 = 2;
+    drive_type == DRIVE_REMOVABLE && mount_path_count > 0 && every_mount_reports_no_media
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn validate_system_authopen() -> Result<(), String> {
     use std::os::unix::fs::MetadataExt as _;
@@ -5049,6 +5059,18 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
         fn FindNextVolumeW(find: *mut c_void, name: *mut u16, length: u32) -> i32;
         fn FindVolumeClose(find: *mut c_void) -> i32;
         fn GetDriveTypeW(root_path: *const u16) -> u32;
+        fn GetVolumePathNamesForVolumeNameW(
+            volume_name: *const u16,
+            paths: *mut u16,
+            paths_bytes: u32,
+            required_bytes: *mut u32,
+        ) -> i32;
+        fn GetDiskFreeSpaceExW(
+            directory_name: *const u16,
+            free_bytes_available: *mut u64,
+            total_bytes: *mut u64,
+            total_free_bytes: *mut u64,
+        ) -> i32;
         fn GetLastError() -> u32;
         fn DeviceIoControl(
             device: *mut c_void,
@@ -5075,6 +5097,7 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
     }
     const INVALID_HANDLE_VALUE: *mut c_void = -1_isize as *mut c_void;
     const ERROR_NO_MORE_FILES: u32 = 18;
+    const ERROR_NOT_READY: u32 = 21;
     const ERROR_MORE_DATA: u32 = 234;
     const DRIVE_CDROM: u32 = 5;
     const FILE_SHARE_READ: u32 = 0x0000_0001;
@@ -5194,6 +5217,57 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
                 }
                 if fallback_selected.is_some() {
                     break 0;
+                }
+                let mut paths = vec![0_u16; 1024];
+                let mut required = 0_u32;
+                let paths_ok = unsafe {
+                    GetVolumePathNamesForVolumeNameW(
+                        name.as_ptr(),
+                        paths.as_mut_ptr(),
+                        paths.len() as u32,
+                        &mut required,
+                    )
+                } != 0;
+                if paths_ok {
+                    let mut mount_path_count = 0_usize;
+                    let mut every_mount_reports_no_media = true;
+                    let mut start = 0_usize;
+                    while start < paths.len() && paths[start] != 0 {
+                        let relative_end = paths[start..]
+                            .iter()
+                            .position(|value| *value == 0)
+                            .unwrap_or(paths.len() - start);
+                        let end = start + relative_end;
+                        if end == paths.len() {
+                            every_mount_reports_no_media = false;
+                            break;
+                        }
+                        mount_path_count += 1;
+                        let mut free = 0_u64;
+                        let mut total = 0_u64;
+                        let mut total_free = 0_u64;
+                        let ready = unsafe {
+                            GetDiskFreeSpaceExW(
+                                paths[start..].as_ptr(),
+                                &mut free,
+                                &mut total,
+                                &mut total_free,
+                            )
+                        } != 0;
+                        if ready || unsafe { GetLastError() } != ERROR_NOT_READY {
+                            every_mount_reports_no_media = false;
+                            break;
+                        }
+                        start = end + 1;
+                    }
+                    if windows_uninspectable_removable_volume_can_be_skipped(
+                        drive_type,
+                        mount_path_count,
+                        every_mount_reports_no_media,
+                    ) {
+                        fallback_selected = Some(false);
+                        break 0;
+                    }
                 }
             }
             if error != ERROR_MORE_DATA || extents.len() >= 1024 * 1024 {
@@ -6011,6 +6085,26 @@ mod windows_usb_inventory_tests {
         assert!(!windows_removable_volume_device_number_fallback_allowed(
             DRIVE_FIXED,
             21,
+        ));
+        assert!(windows_uninspectable_removable_volume_can_be_skipped(
+            DRIVE_REMOVABLE,
+            1,
+            true,
+        ));
+        assert!(!windows_uninspectable_removable_volume_can_be_skipped(
+            DRIVE_REMOVABLE,
+            0,
+            true,
+        ));
+        assert!(!windows_uninspectable_removable_volume_can_be_skipped(
+            DRIVE_REMOVABLE,
+            1,
+            false,
+        ));
+        assert!(!windows_uninspectable_removable_volume_can_be_skipped(
+            DRIVE_FIXED,
+            1,
+            true,
         ));
     }
 
