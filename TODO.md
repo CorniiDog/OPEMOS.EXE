@@ -190,7 +190,23 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   heading also replaces the redundant nested label. The targeted Rust
   event/checkpoint/receipt regression passes 1/1 through `heavy.sh`; executable
   frontend CI, authenticated Windows artifact, new absent preserved-folder
-  candidate deployment, then disposable virtual-USB acceptance remain.
+  candidate deployment, then disposable virtual-USB acceptance remain. Exact
+  head `583ee790` passed all ten checks; authenticated artifact `11263079748`
+  contains the 21,557,760-byte executable at SHA-256
+  `06b96ead98e9d8521814013a307a57a886223c963470028ce92987e1d8c6b07f`
+  and was deployed closed to new preserved-folder candidate
+  `Test-PR159-583ee790-USB-Fixes-2026-10-03`. In the disposable Windows VM,
+  genuine-pointer selection validated the retained NVIDIA image and discovered
+  the exact 32-GiB virtual USB on first display. The guarded write then failed
+  before opening or modifying the target because its partitionless removable
+  volume GUID transiently refused an extent query even though an independent
+  device-number query mapped it exactly to selected disk 2. The bounded
+  correction permits the existing exact device-number fallback for any
+  non-resizable removable-volume extent failure; fixed volumes, foreign disk
+  numbers, non-disk devices, and multi-extent results remain refused. Its
+  focused Rust regression passes 1/1 and the explicit local Node workflow suite
+  passes 24/24 through `heavy.sh`. Changed-head CI/artifact and failed-stage
+  disposable virtual-USB acceptance remain.
 
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.
