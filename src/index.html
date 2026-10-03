@@ -161,7 +161,15 @@
             <div class="usb-dialog-actions">
                 <button id="arm-usb-preflight" class="primary hidden" type="button" disabled>Write &amp; Verify USB</button>
             </div>
-            <p id="usb-active-warning" class="usb-active-warning hidden" role="alert"><strong>Do not disconnect the USB drive.</strong> Keep it connected until writing, read-back verification, flushing, and safe ejection are complete.</p>
+            <div id="usb-dialog-progress" class="usb-write-progress hidden" role="status" aria-live="polite">
+                <div class="usb-write-progress-heading">
+                    <strong id="usb-dialog-progress-phase">Preparing USB write</strong>
+                    <span id="usb-dialog-progress-percent">Waiting…</span>
+                </div>
+                <progress id="usb-dialog-progress-bar" max="100" aria-label="USB write progress"></progress>
+                <small id="usb-dialog-progress-detail">Revalidating the exact image and removable drive.</small>
+            </div>
+            <p id="usb-active-warning" class="usb-active-warning hidden" role="alert"><strong>Do not disconnect the USB drive or close OPEMOS.</strong> You may dismiss this panel; progress remains visible in the Builder until writing, read-back verification, flushing, and safe ejection are complete.</p>
             <p id="usb-message" class="result-message"></p>
         </section>
 
@@ -288,17 +296,9 @@
         >
             <div class="build-options-grid">
                 <div class="source-choice export-choice" role="group" aria-labelledby="output-options-title">
-                    <h3 id="output-options-title" class="control-group-title">Output destinations</h3>
-                    <label class="export-image-toggle" for="export-image">
-                        <input id="export-image" type="checkbox" checked>
-                        <span>
-                            <strong>Keep exported image</strong>
-                            <small>Checked by default. Uncheck only when writing exclusively to a selected USB drive.</small>
-                        </span>
-                    </label>
+                    <h3 id="output-options-title" class="control-group-title">Output folder</h3>
                     <div class="output-destination">
                         <span>
-                            <strong>Output folder</strong>
                             <small id="output-folder-label">Alongside the source image</small>
                         </span>
                         <span class="output-destination-actions">
@@ -360,6 +360,14 @@
                     <select id="usb-target" size="3" disabled aria-label="Detected removable USB drives">
                         <option value="" disabled selected>Connect a USB drive, then refresh…</option>
                     </select>
+                    <div id="usb-inline-progress" class="usb-write-progress hidden" role="status" aria-live="polite">
+                        <div class="usb-write-progress-heading">
+                            <strong id="usb-inline-progress-phase">Preparing USB write</strong>
+                            <span id="usb-inline-progress-percent">Waiting…</span>
+                        </div>
+                        <progress id="usb-inline-progress-bar" max="100" aria-label="USB write progress"></progress>
+                        <small id="usb-inline-progress-detail">Revalidating the exact image and removable drive.</small>
+                    </div>
                     <p id="usb-picker-message" class="usb-picker-message" aria-live="polite">No USB drive will be written unless one is selected.</p>
                     <button id="review-usb-target" class="secondary hidden" type="button" aria-haspopup="dialog" aria-controls="usb-card" aria-expanded="false">Review &amp; Write Selected USB…</button>
                 </div>

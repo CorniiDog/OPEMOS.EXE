@@ -8,7 +8,7 @@ const SETUP_NODE = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020"
 const RUST = "dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87";
 const UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02";
 const DOWNLOAD = "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093";
-const CORE = "6a0128ecd8d42a73621ed7fa5b25e16ff00bf6d6";
+const CORE = "01407aa6174b80e92cb7f3dcb534ade5cdd7bf00";
 const bundle = await readFile(new URL("../bundle_windows.ps1", import.meta.url), "utf8");
 
 function requireText(text, value, label) {
@@ -74,9 +74,15 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, '$qemuDeadline = [DateTime]::UtcNow.AddSeconds(5)', "the bounded post-close QEMU check");
   requireText(text, 'Where-Object { $_ -notin $qemuBefore }', "new-QEMU identity comparison");
   requireText(text, 'if ($qemuAfter.Count -ne 0) {', "the no-orphan QEMU gate");
+  requireText(text, '$webviewBefore = @(Get-Process -Name "msedgewebview2"', "the pre-start WebView identity inventory");
+  requireText(text, 'ForEach-Object { try { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" } catch {} }', "race-safe WebView identity capture");
+  requireText(text, '$webviewDeadline = [DateTime]::UtcNow.AddSeconds(15)', "the bounded post-close WebView check");
+  requireText(text, 'Where-Object { $_ -notin $webviewBefore }', "new-WebView identity comparison");
+  requireText(text, 'if ($webviewAfter.Count -ne 0) {', "the no-orphan WebView gate");
   requireText(text, '$state = Join-Path $bundleRoot "state"', "exact bundle-local smoke-state selection");
   requireText(text, '($stateItem.Attributes -band [IO.FileAttributes]::ReparsePoint)', "linked smoke-state refusal");
   requireText(text, 'Remove-Item -LiteralPath $state -Recurse -Force', "owned smoke-state cleanup");
+  requireText(text, '$stateCleanupDeadline = [DateTime]::UtcNow.AddSeconds(10)', "bounded smoke-state lock-release retry");
   requireText(text, 'throw "Portable smoke-test state survived cleanup."', "post-cleanup absence gate");
   requireText(text, "Get-AuthenticodeSignature -LiteralPath $source", "Authenticode inspection");
   requireText(text, "SignatureStatus]::NotSigned", "the unsigned-only gate");

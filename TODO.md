@@ -92,6 +92,227 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
+- [ ] Correct the PR158 native USB lifecycle regression reported on
+  `Current-df6c24e5-2026-10-01`. Ordinary SteamOS source selection must keep
+  USB Imaging hidden and perform no drive scan; only an independently
+  manifest/hash-validated NVIDIA output may reveal it. Build completion must
+  refresh against that exact output and restore a prior target only when both
+  identifier and identity token still match. Windows helper phases `locking`,
+  `writing`, `flushing`, `verifying`, `releasing`, `finalizing`, and
+  `completed` must advance monotonically in both the modal and persistent
+  inline status. Dismissing the modal during an active write must neither
+  cancel nor hide progress, and a native main-window close request must be
+  refused until the managed write settles so its receipt can be consumed.
+  Read-only native evidence from user-started exchange
+  `opemos-usb-writer-20232-1790908871181504100` showed the elevated helper
+  continued after parent PID 20232 disappeared, completed 8,120,172,544 bytes,
+  verified SHA-256
+  `6bd43e747392edf007194502f2a64e6e5ddb3a1ce6b71bcd3837641a1a25cdb6`,
+  and safely ejected the device, but left its success receipt unconsumed.
+  Nothing interrupted, cancelled, or wrote that user-started physical device.
+  Focused JS/Rust tests, three analysis passes, required CI, a disposable
+  32-GiB virtual-USB partial/genuine-click Windows acceptance, exact Core
+  review, squash merge, exact artifact validation, and a fresh preserved-folder
+  native deployment remain.
+  User-driven native validation of PR159 head `f0905e2e` subsequently confirmed
+  that ordinary-source selection now keeps USB Imaging hidden, and exposed three
+  remaining exact-head gaps before final acceptance: a verified build output was
+  not adopted as the Builder's selected image, completed-output mode retained
+  irrelevant output-destination/planned-output controls, and the first removable
+  inventory could require repeated manual refresh plus reinsertion. The coherent
+  remediation adopts only the manifest/hash-validated output path as the current
+  image, hides only those completed-output controls, and performs at most three
+  context-bound first-show scans (1s then 2s delay) while preserving manual
+  Refresh and exact identifier/identity-token restoration. Analysis pass 1
+  traced ordinary, imported-complete, and build-complete state transitions;
+  pass 2 traced supersession, empty/error inventory, retry exhaustion, and exact
+  target restoration; pass 3 confirmed write admission, destructive phrase,
+  identity, capacity, helper progress, dismiss/reopen, receipt, and eject gates
+  are unchanged. Focused state/layout tests cover bounded retry stop conditions,
+  exact selected-output adoption, completed-output layout, and manual Refresh.
+  This host has no JavaScript runtime, so remote required CI is the first
+  executable frontend validation for the changed head; the recovered disposable
+  Windows stage remains authenticated and preserved for the required partial.
+  Exact candidate `0501ab3` then passed all ten CI checks and, in the recovered
+  Windows VM, genuinely selected and adopted the authenticated 8,120,172,544-byte
+  NVIDIA output, hid the completed-output destination controls, and listed the
+  32-GiB virtual USB on its first display without manual Refresh. The first
+  guarded write reached elevation but failed before opening or writing the
+  target because an unrelated empty removable `A:` volume returned
+  `ERROR_INVALID_FUNCTION` for `IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS`; parent
+  and helper settled, the exchange was consumed, and the virtual-USB backing
+  file remained at zero allocated blocks. The bounded correction uses
+  `IOCTL_STORAGE_GET_DEVICE_NUMBER` only for removable volume GUIDs that report
+  disk-extents unsupported, selects only an exact matching disk-device number,
+  skips foreign/non-disk removable devices, and preserves refusal for fixed,
+  ambiguous, or uninspectable volumes. Focused exact-selected, foreign-disk,
+  non-disk, fixed-disk-refusal, multi-extent, and empty-extent regressions pass
+  through `heavy.sh`. Changed-head Windows compilation and bundle startup then
+  passed, but smoke-test teardown reproduced a bounded WebView shutdown race:
+  a newly created WebView process still held its owned cache journal when state
+  cleanup began. The failed-stage correction inventories pre-existing WebView
+  identities, requires every candidate-created WebView process to drain within
+  15 seconds after application shutdown, and retries only the verified real
+  bundle-local state-directory removal for 10 seconds while Windows releases
+  the final handle. It never terminates an unrelated process and retains the
+  no-orphan and post-cleanup absence gates. Changed-head CI and genuine-click
+  write/dismiss/reopen acceptance remain. The first corrected workflow run
+  reached the new WebView drain, where a child exited between process discovery
+  and `StartTime` access. Identity capture now ignores only that vanished
+  process-object race; live identities remain compared by PID plus start ticks.
+  The follow-on native reproduction on candidate `b19424df` proved elevated
+  helper progress was emitted globally while the frontend subscribed to the
+  `main` webview window. The current PR159 correction removes the obsolete
+  export-mode choice, always retains the verified build output, clears
+  build/companion state, and routes that output through the ordinary
+  `selectImage` manifest/hash-validation path before fresh USB enumeration.
+  Writer progress now targets only the `main` window; a Tauri mock-runtime test
+  proves backend-to-window delivery excludes the companion and that the exact
+  successful elevated receipt is accepted. Focused frontend tests pass 57/57
+  and the targeted Rust event/receipt regression passes 1/1 through `heavy.sh`.
+  The wider JS run passed 375, skipped one absent-sibling fixture, and had two
+  unrelated harness-environment failures because child scripts could not find
+  `node` in the wrapper PATH; its changed Builder/USB tests passed. Updated
+  Windows CI artifact, preserved-folder native candidate deployment, disposable
+  virtual-USB acceptance, exact Core review, and merge remain. User testing of
+  deployed `1820c660` then reproduced two narrower gaps: Windows could retain a
+  stale removable inventory until physical reconnection, and the exact elevated
+  helper advanced to `writing` at 3,833,593,856/8,120,172,544 bytes while the
+  frontend remained at `Revalidating`. The current correction refreshes the
+  existing Windows storage cache before the unchanged guarded disk inventory,
+  gives a clear reconnect instruction when a previously safely-ejected drive is
+  genuinely absent, and checkpoints each monotonic helper update against the
+  exact active preflight token. A single-flight, generation-and-token-checked
+  frontend poll consumes that checkpoint through the existing status command;
+  events remain the immediate path, stale delayed responses cannot enter a later
+  write, and native plus frontend close refusal remain in force with visible
+  dismiss-without-cancel guidance. The requested top-level `Output folder`
+  heading also replaces the redundant nested label. The targeted Rust
+  event/checkpoint/receipt regression passes 1/1 through `heavy.sh`; executable
+  frontend CI, authenticated Windows artifact, new absent preserved-folder
+  candidate deployment, then disposable virtual-USB acceptance remain. Exact
+  head `583ee790` passed all ten checks; authenticated artifact `11263079748`
+  contains the 21,557,760-byte executable at SHA-256
+  `06b96ead98e9d8521814013a307a57a886223c963470028ce92987e1d8c6b07f`
+  and was deployed closed to new preserved-folder candidate
+  `Test-PR159-583ee790-USB-Fixes-2026-10-03`. In the disposable Windows VM,
+  genuine-pointer selection validated the retained NVIDIA image and discovered
+  the exact 32-GiB virtual USB on first display. The guarded write then failed
+  before opening or modifying the target because its partitionless removable
+  volume GUID transiently refused an extent query even though an independent
+  device-number query mapped it exactly to selected disk 2. The bounded
+  correction permits the existing exact device-number fallback for any
+  non-resizable removable-volume extent failure; fixed volumes, foreign disk
+  numbers, non-disk devices, and multi-extent results remain refused. The first
+  changed-head VM retry exposed Windows error 1 plus a transient failure of that
+  read-only device-number query; the target remained unopened and unwritten.
+  The same guarded query now retries five times at 100-ms intervals and reports
+  both Win32 errors if it cannot establish the exact disk number. Its focused
+  Rust regression passes 1/1 and the explicit local Node workflow suite passes
+  24/24 through `heavy.sh`. Changed-head CI/artifact and failed-stage disposable
+  virtual-USB acceptance remain. Native testing of the later desktop candidate
+  proved that helper checkpoints could advance to `writing` while the existing
+  text-only USB view still appeared stuck at `Revalidating`. The current
+  correction adds explicit persistent-inline and dismissible-dialog progress
+  surfaces with an honest indeterminate preparation state, then renders every
+  admitted byte-backed checkpoint as phase, copied/total bytes, percentage, and
+  a visible progress bar. It also places the top-level Output folder and NVIDIA
+  source groups side by side at wide widths and stacks them at the existing
+  narrow-window breakpoint. The executable fake-DOM regression proves both
+  progress surfaces transition from indeterminate to the exact observed
+  2,990,538,752/8,120,172,544-byte writing state; workflow/layout tests pass
+  51/51 through `heavy.sh` with the explicit local Node runtime. Required CI,
+  authenticated Windows artifact, a new preserved-folder desktop candidate,
+  and genuine-pointer disposable virtual-USB proof of visibly advancing
+  progress remain before this correction may be called fixed. Exact head
+  `5d5e2166` then passed all ten checks, consumed the authenticated Core
+  `bf882ba8` bundle, and produced the 21,562,368-byte Windows executable at
+  SHA-256
+  `cceddcb6f5688354f9c988be8dae7e759b3c51417247b8b50bf894aceb927a8c`.
+  Genuine-pointer VM acceptance selected and manifest/hash-validated the
+  preserved NVIDIA image, discovered the exact disposable 32-GiB USB on first
+  display, selected it, typed `ERASE`, and invoked the single write action.
+  Before any helper, exchange directory, or device write began, the new view
+  raised `ReferenceError: formatBytes is not defined`; the virtual target
+  remained unmodified at zero allocated blocks and both overlays verified
+  clean after graceful application/guest shutdown. Analysis pass 1 traced the
+  exception to the main-window module calling a formatter scoped only to the
+  separate build companion; pass 2 verified the progress renderer, admission,
+  session, identity, and writer guards require no change; pass 3 exercised the
+  shared exported USB formatter and both progress surfaces, including exact
+  GiB formatting. The minimal correction imports that formatter into the
+  main-window runtime. Focused workflow/layout/progress tests pass 52/52 through
+  `heavy.sh`; changed-head CI/artifact, corrected candidate deployment, and the
+  failed-stage genuine-pointer disposable-write acceptance remain. Exact head
+  `7bd6c36c` passed all ten checks and produced artifact `11271360418`; its
+  2,237,339,218-byte archive has SHA-256
+  `aeb5c60e7b12afa2b9e4ddf3cb4009d62c31d3ceca99cc638a3ea2c46465b6b0`
+  and contains the 21,562,368-byte executable at SHA-256
+  `c6a1073e9eec4d36a2ba9e523d179ae45c91157aa3632437c09171df69ae6547`.
+  Full closure passed twice before the closed candidate was deployed to the new
+  preserved Desktop folder
+  `Test-PR159-7bd6c36c-USB-Progress-Fix-2026-10-03`. The failed-stage VM rerun
+  then visibly advanced through Revalidating and Authorizing, proving the
+  formatter correction, but failed closed before opening the disposable disk:
+  the guest's empty `A:` removable/no-media volume returned Windows error 1 for
+  both extent and device-number queries. The exact 32-GiB target remained at
+  zero allocated blocks and both overlays verified clean after graceful
+  shutdown. The bounded follow-up ignores only an uninspectable removable
+  volume that has at least one mount path and for which every mounted root
+  independently reports `ERROR_NOT_READY`; fixed volumes, present media,
+  unmounted volumes, ambiguous/truncated responses, and any other error remain
+  refused. Its focused removable/fixed/no-mount/present-media regression passes
+  1/1 through `heavy.sh`. Exact head `48fda523` passed all ten checks; artifact
+  `11271651079` is 2,237,340,241 bytes/SHA-256
+  `b91f243723ea10fb6eba78e70e43e2c7f5f72f28162f8d28a3abf9e93bb6bb8a`
+  and contains the 21,563,392-byte EXE at SHA-256
+  `3b77de56e981477578ff360d470e55f4bcb6ed5401519cfac72a996d31dd8a0f`.
+  Its 5,671-file runtime closure passed before closed deployment to new preserved
+  folder `Test-PR159-48fda523-NoMedia-USB-Fix-2026-10-03`. The genuine-pointer
+  failed-stage rerun validated the image, discovered and selected the exact
+  disposable 32-GiB USB, typed `ERASE`, showed Revalidating then Authorizing,
+  and accepted UAC, but still failed closed before opening disk 2. The exact
+  helper reported Windows error 1 from both identity queries on phantom `A:`;
+  the free-space readiness probe did not admit it. A direct native-API probe
+  proves that same root is removable, not ready, and `GetVolumeInformationW`
+  fails with exact `ERROR_NOT_READY`, while no helper/exchange survived. The
+  next bounded correction uses that Windows volume-readiness API as the
+  independent no-media proof; changed-head checks/artifact and the same failed
+  VM stage remain. Exact head `8ca97aa4` passed all ten checks, produced the
+  21,563,904-byte executable at SHA-256
+  `b1ad9e29d01598874699580914406a7d7d4bcdf72cb4d7262c79962d24339fc7`,
+  and was deployed closed to new preserved Desktop folder
+  `Test-PR159-8ca97aa4-NoMedia-Ready-Fix-2026-10-03`. Genuine-pointer VM
+  acceptance again failed closed before opening disk 2 on the same phantom
+  volume. An exact read-only guest API reproduction proved why: after the
+  extent query and all five device-number queries return Windows error 1,
+  mount-path enumeration returns exact root `A:\`, but `GetVolumeInformationW`
+  with null output buffers returns `ERROR_INVALID_PARAMETER` (87); the same
+  call with ordinary bounded output buffers returns `ERROR_NOT_READY` (21).
+  The current correction supplies those bounded buffers and retains refusal
+  for ready media and every error other than 21. The target remained
+  34,359,738,368 bytes with zero allocated blocks, and both overlays passed
+  `qemu-img check` after cleanup. The focused exact-admission regression passes
+  1/1 through `heavy.sh`. Exact head `cfbee21e` passed all eight source checks;
+  artifact `11275740983` is 2,237,343,826 bytes/SHA-256
+  `af950d0248bf5db4744b90c56ffc53de272663046bc035c207d6679f740e340c`
+  and contains the 21,566,976-byte EXE at SHA-256
+  `b5bed4e9524ca8b576bfae44af0171838d97aba05e2803417a4aec1834deab0e`.
+  Its authenticated closure passed before closed deployment to new preserved
+  folder `Test-PR159-cfbee21e-Buffered-NoMedia-Fix-2026-10-03`. The same
+  genuine-pointer failed stage disproved that buffer-only correction: it again
+  failed closed before opening disk 2. Exact native probes then isolated the
+  handle-lifetime cause. With the read-only volume-GUID inspection handle still
+  open after the failed extent/device-number sequence, the bounded readiness
+  call returned error 87; closing only that handle made the identical `A:\`
+  query return exact `ERROR_NOT_READY` (21). The current correction releases
+  that read-only inspection handle before the independent mounted-root query
+  and refuses admission while it remains open. The target again remained
+  34,359,738,368 bytes with zero allocated blocks, both overlays passed
+  `qemu-img check`, and the focused handle-closed/handle-open/ready/error
+  regression passes 1/1 through `heavy.sh`; changed-head CI/artifact, a new
+  preserved Desktop candidate, and the same failed VM stage remain.
+
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.
   The protected PR153 executable correctly failed closed during integrated
@@ -3464,7 +3685,35 @@ must be reported; a default-suite pass does not imply hardware certification.
   `7588afab9bef375d9ef8e58586d6228e58604b2714271417a3908731af8013ac`;
   an independent download is byte-identical to Core's prepared manifest. EXE
   now consumes that final squash across runtime, maintainer, CI, and Windows
-  artifact pins. The final-head Windows job then reproduced the same HTTP 522
+  artifact pins. The later reviewed Core PR64 interstitial correction
+  squash-merged directly atop that commit as protected main
+  `bf882ba8bbbd4d4a920de83a4d70102071a67804`, tree
+  `cf832843ac98a34e1ce47186e0e7d147583c1457`. Its authenticated create-only
+  release targets that exact commit and contains one independently downloaded
+  22,408-byte, 122-file manifest at SHA-256
+  `bc687864e7074066e44826c6ba340c5fa15a4e3da60a998baa9b0e35c566b758`
+  with bundle ID
+  `93647c9955cc4c2ef8a6e42f312c27b1defa2a6abf8cbd470d97b0a2f2cdfbd4`.
+  PR159 consumes that ordinary Core dependency across runtime, maintainer, CI,
+  and Windows artifact pins so its final Desktop candidate includes the
+  independently labeled overall/current-stage progress and monotonic overall
+  progress guard. PR63 remains separate and is not claimed included.
+  Core PR63 subsequently squash-merged to protected main as
+  `01407aa6174b80e92cb7f3dcb534ade5cdd7bf00`, tree
+  `e9960c0f243d3fc68bd54dfe7870606b6ef151cf`. After the user's explicit
+  development-phase publication approval, canonical GitHub release
+  `402608289` published exact tag
+  `opemos-installer-bundle-01407aa6174b80e92cb7f3dcb534ade5cdd7bf00`
+  with sole asset `608189795`. Its independently downloaded 22,408-byte,
+  122-file manifest is byte-identical to the prepared input at SHA-256
+  `642b290fc4eff163248ef6861d25c3332eff6fa1155385507c5e1fffd66bc2a0`,
+  bundle ID
+  `93066636eb752184db3ce96cc13b009196e215370f335d04f1a5c75edfff67d5`,
+  and support commit `01407aa6174b80e92cb7f3dcb534ade5cdd7bf00`.
+  The changed PR159 head now consumes that exact ordinary Core dependency
+  across runtime, maintainer, CI, and Windows artifact pins; fresh checks,
+  exact Windows artifact/acceptance, and exact changed-head Core review remain.
+  The final-head Windows job then reproduced the same HTTP 522
   twice while acquiring an existing pinned runtime archive, before compilation.
   The initial acquisition correction retried only HTTP 522 at bounded
   5/15/30-second intervals, deleted its exact managed partial between attempts,

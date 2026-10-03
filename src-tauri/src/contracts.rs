@@ -1865,6 +1865,7 @@ pub(crate) struct UsbWritePreflightStatus {
     pub(crate) device_identifier: Option<String>,
     pub(crate) image_sha256: Option<String>,
     pub(crate) identity_token: Option<String>,
+    pub(crate) progress: Option<UsbWriteProgress>,
     pub(crate) message: String,
 }
 

@@ -8,14 +8,14 @@ const chromeCss = await readFile(new URL("../src/window-chrome.css", import.meta
 const script = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
-test("main workflow gives output destination the full build width", () => {
+test("main workflow groups output destination beside the NVIDIA controls", () => {
   assert.match(html, /id="readiness-grid"[\s\S]*class="environment-card"[\s\S]*id="selection-card"[\s\S]*id="drop-zone"/);
   assert.match(html, /class="build-options-grid"[\s\S]*class="source-choice export-choice"[\s\S]*class="build-side-column"[\s\S]*for="nvidia-source"[\s\S]*id="summary-output"[\s\S]*id="usb-picker"[\s\S]*id="usb-target"[\s\S]*id="build-button"/);
   assert.match(css, /\.readiness-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/);
   assert.match(css, /\.build-options-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.12fr\) minmax\(0, \.88fr\);/);
-  assert.match(css, /\.build-side-column \.build-summary\s*\{[^}]*grid-column:\s*2;[^}]*grid-row:\s*1;[^}]*grid-template-columns:\s*1fr;/);
-  assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*grid-column:\s*1 \/ -1;[^}]*width:\s*100%;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*justify-content:\s*stretch;[^}]*justify-self:\s*stretch;/);
-  assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*1 \/ -1;[^}]*grid-template-columns:\s*minmax\(0, 1\.12fr\) minmax\(0, \.88fr\);/);
+  assert.match(css, /\.build-side-column \.build-summary\s*\{[^}]*grid-column:\s*1;[^}]*grid-row:\s*auto;[^}]*grid-template-columns:\s*1fr;/);
+  assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*grid-column:\s*1;[^}]*width:\s*100%;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*justify-content:\s*stretch;[^}]*justify-self:\s*stretch;/);
+  assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*2;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
   assert.match(css, /\.build-options-grid \.export-choice,[\s\S]*\.output-destination\s*\{\s*box-sizing:\s*border-box;/);
   assert.match(css, /\.output-destination\s*\{[^}]*width:\s*100%;/);
 });
@@ -61,7 +61,7 @@ test("image output folder selection is explicit, reversible, and build-bound", a
   assert.match(selection, /!admitOutputDirectorySelection\(currentBuildSnapshot\(\)\)\.accepted/);
   assert.doesNotMatch(selection, /!currentImage \|\| completedOutput \|\| buildRunning/);
   assert.match(script, /applyCompletedOutput[\s\S]*chooseOutputFolder\.disabled = true;[\s\S]*resetOutputFolder\.disabled = true;/);
-  assert.match(script, /async function selectImage\(path\) \{\s*outputSelectionGeneration \+= 1;/);
+  assert.match(script, /async function selectImage\(path, \{ preferredUsbTarget = null, focusUsb = false \} = \{\}\) \{\s*outputSelectionGeneration \+= 1;/);
   assert.match(script, /chooseImage\.addEventListener\("click", async \(\) => \{[\s\S]*admitImageSelection\(currentBuildSnapshot\(\)\)\.accepted[\s\S]*await open/);
   assert.match(script, /chooseOutputFolder\.addEventListener\("click", async \(\) => \{[\s\S]*admitOutputDirectorySelection\(currentBuildSnapshot\(\)\)\.accepted[\s\S]*await open/);
   assert.doesNotMatch(script, /chooseOutputFolder\.addEventListener\("click", async \(\) => \{\s*const directory = await open/);
@@ -75,15 +75,18 @@ test("image output folder selection is explicit, reversible, and build-bound", a
   assert.match(progress, /invoke\("start_appliance",\s*\{[\s\S]*outputDirectory:\s*request\.outputDirectory \?\? null/);
 });
 
-test("USB drives are embedded beside an independent image-output checkbox", () => {
-  assert.match(html, /class="source-choice export-choice"[\s\S]*id="export-image"[^>]*checked[\s\S]*class="build-side-column"[\s\S]*id="usb-picker"[\s\S]*id="usb-target" size="3"[\s\S]*id="review-usb-target"/);
+test("retained output folder and later USB imaging are independent controls", () => {
+  assert.match(html, /class="source-choice export-choice"[\s\S]*id="output-options-title"[\s\S]*id="output-folder-label"[\s\S]*class="build-side-column"[\s\S]*id="usb-picker"[\s\S]*id="usb-target" size="3"[\s\S]*id="review-usb-target"/);
+  assert.doesNotMatch(html, /id="export-image"|Keep exported image|writing exclusively/);
   assert.match(css, /\.usb-picker\s*\{[^}]*grid-column:\s*1 \/ -1;[^}]*width:\s*100%;/);
   assert.match(html, /id="usb-scrim" class="usb-scrim hidden"/);
   assert.match(html, /id="usb-card"[^>]*role="dialog"[\s\S]*class="usb-heading"[\s\S]*id="close-usb-menu"/);
   assert.match(html, /id="review-usb-target"[^>]*aria-haspopup="dialog"[^>]*aria-controls="usb-card"[^>]*aria-expanded="false"/);
   assert.match(script, /function setUsbMenuOpen\(opened\)/);
-  assert.match(script, /function selectedExportMode\(\)[\s\S]*if \(image && usb\) return "both";/);
-  assert.match(script, /if \(currentImage\) \{\s*elements\.usbPicker\.classList\.remove\("hidden"\);\s*await refreshUsbTargets\(\);/);
+  assert.doesNotMatch(script, /selectedExportMode|exportMode|activeExportMode/);
+  assert.match(script, /reviewUsbTarget\.disabled = !finalUsbReady;[\s\S]*usbWriting[\s\S]*View USB Write Progress/);
+  assert.match(script, /if \(completedOutput\?\.path\) \{\s*await revealUsbImaging\(\{ focus: focusUsb, preferredTarget: preferredUsbTarget \}\);/);
+  assert.doesNotMatch(script, /if \(currentImage\) \{[\s\S]{0,180}refreshUsbTargets/);
   assert.match(html, /id="usb-target" size="3" disabled[^>]*>[\s\S]*Connect a USB drive, then refresh…[\s\S]*<\/select>/);
   assert.match(html, /id="usb-target-detail"[\s\S]*class="usb-picker-actions"[\s\S]*id="clear-usb-target"[\s\S]*id="refresh-usb-targets"/);
   assert.doesNotMatch(script, /Select a removable drive for review/);
@@ -100,7 +103,7 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(script, /elements\.usbPicker\.classList\.add\("is-empty", "is-loading"\)/);
   assert.match(script, /elements\.usbPicker\.classList\.toggle\("is-empty", !preflight\.targets\.length\)/);
   assert.match(script, /placeholder\.textContent = "Select a removable drive…";/);
-  assert.match(script, /elements\.reviewUsbTarget\.textContent = finalUsbReady[\s\S]*Select a USB Drive to Continue/);
+  assert.match(script, /elements\.reviewUsbTarget\.textContent = usbWriting[\s\S]*View USB Write Progress[\s\S]*finalUsbReady[\s\S]*Select a USB Drive to Continue/);
   assert.match(script, /elements\.refreshUsbTargets\.textContent = "Scanning…";/);
   assert.match(script, /elements\.refreshUsbTargets\.textContent = "Refresh Drives";/);
   assert.match(script, /Drive inspection failed:[\s\S]*renderUsbConfirmationPhase\(false\);[\s\S]*renderExportMode\(\);/);
@@ -130,21 +133,29 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(script, /clearUsbTarget\.addEventListener\("click"[\s\S]*admitUsbTargetClear\(currentBuildSnapshot\(\), \{[\s\S]*hasTarget: Boolean\(elements\.usbTarget\.value\)/);
   assert.doesNotMatch(script, /clearUsbTarget\.addEventListener\("click", \(\) => \{\s*if \(!elements\.usbTarget\.value\) return;/);
   assert.match(script, /reviewUsbTarget\.addEventListener\("click"[\s\S]*admitUsbReviewOpen\(currentBuildSnapshot\(\), \{[\s\S]*hasTarget: Boolean\(elements\.usbTarget\.value\)[\s\S]*if \(admission\.accepted\) setUsbMenuOpen\(true\)/);
-  assert.match(script, /exportImage\.addEventListener\("change", \(\) => \{[\s\S]*admitExportModeSelection\(currentBuildSnapshot\(\)\)[\s\S]*if \(!admission\.accepted\)[\s\S]*activeExportMode === "both"[\s\S]*renderExportMode\(\)/);
-  assert.doesNotMatch(script, /exportImage\.addEventListener\("change", renderExportMode\)/);
   assert.doesNotMatch(script, /if \(currentImage && completedOutput\?\.path && elements\.usbTarget\.value\)/);
   assert.match(script, /async function dismissUsbMenu\(\) \{[\s\S]*admitUsbReviewDismiss\(currentBuildSnapshot\(\)\)\.accepted/);
+  assert.match(script, /async function dismissUsbMenu\(\) \{[\s\S]*if \(usbWriting\) \{[\s\S]*setUsbMenuOpen\(false\);[\s\S]*return;[\s\S]*cancel_usb_write_preflight/);
   assert.doesNotMatch(script, /async function dismissUsbMenu\(\) \{\s*if \(usbWriting\) return;/);
+  assert.doesNotMatch(script, /closeUsbMenu\.disabled = true/);
   assert.match(script, /installKeyboardBindings[\s\S]*keepKeyboardFocusInside[\s\S]*runKeyboardDefaultAction[\s\S]*from "\.\/keyboard\.js";/);
   assert.match(script, /installKeyboardBindings\(\[[\s\S]*key: "Enter"[\s\S]*usbConfirmationMatches\(elements\.usbConfirmation\.value\)[\s\S]*runKeyboardDefaultAction\(elements\.armUsbPreflight\)[\s\S]*key: "Tab"[\s\S]*keepKeyboardFocusInside[\s\S]*key: "Escape"[\s\S]*dismissUsbMenu\(\)[\s\S]*key: "Escape"[\s\S]*setSettingsOpen\(false\)/);
   assert.match(script, /const wasOpen = !elements\.usbCard\.classList\.contains\("hidden"\);[\s\S]*else if \(wasOpen/);
   assert.match(script, /armUsbPreflight\.setAttribute\("aria-busy", "true"\)[\s\S]*armUsbPreflight\.textContent = "Revalidating…"/);
   assert.doesNotMatch(script, /cancelUsbPreflight|usbCancelPending|admitUsbPreflightCancel/);
-  assert.match(html, /id="usb-active-warning"[^>]*role="alert"[\s\S]*Do not disconnect the USB drive/);
+  assert.match(html, /id="usb-active-warning"[^>]*role="alert"[\s\S]*Do not disconnect the USB drive or close OPEMOS/);
   assert.match(script, /usbWriting = true;[\s\S]*usbActiveWarning\.classList\.remove\("hidden"\)[\s\S]*usbWriting = false;[\s\S]*usbActiveWarning\.classList\.add\("hidden"\)/);
-  assert.match(script, /usb-write-progress[\s\S]*admitUsbWriteProgress\(currentBuildSnapshot\(\), progress, usbWriteProgress\)[\s\S]*if \(!admission\.accepted\) return;[\s\S]*usbWriteProgress = progress/);
-  assert.match(script, /formatBytes\(progress\.bytesCompleted\)[\s\S]*formatBytes\(progress\.bytesTotal\)/);
-  assert.match(script, /usbWriting = true;\s*usbWriteProgress = null;[\s\S]*finally \{\s*usbWriting = false;\s*usbWriteProgress = null;/);
+  assert.match(script, /function applyUsbWriteProgress\(progress\)[\s\S]*admitUsbWriteProgress\(currentBuildSnapshot\(\), progress, usbWriteProgress\)[\s\S]*if \(!admission\.accepted\) return;[\s\S]*usbWriteProgress = progress/);
+  assert.match(script, /pollUsbWriteProgress\(\{[\s\S]*get_usb_write_preflight_status[\s\S]*generation === usbProgressPollGeneration[\s\S]*sessionToken === writeContext\.sessionToken/);
+  assert.match(script, /await pollUsbWriteProgress[\s\S]*setTimeout\(\(\) => \{ void pollProgress\(\); \}, 250\)/);
+  assert.match(script, /let current = true;[\s\S]*catch \{[\s\S]*transient IPC failure must not stop[\s\S]*if \(current && usbWriting/);
+  assert.match(script, /finally \{[\s\S]*clearTimeout\(usbProgressPollTimer\);[\s\S]*usbProgressPollGeneration \+= 1;[\s\S]*usbWriting = false/);
+  assert.match(script, /usbWriteProgress = progress;[\s\S]*usbMessage\.textContent = status;[\s\S]*usbPickerMessage\.textContent = status/);
+  assert.match(script, /usb-write-close-refused[\s\S]*application must remain open until the active USB write settles/);
+  assert.match(script, /onCloseRequested[\s\S]*if \(!usbWriting\) return;[\s\S]*preventDefault\(\)[\s\S]*progress remains visible here/);
+  assert.match(script, /No eligible removable drive is visible\. Windows may still have a previously written drive safely ejected; reconnect it, then choose Refresh Drives\./);
+  assert.match(script, /formatUsbProgressBytes\(progress\.bytesCompleted\)[\s\S]*formatUsbProgressBytes\(progress\.bytesTotal\)/);
+  assert.match(script, /usbWriting = true;\s*usbWriteProgress = null;[\s\S]*finally \{[\s\S]*usbWriting = false;\s*usbWriteProgress = null;/);
   assert.match(script, /const writeContext = Object\.freeze\(\{[\s\S]*sessionToken: usbPreflightSession\.sessionToken,[\s\S]*deviceIdentifier: usbPreflightSession\.deviceIdentifier,[\s\S]*deviceNode: usbPreflightSession\.deviceNode,[\s\S]*imageSha256: usbPreflightSession\.imageSha256/);
   assert.match(script, /invoke\("write_image_to_usb", \{[\s\S]*sessionToken: writeContext\.sessionToken,[\s\S]*imagePath: writeContext\.imagePath[\s\S]*admitUsbWriteCompletion\(currentBuildSnapshot\(\), result, writeContext\)\.accepted/);
   assert.match(script, /usbMessage\.className = `result-message \$\{result\.ejected \? "success" : "error"\}`/);
@@ -152,6 +163,26 @@ test("USB drives are embedded beside an independent image-output checkbox", () =
   assert.match(css, /\.usb-active-warning\s*\{[^}]*border:[^}]*color:\s*#f4d08b;/);
   assert.match(css, /#usb-card > \.result-message\s*\{[^}]*max-height:\s*5em;[^}]*overflow:\s*auto;/);
   assert.match(css, /\.primary:disabled,[\s\S]*\.secondary:disabled\s*\{[^}]*cursor:\s*not-allowed;/);
+});
+
+test("output folder is the top-level destination heading without a duplicate nested label", () => {
+  assert.match(html, /id="output-options-title" class="control-group-title">Output folder<\/h3>/);
+  assert.doesNotMatch(html, /Output destinations/);
+  assert.doesNotMatch(html, /<strong>Output folder<\/strong>/);
+});
+
+test("output folder and NVIDIA source share the wide layout and stack responsively", () => {
+  assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*grid-column:\s*1;/);
+  assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*2;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.build-options-grid \.export-choice,[\s\S]*\.build-side-column[\s\S]*grid-column:\s*1;/);
+});
+
+test("USB Imaging renders persistent inline and dialog progress surfaces", () => {
+  assert.match(html, /id="usb-dialog-progress"[^>]*role="status"[\s\S]*id="usb-dialog-progress-bar"/);
+  assert.match(html, /id="usb-inline-progress"[^>]*role="status"[\s\S]*id="usb-inline-progress-bar"/);
+  assert.match(script, /renderUsbWriteProgress\(null\);[\s\S]*pollUsbWriteProgress/);
+  assert.match(script, /function applyUsbWriteProgress[\s\S]*renderUsbWriteProgress\(progress\);/);
+  assert.match(css, /\.usb-write-progress progress\s*\{[^}]*width:\s*100%;[^}]*accent-color:/);
 });
 
 test("USB disconnect warning spans every accepted destructive progress phase", () => {
@@ -182,17 +213,19 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /option\.dataset\.nvidiaVersion = branch\.version/);
   assert.match(script, /NVIDIA \$\{output\.nvidiaVersion\}, SteamOS \$\{output\.steamosVersion\}, kernel \$\{output\.kernelVersion\}, trust \$\{output\.trust\}/);
   assert.match(script, /function applyCompletedOutput\(output, imported = false\)/);
+  assert.match(script, /function applyCompletedOutput[\s\S]*currentImage = output\.path;[\s\S]*currentImageName = output\.path\.split[\s\S]*selectedName\.textContent = currentImageName;[\s\S]*summaryInput\.textContent = displayPath\(output\.path\)/);
   assert.match(script, /function applyCompletedOutput[\s\S]*renderUsbTargetSelection\(\);[\s\S]*renderExportMode\(\);/);
   assert.match(script, /function applyCompletedOutput[\s\S]*usbPicker\.classList\.remove\("hidden"\)/);
   assert.match(script, /selectImage[\s\S]*usbPicker\.classList\.add\("hidden"\)/);
-  assert.match(script, /if \(currentImage\) \{[\s\S]*usbPicker\.classList\.remove\("hidden"\);[\s\S]*await refreshUsbTargets\(\)/);
-  assert.match(script, /const preferredTarget = pendingUsbTarget;[\s\S]*completedUsbPreferredTarget = preferredTarget;[\s\S]*await revealUsbImaging\(\{ preferredTarget: completedUsbPreferredTarget \}\)/);
+  assert.match(script, /if \(completedOutput\?\.path\) \{[\s\S]*await revealUsbImaging\(\{ focus: focusUsb, preferredTarget: preferredUsbTarget \}\)/);
+  assert.match(script, /if \(completed\) applyCompletedOutput\(completed, true\)/);
+  assert.match(script, /completedUsbPreferredTarget = pendingUsbTarget;[\s\S]*await selectImage\(output\.path, \{[\s\S]*preferredUsbTarget: completedUsbPreferredTarget/);
   assert.match(script, /elements\.resultMessage\.title = installedIdentity;/);
   assert.match(script, /Verified existing NVIDIA.*No rebuild needed; select a USB drive/);
   assert.doesNotMatch(script, /Existing NVIDIA output and adjacent manifest match byte-for-byte/);
   assert.match(script, /admitImageSelection,[\s\S]*deriveBuildAdmission,[\s\S]*from "\.\/workflow-state\.js"/);
   assert.match(script, /admitBuildCompletion,[\s\S]*admitBuildStart,[\s\S]*from "\.\/build-lifecycle-state\.js"/);
-  assert.match(script, /admitExportModeSelection,[\s\S]*admitOutputDirectorySelection,[\s\S]*from "\.\/output-state\.js"/);
+  assert.match(script, /import \{ admitOutputDirectorySelection \} from "\.\/output-state\.js"/);
   assert.match(script, /admitBuildSourceRefresh,[\s\S]*admitBuildSourceSelection,[\s\S]*from "\.\/build-source-state\.js"/);
   assert.match(script, /admitUsbConfirmationEdit,[\s\S]*admitUsbPreflightStart,[\s\S]*admitUsbReviewDismiss,[\s\S]*admitUsbReviewOpen,[\s\S]*admitUsbTargetClear,[\s\S]*admitUsbTargetRefresh,[\s\S]*admitUsbTargetSelection,[\s\S]*from "\.\/usb-target-state\.js"/);
   assert.match(script, /admitUsbWriteCompletion,[\s\S]*admitUsbWriteProgress,[\s\S]*admitUsbWriteStart,[\s\S]*from "\.\/usb-write-state\.js"/);
@@ -208,24 +241,28 @@ test("manifest-bound NVIDIA outputs skip rebuilding and become USB-ready", () =>
   assert.match(script, /allowUpstreamBuild\.addEventListener\("change", \(\) => \{[\s\S]*!elements\.nvidiaSource\.value\.startsWith\("upstream:"\)[\s\S]*allowUpstreamBuild\.checked = false;[\s\S]*acceptedUpstreamApproval = false;[\s\S]*return;/);
   assert.match(script, /const admission = admitBuildStart\(currentBuildSnapshot\(\)\);[\s\S]*if \(!admission\.accepted\)/);
   assert.match(script, /const buildContext = \{[\s\S]*sourceSelection: elements\.nvidiaSource\.value,[\s\S]*allowExperimentalUpstream: elements\.nvidiaSource\.value\.startsWith\("upstream:"\)[\s\S]*selectionGeneration:[\s\S]*buildRunning = true;/);
-  assert.match(script, /const buildContext = \{[\s\S]*inputPath: currentImage,[\s\S]*inputName: currentImageName,[\s\S]*exportMode,[\s\S]*outputDirectory,[\s\S]*sourceSelection:/);
-  assert.match(script, /invoke\("preview_image_output", \{[\s\S]*path: buildContext\.inputPath,[\s\S]*outputDirectory: buildContext\.outputDirectory,[\s\S]*emit\("build-requested", \{[\s\S]*path: buildContext\.inputPath,[\s\S]*name: buildContext\.inputName,[\s\S]*exportMode: buildContext\.exportMode,[\s\S]*outputDirectory: buildContext\.outputDirectory/);
+  assert.match(script, /const buildContext = \{[\s\S]*inputPath: currentImage,[\s\S]*inputName: currentImageName,[\s\S]*outputDirectory,[\s\S]*sourceSelection:/);
+  assert.match(script, /invoke\("preview_image_output", \{[\s\S]*path: buildContext\.inputPath,[\s\S]*outputDirectory: buildContext\.outputDirectory,[\s\S]*emit\("build-requested", \{[\s\S]*path: buildContext\.inputPath,[\s\S]*name: buildContext\.inputName,[\s\S]*outputDirectory: buildContext\.outputDirectory/);
   assert.doesNotMatch(script, /emit\("build-requested", \{[\s\S]*path: currentImage/);
   assert.match(script, /buildRunning = true;[\s\S]*nvidiaSource\.disabled = true;[\s\S]*allowUpstreamBuild\.disabled = true;[\s\S]*emit\("build-requested", \{[\s\S]*sourceSelection: buildContext\.sourceSelection,[\s\S]*allowExperimentalUpstream: buildContext\.allowExperimentalUpstream/);
   assert.doesNotMatch(script, /emit\("build-requested", \{[\s\S]*sourceSelection: elements\.nvidiaSource\.value/);
   assert.match(script, /catch \(error\) \{[\s\S]*buildRunning = false;[\s\S]*nvidiaSource\.disabled = false;[\s\S]*allowUpstreamBuild\.disabled = false;/);
-  assert.match(script, /async function applyBuildFinished[\s\S]*const hasCompletedOutput = Boolean\(completedOutput\?\.path\);[\s\S]*exportImage\.disabled = hasCompletedOutput;[\s\S]*chooseOutputFolder\.disabled = hasCompletedOutput;[\s\S]*resetOutputFolder\.disabled = hasCompletedOutput;[\s\S]*chooseImage\.disabled = false;[\s\S]*nvidiaSource\.disabled = hasCompletedOutput;[\s\S]*allowUpstreamBuild\.disabled = hasCompletedOutput;/);
+  assert.match(script, /async function applyBuildFinished[\s\S]*selectImage\(output\.path, \{[\s\S]*preferredUsbTarget: completedUsbPreferredTarget,[\s\S]*const hasCompletedOutput = Boolean\(completedOutput\?\.path\);[\s\S]*chooseOutputFolder\.disabled = hasCompletedOutput;[\s\S]*resetOutputFolder\.disabled = hasCompletedOutput;[\s\S]*chooseImage\.disabled = false;[\s\S]*nvidiaSource\.disabled = hasCompletedOutput;[\s\S]*allowUpstreamBuild\.disabled = hasCompletedOutput;/);
   assert.doesNotMatch(script, /completedOutput\?\.path \|\| !currentImage \|\| !hostReady/);
   assert.match(css, /\.build-card\.completed-output-selected \.nvidia-choice,[\s\S]*#build-button\s*\{\s*display:\s*none;/);
+  assert.match(css, /\.build-card\.completed-output-selected \.export-choice,[\s\S]*\.build-summary > div:nth-child\(2\),/);
   assert.doesNotMatch(css, /\.build-card\.completed-output-selected \.build-side-column,[\s\S]{0,100}display:\s*none;/);
   assert.match(script, /elements\.appShell\.classList\.add\("completed-output-selected"\)/);
   assert.match(script, /elements\.appShell\.classList\.remove\("completed-output-selected"\)/);
   assert.match(css, /\.build-card\.completed-output-selected\s*\{[^}]*min-height:\s*188px;/);
   assert.match(css, /\.readiness-grid\.has-selection \.selection-card h2,[\s\S]*text-overflow:\s*ellipsis;[\s\S]*white-space:\s*nowrap;/);
   assert.doesNotMatch(css, /\.app-shell\.completed-output-selected \.drop-zone/);
-  assert.match(script, /let completedOutputImported = false;/);
-  assert.match(script, /completedOutputImported = imported;/);
-  assert.match(script, /activeExportMode === "both" && !completedOutputImported/);
+  assert.doesNotMatch(script, /completedOutputImported/);
+});
+
+test("first-show USB inventory retries are bounded and preserve manual refresh", () => {
+  assert.match(script, /const firstShow = usbImagingAutoRetryPath !== outputPath;[\s\S]*attempt <= \(firstShow \? 3 : 1\)[\s\S]*usbFirstShowRetryDelay\(attempt, outcome\)[\s\S]*Retrying automatically[\s\S]*usbImagingAutoRetryPath = outputPath/);
+  assert.match(script, /refreshUsbTargets\.addEventListener\("click", async \(\) => \{[\s\S]*await refreshUsbTargets\(\);/);
 });
 
 test("image selection is transactional across plain and completed outputs", () => {
@@ -248,7 +285,8 @@ test("image selection is transactional across plain and completed outputs", () =
   assert.match(script, /selectionError = String\(error\);[\s\S]*Choose another SteamOS image[\s\S]*elements\.dropMessage\.title = selectionError \|\| "";/);
   assert.match(script, /elements\.usbTarget\.disabled = !hasUsbTargets\(\);/);
   assert.match(script, /const admission = admitBuildStart\(currentBuildSnapshot\(\)\);[\s\S]*if \(!admission\.accepted\)/);
-  assert.match(script, /const buildContext = activeBuildContext;[\s\S]*invoke\("inspect_completed_nvidia_image"[\s\S]*buildContext\.selectionGeneration !== imageSelectionGeneration[\s\S]*inputPath !== currentImage/);
+  assert.match(script, /const buildContext = activeBuildContext;[\s\S]*buildCompletionMatches\(completion, buildContext\)[\s\S]*buildContext\.selectionGeneration !== imageSelectionGeneration/);
+  assert.match(script, /activeBuildContext = null;\s*buildRunning = false;[\s\S]*await selectImage\(output\.path/);
   assert.doesNotMatch(script, /buildRunning = true;[\s\S]{0,900}refreshUsbTargets\.textContent = "Scanning…";/);
 });
 
@@ -274,8 +312,7 @@ test("stale build completions cannot overwrite a newer build context", () => {
   assert.match(script, /if \(!buildCompletionMatches\(event\.payload, activeBuildContext\)\) return;/);
   assert.match(script, /async function applyBuildFinished[\s\S]*if \(!admitBuildCompletion\(currentBuildSnapshot\(\)\)\.accepted[\s\S]*buildCompletionMatches\(completion, buildContext\)/);
   assert.match(script, /applyBuildFinished\(event\.payload, \{\s*openUsbReview: activeCompanion !== "build-progress",\s*\}\)/);
-  assert.match(script, /progressVisible = await invoke\("is_progress_window_visible"\)[\s\S]*revealCompletedUsbReview = openUsbReview \|\| !progressVisible;/);
-  assert.match(script, /pendingUsbReview = !revealCompletedUsbReview;/);
+  assert.match(script, /activeBuildContext = null;[\s\S]*buildRunning = false;[\s\S]*await selectImage\(output\.path/);
   assert.match(script, /selectionGeneration: imageSelectionGeneration/);
   assert.match(script, /activeBuildContext = null;[\s\S]*buildRunning = false;/);
 });
@@ -340,7 +377,7 @@ test("compact main window height agrees between web content and Tauri", () => {
 });
 
 test("Windows live-test controls update immediately and form accessible workflow groups", () => {
-  assert.match(html, /role="group" aria-labelledby="output-options-title"[\s\S]*id="output-options-title"[\s\S]*id="export-image"[\s\S]*id="output-folder-label"/);
+  assert.match(html, /role="group" aria-labelledby="output-options-title"[\s\S]*id="output-options-title"[\s\S]*id="output-folder-label"/);
   assert.match(html, /role="group" aria-labelledby="nvidia-options-title"[\s\S]*id="nvidia-options-title"[\s\S]*id="nvidia-source"/);
   assert.match(html, /id="usb-picker"[^>]*role="group"[^>]*aria-labelledby="usb-destination-title"[\s\S]*id="usb-destination-title"[\s\S]*id="usb-target"/);
   assert.match(html, /id="usb-picker-message"[^>]*aria-live="polite"/);

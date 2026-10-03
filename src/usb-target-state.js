@@ -76,7 +76,7 @@ export function admitUsbReviewOpen(snapshot, capability) {
     throw new TypeError("USB review capability must be an object");
   }
   requireBoolean("hasTarget", capability.hasTarget);
-  const blocker = admission.phase !== "complete"
+  const blocker = admission.phase !== "complete" && admission.phase !== "usb-writing"
     ? "no-completed-output"
     : !capability.hasTarget
       ? "no-usb-target"
@@ -86,11 +86,10 @@ export function admitUsbReviewOpen(snapshot, capability) {
 
 export function admitUsbReviewDismiss(snapshot) {
   const admission = deriveBuildAdmission(snapshot);
-  const accepted = admission.phase !== "usb-writing";
   return Object.freeze({
-    accepted,
+    accepted: true,
     phase: admission.phase,
-    blocker: accepted ? null : "usb-writing",
+    blocker: null,
   });
 }
 

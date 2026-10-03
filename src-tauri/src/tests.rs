@@ -2276,11 +2276,13 @@ esac
         let cancellation = manager
             .begin_write_for_test("drop-active", now)
             .expect("begin synthetic USB write");
+        assert!(manager.has_active_write());
         let after_ttl = manager.status("drop-active", now + USB_PREFLIGHT_TTL * 2);
         assert_eq!(after_ttl.status, "writing");
         assert!(after_ttl.active);
         assert!(!manager.is_armed());
         manager.finish_write_for_test("drop-active");
+        assert!(!manager.has_active_write());
         assert_eq!(
             manager.status("drop-active", now + USB_PREFLIGHT_TTL * 2).status,
             "not-armed"

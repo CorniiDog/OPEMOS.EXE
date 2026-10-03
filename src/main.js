@@ -10,10 +10,7 @@ import {
   admitBuildCompletion,
   admitBuildStart,
 } from "./build-lifecycle-state.js";
-import {
-  admitExportModeSelection,
-  admitOutputDirectorySelection,
-} from "./output-state.js";
+import { admitOutputDirectorySelection } from "./output-state.js";
 import {
   admitBuildSourceRefresh,
   admitBuildSourceSelection,
@@ -31,13 +28,19 @@ import {
   admitUsbWriteCompletion,
   admitUsbWriteProgress,
   admitUsbWriteStart,
+  pollUsbWriteProgress,
 } from "./usb-write-state.js";
+import {
+  formatUsbProgressBytes,
+  renderUsbWriteProgressView,
+} from "./usb-progress-view.js";
 import {
   usbConfirmationForBackend,
   usbConfirmationMatches,
 } from "./usb-confirmation.js";
 import {
   acceptedUsbInventoryPath,
+  usbFirstShowRetryDelay,
   usbInventoryNeedsRefresh,
 } from "./usb-inventory-state.js";
 import { installWindowDrag } from "./window-drag.js";
@@ -70,7 +73,7 @@ const elements = {
   readinessGrid: $("#readiness-grid"), downloadCard: $("#download-card"),
   selectionCard: $("#selection-card"), selectedName: $("#selected-name"), selectedPath: $("#selected-path"),
   selectionStatus: $("#selection-status"), buildCard: $("#build-card"), buildButton: $("#build-button"),
-  exportImage: $("#export-image"), chooseOutputFolder: $("#choose-output-folder"),
+  chooseOutputFolder: $("#choose-output-folder"),
   resetOutputFolder: $("#reset-output-folder"), outputFolderLabel: $("#output-folder-label"),
   usbPicker: $("#usb-picker"),
   nvidiaSource: $("#nvidia-source"), upstreamWarning: $("#upstream-warning"),
@@ -86,6 +89,16 @@ const elements = {
   usbConfirmation: $("#usb-confirmation"), usbConfirmationHelp: $("#usb-confirmation-help"),
   armUsbPreflight: $("#arm-usb-preflight"),
   usbActiveWarning: $("#usb-active-warning"),
+  usbInlineProgress: $("#usb-inline-progress"),
+  usbInlineProgressPhase: $("#usb-inline-progress-phase"),
+  usbInlineProgressPercent: $("#usb-inline-progress-percent"),
+  usbInlineProgressBar: $("#usb-inline-progress-bar"),
+  usbInlineProgressDetail: $("#usb-inline-progress-detail"),
+  usbDialogProgress: $("#usb-dialog-progress"),
+  usbDialogProgressPhase: $("#usb-dialog-progress-phase"),
+  usbDialogProgressPercent: $("#usb-dialog-progress-percent"),
+  usbDialogProgressBar: $("#usb-dialog-progress-bar"),
+  usbDialogProgressDetail: $("#usb-dialog-progress-detail"),
   closeUsbMenu: $("#close-usb-menu"), reviewUsbTarget: $("#review-usb-target"),
   environmentMessage: $("#environment-message"), environmentDetails: $("#environment-details"),
   environmentStatus: $("#environment-status"),
@@ -107,7 +120,6 @@ let outputSelectionGeneration = 0;
 const outputChooserGate = createLatestRequestGate();
 let plannedOutput = null;
 let completedOutput = null;
-let completedOutputImported = false;
 let imageSelectionGeneration = 0;
 const imageChooserGate = createLatestRequestGate();
 let usbPreflightSession = null;
@@ -115,11 +127,11 @@ let usbContextGeneration = 0;
 let usbArmPending = false;
 let usbWriting = false;
 let usbWriteProgress = null;
+let usbProgressPollTimer = null;
+let usbProgressPollGeneration = 0;
 let buildRunning = false;
-let activeExportMode = "image";
-let pendingUsbReview = false;
-let pendingUsbReviewTarget = null;
 let usbImagingRefreshPath = null;
+let usbImagingAutoRetryPath = null;
 let buildContextGeneration = 0;
 let activeBuildContext = null;
 let acceptedNvidiaSource = elements.nvidiaSource.value;
@@ -185,11 +197,6 @@ async function focusActiveCompanion() {
 
 function completeBuildProgressDismissal() {
   if (activeCompanion === "build-progress") setCompanionMode();
-  if (!pendingUsbReview) return;
-  pendingUsbReview = false;
-  const preferredTarget = pendingUsbReviewTarget;
-  pendingUsbReviewTarget = null;
-  void revealUsbImaging({ preferredTarget });
   void mainWindow.setFocus().catch(() => {});
 }
 
@@ -210,12 +217,25 @@ async function revealUsbImaging({ focus = true, preferredTarget = null } = {}) {
   elements.usbPicker.scrollIntoView({ behavior: "smooth", block: "center" });
   let restored = false;
   if (usbInventoryNeedsRefresh(outputPath, usbImagingRefreshPath, hasUsbTargets() ? 1 : 0)) {
-    const outcome = await refreshUsbTargets(preferredTarget);
-    if (completedOutput?.path !== outputPath) return false;
-    if (outcome.completed) {
-      usbImagingRefreshPath = acceptedUsbInventoryPath(outputPath, outcome);
+    const firstShow = usbImagingAutoRetryPath !== outputPath;
+    for (let attempt = 1; attempt <= (firstShow ? 3 : 1); attempt += 1) {
+      const outcome = await refreshUsbTargets(preferredTarget);
+      if (completedOutput?.path !== outputPath) return false;
+      if (outcome.completed) {
+        usbImagingRefreshPath = acceptedUsbInventoryPath(outputPath, outcome);
+      }
+      restored = outcome.preferredTargetRestored;
+      const retryDelay = firstShow ? usbFirstShowRetryDelay(attempt, outcome) : null;
+      if (retryDelay === null) break;
+      elements.usbPickerMessage.textContent = `No removable drive found yet. Retrying automatically (${attempt + 1} of 3)…`;
+      await new Promise((resolve) => setTimeout(resolve, retryDelay));
+      if (completedOutput?.path !== outputPath) return false;
     }
-    restored = outcome.preferredTargetRestored;
+    if (firstShow) usbImagingAutoRetryPath = outputPath;
+    if (!hasUsbTargets()) {
+      elements.usbPickerMessage.textContent = "No eligible removable drive is visible. Windows may still have a previously written drive safely ejected; reconnect it, then choose Refresh Drives.";
+      elements.usbMessage.textContent = elements.usbPickerMessage.textContent;
+    }
   }
   if (focus) {
     const target = elements.usbTarget.disabled ? elements.refreshUsbTargets : elements.usbTarget;
@@ -241,7 +261,6 @@ function currentBuildSnapshot() {
     buildRunning,
     usbWriting,
     hostReady,
-    exportMode: selectedExportMode(),
     upstreamSelected: elements.nvidiaSource.value.startsWith("upstream:"),
     upstreamApproved: elements.allowUpstreamBuild.checked,
   };
@@ -249,15 +268,6 @@ function currentBuildSnapshot() {
 
 function updateBuildButton() {
   elements.buildButton.disabled = !deriveBuildAdmission(currentBuildSnapshot()).canBuild;
-}
-
-function selectedExportMode() {
-  const image = elements.exportImage.checked;
-  const usb = Boolean(elements.usbTarget.value);
-  if (image && usb) return "both";
-  if (usb) return "usb";
-  if (image) return "image";
-  return null;
 }
 
 function hasUsbTargets() {
@@ -268,10 +278,12 @@ function renderExportMode() {
   const completedImageReady = Boolean(completedOutput?.path);
   const finalUsbReady = Boolean(completedImageReady && elements.usbTarget.value);
   elements.reviewUsbTarget.classList.toggle("hidden", !completedImageReady);
-  elements.reviewUsbTarget.disabled = !finalUsbReady || usbWriting;
-  elements.reviewUsbTarget.textContent = finalUsbReady
-    ? "Review & Write Selected USB…"
-    : "Select a USB Drive to Continue";
+  elements.reviewUsbTarget.disabled = !finalUsbReady;
+  elements.reviewUsbTarget.textContent = usbWriting
+    ? "View USB Write Progress…"
+    : finalUsbReady
+      ? "Review & Write Selected USB…"
+      : "Select a USB Drive to Continue";
   renderSourceWarning();
 }
 
@@ -294,6 +306,13 @@ function setUsbMenuOpen(opened) {
 
 async function dismissUsbMenu() {
   if (!admitUsbReviewDismiss(currentBuildSnapshot()).accepted) return;
+  if (usbWriting) {
+    setUsbMenuOpen(false);
+    elements.usbPickerMessage.textContent = usbWriteProgress
+      ? `${usbWriteProgress.message} ${formatUsbProgressBytes(usbWriteProgress.bytesCompleted)} of ${formatUsbProgressBytes(usbWriteProgress.bytesTotal)}.`
+      : "The authorized USB write is continuing. Reopen USB Imaging to see its current progress.";
+    return;
+  }
   usbContextGeneration += 1;
   const session = usbPreflightSession;
   usbPreflightSession = null;
@@ -328,29 +347,28 @@ function renderSourceWarning() {
   const sourceSummary = upstreamSelected
     ? `${selectedLabel} will be built only after its exact source and userspace inputs pass validation.`
     : `${selectedLabel} will prefer an exact trusted release, then use the isolated x86_64 builder when required.`;
-  const destination = selectedExportMode() === "both"
-    ? "Keep the image and write the selected USB drive"
-    : selectedExportMode() === "usb"
-      ? "Write only the selected USB drive"
-      : selectedExportMode() === "image"
-        ? "Keep the exported image"
-        : "Select at least one output";
-  elements.summaryAction.textContent = `${sourceSummary} Destination: ${destination}.`;
+  elements.summaryAction.textContent = `${sourceSummary} The completed image is retained in the selected output folder; USB writing is a separate later action.`;
   updateBuildButton();
 }
 
 function applyCompletedOutput(output, imported = false) {
   completedOutput = output;
-  completedOutputImported = imported;
   usbImagingRefreshPath = null;
+  usbImagingAutoRetryPath = null;
+  currentImage = output.path;
+  currentImageName = output.path.split(/[\\/]/).pop();
   plannedOutput = output.path;
   elements.buildCard.classList.add("completed-output-selected");
   elements.appShell.classList.add("completed-output-selected");
   elements.usbPicker.classList.remove("hidden");
-  elements.exportImage.checked = true;
-  elements.exportImage.disabled = true;
   elements.chooseOutputFolder.disabled = true;
   elements.resetOutputFolder.disabled = true;
+  elements.selectedName.textContent = currentImageName;
+  elements.selectedName.title = currentImageName;
+  elements.selectedPath.textContent = displayPath(output.path);
+  elements.selectedPath.title = displayPath(output.path);
+  elements.summaryInput.textContent = displayPath(output.path);
+  elements.summaryInput.title = displayPath(output.path);
   elements.summaryOutput.textContent = displayPath(output.path);
   elements.summaryOutput.title = displayPath(output.path);
   elements.selectionStatus.textContent = output.nvidiaVersion
@@ -363,7 +381,7 @@ function applyCompletedOutput(output, imported = false) {
   elements.resultMessage.title = installedIdentity;
   elements.resultMessage.textContent = imported
     ? `Verified existing NVIDIA ${output.nvidiaVersion || "image"} output${output.steamosVersion ? ` for SteamOS ${output.steamosVersion}` : ""}. No rebuild needed; select a USB drive.`
-    : `NVIDIA image complete and verified. Select a USB drive to write it, or keep the exported image.`;
+    : `NVIDIA image complete and verified. It remains in the output folder; select a USB drive to write it separately.`;
   elements.resultMessage.className = "result-message success";
   renderSourceWarning();
   renderUsbTargetSelection();
@@ -580,7 +598,7 @@ async function loadNvidiaSourceBranches() {
   }
 }
 
-async function selectImage(path) {
+async function selectImage(path, { preferredUsbTarget = null, focusUsb = false } = {}) {
   outputSelectionGeneration += 1;
   const selection = admitImageSelection(currentBuildSnapshot());
   if (!selection.accepted) {
@@ -596,8 +614,8 @@ async function selectImage(path) {
   const previousUsbSession = usbPreflightSession;
   usbPreflightSession = null;
   completedOutput = null;
-  completedOutputImported = false;
   usbImagingRefreshPath = null;
+  usbImagingAutoRetryPath = null;
   currentImage = null;
   currentImageName = null;
   plannedOutput = null;
@@ -606,8 +624,6 @@ async function selectImage(path) {
   elements.buildCard.classList.add("hidden");
   elements.appShell.classList.remove("completed-output-selected");
   elements.usbPicker.classList.add("hidden");
-  elements.exportImage.checked = true;
-  elements.exportImage.disabled = false;
   elements.chooseOutputFolder.disabled = false;
   elements.resetOutputFolder.disabled = false;
   setUsbMenuOpen(false);
@@ -717,9 +733,8 @@ async function selectImage(path) {
   }
   updateBuildButton();
   renderExportMode();
-  if (currentImage) {
-    elements.usbPicker.classList.remove("hidden");
-    await refreshUsbTargets();
+  if (completedOutput?.path) {
+    await revealUsbImaging({ focus: focusUsb, preferredTarget: preferredUsbTarget });
   }
 }
 
@@ -922,7 +937,6 @@ elements.resetOutputFolder.addEventListener("click", () => {
 });
 
 elements.buildButton.addEventListener("click", async () => {
-  const exportMode = selectedExportMode();
   const admission = admitBuildStart(currentBuildSnapshot());
   if (!admission.accepted) {
     elements.resultMessage.textContent = `Build cannot start: ${admission.blocker}.`;
@@ -934,7 +948,6 @@ elements.buildButton.addEventListener("click", async () => {
     requestId: crypto.randomUUID(),
     inputPath: currentImage,
     inputName: currentImageName,
-    exportMode,
     outputDirectory,
     sourceSelection: elements.nvidiaSource.value,
     allowExperimentalUpstream: elements.nvidiaSource.value.startsWith("upstream:")
@@ -944,15 +957,13 @@ elements.buildButton.addEventListener("click", async () => {
   activeBuildContext = buildContext;
   elements.buildButton.disabled = true;
   buildRunning = true;
-  activeExportMode = exportMode;
   const selectedUsb = elements.usbTarget.selectedOptions[0];
-  pendingUsbTarget = selectedUsb?.value && exportMode !== "image"
+  pendingUsbTarget = selectedUsb?.value
     ? {
       deviceIdentifier: selectedUsb.value,
       identityToken: selectedUsb.dataset.identityToken,
     }
     : null;
-  elements.exportImage.disabled = true;
   elements.chooseOutputFolder.disabled = true;
   elements.resetOutputFolder.disabled = true;
   elements.chooseImage.disabled = true;
@@ -983,7 +994,6 @@ elements.buildButton.addEventListener("click", async () => {
       name: buildContext.inputName,
       sourceSelection: buildContext.sourceSelection,
       allowExperimentalUpstream: buildContext.allowExperimentalUpstream,
-      exportMode: buildContext.exportMode,
       outputDirectory: buildContext.outputDirectory,
     });
   } catch (error) {
@@ -1005,7 +1015,6 @@ elements.buildButton.addEventListener("click", async () => {
     elements.resultMessage.textContent = String(error);
     elements.resultMessage.className = "result-message error";
     buildRunning = false;
-    elements.exportImage.disabled = false;
     elements.chooseOutputFolder.disabled = false;
     elements.resetOutputFolder.disabled = false;
     elements.chooseImage.disabled = false;
@@ -1017,17 +1026,6 @@ elements.buildButton.addEventListener("click", async () => {
   }
 });
 
-async function revealCompletedImage(path) {
-  try {
-    await invoke("reveal_completed_image", { path });
-    return true;
-  } catch (error) {
-    elements.resultMessage.textContent += ` The image is complete, but it could not be revealed automatically: ${error}`;
-    elements.resultMessage.className = "result-message error";
-    return false;
-  }
-}
-
 async function applyBuildFinished(completion, { openUsbReview = true } = {}) {
   const { state, message, output, inputPath } = completion;
   const buildContext = activeBuildContext;
@@ -1036,43 +1034,32 @@ async function applyBuildFinished(completion, { openUsbReview = true } = {}) {
     || buildContext.selectionGeneration !== imageSelectionGeneration) return;
   elements.resultMessage.textContent = message;
   elements.resultMessage.className = `result-message ${state === "complete" ? "success" : state === "failed" ? "error" : ""}`;
-  let revealCompletedUsbReview = false;
   let completedUsbPreferredTarget = null;
   if (state === "complete" && output?.path && inputPath === currentImage) {
-    usbContextGeneration += 1;
-    const completed = await invoke("inspect_completed_nvidia_image", {
-      path: output.path,
-      requestedNvidiaVersion: null,
-    }).catch(() => null);
-    if (!operationContextMatches(buildContext, activeBuildContext || {})
-      || buildContext.selectionGeneration !== imageSelectionGeneration
-      || inputPath !== currentImage) return;
-    applyCompletedOutput(completed || output);
-    const preferredTarget = pendingUsbTarget;
+    completedUsbPreferredTarget = pendingUsbTarget;
     pendingUsbTarget = null;
-    elements.resultMessage.textContent = "The image is complete. Choose the removable USB destination for the validated output.";
-    elements.resultMessage.className = "result-message success";
-    // inspect_completed_nvidia_image can take long enough for the user to close
-    // the progress companion before this handler reaches the handoff. Recheck
-    // the companion's current state instead of relying only on the visibility
-    // snapshot captured when build-finished was first received.
-    let progressVisible = activeCompanion === "build-progress";
-    if (progressVisible) {
-      progressVisible = await invoke("is_progress_window_visible").catch(() => true);
-      if (!progressVisible) completeBuildProgressDismissal();
+    activeBuildContext = null;
+    buildRunning = false;
+    if (activeCompanion === "build-progress") {
+      await invoke("hide_progress_window").catch(() => {});
+      setCompanionMode();
     }
-    revealCompletedUsbReview = openUsbReview || !progressVisible;
-    completedUsbPreferredTarget = preferredTarget;
-    pendingUsbReview = !revealCompletedUsbReview;
-    pendingUsbReviewTarget = pendingUsbReview ? preferredTarget : null;
+    await selectImage(output.path, {
+      preferredUsbTarget: completedUsbPreferredTarget,
+      focusUsb: openUsbReview,
+    });
+    if (!completedOutput?.path) {
+      elements.usbPicker.classList.add("hidden");
+      elements.resultMessage.textContent = "The build finished, but the generated image did not pass the normal completed-output manifest and hash validation. USB Imaging remains unavailable.";
+      elements.resultMessage.className = "result-message error";
+    }
   } else {
     pendingUsbTarget = null;
   }
-  if (!operationContextMatches(buildContext, activeBuildContext || {})) return;
+  if (activeBuildContext && !operationContextMatches(buildContext, activeBuildContext)) return;
   activeBuildContext = null;
   buildRunning = false;
   const hasCompletedOutput = Boolean(completedOutput?.path);
-  elements.exportImage.disabled = hasCompletedOutput;
   elements.chooseOutputFolder.disabled = hasCompletedOutput;
   elements.resetOutputFolder.disabled = hasCompletedOutput;
   elements.chooseImage.disabled = false;
@@ -1081,20 +1068,11 @@ async function applyBuildFinished(completion, { openUsbReview = true } = {}) {
   elements.usbTarget.disabled = !hasUsbTargets();
   elements.refreshUsbTargets.disabled = false;
   updateBuildButton();
-  if (revealCompletedUsbReview) {
-    const restored = await revealUsbImaging({ preferredTarget: completedUsbPreferredTarget });
-    if (restored) {
-      elements.usbPickerMessage.textContent = "Select the intended removable drive, then choose Review & Write Selected USB.";
-    } else {
-      elements.usbDialogTarget.textContent = completedUsbPreferredTarget
-        ? "Select the removable drive again"
-        : "Select a removable drive";
-      elements.usbMessage.textContent = completedUsbPreferredTarget
-        ? "The earlier USB identity is no longer an exact match. Nothing was written. Refresh and select the intended whole removable drive again."
-        : "No eligible removable drive is selected. Connect one, refresh the list, and select it here.";
-      elements.usbMessage.className = completedUsbPreferredTarget ? "result-message error" : "result-message";
-      renderUsbConfirmationPhase(false);
-    }
+  if (hasCompletedOutput && completedUsbPreferredTarget && !elements.usbTarget.value) {
+    elements.usbDialogTarget.textContent = "Select the removable drive again";
+    elements.usbMessage.textContent = "The earlier USB identity is no longer an exact match. Nothing was written. Refresh and select the intended whole removable drive again.";
+    elements.usbMessage.className = "result-message error";
+    renderUsbConfirmationPhase(false);
   }
 }
 
@@ -1286,12 +1264,38 @@ async function writePreparedUsb() {
   });
   usbWriting = true;
   usbWriteProgress = null;
+  renderExportMode();
   elements.chooseImage.disabled = true;
   elements.usbActiveWarning.classList.remove("hidden");
   elements.refreshUsbTargets.disabled = true;
-  elements.closeUsbMenu.disabled = true;
   elements.buildButton.disabled = true;
   elements.usbMessage.textContent = "Revalidating the exact image and removable drive. Windows authorization will appear next for only that selected disk.";
+  elements.usbPickerMessage.textContent = elements.usbMessage.textContent;
+  renderUsbWriteProgress(null);
+  const pollGeneration = ++usbProgressPollGeneration;
+  const pollProgress = async () => {
+    if (!usbWriting || pollGeneration !== usbProgressPollGeneration) return;
+    let current = true;
+    try {
+      current = await pollUsbWriteProgress({
+        generation: pollGeneration,
+        sessionToken: writeContext.sessionToken,
+        readStatus: (sessionToken) => invoke("get_usb_write_preflight_status", { sessionToken }),
+        isCurrent: (generation, sessionToken) => usbWriting
+          && generation === usbProgressPollGeneration
+          && sessionToken === writeContext.sessionToken,
+        applyProgress: applyUsbWriteProgress,
+      });
+    } catch {
+      // The pending write invocation remains authoritative. A later poll or its
+      // terminal result can still update the UI without changing write state,
+      // so a transient IPC failure must not stop this exact write's poll loop.
+    }
+    if (current && usbWriting && pollGeneration === usbProgressPollGeneration) {
+      usbProgressPollTimer = window.setTimeout(() => { void pollProgress(); }, 250);
+    }
+  };
+  usbProgressPollTimer = window.setTimeout(() => { void pollProgress(); }, 0);
   try {
     const result = await invoke("write_image_to_usb", {
       sessionToken: writeContext.sessionToken,
@@ -1303,26 +1307,27 @@ async function writePreparedUsb() {
     usbPreflightSession = null;
     elements.usbMessage.textContent = result.message;
     elements.usbMessage.className = `result-message ${result.ejected ? "success" : "error"}`;
-    // An imported image already exists at a user-selected path. Revealing it
-    // after a USB-only operation falsely implies that this run exported it.
-    if (activeExportMode === "both" && !completedOutputImported) {
-      const revealed = await revealCompletedImage(completedOutput.path);
-      if (revealed) elements.usbMessage.textContent = `${result.message} Finder opened the retained image.`;
-    }
+    elements.usbPickerMessage.textContent = result.message;
   } catch (error) {
     usbPreflightSession = null;
     elements.usbConfirmation.value = "";
     elements.usbMessage.textContent = String(error);
     elements.usbMessage.className = "result-message error";
+    elements.usbPickerMessage.textContent = String(error);
     elements.usbMessage.removeAttribute("title");
     renderUsbConfirmationPhase(false);
   } finally {
+    window.clearTimeout(usbProgressPollTimer);
+    usbProgressPollTimer = null;
+    usbProgressPollGeneration += 1;
     usbWriting = false;
     usbWriteProgress = null;
+    elements.usbInlineProgress.classList.add("hidden");
+    elements.usbDialogProgress.classList.add("hidden");
     elements.chooseImage.disabled = false;
     elements.usbActiveWarning.classList.add("hidden");
     elements.refreshUsbTargets.disabled = false;
-    elements.closeUsbMenu.disabled = false;
+    renderExportMode();
     updateBuildButton();
   }
 }
@@ -1392,15 +1397,6 @@ elements.armUsbPreflight.addEventListener("click", async () => {
   }
 });
 
-elements.exportImage.addEventListener("change", () => {
-  const admission = admitExportModeSelection(currentBuildSnapshot());
-  if (!admission.accepted) {
-    elements.exportImage.checked = admission.phase === "complete"
-      || activeExportMode === "image"
-      || activeExportMode === "both";
-  }
-  renderExportMode();
-});
 elements.reviewUsbTarget.addEventListener("click", () => {
   const admission = admitUsbReviewOpen(currentBuildSnapshot(), {
     hasTarget: Boolean(elements.usbTarget.value),
@@ -1447,14 +1443,56 @@ installKeyboardBindings([
   },
 ]);
 
-await mainWindow.listen("usb-write-progress", (event) => {
-  const progress = event.payload;
+function renderUsbWriteProgress(progress) {
+  const displays = [
+    {
+      container: elements.usbInlineProgress,
+      phase: elements.usbInlineProgressPhase,
+      percent: elements.usbInlineProgressPercent,
+      bar: elements.usbInlineProgressBar,
+      detail: elements.usbInlineProgressDetail,
+    },
+    {
+      container: elements.usbDialogProgress,
+      phase: elements.usbDialogProgressPhase,
+      percent: elements.usbDialogProgressPercent,
+      bar: elements.usbDialogProgressBar,
+      detail: elements.usbDialogProgressDetail,
+    },
+  ];
+  renderUsbWriteProgressView(displays, progress, formatUsbProgressBytes);
+}
+
+function applyUsbWriteProgress(progress) {
   const admission = admitUsbWriteProgress(currentBuildSnapshot(), progress, usbWriteProgress);
   if (!admission.accepted) return;
   usbWriteProgress = progress;
   const ratio = progress.bytesCompleted / progress.bytesTotal;
-  elements.usbMessage.textContent = `${progress.message} ${formatBytes(progress.bytesCompleted)} of ${formatBytes(progress.bytesTotal)} (${(ratio * 100).toFixed(1)}%)`;
+  const status = `${progress.message} ${formatUsbProgressBytes(progress.bytesCompleted)} of ${formatUsbProgressBytes(progress.bytesTotal)} (${(ratio * 100).toFixed(1)}%)`;
+  elements.usbMessage.textContent = status;
+  elements.usbPickerMessage.textContent = status;
   elements.usbMessage.className = "result-message";
+  renderUsbWriteProgress(progress);
+}
+
+await mainWindow.listen("usb-write-progress", (event) => {
+  applyUsbWriteProgress(event.payload);
+});
+
+await mainWindow.listen("usb-write-close-refused", () => {
+  elements.usbPickerMessage.textContent = "The application must remain open until the active USB write settles. You can dismiss and reopen the USB Imaging panel without interrupting it.";
+  if (!elements.usbCard.classList.contains("hidden")) {
+    elements.usbMessage.textContent = elements.usbPickerMessage.textContent;
+  }
+});
+
+await mainWindow.onCloseRequested((event) => {
+  if (!usbWriting) return;
+  event.preventDefault();
+  elements.usbPickerMessage.textContent = "The application must remain open until the active USB write settles. Dismiss USB Imaging to keep working while progress remains visible here.";
+  if (!elements.usbCard.classList.contains("hidden")) {
+    elements.usbMessage.textContent = elements.usbPickerMessage.textContent;
+  }
 });
 
 await mainWindow.onDragDropEvent(async (event) => {
