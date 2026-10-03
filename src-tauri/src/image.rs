@@ -3741,6 +3741,13 @@ fn windows_removable_volume_device_number_fallback(
     Ok(device_number == selected)
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn windows_removable_volume_device_number_fallback_allowed(drive_type: u32, error: u32) -> bool {
+    const DRIVE_REMOVABLE: u32 = 2;
+    const ERROR_MORE_DATA: u32 = 234;
+    drive_type == DRIVE_REMOVABLE && error != ERROR_MORE_DATA
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn validate_system_authopen() -> Result<(), String> {
     use std::os::unix::fs::MetadataExt as _;
@@ -5068,10 +5075,7 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
     }
     const INVALID_HANDLE_VALUE: *mut c_void = -1_isize as *mut c_void;
     const ERROR_NO_MORE_FILES: u32 = 18;
-    const ERROR_INVALID_FUNCTION: u32 = 1;
-    const ERROR_NOT_SUPPORTED: u32 = 50;
     const ERROR_MORE_DATA: u32 = 234;
-    const DRIVE_REMOVABLE: u32 = 2;
     const DRIVE_CDROM: u32 = 5;
     const FILE_SHARE_READ: u32 = 0x0000_0001;
     const FILE_SHARE_WRITE: u32 = 0x0000_0002;
@@ -5142,9 +5146,7 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
                 break returned as usize;
             }
             let error = unsafe { GetLastError() };
-            if drive_type == DRIVE_REMOVABLE
-                && matches!(error, ERROR_INVALID_FUNCTION | ERROR_NOT_SUPPORTED)
-            {
+            if windows_removable_volume_device_number_fallback_allowed(drive_type, error) {
                 let mut storage = StorageDeviceNumber {
                     device_type: 0,
                     device_number: 0,
@@ -5181,8 +5183,8 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
             }
             if error != ERROR_MORE_DATA || extents.len() >= 1024 * 1024 {
                 return Err(format!(
-                    "Could not obtain disk extents for Windows volume GUID {}.",
-                    path.display()
+                    "Could not obtain disk extents for Windows volume GUID {} (Windows error {}).",
+                    path.display(), error
                 ));
             }
             extents.resize(extents.len() * 2, 0);
@@ -5977,6 +5979,22 @@ mod windows_usb_inventory_tests {
             selected,
         )
         .is_err());
+        assert!(windows_removable_volume_device_number_fallback_allowed(
+            DRIVE_REMOVABLE,
+            21,
+        ));
+        assert!(windows_removable_volume_device_number_fallback_allowed(
+            DRIVE_REMOVABLE,
+            5,
+        ));
+        assert!(!windows_removable_volume_device_number_fallback_allowed(
+            DRIVE_REMOVABLE,
+            234,
+        ));
+        assert!(!windows_removable_volume_device_number_fallback_allowed(
+            DRIVE_FIXED,
+            21,
+        ));
     }
 
     #[cfg(target_os = "windows")]
