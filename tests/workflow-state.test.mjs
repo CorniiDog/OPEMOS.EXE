@@ -9,10 +9,7 @@ import {
   admitBuildCompletion,
   admitBuildStart,
 } from "../src/build-lifecycle-state.js";
-import {
-  admitExportModeSelection,
-  admitOutputDirectorySelection,
-} from "../src/output-state.js";
+import { admitOutputDirectorySelection } from "../src/output-state.js";
 import {
   admitBuildSourceRefresh,
   admitBuildSourceSelection,
@@ -39,7 +36,6 @@ const ready = {
   buildRunning: false,
   usbWriting: false,
   hostReady: true,
-  exportMode: "image",
   upstreamSelected: false,
   upstreamApproved: false,
 };
@@ -68,7 +64,6 @@ test("build admission rejects every independent readiness blocker", () => {
   const cases = [
     [{ hasImage: false }, "no-image"],
     [{ hostReady: false }, "host-unavailable"],
-    [{ exportMode: null }, "no-output"],
     [{ upstreamSelected: true, upstreamApproved: false }, "upstream-unapproved"],
   ];
   for (const [change, blocker] of cases) {
@@ -78,9 +73,6 @@ test("build admission rejects every independent readiness blocker", () => {
       blocker,
     });
   }
-  for (const exportMode of ["image", "usb", "both"]) {
-    assert.equal(deriveBuildAdmission({ ...ready, exportMode }).canBuild, true);
-  }
   assert.equal(deriveBuildAdmission({
     ...ready, upstreamSelected: true, upstreamApproved: true,
   }).canBuild, true);
@@ -89,7 +81,6 @@ test("build admission rejects every independent readiness blocker", () => {
 test("build admission fails closed for malformed and impossible snapshots", () => {
   assert.throws(() => deriveBuildAdmission(null), /snapshot must be an object/);
   assert.throws(() => deriveBuildAdmission({ ...ready, hasImage: "yes" }), /hasImage must be boolean/);
-  assert.throws(() => deriveBuildAdmission({ ...ready, exportMode: "disk" }), /exportMode is invalid/);
   assert.throws(() => deriveBuildAdmission({
     ...ready, buildRunning: true, usbWriting: true,
   }), /cannot run concurrently/);
@@ -100,31 +91,17 @@ test("build admission fails closed for malformed and impossible snapshots", () =
     ...ready, hasImage: false, buildRunning: true,
   }), /active build requires its selected image/);
   assert.throws(() => deriveBuildAdmission({
-    ...ready, buildRunning: true, exportMode: null,
-  }), /active build requires its output mode/);
-  assert.throws(() => deriveBuildAdmission({
     ...ready, buildRunning: true, upstreamSelected: true,
   }), /active upstream build requires explicit approval/);
   assert.throws(() => deriveBuildAdmission({
     ...ready, hasImage: false, hasCompletedOutput: true,
   }), /completed output requires its selected image/);
   assert.throws(() => deriveBuildAdmission({
-    ...ready, hasCompletedOutput: true, exportMode: null,
-  }), /completed output requires an output mode/);
-  assert.throws(() => deriveBuildAdmission({
     ...ready, usbWriting: true,
   }), /USB writing requires a completed output/);
   assert.throws(() => deriveBuildAdmission({
-    ...ready, hasCompletedOutput: true, usbWriting: true,
-  }), /USB writing requires a USB output mode/);
-  assert.throws(() => deriveBuildAdmission({
     ...ready, upstreamApproved: true,
   }), /upstream approval requires an upstream source/);
-  for (const exportMode of ["usb", "both"]) {
-    assert.throws(() => deriveBuildAdmission({
-      ...ready, hasImage: false, exportMode,
-    }), /USB output mode requires a selected image/);
-  }
 });
 
 test("build start uses the same fail-closed admission at the event boundary", () => {
@@ -134,7 +111,6 @@ test("build start uses the same fail-closed admission at the event boundary", ()
   for (const change of [
     { hasImage: false },
     { hostReady: false },
-    { exportMode: null },
     { upstreamSelected: true, upstreamApproved: false },
     { hasCompletedOutput: true },
     { hasCompletedOutput: true, usbWriting: true, exportMode: "both" },
@@ -547,33 +523,6 @@ test("USB review dismissal remains available during destructive writing", () => 
     accepted: true, phase: "usb-writing", blocker: null,
   });
   assert.throws(() => admitUsbReviewDismiss({
-    ...ready, buildRunning: true, usbWriting: true,
-  }), /cannot run concurrently/);
-});
-
-test("image export-mode changes only before build mutation begins", () => {
-  assert.deepEqual(admitExportModeSelection({ ...ready, hasImage: false }), {
-    accepted: true, phase: "empty", blocker: null,
-  });
-  assert.deepEqual(admitExportModeSelection(ready), {
-    accepted: true, phase: "selected", blocker: null,
-  });
-  assert.deepEqual(admitExportModeSelection({
-    ...ready, hasCompletedOutput: true, hostReady: false,
-  }), {
-    accepted: false, phase: "complete", blocker: "complete",
-  });
-  const cases = [
-    [{ hasCompletedOutput: true }, "complete", "complete"],
-    [{ buildRunning: true }, "building", "building"],
-    [{ hasCompletedOutput: true, usbWriting: true, exportMode: "both" }, "usb-writing", "usb-writing"],
-  ];
-  for (const [change, phase, blocker] of cases) {
-    assert.deepEqual(admitExportModeSelection({ ...ready, ...change }), {
-      accepted: false, phase, blocker,
-    });
-  }
-  assert.throws(() => admitExportModeSelection({
     ...ready, buildRunning: true, usbWriting: true,
   }), /cannot run concurrently/);
 });

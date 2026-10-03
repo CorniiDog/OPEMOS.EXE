@@ -331,8 +331,6 @@ footer p { color: #aab4c5; }
 .build-side-column .source-warning { grid-column: 1 / -1; }
 .build-side-column .build-summary { grid-column: 2; grid-row: 1; grid-template-columns: 1fr; align-content: start; }
 .build-side-column .build-summary p { grid-column: 1; }
-.export-image-toggle { padding: 2px 0 7px; display: flex !important; align-items: flex-start; gap: 10px; cursor: pointer; }
-.export-image-toggle input { flex: none; width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--steam-blue); }
 .usb-picker { grid-column: 1 / -1; width: 100%; min-width: 0; padding: 10px; border: 1px solid var(--glass-border); border-radius: 10px; background: rgba(12, 25, 35, .4); box-sizing: border-box; display: grid; gap: 7px; }
 .usb-picker-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .usb-picker-heading > span { min-width: 0; }

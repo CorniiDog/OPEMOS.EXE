@@ -5480,6 +5480,13 @@ fn open_usb_raw_device(
     Err("USB writing is currently implemented only for macOS.".into())
 }
 
+fn emit_usb_write_progress<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    progress: UsbWriteProgress,
+) {
+    let _ = app.emit_to("main", "usb-write-progress", progress);
+}
+
 #[tauri::command]
 pub(crate) async fn write_image_to_usb(
     app: tauri::AppHandle,
@@ -5543,33 +5550,27 @@ pub(crate) async fn write_image_to_usb(
                 elevation_owner,
                 &cancel,
                 |progress| {
-                    let _ = app_for_progress.emit("usb-write-progress", progress);
+                    emit_usb_write_progress(&app_for_progress, progress);
                 },
             );
         }
-        let _ = app_for_progress.emit(
-            "usb-write-progress",
-            UsbWriteProgress {
+        emit_usb_write_progress(&app_for_progress, UsbWriteProgress {
                 phase: "unmounting".into(),
                 bytes_completed: 0,
                 bytes_total: image_bytes,
                 message: "Unmounting the selected removable disk without writing to it.".into(),
-            },
-        );
+            });
         unmount_usb_target(&target.device_identifier)?;
         let revalidated = revalidate_usb_target(&target.device_identifier, image_bytes)?;
         if revalidated.identity_token != target.identity_token {
             return Err("The selected removable device changed while it was being unmounted.".into());
         }
-        let _ = app_for_progress.emit(
-            "usb-write-progress",
-            UsbWriteProgress {
+        emit_usb_write_progress(&app_for_progress, UsbWriteProgress {
                 phase: "authorizing".into(),
                 bytes_completed: 0,
                 bytes_total: image_bytes,
                 message: usb_write_permission_message().into(),
-            },
-        );
+            });
         let (mut device, volume_locks, disk_is_offline) =
             match open_usb_raw_device(&revalidated, &cancel) {
             Ok(device) => device,
@@ -5629,7 +5630,7 @@ pub(crate) async fn write_image_to_usb(
             &expected_sha256,
             &cancel,
             |progress| {
-                let _ = app_for_progress.emit("usb-write-progress", progress);
+                emit_usb_write_progress(&app_for_progress, progress);
             },
         );
         drop(device);
@@ -5688,6 +5689,65 @@ pub(crate) async fn write_image_to_usb(
 #[cfg(test)]
 mod windows_usb_inventory_tests {
     use super::*;
+
+    #[test]
+    fn usb_writer_progress_targets_main_window_and_receipt_closes_exact_write() {
+        use tauri::Listener as _;
+
+        let app = tauri::test::mock_app();
+        let main = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .expect("main mock webview");
+        let other = tauri::WebviewWindowBuilder::new(&app, "build-progress", Default::default())
+            .build()
+            .expect("companion mock webview");
+        let (main_sender, main_receiver) = std::sync::mpsc::channel();
+        let (other_sender, other_receiver) = std::sync::mpsc::channel();
+        main.listen("usb-write-progress", move |event| {
+            main_sender.send(event.payload().to_string()).unwrap();
+        });
+        other.listen("usb-write-progress", move |event| {
+            other_sender.send(event.payload().to_string()).unwrap();
+        });
+
+        emit_usb_write_progress(
+            app.handle(),
+            UsbWriteProgress {
+                phase: "writing".into(),
+                bytes_completed: 6_941_573_120,
+                bytes_total: 8_120_172_544,
+                message: "Writing the verified image.".into(),
+            },
+        );
+        let delivered: serde_json::Value = serde_json::from_str(
+            &main_receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("main window must receive writer progress"),
+        )
+        .expect("progress payload JSON");
+        assert_eq!(delivered["phase"], "writing");
+        assert_eq!(delivered["bytesCompleted"], 6_941_573_120u64);
+        assert!(other_receiver
+            .recv_timeout(Duration::from_millis(25))
+            .is_err());
+
+        let request_sha256 = "1".repeat(64);
+        let image_sha256 = "a".repeat(64);
+        let receipt = serde_json::to_vec(&WindowsUsbWriterReceipt {
+            schema_version: 1,
+            request_sha256: request_sha256.clone(),
+            success: true,
+            verified_sha256: image_sha256.clone(),
+            ejected: true,
+            error: String::new(),
+        })
+        .unwrap();
+        let accepted =
+            validate_windows_usb_writer_receipt(&receipt, 0, &request_sha256, &image_sha256)
+                .expect("exact completed helper receipt");
+        assert!(accepted.ejected);
+        assert_eq!(accepted.verified_sha256, image_sha256);
+    }
 
     #[test]
     fn accepts_only_exact_capacity_eligible_usb_physical_drives() {

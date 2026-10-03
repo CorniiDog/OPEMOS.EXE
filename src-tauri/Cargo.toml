@@ -32,5 +32,8 @@ xz2 = "0.1.7"
 russh = { version = "0.63.2", default-features = false, features = ["ring"] }
 tokio = { version = "1.53.0", features = ["rt", "time"] }
 
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+
 [profile.dev.package.sha2]
 opt-level=3

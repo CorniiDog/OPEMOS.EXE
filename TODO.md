@@ -160,6 +160,21 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   reached the new WebView drain, where a child exited between process discovery
   and `StartTime` access. Identity capture now ignores only that vanished
   process-object race; live identities remain compared by PID plus start ticks.
+  The follow-on native reproduction on candidate `b19424df` proved elevated
+  helper progress was emitted globally while the frontend subscribed to the
+  `main` webview window. The current PR159 correction removes the obsolete
+  export-mode choice, always retains the verified build output, clears
+  build/companion state, and routes that output through the ordinary
+  `selectImage` manifest/hash-validation path before fresh USB enumeration.
+  Writer progress now targets only the `main` window; a Tauri mock-runtime test
+  proves backend-to-window delivery excludes the companion and that the exact
+  successful elevated receipt is accepted. Focused frontend tests pass 57/57
+  and the targeted Rust event/receipt regression passes 1/1 through `heavy.sh`.
+  The wider JS run passed 375, skipped one absent-sibling fixture, and had two
+  unrelated harness-environment failures because child scripts could not find
+  `node` in the wrapper PATH; its changed Builder/USB tests passed. Updated
+  Windows CI artifact, preserved-folder native candidate deployment, disposable
+  virtual-USB acceptance, exact Core review, and merge remain.
 
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.
