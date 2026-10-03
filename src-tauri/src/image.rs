@@ -3758,6 +3758,12 @@ fn windows_uninspectable_removable_volume_can_be_skipped(
     drive_type == DRIVE_REMOVABLE && mount_path_count > 0 && every_mount_reports_no_media
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn windows_mount_reports_no_media(ready: bool, error: u32) -> bool {
+    const ERROR_NOT_READY: u32 = 21;
+    !ready && error == ERROR_NOT_READY
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn validate_system_authopen() -> Result<(), String> {
     use std::os::unix::fs::MetadataExt as _;
@@ -5101,7 +5107,6 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
     }
     const INVALID_HANDLE_VALUE: *mut c_void = -1_isize as *mut c_void;
     const ERROR_NO_MORE_FILES: u32 = 18;
-    const ERROR_NOT_READY: u32 = 21;
     const ERROR_MORE_DATA: u32 = 234;
     const DRIVE_CDROM: u32 = 5;
     const FILE_SHARE_READ: u32 = 0x0000_0001;
@@ -5250,22 +5255,29 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
                         let mut serial = 0_u32;
                         let mut maximum_component_length = 0_u32;
                         let mut file_system_flags = 0_u32;
+                        let mut volume_name = vec![0_u16; 261];
+                        let mut file_system_name = vec![0_u16; 261];
                         // A mounted root is skippable only when Windows' volume
                         // readiness API independently identifies absent media.
-                        // The extent/device-number failure alone is insufficient.
+                        // Supplying bounded output buffers is material here:
+                        // after the failed volume IOCTL sequence, Windows 11
+                        // returns ERROR_INVALID_PARAMETER for null output
+                        // buffers even though the same no-media root reports
+                        // ERROR_NOT_READY with ordinary buffers.
                         let ready = unsafe {
                             GetVolumeInformationW(
                                 paths[start..].as_ptr(),
-                                std::ptr::null_mut(),
-                                0,
+                                volume_name.as_mut_ptr(),
+                                volume_name.len() as u32,
                                 &mut serial,
                                 &mut maximum_component_length,
                                 &mut file_system_flags,
-                                std::ptr::null_mut(),
-                                0,
+                                file_system_name.as_mut_ptr(),
+                                file_system_name.len() as u32,
                             )
                         } != 0;
-                        if ready || unsafe { GetLastError() } != ERROR_NOT_READY {
+                        let readiness_error = unsafe { GetLastError() };
+                        if !windows_mount_reports_no_media(ready, readiness_error) {
                             every_mount_reports_no_media = false;
                             break;
                         }
@@ -6047,7 +6059,7 @@ mod windows_usb_inventory_tests {
     }
 
     #[test]
-    fn removable_volume_device_number_fallback_is_exact_and_never_broadens_fixed_disks() {
+    fn removable_volume_fallback_and_no_media_admission_are_exact_and_never_broaden_fixed_disks() {
         const DRIVE_REMOVABLE: u32 = 2;
         const DRIVE_FIXED: u32 = 3;
         const FILE_DEVICE_DISK: u32 = 7;
@@ -6117,6 +6129,10 @@ mod windows_usb_inventory_tests {
             1,
             true,
         ));
+        assert!(windows_mount_reports_no_media(false, 21));
+        assert!(!windows_mount_reports_no_media(true, 21));
+        assert!(!windows_mount_reports_no_media(false, 1));
+        assert!(!windows_mount_reports_no_media(false, 87));
     }
 
     #[cfg(target_os = "windows")]

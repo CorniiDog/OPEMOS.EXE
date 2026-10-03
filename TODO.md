@@ -278,7 +278,23 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   fails with exact `ERROR_NOT_READY`, while no helper/exchange survived. The
   next bounded correction uses that Windows volume-readiness API as the
   independent no-media proof; changed-head checks/artifact and the same failed
-  VM stage remain.
+  VM stage remain. Exact head `8ca97aa4` passed all ten checks, produced the
+  21,563,904-byte executable at SHA-256
+  `b1ad9e29d01598874699580914406a7d7d4bcdf72cb4d7262c79962d24339fc7`,
+  and was deployed closed to new preserved Desktop folder
+  `Test-PR159-8ca97aa4-NoMedia-Ready-Fix-2026-10-03`. Genuine-pointer VM
+  acceptance again failed closed before opening disk 2 on the same phantom
+  volume. An exact read-only guest API reproduction proved why: after the
+  extent query and all five device-number queries return Windows error 1,
+  mount-path enumeration returns exact root `A:\`, but `GetVolumeInformationW`
+  with null output buffers returns `ERROR_INVALID_PARAMETER` (87); the same
+  call with ordinary bounded output buffers returns `ERROR_NOT_READY` (21).
+  The current correction supplies those bounded buffers and retains refusal
+  for ready media and every error other than 21. The target remained
+  34,359,738,368 bytes with zero allocated blocks, and both overlays passed
+  `qemu-img check` after cleanup. The focused exact-admission regression passes
+  1/1 through `heavy.sh`; changed-head CI/artifact, a new preserved Desktop
+  candidate, and the same failed VM stage remain.
 
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.
