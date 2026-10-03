@@ -262,8 +262,23 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   independently reports `ERROR_NOT_READY`; fixed volumes, present media,
   unmounted volumes, ambiguous/truncated responses, and any other error remain
   refused. Its focused removable/fixed/no-mount/present-media regression passes
-  1/1 through `heavy.sh`; changed-head CI/artifact and the failed-stage VM write
-  remain.
+  1/1 through `heavy.sh`. Exact head `48fda523` passed all ten checks; artifact
+  `11271651079` is 2,237,340,241 bytes/SHA-256
+  `b91f243723ea10fb6eba78e70e43e2c7f5f72f28162f8d28a3abf9e93bb6bb8a`
+  and contains the 21,563,392-byte EXE at SHA-256
+  `3b77de56e981477578ff360d470e55f4bcb6ed5401519cfac72a996d31dd8a0f`.
+  Its 5,671-file runtime closure passed before closed deployment to new preserved
+  folder `Test-PR159-48fda523-NoMedia-USB-Fix-2026-10-03`. The genuine-pointer
+  failed-stage rerun validated the image, discovered and selected the exact
+  disposable 32-GiB USB, typed `ERASE`, showed Revalidating then Authorizing,
+  and accepted UAC, but still failed closed before opening disk 2. The exact
+  helper reported Windows error 1 from both identity queries on phantom `A:`;
+  the free-space readiness probe did not admit it. A direct native-API probe
+  proves that same root is removable, not ready, and `GetVolumeInformationW`
+  fails with exact `ERROR_NOT_READY`, while no helper/exchange survived. The
+  next bounded correction uses that Windows volume-readiness API as the
+  independent no-media proof; changed-head checks/artifact and the same failed
+  VM stage remain.
 
 - [x] Correct the exact `bootstrap/install_to_root.sh` identity consumed from
   canonical Core squash `4b676dc4efed50dac446a59475b5fadf83722176`.

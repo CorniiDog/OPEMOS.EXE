@@ -5065,11 +5065,15 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
             paths_bytes: u32,
             required_bytes: *mut u32,
         ) -> i32;
-        fn GetDiskFreeSpaceExW(
-            directory_name: *const u16,
-            free_bytes_available: *mut u64,
-            total_bytes: *mut u64,
-            total_free_bytes: *mut u64,
+        fn GetVolumeInformationW(
+            root_path: *const u16,
+            volume_name: *mut u16,
+            volume_name_size: u32,
+            volume_serial_number: *mut u32,
+            maximum_component_length: *mut u32,
+            file_system_flags: *mut u32,
+            file_system_name: *mut u16,
+            file_system_name_size: u32,
         ) -> i32;
         fn GetLastError() -> u32;
         fn DeviceIoControl(
@@ -5243,15 +5247,22 @@ fn lock_windows_disk_volumes(number: u32) -> Result<Vec<File>, String> {
                             break;
                         }
                         mount_path_count += 1;
-                        let mut free = 0_u64;
-                        let mut total = 0_u64;
-                        let mut total_free = 0_u64;
+                        let mut serial = 0_u32;
+                        let mut maximum_component_length = 0_u32;
+                        let mut file_system_flags = 0_u32;
+                        // A mounted root is skippable only when Windows' volume
+                        // readiness API independently identifies absent media.
+                        // The extent/device-number failure alone is insufficient.
                         let ready = unsafe {
-                            GetDiskFreeSpaceExW(
+                            GetVolumeInformationW(
                                 paths[start..].as_ptr(),
-                                &mut free,
-                                &mut total,
-                                &mut total_free,
+                                std::ptr::null_mut(),
+                                0,
+                                &mut serial,
+                                &mut maximum_component_length,
+                                &mut file_system_flags,
+                                std::ptr::null_mut(),
+                                0,
                             )
                         } != 0;
                         if ready || unsafe { GetLastError() } != ERROR_NOT_READY {
