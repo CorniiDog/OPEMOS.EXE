@@ -3825,6 +3825,33 @@ must be reported; a default-suite pass does not imply hardware certification.
   the same pinned runtime PATH passed 5/5. Required CI, exact Windows artifact
   startup, exact Core review, guarded Desktop deployment, and any separately
   owned Core recovery correction remain pending. No OMEN boot result is claimed.
+  Core PR #68 then corrected the production recovery contract exposed by the
+  physical OMEN and contained acceptance runs: it requires an authenticated
+  renderer, accepts bounded GitHub metadata up to 256 KiB, parses exact release
+  records correctly, defers reboot noninteractively, and restores all five
+  driver modules as root-owned mode-0644 single-link files. Its reviewed head
+  `846b3a2dd3523db2daf4c8afc019743ac959d274` passed all three checks and one
+  clean 32-GiB contained install/removal/recovery/cleanup acceptance, then
+  squash-merged to protected Core main as
+  `9cbca4e20231d63d92f0004a7ca413343bbbea4b`, tree
+  `ad10e6594bb7d92fedc5cf3652a09137d80dc05c`. The current fresh EXE branch
+  consumes that exact squash across runtime, Maintainer, CI, and Windows
+  artifact pins; binds its canonical 123-file dry-run manifest SHA-256
+  `4051d021f32785435dc940c5663003d52105658cea3b5c1e474b905723c712c1`
+  and bundle ID
+  `424a9a76f1353b5f8612c0805cc62cc3f600c6e4705375dedde5479811ec2570`;
+  and embeds Core main workflow artifact `11297403476`'s exact 463,440-byte
+  renderer at SHA-256
+  `364e4d92f8e812572273ace148ff27b64ad8e2d36d21fd1e0c15af212a2f87f6`.
+  Construction installs the renderer plus its receipt into recovery media,
+  independently revalidates both, and supplies both mandatory arguments to
+  Core for each A/B guardian installation. Focused JavaScript contracts pass
+  61/61, the focused Rust embedded-identity/production-invocation regression
+  passes 1/1, and documentation, shell syntax, formatting, hygiene, and diff
+  checks pass. Exact Windows artifact/startup, one coherent `partial` imaging
+  run, required CI, and immutable Core counterpart review remain pending. The
+  Core bundle release remains a separately gated publication action; this work
+  does not publish it or claim physical OMEN display certification.
 
 ### Alpha
 
