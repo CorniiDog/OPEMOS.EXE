@@ -4402,6 +4402,11 @@ esac
             );
         }
         assert!(INSTALL_MEDIA_WELCOME.starts_with(b"#!/usr/bin/env bash\n"));
+        assert_eq!(INSTALL_MEDIA_INTERSTITIAL.len(), 463_440);
+        assert_eq!(
+            format!("{:x}", Sha256::digest(INSTALL_MEDIA_INTERSTITIAL)),
+            "364e4d92f8e812572273ace148ff27b64ad8e2d36d21fd1e0c15af212a2f87f6"
+        );
 
         assert!(desktop.contains("Name=Install SteamOS with NVIDIA drivers"));
         assert!(desktop.contains("Exec=/home/deck/tools/open-opemos-welcome"));
@@ -4413,6 +4418,12 @@ esac
             "$ROOT/usr/lib/opemos-install-media/maintainer/open-opemos-welcome"
         ));
         let installer = include_str!("installer.rs");
+        assert!(installer.contains(
+            "sudo install -m 0755 -o root -g root /tmp/opemos-interstitial"
+        ));
+        assert!(installer.contains(
+            "test ! -L \"$ROOT/usr/lib/opemos-install-media/interstitial.sha256\""
+        ));
         assert!(installer.contains(r#"test "$DECK_ID" = 1000:1000"#));
         assert!(installer.contains(
             r#"for DIRECTORY in "$ROOT/home/deck" "$ROOT/home/deck/.config" "$ROOT/home/deck/.local" "$ROOT/home/deck/.local/share"; do
@@ -4466,8 +4477,10 @@ done"#
         assert!(helper.contains("interstitial_progress.py"));
         assert!(helper.contains("validate_interstitial_binary.py"));
         assert!(helper.contains("opemos-interstitial.service"));
-        assert!(!helper.contains("--interstitial-binary"));
-        assert!(!helper.contains("bin/opemos-interstitial"));
+        assert!(helper.contains("--interstitial-binary \"$INTERSTITIAL_BINARY\""));
+        assert!(helper.contains("--interstitial-sha256 \"$interstitial_sha256\""));
+        assert!(helper.contains("bin/opemos-interstitial"));
+        assert!(helper.contains("the recovery interstitial failed authentication"));
         assert!(helper.contains("installed recovery guardian verification failed"));
         assert!(helper.contains("ui_stage \"Installing the recovery guardian into rootfs-$slot"));
         assert!(helper.contains("partition_by_label \"$device\" home"));
