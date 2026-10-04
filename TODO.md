@@ -92,6 +92,27 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
+- [ ] Deliver the user-requested combined recovery candidate with the reviewed
+  Core GSP-firmware closure and the reported Builder/USB presentation fixes.
+  EXE UI work is implemented on `codex/ui-recovery-candidate`: Output Folder and
+  NVIDIA Source occupy equal desktop columns; read-only source and planned
+  output span the full row; long selected-image names and paths wrap and remain
+  selectable; the USB dialog collapses empty result space; and byte progress no
+  longer repeats the visible `Writing` phase. Focused layout/progress tests pass
+  30/30 through `heavy.sh`. The wider JavaScript suite passed 385 tests and
+  skipped one absent-sibling fixture; two headless-harness cases initially
+  failed only because child shells could not resolve `node`, then passed 5/5
+  when the same pinned Node directory was placed on `PATH`. Rendered Chrome
+  validation passed at 900x800 and a short 900x533 viewport: desktop screenshot
+  SHA-256 `829f30380f0070df8ff47f2fc9ead8f59c38b9e8f30cd6bc89e1f24a6bc56c84`;
+  compact active-write dialog screenshot SHA-256
+  `1dca8ef56318212c43fe8d6072c48b386fdd542124ab230e2a5fe9b00d0e7c56`.
+  Await the already-active Core primary's exact reviewed GSP dependency; then
+  consume it from canonical GitHub at its immutable commit, run the required
+  artifact/check and closure gates, and copy the complete verified portable
+  bundle to a new clearly labeled native Desktop/OPEMOS test-candidate folder.
+  Do not launch the application or touch physical media during delivery.
+
 - [ ] Correct the PR158 native USB lifecycle regression reported on
   `Current-df6c24e5-2026-10-01`. Ordinary SteamOS source selection must keep
   USB Imaging hidden and perform no drive scan; only an independently
