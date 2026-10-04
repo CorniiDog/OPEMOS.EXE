@@ -3783,6 +3783,27 @@ must be reported; a default-suite pass does not imply hardware certification.
   write; its executable regression proves a symlink refusal leaves the
   referent mode unchanged. Changed-head checks, failed-stage acceptance, one
   clean final full pass, and exact changed-head Core counterpart review remain.
+  A fresh independent regression batch now addresses the user's post-PR159
+  presentation evidence without touching the frozen PR160 SAC scope. The
+  default 760-pixel Windows main window no longer enters the former
+  `max-width: 760px`/short-height stacking rule, so Output Folder and NVIDIA
+  Source remain side by side at the configured 760-by-800 size and stack only
+  below 680 pixels. The USB dialog retains its phase/byte/percentage surface
+  while the persistent Builder status keeps the detailed sentence, removing
+  the adjacent duplicate `Writing the validated image` text. Both the
+  installation-media controller and its mounted renderer clamp active overall
+  progress monotonically, preventing a late partition/format log line from
+  moving the bar backward after a rootfs-B or verification checkpoint while
+  still updating the current stage text. Focused layout, USB, renderer, and
+  controller regressions pass 35/35 through `heavy.sh`. A real headless Chrome
+  render of the actual application at 760-by-800 measured the two groups on
+  the same row (`x=39` and `x=426.1875`), while 640-by-800 stacked them; the
+  disposable browser profile was removed and no browser survived. The broad
+  frontend run reached 384 passes, one expected skip, and two harness failures
+  caused solely by a child PATH lacking Node; rerunning that exact harness with
+  the same pinned runtime PATH passed 5/5. Required CI, exact Windows artifact
+  startup, exact Core review, guarded Desktop deployment, and any separately
+  owned Core recovery correction remain pending. No OMEN boot result is claimed.
 
 ### Alpha
 

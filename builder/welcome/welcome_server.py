@@ -136,6 +136,12 @@ class Controller:
 
     def update_operation(self, **values):
         with self.lock:
+            progress = values.get("progress")
+            remains_running = values.get("status", self.operation.get("status")) == "running"
+            if remains_running and isinstance(progress, (int, float)):
+                previous = self.operation.get("progress", 0)
+                if isinstance(previous, (int, float)):
+                    values["progress"] = max(previous, progress)
             self.operation = {**self.operation, **values}
 
     def mark_runtime_state(self, name):

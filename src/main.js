@@ -1469,7 +1469,10 @@ function applyUsbWriteProgress(progress) {
   usbWriteProgress = progress;
   const ratio = progress.bytesCompleted / progress.bytesTotal;
   const status = `${progress.message} ${formatUsbProgressBytes(progress.bytesCompleted)} of ${formatUsbProgressBytes(progress.bytesTotal)} (${(ratio * 100).toFixed(1)}%)`;
-  elements.usbMessage.textContent = status;
+  // The dialog progress surface already renders phase, bytes, and percentage.
+  // Keep the same status in the persistent Builder view without repeating it
+  // immediately below the dialog's progress bar.
+  elements.usbMessage.textContent = "";
   elements.usbPickerMessage.textContent = status;
   elements.usbMessage.className = "result-message";
   renderUsbWriteProgress(progress);

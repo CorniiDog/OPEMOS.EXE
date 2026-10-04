@@ -551,7 +551,7 @@ footer p { margin: 0; }
 
 @keyframes pulse { 50% { transform: scale(.9); opacity: .65; } }
 
-@media (max-width: 760px), (max-height: 760px) {
+@media (max-width: 680px) {
   body { min-width: 0; min-height: 0; }
   .app-shell {
     width: calc(100% - 24px);
