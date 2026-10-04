@@ -3834,6 +3834,20 @@ must be reported; a default-suite pass does not imply hardware certification.
   run, required CI, and immutable Core counterpart review remain pending. The
   Core bundle release remains a separately gated publication action; this work
   does not publish it or claim physical OMEN display certification.
+  The first coherent partial then failed closed at Core's exact initramfs
+  verifier because the generated portable initramfs omitted `nvidia.ko`; no
+  output was accepted and exact owned processes, task, and transient state were
+  cleaned. Core PR #69 corrected that reproduced generator defect and
+  squash-merged as protected Core main
+  `e1d2046828526c2c23a5e348380f87799fa273e2`, tree
+  `af154e55019f75ca78afa3cb776775b69e060d2f`. Its published canonical
+  123-file manifest is 22,590 bytes with SHA-256
+  `333d6447403c9443d960d429b57906ff36de9e4ca9c04f1616f699119046ca3b`
+  and bundle ID
+  `a8b21d3efafe0da5fe49678ea7a8927cac011268a5fec24b07d392c67a6d15c2`.
+  This changed head repins the existing PR163 consumption path to that exact
+  immutable identity; required checks, exact Windows artifact/startup, the
+  failed construction/partial stage, and fresh immutable Core review remain.
 
 ### Alpha
 
