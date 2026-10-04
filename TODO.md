@@ -3867,8 +3867,16 @@ must be reported; a default-suite pass does not imply hardware certification.
   and bundle ID
   `a8b21d3efafe0da5fe49678ea7a8927cac011268a5fec24b07d392c67a6d15c2`.
   This changed head repins the existing PR163 consumption path to that exact
-  immutable identity; required checks, exact Windows artifact/startup, the
-  failed construction/partial stage, and fresh immutable Core review remain.
+  immutable identity. Exact-head checks, Windows startup/provenance, and Core
+  review passed, but the failed-stage partial exposed one EXE consumer defect
+  after Core installation and initramfs verification succeeded: the independent
+  export verifier still required the obsolete early-loading
+  `MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)` line. The bounded
+  correction instead requires Core's portable display-decision marker, exactly
+  one early `MODULES` declaration with no NVIDIA driver, and the exact four
+  verified NVIDIA payloads in `FILES`. The focused regression passes 1/1 and
+  formatting passes through `heavy.sh`; changed-head CI, Windows artifact,
+  fresh immutable Core review, and the failed construction/partial stage remain.
 
 ### Alpha
 
