@@ -63,6 +63,29 @@ mod tests {
         assert_eq!(arguments.iter().filter(|argument| *argument == "-l").count(), 1);
     }
 
+    #[test]
+    fn exported_nvidia_image_verifier_matches_portable_initramfs_contract() {
+        let source = include_str!("image.rs");
+        assert!(source.contains(
+            "# Display boot decision: portable-integrated-early-nvidia-rootfs"
+        ));
+        assert!(source.contains(
+            "! grep '^MODULES=(' \"$INITRAMFS_CONFIG\" | grep -Eq"
+        ));
+        let files_assertion = source
+            .lines()
+            .find(|line| line.contains("grep -Fqx 'FILES=("))
+            .expect("portable FILES assertion");
+        for module in ["nvidia", "nvidia-modeset", "nvidia-uvm", "nvidia-drm"] {
+            assert!(files_assertion.contains(&format!("/{module}.ko.zst")));
+        }
+        assert_eq!(files_assertion.matches(".ko.zst").count(), 4);
+        assert!(!files_assertion.contains("nvidia-peermem"));
+        assert!(!source.contains(
+            "grep -qx 'MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)'"
+        ));
+    }
+
     #[cfg(unix)]
     #[test]
     fn finished_guest_command_captures_stdout_and_stderr() {
