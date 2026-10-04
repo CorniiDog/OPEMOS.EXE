@@ -1263,6 +1263,7 @@ pub(crate) fn verify_nvidia_from_validation_overlay(
     let welcome_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_WELCOME));
     let welcome_server_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_WELCOME_SERVER));
     let welcome_helper_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_HELPER));
+    let interstitial_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_INTERSTITIAL));
     let welcome_desktop_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_DESKTOP));
     let welcome_icon_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_ICON));
     let welcome_gtk_css_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_GTK_CSS));
@@ -1446,6 +1447,12 @@ test -f "$ROOT/usr/lib/opemos-install-media/opemos-install-helper"
 test ! -L "$ROOT/usr/lib/opemos-install-media/opemos-install-helper"
 test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/opemos-install-helper" | awk '{{print $1}}')" = "{}"
 test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/opemos-install-helper")" = 755:0:0
+test -f "$ROOT/usr/lib/opemos-install-media/bin/opemos-interstitial"
+test ! -L "$ROOT/usr/lib/opemos-install-media/bin/opemos-interstitial"
+test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/bin/opemos-interstitial" | awk '{{print $1}}')" = "{interstitial_sha256}"
+test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/bin/opemos-interstitial")" = 755:0:0
+test "$(cat "$ROOT/usr/lib/opemos-install-media/interstitial.sha256")" = "{interstitial_sha256}"
+test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/interstitial.sha256")" = 644:0:0
 test -f "$ROOT/usr/lib/opemos-install-media/welcome_server.py"
 test ! -L "$ROOT/usr/lib/opemos-install-media/welcome_server.py"
 test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/welcome_server.py" | awk '{{print $1}}')" = "{}"
@@ -1526,6 +1533,7 @@ trap - EXIT INT TERM"#,
         welcome_asset_assertions,
         install_media_support_assertions,
         receipt_assertions,
+        interstitial_sha256 = interstitial_sha256,
     );
     run_guest_command(session, &command).map(|_| ())
 }
