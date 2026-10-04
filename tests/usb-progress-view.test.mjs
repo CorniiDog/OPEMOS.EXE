@@ -49,7 +49,8 @@ test("USB progress renders honest indeterminate and byte-backed states in both v
     assert.equal(view.phase.textContent, "Writing");
     assert.equal(view.percent.textContent, "36.8%");
     assert.equal(view.bar.value, progress.bytesCompleted / progress.bytesTotal * 100);
-    assert.equal(view.detail.textContent, "Writing the verified image. 2990538752 bytes of 8120172544 bytes.");
+    assert.equal(view.detail.textContent, "2990538752 bytes of 8120172544 bytes processed.");
+    assert.doesNotMatch(view.detail.textContent, /Writing/i);
   }
 });
 

@@ -8,12 +8,13 @@ const chromeCss = await readFile(new URL("../src/window-chrome.css", import.meta
 const script = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
-test("main workflow groups output destination beside the NVIDIA controls", () => {
+test("main workflow gives output and NVIDIA equal columns with a full-width summary", () => {
   assert.match(html, /id="readiness-grid"[\s\S]*class="environment-card"[\s\S]*id="selection-card"[\s\S]*id="drop-zone"/);
   assert.match(html, /class="build-options-grid"[\s\S]*class="source-choice export-choice"[\s\S]*class="build-side-column"[\s\S]*for="nvidia-source"[\s\S]*id="summary-output"[\s\S]*id="usb-picker"[\s\S]*id="usb-target"[\s\S]*id="build-button"/);
   assert.match(css, /\.readiness-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/);
-  assert.match(css, /\.build-options-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.12fr\) minmax\(0, \.88fr\);/);
-  assert.match(css, /\.build-side-column \.build-summary\s*\{[^}]*grid-column:\s*1;[^}]*grid-row:\s*auto;[^}]*grid-template-columns:\s*1fr;/);
+  assert.match(css, /\.build-options-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(html, /class="source-choice export-choice"[\s\S]*class="build-side-column"[\s\S]*<\/div>\s*<div class="build-summary"/);
+  assert.match(css, /\.build-options-grid > \.build-summary\s*\{[^}]*grid-column:\s*1 \/ -1;[^}]*width:\s*100%;/);
   assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*grid-column:\s*1;[^}]*width:\s*100%;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*justify-content:\s*stretch;[^}]*justify-self:\s*stretch;/);
   assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*2;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
   assert.match(css, /\.build-options-grid \.export-choice,[\s\S]*\.output-destination\s*\{\s*box-sizing:\s*border-box;/);
@@ -182,6 +183,13 @@ test("output folder and NVIDIA source share the wide layout and stack responsive
   assert.doesNotMatch(css, /@media[^\{]*max-height[^\{]*\{[\s\S]*?\.build-side-column/);
 });
 
+test("USB dialog collapses empty status space and progress detail does not duplicate its phase", () => {
+  assert.match(css, /#usb-card\s*\{[^}]*height:\s*fit-content;/);
+  assert.match(css, /#usb-card > \.result-message:empty\s*\{\s*display:\s*none;/);
+  assert.match(script, /usbMessage\.textContent = "";/);
+  assert.doesNotMatch(css, /#usb-card > \.result-message\s*\{[^}]*min-height:\s*34px;/);
+});
+
 test("USB Imaging renders persistent inline and dialog progress surfaces", () => {
   assert.match(html, /id="usb-dialog-progress"[^>]*role="status"[\s\S]*id="usb-dialog-progress-bar"/);
   assert.match(html, /id="usb-inline-progress"[^>]*role="status"[\s\S]*id="usb-inline-progress-bar"/);
@@ -345,6 +353,9 @@ test("long selected-image names and paths remain inside the readiness card", () 
   assert.match(css, /\.readiness-grid \.path\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/);
   assert.match(css, /\.selection-card h2\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/);
   assert.doesNotMatch(css, /\.selection-card h2\s*\{[^}]*text-overflow:\s*ellipsis;/);
+  const selectedPathRule = css.match(/\.readiness-grid\.has-selection \.selection-card h2,[\s\S]*?\.readiness-grid\.has-selection \.path\s*\{[^}]*\}/)?.[0] || "";
+  assert.match(selectedPathRule, /user-select:\s*text/);
+  assert.doesNotMatch(selectedPathRule, /text-overflow:\s*ellipsis/);
 });
 
 test("settings reads and writes reject stale completions and freeze request payloads", () => {
