@@ -3805,6 +3805,25 @@ must be reported; a default-suite pass does not imply hardware certification.
   startup, exact Core review, guarded Desktop deployment, and any separately
   owned Core recovery correction remain pending. No OMEN boot result is claimed.
 
+  Core PR66's reviewed portable-initramfs correction squash-merged to protected
+  Core main as `9aa77c897ebe9c0f6534fac30a5ced7597924814`, tree
+  `2179a5fec8e2b56073aea35a639e2cb94f30f97c`, with sole parent
+  `1f9fb4ba2f403552a89862f9d1997a3dfc4e4953`. This fresh EXE consumption
+  batch repins runtime, maintainer, CI, Windows artifact, documentation-policy,
+  and focused test identities to that exact squash commit. A canonical dry run
+  from an authenticated GitHub checkout produced the 122-file installer bundle
+  manifest SHA-256
+  `e419499e33f8cbc01678713fd95743c755cbc0a4a5d617b29a18fd52c6fa998c`
+  and bundle ID
+  `9af0d18680e3f1f4ccba352f93e7d761d26925ff6a8aa20c55fe8bc450f971dd`.
+  Rust formatting and the focused production-commit/manifest binding regression
+  pass through `heavy.sh`; exact-head JavaScript and Windows build/startup
+  checks remain for remote CI because this host has no Node binary. The exact
+  immutable release tag is currently absent. Publication is separately gated
+  and is not inferred from the Core merge, so fresh exact-image construction,
+  candidate validation, and immutable Core review remain pending that exact
+  manifest publication. No corrected-image or physical OMEN result is claimed.
+
 ### Alpha
 
 - [ ] One fresh official image builds, writes to USB, installs to the intended
