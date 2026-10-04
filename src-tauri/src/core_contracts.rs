@@ -4842,7 +4842,7 @@ mod tests {
             OPEMOS_CORE_COMPATIBILITY_COMMIT,
         )
         .expect("consume canonical pinned Core manifest");
-        assert_eq!(manifest.files.len(), 122);
+        assert_eq!(manifest.files.len(), 123);
         assert_eq!(manifest.bundle_id, OPEMOS_CORE_COMPATIBILITY_BUNDLE_ID);
         assert!(manifest.files.iter().any(|file| {
             file.path == "lib/resolve_target.py" && file.role == "resolver" && file.mode == "0755"
@@ -4885,7 +4885,7 @@ mod tests {
             },
         )
         .expect("stage the complete authenticated Core tree");
-        assert_eq!(staged.manifest.files.len(), 122);
+        assert_eq!(staged.manifest.files.len(), 123);
         validate_core_bundle_tree(&staged.root, &staged.manifest).unwrap();
 
         let cancelled_staging = root.join("cancelled-staging");
@@ -4921,7 +4921,7 @@ mod tests {
             "authenticated_core_bundle_verified"
         );
         assert_eq!(installer.report.commit, OPEMOS_CORE_COMPATIBILITY_COMMIT);
-        assert_eq!(installer.report.files.len(), 122);
+        assert_eq!(installer.report.files.len(), 123);
         assert_eq!(
             installer
                 .core_manifest

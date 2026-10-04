@@ -3827,7 +3827,10 @@ must be reported; a default-suite pass does not imply hardware certification.
   Core for each A/B guardian installation. Focused JavaScript contracts pass
   61/61, the focused Rust embedded-identity/production-invocation regression
   passes 1/1, and documentation, shell syntax, formatting, hygiene, and diff
-  checks pass. Exact Windows artifact/startup, one coherent `partial` imaging
+  checks pass. The first exact-head CI run then exposed only three stale
+  122-file migration expectations against the verified 123-file Core manifest;
+  the bounded correction updates those counts, and the failed Core-pin stage
+  now passes 2/2 locally through `heavy.sh`. Exact Windows artifact/startup, one coherent `partial` imaging
   run, required CI, and immutable Core counterpart review remain pending. The
   Core bundle release remains a separately gated publication action; this work
   does not publish it or claim physical OMEN display certification.
