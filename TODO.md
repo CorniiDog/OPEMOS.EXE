@@ -116,9 +116,14 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   production/portable-initramfs correction history plus the UI commit and exact
   Core repin. Focused UI, Windows-workflow, documentation, and maintainer
   contract checks pass 82/82 against a canonical GitHub checkout of the squash
-  commit. Commit the repin, push the fresh branch, open the combined imaging-
-  sensitive PR, wait for native Windows artifact/checks and exact Core review,
-  then run the required changed-input partial/full gates and copy the complete
+  commit. Imaging-sensitive PR #164 produced a provenance-bound native Windows
+  artifact, but exact Core review found its export verifier still required the
+  obsolete four-module-only `FILES` line. The corrected verifier requires the
+  four ordered NVIDIA module payloads plus exact versioned `gsp_tu10x.bin` and
+  `gsp_ga10x.bin` firmware paths, still excludes `nvidia-peermem`, and its
+  focused regression passes through `heavy.sh`. Rerun required CI and the
+  Windows artifact build on the changed immutable head, obtain exact Core
+  rereview, then run the changed-input partial/full gates and copy the complete
   verified portable bundle to a new clearly labeled native Desktop/OPEMOS
   test-candidate folder. Do not launch the application or touch physical media
   during delivery.
