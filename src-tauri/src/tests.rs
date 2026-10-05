@@ -4432,10 +4432,10 @@ esac
             );
         }
         assert!(INSTALL_MEDIA_WELCOME.starts_with(b"#!/usr/bin/env bash\n"));
-        assert_eq!(INSTALL_MEDIA_INTERSTITIAL.len(), 463_440);
+        assert_eq!(INSTALL_MEDIA_INTERSTITIAL.len(), 469_384);
         assert_eq!(
             format!("{:x}", Sha256::digest(INSTALL_MEDIA_INTERSTITIAL)),
-            "364e4d92f8e812572273ace148ff27b64ad8e2d36d21fd1e0c15af212a2f87f6"
+            "05adeda203528632134c563efc312945dc68160a202539e6088a60ac934e53f0"
         );
 
         assert!(desktop.contains("Name=Install SteamOS with NVIDIA drivers"));

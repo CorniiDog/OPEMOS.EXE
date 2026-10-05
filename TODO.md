@@ -127,6 +127,27 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   verified portable bundle to a new clearly labeled native Desktop/OPEMOS
   test-candidate folder. Do not launch the application or touch physical media
   during delivery.
+  Core PR72 subsequently passed exact EXE counterpart review and was
+  squash-merged to protected main
+  `86acf7bd2bbe2b91ee39c6a7a2dd75ceb58d539b`. Its explicitly authorized
+  create-only display-fallback installer bundle is published with manifest
+  SHA-256
+  `1b190c441d186fb3ae19cb37283c6cf2ab57231b11108c991d678b4d8a7bba11`,
+  bundle ID
+  `863387d7e61ce1fa08d75147767077f8b1e7f61b71ba923e33605374d6a2b219`,
+  and 124 verified files. Fresh branch `codex/display-fallback-candidate`
+  preserves the eight reviewed PR164 commits, repins the exact protected Core
+  commit and bundle, and embeds PR72 Arch artifact 11325536839's 469,384-byte
+  interstitial at SHA-256
+  `05adeda203528632134c563efc312945dc68160a202539e6088a60ac934e53f0`.
+  Focused UI/workflow checks pass 93/93, documentation and exact Core
+  maintainer parity pass, and the embedded-binary Rust regression passes
+  through `heavy.sh`. Exact Core parity initially exposed PR71's changed
+  exact-target policy hash; the bounded correction now binds
+  `e8c1ac32676866c353d7e5a1f349621004e528ceeaafcf205052fd0455e8c2a1`
+  and its failed stage passes 8/8. Commit, required remote checks, exact Core
+  review, changed-input gates, artifact verification, and closed native
+  delivery remain.
 
 - [ ] Correct the PR158 native USB lifecycle regression reported on
   `Current-df6c24e5-2026-10-01`. Ordinary SteamOS source selection must keep
