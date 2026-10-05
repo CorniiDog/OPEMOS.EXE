@@ -4435,7 +4435,7 @@ esac
         assert_eq!(INSTALL_MEDIA_INTERSTITIAL.len(), 469_384);
         assert_eq!(
             format!("{:x}", Sha256::digest(INSTALL_MEDIA_INTERSTITIAL)),
-            "05adeda203528632134c563efc312945dc68160a202539e6088a60ac934e53f0"
+            "171e4ef98325e231a5dc7a5fa2345653cf27858c953f1b8c39a00cd5d5f4bfd3"
         );
 
         assert!(desktop.contains("Name=Install SteamOS with NVIDIA drivers"));

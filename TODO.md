@@ -92,6 +92,21 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
+- [ ] Deliver the attention-to-black correction candidate using protected Core
+  `fc89fafdf5b4334ec61b8d79e53c74d5ec16011b`. Exact published 124-file manifest
+  SHA-256 `b6289331d3ea6d179f8356cd24784e585c0a4eec0a775a62384cd51ebce4bbad`
+  and bundle ID `166911da321fd3b356546dabf34189fd727c6d7b411384a01bb4bde51118aee9`
+  replace the previous candidate inputs. Embed the approved PR73 head's successful
+  Arch run 37272675294 artifact 11328931893 renderer (469,384 bytes), SHA-256
+  `171e4ef98325e231a5dc7a5fa2345653cf27858c953f1b8c39a00cd5d5f4bfd3`.
+  Preserve the prior candidate history on a fresh branch from fetched main.
+  Focused JS workflow/maintainer regression tests pass 52/52; documentation and
+  exact Core maintainer parity pass. The embedded renderer/installation-media
+  privilege-boundary Rust regression passes through `heavy.sh`. Remote checks,
+  exact Core review and new-folder native
+  test delivery remain; partial/full certification and physical visibility are
+  separate, and this correction does not provide the missing exact 6.18 product.
+
 - [ ] Deliver the user-requested combined recovery candidate with the reviewed
   Core GSP-firmware closure and the reported Builder/USB presentation fixes.
   EXE UI work is implemented on `codex/ui-recovery-candidate`: Output Folder and
