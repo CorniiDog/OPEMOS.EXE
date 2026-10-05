@@ -8,7 +8,7 @@ const SETUP_NODE = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020"
 const RUST = "dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87";
 const UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02";
 const DOWNLOAD = "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093";
-const CORE = "e1d2046828526c2c23a5e348380f87799fa273e2";
+const CORE = "21c47c134952b1326321d604de230a3466da83b9";
 const bundle = await readFile(new URL("../bundle_windows.ps1", import.meta.url), "utf8");
 
 function requireText(text, value, label) {
