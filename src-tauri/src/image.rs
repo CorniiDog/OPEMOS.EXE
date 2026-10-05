@@ -1390,7 +1390,7 @@ INITRAMFS_CONFIG="$ROOT/etc/mkinitcpio.conf.d/90-open-gpu-kernel-modules-steamos
 grep -Fqx '# Display boot decision: portable-integrated-early-nvidia-rootfs' "$INITRAMFS_CONFIG"
 test "$(grep -c '^MODULES=(' "$INITRAMFS_CONFIG")" = 1
 ! grep '^MODULES=(' "$INITRAMFS_CONFIG" | grep -Eq '(^|[ (])(nvidia|nvidia_modeset|nvidia_uvm|nvidia_drm)([ )]|$)'
-grep -Fqx 'FILES=(/usr/lib/modules/{}/updates/open-gpu-kernel-modules-steamos/nvidia.ko.zst /usr/lib/modules/{}/updates/open-gpu-kernel-modules-steamos/nvidia-modeset.ko.zst /usr/lib/modules/{}/updates/open-gpu-kernel-modules-steamos/nvidia-uvm.ko.zst /usr/lib/modules/{}/updates/open-gpu-kernel-modules-steamos/nvidia-drm.ko.zst)' "$INITRAMFS_CONFIG"
+grep -Fqx 'FILES=(/usr/lib/modules/{}/updates/open-gpu-kernel-modules-steamos/nvidia.ko.zst /usr/lib/modules/{}/updates/open-gpu-kernel-modules-steamos/nvidia-modeset.ko.zst /usr/lib/modules/{}/updates/open-gpu-kernel-modules-steamos/nvidia-uvm.ko.zst /usr/lib/modules/{}/updates/open-gpu-kernel-modules-steamos/nvidia-drm.ko.zst /usr/lib/firmware/nvidia/{}/gsp_tu10x.bin /usr/lib/firmware/nvidia/{}/gsp_ga10x.bin)' "$INITRAMFS_CONFIG"
 GRUB="$ROOT/efi/EFI/steamos/grub.cfg"
 test -f "$GRUB"
 test ! -L "$GRUB"
@@ -1518,6 +1518,8 @@ trap - EXIT INT TERM"#,
         installation.kernel_version,
         installation.kernel_version,
         installation.kernel_version,
+        installation.nvidia_version,
+        installation.nvidia_version,
         NVIDIA_GRUB_VALIDATION_AWK,
         installation.kernel_version,
         installation.nvidia_version,
