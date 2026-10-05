@@ -102,9 +102,21 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   Preserve the prior candidate history on a fresh branch from fetched main.
   Focused JS workflow/maintainer regression tests pass 52/52; documentation and
   exact Core maintainer parity pass. The embedded renderer/installation-media
-  privilege-boundary Rust regression passes through `heavy.sh`. Remote checks,
-  exact Core review and new-folder native
-  test delivery remain; partial/full certification and physical visibility are
+  privilege-boundary Rust regression passes through `heavy.sh`. PR166 head
+  `0152c731944fefa0391e1386ad199b4982d4da20` passed required CI and Windows
+  run 37315255684; its new native Desktop test folder was delivered with all
+  5,680 files/hash closure verified. Executable SHA-256 is
+  `3084ab623db128eec25a9ef97c1f507b406d9ababf2de6614a5f13b7dad3159e`.
+  Authenticated handoff `exe-pr166-0152c731-native-delivery-handoff.md` and
+  original watcher receipt preserve that exact delivered identity.
+  Core review found a stale 123-file expectation in the ignored live consumer
+  test. Correcting only that expectation to 124 passes the actual authenticated
+  `tests::live_pinned_nvidia_installer_bundle` regression (1/1) through
+  `heavy.sh`; synthetic fixtures remain unchanged. This follow-up source push
+  is necessary for exact changed-head Core review and required remote CI on
+  `https://github.com/CorniiDog/OPEMOS.EXE.git`, branch
+  `work/exe-attention-fix-candidate`. Exact changed-head review and required
+  checks remain; partial/full certification and physical visibility are
   separate, and this correction does not provide the missing exact 6.18 product.
 
 - [ ] Deliver the user-requested combined recovery candidate with the reviewed

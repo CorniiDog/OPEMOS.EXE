@@ -5808,7 +5808,7 @@ done"#
             assert_eq!(state.report.reason, "authenticated_core_bundle_verified");
             assert_eq!(state.report.commit, OPEMOS_CORE_COMPATIBILITY_COMMIT);
             assert_eq!(state.report.files.len(), manifest.files.len());
-            assert_eq!(manifest.files.len(), 123);
+            assert_eq!(manifest.files.len(), 124);
         } else {
             assert_eq!(state.report.reason, "legacy_pinned_installer_fallback");
             assert_eq!(state.report.commit, NVIDIA_INSTALLER_COMMIT);
