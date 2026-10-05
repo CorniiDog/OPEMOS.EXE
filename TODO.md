@@ -148,6 +148,11 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   and its failed stage passes 8/8. Commit, required remote checks, exact Core
   review, changed-input gates, artifact verification, and closed native
   delivery remain.
+  The first PR165 Rust run then exposed three stale 123-file consumer
+  assertions against the authenticated 124-file bundle. The failed-stage fix
+  updates those exact counts and requires the new executable
+  `bootstrap/show_recovery_console.sh` device entrypoint; the targeted canonical
+  Core generator/staging/installer regression passes through `heavy.sh`.
 
 - [ ] Correct the PR158 native USB lifecycle regression reported on
   `Current-df6c24e5-2026-10-01`. Ordinary SteamOS source selection must keep
