@@ -79,7 +79,14 @@ mod tests {
         for module in ["nvidia", "nvidia-modeset", "nvidia-uvm", "nvidia-drm"] {
             assert!(files_assertion.contains(&format!("/{module}.ko.zst")));
         }
+        for firmware in ["gsp_tu10x.bin", "gsp_ga10x.bin"] {
+            assert!(files_assertion.contains(&format!(
+                "/usr/lib/firmware/nvidia/{{}}/{firmware}"
+            )));
+        }
+        assert_eq!(files_assertion.matches("/usr/lib/").count(), 6);
         assert_eq!(files_assertion.matches(".ko.zst").count(), 4);
+        assert_eq!(files_assertion.matches("gsp_").count(), 2);
         assert!(!files_assertion.contains("nvidia-peermem"));
         assert!(!source.contains(
             "grep -qx 'MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)'"
