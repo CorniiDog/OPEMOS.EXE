@@ -4842,7 +4842,7 @@ mod tests {
             OPEMOS_CORE_COMPATIBILITY_COMMIT,
         )
         .expect("consume canonical pinned Core manifest");
-        assert_eq!(manifest.files.len(), 123);
+        assert_eq!(manifest.files.len(), 124);
         assert_eq!(manifest.bundle_id, OPEMOS_CORE_COMPATIBILITY_BUNDLE_ID);
         assert!(manifest.files.iter().any(|file| {
             file.path == "lib/resolve_target.py" && file.role == "resolver" && file.mode == "0755"
@@ -4850,6 +4850,11 @@ mod tests {
         assert!(manifest.files.iter().any(|file| {
             file.path == "locks/userspace/steamos-3.8.14-nvidia-575.64.05.json"
                 && file.role == "userspace-lock"
+        }));
+        assert!(manifest.files.iter().any(|file| {
+            file.path == "bootstrap/show_recovery_console.sh"
+                && file.role == "device-entrypoint"
+                && file.mode == "0755"
         }));
         assert_eq!(
             core_bundle_release_url(),
@@ -4885,7 +4890,7 @@ mod tests {
             },
         )
         .expect("stage the complete authenticated Core tree");
-        assert_eq!(staged.manifest.files.len(), 123);
+        assert_eq!(staged.manifest.files.len(), 124);
         validate_core_bundle_tree(&staged.root, &staged.manifest).unwrap();
 
         let cancelled_staging = root.join("cancelled-staging");
@@ -4921,7 +4926,7 @@ mod tests {
             "authenticated_core_bundle_verified"
         );
         assert_eq!(installer.report.commit, OPEMOS_CORE_COMPATIBILITY_COMMIT);
-        assert_eq!(installer.report.files.len(), 123);
+        assert_eq!(installer.report.files.len(), 124);
         assert_eq!(
             installer
                 .core_manifest
