@@ -107,11 +107,21 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   SHA-256 `829f30380f0070df8ff47f2fc9ead8f59c38b9e8f30cd6bc89e1f24a6bc56c84`;
   compact active-write dialog screenshot SHA-256
   `1dca8ef56318212c43fe8d6072c48b386fdd542124ab230e2a5fe9b00d0e7c56`.
-  Await the already-active Core primary's exact reviewed GSP dependency; then
-  consume it from canonical GitHub at its immutable commit, run the required
-  artifact/check and closure gates, and copy the complete verified portable
-  bundle to a new clearly labeled native Desktop/OPEMOS test-candidate folder.
-  Do not launch the application or touch physical media during delivery.
+  Core PR70 passed exact EXE review and was squash-merged to protected main
+  `21c47c134952b1326321d604de230a3466da83b9`; its user-authorized create-only
+  installer bundle is published with manifest SHA-256
+  `cd96780dabc26a5b098b05eb2ef0c31bf23317068152df1caedc5499ecd75c3a`,
+  bundle ID `7a213b9050448dd500c4f80938882e51f0de0beb2a065ac3e77104b8c4954962`,
+  and 123 verified files. The combined branch now carries the preserved PR163
+  production/portable-initramfs correction history plus the UI commit and exact
+  Core repin. Focused UI, Windows-workflow, documentation, and maintainer
+  contract checks pass 82/82 against a canonical GitHub checkout of the squash
+  commit. Commit the repin, push the fresh branch, open the combined imaging-
+  sensitive PR, wait for native Windows artifact/checks and exact Core review,
+  then run the required changed-input partial/full gates and copy the complete
+  verified portable bundle to a new clearly labeled native Desktop/OPEMOS
+  test-candidate folder. Do not launch the application or touch physical media
+  during delivery.
 
 - [ ] Correct the PR158 native USB lifecycle regression reported on
   `Current-df6c24e5-2026-10-01`. Ordinary SteamOS source selection must keep
