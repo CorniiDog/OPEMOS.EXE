@@ -291,7 +291,7 @@ footer p { color: #aab4c5; }
 .build-options-grid {
   margin-bottom: 9px;
   display: grid;
-  grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 9px 12px;
   align-items: stretch;
 }
@@ -447,14 +447,13 @@ footer p { color: #aab4c5; }
 .output-destination {
   width: 100%;
   min-width: 0;
-  padding: 9px 10px;
+  padding: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
   gap: 8px;
-  border: 1px solid rgba(184, 220, 241, .12);
-  border-radius: 11px;
-  background: rgba(8, 15, 22, .28);
+  border: 0;
+  background: transparent;
 }
 .output-destination > span:first-child { width: 100%; min-width: 0; }
 .output-destination strong,
