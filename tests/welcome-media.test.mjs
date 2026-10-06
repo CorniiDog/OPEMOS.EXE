@@ -66,6 +66,9 @@ test("install helper binds and revalidates a physical device identity", () => {
   assert.match(helper, /install_recovery_guardian_to_root\.sh/);
   assert.match(helper, /for slot in A B/);
   assert.match(helper, /--support-revision "\$support_revision"/);
+  assert.match(helper, /--interstitial-binary "\$INTERSTITIAL_BINARY"/);
+  assert.match(helper, /--interstitial-sha256 "\$interstitial_sha256"/);
+  assert.match(helper, /sha256sum "\$INTERSTITIAL_BINARY"/);
   assert.match(helper, /media-info\)/);
   assert.match(helper, /verify_guardian_slot/);
   assert.match(helper, /installed recovery guardian verification failed/);

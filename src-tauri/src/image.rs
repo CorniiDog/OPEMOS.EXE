@@ -1263,6 +1263,7 @@ pub(crate) fn verify_nvidia_from_validation_overlay(
     let welcome_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_WELCOME));
     let welcome_server_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_WELCOME_SERVER));
     let welcome_helper_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_HELPER));
+    let interstitial_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_INTERSTITIAL));
     let welcome_desktop_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_DESKTOP));
     let welcome_icon_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_ICON));
     let welcome_gtk_css_sha256 = format!("{:x}", Sha256::digest(INSTALL_MEDIA_GTK_CSS));
@@ -1385,7 +1386,11 @@ for MODULE in nvidia nvidia-drm nvidia-modeset nvidia-peermem nvidia-uvm; do
 done
 grep -qx 'blacklist nouveau' "$ROOT/etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf"
 grep -qx 'options nvidia-drm modeset=1 fbdev=1' "$ROOT/etc/modprobe.d/99-open-gpu-kernel-modules-steamos.conf"
-grep -qx 'MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)' "$ROOT/etc/mkinitcpio.conf.d/90-open-gpu-kernel-modules-steamos.conf"
+INITRAMFS_CONFIG="$ROOT/etc/mkinitcpio.conf.d/90-open-gpu-kernel-modules-steamos.conf"
+grep -Fqx '# Display boot decision: portable-integrated-early-nvidia-rootfs' "$INITRAMFS_CONFIG"
+test "$(grep -c '^MODULES=(' "$INITRAMFS_CONFIG")" = 1
+! grep '^MODULES=(' "$INITRAMFS_CONFIG" | grep -Eq '(^|[ (])(nvidia|nvidia_modeset|nvidia_uvm|nvidia_drm)([ )]|$)'
+grep -Fqx 'FILES=(/usr/lib/modules/{}/updates/open-gpu-kernel-modules-steamos/nvidia.ko.zst /usr/lib/modules/{}/updates/open-gpu-kernel-modules-steamos/nvidia-modeset.ko.zst /usr/lib/modules/{}/updates/open-gpu-kernel-modules-steamos/nvidia-uvm.ko.zst /usr/lib/modules/{}/updates/open-gpu-kernel-modules-steamos/nvidia-drm.ko.zst /usr/lib/firmware/nvidia/{}/gsp_tu10x.bin /usr/lib/firmware/nvidia/{}/gsp_ga10x.bin)' "$INITRAMFS_CONFIG"
 GRUB="$ROOT/efi/EFI/steamos/grub.cfg"
 test -f "$GRUB"
 test ! -L "$GRUB"
@@ -1446,6 +1451,12 @@ test -f "$ROOT/usr/lib/opemos-install-media/opemos-install-helper"
 test ! -L "$ROOT/usr/lib/opemos-install-media/opemos-install-helper"
 test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/opemos-install-helper" | awk '{{print $1}}')" = "{}"
 test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/opemos-install-helper")" = 755:0:0
+test -f "$ROOT/usr/lib/opemos-install-media/bin/opemos-interstitial"
+test ! -L "$ROOT/usr/lib/opemos-install-media/bin/opemos-interstitial"
+test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/bin/opemos-interstitial" | awk '{{print $1}}')" = "{interstitial_sha256}"
+test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/bin/opemos-interstitial")" = 755:0:0
+test "$(cat "$ROOT/usr/lib/opemos-install-media/interstitial.sha256")" = "{interstitial_sha256}"
+test "$(stat -c '%a:%u:%g' "$ROOT/usr/lib/opemos-install-media/interstitial.sha256")" = 644:0:0
 test -f "$ROOT/usr/lib/opemos-install-media/welcome_server.py"
 test ! -L "$ROOT/usr/lib/opemos-install-media/welcome_server.py"
 test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/welcome_server.py" | awk '{{print $1}}')" = "{}"
@@ -1503,6 +1514,12 @@ trap - EXIT INT TERM"#,
         installation.kernel_version,
         installation.nvidia_version,
         installation.kernel_version,
+        installation.kernel_version,
+        installation.kernel_version,
+        installation.kernel_version,
+        installation.kernel_version,
+        installation.nvidia_version,
+        installation.nvidia_version,
         NVIDIA_GRUB_VALIDATION_AWK,
         installation.kernel_version,
         installation.nvidia_version,
@@ -1526,6 +1543,7 @@ trap - EXIT INT TERM"#,
         welcome_asset_assertions,
         install_media_support_assertions,
         receipt_assertions,
+        interstitial_sha256 = interstitial_sha256,
     );
     run_guest_command(session, &command).map(|_| ())
 }
