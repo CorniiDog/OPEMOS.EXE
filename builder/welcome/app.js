@@ -12,6 +12,44 @@ const state = {
   renderedProgress: 0,
 };
 
+let startupJingleAttempted = false;
+function playStartupJingle() {
+  if (startupJingleAttempted || state.bootstrap?.mode !== "live" || document.visibilityState !== "visible") return;
+  startupJingleAttempted = true;
+  let audio;
+  let finished = false;
+  const close = () => {
+    if (finished) return;
+    finished = true;
+    try { audio?.close().catch(() => {}); } catch (_) {}
+  };
+  try {
+    const Audio = window.AudioContext || window.webkitAudioContext;
+    if (!Audio) return;
+    audio = new Audio();
+    // Never wait for an audio device or autoplay permission to show the UI.
+    setTimeout(close, 1500);
+    audio.resume().then(() => {
+      if (finished || audio.state !== "running" || document.visibilityState !== "visible") { close(); return; }
+      const start = audio.currentTime + 0.02;
+      [523.25, 659.25, 783.99, 1046.5].forEach((frequency, index) => {
+        const tone = audio.createOscillator();
+        const volume = audio.createGain();
+        const at = start + index * 0.18;
+        tone.type = "sine";
+        tone.frequency.value = frequency;
+        volume.gain.setValueAtTime(0, at);
+        volume.gain.linearRampToValueAtTime(0.045, at + 0.015);
+        volume.gain.linearRampToValueAtTime(0, at + 0.25);
+        tone.connect(volume);
+        volume.connect(audio.destination);
+        tone.start(at);
+        tone.stop(at + 0.26);
+      });
+    }).catch(close);
+  } catch (_) { close(); }
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -269,6 +307,7 @@ async function initialize() {
     badge.textContent = state.bootstrap.mode === "simulation" ? "Safe simulation" : "Installation media";
     badge.classList.toggle("simulation", state.bootstrap.mode === "simulation");
     home();
+    requestAnimationFrame(() => requestAnimationFrame(playStartupJingle));
   } catch (error) {
     setError(error);
     view.innerHTML = `<div class="panel"><span class="label">Startup failed</span><h2>The installation controller is unavailable</h2><p class="lead">${escapeHtml(error.message)}</p></div>`;

@@ -3859,3 +3859,19 @@ current and their repository ownership is unambiguous.
   and CSS passes at1280px and640px through heavy.sh; existing power actions are
   unchanged. Branch work/exe-completion-controls; remote CI/PR still required.
   Output-folder consolidation and installation-media startup jingle remain open.
+
+- [ ] Installation-media startup jingle: local implementation on fresh branch
+  `work/exe-welcome-startup-jingle` from fetched main `4cba3835` synthesizes four
+  original sine notes once after visible-ready rendering, with modest gain and
+  a 1.5-second audio cleanup bound. No downloads/dependencies, installation wait,
+  simulation sound, or installed-system recovery changes. Existing local welcome
+  WebEngine profile permits autoplay per Qt's documented playback setting.
+  Focused browser execution through heavy.sh passes once/live-only/brief/quiet,
+  constructor failure, resume rejection, missing API, stalled resume, and cleanup.
+  Real Chromium offline Web Audio also renders the actual synthesis: peak
+  0.054875, energy 14.8858, final non-silent sample at 0.80982 seconds. Hidden-page
+  refusal and late-resume-after-cleanup regression coverage is included. These
+  establish synthesis and silent fallback, not physical playback or native Qt
+  startup. Required remote frontend/Windows CI and PR gates remain; no release
+  acceptance claim. PR #168 remains independently
+  gated on the running exact-head Windows build.
