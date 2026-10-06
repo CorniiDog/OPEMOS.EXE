@@ -3851,3 +3851,11 @@ These are not current OPEMOS.EXE implementation work:
 
 Deferred items should return here only when an accepted milestone makes them
 current and their repository ownership is unambiguous.
+# Completion controls — current user request
+
+- [x] Scope the installation-media completion row to left-group Stay Here,
+  Restart, and Shut Down with 5px gaps, removing the primary-button auto push
+  only on this row. Actual Chrome rendering of the shipped completion function
+  and CSS passes at1280px and640px through heavy.sh; existing power actions are
+  unchanged. Branch work/exe-completion-controls; remote CI/PR still required.
+  Output-folder consolidation and installation-media startup jingle remain open.

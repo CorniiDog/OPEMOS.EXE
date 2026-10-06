@@ -218,7 +218,7 @@ function completionScreen() {
     <div><span class="label">Installation complete · Maintained by OPEMOS</span><h2>SteamOS with NVIDIA drivers is ready to boot</h2>
       <p class="lead">Shut Down is recommended. Remove the installation USB after power-off, then boot from the installed drive.</p>
       <p class="lead warning">If you restart, remove the USB as the screen turns off or choose the installed disk from the boot menu.</p>
-      <div class="actions">${button("Stay Here", "home", "secondary")}${button("Restart", "restart", "secondary")}${button("Shut Down", "shutdown", "primary")}</div>
+      <div class="actions completion-actions">${button("Stay Here", "home", "secondary")}${button("Restart", "restart", "secondary")}${button("Shut Down", "shutdown", "primary")}</div>
     </div></div>`;
 }
 

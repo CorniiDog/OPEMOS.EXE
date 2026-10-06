@@ -117,6 +117,8 @@ button.secondary { background: rgba(27, 52, 67, .65); }
 .actions { display: flex; gap: 10px; margin-top: 18px; }
 .actions button { min-width: 120px; }
 .actions .primary { margin-left: auto; }
+.completion-actions { justify-content: flex-start; gap: 5px; flex-wrap: wrap; }
+.completion-actions .primary { margin-left: 0; }
 .panel { border-radius: 18px; padding: 20px; }
 .panel h2 { margin: 0 0 7px; font-size: 21px; }
 .feature-card, .slide {
