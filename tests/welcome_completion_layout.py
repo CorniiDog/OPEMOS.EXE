@@ -33,6 +33,83 @@ with tempfile.TemporaryDirectory(prefix='opemos-completion-render-') as temporar
             assert abs(current['x'] - previous['right'] - 5) < 0.5, result
         print(f'{width}px actual completion render PASS: {result}')
 
+    jingle = app[app.index('let startupJingleAttempted'):app.index('function escapeHtml(')]
+    fixture = directory / 'startup-audio.html'
+    fixture.write_text('<body><script>const state={bootstrap:{mode:"simulation"}};'
+        + jingle + '''
+        (async()=>{
+          const timers=[];window.setTimeout=f=>timers.push(f);
+          let made=0,closed=0,notes=[],fail=false,pending=false,lateResume;
+          const gain={setValueAtTime(){},linearRampToValueAtTime(value){if(value>0.05)throw Error('too loud');}};
+          class Audio {constructor(){made++;this.state='running';this.currentTime=0;this.destination={};if(fail==='constructor')throw Error('no device');}
+            resume(){return pending?new Promise(resolve=>lateResume=resolve):fail?Promise.reject(Error('unavailable')):Promise.resolve();}
+            close(){closed++;return Promise.resolve();}
+            createGain(){return {gain,connect(){}};}
+            createOscillator(){const frequency={};return {frequency,connect(){},start(at){notes.push({frequency:frequency.value,at});},stop(at){if(at>1)throw Error('too long');}};}}
+          window.AudioContext=Audio;
+          const check=(ok,message)=>{if(!ok)throw Error(message);};
+          playStartupJingle();check(made===0,'simulation must stay silent');
+          state.bootstrap.mode='live';
+          Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
+          playStartupJingle();check(made===0,'hidden page must stay silent');
+          Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});
+          state.bootstrap.mode='live';playStartupJingle();playStartupJingle();
+          await Promise.resolve();check(made===1&&notes.length===4,'one brief jingle');
+          check(new Set(notes.map(n=>n.frequency)).size===4,'original rising notes');
+          timers.splice(0).forEach(f=>f());check(closed===1,'bounded cleanup');
+          for(const failure of ['constructor','resume','pending','missing']) {
+            startupJingleAttempted=false;fail=failure;pending=failure==='pending';
+            window.AudioContext=failure==='missing'?undefined:Audio;
+            const before=notes.length;playStartupJingle();
+            await Promise.resolve();await Promise.resolve();
+            timers.splice(0).forEach(f=>f());
+            if(failure==='pending'){lateResume();await Promise.resolve();}
+            check(notes.length===before,'silent fallback '+failure);
+          }
+          const o=document.createElement('output');o.id='result';o.textContent='PASS once/live-only/brief/quiet/rejected/missing/pending/cleanup';document.body.append(o);
+        })().catch(error=>{const o=document.createElement('output');o.id='result';o.textContent='FAIL '+error;document.body.append(o);});
+        </script>''')
+    run = subprocess.run(['google-chrome', '--headless=new', '--no-sandbox',
+        '--disable-gpu', f'--user-data-dir={directory / "audio"}',
+        '--virtual-time-budget=1000', '--dump-dom', fixture.as_uri()],
+        capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stderr
+    match = re.search(r'<output id="result">(.*?)</output>', run.stdout)
+    assert match and match[1].startswith('PASS'), run.stdout
+    print('Startup audio behavior ' + match[1] + ' (mock device; not audible playback)')
+
+    # Real Chromium Web Audio synthesis, offline: verify the produced waveform
+    # without playing sound on the user's computer or claiming a physical sink.
+    fixture = directory / 'startup-waveform.html'
+    fixture.write_text('<body><script>const state={bootstrap:{mode:"live"}};'
+        + jingle + '''
+        let context;
+        class RenderAudio extends OfflineAudioContext {
+          constructor(){super(1,44100,44100);context=this;}
+          get state(){return 'running';}
+          resume(){return Promise.resolve();}
+          close(){return Promise.resolve();}
+        }
+        window.AudioContext=RenderAudio;
+        playStartupJingle();
+        Promise.resolve().then(()=>context.startRendering()).then(buffer=>{
+          const samples=buffer.getChannelData(0);
+          let peak=0,last=0,energy=0;
+          samples.forEach((v,i)=>{peak=Math.max(peak,Math.abs(v));energy+=v*v;if(Math.abs(v)>0.00001)last=i;});
+          const result={peak,energy,lastSeconds:last/44100};
+          if(!(peak>0.02&&peak<0.09&&energy>1&&result.lastSeconds<0.85))throw Error(JSON.stringify(result));
+          const o=document.createElement('output');o.id='result';o.textContent='PASS '+JSON.stringify(result);document.body.append(o);
+        }).catch(error=>{const o=document.createElement('output');o.id='result';o.textContent='FAIL '+error;document.body.append(o);});
+        </script>''')
+    run = subprocess.run(['google-chrome', '--headless=new', '--no-sandbox',
+        '--disable-gpu', f'--user-data-dir={directory / "waveform"}',
+        '--virtual-time-budget=3000', '--dump-dom', fixture.as_uri()],
+        capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stderr
+    match = re.search(r'<output id="result">(.*?)</output>', run.stdout)
+    assert match and match[1].startswith('PASS'), run.stdout
+    print('Real offline Web Audio waveform ' + match[1] + ' (no physical playback claim)')
+
     # Reuse this contained browser-render check for the actual host markup/CSS.
     host_html = (root / 'src/index.html').read_text()
     host_css = (root / 'src/styles.css').read_text()

@@ -3862,12 +3862,29 @@ current and their repository ownership is unambiguous.
   `4cba38357188586d22a154d87f001ac4ada3f873`; authenticated merge handoff retained.
   Output-folder consolidation and installation-media startup jingle remain open.
 
+- [ ] Installation-media startup jingle: local implementation on fresh branch
+  `work/exe-welcome-startup-jingle` from fetched main `4cba3835` synthesizes four
+  original sine notes once after visible-ready rendering, with modest gain and
+  a 1.5-second audio cleanup bound. No downloads/dependencies, installation wait,
+  simulation sound, or installed-system recovery changes. Existing local welcome
+  WebEngine profile permits autoplay per Qt's documented playback setting.
+  Focused browser execution through heavy.sh passes once/live-only/brief/quiet,
+  constructor failure, resume rejection, missing API, stalled resume, and cleanup.
+  Real Chromium offline Web Audio also renders the actual synthesis: peak
+  0.054875, energy 14.8858, final non-silent sample at 0.80982 seconds. Hidden-page
+  refusal and late-resume-after-cleanup regression coverage is included. These
+  establish synthesis and silent fallback, not physical playback or native Qt
+  startup. Required remote frontend/Windows CI and PR gates remain; no release
+  acceptance claim. Implementation commit `055175e4` is preserved; merged
+  PR #168 is incorporated without rewriting history.
+
 - [x] Consolidate the output-folder presentation into one bordered control and
   equal-width desktop Output folder/NVIDIA source columns. Existing path/default,
   folder-selection handlers, and validation are unchanged. Actual shipped markup
   and CSS render passes through heavy.sh at 1280px/640px for default and long
   custom paths: one surface, equal desktop columns, narrow stacking, reset-button
   visibility, contained buttons, and no horizontal overflow. Existing completion
-  render regressions also pass. Branch `work/exe-output-folder-control`; required
-  remote frontend/Windows CI and PR checks remain before merge. This isolated
+  render regressions also pass. PR #168 exact head `a6ac7cd6` passed all ten
+  checks including Windows and squash-merged as
+  `efddff6ce8bc258e95026ae01f96a1f83bc89296`. This isolated
   CSS change cannot reach disks, images, lifecycle, trust, or Core contracts.

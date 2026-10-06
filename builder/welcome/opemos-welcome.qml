@@ -19,6 +19,8 @@ Window {
     WebEngineView {
         anchors.fill: parent
         profile: privateProfile
+        // Only the local installation-media welcome page uses this profile.
+        settings.playbackRequiresUserGesture: false
         url: "__OPEMOS_INSTALLER_URL__"
     }
 }
