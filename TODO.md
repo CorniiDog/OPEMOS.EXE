@@ -3857,5 +3857,17 @@ current and their repository ownership is unambiguous.
   Restart, and Shut Down with 5px gaps, removing the primary-button auto push
   only on this row. Actual Chrome rendering of the shipped completion function
   and CSS passes at1280px and640px through heavy.sh; existing power actions are
-  unchanged. Branch work/exe-completion-controls; remote CI/PR still required.
+  unchanged. PR #167 exact head `93bcfee9b89833e502ba89b40e0865367231b42a`
+  passed all ten required checks including Windows and squash-merged as
+  `4cba38357188586d22a154d87f001ac4ada3f873`; authenticated merge handoff retained.
   Output-folder consolidation and installation-media startup jingle remain open.
+
+- [x] Consolidate the output-folder presentation into one bordered control and
+  equal-width desktop Output folder/NVIDIA source columns. Existing path/default,
+  folder-selection handlers, and validation are unchanged. Actual shipped markup
+  and CSS render passes through heavy.sh at 1280px/640px for default and long
+  custom paths: one surface, equal desktop columns, narrow stacking, reset-button
+  visibility, contained buttons, and no horizontal overflow. Existing completion
+  render regressions also pass. Branch `work/exe-output-folder-control`; required
+  remote frontend/Windows CI and PR checks remain before merge. This isolated
+  CSS change cannot reach disks, images, lifecycle, trust, or Core contracts.
