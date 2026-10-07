@@ -1,5 +1,13 @@
 # OPEMOS.EXE — Product Checklist
 
+- [ ] Close R19 Windows 6-GiB admission regression: exact configured6GiB reports
+  usable6441336832, source Ready but Build disabled. Confirm installed RAM through
+  the native firmware API; correct only a <=2MiB minimum-boundary reservation,
+  retaining usable sizing for larger reservations and unchanged guest limits.
+  Focused regression covers real R19 values, low RAM, excessive reservation,
+  malformed reports and bounded guest allocations. Imaging-sensitive: exact
+  Windows CI, candidate partial and exact Core review remain required.
+
 ## Foundation and change policy
 
 Commit `e0502833282ffd9055ecf46f75df82f71a9ee20f` is the current tested
