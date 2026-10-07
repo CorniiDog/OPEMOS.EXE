@@ -1,5 +1,16 @@
 # OPEMOS.EXE — Product Checklist
 
+- [ ] Close R19 Windows 6-GiB admission regression: exact configured6GiB reports
+  usable6441336832, source Ready but Build disabled. Confirm installed RAM through
+  the native firmware API; correct only a <=2MiB minimum-boundary reservation,
+  retaining usable sizing for larger reservations and unchanged guest limits.
+  Focused regression covers real R19 values, low RAM, excessive reservation,
+  malformed reports and bounded guest allocations. Imaging-sensitive: exact
+  Windows CI, candidate partial and exact Core review remain required.
+  Core source finding on PR171 `8984e121` corrected: reservation bound now
+  compares installed-minus-usable, not minimum-minus-usable; 16GiB installed
+  with 6GiB-minus-1MiB usable remains unchanged and is refused by planning.
+
 ## Foundation and change policy
 
 Commit `e0502833282ffd9055ecf46f75df82f71a9ee20f` is the current tested
@@ -91,6 +102,95 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 `install-ready`, hardware-certified, or update-safe until the gates below pass.
 
 ## Immediate work
+
+- [ ] Deliver the attention-to-black correction candidate using protected Core
+  `fc89fafdf5b4334ec61b8d79e53c74d5ec16011b`. Exact published 124-file manifest
+  SHA-256 `b6289331d3ea6d179f8356cd24784e585c0a4eec0a775a62384cd51ebce4bbad`
+  and bundle ID `166911da321fd3b356546dabf34189fd727c6d7b411384a01bb4bde51118aee9`
+  replace the previous candidate inputs. Embed the approved PR73 head's successful
+  Arch run 37272675294 artifact 11328931893 renderer (469,384 bytes), SHA-256
+  `171e4ef98325e231a5dc7a5fa2345653cf27858c953f1b8c39a00cd5d5f4bfd3`.
+  Preserve the prior candidate history on a fresh branch from fetched main.
+  Focused JS workflow/maintainer regression tests pass 52/52; documentation and
+  exact Core maintainer parity pass. The embedded renderer/installation-media
+  privilege-boundary Rust regression passes through `heavy.sh`. PR166 head
+  `0152c731944fefa0391e1386ad199b4982d4da20` passed required CI and Windows
+  run 37315255684; its new native Desktop test folder was delivered with all
+  5,680 files/hash closure verified. Executable SHA-256 is
+  `3084ab623db128eec25a9ef97c1f507b406d9ababf2de6614a5f13b7dad3159e`.
+  Authenticated handoff `exe-pr166-0152c731-native-delivery-handoff.md` and
+  original watcher receipt preserve that exact delivered identity.
+  Core review found a stale 123-file expectation in the ignored live consumer
+  test. Correcting only that expectation to 124 passes the actual authenticated
+  `tests::live_pinned_nvidia_installer_bundle` regression (1/1) through
+  `heavy.sh`; synthetic fixtures remain unchanged. This follow-up source push
+  is necessary for exact changed-head Core review and required remote CI on
+  `https://github.com/CorniiDog/OPEMOS.EXE.git`, branch
+  `work/exe-attention-fix-candidate`. Exact changed-head review and required
+  checks remain; partial/full certification and physical visibility are
+  separate, and this correction does not provide the missing exact 6.18 product.
+
+- [ ] Deliver the user-requested combined recovery candidate with the reviewed
+  Core GSP-firmware closure and the reported Builder/USB presentation fixes.
+  EXE UI work is implemented on `codex/ui-recovery-candidate`: Output Folder and
+  NVIDIA Source occupy equal desktop columns; read-only source and planned
+  output span the full row; long selected-image names and paths wrap and remain
+  selectable; the USB dialog collapses empty result space; and byte progress no
+  longer repeats the visible `Writing` phase. Focused layout/progress tests pass
+  30/30 through `heavy.sh`. The wider JavaScript suite passed 385 tests and
+  skipped one absent-sibling fixture; two headless-harness cases initially
+  failed only because child shells could not resolve `node`, then passed 5/5
+  when the same pinned Node directory was placed on `PATH`. Rendered Chrome
+  validation passed at 900x800 and a short 900x533 viewport: desktop screenshot
+  SHA-256 `829f30380f0070df8ff47f2fc9ead8f59c38b9e8f30cd6bc89e1f24a6bc56c84`;
+  compact active-write dialog screenshot SHA-256
+  `1dca8ef56318212c43fe8d6072c48b386fdd542124ab230e2a5fe9b00d0e7c56`.
+  Core PR70 passed exact EXE review and was squash-merged to protected main
+  `21c47c134952b1326321d604de230a3466da83b9`; its user-authorized create-only
+  installer bundle is published with manifest SHA-256
+  `cd96780dabc26a5b098b05eb2ef0c31bf23317068152df1caedc5499ecd75c3a`,
+  bundle ID `7a213b9050448dd500c4f80938882e51f0de0beb2a065ac3e77104b8c4954962`,
+  and 123 verified files. The combined branch now carries the preserved PR163
+  production/portable-initramfs correction history plus the UI commit and exact
+  Core repin. Focused UI, Windows-workflow, documentation, and maintainer
+  contract checks pass 82/82 against a canonical GitHub checkout of the squash
+  commit. Imaging-sensitive PR #164 produced a provenance-bound native Windows
+  artifact, but exact Core review found its export verifier still required the
+  obsolete four-module-only `FILES` line. The corrected verifier requires the
+  four ordered NVIDIA module payloads plus exact versioned `gsp_tu10x.bin` and
+  `gsp_ga10x.bin` firmware paths, still excludes `nvidia-peermem`, and its
+  focused regression passes through `heavy.sh`. Rerun required CI and the
+  Windows artifact build on the changed immutable head, obtain exact Core
+  rereview, then run the changed-input partial/full gates and copy the complete
+  verified portable bundle to a new clearly labeled native Desktop/OPEMOS
+  test-candidate folder. Do not launch the application or touch physical media
+  during delivery.
+  Core PR72 subsequently passed exact EXE counterpart review and was
+  squash-merged to protected main
+  `86acf7bd2bbe2b91ee39c6a7a2dd75ceb58d539b`. Its explicitly authorized
+  create-only display-fallback installer bundle is published with manifest
+  SHA-256
+  `1b190c441d186fb3ae19cb37283c6cf2ab57231b11108c991d678b4d8a7bba11`,
+  bundle ID
+  `863387d7e61ce1fa08d75147767077f8b1e7f61b71ba923e33605374d6a2b219`,
+  and 124 verified files. Fresh branch `codex/display-fallback-candidate`
+  preserves the eight reviewed PR164 commits, repins the exact protected Core
+  commit and bundle, and embeds PR72 Arch artifact 11325536839's 469,384-byte
+  interstitial at SHA-256
+  `05adeda203528632134c563efc312945dc68160a202539e6088a60ac934e53f0`.
+  Focused UI/workflow checks pass 93/93, documentation and exact Core
+  maintainer parity pass, and the embedded-binary Rust regression passes
+  through `heavy.sh`. Exact Core parity initially exposed PR71's changed
+  exact-target policy hash; the bounded correction now binds
+  `e8c1ac32676866c353d7e5a1f349621004e528ceeaafcf205052fd0455e8c2a1`
+  and its failed stage passes 8/8. Commit, required remote checks, exact Core
+  review, changed-input gates, artifact verification, and closed native
+  delivery remain.
+  The first PR165 Rust run then exposed three stale 123-file consumer
+  assertions against the authenticated 124-file bundle. The failed-stage fix
+  updates those exact counts and requires the new executable
+  `bootstrap/show_recovery_console.sh` device entrypoint; the targeted canonical
+  Core generator/staging/installer regression passes through `heavy.sh`.
 
 - [ ] Correct the PR158 native USB lifecycle regression reported on
   `Current-df6c24e5-2026-10-01`. Ordinary SteamOS source selection must keep
@@ -3804,6 +3904,58 @@ must be reported; a default-suite pass does not imply hardware certification.
   the same pinned runtime PATH passed 5/5. Required CI, exact Windows artifact
   startup, exact Core review, guarded Desktop deployment, and any separately
   owned Core recovery correction remain pending. No OMEN boot result is claimed.
+  Core PR #68 then corrected the production recovery contract exposed by the
+  physical OMEN and contained acceptance runs: it requires an authenticated
+  renderer, accepts bounded GitHub metadata up to 256 KiB, parses exact release
+  records correctly, defers reboot noninteractively, and restores all five
+  driver modules as root-owned mode-0644 single-link files. Its reviewed head
+  `846b3a2dd3523db2daf4c8afc019743ac959d274` passed all three checks and one
+  clean 32-GiB contained install/removal/recovery/cleanup acceptance, then
+  squash-merged to protected Core main as
+  `9cbca4e20231d63d92f0004a7ca413343bbbea4b`, tree
+  `ad10e6594bb7d92fedc5cf3652a09137d80dc05c`. The current fresh EXE branch
+  consumes that exact squash across runtime, Maintainer, CI, and Windows
+  artifact pins; binds its canonical 123-file dry-run manifest SHA-256
+  `4051d021f32785435dc940c5663003d52105658cea3b5c1e474b905723c712c1`
+  and bundle ID
+  `424a9a76f1353b5f8612c0805cc62cc3f600c6e4705375dedde5479811ec2570`;
+  and embeds Core main workflow artifact `11297403476`'s exact 463,440-byte
+  renderer at SHA-256
+  `364e4d92f8e812572273ace148ff27b64ad8e2d36d21fd1e0c15af212a2f87f6`.
+  Construction installs the renderer plus its receipt into recovery media,
+  independently revalidates both, and supplies both mandatory arguments to
+  Core for each A/B guardian installation. Focused JavaScript contracts pass
+  61/61, the focused Rust embedded-identity/production-invocation regression
+  passes 1/1, and documentation, shell syntax, formatting, hygiene, and diff
+  checks pass. The first exact-head CI run then exposed only three stale
+  122-file migration expectations against the verified 123-file Core manifest;
+  the bounded correction updates those counts, and the failed Core-pin stage
+  now passes 2/2 locally through `heavy.sh`. Exact Windows artifact/startup, one coherent `partial` imaging
+  run, required CI, and immutable Core counterpart review remain pending. The
+  Core bundle release remains a separately gated publication action; this work
+  does not publish it or claim physical OMEN display certification.
+  The first coherent partial then failed closed at Core's exact initramfs
+  verifier because the generated portable initramfs omitted `nvidia.ko`; no
+  output was accepted and exact owned processes, task, and transient state were
+  cleaned. Core PR #69 corrected that reproduced generator defect and
+  squash-merged as protected Core main
+  `e1d2046828526c2c23a5e348380f87799fa273e2`, tree
+  `af154e55019f75ca78afa3cb776775b69e060d2f`. Its published canonical
+  123-file manifest is 22,590 bytes with SHA-256
+  `333d6447403c9443d960d429b57906ff36de9e4ca9c04f1616f699119046ca3b`
+  and bundle ID
+  `a8b21d3efafe0da5fe49678ea7a8927cac011268a5fec24b07d392c67a6d15c2`.
+  This changed head repins the existing PR163 consumption path to that exact
+  immutable identity. Exact-head checks, Windows startup/provenance, and Core
+  review passed, but the failed-stage partial exposed one EXE consumer defect
+  after Core installation and initramfs verification succeeded: the independent
+  export verifier still required the obsolete early-loading
+  `MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)` line. The bounded
+  correction instead requires Core's portable display-decision marker, exactly
+  one early `MODULES` declaration with no NVIDIA driver, and the exact four
+  verified NVIDIA payloads in `FILES`. The focused regression passes 1/1 and
+  formatting passes through `heavy.sh`; changed-head CI, Windows artifact,
+  fresh immutable Core review, and the failed construction/partial stage remain.
 
 ### Alpha
 
@@ -3862,7 +4014,7 @@ current and their repository ownership is unambiguous.
   `4cba38357188586d22a154d87f001ac4ada3f873`; authenticated merge handoff retained.
   Output-folder consolidation and installation-media startup jingle remain open.
 
-- [ ] Installation-media startup jingle: local implementation on fresh branch
+- [x] Installation-media startup jingle: local implementation on fresh branch
   `work/exe-welcome-startup-jingle` from fetched main `4cba3835` synthesizes four
   original sine notes once after visible-ready rendering, with modest gain and
   a 1.5-second audio cleanup bound. No downloads/dependencies, installation wait,
@@ -3877,6 +4029,9 @@ current and their repository ownership is unambiguous.
   startup. Required remote frontend/Windows CI and PR gates remain; no release
   acceptance claim. Implementation commit `055175e4` is preserved; merged
   PR #168 is incorporated without rewriting history.
+  PR #169 exact head `c58cd24298a35c682a869faa67375b992bb4a0dd` passed all ten
+  checks including Windows37421575261 and protected squash-merged as
+  `ebaa78fdccad27a7bdaba9107042f71667617bc1`; authenticated final handoff retained.
 
 - [x] Consolidate the output-folder presentation into one bordered control and
   equal-width desktop Output folder/NVIDIA source columns. Existing path/default,
@@ -3888,3 +4043,15 @@ current and their repository ownership is unambiguous.
   checks including Windows and squash-merged as
   `efddff6ce8bc258e95026ae01f96a1f83bc89296`. This isolated
   CSS change cannot reach disks, images, lifecycle, trust, or Core contracts.
+
+- [ ] Combined desktop candidate: fresh `work/exe-combined-desktop-candidate`
+  from fetched canonical main `ebaa78fd` preserves PR166 implementation/history
+  and merged PR167/168/169 UI. Ordinary consumer pins now use protected Core
+  squash `f72aff92a5534b676083ccba974f4185f2d4551f`, published manifest asset
+  614704834 (22765 bytes, SHA256 `0bd25f2d27873ac30ad0c8e87ddb7c5dcdcd343bcb142455433ed6415974e82d`),
+  and bundle ID `8928131d4d9be642cefbc8ce5a269e2ae8ef03eecd6cd6b9bc9b9efc27b1ed11`.
+  Canonical GitHub direct tag/release/sole asset and downloaded bytes verified.
+  Layout-test conflict resolved to actual full-width summary while preserving
+  equal columns/single output surface. Focused validation, immutable-head PR/Core
+  review, imaging partial and final exact-artifact full remain required; no
+  installed/physical/publication acceptance inferred from this composition.

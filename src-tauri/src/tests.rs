@@ -63,6 +63,36 @@ mod tests {
         assert_eq!(arguments.iter().filter(|argument| *argument == "-l").count(), 1);
     }
 
+    #[test]
+    fn exported_nvidia_image_verifier_matches_portable_initramfs_contract() {
+        let source = include_str!("image.rs");
+        assert!(source.contains(
+            "# Display boot decision: portable-integrated-early-nvidia-rootfs"
+        ));
+        assert!(source.contains(
+            "! grep '^MODULES=(' \"$INITRAMFS_CONFIG\" | grep -Eq"
+        ));
+        let files_assertion = source
+            .lines()
+            .find(|line| line.contains("grep -Fqx 'FILES=("))
+            .expect("portable FILES assertion");
+        for module in ["nvidia", "nvidia-modeset", "nvidia-uvm", "nvidia-drm"] {
+            assert!(files_assertion.contains(&format!("/{module}.ko.zst")));
+        }
+        for firmware in ["gsp_tu10x.bin", "gsp_ga10x.bin"] {
+            assert!(files_assertion.contains(&format!(
+                "/usr/lib/firmware/nvidia/{{}}/{firmware}"
+            )));
+        }
+        assert_eq!(files_assertion.matches("/usr/lib/").count(), 6);
+        assert_eq!(files_assertion.matches(".ko.zst").count(), 4);
+        assert_eq!(files_assertion.matches("gsp_").count(), 2);
+        assert!(!files_assertion.contains("nvidia-peermem"));
+        assert!(!source.contains(
+            "grep -qx 'MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)'"
+        ));
+    }
+
     #[cfg(unix)]
     #[test]
     fn finished_guest_command_captures_stdout_and_stderr() {
@@ -3436,6 +3466,48 @@ esac
     }
 
     #[test]
+    fn windows_six_gib_guest_admits_small_verified_firmware_reservation() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        #[cfg(target_os = "windows")]
+        assert!(windows_physical_memory_bytes().expect("native Windows memory APIs") > 0);
+        let observed = windows_memory_admission_bytes(6 * GIB / 1024, 6_441_336_832)
+            .expect("R19 installed/usable reports");
+        let inspection = plan_guest_resources(observed, 2, false).expect("6-GiB inspection");
+        assert_eq!(inspection.guest_memory_mib, 2048);
+        assert_eq!(inspection.guest_vcpus, 1);
+        let build = plan_guest_resources(observed, 2, true).expect("6-GiB build");
+        assert_eq!(build.guest_memory_mib, 4096);
+        assert_eq!(build.guest_vcpus, 1);
+        let too_reserved = 6 * GIB - 2 * 1024 * 1024 - 1;
+        let large_reservation = 6 * GIB - 1024 * 1024;
+        let retained = windows_memory_admission_bytes(16 * GIB / 1024, large_reservation)
+            .expect("valid reports with large reservation");
+        assert_eq!(retained, large_reservation);
+        assert!(plan_guest_resources(retained, 2, false).is_err());
+        assert_eq!(
+            windows_memory_admission_bytes(6 * GIB / 1024, too_reserved + 1).unwrap(),
+            6 * GIB
+        );
+        assert!(plan_guest_resources(
+            windows_memory_admission_bytes(6 * GIB / 1024, too_reserved).unwrap(),
+            2,
+            false
+        ).is_err());
+        assert!(plan_guest_resources(
+            windows_memory_admission_bytes(5 * GIB / 1024, 5 * GIB).unwrap(),
+            2,
+            false
+        ).is_err());
+        assert_eq!(
+            windows_memory_admission_bytes(16 * GIB / 1024, 8 * GIB).unwrap(),
+            8 * GIB
+        );
+        for (installed, usable) in [(0, 1), (1, 0), (1, 2048), (u64::MAX, 1)] {
+            assert!(windows_memory_admission_bytes(installed, usable).is_err());
+        }
+    }
+
+    #[test]
     fn validates_and_names_exact_nvidia_target_builds() {
         let spec = NvidiaTargetBuildSpec {
             steamos_version: "3.8.14".into(),
@@ -4402,6 +4474,11 @@ esac
             );
         }
         assert!(INSTALL_MEDIA_WELCOME.starts_with(b"#!/usr/bin/env bash\n"));
+        assert_eq!(INSTALL_MEDIA_INTERSTITIAL.len(), 469_384);
+        assert_eq!(
+            format!("{:x}", Sha256::digest(INSTALL_MEDIA_INTERSTITIAL)),
+            "171e4ef98325e231a5dc7a5fa2345653cf27858c953f1b8c39a00cd5d5f4bfd3"
+        );
 
         assert!(desktop.contains("Name=Install SteamOS with NVIDIA drivers"));
         assert!(desktop.contains("Exec=/home/deck/tools/open-opemos-welcome"));
@@ -4413,6 +4490,12 @@ esac
             "$ROOT/usr/lib/opemos-install-media/maintainer/open-opemos-welcome"
         ));
         let installer = include_str!("installer.rs");
+        assert!(installer.contains(
+            "sudo install -m 0755 -o root -g root /tmp/opemos-interstitial"
+        ));
+        assert!(installer.contains(
+            "test ! -L \"$ROOT/usr/lib/opemos-install-media/interstitial.sha256\""
+        ));
         assert!(installer.contains(r#"test "$DECK_ID" = 1000:1000"#));
         assert!(installer.contains(
             r#"for DIRECTORY in "$ROOT/home/deck" "$ROOT/home/deck/.config" "$ROOT/home/deck/.local" "$ROOT/home/deck/.local/share"; do
@@ -4466,8 +4549,10 @@ done"#
         assert!(helper.contains("interstitial_progress.py"));
         assert!(helper.contains("validate_interstitial_binary.py"));
         assert!(helper.contains("opemos-interstitial.service"));
-        assert!(!helper.contains("--interstitial-binary"));
-        assert!(!helper.contains("bin/opemos-interstitial"));
+        assert!(helper.contains("--interstitial-binary \"$INTERSTITIAL_BINARY\""));
+        assert!(helper.contains("--interstitial-sha256 \"$interstitial_sha256\""));
+        assert!(helper.contains("bin/opemos-interstitial"));
+        assert!(helper.contains("the recovery interstitial failed authentication"));
         assert!(helper.contains("installed recovery guardian verification failed"));
         assert!(helper.contains("ui_stage \"Installing the recovery guardian into rootfs-$slot"));
         assert!(helper.contains("partition_by_label \"$device\" home"));
@@ -5765,7 +5850,7 @@ done"#
             assert_eq!(state.report.reason, "authenticated_core_bundle_verified");
             assert_eq!(state.report.commit, OPEMOS_CORE_COMPATIBILITY_COMMIT);
             assert_eq!(state.report.files.len(), manifest.files.len());
-            assert_eq!(manifest.files.len(), 55);
+            assert_eq!(manifest.files.len(), 124);
         } else {
             assert_eq!(state.report.reason, "legacy_pinned_installer_fallback");
             assert_eq!(state.report.commit, NVIDIA_INSTALLER_COMMIT);
