@@ -3436,6 +3436,41 @@ esac
     }
 
     #[test]
+    fn windows_six_gib_guest_admits_small_verified_firmware_reservation() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        let observed = windows_memory_admission_bytes(6 * GIB / 1024, 6_441_336_832)
+            .expect("R19 installed/usable reports");
+        let inspection = plan_guest_resources(observed, 2, false).expect("6-GiB inspection");
+        assert_eq!(inspection.guest_memory_mib, 2048);
+        assert_eq!(inspection.guest_vcpus, 1);
+        let build = plan_guest_resources(observed, 2, true).expect("6-GiB build");
+        assert_eq!(build.guest_memory_mib, 4096);
+        assert_eq!(build.guest_vcpus, 1);
+        let too_reserved = 6 * GIB - 2 * 1024 * 1024 - 1;
+        assert_eq!(
+            windows_memory_admission_bytes(6 * GIB / 1024, too_reserved + 1).unwrap(),
+            6 * GIB
+        );
+        assert!(plan_guest_resources(
+            windows_memory_admission_bytes(6 * GIB / 1024, too_reserved).unwrap(),
+            2,
+            false
+        ).is_err());
+        assert!(plan_guest_resources(
+            windows_memory_admission_bytes(5 * GIB / 1024, 5 * GIB).unwrap(),
+            2,
+            false
+        ).is_err());
+        assert_eq!(
+            windows_memory_admission_bytes(16 * GIB / 1024, 8 * GIB).unwrap(),
+            8 * GIB
+        );
+        for (installed, usable) in [(0, 1), (1, 0), (1, 2048), (u64::MAX, 1)] {
+            assert!(windows_memory_admission_bytes(installed, usable).is_err());
+        }
+    }
+
+    #[test]
     fn validates_and_names_exact_nvidia_target_builds() {
         let spec = NvidiaTargetBuildSpec {
             steamos_version: "3.8.14".into(),
