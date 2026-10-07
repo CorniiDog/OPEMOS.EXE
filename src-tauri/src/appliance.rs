@@ -222,6 +222,7 @@ pub(crate) fn windows_physical_memory_bytes() -> Result<u64, String> {
     windows_memory_admission_bytes(installed_kib, status.total_phys)
 }
 
+#[cfg(any(target_os = "windows", test))]
 pub(crate) fn windows_memory_admission_bytes(
     installed_kib: u64,
     usable_bytes: u64,
@@ -235,7 +236,8 @@ pub(crate) fn windows_memory_admission_bytes(
     // because of firmware reservation. Correct only this minimum-boundary case,
     // with independently confirmed installed RAM and at most 2 MiB reserved.
     // Larger reservations and all guest sizing retain the usable-memory budget.
-    if installed >= MINIMUM && usable_bytes < MINIMUM && MINIMUM - usable_bytes <= 2 * 1024 * 1024 {
+    if installed >= MINIMUM && usable_bytes < MINIMUM && installed - usable_bytes <= 2 * 1024 * 1024
+    {
         Ok(MINIMUM)
     } else {
         Ok(usable_bytes)

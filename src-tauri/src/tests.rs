@@ -3468,6 +3468,8 @@ esac
     #[test]
     fn windows_six_gib_guest_admits_small_verified_firmware_reservation() {
         const GIB: u64 = 1024 * 1024 * 1024;
+        #[cfg(target_os = "windows")]
+        assert!(windows_physical_memory_bytes().expect("native Windows memory APIs") > 0);
         let observed = windows_memory_admission_bytes(6 * GIB / 1024, 6_441_336_832)
             .expect("R19 installed/usable reports");
         let inspection = plan_guest_resources(observed, 2, false).expect("6-GiB inspection");
@@ -3477,6 +3479,11 @@ esac
         assert_eq!(build.guest_memory_mib, 4096);
         assert_eq!(build.guest_vcpus, 1);
         let too_reserved = 6 * GIB - 2 * 1024 * 1024 - 1;
+        let large_reservation = 6 * GIB - 1024 * 1024;
+        let retained = windows_memory_admission_bytes(16 * GIB / 1024, large_reservation)
+            .expect("valid reports with large reservation");
+        assert_eq!(retained, large_reservation);
+        assert!(plan_guest_resources(retained, 2, false).is_err());
         assert_eq!(
             windows_memory_admission_bytes(6 * GIB / 1024, too_reserved + 1).unwrap(),
             6 * GIB
