@@ -7,6 +7,9 @@
   Focused regression covers real R19 values, low RAM, excessive reservation,
   malformed reports and bounded guest allocations. Imaging-sensitive: exact
   Windows CI, candidate partial and exact Core review remain required.
+  Core source finding on PR171 `8984e121` corrected: reservation bound now
+  compares installed-minus-usable, not minimum-minus-usable; 16GiB installed
+  with 6GiB-minus-1MiB usable remains unchanged and is refused by planning.
 
 ## Foundation and change policy
 
