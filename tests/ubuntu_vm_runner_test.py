@@ -12,6 +12,15 @@ import ubuntu_vm_runner as runner
 
 
 class RunnerTest(unittest.TestCase):
+    def test_isolated_ssh_refuses_malformed_or_non_windows_before_spawn(self):
+        with patch.object(runner.subprocess, 'Popen') as spawn:
+            for selected in ('true', 1, None, True):
+                with self.subTest(selected=selected), self.assertRaisesRegex(ValueError, 'isolated SSH'):
+                    runner.launch_bounded(Path('/unused.qcow2'), 1000000, isolated_ssh=selected)
+            spawn.assert_not_called()
+        with self.assertRaisesRegex(ValueError, 'explicit isolated SSH'):
+            runner.run_owned_vm('/unused', isolated_ssh='true')
+
     def test_monitor_flood_and_ignored_quit_are_killed_and_reaped(self):
         greeting = ('import json,sys,time; print(json.dumps({"QMP":{}}),flush=True); '
                     'a=json.loads(input()); print(json.dumps({"return":{},"id":a["id"]}),flush=True); '
@@ -65,8 +74,9 @@ class RunnerTest(unittest.TestCase):
                        'a=json.loads(input()); print(json.dumps({"return":{},"id":a["id"]}),flush=True); '
                        'b=json.loads(input()); print(json.dumps({"return":{"running":True,"status":"running"},"id":b["id"]}),flush=True)')
             real_which = runner.shutil.which
-            with patch.object(runner, 'windows_launch_command', return_value=[sys.executable, '-c', program]), patch.object(runner.shutil, 'which', side_effect=lambda name: sys.executable if name == 'qemu-system-x86_64' else real_which(name)):
-                self.assertEqual(runner.launch_bounded(image, 1000000, 3, firmware={'code':'code.fd','vars':'vars.fd'}), 0)
+            with patch.object(runner, 'windows_launch_command', return_value=[sys.executable, '-c', program]) as prepare, patch.object(runner.shutil, 'which', side_effect=lambda name: sys.executable if name == 'qemu-system-x86_64' else real_which(name)):
+                self.assertEqual(runner.launch_bounded(image, 1000000, 3, firmware={'code':'code.fd','vars':'vars.fd'}, isolated_ssh=True), 0)
+            prepare.assert_called_once_with(image, image.parent / 'code.fd', image.parent / 'vars.fd', isolated_ssh=True)
             receipts = list(Path(directory).glob('receipt-qmp-*.json'))
             self.assertEqual(len(receipts), 1)
             evidence = json.loads(receipts[0].read_text())
@@ -121,10 +131,18 @@ class RunnerTest(unittest.TestCase):
             (root / 'manifest.json').write_text(json.dumps(manifest))
             expected_allocation = sum(p.stat().st_blocks * 512 for p in root.iterdir())
             with patch.object(runner, 'require_ntfs_envelope', return_value={}), patch.object(runner, 'launch_bounded', return_value=0) as launch:
+                before = (root / 'manifest.json').read_bytes()
+                with patch.object(runner, 'recover_retirement') as recover, self.assertRaisesRegex(ValueError, 'exact migrated Agent-Boot base'):
+                    runner.run_owned_vm(root, isolated_ssh=True)
+                recover.assert_not_called()
+                launch.assert_not_called()
+                self.assertEqual((root / 'manifest.json').read_bytes(), before)
+                self.assertTrue(image.exists())
                 receipt = runner.run_owned_vm(root)
             launch.assert_called_once_with(image, 12000000, 300, firmware=firmware)
             updated = json.loads((root / 'manifest.json').read_text())
             self.assertEqual(updated['windowsFirmware'], firmware)
+            self.assertNotIn('isolatedSsh', updated)  # Selection is per run, never sticky.
             self.assertEqual(runner.base_digest(base), manifest['baseSha256'])
             self.assertTrue(code.exists() and variables.exists())
             # The lock is created during admission and contributes no blocks.
@@ -159,6 +177,14 @@ class RunnerTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'limits changed'):
                 runner.require_windows_pool()
 
+    def test_windows_pool_accepts_ten_cpu_limit_and_refuses_old_twelve(self):
+        pool = '0::/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/owned.service\n'
+        with patch.object(Path, 'read_text', side_effect=[pool, '34359738368', '0', '1000000 100000', '0-9']):
+            runner.require_windows_pool()
+        with patch.object(Path, 'read_text', side_effect=[pool, '34359738368', '0', '1200000 100000']):
+            with self.assertRaisesRegex(ValueError, 'limits changed'):
+                runner.require_windows_pool()
+
     def test_windows_command_preserves_gen2_resources_and_only_kvm_group(self):
         import os
         from types import SimpleNamespace
@@ -176,6 +202,9 @@ class RunnerTest(unittest.TestCase):
                 return real_stat(path, *args, **kwargs)
             with patch.object(runner, 'require_windows_pool'), patch.object(runner, 'require_ntfs_envelope'), patch.object(Path, 'stat', device_stat), patch.object(runner.os, 'access', return_value=True), patch.object(runner.os, 'getgroups', return_value=[device_group, device_group + 1]), patch.object(runner.shutil, 'which', side_effect=lambda name: '/usr/bin/' + name):
                 command = runner.windows_launch_command(image, code, variables)
+                ssh_command = runner.windows_launch_command(image, code, variables, isolated_ssh=True)
+                with self.assertRaisesRegex(ValueError, 'explicit'):
+                    runner.windows_launch_command(image, code, variables, isolated_ssh='true')
             self.assertEqual(command[command.index('-m') + 1], '6152')
             self.assertEqual(command[command.index('-smp') + 1], '2')
             self.assertIn('q35,accel=kvm', command)
@@ -185,6 +214,10 @@ class RunnerTest(unittest.TestCase):
             self.assertIn('if=pflash,format=raw,readonly=on,file=' + str(code), command)
             self.assertIn('if=pflash,format=raw,file=' + str(variables), command)
             self.assertEqual(command[command.index('-nic') + 1], 'none')
+            self.assertIn('--unshare-net', ssh_command)
+            self.assertEqual(ssh_command[ssh_command.index('-nic') + 1],
+                             'user,model=e1000,mac=00:15:5d:10:0f:02,restrict=on,net=172.22.64.0/20,host=172.22.64.1,hostfwd=tcp:127.0.0.1:2222-172.22.79.248:22')
+            self.assertNotIn('0.0.0.0', ' '.join(ssh_command))
 
     def test_windows_refuses_unadmitted_process_before_image_or_tools(self):
         with patch.object(Path, 'read_text', return_value='0::/user.slice/unrelated.service\n'), patch.object(runner.subprocess, 'run') as tools:

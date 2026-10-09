@@ -221,12 +221,14 @@ def launch_command(image, memory_mib=2048, cpus=1, privileged_namespace=False):
             '-no-reboot', '-drive', 'if=ide,format=qcow2,file=' + str(image)]
 
 
-def launch_bounded(image, ceiling, timeout_seconds=300, firmware=None):
+def launch_bounded(image, ceiling, timeout_seconds=300, firmware=None, isolated_ssh=False):
     """Reap on every exit; caller must hold lifecycle lock and verify accounting."""
     if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 900:
         raise ValueError('bounded runtime required')
+    if type(isolated_ssh) is not bool or (isolated_ssh and firmware is None):
+        raise ValueError('isolated SSH requires explicit selection and Windows firmware')
     command = (windows_launch_command(image, image.parent / firmware['code'],
-                                      image.parent / firmware['vars']) if firmware is not None
+                                      image.parent / firmware['vars'], isolated_ssh=isolated_ssh) if firmware is not None
                else launch_command(image, privileged_namespace=True))
     if type(ceiling) is not int or not 0 < ceiling < 60_000_000_000:
         raise ValueError('invalid write ceiling')
@@ -291,7 +293,7 @@ def require_windows_pool():
         raise ValueError('Windows process must inherit the admitted VM pool')
     controls = Path('/sys/fs/cgroup' + pool)
     expected = {'memory.max': '34359738368', 'memory.swap.max': '0',
-                'cpu.max': '1200000 100000', 'cpuset.cpus.effective': '0-11'}
+                'cpu.max': '1000000 100000', 'cpuset.cpus.effective': '0-9'}
     if any((controls / name).read_text().strip() != value for name, value in expected.items()):
         raise ValueError('Windows pool limits changed; refuse launch')
 
@@ -316,13 +318,15 @@ def validate_windows_firmware(root, firmware, image_names):
     return set(names)
 
 
-def windows_launch_command(image, firmware_code, firmware_vars):
-    """First migrated Gen2 guest only: original 6152 MiB/two CPUs, no NIC.
+def windows_launch_command(image, firmware_code, firmware_vars, isolated_ssh=False):
+    """First migrated Gen2 guest: no NIC unless exact isolated SSH is selected.
 
     Firmware must be staged as owned direct files inside the same allocation
     envelope. Caller holds the lifecycle lock and accounts both firmware files.
     This command preparation does not establish Windows workflow acceptance.
     """
+    if type(isolated_ssh) is not bool:
+        raise ValueError('explicit isolated SSH selection required')
     require_windows_pool()
     image = Path(image)
     require_ntfs_envelope(image.parent)
@@ -355,15 +359,26 @@ def windows_launch_command(image, firmware_code, firmware_vars):
     command[command.index('max', qemu_index)] = 'host'
     command.extend(['-drive', 'if=pflash,format=raw,readonly=on,file=' + str(code),
                     '-drive', 'if=pflash,format=raw,file=' + str(variables)])
+    if isolated_ssh:
+        # Forward exists only in the existing unshared network namespace;
+        # no bridge/tap, host wildcard listener, or unrestricted guest egress.
+        nic_index = command.index('-nic')
+        if command[nic_index + 1] != 'none' or '--unshare-net' not in command:
+            raise ValueError('isolated network baseline changed')
+        command[nic_index + 1] = ('user,model=e1000,mac=00:15:5d:10:0f:02,restrict=on,'
+                                  'net=172.22.64.0/20,host=172.22.64.1,'
+                                  'hostfwd=tcp:127.0.0.1:2222-172.22.79.248:22')
     return command
 
 
-def run_owned_vm(directory, timeout_seconds=300):
+def run_owned_vm(directory, timeout_seconds=300, isolated_ssh=False):
     """Locked standalone lifecycle; retains every prior image and output.
 
     This is not Windows migration acceptance or an NTFS aggregate quota.
     RLIMIT bounds file length; actual allocation is independently measured.
     """
+    if type(isolated_ssh) is not bool:
+        raise ValueError('explicit isolated SSH selection required')
     root = Path(directory)
     if not root.is_absolute() or root.resolve() != root or root.is_symlink():
         raise ValueError('unsafe lifecycle root')
@@ -397,6 +412,12 @@ def run_owned_vm(directory, timeout_seconds=300):
                 raise ValueError('immutable base hash mismatch')
         elif 'baseSha256' in manifest or 'writeCeilingBytes' in manifest:
             raise ValueError('hash without base')
+        if isolated_ssh and manifest.get('windowsFirmware') is None:
+            raise ValueError('isolated SSH requires Windows firmware')
+        # Refuse before retirement recovery can change any image references.
+        # This endpoint is only for the verified first Agent-Boot lineage.
+        if isolated_ssh and base_hash != '2a6fd3993ad38ca2d1d3b74dc8fd7d3ed51b0ad16297b85ab9981fa42ababa52':
+            raise ValueError('isolated SSH requires the exact migrated Agent-Boot base')
         recover_retirement(root, manifest)
         original = manifest_path.read_bytes()
         manifest = json.loads(original)
@@ -437,8 +458,12 @@ def run_owned_vm(directory, timeout_seconds=300):
         admitted_identity = [admitted_info.st_dev, admitted_info.st_ino]
         try:
             try:
-                exit_code = (launch_bounded(image, ceiling, timeout_seconds, firmware=firmware)
-                             if firmware is not None else launch_bounded(image, ceiling, timeout_seconds))
+                if isolated_ssh:
+                    exit_code = launch_bounded(image, ceiling, timeout_seconds, firmware=firmware, isolated_ssh=True)
+                elif firmware is not None:
+                    exit_code = launch_bounded(image, ceiling, timeout_seconds, firmware=firmware)
+                else:
+                    exit_code = launch_bounded(image, ceiling, timeout_seconds)
             finally:
                 # Reaped before reconciliation; failed current data is retained.
                 recover_retirement(root, json.loads(manifest_path.read_text()))
