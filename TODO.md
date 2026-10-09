@@ -57,6 +57,30 @@ this repository.
 
 ## Current validated baseline
 
+- [ ] Admit the migrated Agent-Boot Gen2 Windows workflow on
+  `work/exe-migrated-windows-uefi`, from squash `f5474b475f6a82f915ada8f75f91678834fd8803`.
+  Pending command preparation retains the original 6152MiB/two-CPU settings,
+  requires inherited exact Ubuntu VM-pool limits, stages only contained OVMF
+  files, and refuses TCG fallback. Inspection found generic supplementary-group
+  dropping would remove KVM access; the Windows path retains only its existing
+  authorized device group. Focused19/19 pass viaheavy.sh (2.338s), with changed
+  pool-limit refusal and Gen2 resource/firmware/device-group command assertions;
+  diffcheck passes. Firmware byte identity, closed-set allocation accounting,
+  bounded workflow integration, exact PR checks/review and actual guest
+  acceptance remain pending. No VM launch, publication or source retirement.
+  Firmware is now integrated into the existing locked lifecycle: optional exact
+  staged CODE SHA-256 and mutable VARS file identity are checked before launch
+  and after reaping, both files join closed-set allocation accounting, and the
+  bounded launcher selects the Gen2 command only for that record. Changed CODE
+  and replaced VARS refusal preserve files; focused20/20 pass viaheavy.sh
+  (2.307s). Native firmware staging/provenance and actual workflow remain unrun;
+  no PR or guest acceptance is claimed.
+  Export inspection found the rebuilt manifest omitted the firmware record;
+  reference switching now preserves it. A real QCOW2 backing/export fixture
+  (mocked guest launch) verifies exact firmware dispatch, retained firmware,
+  immutable base and post-export record. Focused21/21 pass viaheavy.sh (2.433s),
+  diffcheck passes; this is not Windows boot/workflow acceptance.
+
 - [ ] Complete the user-requested Windows-first cleanup and capped Ubuntu VM
   migration lifecycle on `work/exe-vm-growth-cap` (base
   `ebaa78fdccad27a7bdaba9107042f71667617bc1`). Native Windows cache cleanup

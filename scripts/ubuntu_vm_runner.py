@@ -165,11 +165,13 @@ def launch_command(image, memory_mib=2048, cpus=1, privileged_namespace=False):
             '-no-reboot', '-drive', 'if=ide,format=qcow2,file=' + str(image)]
 
 
-def launch_bounded(image, ceiling, timeout_seconds=300):
+def launch_bounded(image, ceiling, timeout_seconds=300, firmware=None):
     """Reap on every exit; caller must hold lifecycle lock and verify accounting."""
     if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 900:
         raise ValueError('bounded runtime required')
-    command = launch_command(image, privileged_namespace=True)
+    command = (windows_launch_command(image, image.parent / firmware['code'],
+                                      image.parent / firmware['vars']) if firmware is not None
+               else launch_command(image, privileged_namespace=True))
     if type(ceiling) is not int or not 0 < ceiling < 60_000_000_000:
         raise ValueError('invalid write ceiling')
     prlimit = shutil.which('prlimit')
@@ -187,6 +189,81 @@ def launch_bounded(image, ceiling, timeout_seconds=300):
             process.kill()
             process.wait()
             raise
+
+
+def require_windows_pool():
+    """Require actual process ancestry, not merely a configured empty slice."""
+    pool = '/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice'
+    membership = Path('/proc/self/cgroup').read_text().splitlines()
+    if len(membership) != 1 or not membership[0].startswith('0::' + pool + '/'):
+        raise ValueError('Windows process must inherit the admitted VM pool')
+    controls = Path('/sys/fs/cgroup' + pool)
+    expected = {'memory.max': '34359738368', 'memory.swap.max': '0',
+                'cpu.max': '1200000 100000', 'cpuset.cpus.effective': '0-11'}
+    if any((controls / name).read_text().strip() != value for name, value in expected.items()):
+        raise ValueError('Windows pool limits changed; refuse launch')
+
+
+def validate_windows_firmware(root, firmware, image_names):
+    """Exact staged CODE bytes and mutable VARS identity, never host paths."""
+    if not isinstance(firmware, dict) or set(firmware) != {'code', 'codeSha256', 'vars', 'varsIdentity'}:
+        raise ValueError('exact firmware record required')
+    names = [firmware['code'], firmware['vars']]
+    if len(set(names)) != 2 or any(not isinstance(name, str) or Path(name).name != name or name in ('.', '..') or ',' in name or name in image_names or not name.endswith('.fd') for name in names):
+        raise ValueError('invalid firmware names')
+    for name, length in zip(names, (3653632, 540672)):
+        path = root / name
+        info = path.lstat()
+        if path.resolve() != path or not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_size != length:
+            raise ValueError('unsafe staged firmware')
+    if base_digest(root / firmware['code']) != firmware['codeSha256']:
+        raise ValueError('firmware CODE hash mismatch')
+    info = (root / firmware['vars']).lstat()
+    if [info.st_dev, info.st_ino] != firmware['varsIdentity']:
+        raise ValueError('firmware VARS identity mismatch')
+    return set(names)
+
+
+def windows_launch_command(image, firmware_code, firmware_vars):
+    """First migrated Gen2 guest only: original 6152 MiB/two CPUs, no NIC.
+
+    Firmware must be staged as owned direct files inside the same allocation
+    envelope. Caller holds the lifecycle lock and accounts both firmware files.
+    This command preparation does not establish Windows workflow acceptance.
+    """
+    require_windows_pool()
+    image = Path(image)
+    require_ntfs_envelope(image.parent)
+    code, variables = Path(firmware_code), Path(firmware_vars)
+    for firmware, length in ((code, 3653632), (variables, 540672)):
+        if firmware.parent != image.parent or firmware == image or ',' in str(firmware):
+            raise ValueError('firmware must be a distinct contained direct file')
+        info = firmware.lstat()
+        if firmware.resolve() != firmware or not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_size != length:
+            raise ValueError('unsafe or unmatched staged OVMF firmware')
+    if code == variables:
+        raise ValueError('firmware code and variables must differ')
+    kvm = Path('/dev/kvm').stat()
+    if not stat.S_ISCHR(kvm.st_mode) or not os.access('/dev/kvm', os.R_OK | os.W_OK):
+        raise ValueError('KVM unavailable; no TCG fallback')
+    command = launch_command(image, memory_mib=6152, cpus=2, privileged_namespace=True)
+    # The generic sandbox drops supplementary groups. Preserve only the
+    # already-authorized device group or QEMU cannot open mode-0660 KVM.
+    if kvm.st_gid != os.getgid():
+        if kvm.st_gid not in os.getgroups():
+            raise ValueError('KVM device group is not already authorized')
+        command[command.index('--clear-groups')] = '--groups=' + str(kvm.st_gid)
+    # Only the exact KVM device and mutable VARS file extend the existing
+    # namespace. CODE and immutable base remain covered by read-only root.
+    bind_index = command.index('--proc')
+    command[bind_index:bind_index] = ['--dev-bind', '/dev/kvm', '/dev/kvm',
+                                     '--bind', str(variables), str(variables)]
+    qemu_index = command.index(shutil.which('qemu-system-x86_64'))
+    command[command.index('q35,accel=tcg')] = 'q35,accel=kvm'
+    command[command.index('max', qemu_index)] = 'host'
+    command.extend(['-drive', 'if=pflash,format=raw,readonly=on,file=' + str(code),
+                    '-drive', 'if=pflash,format=raw,file=' + str(variables)])
+    return command
 
 
 def run_owned_vm(directory, timeout_seconds=300):
@@ -209,7 +286,7 @@ def run_owned_vm(directory, timeout_seconds=300):
             raise ValueError('linked manifest refused')
         original = manifest_path.read_bytes()
         manifest = json.loads(original)
-        keys = set(manifest) - {'base', 'baseSha256', 'writeCeilingBytes'}
+        keys = set(manifest) - {'base', 'baseSha256', 'writeCeilingBytes', 'windowsFirmware'}
         if keys not in ({'schemaVersion', 'image', 'retained'}, {'schemaVersion', 'image', 'retained', 'generated'}) or manifest['schemaVersion'] != 1:
             raise ValueError('unsupported lifecycle manifest')
         base = manifest.get('base')
@@ -237,6 +314,11 @@ def run_owned_vm(directory, timeout_seconds=300):
         allowed = set(names) | {'.opemos-migration-owned', '.lifecycle-lock', 'manifest.json'}
         if base is not None:
             allowed.add(base)
+        firmware = manifest.get('windowsFirmware')
+        if firmware is not None:
+            if base is None:
+                raise ValueError('Windows firmware requires immutable base')
+            allowed.update(validate_windows_firmware(root, firmware, allowed))
         allocated = 0
         for entry in root.iterdir():
             info = entry.lstat()
@@ -263,12 +345,15 @@ def run_owned_vm(directory, timeout_seconds=300):
         admitted_identity = [admitted_info.st_dev, admitted_info.st_ino]
         try:
             try:
-                exit_code = launch_bounded(image, ceiling, timeout_seconds)
+                exit_code = (launch_bounded(image, ceiling, timeout_seconds, firmware=firmware)
+                             if firmware is not None else launch_bounded(image, ceiling, timeout_seconds))
             finally:
                 # Reaped before reconciliation; failed current data is retained.
                 recover_retirement(root, json.loads(manifest_path.read_text()))
                 if base is not None and base_digest(root / base) != base_hash:
                     raise ValueError('base changed during guest operation')
+                if firmware is not None:
+                    validate_windows_firmware(root, firmware, names + [base])
             if exit_code != 0:
                 raise RuntimeError('guest failed; image retained, no reference switch')
         except BaseException as failure:
@@ -304,6 +389,8 @@ def run_owned_vm(directory, timeout_seconds=300):
         new_info = (root / export).stat()
         generated[export] = [new_info.st_dev, new_info.st_ino]
         updated = {'schemaVersion': 1, 'image': export, 'retained': names, 'generated': generated}
+        if firmware is not None:
+            updated['windowsFirmware'] = firmware
         if base is not None:
             if base_digest(root / base) != base_hash:
                 raise ValueError('base changed during export')
