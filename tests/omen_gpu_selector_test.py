@@ -10,6 +10,22 @@ spec.loader.exec_module(selector)
 
 
 class SelectorTest(unittest.TestCase):
+    def test_vfio_and_unbound_nvidia_presentation_does_not_claim_host_rendering(self):
+        for driver in ('vfio-pci', None):
+            with self.subTest(driver=driver), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                display = root / '0000:01:00.0'
+                display.mkdir()
+                for name, value in [('class', '0x030000'), ('vendor', '0x10de'), ('boot_vga', '1')]:
+                    (display / name).write_text(value)
+                if driver:
+                    (display / 'driver').symlink_to('/drivers/' + driver)
+                result = selector.inspect(root)
+                self.assertEqual(result['gpuLabel'], 'GPU — detected (active output unverified)')
+                self.assertFalse(result['gpuHostDisplayInUse'])
+                self.assertFalse(result['vmPassthroughAccepted'])
+                self.assertFalse(result['applyAllowed'])
+
     def test_desktop_failure_removes_exact_generated_view_and_preserves_template(self):
         import subprocess
         template = Path(selector.__file__).with_name('omen-gpu-selector.qml')

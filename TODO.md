@@ -3997,6 +3997,12 @@ current and their repository ownership is unambiguous.
   presentation plus cleanup. Five focused tests PASS heavy0.009s; diffcheck
   PASS. This local checkpoint is read-only/refusal presentation, not a working
   hardware switch or visual acceptance; no runtime dependency installed.
+  PR176 Core finding on head7d67e5cd corrected: vendor presence no longer says
+  host rendering. Shipped GPU label is detection-only with active output
+  explicitly unverified, including vfio-pci and unbound NVIDIA fixtures; both
+  retain refused Apply and no passthrough acceptance. Six focused tests PASS
+  heavy0.009s; diffcheck PASS. New head requires new exact review/CI, preserving
+  original checkpoint and finding history. Actual Qt render still unverified.
 
 - [ ] Authorized eight-lane migration continuation: fresh
   `work/exe-migrated-windows-ssh` from fetched `0e2d29f7` preserves all lane,

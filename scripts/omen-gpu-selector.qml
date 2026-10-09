@@ -25,7 +25,7 @@ Window {
         }
         RadioButton { text: "Internal graphics — unavailable"; enabled: false }
         RadioButton {
-            text: inventory.inspectionFailed ? "GPU — inspection unavailable" : inventory.gpuPresent ? "GPU — detected (host rendering)" : "GPU — not detected"
+            text: inventory.gpuLabel
             checked: inventory.gpuPresent === true
             enabled: false
         }

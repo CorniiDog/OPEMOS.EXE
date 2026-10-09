@@ -33,6 +33,7 @@ def probe(devices=Path('/sys/bus/pci/devices')):
             'internalGraphicsAvailable': False,
             'internalGraphicsReason': 'OMEN integrated Intel display candidate detected; active display route still requires validation.' if internal else 'No OMEN integrated Intel display detected. Internal graphics cannot be selected.',
             'gpuPresent': bool(nvidia),
+            'gpuLabel': 'GPU — detected (active output unverified)' if nvidia else 'GPU — not detected',
             'gpuHostDisplayInUse': any(d['bootDisplay'] and d['driver'] == 'nvidia' for d in nvidia),
             'vmPassthroughAccepted': False,
             'applyAllowed': False,
@@ -45,6 +46,7 @@ def inspect(devices=Path('/sys/bus/pci/devices')):
     except (OSError, ValueError):
         # Missing, malformed or racing sysfs must not become an empty success.
         return {'inspectionFailed': True, 'internalGraphicsAvailable': False,
+                'gpuLabel': 'GPU — inspection unavailable',
                 'vmPassthroughAccepted': False, 'applyAllowed': False,
                 'applyReason': 'Hardware inspection failed. No graphics change is available; refresh after resolving the device metadata error.'}
 
