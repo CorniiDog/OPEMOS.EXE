@@ -12,12 +12,68 @@ import fcntl
 import json
 import uuid
 import hashlib
+import selectors
+import time
 from vm_write_ceiling import compact_owned_image, bounded_file_ceiling, VM_BUDGET_BYTES, validate_chain
 
 
 def base_digest(path):
     with open(path, 'rb') as source:
         return hashlib.file_digest(source, 'sha256').hexdigest()
+
+
+def qmp_stdio_status(reader, writer, timeout_seconds=3):
+    """Exact no-network greeting/capabilities/status protocol, bounded once.
+
+    Caller owns the child and must kill/reap on every protocol refusal. Only
+    monitor status is evidence here, never Windows or application acceptance.
+    """
+    if type(timeout_seconds) not in (int, float) or not 0 < timeout_seconds <= 3:
+        raise ValueError('bounded QMP deadline required')
+    deadline = time.monotonic() + timeout_seconds
+    pending = bytearray()
+    total = 0
+    with selectors.DefaultSelector() as selector:
+        selector.register(reader, selectors.EVENT_READ)
+        def receive():
+            nonlocal total
+            while True:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError('QMP absolute deadline expired')
+                if b'\n' in pending:
+                    line, _, rest = pending.partition(b'\n')
+                    pending[:] = rest
+                    value = json.loads(line)
+                    if not isinstance(value, dict) or 'error' in value:
+                        raise ValueError('invalid QMP response')
+                    return value
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not selector.select(remaining):
+                    raise TimeoutError('QMP absolute deadline expired')
+                chunk = os.read(reader.fileno(), 4096)
+                if not chunk:
+                    raise ValueError('QMP closed before response')
+                total += len(chunk)
+                if total > 65536:
+                    raise ValueError('QMP output exceeds bound')
+                pending.extend(chunk)
+        if 'QMP' not in receive():
+            raise ValueError('missing QMP greeting')
+        for identifier, command in ((1, 'qmp_capabilities'), (2, 'query-status')):
+            # This tiny bounded write cannot fill an empty owned QMP pipe.
+            writer.write((json.dumps({'execute': command, 'id': identifier}) + '\n').encode())
+            writer.flush()
+            while True:
+                value = receive()
+                if 'event' in value:
+                    continue
+                if value.get('id') != identifier or 'return' not in value:
+                    raise ValueError('QMP response identity mismatch')
+                break
+        status = value['return']
+        if not isinstance(status, dict) or type(status.get('running')) is not bool or not isinstance(status.get('status'), str):
+            raise ValueError('invalid QMP guest status')
+        return status
 
 
 def require_ntfs_envelope(root):
@@ -181,11 +237,47 @@ def launch_bounded(image, ceiling, timeout_seconds=300, firmware=None):
     command[qemu_index:qemu_index] = [prlimit, f'--fsize={ceiling}:{ceiling}', '--']
     if Path(image).stat().st_size > ceiling:
         raise ValueError('image already exceeds write ceiling')
-    with subprocess.Popen(command, stdin=subprocess.DEVNULL,
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as process:
+    if firmware is not None:
+        command.extend(['-qmp', 'stdio'])
+    deadline = time.monotonic() + timeout_seconds
+    with subprocess.Popen(command, stdin=subprocess.PIPE if firmware is not None else subprocess.DEVNULL,
+                          stdout=subprocess.PIPE if firmware is not None else subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL, bufsize=0) as process:
         try:
-            return process.wait(timeout=timeout_seconds)
+            if firmware is not None:
+                status = qmp_stdio_status(process.stdout, process.stdin,
+                                          min(3, timeout_seconds))
+                receipt = Path(image).parent / ('receipt-qmp-' + uuid.uuid4().hex + '.json')
+                with receipt.open('x') as output:
+                    json.dump({'monitorStatus': status, 'workflowAccepted': False}, output)
+                    output.flush(); os.fsync(output.fileno())
+                sync_directory(receipt.parent)
+                # Drain asynchronous monitor output so a full pipe cannot
+                # stall the guest. Cap it; output flooding is a refusal.
+                total = 0
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    while process.poll() is None:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise subprocess.TimeoutExpired(command, timeout_seconds)
+                        if selector.select(min(remaining, 0.1)):
+                            data = os.read(process.stdout.fileno(), 4096)
+                            total += len(data)
+                            if total > 65536:
+                                raise ValueError('QMP runtime output exceeds bound')
+                            if not data:
+                                selector.unregister(process.stdout)
+                                return process.wait(timeout=max(0.001, deadline - time.monotonic()))
+            return process.wait(timeout=max(0.001, deadline - time.monotonic()))
         except BaseException:
+            if firmware is not None and process.poll() is None:
+                try:
+                    process.stdin.write(b'{"execute":"quit","id":3}\n')
+                    process.stdin.flush()
+                    process.wait(timeout=3)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
             process.kill()
             process.wait()
             raise

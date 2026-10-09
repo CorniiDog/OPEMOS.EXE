@@ -12,6 +12,96 @@ import ubuntu_vm_runner as runner
 
 
 class RunnerTest(unittest.TestCase):
+    def test_monitor_flood_and_ignored_quit_are_killed_and_reaped(self):
+        greeting = ('import json,sys,time; print(json.dumps({"QMP":{}}),flush=True); '
+                    'a=json.loads(input()); print(json.dumps({"return":{},"id":a["id"]}),flush=True); '
+                    'b=json.loads(input()); print(json.dumps({"return":{"running":True,"status":"running"},"id":b["id"]}),flush=True); ')
+        for suffix, error in [('sys.stdout.write("x"*70000); sys.stdout.flush(); time.sleep(30)', ValueError),
+                              ('time.sleep(30)', subprocess.TimeoutExpired)]:
+            with self.subTest(error=error), tempfile.TemporaryDirectory(prefix='opemos-qmp-kill-') as directory:
+                image = Path(directory) / 'active.qcow2'
+                image.write_bytes(b'fixture')
+                real_which = runner.shutil.which
+                real_popen = runner.subprocess.Popen
+                children = []
+                def spawn(*args, **kwargs):
+                    child = real_popen(*args, **kwargs)
+                    children.append(child)
+                    return child
+                with patch.object(runner, 'windows_launch_command', return_value=[sys.executable, '-c', greeting + suffix]), patch.object(runner.shutil, 'which', side_effect=lambda name: sys.executable if name == 'qemu-system-x86_64' else real_which(name)), patch.object(runner.subprocess, 'Popen', side_effect=spawn):
+                    with self.assertRaises(error):
+                        runner.launch_bounded(image, 1000000, 1, firmware={'code':'code.fd','vars':'vars.fd'})
+                self.assertEqual(len(children), 1)
+                self.assertEqual(children[0].returncode, -9)
+                receipts = list(Path(directory).glob('receipt-qmp-*.json'))
+                self.assertEqual(len(receipts), 1)
+                self.assertFalse(json.loads(receipts[0].read_text())['workflowAccepted'])
+
+    def test_protocol_refusal_sends_quit_and_reaps_owned_child(self):
+        with tempfile.TemporaryDirectory(prefix='opemos-qmp-refusal-') as directory:
+            image = Path(directory) / 'active.qcow2'
+            image.write_bytes(b'fixture')
+            program = ('import json,sys; print("{}",flush=True); '
+                       'a=json.loads(input()); sys.exit(0 if a.get("execute")=="quit" else 9)')
+            real_which = runner.shutil.which
+            real_popen = runner.subprocess.Popen
+            children = []
+            def spawn(*args, **kwargs):
+                child = real_popen(*args, **kwargs)
+                children.append(child)
+                return child
+            with patch.object(runner, 'windows_launch_command', return_value=[sys.executable, '-c', program]), patch.object(runner.shutil, 'which', side_effect=lambda name: sys.executable if name == 'qemu-system-x86_64' else real_which(name)), patch.object(runner.subprocess, 'Popen', side_effect=spawn):
+                with self.assertRaisesRegex(ValueError, 'greeting'):
+                    runner.launch_bounded(image, 1000000, 3, firmware={'code':'code.fd','vars':'vars.fd'})
+            self.assertEqual(len(children), 1)
+            self.assertEqual(children[0].returncode, 0)
+            self.assertEqual(list(Path(directory).glob('receipt-qmp-*.json')), [])
+
+    def test_firmware_launcher_stdio_records_monitor_not_acceptance(self):
+        with tempfile.TemporaryDirectory(prefix='opemos-qmp-launch-') as directory:
+            image = Path(directory) / 'active.qcow2'
+            image.write_bytes(b'fixture')
+            program = ('import json,sys; print(json.dumps({"QMP":{}}),flush=True); '
+                       'a=json.loads(input()); print(json.dumps({"return":{},"id":a["id"]}),flush=True); '
+                       'b=json.loads(input()); print(json.dumps({"return":{"running":True,"status":"running"},"id":b["id"]}),flush=True)')
+            real_which = runner.shutil.which
+            with patch.object(runner, 'windows_launch_command', return_value=[sys.executable, '-c', program]), patch.object(runner.shutil, 'which', side_effect=lambda name: sys.executable if name == 'qemu-system-x86_64' else real_which(name)):
+                self.assertEqual(runner.launch_bounded(image, 1000000, 3, firmware={'code':'code.fd','vars':'vars.fd'}), 0)
+            receipts = list(Path(directory).glob('receipt-qmp-*.json'))
+            self.assertEqual(len(receipts), 1)
+            evidence = json.loads(receipts[0].read_text())
+            self.assertTrue(evidence['monitorStatus']['running'])
+            self.assertFalse(evidence['workflowAccepted'])
+
+    def test_stdio_qmp_exact_status_and_refusals(self):
+        import os
+        import io
+        cases = [(b'{"QMP":{}}\n{"return":{},"id":1}\n{"event":"RESET"}\n{"return":{"running":true,"status":"running"},"id":2}\n', None),
+                 (b'{}\n', 'greeting'),
+                 (b'{"QMP":{}}\n{"return":{},"id":9}\n', 'identity'),
+                 (b'{"QMP":{}}\n', 'closed')]
+        for payload, error in cases:
+            read_fd, write_fd = os.pipe()
+            os.write(write_fd, payload); os.close(write_fd)
+            with os.fdopen(read_fd, 'rb', buffering=0) as reader:
+                writer = io.BytesIO()
+                if error:
+                    with self.assertRaisesRegex(ValueError, error):
+                        runner.qmp_stdio_status(reader, writer)
+                else:
+                    self.assertTrue(runner.qmp_stdio_status(reader, writer)['running'])
+                    self.assertEqual([json.loads(line)['execute'] for line in writer.getvalue().splitlines()], ['qmp_capabilities', 'query-status'])
+
+    def test_stdio_qmp_silent_peer_expires_without_deadline_reset(self):
+        import os
+        read_fd, write_fd = os.pipe()
+        try:
+            with os.fdopen(read_fd, 'rb', buffering=0) as reader, tempfile.TemporaryFile() as writer:
+                with self.assertRaises(TimeoutError):
+                    runner.qmp_stdio_status(reader, writer, 0.02)
+        finally:
+            os.close(write_fd)
+
     def test_firmware_lifecycle_accounts_and_preserves_record_after_export(self):
         with tempfile.TemporaryDirectory(prefix='opemos-gen2-cycle-') as directory:
             root = Path(directory)
