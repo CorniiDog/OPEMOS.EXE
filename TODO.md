@@ -3960,6 +3960,58 @@ Deferred items should return here only when an accepted milestone makes them
 current and their repository ownership is unambiguous.
 # Completion controls — current user request
 
+- [ ] Authorized eight-lane migration continuation: fresh
+  `work/exe-migrated-windows-ssh` from fetched `0e2d29f7` preserves all lane,
+  firmware/security and disk-parent identities recorded in the authenticated
+  eight-lane manifest. Latest user aggregate limit is 32 GiB RAM, zero VM swap,
+  ten logical CPUs. Existing runner admission now requires exact CPU quota
+  `1000000 100000` and cpuset `0-9`, refusing superseded twelve-CPU settings.
+  Focused 27/27 PASS through heavy.sh (10.130s); diff-check PASS. Isolated SSH
+  integration and actual migrated workflow remain pending; no guest launch,
+  source retirement, publication, or new credentials established here.
+  Subsequent command-preparation checkpoint adds explicit boolean opt-in for
+  the user-approved restricted user NIC: private namespace loopback2222 to
+  exact historical Agent-Boot address172.22.79.248 port22, no bridge/tap or
+  wildcard listener, default remains no NIC. Existing command fixture proves
+  exact restriction/namespace/endpoint and malformed opt-in refusal; focused
+  27/27 PASS heavy10.064s, diff-check PASS. Not wired to lifecycle or launched;
+  preserved guest addressing, relay ownership, credential/pin and actual
+  containment checks remain before execution. No Windows acceptance claim.
+  Subsequent lifecycle checkpoint passes the explicit boolean selection through
+  `run_owned_vm` and the bounded launcher without persisting network selection
+  in the image manifest. Malformed values and non-Windows launches refuse before
+  process creation; real subprocess monitor coverage proves propagation while
+  retaining explicit non-acceptance evidence. Runner focused 23/23 PASS through
+  heavy.sh (9.769s), diff-check PASS. No guest/NIC/listener launched. Exact
+  Agent-Boot addressing, relay ownership, credential availability, implementation
+  PR/checks/counterpart review and actual containment remain pending.
+  New user scope additionally plans eight Ubuntu A/B counterparts (16 total
+  planned, not concurrent), retaining Windows-first workflow verification and
+  the one shared 32 GiB/zero-swap/ten-CPU pool. The single Agent-Boot SSH endpoint
+  now refuses any other immutable base lineage before retirement recovery or
+  process creation; the fixture proves unchanged manifest/image and no launch
+  or recovery on refusal, then exercises the default no-network lifecycle.
+  Focused runner/storage 28/28 PASS heavy10.137s; after moving refusal before
+  recovery, the exact changed regression PASS heavy0.231s; diff-check PASS.
+  No additional lanes, guests, network listeners, or credentials created.
+  Preserved `readdress-boot-after-host-restart-pr123.ps1` and VM_POOL evidence
+  identifies manual IPv4 .248/20, gateway172.22.64.1, DHCP disabled and exact
+  MAC00155D100F02. Restricted NIC command now preserves that gateway/MAC rather
+  than QEMU defaults; exact command/refusal tests 6/6 PASS heavy0.006s and
+  diff-check PASS. This does not prove Windows binds the static configuration
+  to the migrated e1000 adapter. Authenticated read-only Ubuntu tool inventory
+  finds existing /usr/bin/nsenter, /usr/bin/nc and QEMU; socat absent, no install
+  required for the proposed existing-tool route. Relay ownership/authentication
+  and actual guest adapter validation remain pending; no listener/VM launched.
+  Latest user parallel allocation assigns additional Ubuntu lane provisioning
+  to the existing Core lead, leaving native Windows transfer/migration and
+  acceptance with EXE. No duplicate Ubuntu setup by EXE. Stable batch dispatch
+  uses explicit branches rather than nested conditional precedence. Final
+  focused batch invocation refused heavy exit75 (shared job active); no retry
+  or bypass. Earlier 28-test and exact six-command-check evidence retained;
+  final checkpoint validation remains pending. Local commit preserves only
+  runner/tests/TODO, with no credentials/private payloads or governance edits.
+
 - [ ] Migrated Agent-Boot control batch on `work/exe-migrated-windows-control`
   from fetched main `408b0330dc66b4f0d1814d13fec4cc25d7bd713a`: existing
   firmware-enabled launcher now uses bounded stdio QMP rather than a network
