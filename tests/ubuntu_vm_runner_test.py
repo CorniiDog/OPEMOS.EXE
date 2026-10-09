@@ -12,6 +12,102 @@ import ubuntu_vm_runner as runner
 
 
 class RunnerTest(unittest.TestCase):
+    def test_firmware_lifecycle_accounts_and_preserves_record_after_export(self):
+        with tempfile.TemporaryDirectory(prefix='opemos-gen2-cycle-') as directory:
+            root = Path(directory)
+            (root / '.opemos-migration-owned').write_text('OPEMOS.EXE\n')
+            base, image = root / 'base.qcow2', root / 'active.qcow2'
+            subprocess.run(['qemu-img', 'create', '-f', 'qcow2', str(base), '16M'], check=True, capture_output=True)
+            subprocess.run(['qemu-img', 'create', '-f', 'qcow2', '-F', 'qcow2', '-b', str(base), str(image)], check=True, capture_output=True)
+            code, variables = root / 'code.fd', root / 'vars.fd'
+            for path, size in ((code, 3653632), (variables, 540672)):
+                path.write_bytes(b'\0' * size)
+            info = variables.stat()
+            firmware = {'code': code.name, 'codeSha256': runner.base_digest(code),
+                        'vars': variables.name, 'varsIdentity': [info.st_dev, info.st_ino]}
+            manifest = {'schemaVersion': 1, 'image': image.name, 'retained': [],
+                        'base': base.name, 'baseSha256': runner.base_digest(base),
+                        'writeCeilingBytes': 12000000, 'windowsFirmware': firmware}
+            (root / 'manifest.json').write_text(json.dumps(manifest))
+            expected_allocation = sum(p.stat().st_blocks * 512 for p in root.iterdir())
+            with patch.object(runner, 'require_ntfs_envelope', return_value={}), patch.object(runner, 'launch_bounded', return_value=0) as launch:
+                receipt = runner.run_owned_vm(root)
+            launch.assert_called_once_with(image, 12000000, 300, firmware=firmware)
+            updated = json.loads((root / 'manifest.json').read_text())
+            self.assertEqual(updated['windowsFirmware'], firmware)
+            self.assertEqual(runner.base_digest(base), manifest['baseSha256'])
+            self.assertTrue(code.exists() and variables.exists())
+            # The lock is created during admission and contributes no blocks.
+            self.assertGreaterEqual(receipt['totalAfterAllocatedBytes'], expected_allocation)
+
+    def test_firmware_changed_code_or_replaced_vars_refuses_preserving_files(self):
+        with tempfile.TemporaryDirectory(prefix='opemos-firmware-') as directory:
+            root = Path(directory)
+            code, variables = root / 'code.fd', root / 'vars.fd'
+            for path, size in ((code, 3653632), (variables, 540672)):
+                with path.open('wb') as output:
+                    output.truncate(size)
+            info = variables.stat()
+            record = {'code': code.name, 'codeSha256': runner.base_digest(code),
+                      'vars': variables.name, 'varsIdentity': [info.st_dev, info.st_ino]}
+            self.assertEqual(runner.validate_windows_firmware(root, record, ['active.qcow2', 'base.qcow2']), {'code.fd', 'vars.fd'})
+            with code.open('r+b') as output:
+                output.write(b'changed')
+            with self.assertRaisesRegex(ValueError, 'CODE hash'):
+                runner.validate_windows_firmware(root, record, [])
+            record['codeSha256'] = runner.base_digest(code)
+            variables.rename(root / 'preserved-vars.fd')
+            with variables.open('wb') as output:
+                output.truncate(540672)
+            with self.assertRaisesRegex(ValueError, 'VARS identity'):
+                runner.validate_windows_firmware(root, record, [])
+            self.assertTrue((root / 'preserved-vars.fd').exists())
+
+    def test_windows_refuses_changed_pool_limits(self):
+        pool = '0::/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/owned.service\n'
+        with patch.object(Path, 'read_text', side_effect=[pool, '34359738368', '1']):
+            with self.assertRaisesRegex(ValueError, 'limits changed'):
+                runner.require_windows_pool()
+
+    def test_windows_command_preserves_gen2_resources_and_only_kvm_group(self):
+        import os
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory(prefix='opemos-uefi-') as directory:
+            root = Path(directory)
+            image, code, variables = (root / name for name in ('active.qcow2', 'code.fd', 'vars.fd'))
+            for path, size in ((image, 1), (code, 3653632), (variables, 540672)):
+                with path.open('wb') as output:
+                    output.truncate(size)
+            real_stat = Path.stat
+            device_group = os.getgid() + 10000
+            def device_stat(path, *args, **kwargs):
+                if str(path) == '/dev/kvm':
+                    return SimpleNamespace(st_mode=0o020660, st_gid=device_group)
+                return real_stat(path, *args, **kwargs)
+            with patch.object(runner, 'require_windows_pool'), patch.object(runner, 'require_ntfs_envelope'), patch.object(Path, 'stat', device_stat), patch.object(runner.os, 'access', return_value=True), patch.object(runner.os, 'getgroups', return_value=[device_group, device_group + 1]), patch.object(runner.shutil, 'which', side_effect=lambda name: '/usr/bin/' + name):
+                command = runner.windows_launch_command(image, code, variables)
+            self.assertEqual(command[command.index('-m') + 1], '6152')
+            self.assertEqual(command[command.index('-smp') + 1], '2')
+            self.assertIn('q35,accel=kvm', command)
+            self.assertNotIn('q35,accel=tcg', command)
+            self.assertIn('--groups=' + str(device_group), command)
+            self.assertNotIn('--groups=' + str(device_group + 1), command)
+            self.assertIn('if=pflash,format=raw,readonly=on,file=' + str(code), command)
+            self.assertIn('if=pflash,format=raw,file=' + str(variables), command)
+            self.assertEqual(command[command.index('-nic') + 1], 'none')
+
+    def test_windows_refuses_unadmitted_process_before_image_or_tools(self):
+        with patch.object(Path, 'read_text', return_value='0::/user.slice/unrelated.service\n'), patch.object(runner.subprocess, 'run') as tools:
+            with self.assertRaisesRegex(ValueError, 'inherit'):
+                runner.windows_launch_command('/absent/image', '/absent/code', '/absent/vars')
+            tools.assert_not_called()
+
+    def test_windows_refuses_firmware_outside_envelope_before_kvm(self):
+        with patch.object(runner, 'require_windows_pool'), patch.object(runner, 'require_ntfs_envelope'), patch.object(runner, 'launch_command') as launch:
+            with self.assertRaisesRegex(ValueError, 'contained direct file'):
+                runner.windows_launch_command('/owned/image', '/external/code', '/owned/vars')
+            launch.assert_not_called()
+
     def test_backed_runtime_refuses_unknown_slot_ceiling_before_admission(self):
         for value in (None, True, 0, 60_000_000_000):
             with self.subTest(ceiling=value), tempfile.TemporaryDirectory(prefix='opemos-slot-') as directory:
