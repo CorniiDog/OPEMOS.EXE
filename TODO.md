@@ -57,6 +57,82 @@ this repository.
 
 ## Current validated baseline
 
+- [ ] Complete the user-requested Windows-first cleanup and capped Ubuntu VM
+  migration lifecycle on `work/exe-vm-growth-cap` (base
+  `ebaa78fdccad27a7bdaba9107042f71667617bc1`). Native Windows cache cleanup
+  2026-10-09: two exact EXE transient archives retained on D with SHA-256,
+  flushed restore catalogs and tested handle-bound removal; C free increased
+  4,186,112,000 bytes. Native refusal fixture passed changed identity, rename,
+  hardlink and reparse cases. Shared authenticated migration handoff records
+  exact receipts/hashes. Runner five focused tests passed via `heavy.sh`,
+  including journal/reference/unlink interruption recovery. Backup verification
+  passed: source/clone 91,742,011,392 bytes, SHA-256
+  `ab0522e09ce55f46bf05400c31ef8407c3ee30eb292ae877fd960c395d9ef9eb`,
+  durable native receipt and controller exit0 (pre-cleanup recovery backup).
+  Read-only ten-file catalog completed; expanded outputs distinct and referenced
+  inputs held. Exact unreferenced archive was removed with verified hash/file-ID,
+  flushed restore catalog and exclusive-handle guards, recoverable in unchanged
+  D backup. Stopped standalone VHDX full compaction passed: measured C free
+  +736,083,968 bytes, apparent VHDX length91,742,011,392 ->86,306,193,408;
+  those are distinct metrics, not an allocation-equivalence claim. Native final
+  dismount verified. Source now differs from the retained pre-cleanup backup.
+  Subsequent exact eight historical PR123 payload cleanup+compact passed with
+  restore catalogs retaining unique bytes in D backup: measured host allocation
+  86,306,193,408 ->58,892,222,464 (27,413,970,944 reclaimed). Independent read-only
+  postcheck passed eight removed paths absent, twenty scripts/results preserved,
+  required642 SHA unchanged, user input and backup retained, final dismount.
+  This first source disk is below60GB; whole-VM accounting/runtime enforcement
+  and integrity/migration acceptance remain pending. No 60-GB hard-cap,
+  real-QEMU migration acceptance, PR or merge completion is claimed.
+  Cleaned-source CHKDSK/hash passed (new SHA
+  `c52ec40abca9f41a99e13c7217a2c71ce3a9742cddbfe1df5a49b2fd1c536e0c`).
+  Same durable native compressed-export-r2 job passed conversion, QCOW2 check
+  and logical comparison at09:27:59Z; opened export34,477,437,440 bytes,
+  export SHA passed `2a6fd3993ad38ca2d1d3b74dc8fd7d3ed51b0ad16297b85ab9981fa42ababa52`
+  at09:31:53Z. Two standalone images exceed60GB; added a tiny
+  existing-QEMU backing/delta fixture for exact changed/zeroed sector and
+  immutable-base preservation; all10 focused VM tests passed viaheavy.sh.
+  These are synthetic fixtures, not Windows/NTFS acceptance. No transfer or runtime
+  admission; base, both writable slots, firmware and all retained runtime files
+  must fit the aggregate cap with kernel-enforced allocation acceptance.
+  Narrow base/delta integration: ten focused checks passed after integration.
+  Native NTFS three-cycle fixture passed changed/zeroed/inherited byte checks,
+  unchanged base hash, ref retirement and allocation/write ENOSPC refusal inside
+  fixed64MiB owned volume, final dismount. Actual first-VM59.9GB NTFS envelope
+  prepared with measured full allocation and base+two12GB slots+firmware/log
+  reservations. Same exact guarded resumable export transfer started09:47:22Z,
+  durable native receiver checkpoint8MiB; no Windows VM launch or acceptance.
+  Newly added external-parent regression awaits shared heavy slot. Authenticated
+  migration handoff holds exact identities/receipts and outstanding review gates.
+  While the SAME transfer holds heavy admission, corrected a concrete crash gap:
+  journal intent+replacement identity now precede the FIRST reference switch,
+  and recovery handles the old-current phase without deleting an unverified
+  replacement. Added fourth crash boundary and missing-old/replaced-candidate
+  refusal fixtures. Backed manifests must declare their exact write ceiling
+  (12GB for the actual storage plan) instead of using larger residual headroom.
+  These changes/tests are pending heavy validation; no passing claim or PR yet.
+  Added a durable failed-guest/postcheck receipt with retained-image identity,
+  bounded error and before/after footprint, without cleanup/export on failure;
+  focused/native assertions prepared. SAME transfer now2,139,095,040 bytes;
+  new tests still await its heavy-slot release, not represented as passed.
+  Prepared existing native NTFS r2 fixture for four real journal/reference/unlink
+  crash boundaries and locked recovery+sector readback. UNRUN during SAME
+  transfer (3,405,774,848 bytes); no fresh source copy or VM launch.
+  Transfer subsequently completed: exact34,477,437,440 bytes and destination
+  SHA-256 match the verified export, controller exit0; destination runtime
+  dismounted. Current-head focused VM regressions pass13/13 viaheavy.sh.
+  Native NTFS r2 passes three cycles, all four durable crash boundaries,
+  locked recovery and sector readback, unchanged base, failed-guest retention,
+  allocation/write ENOSPC28, and final dismount. These are lifecycle fixtures,
+  not migrated Windows workflow acceptance; runtime launch remains unadmitted.
+  This bounded imaging-sensitive implementation requires remote CI and exact
+  Core primary review. Lead-only push destination verified as
+  `https://github.com/CorniiDog/OPEMOS.EXE.git`, branch
+  `work/exe-vm-growth-cap`, from fetched main `ebaa78fd`; only this lifecycle
+  batch and its focused tests/history are included. No private inputs,
+  credentials, boundary pins or sibling changes are included. Exact pushed
+  commit and PR identity will be retained in the authenticated handoff.
+
 - [x] Build and run the Tauri application on macOS Apple Silicon.
 - [x] Select, normalize, and inspect supported Valve recovery images without
   mutating the original.
