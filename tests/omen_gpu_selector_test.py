@@ -10,6 +10,15 @@ spec.loader.exec_module(selector)
 
 
 class SelectorTest(unittest.TestCase):
+    def test_qt6_qml_package_launches_without_qmlscene(self):
+        for executable in ('/existing/qml6', '/usr/lib/qt6/bin/qml'):
+            with self.subTest(executable=executable), patch.object(selector.shutil, 'which', side_effect=lambda name: executable if name == 'qml6' and executable.startswith('/existing/') else None), patch.object(Path, 'is_file', autospec=True, side_effect=lambda path: str(path) == executable), patch.object(selector.subprocess, 'run') as run:
+                selector.desktop()
+                command = run.call_args.args[0]
+                self.assertEqual(command[0], executable)
+                self.assertEqual(run.call_args.kwargs['timeout'], 900)
+                self.assertFalse(Path(command[1]).parent.exists())
+
     def test_vfio_and_unbound_nvidia_presentation_does_not_claim_host_rendering(self):
         for driver in ('vfio-pci', None):
             with self.subTest(driver=driver), tempfile.TemporaryDirectory() as directory:

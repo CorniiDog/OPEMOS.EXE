@@ -4003,6 +4003,17 @@ current and their repository ownership is unambiguous.
   retain refused Apply and no passthrough acceptance. Six focused tests PASS
   heavy0.009s; diffcheck PASS. New head requires new exact review/CI, preserving
   original checkpoint and finding history. Actual Qt render still unverified.
+  Resolver's isolated existing-trust Qt6 6.4.2 runtime subsequently validated
+  the actual shipped QML control tree for detected GPU and inspection failure:
+  correct label and disabled Apply, both exit0 through heavy.sh. Receipt
+  selector-qt-presentation-result-r1.json records the bounded generated-view
+  method; this is not physical OMEN display or hardware-switch acceptance.
+  That run exposed launcher discovery limited to qmlscene despite Ubuntu's
+  Qt6 qml executable. Discovery now prefers explicit qml6 or Qt6 package paths,
+  retaining qmlscene fallback without selecting ambiguous unversioned qml.
+  Seven focused regressions PASS through heavy.sh (0.016s), including Qt6-only
+  launch and generated-view cleanup; diffcheck PASS. Changed head needs new
+  exact remote CI/Core review before merge; no system install or GPU transition.
 
 - [ ] Authorized eight-lane migration continuation: fresh
   `work/exe-migrated-windows-ssh` from fetched `0e2d29f7` preserves all lane,

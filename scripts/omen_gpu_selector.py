@@ -52,12 +52,16 @@ def inspect(devices=Path('/sys/bus/pci/devices')):
 
 
 def desktop():
-    runner = shutil.which('qmlscene')
-    qt6 = Path('/usr/lib/qt6/bin/qmlscene')
-    if runner is None and qt6.is_file():
-        runner = str(qt6)
+    # The Ubuntu Qt6 package supplies qml, not necessarily qmlscene. Prefer
+    # explicitly Qt6 names/paths; do not select an ambiguous unversioned qml.
+    runner = shutil.which('qml6')
+    for qt6 in (Path('/usr/lib/qt6/bin/qml'), Path('/usr/lib/qt6/bin/qmlscene')):
+        if runner is None and qt6.is_file():
+            runner = str(qt6)
     if runner is None:
-        raise RuntimeError('Existing Qt qmlscene runtime is unavailable; no package installation or graphics change attempted.')
+        runner = shutil.which('qmlscene')
+    if runner is None:
+        raise RuntimeError('Existing Qt6 qml or qmlscene runtime is unavailable; no package installation or graphics change attempted.')
     template = Path(__file__).with_name('omen-gpu-selector.qml').read_text()
     # JSON is data, not QML code; escape line separators for JS parsing.
     inventory = json.dumps(json.dumps(inspect(), ensure_ascii=True), ensure_ascii=True)
