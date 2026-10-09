@@ -3960,6 +3960,61 @@ Deferred items should return here only when an accepted milestone makes them
 current and their repository ownership is unambiguous.
 # Completion controls — current user request
 
+- [ ] Requested OMEN desktop GPU selector: fresh `work/exe-omen-gpu-selector`
+  from fetched main `f01d3bc6`; initial read-only sysfs probe reports actual
+  display/driver/group inventory, distinguishes NVIDIA host display from VM
+  passthrough and refuses Apply until live ownership/admission/rollback checks.
+  Sole-NVIDIA and empty/missing metadata regressions pass through heavy.sh
+  (2 tests, 0.002s); no host hardware/network changes or GUI delivery claimed.
+  Integrated Intel detection is OMEN-specific, not vendor-only inference.
+  Desktop UI and exact Core-owned VFIO admission remain pending. PR175 merge
+  history is retained in authenticated exe-pr175-f01d3bc6-merge-handoff.json.
+  Core operational assessment r1 now explicitly refuses transitions pending
+  reachable idle group/USB-storage/recovery/ownership/restore validation; it is
+  not a new API or trust input. Probe distinguishes an integrated Intel
+  candidate from a validated usable display route: even a candidate cannot
+  enable Apply. Discrete Intel, malformed/missing metadata, empty inventory and
+  sole NVIDIA cases pass 3 focused tests through heavy.sh (0.007s), diffcheck
+  PASS. Inspection failures return an actionable refusal instead of an empty
+  successful inventory. No hardware or remote connection attempted.
+  Existing QtQuick conventions now provide a small local desktop presentation
+  with Internal graphics/GPU/Apply, explicit host-rendering vs VM distinction,
+  disruption warning and refusal reason. Apply is disabled, not a placeholder
+  hardware API. `--desktop` requires existing qmlscene and bounded temporary
+  view cleanup; no install/network endpoint. Local Qt runtime absent, so actual
+  render/interaction remains unverified. Four focused tests PASS including
+  missing-runtime refusal with no process creation; final visual gate pending.
+  Desktop failure/timeout fixtures now verify generated-view cleanup and source
+  template preservation; inspection failure displays unknown GPU state rather
+  than falsely reporting absence. CLI startup errors are actionable with no
+  graphics change claim. Five focused tests PASS heavy0.007s; diffcheck PASS.
+  Bounded existing /usr/lib and /opt Qt-tool inventory found no prepared local
+  qmlscene/qmltestrunner/qmllint. No installation or offline-host retry made;
+  real Qt rendering is still a separate unresolved validation gate.
+  Precommit inspection corrected QML object-binding ambiguity: inventory is
+  now a JSON.parse of an escaped JSON string, never a raw object/code binding.
+  Launch-failure fixture round-trips the generated data and verifies failure
+  presentation plus cleanup. Five focused tests PASS heavy0.009s; diffcheck
+  PASS. This local checkpoint is read-only/refusal presentation, not a working
+  hardware switch or visual acceptance; no runtime dependency installed.
+  PR176 Core finding on head7d67e5cd corrected: vendor presence no longer says
+  host rendering. Shipped GPU label is detection-only with active output
+  explicitly unverified, including vfio-pci and unbound NVIDIA fixtures; both
+  retain refused Apply and no passthrough acceptance. Six focused tests PASS
+  heavy0.009s; diffcheck PASS. New head requires new exact review/CI, preserving
+  original checkpoint and finding history. Actual Qt render still unverified.
+  Resolver's isolated existing-trust Qt6 6.4.2 runtime subsequently validated
+  the actual shipped QML control tree for detected GPU and inspection failure:
+  correct label and disabled Apply, both exit0 through heavy.sh. Receipt
+  selector-qt-presentation-result-r1.json records the bounded generated-view
+  method; this is not physical OMEN display or hardware-switch acceptance.
+  That run exposed launcher discovery limited to qmlscene despite Ubuntu's
+  Qt6 qml executable. Discovery now prefers explicit qml6 or Qt6 package paths,
+  retaining qmlscene fallback without selecting ambiguous unversioned qml.
+  Seven focused regressions PASS through heavy.sh (0.016s), including Qt6-only
+  launch and generated-view cleanup; diffcheck PASS. Changed head needs new
+  exact remote CI/Core review before merge; no system install or GPU transition.
+
 - [ ] Authorized eight-lane migration continuation: fresh
   `work/exe-migrated-windows-ssh` from fetched `0e2d29f7` preserves all lane,
   firmware/security and disk-parent identities recorded in the authenticated
