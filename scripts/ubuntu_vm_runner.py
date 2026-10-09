@@ -70,7 +70,7 @@ def recover_retirement(root, manifest):
                                 {'old', 'identity', 'replacement', 'receipt', 'replacementIdentity'}):
         raise ValueError('unknown retirement transaction')
     for key in ('old', 'replacement', 'receipt'):
-        if Path(transaction[key]).name != transaction[key]:
+        if Path(transaction[key]).name != transaction[key] or transaction[key] in ('.', '..'):
             raise ValueError('unsafe retirement path')
     if manifest['image'] not in (transaction['replacement'], transaction['old']):
         raise ValueError('retirement still referenced; preserve for investigation')
@@ -115,6 +115,8 @@ def recover_retirement(root, manifest):
         old.unlink()
         sync_directory(root)
     else:
+        if transaction['old'] in manifest['retained'] or transaction['old'] in manifest.get('generated', {}):
+            raise ValueError('missing old image still referenced; preserve journal')
         new_info = replacement.lstat()
         expected = transaction.get('replacementIdentity', manifest.get('generated', {}).get(replacement.name))
         if manifest['image'] != replacement.name or not stat.S_ISREG(new_info.st_mode) or new_info.st_uid != os.getuid() or new_info.st_nlink != 1 or [new_info.st_dev, new_info.st_ino] != expected:

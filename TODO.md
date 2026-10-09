@@ -132,6 +132,13 @@ this repository.
   batch and its focused tests/history are included. No private inputs,
   credentials, boundary pins or sibling changes are included. Exact pushed
   commit and PR identity will be retained in the authenticated handoff.
+  PR172 Core review identified missing-old dangling-reference recovery and
+  dotdot retirement-name gaps. Recovery now refuses and preserves the journal
+  when either retained/generated still references the missing old image;
+  dotdot names fail before receipt reads or tools. New valid-replacement and
+  path refusal regressions plus the focused suite pass15/15 viaheavy.sh.
+  Changed-head remote CI/review is necessary; prior native r2 evidence remains
+  tied to the earlier head, not a new Windows acceptance claim.
 
 - [x] Build and run the Tauri application on macOS Apple Silicon.
 - [x] Select, normalize, and inspect supported Valve recovery images without

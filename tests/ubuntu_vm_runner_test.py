@@ -123,6 +123,43 @@ class RunnerTest(unittest.TestCase):
             self.assertTrue((root/'.retirement.json').exists())
             self.assertEqual(replacement.read_bytes(),b'not the verified replacement')
 
+    def test_missing_old_with_valid_replacement_preserves_dangling_references(self):
+        for retained, generated_old in ((True, False), (False, True), (True, True)):
+            with self.subTest(retained=retained, generated=generated_old), tempfile.TemporaryDirectory(prefix='opemos-dangling-') as directory:
+                root=Path(directory)
+                replacement=root/'replacement.qcow2'
+                subprocess.run(['qemu-img','create','-f','qcow2',str(replacement),'16M'],check=True,capture_output=True)
+                identity=[replacement.stat().st_dev,replacement.stat().st_ino]
+                manifest={'image':replacement.name,'retained':['old.qcow2'] if retained else [],
+                          'generated':{replacement.name:identity}}
+                if generated_old:
+                    manifest['generated']['old.qcow2']=[-1,-1]
+                (root/'manifest.json').write_text(json.dumps(manifest))
+                (root/'receipt-test.json').write_text(json.dumps({'retirementCandidate':'old.qcow2'}))
+                journal=root/'.retirement.json'
+                journal.write_text(json.dumps({'old':'old.qcow2','identity':[-1,-1],
+                    'replacement':replacement.name,'replacementIdentity':identity,'receipt':'receipt-test.json'}))
+                before={p.name:p.read_bytes() for p in root.iterdir()}
+                with self.assertRaisesRegex(ValueError,'still referenced'):
+                    runner.recover_retirement(root,manifest)
+                self.assertEqual(before,{p.name:p.read_bytes() for p in root.iterdir()})
+
+    def test_retirement_dotdot_refused_before_receipt_or_tools(self):
+        for key in ('old','replacement','receipt'):
+            with self.subTest(key=key), tempfile.TemporaryDirectory(prefix='opemos-path-') as directory:
+                root=Path(directory)
+                transaction={'old':'old.qcow2','identity':[-1,-1],
+                    'replacement':'replacement.qcow2','receipt':'absent.json'}
+                transaction[key]='..'
+                journal=root/'.retirement.json'
+                journal.write_text(json.dumps(transaction))
+                before=journal.read_bytes()
+                with patch.object(runner.subprocess,'run') as tools:
+                    with self.assertRaisesRegex(ValueError,'unsafe retirement path'):
+                        runner.recover_retirement(root,{'image':'replacement.qcow2','retained':[]})
+                    tools.assert_not_called()
+                self.assertEqual(journal.read_bytes(),before)
+
     def test_export_limit_failure_preserves_source(self):
         with tempfile.TemporaryDirectory(prefix='opemos-export-limit-') as directory:
             root = Path(directory)
