@@ -10,7 +10,69 @@ import shutil
 import subprocess
 import tempfile
 import sys
+import os
+import stat
+import time
 from pathlib import Path
+
+
+def gpu_users(nodes, processes=Path('/proc'), timeout=3):
+    """Snapshot device holders, never treat incomplete visibility as idle.
+
+    The caller supplies exact device nodes from its live PCI/group inventory.
+    This is a refusal guard, not hardware admission or permission to stop users.
+    No command lines, environment, or credential contents are inspected.
+    """
+    if type(timeout) not in (int, float) or not 0 < timeout <= 3:
+        raise ValueError('GPU inspection deadline must be bounded to three seconds')
+    deadline = time.monotonic() + timeout
+    targets = {}
+    for node in nodes:
+        metadata = Path(node).stat()
+        if not stat.S_ISCHR(metadata.st_mode):
+            raise ValueError('GPU holder inspection requires character devices')
+        targets[metadata.st_rdev] = Path(node).name
+    if not targets:
+        raise ValueError('Exact GPU device nodes required; empty is not idle')
+    if os.geteuid() != 0:
+        raise PermissionError('Complete GPU holder inspection requires root visibility')
+    users = []
+    count = 0
+    entries = list(processes.iterdir())
+    if len(entries) > 8192:
+        raise ValueError('Process inventory exceeds bounded inspection')
+    for process in entries:
+        if time.monotonic() >= deadline:
+            raise TimeoutError('GPU holder inspection exceeded bound')
+        if not process.name.isdecimal():
+            continue
+        try:
+            # comm may contain spaces or parentheses; fields after its final
+            # closing parenthesis begin at stat field 3 (starttime is 22).
+            before = (process / 'stat').read_text().rsplit(')', 1)[1].split()[19]
+            handles = set()
+            for fd in (process / 'fd').iterdir():
+                count += 1
+                if count > 65536 or time.monotonic() >= deadline:
+                    raise TimeoutError('GPU holder inspection exceeded bound')
+                try:
+                    metadata = fd.stat()
+                except FileNotFoundError:
+                    continue  # descriptor closed before observation
+                if stat.S_ISCHR(metadata.st_mode) and metadata.st_rdev in targets:
+                    handles.add(targets[metadata.st_rdev])
+            after = (process / 'stat').read_text().rsplit(')', 1)[1].split()[19]
+            if before != after:
+                raise RuntimeError('Process identity changed during GPU inspection')
+            if handles:
+                users.append({'pid': int(process.name), 'startTimeTicks': int(before),
+                              'devices': sorted(handles)})
+        except FileNotFoundError:
+            if process.exists():
+                raise RuntimeError('Incomplete live process GPU inspection')
+            # Fully exited processes no longer own device descriptors.
+    return {'users': sorted(users, key=lambda item: item['pid']),
+            'idleObserved': not users, 'transitionAdmitted': False}
 
 
 def probe(devices=Path('/sys/bus/pci/devices')):
@@ -74,7 +136,18 @@ def desktop():
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--desktop', action='store_true')
-    if parser.parse_args().desktop:
+    parser.add_argument('--gpu-node', action='append', help='Inspect holders of an exact character device; does not admit a transition')
+    args = parser.parse_args()
+    if args.desktop and args.gpu_node:
+        parser.error('Choose desktop presentation or exact device-holder inspection')
+    if args.gpu_node:
+        try:
+            print(json.dumps(gpu_users(args.gpu_node), sort_keys=True))
+        except (OSError, ValueError, RuntimeError, IndexError) as error:
+            print(json.dumps({'inspectionFailed': True, 'transitionAdmitted': False,
+                              'reason': str(error)}, sort_keys=True))
+            sys.exit(1)
+    elif args.desktop:
         try:
             desktop()
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:

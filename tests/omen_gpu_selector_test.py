@@ -10,6 +10,44 @@ spec.loader.exec_module(selector)
 
 
 class SelectorTest(unittest.TestCase):
+    def test_live_holder_blocks_even_without_boot_display_metadata(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(selector.os, 'geteuid', return_value=0):
+            root = Path(directory)
+            process = root / '2568'
+            (process / 'fd').mkdir(parents=True)
+            # The holder's name includes parentheses, as Linux comm permits.
+            (process / 'stat').write_text('2568 (Xorg (worker)) ' + ' '.join(['S'] + ['0'] * 18 + ['2098']))
+            (process / 'fd' / '4').symlink_to('/dev/null')
+            result = selector.gpu_users(['/dev/null'], root)
+            self.assertEqual(result['users'], [{'pid': 2568, 'startTimeTicks': 2098, 'devices': ['null']}])
+            self.assertFalse(result['idleObserved'])
+            self.assertFalse(result['transitionAdmitted'])
+            (process / 'fd' / '4').unlink()
+            result = selector.gpu_users(['/dev/null'], root)
+            self.assertTrue(result['idleObserved'])
+            self.assertFalse(result['transitionAdmitted'])
+
+    def test_incomplete_visibility_or_nondevice_never_means_idle(self):
+        with patch.object(selector.os, 'geteuid', return_value=1000):
+            with self.assertRaises(PermissionError):
+                selector.gpu_users(['/dev/null'])
+        with self.assertRaises(ValueError):
+            selector.gpu_users([])
+        with self.assertRaises(ValueError):
+            selector.gpu_users([Path(__file__)])
+        with tempfile.TemporaryDirectory() as directory, patch.object(selector.os, 'geteuid', return_value=0):
+            process = Path(directory) / '2568'
+            process.mkdir()
+            with self.assertRaisesRegex(RuntimeError, 'Incomplete live process'):
+                selector.gpu_users(['/dev/null'], Path(directory))
+
+    def test_busy_inspection_deadline_refuses_without_transition(self):
+        with patch.object(selector.os, 'geteuid', return_value=0), patch.object(selector.time, 'monotonic', side_effect=[0, 4]):
+            with tempfile.TemporaryDirectory() as directory:
+                (Path(directory) / '2568').mkdir()
+                with self.assertRaises(TimeoutError):
+                    selector.gpu_users(['/dev/null'], Path(directory))
+
     def test_qt6_qml_package_launches_without_qmlscene(self):
         for executable in ('/existing/qml6', '/usr/lib/qt6/bin/qml'):
             with self.subTest(executable=executable), patch.object(selector.shutil, 'which', side_effect=lambda name: executable if name == 'qml6' and executable.startswith('/existing/') else None), patch.object(Path, 'is_file', autospec=True, side_effect=lambda path: str(path) == executable), patch.object(selector.subprocess, 'run') as run:

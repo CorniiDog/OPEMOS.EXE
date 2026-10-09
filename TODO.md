@@ -4120,3 +4120,26 @@ current and their repository ownership is unambiguous.
   checks including Windows and squash-merged as
   `efddff6ce8bc258e95026ae01f96a1f83bc89296`. This isolated
   CSS change cannot reach disks, images, lifecycle, trust, or Core contracts.
+- [ ] Functional OMEN graphics-switch backend continuation from PR176 squash
+  `8301bdf95c3ec84e589d16102e49db26244b146b`, fresh branch
+  `work/exe-gpu-busy-guard`: Core live checkpoint r2 proves NVIDIA Xorg handles
+  despite disconnected connectors; boot-display metadata is not an idle guard.
+  Existing selector now has bounded exact-character-device holder inspection,
+  PID/start-time identity checks, no command-line/credential inspection, root
+  visibility requirement, and fail-closed incomplete/racing inventory. Empty or
+  non-device targets refuse. An idle observation never admits a transition.
+  Regression fixtures prove active holder, holder closure, insufficient visibility,
+  missing live metadata and deadline refusal; exact remote source CI is wired.
+  Diff-check PASS. No local project tests under the new VM-only testing rule;
+  remote checks and assigned OMEN guest validation remain pending. All three
+  test-team agents are onboarding/unassigned; no busy-owner contact or shared
+  guest launch. Still required: exact Core live scanout/viability/recovery/restore
+  admission, exclusive transition/rollback backend and functional desktop Apply,
+  exact counterpart review and actual same-SteamOS-guest NVIDIA proof. This is a
+  necessary refusal-guard checkpoint, not feature completion or hardware approval.
+  Necessary source push targets only canonical
+  `https://github.com/CorniiDog/OPEMOS.EXE.git` role branch for remote regression
+  CI and exact review; four owned source/test/workflow/TODO files only, no private
+  inputs, credentials, unrelated commits or governance changes. PR176 final
+  squash `8301bdf9` and all ten checks/unchanged-head Core approval remain in
+  authenticated `exe-pr176-8301bdf9-merge-handoff.json`; no evidence-only PR.
