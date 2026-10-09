@@ -3960,6 +3960,24 @@ Deferred items should return here only when an accepted milestone makes them
 current and their repository ownership is unambiguous.
 # Completion controls — current user request
 
+- [ ] Migrated Agent-Boot control batch on `work/exe-migrated-windows-control`
+  from fetched main `408b0330dc66b4f0d1814d13fec4cc25d7bd713a`: existing
+  firmware-enabled launcher now uses bounded stdio QMP rather than a network
+  endpoint. Greeting/capabilities/status identity, absolute deadline, EOF/error
+  and output bounds fail closed. Monitor status is create-only recorded with
+  `workflowAccepted: false`; asynchronous output is drained within the runtime
+  bound, and refusal attempts quit before kill/reap. Real pipe/subprocess
+  fixtures prove status recording and protocol-refusal quit/reap without a VM.
+  Focused 25/25 tests PASS through shared heavy.sh (2.491s), diff-check PASS.
+  Remaining: forced-kill/runtime-flood regression coverage, exact PR/CI/Core
+  review, and actual migrated Windows workflow acceptance. No guest launch,
+  new endpoint/trust, publication, or source retirement is established here.
+  Subsequent checkpoint adds real subprocess runtime-output-flood and ignored-
+  quit timeout regressions: both children are SIGKILLed and reaped, while the
+  retained status receipts remain explicitly non-acceptance. Focused 26/26
+  PASS through heavy.sh (9.563s); diff-check PASS. Forced-kill/flood coverage
+  is now complete; exact remote PR/CI/Core review and real workflow gates remain.
+
 - [x] Scope the installation-media completion row to left-group Stay Here,
   Restart, and Shut Down with 5px gaps, removing the primary-button auto push
   only on this row. Actual Chrome rendering of the shipped completion function
