@@ -3960,6 +3960,24 @@ Deferred items should return here only when an accepted milestone makes them
 current and their repository ownership is unambiguous.
 # Completion controls — current user request
 
+- [ ] User-requested reversal of misplaced graphics-selector integration (2026-10-10):
+  the small application is NOT part of OPEMOS.EXE. Remove the three selector
+  source/test files and their dedicated CI invocation through a corrective PR;
+  preserve PR176 `8301bdf95c3ec84e589d16102e49db26244b146b`, PR177
+  `f366ba35c959eefcee88381e194ffe3185738fa4`, and all historical entries below.
+  The two selector continuation entries below are superseded for this repository,
+  not unfinished EXE deliverables. Exact source bytes from canonical main
+  `71c7073aa2e3ae7e2af297297d61890842bceb8e` are preserved outside this repository
+  at `/home/connor/Documents/ChatGPT/Handoff troubleshooting/ubuntu-graphics-switcher`
+  with provenance. Apply remains disabled; this is incomplete standalone
+  preparation, not hardware-switch acceptance. Static removal/diff checks PASS;
+  required remote CI and exact Core review remain merge gates. No local project
+  tests, guest launches, GPU operations, publication or boundary changes.
+  Necessary push is only `work/exe-undo-graphics-selector` to canonical
+  `https://github.com/CorniiDog/OPEMOS.EXE.git` for required remote CI/review and
+  the user's requested GitHub correction; exact commit/merge evidence goes in
+  the implementation PR and authenticated handoff, never an evidence-only PR.
+
 - [ ] Requested OMEN desktop GPU selector: fresh `work/exe-omen-gpu-selector`
   from fetched main `f01d3bc6`; initial read-only sysfs probe reports actual
   display/driver/group inventory, distinguishes NVIDIA host display from VM

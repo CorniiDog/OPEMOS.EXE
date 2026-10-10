@@ -35,9 +35,6 @@ jobs:
       - name: Check committed patch whitespace
         run: git diff --check
 
-      - name: Validate graphics selector busy-user refusal
-        run: python3 -m unittest discover -s tests -p omen_gpu_selector_test.py
-
   rust:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
