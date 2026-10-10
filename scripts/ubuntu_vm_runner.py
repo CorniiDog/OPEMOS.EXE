@@ -14,7 +14,177 @@ import uuid
 import hashlib
 import selectors
 import time
+import signal
+import threading
 from vm_write_ceiling import compact_owned_image, bounded_file_ceiling, VM_BUDGET_BYTES, validate_chain
+
+
+def pin_owned_qemu_network(launcher_pid, required_files, deadline):
+    """Pin an owned descendant's private netns; never search global QEMU names.
+
+    Caller keeps its launcher alive and lifecycle lock held. This gate opens no
+    connection and grants no guest authentication or transition authority.
+    """
+    if type(launcher_pid) is not int or launcher_pid <= 0:
+        raise ValueError('exact launcher PID required')
+    if type(deadline) not in (int, float) or not time.monotonic() < deadline <= time.monotonic() + 900:
+        raise ValueError('finite bounded admission deadline required')
+    if not required_files or time.monotonic() >= deadline:
+        raise ValueError('live files and deadline required')
+    def identity(pid):
+        if time.monotonic() >= deadline:
+            raise TimeoutError('namespace admission deadline')
+        root = Path('/proc') / str(pid)
+        fields = (root / 'stat').read_text().rsplit(')', 1)[1].split()
+        return (pid, int(fields[19]), root.stat().st_uid, int(fields[1]))
+    launcher = identity(launcher_pid)
+    if launcher[2] != os.getuid():
+        raise ValueError('launcher owner mismatch')
+    expected = set()
+    for path in required_files:
+        info = Path(path).lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ValueError('unsafe required runtime file')
+        expected.add((info.st_dev, info.st_ino))
+    qemu = shutil.which('qemu-system-x86_64')
+    if not qemu:
+        raise ValueError('existing QEMU executable required')
+    executable = os.stat(qemu)
+    pending = [(launcher_pid, None)]; seen = set(); matches = []; observed = {}
+    while pending:
+        pid, parent = pending.pop()
+        if pid in seen or len(seen) >= 64:
+            raise ValueError('ambiguous or excessive owned process tree')
+        seen.add(pid)
+        before = identity(pid)
+        observed[pid] = before
+        if parent is not None and before[3] != parent:
+            raise ValueError('descendant no longer owned by launcher tree')
+        root = Path('/proc') / str(pid)
+        if before[2] != launcher[2]:
+            raise ValueError('descendant owner mismatch')
+        pending.extend((int(child), pid) for child in
+                       (root / 'task' / str(pid) / 'children').read_text().split())
+        actual = (root / 'exe').stat()
+        if (actual.st_dev, actual.st_ino) == (executable.st_dev, executable.st_ino):
+            handles = set()
+            for entry in (root / 'fd').iterdir():
+                info = entry.stat()
+                handles.add((info.st_dev, info.st_ino))
+            pool = '/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice'
+            if not any(line.split(':', 2)[-1] == pool or
+                       line.split(':', 2)[-1].startswith(pool + '/')
+                       for line in (root / 'cgroup').read_text().splitlines()):
+                raise ValueError('QEMU outside admitted pool')
+            if not expected.issubset(handles):
+                raise ValueError('QEMU runtime file ownership mismatch')
+            matches.append(before)
+        if identity(pid) != before:
+            raise ValueError('owned process changed during inspection')
+    if any(identity(pid) != before for pid, before in observed.items()) or len(matches) != 1:
+        raise ValueError('exactly one live owned QEMU required')
+    selected = matches[0]
+    fd = os.open(f'/proc/{selected[0]}/ns/net', os.O_RDONLY | os.O_CLOEXEC)
+    try:
+        pinned = os.fstat(fd)
+        host = os.stat('/proc/self/ns/net')
+        current = os.stat(f'/proc/{selected[0]}/ns/net')
+        if ((pinned.st_dev, pinned.st_ino) == (host.st_dev, host.st_ino) or
+                (pinned.st_dev, pinned.st_ino) != (current.st_dev, current.st_ino) or
+                any(identity(pid) != before for pid, before in observed.items())):
+            raise ValueError('private owned network namespace required')
+        chain = [selected]
+        while chain[-1][0] != launcher_pid:
+            ancestor = observed.get(chain[-1][3])
+            if ancestor is None or ancestor in chain:
+                raise ValueError('complete launcher ancestry required')
+            chain.append(ancestor)
+        return fd, selected, tuple(chain)
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def relay_owned_guest_stdio(namespace_fd, qemu_identity, deadline, ancestry, cancel=None):
+    """Fixed AgentBoot ProxyCommand bytes, never a listening/host relay.
+
+    Caller retains the lifecycle lock and the admitted namespace descriptor.
+    This uses only the pre-existing private loopback endpoint; SSH authentication
+    stays on the controller. No private key or credential enters this process.
+    """
+    if type(deadline) not in (int, float) or not time.monotonic() < deadline <= time.monotonic() + 900:
+        raise ValueError('finite bounded relay deadline required')
+    if cancel is not None and not isinstance(cancel, threading.Event):
+        raise ValueError('owned relay cancellation event required')
+    def check_cancelled():
+        if cancel is not None and cancel.is_set():
+            raise InterruptedError('owned relay cancelled')
+    check_cancelled()
+    if not isinstance(qemu_identity, tuple) or len(qemu_identity) != 4:
+        raise ValueError('exact admitted QEMU identity required')
+    pid, start, uid, parent = qemu_identity
+    if type(pid) is not int or pid <= 0 or uid != os.getuid():
+        raise ValueError('exact admitted QEMU owner required')
+    if (not isinstance(ancestry, tuple) or not 1 <= len(ancestry) <= 64 or
+            ancestry[0] != qemu_identity or
+            any(not isinstance(item, tuple) or len(item) != 4 for item in ancestry) or
+            len({item[0] for item in ancestry}) != len(ancestry) or
+            any(child[3] != ancestor[0] for child, ancestor in zip(ancestry, ancestry[1:]))):
+        raise ValueError('complete admitted launcher ancestry required')
+    pinned = os.fstat(namespace_fd)
+    def verify():
+        root = Path('/proc') / str(pid)
+        fields = (root / 'stat').read_text().rsplit(')', 1)[1].split()
+        current = (pid, int(fields[19]), root.stat().st_uid, int(fields[1]))
+        for expected in ancestry:
+            ancestor = Path('/proc') / str(expected[0])
+            values = (ancestor / 'stat').read_text().rsplit(')', 1)[1].split()
+            actual = (expected[0], int(values[19]), ancestor.stat().st_uid, int(values[1]))
+            if actual != expected:
+                raise ValueError('admitted launcher ancestry changed')
+        ns = (root / 'ns/net').stat()
+        host = os.stat('/proc/self/ns/net')
+        if (current != qemu_identity or
+                (ns.st_dev, ns.st_ino) != (pinned.st_dev, pinned.st_ino) or
+                (ns.st_dev, ns.st_ino) == (host.st_dev, host.st_ino)):
+            raise ValueError('owned private QEMU namespace changed')
+    nsenter, nc = shutil.which('nsenter'), shutil.which('nc')
+    if not nsenter or not nc or not hasattr(os, 'pidfd_open'):
+        raise ValueError('existing relay tools and kernel PID lifetime support required')
+    verify()
+    lifetime = os.pidfd_open(pid, 0)
+    child = None
+    try:
+        verify()
+        with selectors.DefaultSelector() as selector:
+            selector.register(lifetime, selectors.EVENT_READ)
+            if selector.select(0):
+                raise ValueError('QEMU exited before relay')
+            check_cancelled()
+            child = subprocess.Popen([nsenter, f'--net=/proc/self/fd/{namespace_fd}',
+                                      '--', nc, '-N', '-n', '-w', '3', '127.0.0.1', '2222'],
+                                     pass_fds=(namespace_fd,), start_new_session=True,
+                                     stderr=subprocess.DEVNULL)
+            while child.poll() is None:
+                check_cancelled()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError('owned relay absolute deadline')
+                if selector.select(min(remaining, 0.05)):
+                    raise ValueError('QEMU exited during relay')
+                verify()
+            return child.returncode
+    finally:
+        if child is not None:
+            # This process group was created here and its leader remains an
+            # unreaped Popen child. Never kill a discovered/global process.
+            if child.returncode is None:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            child.wait()
+        os.close(lifetime)
 
 
 def base_digest(path):
@@ -221,12 +391,19 @@ def launch_command(image, memory_mib=2048, cpus=1, privileged_namespace=False):
             '-no-reboot', '-drive', 'if=ide,format=qcow2,file=' + str(image)]
 
 
-def launch_bounded(image, ceiling, timeout_seconds=300, firmware=None, isolated_ssh=False):
+def launch_bounded(image, ceiling, timeout_seconds=300, firmware=None, isolated_ssh=False,
+                   relay_stdio=False, relay_base=None):
     """Reap on every exit; caller must hold lifecycle lock and verify accounting."""
     if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 900:
         raise ValueError('bounded runtime required')
     if type(isolated_ssh) is not bool or (isolated_ssh and firmware is None):
         raise ValueError('isolated SSH requires explicit selection and Windows firmware')
+    if type(relay_stdio) is not bool or (relay_stdio and not isolated_ssh):
+        raise ValueError('stdio relay requires explicit isolated SSH selection')
+    if relay_stdio and (relay_base is None or Path(relay_base).parent != image.parent or
+                        Path(relay_base).resolve() != Path(relay_base) or
+                        Path(relay_base) == image):
+        raise ValueError('stdio relay requires admitted local immutable base')
     command = (windows_launch_command(image, image.parent / firmware['code'],
                                       image.parent / firmware['vars'], isolated_ssh=isolated_ssh) if firmware is not None
                else launch_command(image, privileged_namespace=True))
@@ -245,6 +422,10 @@ def launch_bounded(image, ceiling, timeout_seconds=300, firmware=None, isolated_
     with subprocess.Popen(command, stdin=subprocess.PIPE if firmware is not None else subprocess.DEVNULL,
                           stdout=subprocess.PIPE if firmware is not None else subprocess.DEVNULL,
                           stderr=subprocess.DEVNULL, bufsize=0) as process:
+        cancel = threading.Event()
+        worker = None
+        namespace_fd = None
+        outcome = []
         try:
             if firmware is not None:
                 status = qmp_stdio_status(process.stdout, process.stdin,
@@ -254,12 +435,36 @@ def launch_bounded(image, ceiling, timeout_seconds=300, firmware=None, isolated_
                     json.dump({'monitorStatus': status, 'workflowAccepted': False}, output)
                     output.flush(); os.fsync(output.fileno())
                 sync_directory(receipt.parent)
+                if relay_stdio:
+                    if not status['running']:
+                        raise ValueError('stdio relay requires running QEMU')
+                    namespace_fd, identity, ancestry = pin_owned_qemu_network(
+                        process.pid, (image, relay_base, image.parent / firmware['code'],
+                                      image.parent / firmware['vars']), deadline)
+                    def transport():
+                        try:
+                            outcome.append(relay_owned_guest_stdio(
+                                namespace_fd, identity, deadline, ancestry, cancel))
+                        except BaseException as error:
+                            outcome.append(error)
+                    worker = threading.Thread(target=transport, name='opemos-owned-relay')
+                    worker.start()
                 # Drain asynchronous monitor output so a full pipe cannot
                 # stall the guest. Cap it; output flooding is a refusal.
                 total = 0
                 with selectors.DefaultSelector() as selector:
                     selector.register(process.stdout, selectors.EVENT_READ)
                     while process.poll() is None:
+                        if worker is not None and not worker.is_alive():
+                            worker.join()
+                            if len(outcome) != 1:
+                                raise ValueError('missing owned relay result')
+                            if isinstance(outcome[0], BaseException):
+                                raise outcome[0]
+                            process.stdin.write(b'{"execute":"quit","id":3}\n')
+                            process.stdin.flush()
+                            process.wait(timeout=min(3, max(0.001, deadline - time.monotonic())))
+                            return outcome[0]
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
                             raise subprocess.TimeoutExpired(command, timeout_seconds)
@@ -270,7 +475,11 @@ def launch_bounded(image, ceiling, timeout_seconds=300, firmware=None, isolated_
                                 raise ValueError('QMP runtime output exceeds bound')
                             if not data:
                                 selector.unregister(process.stdout)
+                                if worker is not None:
+                                    raise ValueError('QMP closed during owned relay')
                                 return process.wait(timeout=max(0.001, deadline - time.monotonic()))
+            if worker is not None:
+                raise ValueError('QEMU exited during owned relay')
             return process.wait(timeout=max(0.001, deadline - time.monotonic()))
         except BaseException:
             if firmware is not None and process.poll() is None:
@@ -283,6 +492,14 @@ def launch_bounded(image, ceiling, timeout_seconds=300, firmware=None, isolated_
             process.kill()
             process.wait()
             raise
+        finally:
+            # Never release the caller's image lock or reconcile disk state
+            # while an owned transport still holds the namespace/guest alive.
+            cancel.set()
+            if worker is not None and worker.ident is not None:
+                worker.join()
+            if namespace_fd is not None:
+                os.close(namespace_fd)
 
 
 def require_windows_pool():
@@ -371,7 +588,7 @@ def windows_launch_command(image, firmware_code, firmware_vars, isolated_ssh=Fal
     return command
 
 
-def run_owned_vm(directory, timeout_seconds=300, isolated_ssh=False):
+def run_owned_vm(directory, timeout_seconds=300, isolated_ssh=False, relay_stdio=False):
     """Locked standalone lifecycle; retains every prior image and output.
 
     This is not Windows migration acceptance or an NTFS aggregate quota.
@@ -379,6 +596,8 @@ def run_owned_vm(directory, timeout_seconds=300, isolated_ssh=False):
     """
     if type(isolated_ssh) is not bool:
         raise ValueError('explicit isolated SSH selection required')
+    if type(relay_stdio) is not bool or (relay_stdio and not isolated_ssh):
+        raise ValueError('stdio relay requires explicit isolated SSH selection')
     root = Path(directory)
     if not root.is_absolute() or root.resolve() != root or root.is_symlink():
         raise ValueError('unsafe lifecycle root')
@@ -459,7 +678,12 @@ def run_owned_vm(directory, timeout_seconds=300, isolated_ssh=False):
         try:
             try:
                 if isolated_ssh:
-                    exit_code = launch_bounded(image, ceiling, timeout_seconds, firmware=firmware, isolated_ssh=True)
+                    if relay_stdio:
+                        exit_code = launch_bounded(image, ceiling, timeout_seconds, firmware=firmware,
+                                                   isolated_ssh=True, relay_stdio=True,
+                                                   relay_base=root / base)
+                    else:
+                        exit_code = launch_bounded(image, ceiling, timeout_seconds, firmware=firmware, isolated_ssh=True)
                 elif firmware is not None:
                     exit_code = launch_bounded(image, ceiling, timeout_seconds, firmware=firmware)
                 else:
