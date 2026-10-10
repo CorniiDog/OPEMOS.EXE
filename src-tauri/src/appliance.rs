@@ -207,13 +207,41 @@ pub(crate) fn windows_physical_memory_bytes() -> Result<u64, String> {
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn GlobalMemoryStatusEx(status: *mut MemoryStatusEx) -> i32;
+        fn GetPhysicallyInstalledSystemMemory(total_kib: *mut u64) -> i32;
     }
     let mut status: MemoryStatusEx = unsafe { std::mem::zeroed() };
     status.length = std::mem::size_of::<MemoryStatusEx>() as u32;
     if unsafe { GlobalMemoryStatusEx(&mut status) } == 0 || status.total_phys == 0 {
         return Err("Windows host RAM could not be determined.".into());
     }
-    Ok(status.total_phys)
+    let mut installed_kib = 0;
+    if unsafe { GetPhysicallyInstalledSystemMemory(&mut installed_kib) } == 0 {
+        // Missing firmware information must never increase the usable budget.
+        return Ok(status.total_phys);
+    }
+    windows_memory_admission_bytes(installed_kib, status.total_phys)
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn windows_memory_admission_bytes(
+    installed_kib: u64,
+    usable_bytes: u64,
+) -> Result<u64, String> {
+    let installed = installed_kib
+        .checked_mul(1024)
+        .filter(|bytes| *bytes >= usable_bytes && usable_bytes != 0)
+        .ok_or_else(|| "Windows installed/usable RAM reports are invalid.".to_string())?;
+    const MINIMUM: u64 = 6 * 1024 * 1024 * 1024;
+    // A configured 6-GiB Windows guest reports 1,114,112 bytes less usable RAM
+    // because of firmware reservation. Correct only this minimum-boundary case,
+    // with independently confirmed installed RAM and at most 2 MiB reserved.
+    // Larger reservations and all guest sizing retain the usable-memory budget.
+    if installed >= MINIMUM && usable_bytes < MINIMUM && installed - usable_bytes <= 2 * 1024 * 1024
+    {
+        Ok(MINIMUM)
+    } else {
+        Ok(usable_bytes)
+    }
 }
 
 pub(crate) type ProgressCallback<'a> = dyn Fn(&str, u64, u64) + 'a;
