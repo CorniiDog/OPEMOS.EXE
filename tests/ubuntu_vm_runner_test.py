@@ -5,13 +5,245 @@ import tempfile
 import unittest
 import json
 import subprocess
+import os
+import time
+import threading
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import ubuntu_vm_runner as runner
 
 
+def fixture_spawn_receipt(child, kind):
+    # Read before any wait/poll/cancel: an unreaped child cannot be PID-reused.
+    root = Path('/proc') / str(child.pid)
+    fields = (root / 'stat').read_text().rsplit(')', 1)[1].split()
+    row = {'pid': child.pid, 'startTicks': int(fields[19]), 'ppid': int(fields[1]),
+           'uid': root.stat().st_uid, 'kind': kind}
+    if row['ppid'] != os.getpid() or row['uid'] != os.getuid():
+        raise AssertionError('fixture child ownership changed')
+    line = 'OPEMOS_FIXTURE_SPAWN ' + json.dumps(row, separators=(',', ':'))
+    if len(line.encode()) > 4096:
+        raise AssertionError('fixture receipt exceeds bound')
+    print(line, flush=True)
+    return row
+
+
+def fixture_reap_receipt(child, row):
+    if child.returncode is None:
+        raise AssertionError('fixture child not reaped')
+    try:
+        fields = (Path('/proc') / str(child.pid) / 'stat').read_text().rsplit(')', 1)[1].split()
+    except FileNotFoundError:
+        pass
+    else:
+        if int(fields[19]) == row['startTicks']:
+            raise AssertionError('original fixture identity survives reap')
+    print('OPEMOS_FIXTURE_REAP ' + json.dumps(
+        {**row, 'exit': child.returncode, 'originalIdentityAbsent': True},
+        separators=(',', ':')), flush=True)
+
+
 class RunnerTest(unittest.TestCase):
+    def test_launcher_relay_refuses_unisolated_or_missing_base_before_spawn(self):
+        with patch.object(runner.subprocess, 'Popen') as spawn:
+            for selected in (True, 1, 'true'):
+                with self.subTest(selected=selected), self.assertRaisesRegex(ValueError, 'stdio relay'):
+                    runner.launch_bounded(Path('/unused.qcow2'), 1000000, relay_stdio=selected)
+            with self.assertRaisesRegex(ValueError, 'immutable base'):
+                runner.launch_bounded(Path('/unused.qcow2'), 1000000,
+                                      firmware={'code':'code','vars':'vars'},
+                                      isolated_ssh=True, relay_stdio=True)
+            spawn.assert_not_called()
+        with self.assertRaisesRegex(ValueError, 'stdio relay'):
+            runner.run_owned_vm('/unused', relay_stdio=True)
+
+    def test_launcher_relay_completion_quits_guest_and_closes_namespace(self):
+        self.assert_launcher_relay_cleanup(cancelled=False)
+
+    def test_launcher_timeout_joins_cancelled_transport_before_return(self):
+        self.assert_launcher_relay_cleanup(cancelled=True)
+
+    def assert_launcher_relay_cleanup(self, cancelled):
+        with tempfile.TemporaryDirectory(prefix='opemos-relay-launch-') as directory:
+            image = Path(directory) / 'active.qcow2'
+            base = Path(directory) / 'base.qcow2'
+            image.write_bytes(b'fixture'); base.write_bytes(b'fixture base')
+            program = ('import json,sys; print(json.dumps({"QMP":{}}),flush=True); '
+                       'a=json.loads(input()); print(json.dumps({"return":{},"id":a["id"]}),flush=True); '
+                       'b=json.loads(input()); print(json.dumps({"return":{"running":True,"status":"running"},"id":b["id"]}),flush=True); '
+                       'c=json.loads(input()); sys.exit(0 if c.get("execute")=="quit" else 9)')
+            fd = os.open('/proc/self/ns/net', os.O_RDONLY)
+            finished = threading.Event()
+            children = []
+            identities = []
+            real_spawn, real_which = subprocess.Popen, runner.shutil.which
+            def spawn(*args, **kwargs):
+                child = real_spawn(*args, **kwargs)
+                children.append(child)
+                identities.append(fixture_spawn_receipt(child, 'qmp-launcher'))
+                return child
+            def transport(namespace, identity, deadline, ancestry, cancel):
+                self.assertEqual(namespace, fd)
+                if cancelled:
+                    if not cancel.wait(5):
+                        raise AssertionError('launcher did not cancel transport')
+                finished.set()
+                return 7
+            with patch.object(runner, 'windows_launch_command', return_value=[sys.executable, '-c', program]), \
+                    patch.object(runner.shutil, 'which', side_effect=lambda name: sys.executable if name == 'qemu-system-x86_64' else real_which(name)), \
+                    patch.object(runner.subprocess, 'Popen', side_effect=spawn), \
+                    patch.object(runner, 'pin_owned_qemu_network', return_value=(fd, (), ())), \
+                    patch.object(runner, 'relay_owned_guest_stdio', side_effect=transport):
+                if cancelled:
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        runner.launch_bounded(image, 1000000, 1, firmware={'code':'code','vars':'vars'},
+                                              isolated_ssh=True, relay_stdio=True, relay_base=base)
+                else:
+                    self.assertEqual(runner.launch_bounded(image, 1000000, 3,
+                                     firmware={'code':'code','vars':'vars'}, isolated_ssh=True,
+                                     relay_stdio=True, relay_base=base), 7)
+            self.assertTrue(finished.is_set())
+            self.assertEqual(len(children), 1)
+            self.assertEqual(children[0].returncode, 0)
+            fixture_reap_receipt(children[0], identities[0])
+            with self.assertRaises(OSError):
+                os.fstat(fd)
+            with self.assertRaises(ChildProcessError):
+                os.waitpid(children[0].pid, os.WNOHANG)
+
+    def test_stdio_relay_cancelled_before_connection_never_spawns(self):
+        cancel = threading.Event()
+        cancel.set()
+        with patch.object(runner.subprocess, 'Popen') as spawn, \
+                patch.object(runner.os, 'fstat') as inspected:
+            with self.assertRaisesRegex(InterruptedError, 'cancelled'):
+                runner.relay_owned_guest_stdio(-1, (), time.monotonic() + 2, (), cancel)
+            spawn.assert_not_called()
+            inspected.assert_not_called()
+
+    def test_stdio_relay_refuses_changed_launcher_ancestor_before_connection(self):
+        fields = Path('/proc/self/stat').read_text().rsplit(')', 1)[1].split()
+        parent = int(fields[1])
+        parent_root = Path('/proc') / str(parent)
+        parent_fields = (parent_root / 'stat').read_text().rsplit(')', 1)[1].split()
+        identity = (os.getpid(), int(fields[19]), os.getuid(), parent)
+        stale_parent = (parent, int(parent_fields[19]) + 1,
+                        parent_root.stat().st_uid, int(parent_fields[1]))
+        fd = os.open('/proc/self/ns/net', os.O_RDONLY)
+        try:
+            with patch.object(runner.subprocess, 'Popen') as spawn:
+                with self.assertRaisesRegex(ValueError, 'ancestry changed'):
+                    runner.relay_owned_guest_stdio(fd, identity, time.monotonic() + 2,
+                                                  (identity, stale_parent))
+                spawn.assert_not_called()
+        finally:
+            os.close(fd)
+
+    def test_stdio_relay_silent_child_deadline_kills_and_reaps(self):
+        self.assert_silent_relay_reaped(cancelled=False)
+
+    def test_stdio_relay_cancelled_child_kills_and_reaps(self):
+        self.assert_silent_relay_reaped(cancelled=True)
+
+    def assert_silent_relay_reaped(self, cancelled):
+        fields = Path('/proc/self/stat').read_text().rsplit(')', 1)[1].split()
+        identity = (os.getpid(), int(fields[19]), os.getuid(), int(fields[1]))
+        fd = os.open('/proc/self/ns/net', os.O_RDONLY)
+        real_stat, real_spawn = os.stat, subprocess.Popen
+        children = []
+        identities = []
+        cancel = threading.Event()
+        def simulated_host_stat(path, *args, **kwargs):
+            result = real_stat(path, *args, **kwargs)
+            if str(path) == '/proc/self/ns/net':
+                return SimpleNamespace(st_dev=result.st_dev, st_ino=result.st_ino + 1)
+            return result
+        def silent_owned_child(*args, **kwargs):
+            child = real_spawn([sys.executable, '-c', 'import time; time.sleep(30)'],
+                               start_new_session=True, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            children.append(child)
+            identities.append(fixture_spawn_receipt(child, 'silent-relay'))
+            if cancelled:
+                cancel.set()
+            return child
+        try:
+            with patch.object(runner.os, 'stat', side_effect=simulated_host_stat), \
+                    patch.object(runner.shutil, 'which', return_value=sys.executable), \
+                    patch.object(runner.subprocess, 'Popen', side_effect=silent_owned_child):
+                failure, message = ((InterruptedError, 'cancelled') if cancelled
+                                    else (TimeoutError, 'absolute deadline'))
+                with self.assertRaisesRegex(failure, message):
+                    runner.relay_owned_guest_stdio(fd, identity, time.monotonic() + 0.15,
+                                                  (identity,), cancel)
+            self.assertEqual(len(children), 1)
+            self.assertEqual(children[0].returncode, -9)
+            fixture_reap_receipt(children[0], identities[0])
+            with self.assertRaises(ChildProcessError):
+                os.waitpid(children[0].pid, os.WNOHANG)
+        finally:
+            os.close(fd)
+            for child in children:
+                if child.poll() is None:
+                    child.kill()
+                child.wait()
+
+    def test_stdio_relay_refuses_host_namespace_without_spawning(self):
+        fields = Path('/proc/self/stat').read_text().rsplit(')', 1)[1].split()
+        identity = (os.getpid(), int(fields[19]), os.getuid(), int(fields[1]))
+        fd = os.open('/proc/self/ns/net', os.O_RDONLY)
+        try:
+            with patch.object(runner.subprocess, 'Popen') as spawn:
+                with self.assertRaisesRegex(ValueError, 'private QEMU namespace'):
+                    runner.relay_owned_guest_stdio(fd, identity, time.monotonic() + 2, (identity,))
+                spawn.assert_not_called()
+        finally:
+            os.close(fd)
+
+    def test_stdio_relay_refuses_reused_identity_before_connection(self):
+        fields = Path('/proc/self/stat').read_text().rsplit(')', 1)[1].split()
+        identity = (os.getpid(), int(fields[19]) + 1, os.getuid(), int(fields[1]))
+        fd = os.open('/proc/self/ns/net', os.O_RDONLY)
+        try:
+            with patch.object(runner.subprocess, 'Popen') as spawn:
+                with self.assertRaisesRegex(ValueError, 'ancestry changed'):
+                    runner.relay_owned_guest_stdio(fd, identity, time.monotonic() + 2, (identity,))
+                spawn.assert_not_called()
+        finally:
+            os.close(fd)
+
+    def test_relay_refuses_invalid_pid_deadline_and_symlink_before_namespace_open(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'image'
+            target.write_bytes(b'fixture')
+            linked = Path(directory) / 'linked'
+            linked.symlink_to(target)
+            with patch.object(runner.os, 'open') as opened:
+                for pid in (0, -1, True, '1'):
+                    with self.subTest(pid=pid), self.assertRaises(ValueError):
+                        runner.pin_owned_qemu_network(pid, [target], time.monotonic() + 2)
+                for deadline in (float('nan'), float('inf'), time.monotonic() - 1):
+                    with self.subTest(deadline=deadline), self.assertRaises(ValueError):
+                        runner.pin_owned_qemu_network(os.getpid(), [target], deadline)
+                with self.assertRaisesRegex(ValueError, 'unsafe required'):
+                    runner.pin_owned_qemu_network(os.getpid(), [linked], time.monotonic() + 2)
+                opened.assert_not_called()
+
+    def test_relay_refuses_dead_launcher_without_opening_any_namespace(self):
+        child = subprocess.Popen([sys.executable, '-c', 'pass'])
+        identity = fixture_spawn_receipt(child, 'dead-launcher')
+        child.wait(timeout=5)
+        fixture_reap_receipt(child, identity)
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'image'
+            target.write_bytes(b'fixture')
+            with patch.object(runner.os, 'open') as opened:
+                with self.assertRaises(FileNotFoundError):
+                    runner.pin_owned_qemu_network(child.pid, [target], time.monotonic() + 2)
+                opened.assert_not_called()
+
     def test_isolated_ssh_refuses_malformed_or_non_windows_before_spawn(self):
         with patch.object(runner.subprocess, 'Popen') as spawn:
             for selected in ('true', 1, None, True):

@@ -4120,6 +4120,88 @@ current and their repository ownership is unambiguous.
   checks including Windows and squash-merged as
   `efddff6ce8bc258e95026ae01f96a1f83bc89296`. This isolated
   CSS change cannot reach disks, images, lifecycle, trust, or Core contracts.
+- [ ] AgentBoot isolated relay batch on `work/exe-agentboot-relay` from fetched
+  main `f366ba35`: reproduced QMP-only launcher has no owned guest transport.
+  Draft existing-runner namespace admission selects only bounded launcher
+  descendants, exact executable/runtime file handles and pool ancestry, verifies
+  PID/start/UID before and after inspection, and pins a non-host namespace FD.
+  Diff-check PASS; no project tests run on controller under VM-only policy.
+  Draft now rechecks all observed PID/start/UID/parent links before and after
+  namespace pinning and refuses nonfinite/unbounded deadlines. Added regression
+  cases for invalid PID/deadline, linked runtime files and a real exited launcher,
+  requiring refusal before namespace open. These tests are NOT executed yet.
+  Added fixed stdio nsenter/nc relay with inherited pinned namespace FD, exact
+  QEMU PID/start/UID/parent and namespace checks, kernel pidfd lifetime, absolute
+  deadline and owned child-group kill/reap. No listener or credentials passed.
+  Added host-namespace and stale-identity refusal-before-spawn tests, unexecuted.
+  Subsequent exact frozen five-test checkpoint PASS inside assigned OMEN Ubuntu
+  guest: 5/5, exit0, 0.169s, host probe8.12s; handback at
+  2026-10-10T02:19:01Z explicitly releases source/lane ownership. Fixture and
+  test PIDs reaped, host units MainPID0/FDholders absent, active qcow check0,
+  exact new test root/boot staging cleaned; failed Core r1/r3 roots preserved.
+  Terminal/cleanup receipt SHA matches authenticated handback. Source SHA
+  534bde41/test db1549c3 remain exact tested bytes. This proves only five
+  refusal/lifetime regressions, not full relay, Windows login or workflow.
+  After explicit source release, admission now retains the complete QEMU-to-
+  launcher PID/start/UID/parent chain and relay rechecks it before connection
+  and throughout lifetime; added changed-ancestor refusal regression. Changed
+  source invalidates the earlier exact test offer: prior five-test PASS remains
+  historical, revised six-test batch is unexecuted. Diff-check PASS.
+  Added owner cancellation event checked before descriptor inspection, before
+  transport spawn and during transport lifetime, using the same owned kill/reap
+  path. Added pre-cancel no-spawn and real silent-child cancellation/reap cases;
+  revised eight-case batch remains unexecuted under OMEN-VM-only policy. This is
+  the launcher cancellation prerequisite, not completed launcher integration.
+  Launcher now has an explicit opt-in relay path only with isolated Windows SSH
+  and admitted local base. QMP remains drained separately; relay completion quits
+  and reaps the guest, while all exits cancel/join transport before namespace FD
+  close and caller disk reconciliation. Early guest/QMP exit refuses relay success.
+  Added three launcher refusal/completion/timeout cleanup fixtures using real
+  disposable Python QMP children, not actual QEMU or guest login. Exact revised
+  eleven-case OMEN test offer r2 prepared; all eleven are currently unexecuted.
+  Default invocation stays unchanged; no operational enablement or source push.
+  Resolver assigned exact eleven-case offer r2 to the existing Ubuntu helper via
+  shared-exe-relay-focused-test-handoff-r2.json; source hashes remain frozen and
+  terminal handback is not yet present. Separate runtime-initialization plan r1
+  records the demonstrated missing active-overlay/manifest gap, create-only
+  initialization, measured envelope/two-image headroom and failure preservation
+  using existing runner contracts. Plan only: no runtime write or guest launch.
+  Subsequent r2 handback at 2026-10-10T03:23:12Z releases lane/source freeze:
+  exact eleven tests PASS/testExit0 in1.206s, but collector EXIT1 captured only
+  four of five fixture PID/start identities. Independent full fixture cleanup
+  acceptance withheld; recorded host/guest children, staging, FD holders and
+  qcow/input preservation checks passed. Test-output SHA a6d243f3 and cleanup
+  SHA73e102bb independently matched. No unchanged retry or full relay claim.
+  Fixed demonstrated capture race in primary-owned tests: synchronous bounded
+  spawn PID/start/UID/parent receipts before cancellation/wait, plus original
+  identity-absent reap receipts at all three selected real-child spawn sites.
+  Runner bytes unchanged; changed test bytes are unexecuted and require a new
+  exact offer with Ubuntu-owned collector integration before any new run.
+  New user full-stack575 old/new requirement has EXE acceptance matrix r1 and
+  supplied Core plan at exact Core6277372: isolated canonical signed-local-input
+  builder route is distinct from unproved old-target d8 install admission.
+  All three targets, full UI/backend/build/install/export/virtualUSB and same-
+  SteamOS update/render/recovery phases remain unverified. Current r3 collector
+  preparation/source freeze preserved; no helper steering or repeated r2 test.
+  Subsequent r3 exact handback0407cf3c at2026-10-10T04:05:20Z accepted:
+  eleven tests PASS0/1.211s, five matched synchronous spawn/reap pairs, complete
+  FD/thread maps, original fixture/interpreter/thread identities absent and
+  supervisor/output FDs closed. Independent durable readback matches; qcow0,
+  host units/PIDs/FDholders absent, exact testroot/staging cleaned, prior r1/r2
+  failures and protected Core/base/seed/GRUB inputs preserved. All40 evidence
+  SHA independently verified. Source/lane explicitly yielded; tested runner
+  5955860f/test7a2d17f8/ceilingffbe0236 unchanged. This closes the fixture capture
+  blocker only, not real relay, Windows authentication, fullstack575 or hardware.
+  Remaining: pinned launcher lifetime/ancestry race barriers, launcher/byte transport integration,
+  meaningful OMEN-VM regressions, runtime active/manifest staging, exact PR/CI/Core
+  review, and separately gated current guest identity before workflow. Focused
+  fixture validation above is complete; real guest acceptance remains absent.
+  Necessary source push is limited to canonical OPEMOS.EXE role branch for remote
+  required CI/exact Core review of this lifecycle-sensitive implementation. No
+  credentials, private inputs, boundary/integrity changes or unrelated commits.
+  Completed public-host/key/partition and sanitized historical-account evidence
+  remains in authenticated handoffs, with no credentials/trust/source retirement.
+
 - [ ] Functional OMEN graphics-switch backend continuation from PR176 squash
   `8301bdf95c3ec84e589d16102e49db26244b146b`, fresh branch
   `work/exe-gpu-busy-guard`: Core live checkpoint r2 proves NVIDIA Xorg handles
