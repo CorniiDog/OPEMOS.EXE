@@ -112,12 +112,23 @@ def main():
             raise RuntimeError("non-native Rust host")
         if not run("npm-ci", ["npm", "ci"], 300):
             raise RuntimeError("locked JavaScript dependencies failed")
+        helper = OUT / "macos-ui-smoke"
+        helper_built = run("gui-helper-build", ["xcrun", "swiftc", "tests/macos-ui-smoke.swift",
+                                              "-o", str(helper)], 120)
+        receipt["stages"]["gui"] = {"state": "not_run", "reason": "awaiting native app" if helper_built else "helper compilation failed"}
+        save()
         for name, args in [
-            ("frontend", ["npm", "run", "test:frontend"]),
+            ("frontend", ["node", "--test", "tests/linux-appliance-builder.test.mjs",
+                          "tests/virtual-usb-media.test.mjs", "tests/welcome-launcher.test.mjs",
+                          "tests/welcome-linux.test.mjs", "tests/welcome-media.test.mjs",
+                          "tests/welcome-runtime.test.mjs"]),
+            ("docs", ["npm", "run", "test:docs"]),
+            ("hygiene", ["npm", "run", "test:hygiene"]),
             ("format", ["cargo", "fmt", "--manifest-path", "src-tauri/Cargo.toml", "--", "--check"]),
             ("clippy", ["cargo", "clippy", "--manifest-path", "src-tauri/Cargo.toml", "--locked",
                         "--target", TARGET, "--all-targets", "--all-features", "--", "-D", "warnings"]),
-            ("rust-tests", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked", "--target", TARGET])]:
+            ("rust-tests", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked", "--target", TARGET, "core_generation_cache"]),
+            ("output-path-test", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked", "--target", TARGET, "derives_non_overwriting_raw_output_names"])]:
             run(name, args, 1200)
         built = run("native-build", ["npm", "run", "build:app", "--", "--target", TARGET], 1800)
         if receipt["locks"] != {name: digest(ROOT / name) for name in LOCKS}:
@@ -136,9 +147,7 @@ def main():
         run("artifact-inspection", ["/bin/sh", "-c",
             'file "$1"; otool -L "$1"; codesign -dv --verbose=2 "$2"',
             "inspect", str(binary), str(app)], 60)
-        helper = OUT / "macos-ui-smoke"
-        if run("gui-helper-build", ["xcrun", "swiftc", "tests/macos-ui-smoke.swift",
-                                   "-o", str(helper)], 120):
+        if helper_built:
             receipt["helperSHA256"] = digest(helper)
             if app_processes(binary):
                 raise RuntimeError("pre-existing exact executable; refuse GUI interaction")
@@ -152,11 +161,15 @@ def main():
                     # The helper persists its exact app PID before subsequent actions.
                     events_path = OUT / "gui-events.json"
                     events = json.loads(events_path.read_text()) if events_path.exists() else []
-                    owned = {e["pid"] for e in events if e.get("kind") == "app" and
+                    owned = {e["pid"]: e.get("launchDate") for e in events if e.get("kind") == "app" and
                              e.get("executable") == str(binary)}
                     for pid in survivors:
                         if pid in owned and app_processes(binary).count(pid) == 1:
-                            os.kill(pid, signal.SIGTERM)
+                            birth = output(["/bin/ps", "-p", str(pid), "-o", "lstart="])
+                            epoch = time.mktime(time.strptime(birth, "%a %b %d %H:%M:%S %Y"))
+                            if isinstance(owned[pid], (int, float)) and abs(epoch - owned[pid]) < 1:
+                                receipt.setdefault("ownedCleanupIdentities", []).append({"pid": pid, "start": birth, "executable": str(binary)})
+                                os.kill(pid, signal.SIGTERM)
                     end = time.monotonic() + 5
                     while app_processes(binary) and time.monotonic() < end:
                         time.sleep(0.1)
@@ -178,7 +191,7 @@ def main():
         receipt["childProcessGroupsClosed"] = children_closed
         receipt["finished"] = time.time()
         save()
-    required = ["frontend", "format", "clippy", "rust-tests", "native-build", "gui", "archive"]
+    required = ["frontend", "docs", "hygiene", "format", "clippy", "rust-tests", "output-path-test", "native-build", "gui", "archive"]
     return 0 if not receipt.get("error") and all(
         receipt["stages"].get(name, {}).get("state") == "passed" for name in required) else 1
 

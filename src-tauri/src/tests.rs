@@ -6039,7 +6039,7 @@ done"#
         .expect("preview selected output directory");
         assert_eq!(
             PathBuf::from(preview.output_path),
-            custom.join("preview-source-nvidia.img")
+            custom.canonicalize().unwrap().join("preview-source-nvidia.img")
         );
         assert!(preview_image_output(
             source.to_string_lossy().into_owned(),

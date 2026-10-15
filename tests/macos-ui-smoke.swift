@@ -23,7 +23,7 @@ func record(_ kind: String, _ fields: [String: Any] = [:]) {
 func require(_ ok: Bool, _ message: String) throws {
     if !ok { throw Refusal(message: message) }
 }
-func pause() throws {
+func guiWaitTick() throws {
     try require(Date() < deadline, "absolute GUI deadline")
     RunLoop.current.run(until: Date().addingTimeInterval(0.2))
 }
@@ -65,7 +65,7 @@ func screenshot(_ name: String) throws {
     p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
     p.arguments = ["-x", out!.appendingPathComponent(name + ".png").path]
     try p.run()
-    while p.isRunning && Date() < deadline { try pause() }
+    while p.isRunning && Date() < deadline { try guiWaitTick() }
     if p.isRunning { p.terminate(); p.waitUntilExit(); throw Refusal(message: "screenshot timeout") }
     try require(p.terminationStatus == 0, "screen capture refused")
     let url = out!.appendingPathComponent(name + ".png")
@@ -74,24 +74,37 @@ func screenshot(_ name: String) throws {
     record("screenshot", ["name": url.lastPathComponent, "width": image.size.width, "height": image.size.height])
 }
 func click(_ element: AXUIElement, _ label: String, double: Bool = false) throws {
-    try require((value(element, kAXEnabledAttribute) as? Bool) != false, "disabled control: " + label)
+    try require((value(element, kAXEnabledAttribute) as? Bool) == true, "disabled or unknown enabled state: " + label)
     let rect = try bounds(element)
     let point = CGPoint(x: rect.midX, y: rect.midY)
     var pid: pid_t = 0
     AXUIElementGetPid(element, &pid)
-    var hit: AXUIElement?
-    try require(AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(point.x),
-                Float(point.y), &hit) == .success && hit != nil, "control not hittable")
-    var hitPID: pid_t = 0
-    AXUIElementGetPid(hit!, &hitPID)
-    try require(hitPID == pid, "another process occludes " + label)
+    func requireExactHit() throws {
+        var hit: AXUIElement?
+        try require(AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(point.x),
+                    Float(point.y), &hit) == .success && hit != nil, "control not hittable")
+        var hitPID: pid_t = 0
+        AXUIElementGetPid(hit!, &hitPID)
+        try require(hitPID == pid, "another process occludes " + label)
+        for _ in 0..<32 {
+            guard let current = hit else { break }
+            if CFEqual(current, element) { return }
+            guard let parent = value(current, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+            hit = (parent as! AXUIElement)
+        }
+        throw Refusal(message: "same-process overlay or unrelated hit target: " + label)
+    }
+    try requireExactHit()
     let before = CGEvent(source: nil)!.location
     CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point,
             mouseButton: .left)!.post(tap: .cghidEventTap)
-    try pause()
+    try guiWaitTick()
     let after = CGEvent(source: nil)!.location
     try require(abs(after.x-point.x) < 3 && abs(after.y-point.y) < 3, "pointer motion not observed")
     try screenshot(label + "-hover")
+    try require((value(element, kAXEnabledAttribute) as? Bool) == true, "enabled state changed after hover")
+    try require(try bounds(element) == rect, "control moved after hover")
+    try requireExactHit()
     for n in 1...(double ? 2 : 1) {
         for type in [CGEventType.leftMouseDown, CGEventType.leftMouseUp] {
             let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)!
@@ -122,7 +135,7 @@ do {
     try require(ax && post && screen, "GUI permissions unavailable; no TCC bypass")
     try screenshot("desktop-before")
     // Reveal only. Finder must launch the actual app via a real icon double-click.
-    NSWorkspace.shared.selectFile(appURL.path, inFileViewerRootedAtPath: appURL.deletingLastPathComponent().path)
+    try require(NSWorkspace.shared.selectFile(appURL.path, inFileViewerRootedAtPath: appURL.deletingLastPathComponent().path), "Finder reveal failed")
     var icon: AXUIElement?
     while icon == nil {
         guard let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first else {
@@ -131,10 +144,13 @@ do {
         icon = try find(AXUIElementCreateApplication(finder.processIdentifier)) { element in
             let name = text(element, kAXTitleAttribute)
             let role = text(element, kAXRoleAttribute)
+            let fileURL = value(element, kAXURLAttribute) as? URL
             return ["SteamOS NVIDIA Builder", "SteamOS NVIDIA Builder.app"].contains(name) &&
-                ["AXImage", "AXButton", "AXCell"].contains(role)
+                ["AXImage", "AXButton", "AXCell"].contains(role) &&
+                fileURL?.standardizedFileURL == appURL &&
+                (value(element, kAXSelectedAttribute) as? Bool) == true
         }
-        if icon == nil { try pause() }
+        if icon == nil { try guiWaitTick() }
     }
     try screenshot("finder-before-launch")
     try click(icon!, "finder-app", double: true)
@@ -147,7 +163,7 @@ do {
             record("app", ["pid": app.processIdentifier, "bundle": appURL.path,
                            "executable": app.executableURL?.path ?? "", "architecture": app.executableArchitecture,
                            "launchDate": app.launchDate?.timeIntervalSince1970 ?? 0])
-        } else { try pause() }
+        } else { try guiWaitTick() }
     }
     let root = AXUIElementCreateApplication(owned!.processIdentifier)
     func button(_ label: String) throws -> AXUIElement? {
@@ -155,7 +171,7 @@ do {
             [text(e, kAXTitleAttribute), text(e, kAXDescriptionAttribute)].contains(label) }
     }
     var open: AXUIElement?
-    while open == nil { open = try button("Open settings"); if open == nil { try pause() } }
+    while open == nil { open = try button("Open settings"); if open == nil { try guiWaitTick() } }
     let windows = value(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
     try require(windows.contains { text($0, kAXTitleAttribute) == "SteamOS NVIDIA Builder" }, "main window missing")
     try require(!windows.contains { text($0, kAXTitleAttribute).contains("Opening SteamOS") }, "splash still open")
@@ -163,11 +179,11 @@ do {
     try screenshot("main-before-settings")
     try click(open!, "open-settings")
     var close: AXUIElement?
-    while close == nil { close = try button("Close settings"); if close == nil { try pause() } }
+    while close == nil { close = try button("Close settings"); if close == nil { try guiWaitTick() } }
     try screenshot("settings-open")
     record("settings-open-observed")
     try click(close!, "close-settings")
-    while try button("Close settings") != nil { try pause() }
+    while try button("Close settings") != nil { try guiWaitTick() }
     try screenshot("settings-closed")
     record("settings-closed-observed")
     guard let window = (value(root, kAXWindowsAttribute) as? [AXUIElement])?.first,
@@ -175,7 +191,7 @@ do {
         throw Refusal(message: "normal window close control unavailable")
     }
     try click(closeWindow as! AXUIElement, "close-app")
-    while !owned!.isTerminated { try pause() }
+    while !owned!.isTerminated { try guiWaitTick() }
     record("normal-app-close", ["terminated": true])
 } catch {
     failed = true
@@ -184,10 +200,17 @@ do {
 // Independently close only the exact new process; forced cleanup never passes.
 if let app = owned, !app.isTerminated {
     failed = true
-    record("cleanup-terminate", ["accepted": app.terminate()])
+    func stillOwned() -> Bool {
+        guard let current = NSRunningApplication(processIdentifier: app.processIdentifier),
+              let originalBirth = app.launchDate, let currentBirth = current.launchDate else { return false }
+        return currentBirth == originalBirth && current.executableURL == app.executableURL &&
+            current.bundleURL == app.bundleURL
+    }
+    if stillOwned() { record("cleanup-terminate", ["accepted": app.terminate()]) }
+    else { record("cleanup-refused", ["reason": "PID birth/executable ownership changed or unavailable"]) }
     let cleanupEnd = Date().addingTimeInterval(5)
     while !app.isTerminated && Date() < cleanupEnd { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
-    if !app.isTerminated { record("cleanup-force", ["accepted": app.forceTerminate()]) }
+    if !app.isTerminated && stillOwned() { record("cleanup-force", ["accepted": app.forceTerminate()]) }
     let forceEnd = Date().addingTimeInterval(5)
     while !app.isTerminated && Date() < forceEnd { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
     record("cleanup-closure", ["terminated": app.isTerminated])

@@ -15,6 +15,19 @@
   necessary for that remote-only CI and exact counterpart review. Commit/job
   results remain in this implementation PR and authenticated handoff, not an
   evidence-only follow-up PR.
+  Initial PR180 head `4be10a2a7a3770aa6234c16d9bf148ce0ff772fd`
+  actually built an arm64 executable (18,950,672 bytes, SHA-256
+  `e4db9a4c10243383036f845785e26e2ddfde1f198e7bbad5a4d2f26a2ed07ab5`)
+  in Mac job `38679726926`; archive SHA-256
+  `47b0d12d75453a1cade6c1e608382a5b9c564ad6f4b8ef705303704643705a53`.
+  Preserve that success and initial 23 Rust/29 frontend/lint/Swift failures.
+  The coherent correction prepares/reseals only the pinned handoff directory
+  for Darwin create-only rename (including crash recovery), fixes adversarial
+  fixture modes/canonical paths, narrowly declares Linux runtime eligibility,
+  diagnoses the still-enabled portable mock startup, and tightens real pointer
+  and PID-birth custody. Corrected helper compiles first; affected cache tests,
+  changed frontend files and missing docs/hygiene run before the new exact app
+  and GUI attempt. These changes are unverified until corrected-head CI returns.
 
 ## Foundation and change policy
 
