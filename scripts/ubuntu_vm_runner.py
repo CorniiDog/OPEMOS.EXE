@@ -16,10 +16,12 @@ import selectors
 import time
 import signal
 import threading
+import struct
+import base64
 from vm_write_ceiling import compact_owned_image, bounded_file_ceiling, VM_BUDGET_BYTES, validate_chain
 
 
-def pin_owned_qemu_network(launcher_pid, required_files, deadline):
+def pin_owned_qemu_network(launcher_pid, required_files, deadline, allow_setup_root=False):
     """Pin an owned descendant's private netns; never search global QEMU names.
 
     Caller keeps its launcher alive and lifecycle lock held. This gate opens no
@@ -38,7 +40,7 @@ def pin_owned_qemu_network(launcher_pid, required_files, deadline):
         fields = (root / 'stat').read_text().rsplit(')', 1)[1].split()
         return (pid, int(fields[19]), root.stat().st_uid, int(fields[1]))
     launcher = identity(launcher_pid)
-    if launcher[2] != os.getuid():
+    if launcher[2] != os.getuid() and not (allow_setup_root and launcher[2] == 0):
         raise ValueError('launcher owner mismatch')
     expected = set()
     for path in required_files:
@@ -61,12 +63,24 @@ def pin_owned_qemu_network(launcher_pid, required_files, deadline):
         if parent is not None and before[3] != parent:
             raise ValueError('descendant no longer owned by launcher tree')
         root = Path('/proc') / str(pid)
-        if before[2] != launcher[2]:
+        if before[2] != os.getuid() and not (allow_setup_root and before[2] == 0):
             raise ValueError('descendant owner mismatch')
         pending.extend((int(child), pid) for child in
                        (root / 'task' / str(pid) / 'children').read_text().split())
-        actual = (root / 'exe').stat()
-        if (actual.st_dev, actual.st_ino) == (executable.st_dev, executable.st_ino):
+        if before[2] == 0 and allow_setup_root:
+            permitted = [shutil.which(name) for name in ('sudo', 'bwrap', 'setpriv', 'python3')]
+            # /proc/<privileged-setup>/exe is not a same-UID-readable handle.
+            # Bind only this owned ancestry's exact constructed tool argv;
+            # QEMU itself still requires same UID and kernel executable inode.
+            setup_argv = [value.decode() for value in (root / 'cmdline').read_bytes().split(b'\0') if value]
+            if not setup_argv or setup_argv[0] not in permitted:
+                raise ValueError('unknown privileged setup executable')
+            actual = None
+        else:
+            actual = (root / 'exe').stat()
+        if actual is not None and (actual.st_dev, actual.st_ino) == (executable.st_dev, executable.st_ino):
+            if before[2] != os.getuid():
+                raise ValueError('QEMU must run as the original user, never root')
             handles = set()
             for entry in (root / 'fd').iterdir():
                 info = entry.stat()
@@ -562,9 +576,7 @@ def windows_launch_command(image, firmware_code, firmware_vars, isolated_ssh=Fal
     command = launch_command(image, memory_mib=6152, cpus=2, privileged_namespace=True)
     # The generic sandbox drops supplementary groups. Preserve only the
     # already-authorized device group or QEMU cannot open mode-0660 KVM.
-    if kvm.st_gid != os.getgid():
-        if kvm.st_gid not in os.getgroups():
-            raise ValueError('KVM device group is not already authorized')
+    if kvm.st_gid != os.getgid() and kvm.st_gid in os.getgroups():
         command[command.index('--clear-groups')] = '--groups=' + str(kvm.st_gid)
     # Only the exact KVM device and mutable VARS file extend the existing
     # namespace. CODE and immutable base remain covered by read-only root.
@@ -586,6 +598,601 @@ def windows_launch_command(image, firmware_code, firmware_vars, isolated_ssh=Fal
                                   'net=172.22.64.0/20,host=172.22.64.1,'
                                   'hostfwd=tcp:127.0.0.1:2222-172.22.79.248:22')
     return command
+
+
+AGENTBOOT_BASE = '2a6fd3993ad38ca2d1d3b74dc8fd7d3ed51b0ad16297b85ab9981fa42ababa52'
+AGENTBOOT_CODE = 'ad23261d43116abc3747d59a7837fbf578c9586a8993f4eeba064cd07eccb083'
+AGENTBOOT_VARS = '5d2ac383371b408398accee7ec27c8c09ea5b74a0de0ceea6513388b15be5d1e'
+
+
+def owned_regular(path, maximum):
+    path = Path(path)
+    info = path.lstat()
+    if (path.resolve() != path or not stat.S_ISREG(info.st_mode) or
+            info.st_uid != os.getuid() or info.st_nlink != 1 or not 0 <= info.st_size <= maximum):
+        raise ValueError('unsafe owned regular file')
+    return info
+
+
+def windows_runtime_lock(root):
+    path = Path(root) / '.lifecycle-lock'
+    before = owned_regular(path, 0)
+    if stat.S_IMODE(before.st_mode) != 0o600:
+        raise ValueError('unsafe lifecycle lock mode')
+    fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
+    after = os.fstat(fd)
+    if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+        os.close(fd)
+        raise ValueError('lifecycle lock replaced')
+    return fd
+
+
+def create_windows_graphical_runtime(directory):
+    """Create only this retained AgentBoot overlay/VARS transaction; never boot.
+
+    Caller has separately admitted and mounted the exact envelope. Exclusive
+    lifecycle ownership is held throughout. Any partials remain for review, not
+    automatically replaced, retired or reused after a failed initialization.
+    """
+    root = Path(directory)
+    require_ntfs_envelope(root)
+    if (root / '.opemos-migration-owned').read_text() != 'OPEMOS.EXE\n':
+        raise ValueError('unowned Windows runtime')
+    lock = windows_runtime_lock(root)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        expected = {'.opemos-migration-owned', '.lifecycle-lock', 'base.qcow2',
+                    'OVMF_CODE_4M.fd', 'OVMF_VARS_4M.fd'}
+        if {p.name for p in root.iterdir()} != expected:
+            raise ValueError('initialized, partial or unknown Windows runtime; preserve it')
+        pins = {'base.qcow2': AGENTBOOT_BASE, 'OVMF_CODE_4M.fd': AGENTBOOT_CODE,
+                'OVMF_VARS_4M.fd': AGENTBOOT_VARS}
+        for name, sha in pins.items():
+            owned_regular(root / name, VM_BUDGET_BYTES)
+            if base_digest(root / name) != sha:
+                raise ValueError('retained AgentBoot input hash mismatch')
+        validate_chain(root, root / 'base.qcow2')
+        image = root / 'graphical.qcow2'
+        variables = root / 'graphical-vars.fd'
+        # A reservation prevents another cooperative initializer. qemu-img must
+        # not reuse any preexisting output; all original paths stay untouched.
+        reservation = root / 'graphical-initialization.json'
+        with reservation.open('x') as stream:
+            json.dump({'state': 'creating', 'base': AGENTBOOT_BASE}, stream)
+            stream.flush(); os.fsync(stream.fileno())
+        sync_directory(root)
+        image_fd = os.open(image, os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_RDWR, 0o600)
+        try:
+            subprocess.run(['qemu-img', 'create', '-f', 'qcow2', '-F', 'qcow2',
+                            '-b', str(root / 'base.qcow2'), f'/proc/self/fd/{image_fd}'],
+                           cwd=root, pass_fds=(image_fd,), check=True, capture_output=True, timeout=60)
+            if (os.fstat(image_fd).st_dev, os.fstat(image_fd).st_ino) != (image.stat().st_dev, image.stat().st_ino):
+                raise ValueError('created overlay path replaced; preserve partials')
+            os.fsync(image_fd)
+        finally:
+            os.close(image_fd)
+        owned_regular(image, 12_000_000_000)
+        validate_chain(root, image, 'base.qcow2')
+        with (root / 'OVMF_VARS_4M.fd').open('rb') as source, variables.open('xb') as target:
+            os.fchmod(target.fileno(), 0o600)
+            shutil.copyfileobj(source, target, 65536)
+            target.flush(); os.fsync(target.fileno())
+        if base_digest(variables) != AGENTBOOT_VARS:
+            raise ValueError('working VARS copy mismatch; preserve partials')
+        control = root / 'graphical-evidence'
+        control.mkdir(mode=0o700)
+        var_info = owned_regular(variables, 540672)
+        result = {'schemaVersion': 1, 'image': image.name, 'base': 'base.qcow2',
+                  'baseSha256': AGENTBOOT_BASE, 'writeCeilingBytes': 12_000_000_000,
+                  'vars': variables.name, 'varsIdentity': [var_info.st_dev, var_info.st_ino],
+                  'code': 'OVMF_CODE_4M.fd', 'codeSha256': AGENTBOOT_CODE,
+                  'template': 'OVMF_VARS_4M.fd', 'templateSha256': AGENTBOOT_VARS,
+                  'control': control.name, 'runtimeAuthorized': False}
+        for name, sha in pins.items():
+            if base_digest(root / name) != sha:
+                raise ValueError('immutable input changed during initialization')
+        with (root / 'graphical-manifest.json').open('x') as stream:
+            json.dump(result, stream, sort_keys=True)
+            stream.flush(); os.fsync(stream.fileno())
+        sync_directory(root)
+        return result
+    finally:
+        os.close(lock)
+
+
+def windows_graphical_command(directory, package_iso, package_sha256):
+    """Concrete AgentBoot argv, paused/no-NIC/private stdio; not admission."""
+    root = Path(directory)
+    require_ntfs_envelope(root)
+    manifest = json.loads((root / 'graphical-manifest.json').read_text())
+    if (manifest.get('baseSha256') != AGENTBOOT_BASE or manifest.get('image') != 'graphical.qcow2'
+            or manifest.get('vars') != 'graphical-vars.fd' or manifest.get('control') != 'graphical-evidence'
+            or manifest.get('code') != 'OVMF_CODE_4M.fd' or manifest.get('codeSha256') != AGENTBOOT_CODE
+            or manifest.get('template') != 'OVMF_VARS_4M.fd' or manifest.get('templateSha256') != AGENTBOOT_VARS):
+        raise ValueError('unknown graphical runtime binding')
+    for name, sha in [('base.qcow2', AGENTBOOT_BASE), ('OVMF_CODE_4M.fd', AGENTBOOT_CODE),
+                      ('OVMF_VARS_4M.fd', AGENTBOOT_VARS)]:
+        owned_regular(root / name, VM_BUDGET_BYTES)
+        if base_digest(root / name) != sha:
+            raise ValueError('retained input changed')
+    variables = root / manifest['vars']
+    info = owned_regular(variables, 540672)
+    if [info.st_dev, info.st_ino] != manifest['varsIdentity']:
+        raise ValueError('working VARS identity changed')
+    package_iso = Path(package_iso)
+    if package_iso.parent != root or ',' in str(package_iso):
+        raise ValueError('package media must be inside exact envelope')
+    owned_regular(package_iso, 8_000_000_000)
+    if (len(package_sha256) != 64 or base_digest(package_iso) != package_sha256):
+        raise ValueError('exact admitted package ISO hash required')
+    control = root / manifest['control']
+    info = control.lstat()
+    if control.resolve() != control or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError('unsafe private capture directory')
+    image = root / manifest['image']
+    owned_regular(image, 12_000_000_000)
+    validate_chain(root, image, 'base.qcow2')
+    command = windows_launch_command(image, root / manifest['code'], variables)
+    at = command.index('--proc')
+    command[at:at] = ['--bind', str(control), str(control)]
+    qemu = command.index(shutil.which('qemu-system-x86_64'))
+    # Runs AFTER sandbox setup and identity drop, before exec of QEMU. It uses
+    # the same bound KVM device/UID; ACL access is actually tested, not assumed.
+    device = Path('/dev/kvm').stat()
+    probe = ('import os,stat,fcntl,sys,resource\n'
+             f'if os.getuid()!={os.getuid()} or os.geteuid()!={os.getuid()}: raise RuntimeError("wrong sandbox UID")\n'
+             's=os.stat("/dev/kvm")\n'
+             f'if not stat.S_ISCHR(s.st_mode) or (s.st_dev,s.st_ino,s.st_rdev)!={(device.st_dev, device.st_ino, device.st_rdev)!r}: raise RuntimeError("KVM device changed")\n'
+             'f=os.open("/dev/kvm",os.O_RDWR|os.O_CLOEXEC)\n'
+             'try:\n'
+             ' if fcntl.ioctl(f,0xae00,0)!=12: raise RuntimeError("unsupported KVM API")\n'
+             'finally: os.close(f)\n'
+             'resource.setrlimit(resource.RLIMIT_FSIZE,(12000000000,12000000000))\n'
+             'os.execv(sys.argv[1],sys.argv[1:])\n')
+    python = shutil.which('python3')
+    if not python:
+        raise ValueError('existing sandbox Python required')
+    command[qemu:qemu] = [python, '-I', '-c', probe]
+    command.extend(['-S', '-name', 'OPEMOS-Agent-Boot', '-vga', 'std',
+                    '-device', 'qemu-xhci,id=opemos-xhci',
+                    '-device', 'usb-tablet,bus=opemos-xhci.0',
+                    '-drive', 'if=ide,media=cdrom,readonly=on,format=raw,file=' + str(package_iso),
+                    '-qmp', 'stdio'])
+    return command
+
+
+class WindowsGraphicalQMP:
+    """Only the owned AgentBoot stdio channel; no listener or guest execution."""
+    def __init__(self, reader, writer, directory, deadline):
+        self.reader, self.writer = reader, writer
+        self.root = Path(directory)
+        self.deadline = deadline
+        self.buffer = bytearray()
+        self.sequence = 0
+        self.total = 0
+        self.started = False
+        self.handshaken = False
+        self.frames = {}
+        self.qemu_identity = None
+        self.qemu_argv = None
+        self.selector = selectors.DefaultSelector()
+        self.selector.register(reader, selectors.EVENT_READ)
+
+    def receive(self):
+        while True:
+            remaining = self.deadline - time.monotonic()
+            if not 0 < remaining <= 900:
+                raise TimeoutError('Windows QMP absolute deadline')
+            if b'\n' in self.buffer:
+                line, _, rest = self.buffer.partition(b'\n')
+                self.buffer[:] = rest
+                result = json.loads(line)
+                if not isinstance(result, dict):
+                    raise ValueError('QMP object required')
+                return result
+            if not self.selector.select(min(remaining, 5)):
+                continue
+            data = os.read(self.reader.fileno(), 4096)
+            self.total += len(data)
+            if not data or self.total > 1_048_576:
+                raise ValueError('QMP closed or exceeded transcript bound')
+            self.buffer.extend(data)
+
+    def call(self, command, arguments=None):
+        if self.qemu_identity is not None:
+            pid, start, uid, _ = self.qemu_identity
+            proc = Path(f'/proc/{pid}')
+            fields = (proc / 'stat').read_text().rsplit(')', 1)[1].split()
+            if (int(fields[19]) != start or proc.stat().st_uid != uid or
+                    (proc / 'cmdline').read_bytes() != self.qemu_argv):
+                raise ValueError('owned QEMU PID/start/UID/argv changed')
+        self.sequence += 1
+        packet = {'execute': command, 'id': self.sequence}
+        if arguments is not None:
+            packet['arguments'] = arguments
+        data = (json.dumps(packet) + '\n').encode()
+        if len(data) > 4096 or time.monotonic() >= self.deadline:
+            raise ValueError('bounded QMP command required')
+        self.writer.write(data); self.writer.flush()
+        for _ in range(128):
+            reply = self.receive()
+            if 'event' in reply:
+                continue
+            if reply.get('id') != self.sequence or 'error' in reply or 'return' not in reply:
+                raise ValueError('QMP reply identity/error')
+            return reply['return']
+        raise ValueError('excessive asynchronous QMP events')
+
+    def handshake(self):
+        if self.handshaken:
+            raise ValueError('duplicate graphical monitor handshake')
+        if 'QMP' not in self.receive():
+            raise ValueError('QMP greeting missing')
+        self.call('qmp_capabilities')
+        if self.call('query-name').get('name') != 'OPEMOS-Agent-Boot':
+            raise ValueError('wrong guest monitor')
+        state = self.call('query-status')
+        if state.get('running') or state.get('status') not in ('paused', 'prelaunch'):
+            raise ValueError('Windows must still be paused before device proof')
+        self.handshaken = True
+        return state
+
+    def start(self, image, package, code, variables):
+        state = self.call('query-status') if self.handshaken else self.handshake()
+        if state.get('running') or state.get('status') not in ('paused', 'prelaunch'):
+            raise ValueError('Windows left paused state before device proof')
+        blocks = self.call('query-block')
+        devices = self.call('human-monitor-command', {'command-line': 'info qtree'})
+        actual = {row['inserted']['file']: row['inserted'] for row in blocks if 'inserted' in row}
+        for path in (image, package, code, variables):
+            if str(path) not in actual:
+                raise ValueError('actual Windows disk/firmware binding differs')
+        if not actual[str(package)].get('ro') or not actual[str(code)].get('ro'):
+            raise ValueError('package/CODE must be read-only')
+        if actual[str(image)].get('ro') or actual[str(variables)].get('ro'):
+            raise ValueError('overlay/working VARS must be writable')
+        if 'usb-tablet' not in devices or 'VGA' not in devices:
+            raise ValueError('actual Windows display/tablet missing')
+        proof = {'blocks': blocks, 'qtree': devices, 'paused': state, 'guestAccepted': False}
+        with (self.root / 'device-proof.json').open('x') as stream:
+            json.dump(proof, stream); stream.flush(); os.fsync(stream.fileno())
+        sync_directory(self.root)
+        self.call('cont')
+        self.started = True
+        return proof
+
+    def capture(self, number):
+        if not self.started or type(number) is not int or not 0 <= number < 16:
+            raise ValueError('started guest and bounded frame number required')
+        path = self.root / f'frame-{number:04d}.png'
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_RDWR, 0o600)
+        try:
+            original = os.fstat(fd)
+            self.call('screendump', {'filename': str(path), 'format': 'png'})
+            info = owned_regular(path, 16_777_216)
+            if (info.st_dev, info.st_ino) != (original.st_dev, original.st_ino):
+                raise ValueError('capture inode replaced')
+            data = os.read(fd, 16_777_217)
+            if len(data) != info.st_size or data[:8] != b'\x89PNG\r\n\x1a\n' or len(data) < 24:
+                raise ValueError('invalid capture bytes')
+            width, height = struct.unpack('>II', data[16:24])
+            if not 1 < width <= 8192 or not 1 < height <= 8192:
+                raise ValueError('unsupported actual framebuffer geometry')
+            frame = {'number': number, 'width': width, 'height': height,
+                     'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data),
+                     'device': info.st_dev, 'inode': info.st_ino}
+            self.frames[number] = frame
+            return {**frame, 'imageBase64': base64.b64encode(data).decode()}
+        finally:
+            os.close(fd)
+
+    def click(self, frame_number, sha256, x, y, count=1):
+        frame = self.frames.get(frame_number)
+        if (not self.started or not frame or frame['sha256'] != sha256 or
+                any(type(n) is not int for n in (x, y, count)) or count not in (1, 2) or
+                not 0 <= x < frame['width'] or not 0 <= y < frame['height']):
+            raise ValueError('click must reference an actual observed frame and integer coordinates')
+        path = self.root / f'frame-{frame_number:04d}.png'
+        info = owned_regular(path, 16_777_216)
+        if (info.st_dev, info.st_ino, info.st_size) != (frame['device'], frame['inode'], frame['bytes']) or base_digest(path) != sha256:
+            raise ValueError('referenced capture changed')
+        if frame_number != max(self.frames):
+            raise ValueError('stale screenshot; capture current visible enabled target first')
+        self.call('input-send-event', {'events': [
+            {'type': 'abs', 'data': {'axis': 'x', 'value': round(x * 32767 / (frame['width'] - 1))}},
+            {'type': 'abs', 'data': {'axis': 'y', 'value': round(y * 32767 / (frame['height'] - 1))}}]})
+        try:
+            for _ in range(count):
+                primary = None
+                try:
+                    self.call('input-send-event', {'events': [{'type': 'btn', 'data': {'down': True, 'button': 'left'}}]})
+                except BaseException as error:
+                    primary = error
+                try:
+                    self.call('input-send-event', {'events': [{'type': 'btn', 'data': {'down': False, 'button': 'left'}}]})
+                except BaseException as cleanup:
+                    if primary is not None:
+                        raise RuntimeError(f'{primary}; pointer release also failed: {cleanup}') from primary
+                    raise
+                if primary is not None:
+                    raise primary
+        finally:
+            # Any attempted action invalidates the observed UI state. A second
+            # target requires another current screenshot, not a reused token.
+            self.frames.clear()
+        return {'frame': frame_number, 'sha256': sha256, 'x': x, 'y': y,
+                'clickCount': count, 'actualPointerEvents': True}
+
+    def close(self):
+        self.selector.close()
+
+
+def run_windows_graphical(directory, package_iso, package_sha256, control_in, control_out,
+                          timeout_seconds=900):
+    """Exact paused AgentBoot -> frames/pointer -> shutdown source transaction.
+
+    Invoke only under separately reviewed Root queue/VM admission. Stream
+    requests use the existing authenticated SSH/control session, never a new
+    listener. This function cannot establish login or enable a disabled UI.
+    Caller must inspect current frames and attest the visible enabled target.
+    No initialization, retry, retirement or original mutation occurs here.
+    """
+    if type(timeout_seconds) is not int or not 15 <= timeout_seconds <= 900:
+        raise ValueError('bounded Windows transaction required')
+    root = Path(directory)
+    require_windows_pool()
+    envelope = require_ntfs_envelope(root)
+    lock = windows_runtime_lock(root)
+    process = monitor = None
+    namespace_fd = None
+    receipt = {'workflowAccepted': False, 'operations': [], 'envelope': envelope}
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        command = windows_graphical_command(root, package_iso, package_sha256)
+        package_record = json.loads((root / 'graphical-package.json').read_text())
+        if (package_record.get('artifactId') != 11952692823 or
+                package_record.get('archiveSha256') != '32d145dadca03547eb0f55fa8a188106de46604e5650ce8963bc32cb57c1a742' or
+                package_record.get('sourceCommit') != '28c36055a51ae241b455757486bf838c5901e1d3' or
+                package_record.get('coreCommit') != '01407aa6174b80e92cb7f3dcb534ade5cdd7bf00' or
+                package_record.get('isoSha256') != package_sha256 or
+                package_record.get('portableInventoryVerified') is not True or
+                len(package_record.get('executableSha256', '')) != 64 or
+                any(c not in '0123456789abcdef' for c in package_record.get('executableSha256', ''))):
+            raise ValueError('exact full portable package/provenance verification missing')
+        # This is the coordinator's staged, reviewed package evidence, not
+        # authentication invented by a guest or a new trust input.
+        receipt['packageEvidence'] = package_record
+        allowed = {'.opemos-migration-owned', '.lifecycle-lock', 'base.qcow2',
+                   'OVMF_CODE_4M.fd', 'OVMF_VARS_4M.fd', 'graphical.qcow2',
+                   'graphical-vars.fd', 'graphical-manifest.json',
+                   'graphical-initialization.json', 'graphical-package.json',
+                   Path(package_iso).name, 'graphical-evidence'}
+        if {p.name for p in root.iterdir()} != allowed:
+            raise ValueError('unaccounted Windows runtime entries; preserve them')
+        evidence = root / 'graphical-evidence'
+        if list(evidence.iterdir()):
+            raise ValueError('prior graphical evidence exists; do not silently retry/rearm')
+        def account():
+            total = 0
+            for item in root.iterdir():
+                if item == evidence:
+                    entries = list(item.iterdir())
+                    if len(entries) > 20:
+                        raise ValueError('graphical evidence entry bound')
+                    total += item.stat().st_blocks * 512
+                    for child in entries:
+                        info = owned_regular(child, 16_777_216)
+                        total += info.st_blocks * 512
+                else:
+                    total += owned_regular(item, VM_BUDGET_BYTES).st_blocks * 512
+            if total > 59_900_000_256:
+                raise ValueError('Windows whole-envelope allocation exceeded')
+            return total
+        receipt['allocatedBefore'] = account()
+        receipt['argv'] = command
+        with (evidence / 'stderr.log').open('xb') as log:
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stderr=log, start_new_session=True, bufsize=0)
+            receipt['launcherPID'] = process.pid
+            leader_stat = Path(f'/proc/{process.pid}/stat').read_text().rsplit(')', 1)[1].split()
+            receipt['launcherStartTicks'] = int(leader_stat[19])
+            receipt['launcherPGID'] = os.getpgid(process.pid)
+            if receipt['launcherPGID'] != process.pid:
+                raise ValueError('launcher process group not isolated')
+            monitor = WindowsGraphicalQMP(process.stdout, process.stdin, evidence, deadline - 5)
+            # Wait for the actual paused QEMU producer before inspecting its
+            # host ancestry. No cont/device/input effect occurs during this.
+            monitor.handshake()
+            manifest = json.loads((root / 'graphical-manifest.json').read_text())
+            namespace_fd, qemu_identity, ancestry = pin_owned_qemu_network(
+                process.pid, (root / manifest['image'], root / manifest['base'], Path(package_iso),
+                              root / manifest['code'], root / manifest['vars']), deadline - 5,
+                allow_setup_root=True)
+            monitor.qemu_identity = qemu_identity
+            monitor.qemu_argv = Path(f'/proc/{qemu_identity[0]}/cmdline').read_bytes()
+            receipt['qemuIdentity'] = qemu_identity
+            receipt['ancestry'] = ancestry
+            receipt['bootID'] = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+            receipt['cgroup'] = Path(f'/proc/{qemu_identity[0]}/cgroup').read_text().strip()
+            if any(os.getpgid(row[0]) != process.pid for row in ancestry):
+                raise ValueError('owned setup/QEMU escaped exact launcher process group')
+            receipt['deviceProof'] = monitor.start(root / manifest['image'], Path(package_iso),
+                                                  root / manifest['code'], root / manifest['vars'])
+            pending = bytearray()
+            with selectors.DefaultSelector() as io:
+                io.register(control_in, selectors.EVENT_READ)
+                for _ in range(64):
+                    while b'\n' not in pending:
+                        remaining = deadline - 5 - time.monotonic()
+                        if remaining <= 0 or not io.select(remaining):
+                            raise TimeoutError('Windows control absolute deadline')
+                        chunk = os.read(control_in.fileno(), 4096)
+                        if not chunk:
+                            raise ValueError('control session closed; not app acceptance')
+                        pending.extend(chunk)
+                        if len(pending) > 4096:
+                            raise ValueError('bounded control request required')
+                    line, _, rest = pending.partition(b'\n'); pending[:] = rest
+                    op = json.loads(line)
+                    if not isinstance(op, dict):
+                        raise ValueError('control object required')
+                    kind = op.get('kind')
+                    if kind == 'capture':
+                        result = monitor.capture(op['number'])
+                    elif kind == 'click':
+                        if op.get('visibleEnabledTarget') is not True or not isinstance(op.get('target'), str) or not 1 <= len(op['target']) <= 80:
+                            raise ValueError('current visible enabled target observation required')
+                        result = monitor.click(op['frame'], op['sha256'], op['x'], op['y'], op.get('clickCount', 1))
+                    elif kind == 'powerdown':
+                        result = monitor.call('system_powerdown')
+                    elif kind == 'quit':
+                        monitor.call('quit')
+                        break
+                    else:
+                        raise ValueError('unapproved Windows control operation')
+                    receipt['operations'].append({'request': op, 'result': {
+                        k: v for k, v in result.items() if k != 'imageBase64'}})
+                    packet = (json.dumps(result) + '\n').encode()
+                    # The controlled stream is private; output must be drained
+                    # by the same admitted controller or the operation refuses.
+                    offset = 0
+                    with selectors.DefaultSelector() as writable:
+                        writable.register(control_out, selectors.EVENT_WRITE)
+                        os.set_blocking(control_out.fileno(), False)
+                        try:
+                            while offset < len(packet):
+                                remaining = deadline - 5 - time.monotonic()
+                                if remaining <= 0 or not writable.select(remaining):
+                                    raise TimeoutError('control output deadline')
+                                try:
+                                    offset += os.write(control_out.fileno(), packet[offset:offset + 65536])
+                                except BlockingIOError:
+                                    continue
+                        finally:
+                            os.set_blocking(control_out.fileno(), True)
+                    account()
+                else:
+                    raise ValueError('Windows operation count exhausted')
+            receipt['qemuLauncherExit'] = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+            receipt['allocatedAfter'] = account()
+            # Human-observed app/guest acceptance is separate. No settable
+            # accepted flag can promote a stream of pointer operations to it.
+            return receipt
+    except BaseException as error:
+        receipt['error'] = str(error)
+        raise
+    finally:
+        if process is not None and process.poll() is None:
+            if monitor is not None:
+                try:
+                    monitor.deadline = time.monotonic() + 2
+                    monitor.call('quit')
+                    process.wait(timeout=2)
+                except (OSError, ValueError, TimeoutError, subprocess.TimeoutExpired):
+                    pass
+            if process.poll() is None:
+                try:
+                    fields = Path(f'/proc/{process.pid}/stat').read_text().rsplit(')', 1)[1].split()
+                    if (int(fields[19]) != receipt['launcherStartTicks'] or
+                            os.getpgid(process.pid) != process.pid):
+                        raise ValueError('launcher identity changed before cleanup')
+                    # Only this freshly created and still-bound process group,
+                    # never a process-name search or an arbitrary old queue job.
+                    stopped = subprocess.run(['sudo', '-n', 'kill', '-KILL', '--',
+                                              '-' + str(process.pid)], timeout=3,
+                                             capture_output=True)
+                    receipt['ownedGroupCleanupExit'] = stopped.returncode
+                    process.wait(timeout=3)
+                except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+                    receipt['cleanupError'] = str(error)
+                receipt['rootFinalizerRequired'] = process.poll() is None
+                receipt['closureVerified'] = False
+            else:
+                receipt['closureVerified'] = True
+        elif process is not None:
+            receipt['closureVerified'] = True
+        if process is not None:
+            receipt['qemuLauncherExit'] = process.returncode
+            if monitor is not None and monitor.qemu_identity is not None:
+                qpid, qstart, _, _ = monitor.qemu_identity
+                try:
+                    fields = Path(f'/proc/{qpid}/stat').read_text().rsplit(')', 1)[1].split()
+                    receipt['originalQemuIdentityAbsent'] = int(fields[19]) != qstart
+                except FileNotFoundError:
+                    receipt['originalQemuIdentityAbsent'] = True
+                if not receipt['originalQemuIdentityAbsent']:
+                    receipt['rootFinalizerRequired'] = True
+                    receipt['closureVerified'] = False
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                receipt['ownedProcessGroupAbsent'] = True
+            except PermissionError:
+                receipt['rootFinalizerRequired'] = True
+                receipt['closureVerified'] = False
+            else:
+                receipt['rootFinalizerRequired'] = True
+                receipt['closureVerified'] = False
+        if namespace_fd is not None:
+            os.close(namespace_fd)
+        if monitor is not None:
+            monitor.close()
+        for name, sha in [('base.qcow2', AGENTBOOT_BASE), ('OVMF_CODE_4M.fd', AGENTBOOT_CODE),
+                          ('OVMF_VARS_4M.fd', AGENTBOOT_VARS)]:
+            try:
+                if base_digest(root / name) != sha:
+                    receipt['immutableInputFailure'] = name
+            except OSError as error:
+                receipt['immutableInputFailure'] = str(error)
+        try:
+            evidence = root / 'graphical-evidence'
+            if evidence.is_dir():
+                with (evidence / 'transaction.json').open('x') as stream:
+                    json.dump(receipt, stream, sort_keys=True)
+                    stream.flush(); os.fsync(stream.fileno())
+                sync_directory(evidence)
+        finally:
+            # A failed launcher is not permission to release/reuse its disks.
+            # Refuse return and leave the job logically held for Root cleanup.
+            if receipt.get('rootFinalizerRequired'):
+                # Retain the lock FD in this controller until the independently
+                # admitted Root job finalizer closes the exact remaining unit.
+                _WINDOWS_HELD_LOCKS.append(lock)
+            else:
+                os.close(lock)
+        if receipt.get('rootFinalizerRequired') or receipt.get('immutableInputFailure'):
+            raise RuntimeError('Windows lifecycle/integrity failure; preserve exact job and inputs')
+
+
+_WINDOWS_HELD_LOCKS = []
+
+
+def windows_graphical_main(arguments):
+    """Narrow entry point; these commands require separate Root admission."""
+    import argparse
+    import sys
+    parser = argparse.ArgumentParser(description='Retained AgentBoot graphical transaction; not runtime admission')
+    parser.add_argument('operation', choices=['windows-graphical-initialize', 'windows-graphical-argv',
+                                             'windows-graphical-run'])
+    parser.add_argument('directory', type=Path)
+    parser.add_argument('--package', type=Path)
+    parser.add_argument('--package-sha256')
+    selected = parser.parse_args(arguments)
+    if selected.operation == 'windows-graphical-initialize':
+        if selected.package is not None or selected.package_sha256 is not None:
+            parser.error('initialization does not acquire or stage a package')
+        result = create_windows_graphical_runtime(selected.directory)
+    else:
+        if selected.package is None or selected.package_sha256 is None:
+            parser.error('exact verified package ISO and hash required')
+        if selected.operation == 'windows-graphical-argv':
+            result = windows_graphical_command(selected.directory, selected.package, selected.package_sha256)
+        else:
+            result = run_windows_graphical(selected.directory, selected.package, selected.package_sha256,
+                                           sys.stdin.buffer, sys.stdout.buffer)
+    print(json.dumps(result, sort_keys=True))
+    return 0
 
 
 def run_owned_vm(directory, timeout_seconds=300, isolated_ssh=False, relay_stdio=False):
@@ -803,3 +1410,8 @@ def run_owned_vm(directory, timeout_seconds=300, isolated_ssh=False, relay_stdio
             os.fsync(output.fileno())
         sync_directory(root)
         return receipt
+
+
+if __name__ == '__main__':
+    import sys
+    raise SystemExit(windows_graphical_main(sys.argv[1:]))

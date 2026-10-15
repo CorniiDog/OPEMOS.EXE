@@ -1,5 +1,25 @@
 # OPEMOS.EXE — Product Checklist
 
+## Original-transferred Windows graphical transaction
+
+- [ ] Validate the source candidate on `work/exe-windows-graphical`, based on
+  immutable main `099d38f03bdc2e4c81cb921e7c3625812910c227`. Reproduced blockers:
+  group-only KVM refusal despite retained same-UID ACL access; missing create-only
+  runtime/VARS commit; status-only QMP without framebuffer/pointer control.
+  Existing runner now contains the exact AgentBoot initialization, sandbox
+  KVM API probe, paused device proof, stdio frame/real-pointer operation stream,
+  full-package binding and bounded custody/closure candidate. No new suite,
+  viewer endpoint, credentials, Core source or R17/PR180 mutation.
+  New `tests/windows_graphical_test.py` exercises a complete actual subprocess/
+  pipe/file protocol transaction and changed failure cases plus real file-lock
+  exclusion; its producer is explicitly not QEMU/Windows/OS acceptance. Run
+  only inside an admitted OMEN VM. Local AST/diff inspection is not a test pass.
+  Actual namespace UID/KVM, firmware/SecureBoot raw0, full current package ISO,
+  Windows login/session and real click/closure remain separately admitted gates.
+  Exact source/argv/input handback goes to Root before any VM operation.
+  A normal source-review/required-CI topic push, if needed, is EXE-lead-only to
+  `https://github.com/CorniiDog/OPEMOS.EXE.git`; no merge or publication authority.
+
 ## Foundation and change policy
 
 Commit `e0502833282ffd9055ecf46f75df82f71a9ee20f` is the current tested
