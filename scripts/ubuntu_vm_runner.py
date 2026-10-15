@@ -1013,6 +1013,8 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
             monitor.qemu_argv = Path(f'/proc/{qemu_identity[0]}/cmdline').read_bytes()
             receipt['qemuIdentity'] = qemu_identity
             receipt['ancestry'] = ancestry
+            namespace_info = os.fstat(namespace_fd)
+            receipt['networkNamespaceIdentity'] = [namespace_info.st_dev, namespace_info.st_ino]
             receipt['bootID'] = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
             receipt['cgroup'] = Path(f'/proc/{qemu_identity[0]}/cgroup').read_text().strip()
             if any(os.getpgid(row[0]) != process.pid for row in ancestry):
@@ -1024,15 +1026,22 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
                 io.register(control_in, selectors.EVENT_READ)
                 for _ in range(64):
                     while b'\n' not in pending:
+                        if process.poll() is not None:
+                            receipt['guestShutdownObserved'] = True
+                            break
                         remaining = deadline - 5 - time.monotonic()
-                        if remaining <= 0 or not io.select(remaining):
+                        if remaining <= 0:
                             raise TimeoutError('Windows control absolute deadline')
+                        if not io.select(min(remaining, 0.25)):
+                            continue
                         chunk = os.read(control_in.fileno(), 4096)
                         if not chunk:
                             raise ValueError('control session closed; not app acceptance')
                         pending.extend(chunk)
                         if len(pending) > 4096:
                             raise ValueError('bounded control request required')
+                    if process.poll() is not None:
+                        break
                     line, _, rest = pending.partition(b'\n'); pending[:] = rest
                     op = json.loads(line)
                     if not isinstance(op, dict):
