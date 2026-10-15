@@ -34,17 +34,39 @@ func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
 func text(_ element: AXUIElement, _ attribute: String) -> String {
     return value(element, attribute) as? String ?? ""
 }
-func find(_ root: AXUIElement, _ predicate: (AXUIElement) -> Bool) throws -> AXUIElement? {
+func find(_ root: AXUIElement, unique: Bool = false, _ predicate: (AXUIElement) -> Bool) throws -> AXUIElement? {
     var queue = [root]
     var count = 0
+    var matches: [AXUIElement] = []
     while !queue.isEmpty {
         try require(Date() < deadline && count < 6000, "AX tree/time bound")
         let element = queue.removeFirst()
         count += 1
-        if predicate(element) { return element }
+        if predicate(element) {
+            if !unique { return element }
+            matches.append(element)
+            record("target-candidate", describeTarget(element))
+        }
         queue.append(contentsOf: value(element, kAXChildrenAttribute) as? [AXUIElement] ?? [])
     }
-    return nil
+    try require(matches.count <= 1, "ambiguous accessible target; no first-match click")
+    return matches.first
+}
+func describeTarget(_ element: AXUIElement) -> [String: Any] {
+    var current: AXUIElement? = element
+    var ancestry: [[String: Any]] = []
+    for _ in 0..<12 {
+        guard let node = current else { break }
+        var pid: pid_t = 0
+        AXUIElementGetPid(node, &pid)
+        let enabled: Any = (value(node, kAXEnabledAttribute) as? Bool).map { $0 as Any } ?? "unknown"
+        ancestry.append(["role": text(node, kAXRoleAttribute), "title": text(node, kAXTitleAttribute),
+            "description": text(node, kAXDescriptionAttribute), "identifier": text(node, kAXIdentifierAttribute),
+            "pid": pid, "enabled": enabled])
+        guard let parent = value(node, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+        current = (parent as! AXUIElement)
+    }
+    return ["ancestry": ancestry]
 }
 func bounds(_ element: AXUIElement) throws -> CGRect {
     var p = CGPoint.zero
@@ -184,7 +206,7 @@ do {
     }
     let root = AXUIElementCreateApplication(owned!.processIdentifier)
     func button(_ label: String) throws -> AXUIElement? {
-        return try find(root) { e in text(e, kAXRoleAttribute) == "AXButton" &&
+        return try find(root, unique: true) { e in text(e, kAXRoleAttribute) == "AXButton" &&
             [text(e, kAXTitleAttribute), text(e, kAXDescriptionAttribute)].contains(label) }
     }
     var open: AXUIElement?

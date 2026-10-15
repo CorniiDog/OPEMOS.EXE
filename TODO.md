@@ -39,6 +39,15 @@
   The next native run selects the remaining retirement and welcome cases,
   required lint/checks, current app build and full genuine GUI transaction;
   prior passes are retained, not replayed or relabeled as corrected-head proof.
+  Final `02d6c95901dcbcecc7c7e21b0ca4495286a9facd` evidence identified
+  duplicate “Close settings” accessible names: the helper selected the full-window
+  scrim, not the visible X. Give the backdrop a distinct accessible action and
+  require unique native targets with AX ancestry diagnostics. Keep all geometry,
+  occlusion, enabled-state, real-pointer and normal-close gates. Reconcile the
+  welcome Rust source invariant with the real numeric-loopback TCP/HTTP-handler
+  metadata contract; retain token/authentication and same-head live HTTP checks.
+  New exact-head M1 full Settings close/app close and required checks remain
+  unverified; no longer timeout, clipped target or forced click is substituted.
 
 ## Foundation and change policy
 

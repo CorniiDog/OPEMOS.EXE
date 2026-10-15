@@ -4438,7 +4438,11 @@ done"#
         assert!(welcome.contains("qmlscene"));
         assert!(welcome.contains("WELCOME_SERVER"));
         assert!(!welcome.contains("eval "));
-        assert!(server.contains("ThreadingHTTPServer((\"127.0.0.1\", 0)"));
+        assert!(
+            server.contains("socketserver.ThreadingTCPServer((\"127.0.0.1\", 0), Handler)")
+        );
+        assert!(server.contains("server.server_name, server.server_port = server.server_address"));
+        assert!(!server.contains("socket.getfqdn("));
         assert!(server.contains("X-OPEMOS-Token"));
         assert!(!server.contains("shell=True"));
         assert!(html.contains("close-app"));

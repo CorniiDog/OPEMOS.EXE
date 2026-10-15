@@ -118,14 +118,14 @@ def main():
         receipt["stages"]["gui"] = {"state": "not_run", "reason": "awaiting native app" if helper_built else "helper compilation failed"}
         save()
         for name, args in [
-            ("frontend", ["node", "--test", "tests/welcome-runtime.test.mjs"]),
+            ("frontend", ["node", "--test", "tests/settings-accessibility.test.mjs", "tests/welcome-runtime.test.mjs"]),
             ("docs", ["npm", "run", "test:docs"]),
             ("hygiene", ["npm", "run", "test:hygiene"]),
             ("format", ["cargo", "fmt", "--manifest-path", "src-tauri/Cargo.toml", "--", "--check"]),
             ("clippy", ["cargo", "clippy", "--manifest-path", "src-tauri/Cargo.toml", "--locked",
                         "--target", TARGET, "--all-targets", "--all-features", "--", "-D", "warnings"]),
             ("rust-tests", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked", "--target", TARGET,
-                            "retirement_rejects_a_renamed_handoff_without_losing_retry_identity"])]:
+                            "installation_media_welcome_is_bundled_with_a_bounded_privilege_boundary"])]:
             run(name, args, 1200)
         built = run("native-build", ["npm", "run", "build:app", "--", "--target", TARGET], 1800)
         if receipt["locks"] != {name: digest(ROOT / name) for name in LOCKS}:
