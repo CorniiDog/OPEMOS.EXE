@@ -634,6 +634,8 @@ def create_windows_graphical_runtime(directory):
     lifecycle ownership is held throughout. Any partials remain for review, not
     automatically replaced, retired or reused after a failed initialization.
     """
+    if os.getuid() != 1000 or os.geteuid() != 1000:
+        raise ValueError('retained AgentBoot controller must run as UID1000, not root')
     root = Path(directory)
     require_ntfs_envelope(root)
     if (root / '.opemos-migration-owned').read_text() != 'OPEMOS.EXE\n':
@@ -702,6 +704,8 @@ def create_windows_graphical_runtime(directory):
 
 def windows_graphical_command(directory, package_iso, package_sha256):
     """Concrete AgentBoot argv, paused/no-NIC/private stdio; not admission."""
+    if os.getuid() != 1000 or os.geteuid() != 1000:
+        raise ValueError('retained AgentBoot controller must run as UID1000, not root')
     root = Path(directory)
     require_ntfs_envelope(root)
     manifest = json.loads((root / 'graphical-manifest.json').read_text())
@@ -937,6 +941,8 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
     Caller must inspect current frames and attest the visible enabled target.
     No initialization, retry, retirement or original mutation occurs here.
     """
+    if os.getuid() != 1000 or os.geteuid() != 1000:
+        raise ValueError('retained AgentBoot controller must run as UID1000, not root')
     if type(timeout_seconds) is not int or not 15 <= timeout_seconds <= 900:
         raise ValueError('bounded Windows transaction required')
     root = Path(directory)
