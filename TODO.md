@@ -1,5 +1,69 @@
 # OPEMOS.EXE — Product Checklist
 
+## Original-transferred Windows graphical transaction
+
+- [ ] PR181 reviewed `99bfe219` birth-gap correction: failed post-Popen `/proc`
+  lookup left `launcherStartTicks` absent; live cleanup indexed it and could
+  replace the first error with KeyError before receipt/hash/lock finalization.
+  Existing runner now initializes birth as UNKNOWN, records a complete observed
+  birth atomically, and uses a narrow independent finalization path. Unknown
+  birth permits only owned Popen-handle cleanup, never guessed group signalling
+  or closure proof; durable lease remains for Root. Monitor/stop/reap/absence,
+  descriptor closes, envelope and each immutable-input hash, transaction receipt
+  and explicit lock close are independently attempted with structured secondary
+  errors. First failure is durably recorded before slow rehashes. A separate
+  create-only tail records actual lock-close/persistence
+  outcomes; original exception remains primary after all finalization stages.
+  Three additional tests authored: genuine disappeared `/proc` birth, live
+  unknown-birth cleanup with real EBADF/O_EXCL faults, and new ordinary protocol
+  through current birth/capture/click/close/finalizer. Fixture input mismatches
+  remain refusals, never substituted pins or fabricated OS/QEMU proof.
+  NOT RUN: no OMEN test/runtime admission. Local AST/diff only. Exact new source
+  head requires normal remote CI and unchanged-head counterpart/full Root review
+  under the existing pinned causal plan before separate guest admission.
+
+- [ ] PR181 causal correction of reviewed `61b7fd9b` (CI passed, runtime not
+  admitted): process-local FD custody ended at CLI exit, and generic marked
+  NTFS acceptance did not select the retained AgentBoot backing inode. Existing
+  runner now creates/fsyncs a durable deny-reuse lease before Popen, binding the
+  current read-only queue row, actual system unit/invocation/cgroup, controller
+  birth, lock and envelope. Launcher/QEMU births are separately create-only
+  records. Every graphical/legacy lifecycle consumer refuses any lease marker,
+  including malformed/partial/linked or caller-claimed closed markers. The
+  marker stays after clean exit too: no consumer release/rearm/queue mutation;
+  separately admitted Root finalization must prove full unit/pool/group absence
+  and preserve exact cleanup evidence before resource reuse.
+  Graphical initialization/argv/run now require exact retained NTFS backing
+  path/dev2051/inode227/59,900,000,256B/mode0600/UID1000/whole mount, plus actual
+  LOOP_GET_STATUS64 backing identity and zero offset/size limit. Immutable base
+  and firmware pins stay unchanged. Wrong identity refuses, never repins.
+  Four new authored tests cover normal current protocol plus durable lease,
+  actual CLI-exit/live-child/flock boundary with owned subreaper cleanup,
+  malformed/linked/claimed-closed markers and exact-envelope negative cases.
+  NOT RUN: all project tests require a separately admitted OMEN VM. Local AST
+  and diff inspection are not runtime/systemd/KVM/Windows or closure acceptance.
+  Existing CI/passes/failures and commits remain. Normal same-topic source push
+  is necessary only for exact immutable remote review and required CI; no merge,
+  VM launch, package staging, Root finalizer execution or publication authorized.
+
+- [ ] Validate the source candidate on `work/exe-windows-graphical`, based on
+  immutable main `099d38f03bdc2e4c81cb921e7c3625812910c227`. Reproduced blockers:
+  group-only KVM refusal despite retained same-UID ACL access; missing create-only
+  runtime/VARS commit; status-only QMP without framebuffer/pointer control.
+  Existing runner now contains the exact AgentBoot initialization, sandbox
+  KVM API probe, paused device proof, stdio frame/real-pointer operation stream,
+  full-package binding and bounded custody/closure candidate. No new suite,
+  viewer endpoint, credentials, Core source or R17/PR180 mutation.
+  New `tests/windows_graphical_test.py` exercises a complete actual subprocess/
+  pipe/file protocol transaction and changed failure cases plus real file-lock
+  exclusion; its producer is explicitly not QEMU/Windows/OS acceptance. Run
+  only inside an admitted OMEN VM. Local AST/diff inspection is not a test pass.
+  Actual namespace UID/KVM, firmware/SecureBoot raw0, full current package ISO,
+  Windows login/session and real click/closure remain separately admitted gates.
+  Exact source/argv/input handback goes to Root before any VM operation.
+  A normal source-review/required-CI topic push, if needed, is EXE-lead-only to
+  `https://github.com/CorniiDog/OPEMOS.EXE.git`; no merge or publication authority.
+
 ## Foundation and change policy
 
 Commit `e0502833282ffd9055ecf46f75df82f71a9ee20f` is the current tested
