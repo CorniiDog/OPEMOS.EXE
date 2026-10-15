@@ -1098,6 +1098,166 @@ class WindowsGraphicalQMP:
         self.selector.close()
 
 
+def capture_windows_launcher(process, receipt, evidence):
+    """An unobserved birth stays UNKNOWN, including a genuine /proc failure."""
+    receipt['launcherPID'] = process.pid
+    receipt['launcherBirth'] = 'UNKNOWN'
+    birth = windows_process_identity(process.pid)
+    if birth['pgid'] != process.pid:
+        raise ValueError('launcher process group not isolated')
+    receipt.update(launcherBirth=birth, launcherStartTicks=birth['startTicks'],
+                   launcherPGID=birth['pgid'])
+    persist_windows_record(evidence / 'lease-launcher.json', {
+        'lease': receipt['durableLease'], 'launcher': birth})
+
+
+def finalize_windows_graphical(root, lock, process, monitor, namespace_fd, envelope, receipt):
+    """Independent cleanup/evidence stages; never replace first error.
+
+    Only run_windows_graphical's own Popen handle can be cleaned. Unknown birth
+    never authorizes group signalling or a closure claim. Durable lease custody
+    is separate from every local close, reap, proof and receipt attempt.
+    """
+    errors = receipt.setdefault('secondaryErrors', [])
+    receipt['closureVerified'] = False
+    if process is not None:
+        receipt.setdefault('launcherBirth', 'UNKNOWN')
+        receipt.setdefault('qemuLauncherExit', 'UNKNOWN')
+
+    def attempt(stage, action):
+        try:
+            action()
+        except BaseException as error:
+            errors.append({'stage': stage, 'type': type(error).__name__, 'error': str(error)})
+            receipt['rootFinalizerRequired'] = True
+            receipt['closureVerified'] = False
+
+    def stop_monitor():
+        if process is not None and process.poll() is None and monitor is not None:
+            monitor.deadline = time.monotonic() + 2
+            monitor.call('quit')
+            process.wait(timeout=2)
+
+    def stop_owned_child():
+        if process is None or process.poll() is not None:
+            return
+        birth = receipt.get('launcherBirth', 'UNKNOWN')
+        if not isinstance(birth, dict):
+            receipt['launcherBirth'] = 'UNKNOWN'
+            receipt['rootFinalizerRequired'] = True
+            receipt['ownedCleanupScope'] = 'Popen handle only; no group birth proof'
+            # Popen owns an unreaped direct child. Its kill implementation checks
+            # child status before signalling; no discovered PID/name is used.
+            # If sudo changed UID and denies this signal, record that refusal
+            # and let the separately admitted Root unit finalizer handle it.
+            process.kill()
+        else:
+            current = windows_process_identity(process.pid)
+            if (current['startTicks'] != birth['startTicks'] or
+                    current['pgid'] != process.pid or birth['pgid'] != process.pid):
+                raise ValueError('launcher birth/group changed before cleanup')
+            stopped = subprocess.run(['sudo', '-n', 'kill', '-KILL', '--',
+                                      '-' + str(process.pid)], timeout=3, capture_output=True)
+            receipt['ownedGroupCleanupExit'] = stopped.returncode
+            if stopped.returncode != 0:
+                raise RuntimeError('owned process group cleanup refused')
+
+    def reap_child():
+        if process is not None:
+            receipt['qemuLauncherExit'] = process.wait(timeout=3)
+
+    def prove_qemu_absence():
+        identity = None if monitor is None else monitor.qemu_identity
+        if identity is None:
+            receipt['originalQemuIdentityAbsent'] = 'UNKNOWN'
+            if process is not None:
+                receipt['rootFinalizerRequired'] = True
+            return
+        qpid, qstart, _, _ = identity
+        try:
+            fields = Path(f'/proc/{qpid}/stat').read_text().rsplit(')', 1)[1].split()
+            receipt['originalQemuIdentityAbsent'] = int(fields[19]) != qstart
+        except FileNotFoundError:
+            receipt['originalQemuIdentityAbsent'] = True
+        if receipt['originalQemuIdentityAbsent'] is not True:
+            receipt['rootFinalizerRequired'] = True
+
+    def prove_group_absence():
+        if process is None:
+            return
+        if not isinstance(receipt.get('launcherBirth'), dict):
+            receipt['ownedProcessGroupAbsent'] = 'UNKNOWN'
+            receipt['rootFinalizerRequired'] = True
+            return
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            receipt['ownedProcessGroupAbsent'] = True
+        else:
+            receipt['ownedProcessGroupAbsent'] = False
+            receipt['rootFinalizerRequired'] = True
+
+    try:
+        if receipt.get('primaryError') is not None:
+            # Preserve the original failure before slow immutable rehashes or
+            # other cleanup can itself hit the enclosing Root job deadline.
+            attempt('first-error-persist', lambda: persist_windows_record(
+                root / 'graphical-evidence' / 'first-error.json', {
+                    'primaryError': receipt['primaryError'],
+                    'launcherPID': None if process is None else process.pid,
+                    'launcherBirth': receipt.get('launcherBirth', 'UNKNOWN'),
+                    'durableLease': receipt.get('durableLease'),
+                    'resourceReleaseAuthorized': False}))
+        attempt('monitor-quit', stop_monitor)
+        attempt('owned-child-stop', stop_owned_child)
+        attempt('launcher-reap', reap_child)
+        attempt('qemu-absence', prove_qemu_absence)
+        attempt('group-absence', prove_group_absence)
+        if namespace_fd is not None:
+            attempt('namespace-close', lambda: os.close(namespace_fd))
+        if monitor is not None:
+            attempt('monitor-close', monitor.close)
+        if process is not None:
+            for name in ('stdin', 'stdout', 'stderr'):
+                stream = getattr(process, name, None)
+                if stream is not None:
+                    attempt('launcher-' + name + '-close', stream.close)
+
+        def check_envelope():
+            receipt['envelopeAfter'] = require_agentboot_envelope(root)
+            if any(receipt['envelopeAfter'][key] != envelope[key]
+                   for key in envelope if key != 'hostAllocatedBytes'):
+                raise ValueError('AgentBoot envelope identity changed')
+        attempt('envelope-revalidation', check_envelope)
+        receipt['immutableInputChecks'] = []
+        for name, sha in [('base.qcow2', AGENTBOOT_BASE), ('OVMF_CODE_4M.fd', AGENTBOOT_CODE),
+                          ('OVMF_VARS_4M.fd', AGENTBOOT_VARS)]:
+            def check_input(name=name, sha=sha):
+                actual = base_digest(root / name)
+                receipt['immutableInputChecks'].append({'name': name, 'sha256': actual,
+                                                       'matches': actual == sha})
+                if actual != sha:
+                    raise ValueError('immutable input hash mismatch: ' + name)
+            attempt('input-rehash:' + name, check_input)
+        receipt['closureVerified'] = (process is not None and process.returncode is not None and
+                                      receipt.get('ownedProcessGroupAbsent') is True and
+                                      receipt.get('originalQemuIdentityAbsent') is True and not errors and
+                                      not receipt.get('rootFinalizerRequired'))
+        receipt['explicitLockClose'] = 'PENDING'
+        attempt('transaction-persist', lambda: persist_windows_record(
+            root / 'graphical-evidence' / 'transaction.json', receipt))
+    finally:
+        # Even a schema/receipt/close error cannot skip the original lock close.
+        def close_lock():
+            os.close(lock)
+            receipt['explicitLockClose'] = 'CLOSED'
+        attempt('lock-close', close_lock)
+        # transaction.json precedes lock release. This independent create-only
+        # tail carries the actual close result and any persistence/close errors.
+        attempt('finalization-tail-persist', lambda: persist_windows_record(
+            root / 'graphical-evidence' / 'finalization.json', receipt))
+
+
 def run_windows_graphical(directory, package_iso, package_sha256, control_in, control_out,
                           timeout_seconds=900, queue_directory=None):
     """Exact paused AgentBoot -> frames/pointer -> shutdown source transaction.
@@ -1125,6 +1285,7 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
     process = monitor = None
     namespace_fd = None
     receipt = {'workflowAccepted': False, 'operations': [], 'envelope': envelope}
+    primary = None
     deadline = time.monotonic() + timeout_seconds
     try:
         command = windows_graphical_command(root, package_iso, package_sha256)
@@ -1183,14 +1344,7 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
         with (evidence / 'stderr.log').open('xb') as log:
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=log, start_new_session=True, bufsize=0)
-            receipt['launcherPID'] = process.pid
-            leader_stat = Path(f'/proc/{process.pid}/stat').read_text().rsplit(')', 1)[1].split()
-            receipt['launcherStartTicks'] = int(leader_stat[19])
-            receipt['launcherPGID'] = os.getpgid(process.pid)
-            persist_windows_record(evidence / 'lease-launcher.json', {
-                'lease': receipt['durableLease'], 'launcher': windows_process_identity(process.pid)})
-            if receipt['launcherPGID'] != process.pid:
-                raise ValueError('launcher process group not isolated')
+            capture_windows_launcher(process, receipt, evidence)
             monitor = WindowsGraphicalQMP(process.stdout, process.stdin, evidence, deadline - 12)
             # Wait for the actual paused QEMU producer before inspecting its
             # host ancestry. No cont/device/input effect occurs during this.
@@ -1284,95 +1438,22 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
             receipt['allocatedAfter'] = account()
             # Human-observed app/guest acceptance is separate. No settable
             # accepted flag can promote a stream of pointer operations to it.
-            return receipt
     except BaseException as error:
+        primary = error
         receipt['error'] = str(error)
-        raise
+        receipt['primaryError'] = {'type': type(error).__name__, 'error': str(error)}
     finally:
-        if process is not None and process.poll() is None:
-            if monitor is not None:
-                try:
-                    monitor.deadline = time.monotonic() + 2
-                    monitor.call('quit')
-                    process.wait(timeout=2)
-                except (OSError, ValueError, TimeoutError, subprocess.TimeoutExpired):
-                    pass
-            if process.poll() is None:
-                try:
-                    fields = Path(f'/proc/{process.pid}/stat').read_text().rsplit(')', 1)[1].split()
-                    if (int(fields[19]) != receipt['launcherStartTicks'] or
-                            os.getpgid(process.pid) != process.pid):
-                        raise ValueError('launcher identity changed before cleanup')
-                    # Only this freshly created and still-bound process group,
-                    # never a process-name search or an arbitrary old queue job.
-                    stopped = subprocess.run(['sudo', '-n', 'kill', '-KILL', '--',
-                                              '-' + str(process.pid)], timeout=3,
-                                             capture_output=True)
-                    receipt['ownedGroupCleanupExit'] = stopped.returncode
-                    process.wait(timeout=3)
-                except (OSError, ValueError, subprocess.TimeoutExpired) as error:
-                    receipt['cleanupError'] = str(error)
-                receipt['rootFinalizerRequired'] = process.poll() is None
-                receipt['closureVerified'] = False
-            else:
-                receipt['closureVerified'] = True
-        elif process is not None:
-            receipt['closureVerified'] = True
-        if process is not None:
-            receipt['qemuLauncherExit'] = process.returncode
-            if monitor is not None and monitor.qemu_identity is not None:
-                qpid, qstart, _, _ = monitor.qemu_identity
-                try:
-                    fields = Path(f'/proc/{qpid}/stat').read_text().rsplit(')', 1)[1].split()
-                    receipt['originalQemuIdentityAbsent'] = int(fields[19]) != qstart
-                except FileNotFoundError:
-                    receipt['originalQemuIdentityAbsent'] = True
-                if not receipt['originalQemuIdentityAbsent']:
-                    receipt['rootFinalizerRequired'] = True
-                    receipt['closureVerified'] = False
-            try:
-                os.killpg(process.pid, 0)
-            except ProcessLookupError:
-                receipt['ownedProcessGroupAbsent'] = True
-            except PermissionError:
-                receipt['rootFinalizerRequired'] = True
-                receipt['closureVerified'] = False
-            else:
-                receipt['rootFinalizerRequired'] = True
-                receipt['closureVerified'] = False
-        if namespace_fd is not None:
-            os.close(namespace_fd)
-        if monitor is not None:
-            monitor.close()
-        try:
-            receipt['envelopeAfter'] = require_agentboot_envelope(root)
-            if any(receipt['envelopeAfter'][key] != envelope[key]
-                   for key in envelope if key != 'hostAllocatedBytes'):
-                receipt['immutableInputFailure'] = 'AgentBoot envelope identity changed'
-        except (OSError, ValueError, subprocess.SubprocessError) as error:
-            receipt['immutableInputFailure'] = 'AgentBoot envelope: ' + str(error)
-        for name, sha in [('base.qcow2', AGENTBOOT_BASE), ('OVMF_CODE_4M.fd', AGENTBOOT_CODE),
-                          ('OVMF_VARS_4M.fd', AGENTBOOT_VARS)]:
-            try:
-                if base_digest(root / name) != sha:
-                    receipt['immutableInputFailure'] = name
-            except OSError as error:
-                receipt['immutableInputFailure'] = str(error)
-        try:
-            evidence = root / 'graphical-evidence'
-            if evidence.is_dir():
-                with (evidence / 'transaction.json').open('x') as stream:
-                    json.dump(receipt, stream, sort_keys=True)
-                    stream.flush(); os.fsync(stream.fileno())
-                sync_directory(evidence)
-        finally:
-            # flock lifetime is NOT resource custody. The create-only durable
-            # lease remains after normal exit, exceptions, SIGKILL or power loss.
-            # Every runner refuses it; Root finalizes separately after this unit
-            # (including this controller) is proven empty. No auto-clear path.
-            os.close(lock)
-        if receipt.get('rootFinalizerRequired') or receipt.get('immutableInputFailure'):
-            raise RuntimeError('Windows lifecycle/integrity failure; preserve exact job and inputs')
+        finalize_windows_graphical(root, lock, process, monitor, namespace_fd, envelope, receipt)
+    if primary is not None:
+        primary.add_note('Windows finalization evidence: ' + json.dumps({
+            'secondaryErrors': receipt.get('secondaryErrors', []),
+            'rootFinalizerRequired': receipt.get('rootFinalizerRequired', False),
+            'explicitLockClose': receipt.get('explicitLockClose', 'UNKNOWN')}))
+        raise primary
+    if receipt.get('rootFinalizerRequired') or receipt.get('secondaryErrors'):
+        raise RuntimeError('Windows lifecycle/integrity failure; preserve exact job and inputs: ' +
+                           json.dumps(receipt.get('secondaryErrors', [])))
+    return receipt
 
 
 def windows_graphical_main(arguments):

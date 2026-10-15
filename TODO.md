@@ -2,6 +2,26 @@
 
 ## Original-transferred Windows graphical transaction
 
+- [ ] PR181 reviewed `99bfe219` birth-gap correction: failed post-Popen `/proc`
+  lookup left `launcherStartTicks` absent; live cleanup indexed it and could
+  replace the first error with KeyError before receipt/hash/lock finalization.
+  Existing runner now initializes birth as UNKNOWN, records a complete observed
+  birth atomically, and uses a narrow independent finalization path. Unknown
+  birth permits only owned Popen-handle cleanup, never guessed group signalling
+  or closure proof; durable lease remains for Root. Monitor/stop/reap/absence,
+  descriptor closes, envelope and each immutable-input hash, transaction receipt
+  and explicit lock close are independently attempted with structured secondary
+  errors. First failure is durably recorded before slow rehashes. A separate
+  create-only tail records actual lock-close/persistence
+  outcomes; original exception remains primary after all finalization stages.
+  Three additional tests authored: genuine disappeared `/proc` birth, live
+  unknown-birth cleanup with real EBADF/O_EXCL faults, and new ordinary protocol
+  through current birth/capture/click/close/finalizer. Fixture input mismatches
+  remain refusals, never substituted pins or fabricated OS/QEMU proof.
+  NOT RUN: no OMEN test/runtime admission. Local AST/diff only. Exact new source
+  head requires normal remote CI and unchanged-head counterpart/full Root review
+  under the existing pinned causal plan before separate guest admission.
+
 - [ ] PR181 causal correction of reviewed `61b7fd9b` (CI passed, runtime not
   admitted): process-local FD custody ended at CLI exit, and generic marked
   NTFS acceptance did not select the retained AgentBoot backing inode. Existing

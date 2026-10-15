@@ -291,6 +291,148 @@ finally:
         with self.assertRaises(ValueError):
             runner.validate_agentboot_envelope({**observed, 'backingIdentity': [2052, 227]}, root)
 
+    def test_real_disappeared_proc_birth_keeps_primary_and_completes_finalization(self):
+        with tempfile.TemporaryDirectory(prefix='opemos-birth-missing-') as directory:
+            root = Path(directory)
+            evidence = root / 'graphical-evidence'; evidence.mkdir()
+            (root / '.lifecycle-lock').touch(mode=0o600)
+            lock = runner.windows_runtime_lock(root)
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            receipt = {'durableLease': runner.reserve_windows_lease(
+                root, lock, {'fixtureOnly': True}, ['exited-child-not-qemu'], {'fixtureOnly': True})}
+            child = subprocess.Popen([sys.executable, '-c', 'pass'], start_new_session=True,
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            identity = fixture_spawn_receipt(child, 'actual-missing-proc-birth-not-guest')
+            try:
+                self.assertEqual(child.wait(timeout=3), 0)
+                # A genuine absent /proc record, not an overridden stat reader.
+                try:
+                    runner.capture_windows_launcher(child, receipt, evidence)
+                except FileNotFoundError as error:
+                    receipt['primaryError'] = {'type': type(error).__name__, 'error': str(error)}
+                else:
+                    self.fail('reaped child unexpectedly supplied an original birth')
+                self.assertEqual(receipt['launcherBirth'], 'UNKNOWN')
+                original = dict(receipt['primaryError'])
+                runner.finalize_windows_graphical(root, lock, child, None, None, {}, receipt)
+                tail = json.loads((evidence / 'finalization.json').read_text())
+                self.assertEqual(tail['primaryError'], original)
+                self.assertEqual(json.loads((evidence / 'first-error.json').read_text())['primaryError'], original)
+                self.assertEqual(tail['launcherBirth'], 'UNKNOWN')
+                self.assertEqual(tail['qemuLauncherExit'], 0)
+                self.assertEqual(tail['explicitLockClose'], 'CLOSED')
+                self.assertTrue(tail['rootFinalizerRequired'])
+                self.assertFalse(tail['closureVerified'])
+                stages = {row['stage'] for row in tail['secondaryErrors']}
+                self.assertIn('envelope-revalidation', stages)
+                for name in ['base.qcow2', 'OVMF_CODE_4M.fd', 'OVMF_VARS_4M.fd']:
+                    self.assertIn('input-rehash:' + name, stages)
+                self.assertTrue((evidence / 'transaction.json').exists())
+                with self.assertRaises(OSError):
+                    os.fstat(lock)
+                with self.assertRaisesRegex(ValueError, 'durable Windows lease'):
+                    runner.windows_runtime_lock(root)
+            finally:
+                if child.poll() is None:
+                    child.kill(); child.wait(timeout=3)
+                for stream in (child.stdin, child.stdout, child.stderr):
+                    stream.close()
+                fixture_reap_receipt(child, identity)
+                if receipt.get('explicitLockClose') != 'CLOSED':
+                    os.close(lock)
+
+    def test_live_unknown_birth_independent_close_and_persistence_errors_keep_evidence(self):
+        with tempfile.TemporaryDirectory(prefix='opemos-birth-live-') as directory:
+            root = Path(directory)
+            evidence = root / 'graphical-evidence'; evidence.mkdir()
+            (root / '.lifecycle-lock').touch(mode=0o600)
+            lock = runner.windows_runtime_lock(root)
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            receipt = {'durableLease': runner.reserve_windows_lease(
+                root, lock, {'fixtureOnly': True}, ['live-child-not-qemu'], {'fixtureOnly': True}),
+                       'primaryError': {'type': 'OSError', 'error': 'retained unobserved birth state'}}
+            # This is the interrupted record shape, not a simulated successful
+            # /proc observation. The target may not turn it into group proof.
+            (evidence / 'transaction.json').write_bytes(b'preserve original transaction')
+            child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'],
+                                     start_new_session=True, stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            identity = fixture_spawn_receipt(child, 'live-unknown-birth-cleanup-not-guest')
+            try:
+                # Real EBADF and O_EXCL failures, no method under test replaced.
+                runner.finalize_windows_graphical(root, lock, child, None, -1, {}, receipt)
+                tail = json.loads((evidence / 'finalization.json').read_text())
+                self.assertEqual(child.returncode, -9)
+                self.assertEqual(tail['launcherBirth'], 'UNKNOWN')
+                self.assertEqual(tail['ownedProcessGroupAbsent'], 'UNKNOWN')
+                self.assertNotIn('ownedGroupCleanupExit', tail)
+                self.assertEqual(tail['explicitLockClose'], 'CLOSED')
+                self.assertEqual(tail['primaryError'], receipt['primaryError'])
+                self.assertEqual(json.loads((evidence / 'first-error.json').read_text())['primaryError'], receipt['primaryError'])
+                self.assertFalse(tail['closureVerified'])
+                self.assertTrue(tail['rootFinalizerRequired'])
+                stages = {row['stage'] for row in tail['secondaryErrors']}
+                self.assertIn('namespace-close', stages)
+                self.assertIn('transaction-persist', stages)
+                self.assertEqual((evidence / 'transaction.json').read_bytes(), b'preserve original transaction')
+                self.assertEqual(len([s for s in stages if s.startswith('input-rehash:')]), 3)
+                with self.assertRaises(OSError):
+                    os.fstat(lock)
+                with self.assertRaisesRegex(ValueError, 'durable Windows lease'):
+                    runner.windows_runtime_lock(root)
+            finally:
+                if child.poll() is None:
+                    child.kill(); child.wait(timeout=3)
+                for stream in (child.stdin, child.stdout, child.stderr):
+                    stream.close()
+                fixture_reap_receipt(child, identity)
+                if receipt.get('explicitLockClose') != 'CLOSED':
+                    os.close(lock)
+
+    def test_new_normal_protocol_through_birth_and_finalizer_does_not_fake_os_proof(self):
+        with tempfile.TemporaryDirectory(prefix='opemos-birth-protocol-') as directory:
+            root = Path(directory)
+            (root / '.lifecycle-lock').touch(mode=0o600)
+            lock = runner.windows_runtime_lock(root)
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            receipt = {'durableLease': runner.reserve_windows_lease(
+                root, lock, {'fixtureOnly': True}, ['protocol-not-qemu'], {'fixtureOnly': True})}
+            evidence = root / 'graphical-evidence'; evidence.mkdir()
+            # Real fixture bytes must be rehashed and rejected, not installed as
+            # new expected AgentBoot pins to make this caller pass.
+            for name in ['base.qcow2', 'OVMF_CODE_4M.fd', 'OVMF_VARS_4M.fd']:
+                (root / name).write_bytes(b'NOT AUTHENTICATED AGENTBOOT INPUT')
+            child = subprocess.Popen([sys.executable, '-c', PRODUCER, str(evidence), 'normal'],
+                                     start_new_session=True, stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+            identity = fixture_spawn_receipt(child, 'normal-birth-protocol-finalizer-not-guest')
+            monitor = runner.WindowsGraphicalQMP(child.stdout, child.stdin, evidence, time.monotonic() + 10)
+            try:
+                runner.capture_windows_launcher(child, receipt, evidence)
+                self.start(evidence, monitor)
+                frame = monitor.capture(0)
+                self.assertTrue(monitor.click(0, frame['sha256'], 1, 1)['actualPointerEvents'])
+                monitor.call('quit'); self.assertEqual(child.wait(timeout=3), 0)
+                runner.finalize_windows_graphical(root, lock, child, monitor, None, {}, receipt)
+                tail = json.loads((evidence / 'finalization.json').read_text())
+                self.assertEqual(tail['launcherBirth']['startTicks'], identity['startTicks'])
+                self.assertEqual(tail['qemuLauncherExit'], 0)
+                self.assertEqual(len(tail['immutableInputChecks']), 3)
+                self.assertTrue(all(row['matches'] is False for row in tail['immutableInputChecks']))
+                self.assertEqual(tail['originalQemuIdentityAbsent'], 'UNKNOWN')
+                self.assertFalse(tail['closureVerified'])
+                self.assertEqual(tail['explicitLockClose'], 'CLOSED')
+                self.assertTrue((root / runner.WINDOWS_LEASE).exists())
+            finally:
+                monitor.close()
+                if child.poll() is None:
+                    child.kill(); child.wait(timeout=3)
+                for stream in (child.stdin, child.stdout, child.stderr):
+                    stream.close()
+                fixture_reap_receipt(child, identity)
+                if receipt.get('explicitLockClose') != 'CLOSED':
+                    os.close(lock)
+
 
 if __name__ == '__main__':
     unittest.main()
