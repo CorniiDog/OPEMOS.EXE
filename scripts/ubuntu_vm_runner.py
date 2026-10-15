@@ -957,7 +957,10 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         command = windows_graphical_command(root, package_iso, package_sha256)
         package_record = json.loads((root / 'graphical-package.json').read_text())
-        if (package_record.get('artifactId') != 11952692823 or
+        package_keys = {'artifactId', 'archiveSha256', 'sourceCommit', 'coreCommit',
+                        'isoSha256', 'portableInventoryVerified', 'executableSha256'}
+        if (not isinstance(package_record, dict) or set(package_record) != package_keys or
+                package_record.get('artifactId') != 11952692823 or
                 package_record.get('archiveSha256') != '32d145dadca03547eb0f55fa8a188106de46604e5650ce8963bc32cb57c1a742' or
                 package_record.get('sourceCommit') != '28c36055a51ae241b455757486bf838c5901e1d3' or
                 package_record.get('coreCommit') != '01407aa6174b80e92cb7f3dcb534ade5cdd7bf00' or
@@ -1006,14 +1009,14 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
             receipt['launcherPGID'] = os.getpgid(process.pid)
             if receipt['launcherPGID'] != process.pid:
                 raise ValueError('launcher process group not isolated')
-            monitor = WindowsGraphicalQMP(process.stdout, process.stdin, evidence, deadline - 5)
+            monitor = WindowsGraphicalQMP(process.stdout, process.stdin, evidence, deadline - 12)
             # Wait for the actual paused QEMU producer before inspecting its
             # host ancestry. No cont/device/input effect occurs during this.
             monitor.handshake()
             manifest = json.loads((root / 'graphical-manifest.json').read_text())
             namespace_fd, qemu_identity, ancestry = pin_owned_qemu_network(
                 process.pid, (root / manifest['image'], root / manifest['base'], Path(package_iso),
-                              root / manifest['code'], root / manifest['vars']), deadline - 5,
+                              root / manifest['code'], root / manifest['vars']), deadline - 12,
                 allow_setup_root=True)
             monitor.qemu_identity = qemu_identity
             monitor.qemu_argv = Path(f'/proc/{qemu_identity[0]}/cmdline').read_bytes()
@@ -1035,7 +1038,7 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
                         if process.poll() is not None:
                             receipt['guestShutdownObserved'] = True
                             break
-                        remaining = deadline - 5 - time.monotonic()
+                        remaining = deadline - 12 - time.monotonic()
                         if remaining <= 0:
                             raise TimeoutError('Windows control absolute deadline')
                         if not io.select(min(remaining, 0.25)):
@@ -1077,7 +1080,7 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
                         os.set_blocking(control_out.fileno(), False)
                         try:
                             while offset < len(packet):
-                                remaining = deadline - 5 - time.monotonic()
+                                remaining = deadline - 12 - time.monotonic()
                                 if remaining <= 0 or not writable.select(remaining):
                                     raise TimeoutError('control output deadline')
                                 try:
@@ -1090,6 +1093,8 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
                 else:
                     raise ValueError('Windows operation count exhausted')
             receipt['qemuLauncherExit'] = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+            if receipt['qemuLauncherExit'] != 0:
+                raise RuntimeError(f"Windows launcher exited {receipt['qemuLauncherExit']}; not success")
             receipt['allocatedAfter'] = account()
             # Human-observed app/guest acceptance is separate. No settable
             # accepted flag can promote a stream of pointer operations to it.
