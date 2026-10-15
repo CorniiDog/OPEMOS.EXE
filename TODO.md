@@ -1,5 +1,21 @@
 # OPEMOS.EXE — Product Checklist
 
+## Current Apple Silicon hosted transaction
+
+- [ ] Establish native arm64 app build and actual graphical settings open/close
+  on the existing public `macos-15` runner. The bounded workflow binds the exact
+  PR head and canonical GitHub Core `01407aa6174b80e92cb7f3dcb534ade5cdd7bf00`,
+  records independent source-check/build/GUI failures, and uploads the app plus
+  screenshots and closure evidence for three days. It does not install a nested
+  appliance, sign/notarize/publish a release, or establish imaging/hardware support.
+  Reproduced preparation gap: no native arm64 job or real Mac mouse transaction
+  existed. Only remote Apple Silicon CI can validate Swift/GUI/toolchain behavior;
+  local source syntax/whitespace inspection is not a passed build. EXE lead push
+  of `work/exe-macos-arm64` to `https://github.com/CorniiDog/OPEMOS.EXE.git` is
+  necessary for that remote-only CI and exact counterpart review. Commit/job
+  results remain in this implementation PR and authenticated handoff, not an
+  evidence-only follow-up PR.
+
 ## Foundation and change policy
 
 Commit `e0502833282ffd9055ecf46f75df82f71a9ee20f` is the current tested
