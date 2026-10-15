@@ -4293,10 +4293,14 @@ mod tests {
             fixture.operation, fixture.identity.manifest_sha256
         ));
         let renamed = fixture.destination.join("renamed-handoff");
+        fs::set_permissions(&original, fs::Permissions::from_mode(0o700)).unwrap();
         fs::rename(&original, &renamed).unwrap();
+        fs::set_permissions(&renamed, fs::Permissions::from_mode(0o500)).unwrap();
         assert!(staged.retire().is_err());
         assert!(renamed.exists());
+        fs::set_permissions(&renamed, fs::Permissions::from_mode(0o700)).unwrap();
         fs::rename(&renamed, &original).unwrap();
+        fs::set_permissions(&original, fs::Permissions::from_mode(0o500)).unwrap();
         staged.retire().unwrap();
         assert!(destination_entries(&fixture.destination).is_empty());
     }

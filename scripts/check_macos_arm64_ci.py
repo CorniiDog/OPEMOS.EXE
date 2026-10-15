@@ -118,17 +118,14 @@ def main():
         receipt["stages"]["gui"] = {"state": "not_run", "reason": "awaiting native app" if helper_built else "helper compilation failed"}
         save()
         for name, args in [
-            ("frontend", ["node", "--test", "tests/linux-appliance-builder.test.mjs",
-                          "tests/virtual-usb-media.test.mjs", "tests/welcome-launcher.test.mjs",
-                          "tests/welcome-linux.test.mjs", "tests/welcome-media.test.mjs",
-                          "tests/welcome-runtime.test.mjs"]),
+            ("frontend", ["node", "--test", "tests/welcome-runtime.test.mjs"]),
             ("docs", ["npm", "run", "test:docs"]),
             ("hygiene", ["npm", "run", "test:hygiene"]),
             ("format", ["cargo", "fmt", "--manifest-path", "src-tauri/Cargo.toml", "--", "--check"]),
             ("clippy", ["cargo", "clippy", "--manifest-path", "src-tauri/Cargo.toml", "--locked",
                         "--target", TARGET, "--all-targets", "--all-features", "--", "-D", "warnings"]),
-            ("rust-tests", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked", "--target", TARGET, "core_generation_cache"]),
-            ("output-path-test", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked", "--target", TARGET, "derives_non_overwriting_raw_output_names"])]:
+            ("rust-tests", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked", "--target", TARGET,
+                            "retirement_rejects_a_renamed_handoff_without_losing_retry_identity"])]:
             run(name, args, 1200)
         built = run("native-build", ["npm", "run", "build:app", "--", "--target", TARGET], 1800)
         if receipt["locks"] != {name: digest(ROOT / name) for name in LOCKS}:
@@ -191,7 +188,7 @@ def main():
         receipt["childProcessGroupsClosed"] = children_closed
         receipt["finished"] = time.time()
         save()
-    required = ["frontend", "docs", "hygiene", "format", "clippy", "rust-tests", "output-path-test", "native-build", "gui", "archive"]
+    required = ["frontend", "docs", "hygiene", "format", "clippy", "rust-tests", "native-build", "gui", "archive"]
     return 0 if not receipt.get("error") and all(
         receipt["stages"].get(name, {}).get("state") == "passed" for name in required) else 1
 

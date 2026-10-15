@@ -28,6 +28,17 @@
   and PID-birth custody. Corrected helper compiles first; affected cache tests,
   changed frontend files and missing docs/hygiene run before the new exact app
   and GUI attempt. These changes are unverified until corrected-head CI returns.
+  Head `4b28b628438364881882c3d41270caf53d44ef74` then built the native
+  app/archive and compiled the helper; real Finder launch and Settings-open
+  pointer click passed in run `38682740351`. Full GUI failed on Close-settings
+  geometry (retained screenshot includes a system Python local-network prompt),
+  followed by owned cleanup rather than normal app close. Preserve 132 passing
+  cache cases; fix only the remaining sealed-retirement fixture rename, the
+  two live Linux/Windows-only marker helper cfgs, numeric-loopback server startup
+  (no reverse DNS needed), and measured geometry settling/refusal capture.
+  The next native run selects the remaining retirement and welcome cases,
+  required lint/checks, current app build and full genuine GUI transaction;
+  prior passes are retained, not replayed or relabeled as corrected-head proof.
 
 ## Foundation and change policy
 

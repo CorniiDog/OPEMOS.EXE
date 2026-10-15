@@ -50,6 +50,9 @@ test("mock welcome controller serves and completes the real UI contract safely",
     exitCode: child.exitCode, signal: child.signalCode, stderr,
     python: python.stdout, pythonDiagnosticError: python.stderr,
   }));
+  assert.match(stderr, /OPEMOS_STARTUP before-numeric-loopback-bind/);
+  assert.match(stderr, /OPEMOS_STARTUP numeric-loopback-bound [0-9.]+/);
+  context.diagnostic(JSON.stringify({ readinessMs: performance.now() - started, startup: stderr, python: python.stdout }));
   const origin = `http://127.0.0.1:${port}`;
   const html = await (await fetch(`${origin}/`)).text();
   const readyMarker = statSync(join(runtime, "ui-ready"));

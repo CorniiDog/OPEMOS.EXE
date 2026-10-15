@@ -56,9 +56,26 @@ func bounds(_ element: AXUIElement) throws -> CGRect {
     try require(AXValueGetValue(pv as! AXValue, .cgPoint, &p) &&
                 AXValueGetValue(sv as! AXValue, .cgSize, &s), "invalid AX geometry")
     let rect = CGRect(origin: p, size: s)
+    record("measured-control-geometry", ["rect": NSStringFromRect(rect),
+        "display": NSStringFromRect(CGDisplayBounds(CGMainDisplayID()))])
     try require(rect.width > 0 && rect.height > 0 && CGDisplayBounds(CGMainDisplayID()).contains(rect),
                 "control outside active main display")
     return rect
+}
+func settledGeometry(_ element: AXUIElement) throws -> CGRect {
+    var previous: CGRect?
+    while Date() < deadline {
+        do {
+            let current = try bounds(element)
+            if previous == current { return current }
+            previous = current
+        } catch {
+            record("geometry-not-ready", ["error": String(describing: error)])
+            previous = nil
+        }
+        try guiWaitTick()
+    }
+    throw Refusal(message: "target geometry never settled inside actual display")
 }
 func screenshot(_ name: String) throws {
     let p = Process()
@@ -75,7 +92,7 @@ func screenshot(_ name: String) throws {
 }
 func click(_ element: AXUIElement, _ label: String, double: Bool = false) throws {
     try require((value(element, kAXEnabledAttribute) as? Bool) == true, "disabled or unknown enabled state: " + label)
-    let rect = try bounds(element)
+    let rect = try settledGeometry(element)
     let point = CGPoint(x: rect.midX, y: rect.midY)
     var pid: pid_t = 0
     AXUIElementGetPid(element, &pid)
@@ -196,6 +213,9 @@ do {
 } catch {
     failed = true
     record("failure", ["error": String(describing: error)])
+    // Preserve actual occluding prompts/layout on refusal, without interacting
+    // with permission dialogs or forcing a disabled/foreign target.
+    if out != nil && CGPreflightScreenCaptureAccess() { try? screenshot("failure-desktop") }
 }
 // Independently close only the exact new process; forced cleanup never passes.
 if let app = owned, !app.isTerminated {
