@@ -7,7 +7,9 @@ import http.server
 import json
 import os
 import signal
+import socketserver
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -493,7 +495,16 @@ def main():
     args.runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(args.runtime, 0o700)
     controller = Controller(args)
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    started = time.monotonic()
+    print("OPEMOS_STARTUP before-numeric-loopback-bind", file=sys.stderr, flush=True)
+    # This controller is explicitly numeric-loopback-only. HTTPServer's bind
+    # calls getfqdn(), an unnecessary reverse-DNS/local-network permission path
+    # on macOS. Use the real TCP server directly, not a test monkeypatch or an
+    # overridden bind method; HTTP request/authentication handling is unchanged.
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+    server.server_name, server.server_port = server.server_address
+    print(f"OPEMOS_STARTUP numeric-loopback-bound {time.monotonic() - started:.6f}",
+          file=sys.stderr, flush=True)
     server.daemon_threads = True
     server.controller = controller
     controller.httpd = server
@@ -501,6 +512,8 @@ def main():
     port_file = args.runtime / "port"
     port_file.write_text(str(server.server_port) + "\n", encoding="ascii")
     os.chmod(port_file, 0o600)
+    print(f"OPEMOS_STARTUP port-ready {time.monotonic() - started:.6f}",
+          file=sys.stderr, flush=True)
     try:
         server.serve_forever(poll_interval=0.1)
     finally:

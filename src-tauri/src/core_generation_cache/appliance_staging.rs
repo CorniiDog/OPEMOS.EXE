@@ -1179,6 +1179,31 @@ fn reconcile_handoff_leases(
                 let Some(files_receipt) = files_receipt.as_ref() else {
                     return Err("Published appliance handoff lacks its file receipt.".into());
                 };
+                // A crash may occur after the create-only rename and before
+                // resealing. Only an unpublished, exact staged inode with its
+                // authenticated file receipt may be reconciled in that phase.
+                if published_marker.is_none() {
+                    require_recoverable_stage_identity(&published, stage_marker.directory)?;
+                    validate_handoff_file_receipt(files_receipt, &intent)?;
+                    if directory_names(&published, intent.expected_files.len().saturating_add(1))?
+                        .len()
+                        != intent.expected_files.len()
+                    {
+                        return Err(
+                            "Interrupted publication inventory changed; preserving it.".into()
+                        );
+                    }
+                    for (name, expected) in &intent.expected_files {
+                        verify_exact_file(
+                            &published,
+                            name,
+                            expected.size,
+                            &expected.sha256,
+                            &|| false,
+                        )?;
+                    }
+                    set_directory_mode(&published, HANDOFF_DIRECTORY_MODE)?;
+                }
                 let published_identity = require_lease_directory_identity(
                     &published,
                     stage_marker.directory,
@@ -2113,9 +2138,24 @@ where
             &lease_intent,
             &stage_phase,
         )?;
+        verify_published_handoff(&stage, &record, &transfer_inventory, &|| false)?;
+        // Darwin requires the moved directory itself to be writable. Keep
+        // all contents sealed; mutate only the held, revalidated stage FD.
+        require_recoverable_stage_identity(&stage, LeaseDirectoryIdentity::from(sealed_identity))?;
+        set_directory_mode(&stage, DESTINATION_DIRECTORY_MODE)?;
+        hook("after-rename-prepare")?;
+        require_staging_directory(&destination, &stage_name, &stage, stage_identity)?;
         rename_directory_at(&destination, &stage_name, &directory_name)?;
         published.set(true);
         hook("after-rename")?;
+        require_recoverable_stage_identity(&stage, LeaseDirectoryIdentity::from(sealed_identity))?;
+        let renamed = open_directory_at(&destination, &directory_name)?;
+        require_recoverable_stage_identity(
+            &renamed,
+            LeaseDirectoryIdentity::from(sealed_identity),
+        )?;
+        set_directory_mode(&stage, HANDOFF_DIRECTORY_MODE)?;
+        hook("after-rename-reseal")?;
         destination
             .sync_all()
             .map_err(|error| format!("Could not sync appliance handoff destination: {error}"))?;
@@ -3323,7 +3363,9 @@ mod tests {
         "after-files-receipt-directory-sync",
         "after-copy",
         "after-seal",
+        "after-rename-prepare",
         "after-rename",
+        "after-rename-reseal",
         "after-destination-sync",
         "after-published-marker-create",
         "after-published-marker-write",
@@ -4251,10 +4293,14 @@ mod tests {
             fixture.operation, fixture.identity.manifest_sha256
         ));
         let renamed = fixture.destination.join("renamed-handoff");
+        fs::set_permissions(&original, fs::Permissions::from_mode(0o700)).unwrap();
         fs::rename(&original, &renamed).unwrap();
+        fs::set_permissions(&renamed, fs::Permissions::from_mode(0o500)).unwrap();
         assert!(staged.retire().is_err());
         assert!(renamed.exists());
+        fs::set_permissions(&renamed, fs::Permissions::from_mode(0o700)).unwrap();
         fs::rename(&renamed, &original).unwrap();
+        fs::set_permissions(&original, fs::Permissions::from_mode(0o500)).unwrap();
         staged.retire().unwrap();
         assert!(destination_entries(&fixture.destination).is_empty());
     }
@@ -4363,7 +4409,9 @@ mod tests {
             |phase| {
                 if phase == "after-source-verification" {
                     fs::set_permissions(&generations, fs::Permissions::from_mode(0o700)).unwrap();
+                    fs::set_permissions(&source, fs::Permissions::from_mode(0o700)).unwrap();
                     fs::rename(&source, &original).unwrap();
+                    fs::set_permissions(&original, fs::Permissions::from_mode(0o500)).unwrap();
                     fs::create_dir(&source).unwrap();
                     fs::set_permissions(&source, fs::Permissions::from_mode(0o500)).unwrap();
                     fs::set_permissions(&generations, fs::Permissions::from_mode(0o500)).unwrap();
@@ -4376,7 +4424,9 @@ mod tests {
         fs::set_permissions(&generations, fs::Permissions::from_mode(0o700)).unwrap();
         fs::set_permissions(&source, fs::Permissions::from_mode(0o700)).unwrap();
         fs::remove_dir(&source).unwrap();
+        fs::set_permissions(&original, fs::Permissions::from_mode(0o700)).unwrap();
         fs::rename(&original, &source).unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o500)).unwrap();
         fs::set_permissions(&generations, fs::Permissions::from_mode(0o500)).unwrap();
     }
 
