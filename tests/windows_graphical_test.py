@@ -147,6 +147,150 @@ class WindowsGraphicalProtocolTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 runner.windows_runtime_lock(root)
 
+    def test_normal_protocol_transaction_retains_durable_lease_after_close(self):
+        def action(root, monitor):
+            (root / '.lifecycle-lock').touch(mode=0o600)
+            lock = runner.windows_runtime_lock(root)
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                binding = runner.reserve_windows_lease(root, lock, {'fixtureOnly': True},
+                                                      ['protocol-not-qemu'], {'fixtureOnly': True})
+                self.start(root, monitor)
+                frame = monitor.capture(0)
+                monitor.click(0, frame['sha256'], 1, 1)
+                self.assertEqual(binding['sha256'], runner.base_digest(root / runner.WINDOWS_LEASE))
+            finally:
+                os.close(lock)
+            # Closing the ordinary lock is not resource release, even after a
+            # clean protocol close. The separate Root cgroup finalizer is not
+            # simulated by setting a caller-controlled closed flag.
+            with self.assertRaisesRegex(ValueError, 'durable Windows lease'):
+                runner.windows_runtime_lock(root)
+        self.transaction('normal', action)
+
+    def test_real_cli_exit_releases_flock_but_not_lease_with_live_child(self):
+        # Run the entire experiment in its own subreaper process. It adopts and
+        # reaps only its generated child; no host or existing job is touched.
+        supervisor = r'''
+import ctypes,fcntl,json,os,signal,subprocess,sys
+from pathlib import Path
+import ubuntu_vm_runner as r
+root=Path(sys.argv[1]);root.joinpath('.lifecycle-lock').touch(mode=0o600)
+libc=ctypes.CDLL(None,use_errno=True)
+if libc.prctl(36,1,0,0,0)!=0:raise OSError(ctypes.get_errno(),'subreaper')
+def expired(*unused):raise TimeoutError('bounded CLI boundary experiment')
+signal.signal(signal.SIGALRM,expired);signal.alarm(8)
+worker=r"""
+import fcntl,json,os,subprocess,sys
+from pathlib import Path
+import ubuntu_vm_runner as r
+root=Path(sys.argv[1]);fd=r.windows_runtime_lock(root);fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+r.reserve_windows_lease(root,fd,{'fixtureOnly':True},['owned-child-not-qemu'],{'fixtureOnly':True})
+c=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+r.persist_windows_record(root/'child.json',r.windows_process_identity(c.pid))
+print(json.dumps(r.windows_process_identity(c.pid)),flush=True)
+sys.stdin.readline();os._exit(23)
+"""
+p=subprocess.Popen([sys.executable,'-c',worker,str(root)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+row=None;pidfd=None
+try:
+ row=json.loads(p.stdout.readline());pidfd=os.pidfd_open(row['pid'])
+ if r.windows_process_identity(row['pid'])!=row:raise ValueError('child birth changed')
+ p.stdin.write('exit\n');p.stdin.flush()
+ if p.wait(timeout=3)!=23:raise ValueError('initial worker failure not retained')
+ if r.windows_process_identity(row['pid'])['startTicks']!=row['startTicks']:raise ValueError('child not live after CLI exit')
+ fd=os.open(root/'.lifecycle-lock',os.O_RDWR)
+ try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+ finally:os.close(fd)
+ try:r.windows_runtime_lock(root)
+ except ValueError as e:
+  if 'durable Windows lease' not in str(e):raise
+ else:raise ValueError('lease did not prevent reuse after actual CLI exit')
+ print(json.dumps({'workerExit':23,'childLiveAfterCLI':True,'flockReleased':True,'durableRefusal':True}),flush=True)
+finally:
+ signal.alarm(0)
+ if p.poll() is None:p.kill();p.wait(timeout=3)
+ p.stdin.close();p.stdout.close();error=p.stderr.read();p.stderr.close()
+ if row is None and (root/'child.json').exists():row=json.loads((root/'child.json').read_text())
+ if row is not None:
+  if pidfd is None:pidfd=os.pidfd_open(row['pid'])
+  if r.windows_process_identity(row['pid'])['startTicks']!=row['startTicks']:raise ValueError('cleanup birth changed')
+  signal.pidfd_send_signal(pidfd,signal.SIGKILL)
+  pid,status=os.waitpid(row['pid'],0)
+  if pid!=row['pid'] or not os.WIFSIGNALED(status):raise ValueError('generated child not reaped')
+  if Path('/proc',str(pid)).exists():raise ValueError('generated child still present')
+  os.close(pidfd)
+ if error:raise ValueError(error)
+'''
+        with tempfile.TemporaryDirectory(prefix='opemos-lease-cli-') as directory:
+            child = subprocess.Popen([sys.executable, '-c', supervisor, directory],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     start_new_session=True,
+                                     env={**os.environ, 'PYTHONPATH': str(Path(runner.__file__).parent)})
+            identity = fixture_spawn_receipt(child, 'lease-cli-boundary-not-guest')
+            try:
+                output, error = child.communicate(timeout=12)
+                self.assertEqual(child.returncode, 0, error.decode())
+                self.assertTrue(json.loads(output)['durableRefusal'])
+                with self.assertRaisesRegex(ValueError, 'durable Windows lease'):
+                    runner.windows_runtime_lock(Path(directory))
+                # Actual documented runner CLI, not just an in-process caller:
+                # durable refusal must precede mount/KVM/queue or image work.
+                lease = (Path(directory) / runner.WINDOWS_LEASE).read_bytes()
+                refused = subprocess.run([sys.executable, runner.__file__,
+                                          'windows-graphical-initialize', directory],
+                                         capture_output=True, timeout=3)
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertIn(b'durable Windows lease', refused.stderr)
+                self.assertEqual((Path(directory) / runner.WINDOWS_LEASE).read_bytes(), lease)
+            finally:
+                if child.poll() is None:
+                    # Exact generated supervisor session only, not a process
+                    # name or a discovered existing queue job.
+                    os.killpg(child.pid, 9); child.wait(timeout=3)
+                fixture_reap_receipt(child, identity)
+
+    def test_partial_linked_and_claimed_closed_lease_never_rearm(self):
+        for contents in ('', '{', '{"closed":true,"poolEmpty":true}'):
+            with self.subTest(contents=contents), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / runner.WINDOWS_LEASE).write_text(contents)
+                (root / '.opemos-migration-owned').write_text('OPEMOS.EXE\n')
+                with self.assertRaisesRegex(ValueError, 'durable Windows lease'):
+                    runner.windows_runtime_lock(root)
+                with self.assertRaisesRegex(ValueError, 'durable Windows lease'):
+                    runner.run_owned_vm(root)
+                with self.assertRaisesRegex(ValueError, 'durable Windows lease'):
+                    runner.launch_bounded(root / 'unused.qcow2', 1024)
+                with self.assertRaisesRegex(ValueError, 'durable Windows lease'):
+                    runner.launch_command(root / 'unused.qcow2')
+                with self.assertRaisesRegex(ValueError, 'durable Windows lease'):
+                    runner.windows_launch_command(root / 'unused.qcow2', root / 'code', root / 'vars')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / runner.WINDOWS_LEASE).symlink_to(root / 'missing')
+            with self.assertRaisesRegex(ValueError, 'durable Windows lease'):
+                runner.windows_runtime_lock(root)
+
+    def test_exact_agentboot_envelope_contract_refuses_generic_or_changed_volume(self):
+        root = Path('/run/user/1000/fixture-only-not-an-admitted-mount')
+        observed = {'backingFile': runner.AGENTBOOT_ENVELOPE,
+                    'backingIdentity': [2051, 227], 'backingBytes': 59_900_000_256,
+                    'kernelCapacityBytes': 59_900_000_256, 'backingUID': 1000,
+                    'backingMode': 0o600, 'loopOffset': 0, 'loopSizeLimit': 0,
+                    'mountTarget': str(root)}
+        self.assertEqual(runner.validate_agentboot_envelope(observed, root), observed)
+        changes = {'backingFile': '/another/marked/owned-runtime.ntfs',
+                   'backingIdentity': [2051, 228], 'backingBytes': 59_899_999_744,
+                   'kernelCapacityBytes': 59_899_999_744, 'backingUID': 0,
+                   'backingMode': 0o666, 'loopOffset': 512, 'loopSizeLimit': 512,
+                   'mountTarget': str(root.parent)}
+        for key, value in changes.items():
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                runner.validate_agentboot_envelope({**observed, key: value}, root)
+        with self.assertRaises(ValueError):
+            runner.validate_agentboot_envelope({**observed, 'backingIdentity': [2052, 227]}, root)
+
 
 if __name__ == '__main__':
     unittest.main()

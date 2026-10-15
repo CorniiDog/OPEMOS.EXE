@@ -2,6 +2,30 @@
 
 ## Original-transferred Windows graphical transaction
 
+- [ ] PR181 causal correction of reviewed `61b7fd9b` (CI passed, runtime not
+  admitted): process-local FD custody ended at CLI exit, and generic marked
+  NTFS acceptance did not select the retained AgentBoot backing inode. Existing
+  runner now creates/fsyncs a durable deny-reuse lease before Popen, binding the
+  current read-only queue row, actual system unit/invocation/cgroup, controller
+  birth, lock and envelope. Launcher/QEMU births are separately create-only
+  records. Every graphical/legacy lifecycle consumer refuses any lease marker,
+  including malformed/partial/linked or caller-claimed closed markers. The
+  marker stays after clean exit too: no consumer release/rearm/queue mutation;
+  separately admitted Root finalization must prove full unit/pool/group absence
+  and preserve exact cleanup evidence before resource reuse.
+  Graphical initialization/argv/run now require exact retained NTFS backing
+  path/dev2051/inode227/59,900,000,256B/mode0600/UID1000/whole mount, plus actual
+  LOOP_GET_STATUS64 backing identity and zero offset/size limit. Immutable base
+  and firmware pins stay unchanged. Wrong identity refuses, never repins.
+  Four new authored tests cover normal current protocol plus durable lease,
+  actual CLI-exit/live-child/flock boundary with owned subreaper cleanup,
+  malformed/linked/claimed-closed markers and exact-envelope negative cases.
+  NOT RUN: all project tests require a separately admitted OMEN VM. Local AST
+  and diff inspection are not runtime/systemd/KVM/Windows or closure acceptance.
+  Existing CI/passes/failures and commits remain. Normal same-topic source push
+  is necessary only for exact immutable remote review and required CI; no merge,
+  VM launch, package staging, Root finalizer execution or publication authorized.
+
 - [ ] Validate the source candidate on `work/exe-windows-graphical`, based on
   immutable main `099d38f03bdc2e4c81cb921e7c3625812910c227`. Reproduced blockers:
   group-only KVM refusal despite retained same-UID ACL access; missing create-only

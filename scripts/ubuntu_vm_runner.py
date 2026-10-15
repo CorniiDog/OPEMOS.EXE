@@ -18,6 +18,8 @@ import signal
 import threading
 import struct
 import base64
+import sqlite3
+import re
 from vm_write_ceiling import compact_owned_image, bounded_file_ceiling, VM_BUDGET_BYTES, validate_chain
 
 
@@ -287,7 +289,14 @@ def require_ntfs_envelope(root):
     if not 0 < capacity <= info.st_size <= VM_BUDGET_BYTES - 1024 * 1024 or allocated > VM_BUDGET_BYTES - 1024 * 1024:
         raise ValueError('envelope exceeds aggregate budget')
     return {'kernelCapacityBytes': capacity, 'hostAllocatedBytes': allocated,
-            'backingFile': str(backing), 'device': device}
+            'backingFile': str(backing), 'device': device,
+            'backingIdentity': [info.st_dev, info.st_ino],
+            'backingBytes': info.st_size, 'backingUID': info.st_uid,
+            'backingMode': stat.S_IMODE(info.st_mode),
+            'loopDeviceIdentity': list((os.stat(device).st_dev, os.stat(device).st_rdev)),
+            'loopOffset': int((loop / 'loop/offset').read_text()),
+            'loopSizeLimit': int((loop / 'loop/sizelimit').read_text()),
+            'mountTarget': data['target']}
 
 
 def sync_directory(root):
@@ -369,6 +378,7 @@ def recover_retirement(root, manifest):
 
 def launch_command(image, memory_mib=2048, cpus=1, privileged_namespace=False):
     image = Path(image)
+    refuse_windows_lease(image.parent)
     if not image.is_absolute() or image.is_symlink() or ',' in str(image):
         raise ValueError('image must be an absolute non-link path')
     info = image.lstat()
@@ -408,6 +418,7 @@ def launch_command(image, memory_mib=2048, cpus=1, privileged_namespace=False):
 def launch_bounded(image, ceiling, timeout_seconds=300, firmware=None, isolated_ssh=False,
                    relay_stdio=False, relay_base=None):
     """Reap on every exit; caller must hold lifecycle lock and verify accounting."""
+    refuse_windows_lease(Path(image).parent)
     if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 900:
         raise ValueError('bounded runtime required')
     if type(isolated_ssh) is not bool or (isolated_ssh and firmware is None):
@@ -558,8 +569,9 @@ def windows_launch_command(image, firmware_code, firmware_vars, isolated_ssh=Fal
     """
     if type(isolated_ssh) is not bool:
         raise ValueError('explicit isolated SSH selection required')
-    require_windows_pool()
     image = Path(image)
+    refuse_windows_lease(image.parent)
+    require_windows_pool()
     require_ntfs_envelope(image.parent)
     code, variables = Path(firmware_code), Path(firmware_vars)
     for firmware, length in ((code, 3653632), (variables, 540672)):
@@ -603,6 +615,160 @@ def windows_launch_command(image, firmware_code, firmware_vars, isolated_ssh=Fal
 AGENTBOOT_BASE = '2a6fd3993ad38ca2d1d3b74dc8fd7d3ed51b0ad16297b85ab9981fa42ababa52'
 AGENTBOOT_CODE = 'ad23261d43116abc3747d59a7837fbf578c9586a8993f4eeba064cd07eccb083'
 AGENTBOOT_VARS = '5d2ac383371b408398accee7ec27c8c09ea5b74a0de0ceea6513388b15be5d1e'
+AGENTBOOT_ENVELOPE = '/media/connor/Games/OPEMOS-migration-20261009-r1/agent-boot-runtime-r1/owned-runtime.ntfs'
+WINDOWS_LEASE = '.graphical-lease.json'
+
+
+def validate_agentboot_envelope(envelope, root):
+    """Selected transferred file identity, not a generic marked NTFS volume.
+
+    Device/inode are the retained host identity, not a portable fixture pin.
+    A remount/migration that changes them needs fresh independent admission.
+    """
+    if (envelope['backingFile'] != AGENTBOOT_ENVELOPE or
+            envelope['backingIdentity'] != [2051, 227] or
+            envelope['backingBytes'] != 59_900_000_256 or
+            envelope['kernelCapacityBytes'] != 59_900_000_256 or
+            envelope['backingUID'] != 1000 or envelope['backingMode'] != 0o600 or
+            envelope['loopOffset'] != 0 or envelope['loopSizeLimit'] != 0 or
+            envelope['mountTarget'] != str(root)):
+        raise ValueError('selected transferred AgentBoot envelope identity required')
+    return envelope
+
+
+def require_agentboot_envelope(root):
+    root = Path(root)
+    if not root.is_absolute() or root.resolve() != root:
+        raise ValueError('exact direct AgentBoot mount root required')
+    observed = validate_agentboot_envelope(require_ntfs_envelope(root), root)
+    # sysfs names alone do not prove that a loop still references the inode at
+    # that name (the original can be unlinked/replaced). Read LOOP_GET_STATUS64
+    # from the exact loop device, using the existing bounded sudo control route.
+    probe = r'''
+import os,sys,stat,fcntl,struct,json
+fd=os.open(sys.argv[1],os.O_RDONLY|os.O_CLOEXEC|os.O_NOFOLLOW)
+try:
+ s=os.fstat(fd)
+ if not stat.S_ISBLK(s.st_mode):raise ValueError('not a loop block device')
+ b=bytearray(232);fcntl.ioctl(fd,0x4c05,b,True)
+ print(json.dumps({'loopRdev':s.st_rdev,'backing':list(struct.unpack_from('=5Q',b))}))
+finally:os.close(fd)
+'''
+    kernel = json.loads(subprocess.run(
+        ['sudo', '-n', '/usr/bin/python3', '-I', '-c', probe, observed['device']],
+        check=True, capture_output=True, text=True, timeout=2).stdout)
+    if (kernel['backing'][:2] != [2051, 227] or kernel['backing'][3:] != [0, 0] or
+            kernel['loopRdev'] != observed['loopDeviceIdentity'][1] or
+            root.stat().st_dev != kernel['loopRdev']):
+        raise ValueError('kernel loop backing or exact mounted filesystem changed')
+    observed['kernelLoopStatus'] = kernel
+    return observed
+
+
+def refuse_windows_lease(root):
+    # Existence, including a malformed/linked/partial marker, is a durable
+    # refusal. No consumer imports a claimed "closed" flag or deletes it.
+    if os.path.lexists(Path(root) / WINDOWS_LEASE):
+        raise ValueError('durable Windows lease held; separate exact Root finalization required')
+
+
+def windows_process_identity(pid):
+    root = Path('/proc') / str(pid)
+    values = (root / 'stat').read_text().rsplit(')', 1)[1].split()
+    return {'pid': pid, 'startTicks': int(values[19]), 'uid': root.stat().st_uid,
+            'pgid': int(values[2])}
+
+
+def persist_windows_record(path, record):
+    # A partial write is intentionally not reusable. x/NOFOLLOW and directory
+    # fsync make controller/CLI death a durable refusal, not a lease release.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w') as stream:
+        json.dump(record, stream, sort_keys=True)
+        stream.flush(); os.fsync(stream.fileno())
+    sync_directory(Path(path).parent)
+
+
+def windows_queue_binding(queue_directory):
+    """Read the existing queue row and actual systemd identity; never mutate it.
+
+    This is custody evidence, not runtime authority. Root still admits the exact
+    row/source/inputs and owns pool release after full cgroup closure.
+    """
+    queue = Path(queue_directory)
+    if not queue.is_absolute() or queue.resolve() != queue:
+        raise ValueError('exact existing queue directory required')
+    database_info = owned_regular(queue / 'queue.sqlite3', 16_777_216)
+    membership = Path('/proc/self/cgroup').read_text().splitlines()
+    pool = '/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice'
+    prefix = 'opemos-testq-' + hashlib.sha256(str(queue).encode()).hexdigest()[:12] + '-'
+    if len(membership) != 1 or not membership[0].startswith('0::' + pool + '/'):
+        raise ValueError('exact queue cgroup required')
+    cgroup = membership[0][3:]
+    unit = cgroup.removeprefix(pool + '/')
+    if re.fullmatch(re.escape(prefix) + r'[0-9a-f]{32}\.service', unit) is None:
+        raise ValueError('controller must be in exact original queue unit')
+    db = sqlite3.connect((queue / 'queue.sqlite3').as_uri() + '?mode=ro', uri=True, timeout=2)
+    try:
+        rows = db.execute('SELECT id,spec,state,unit,cpus FROM jobs WHERE unit=?', (unit,)).fetchall()
+    finally:
+        db.close()
+    if len(rows) != 1 or rows[0][2:4] != ('running', unit):
+        raise ValueError('one live exact queue lease required')
+    spec = json.loads(rows[0][1])
+    cpus = json.loads(rows[0][4])
+    if (not isinstance(cpus, list) or len(cpus) != 2 or
+            any(type(cpu) is not int or not 0 <= cpu <= 9 for cpu in cpus) or
+            len(set(cpus)) != 2 or spec.get('memory') != 8 * 1024 ** 3):
+        raise ValueError('exact two-CPU eight-GiB whole-job reservation required')
+    props = dict(line.split('=', 1) for line in subprocess.run(
+        ['systemctl', 'show', unit, '-p', 'InvocationID', '-p', 'ControlGroup',
+         '-p', 'KillMode', '-p', 'ActiveState'], check=True, capture_output=True,
+        text=True, timeout=2).stdout.splitlines() if '=' in line)
+    if (props.get('ControlGroup') != cgroup or props.get('KillMode') != 'control-group' or
+            props.get('ActiveState') != 'active' or
+            re.fullmatch('[0-9a-f]{32}', props.get('InvocationID', '')) is None or
+            props['InvocationID'] != os.environ.get('INVOCATION_ID')):
+        raise ValueError('current system queue invocation required')
+    cgpath = Path('/sys/fs/cgroup' + cgroup)
+    cg = cgpath.stat()
+    if (int((cgpath / 'memory.max').read_text()) != 8 * 1024 ** 3 or
+            (cgpath / 'memory.swap.max').read_text().strip() != '0' or
+            (cgpath / 'cpu.max').read_text().strip() != '200000 100000'):
+        raise ValueError('actual queue unit resource limits changed')
+    after = owned_regular(queue / 'queue.sqlite3', 16_777_216)
+    if (after.st_dev, after.st_ino) != (database_info.st_dev, database_info.st_ino):
+        raise ValueError('queue database replaced during binding')
+    return {'queueDirectory': str(queue), 'jobID': rows[0][0], 'unit': unit,
+            'databaseIdentity': [after.st_dev, after.st_ino],
+            'specSha256': hashlib.sha256(rows[0][1].encode()).hexdigest(),
+            'reservedCPUs': cpus, 'memoryBytes': spec['memory'], 'invocationID': props['InvocationID'],
+            'cgroup': cgroup, 'cgroupIdentity': [cg.st_dev, cg.st_ino],
+            'bootID': Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
+
+
+def reserve_windows_lease(root, lock, envelope, command, queue):
+    """Durable deny-reuse lease BEFORE Popen, retained even on clean CLI exit.
+
+    Root finalization must match this file/queue/invocation/boot, inspect recorded
+    launcher and QEMU births (or preserve an unknown birth), and prove full unit
+    cgroup and owned group absence before any separate resource reuse. This
+    consumer neither releases a queue row nor implements a finalizer bypass.
+    """
+    refuse_windows_lease(root)
+    info = os.fstat(lock)
+    record = {'schemaVersion': 1, 'state': 'HELD_UNTIL_SEPARATE_ROOT_FINALIZATION',
+              'queue': queue, 'envelope': envelope,
+              'controller': windows_process_identity(os.getpid()),
+              'lockIdentity': [info.st_dev, info.st_ino],
+              'argvSha256': hashlib.sha256(json.dumps(command).encode()).hexdigest(),
+              'runnerSha256': base_digest(Path(__file__)),
+              'baseSha256': AGENTBOOT_BASE, 'codeSha256': AGENTBOOT_CODE,
+              'templateSha256': AGENTBOOT_VARS, 'resourceReleaseAuthorized': False}
+    persist_windows_record(Path(root) / WINDOWS_LEASE, record)
+    lease = owned_regular(Path(root) / WINDOWS_LEASE, 65536)
+    return {'path': str(Path(root) / WINDOWS_LEASE), 'identity': [lease.st_dev, lease.st_ino],
+            'sha256': base_digest(Path(root) / WINDOWS_LEASE), 'queue': queue}
 
 
 def owned_regular(path, maximum):
@@ -615,6 +781,7 @@ def owned_regular(path, maximum):
 
 
 def windows_runtime_lock(root):
+    refuse_windows_lease(root)
     path = Path(root) / '.lifecycle-lock'
     before = owned_regular(path, 0)
     if stat.S_IMODE(before.st_mode) != 0o600:
@@ -637,7 +804,7 @@ def create_windows_graphical_runtime(directory):
     if os.getuid() != 1000 or os.geteuid() != 1000:
         raise ValueError('retained AgentBoot controller must run as UID1000, not root')
     root = Path(directory)
-    require_ntfs_envelope(root)
+    require_agentboot_envelope(root)
     if (root / '.opemos-migration-owned').read_text() != 'OPEMOS.EXE\n':
         raise ValueError('unowned Windows runtime')
     lock = windows_runtime_lock(root)
@@ -707,7 +874,7 @@ def windows_graphical_command(directory, package_iso, package_sha256):
     if os.getuid() != 1000 or os.geteuid() != 1000:
         raise ValueError('retained AgentBoot controller must run as UID1000, not root')
     root = Path(directory)
-    require_ntfs_envelope(root)
+    require_agentboot_envelope(root)
     manifest = json.loads((root / 'graphical-manifest.json').read_text())
     if (manifest.get('baseSha256') != AGENTBOOT_BASE or manifest.get('image') != 'graphical.qcow2'
             or manifest.get('vars') != 'graphical-vars.fd' or manifest.get('control') != 'graphical-evidence'
@@ -932,7 +1099,7 @@ class WindowsGraphicalQMP:
 
 
 def run_windows_graphical(directory, package_iso, package_sha256, control_in, control_out,
-                          timeout_seconds=900):
+                          timeout_seconds=900, queue_directory=None):
     """Exact paused AgentBoot -> frames/pointer -> shutdown source transaction.
 
     Invoke only under separately reviewed Root queue/VM admission. Stream
@@ -947,14 +1114,19 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
         raise ValueError('bounded Windows transaction required')
     root = Path(directory)
     require_windows_pool()
-    envelope = require_ntfs_envelope(root)
+    envelope = require_agentboot_envelope(root)
     lock = windows_runtime_lock(root)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        refuse_windows_lease(root)
+    except BaseException:
+        os.close(lock)
+        raise
     process = monitor = None
     namespace_fd = None
     receipt = {'workflowAccepted': False, 'operations': [], 'envelope': envelope}
     deadline = time.monotonic() + timeout_seconds
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         command = windows_graphical_command(root, package_iso, package_sha256)
         package_record = json.loads((root / 'graphical-package.json').read_text())
         package_keys = {'artifactId', 'archiveSha256', 'sourceCommit', 'coreCommit',
@@ -1000,6 +1172,14 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
             return total
         receipt['allocatedBefore'] = account()
         receipt['argv'] = command
+        if queue_directory is None:
+            raise ValueError('exact existing Root-admitted queue directory required')
+        queue = windows_queue_binding(queue_directory)
+        if require_agentboot_envelope(root) != envelope:
+            raise ValueError('AgentBoot envelope changed before durable reservation')
+        receipt['durableLease'] = reserve_windows_lease(root, lock, envelope, command, queue)
+        receipt['durableLeaseRetained'] = True
+        receipt['poolLeaseReleased'] = False
         with (evidence / 'stderr.log').open('xb') as log:
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=log, start_new_session=True, bufsize=0)
@@ -1007,6 +1187,8 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
             leader_stat = Path(f'/proc/{process.pid}/stat').read_text().rsplit(')', 1)[1].split()
             receipt['launcherStartTicks'] = int(leader_stat[19])
             receipt['launcherPGID'] = os.getpgid(process.pid)
+            persist_windows_record(evidence / 'lease-launcher.json', {
+                'lease': receipt['durableLease'], 'launcher': windows_process_identity(process.pid)})
             if receipt['launcherPGID'] != process.pid:
                 raise ValueError('launcher process group not isolated')
             monitor = WindowsGraphicalQMP(process.stdout, process.stdin, evidence, deadline - 12)
@@ -1022,10 +1204,14 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
             monitor.qemu_argv = Path(f'/proc/{qemu_identity[0]}/cmdline').read_bytes()
             receipt['qemuIdentity'] = qemu_identity
             receipt['ancestry'] = ancestry
+            persist_windows_record(evidence / 'lease-qemu.json', {
+                'lease': receipt['durableLease'], 'qemuIdentity': qemu_identity, 'ancestry': ancestry})
             namespace_info = os.fstat(namespace_fd)
             receipt['networkNamespaceIdentity'] = [namespace_info.st_dev, namespace_info.st_ino]
             receipt['bootID'] = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
             receipt['cgroup'] = Path(f'/proc/{qemu_identity[0]}/cgroup').read_text().strip()
+            if receipt['cgroup'] != '0::' + queue['cgroup']:
+                raise ValueError('QEMU escaped exact leased queue unit')
             if any(os.getpgid(row[0]) != process.pid for row in ancestry):
                 raise ValueError('owned setup/QEMU escaped exact launcher process group')
             receipt['deviceProof'] = monitor.start(root / manifest['image'], Path(package_iso),
@@ -1158,6 +1344,13 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
             os.close(namespace_fd)
         if monitor is not None:
             monitor.close()
+        try:
+            receipt['envelopeAfter'] = require_agentboot_envelope(root)
+            if any(receipt['envelopeAfter'][key] != envelope[key]
+                   for key in envelope if key != 'hostAllocatedBytes'):
+                receipt['immutableInputFailure'] = 'AgentBoot envelope identity changed'
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            receipt['immutableInputFailure'] = 'AgentBoot envelope: ' + str(error)
         for name, sha in [('base.qcow2', AGENTBOOT_BASE), ('OVMF_CODE_4M.fd', AGENTBOOT_CODE),
                           ('OVMF_VARS_4M.fd', AGENTBOOT_VARS)]:
             try:
@@ -1173,19 +1366,13 @@ def run_windows_graphical(directory, package_iso, package_sha256, control_in, co
                     stream.flush(); os.fsync(stream.fileno())
                 sync_directory(evidence)
         finally:
-            # A failed launcher is not permission to release/reuse its disks.
-            # Refuse return and leave the job logically held for Root cleanup.
-            if receipt.get('rootFinalizerRequired'):
-                # Retain the lock FD in this controller until the independently
-                # admitted Root job finalizer closes the exact remaining unit.
-                _WINDOWS_HELD_LOCKS.append(lock)
-            else:
-                os.close(lock)
+            # flock lifetime is NOT resource custody. The create-only durable
+            # lease remains after normal exit, exceptions, SIGKILL or power loss.
+            # Every runner refuses it; Root finalizes separately after this unit
+            # (including this controller) is proven empty. No auto-clear path.
+            os.close(lock)
         if receipt.get('rootFinalizerRequired') or receipt.get('immutableInputFailure'):
             raise RuntimeError('Windows lifecycle/integrity failure; preserve exact job and inputs')
-
-
-_WINDOWS_HELD_LOCKS = []
 
 
 def windows_graphical_main(arguments):
@@ -1198,19 +1385,26 @@ def windows_graphical_main(arguments):
     parser.add_argument('directory', type=Path)
     parser.add_argument('--package', type=Path)
     parser.add_argument('--package-sha256')
+    parser.add_argument('--queue-directory', type=Path)
     selected = parser.parse_args(arguments)
+    refuse_windows_lease(selected.directory)
     if selected.operation == 'windows-graphical-initialize':
-        if selected.package is not None or selected.package_sha256 is not None:
+        if selected.package is not None or selected.package_sha256 is not None or selected.queue_directory is not None:
             parser.error('initialization does not acquire or stage a package')
         result = create_windows_graphical_runtime(selected.directory)
     else:
         if selected.package is None or selected.package_sha256 is None:
             parser.error('exact verified package ISO and hash required')
         if selected.operation == 'windows-graphical-argv':
+            if selected.queue_directory is not None:
+                parser.error('argv rendering does not reserve a queue job')
             result = windows_graphical_command(selected.directory, selected.package, selected.package_sha256)
         else:
+            if selected.queue_directory is None:
+                parser.error('run requires the exact existing admitted --queue-directory')
             result = run_windows_graphical(selected.directory, selected.package, selected.package_sha256,
-                                           sys.stdin.buffer, sys.stdout.buffer)
+                                           sys.stdin.buffer, sys.stdout.buffer,
+                                           queue_directory=selected.queue_directory)
     print(json.dumps(result, sort_keys=True))
     return 0
 
@@ -1234,6 +1428,7 @@ def run_owned_vm(directory, timeout_seconds=300, isolated_ssh=False, relay_stdio
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'r+b') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        refuse_windows_lease(root)
         manifest_path = root / 'manifest.json'
         if manifest_path.is_symlink():
             raise ValueError('linked manifest refused')
