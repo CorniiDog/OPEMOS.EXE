@@ -1,5 +1,28 @@
 # OPEMOS.EXE — Product Checklist
 
+## Original AgentBoot Secure Boot preservation source preparation
+
+- [ ] Independent corrected VMGS review SHA059a81df proves recoverable original
+  PK/KEK/db/dbx; supersedes the premature user-only substitution conclusion.
+  Prepare only a create-only OVMF VARS derivative with exact original four data
+  hashes, SecureBootEnable1 and pinned Secure-Boot-capable CODE. Original VMGS,
+  base, blank template, PR181/R17 and prior receipts stay unchanged.
+  Narrow offline source `scripts/agentboot_original_vars.py` validates the exact
+  full VMGS hash and redundant JSON copies, imports only four reviewed trust
+  variables, re-reads OVMF headers/data independently, and records no boot
+  authority or offline SecureBoot/SetupMode attestation. No distro `.ms` keys,
+  new anchors, source mutation, downloads or enrollment on original data.
+  Four focused tests authored, NOT RUN. Actual preserving CLI transaction needs
+  exact private inputs inside an admitted OMEN VM; absent inputs explicitly SKIP,
+  not pass. Local AST/diff only. Original authentication timestamps are not
+  exported by VMGS; zeroed offline header metadata and21KiB dbx capacity require
+  independent firmware behavior review. Runtime must prove SecureBoot1 and
+  SetupMode0 under required SMM/protected pflash before app acceptance.
+  Current PR181 still rejects the new CODE/derived VARS; no implicit pin switch
+  or boot integration. Source PR/required checks/exact counterpart and Root
+  review plus separately admitted staging remain gates. Necessary lead-only
+  normal topic push is for immutable remote source review/CI, not publication.
+
 ## Foundation and change policy
 
 Commit `e0502833282ffd9055ecf46f75df82f71a9ee20f` is the current tested
