@@ -2,6 +2,15 @@
 
 ## Complete packaged Mac cold-Build transaction
 
+  Consumed full exact Core1f62 disposition f495f488 (9472B): both blocking
+  DARWIN-GUI-BIRTH-480 and DARWIN-MANUAL-MODE are included in this correction.
+  Birth uses captured transaction start, not reconstructed deadline; pre-click
+  and observed bounds remain evidence. Removed the nonfunctional manual false
+  input: this workflow explicitly always runs fullstack on PR/manual invocation.
+  Source-contract regression authored; next manual dispatch has no -f input.
+  Preserve Root PR192/21a33 and its separate branch/candidate untouched; no
+  approval or runtime proof transfers. Prior fad42061/source checkpoints kept.
+
   Actual first complete producer/build head1f62a052 M1 run39276928429:
  43 locked bottles,736 native loader records, command/Python/CA probes,
  exact old firmware and Fedora/cloud-init,8,120,172,544-byte pinned recovery,

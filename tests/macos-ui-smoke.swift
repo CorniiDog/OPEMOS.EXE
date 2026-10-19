@@ -230,7 +230,7 @@ do {
                 "launchDate": observedBirth,
                 "notBefore": launchNotBefore.timeIntervalSince1970, "observed": observed.timeIntervalSince1970,
                 "bundle": app.bundleURL?.path ?? "unknown", "executable": app.executableURL?.path ?? "unknown"])
-            try require(ownedBirth(app.launchDate, since: launchNotBefore, observed: observed),
+            try require(ownedBirth(app.launchDate, since: transactionStarted, observed: observed),
                         "app birth unavailable or outside observed owned launch window")
             owned = app
             record("app", ["pid": app.processIdentifier, "bundle": appURL.path,

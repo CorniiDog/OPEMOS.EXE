@@ -3,11 +3,8 @@ name: Apple Silicon app
 on:
   pull_request:
   workflow_dispatch:
-    inputs:
-      fullstack:
-        description: "Changed explicit x86 TCG graphical cold-Build milestone; requires reviewed Darwin runtime source lock and admitted operands"
-        type: boolean
-        default: false
+    # This check always proves the admitted fullstack graph. No advertised
+    # chooser-only control may silently select a different execution mode.
 
 permissions:
   contents: read
