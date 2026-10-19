@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   workflow_run:
     workflows: [04 SteamOS]
-    types: [completed]
+    types: [requested, in_progress, completed]
 
 permissions:
   contents: read
@@ -31,6 +31,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           OPEMOS_UPSTREAM_SHA: ${{ github.event.workflow_run.head_sha }}
           OPEMOS_UPSTREAM_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          OPEMOS_UPSTREAM_ACTION: ${{ github.event.action }}
         run: python3 scripts/check_full_stack_acceptance.py
       - name: Retain the acceptance result, including missing or failed prerequisites
         if: always()

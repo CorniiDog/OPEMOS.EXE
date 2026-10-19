@@ -5,6 +5,8 @@ image, virtual USB, install, boot and recovery evidence. This check requires its
 latest completed successful attempt for this exact main commit. It never starts
 a controller, guest, SSH session, image writer or retry.
 """
+from datetime import datetime
+from http.client import HTTPException
 import json
 import os
 from pathlib import Path
@@ -45,9 +47,17 @@ def parse_response(raw):
                       parse_constant=lambda _: (_ for _ in ()).throw(Refusal("Nonfinite GitHub metadata")))
 
 
+def close_refused_response(response, reason):
+    try:
+        response.close()
+    except Exception as exc:
+        reason += "; response close failed: " + type(exc).__name__
+    raise Refusal(reason) from None
+
+
 class NoRedirect(request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise Refusal("GitHub acceptance API redirected; no alternate endpoint is authorized")
+        close_refused_response(fp, "GitHub acceptance API redirected; no alternate endpoint is authorized")
 
 
 def api_reader(token):
@@ -63,12 +73,17 @@ def api_reader(token):
                 return parse_response(response.read(MAX_RESPONSE + 1))
         except error.HTTPError as exc:
             if exc.code == 404 and path.startswith("actions/workflows/steamos.yml/runs?"):
-                raise Refusal("04 SteamOS is not installed; full-stack acceptance is missing") from None
-            raise Refusal("GitHub acceptance API refused HTTP " + str(exc.code)) from None
+                reason = "04 SteamOS is not installed; full-stack acceptance is missing (HTTP 404)"
+            else:
+                reason = "GitHub acceptance API refused HTTP " + str(exc.code)
+            close_refused_response(exc, reason)
+        except HTTPException as exc:
+            # Never serialize partial response bytes, headers or credentials.
+            raise Refusal("GitHub acceptance transport failed: " + type(exc).__name__) from None
     return read
 
 
-def latest_run(read, sha):
+def run_inventory(read, sha):
     payload = read("actions/workflows/steamos.yml/runs?head_sha=" + sha + "&per_page=100")
     runs = payload["workflow_runs"]
     require(type(payload["total_count"]) is int and isinstance(runs, list)
@@ -78,7 +93,28 @@ def latest_run(read, sha):
     require(all(type(run.get("id")) is int and run["id"] > 0 and run.get("head_sha") == sha
                 for run in runs), "SteamOS run inventory contains another source identity")
     require(len({run["id"] for run in runs}) == len(runs), "Duplicate SteamOS run identity")
-    return max(runs, key=lambda run: run["id"])
+    # A rerun keeps its original ID. Order current attempts by actual start,
+    # refusing unknown or ambiguous ordering instead of using creation IDs.
+    def started(run):
+        value = run.get("run_started_at")
+        require(isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value),
+                "SteamOS attempt start is missing or malformed")
+        try:
+            return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            raise Refusal("SteamOS attempt start is not a valid UTC date") from None
+    ordered = sorted(runs, key=started)
+    require(len(ordered) == 1 or started(ordered[-2]) < started(ordered[-1]),
+            "Latest SteamOS attempt ordering is ambiguous")
+    # Fence all returned attempts, including a lower-ID rerun changing while
+    # the selected job/artifact is inspected. Immutable tuples avoid aliasing.
+    fields = ("id", "run_attempt", "status", "conclusion", "head_sha", "head_branch",
+              "path", "name", "event", "run_started_at")
+    fingerprint = tuple(tuple(run.get(key) for key in fields) +
+                        (run.get("repository", {}).get("full_name"),
+                         run.get("head_repository", {}).get("full_name"))
+                        for run in sorted(runs, key=lambda row: row["id"]))
+    return ordered[-1], fingerprint
 
 
 def identity(run, sha):
@@ -99,7 +135,7 @@ def identity(run, sha):
 
 def evaluate(read, sha):
     require(re.fullmatch(r"[0-9a-f]{40}", sha or ""), "Exact acceptance commit is missing")
-    run = latest_run(read, sha)
+    run, inventory = run_inventory(read, sha)
     run_id, attempt = identity(run, sha)
     jobs = read(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")
     require(type(jobs["total_count"]) is int and jobs["total_count"] == len(jobs["jobs"]) <= 100,
@@ -126,10 +162,12 @@ def evaluate(read, sha):
             and re.fullmatch(r"sha256:[0-9a-f]{64}", proof[0].get("digest", "")),
             "This SteamOS attempt has no retained exact acceptance metadata")
     # A retry/newer failure appearing during inspection invalidates this sample.
-    final = latest_run(read, sha)
-    require(identity(final, sha) == (run_id, attempt), "SteamOS run/attempt changed during acceptance review")
+    final, final_inventory = run_inventory(read, sha)
+    require(inventory == final_inventory and identity(final, sha) == (run_id, attempt),
+            "SteamOS attempt inventory changed during acceptance review")
     return {"status": "passed", "source_commit": sha, "steamOS_run": run_id,
-            "steamOS_attempt": attempt, "acceptance_artifact_sha256": proof[0]["digest"],
+            "steamOS_attempt": attempt, "steamOS_attempt_started_at": run["run_started_at"],
+            "acceptance_artifact_sha256": proof[0]["digest"],
             "url": f"https://github.com/{REPOSITORY}/actions/runs/{run_id}",
             "reason": "Exact main 04 SteamOS all-VM and every-executable acceptance job passed"}
 
@@ -144,6 +182,8 @@ def event_target(env):
         require(env.get("OPEMOS_UPSTREAM_SHA") == sha
                 and env.get("OPEMOS_UPSTREAM_REPOSITORY") == REPOSITORY,
                 "Completed SteamOS event is stale or foreign to this check's main commit")
+        require(env.get("OPEMOS_UPSTREAM_ACTION") == "completed",
+                "04 SteamOS has a requested or running attempt; acceptance must be rechecked after completion")
     return sha
 
 

@@ -1,9 +1,15 @@
 """Acceptance decision tests, not VM/USB/SteamOS acceptance evidence."""
 import copy
+from contextlib import redirect_stdout
+from http.client import IncompleteRead
 import importlib.util
+import io
 import json
+import os
 from pathlib import Path
+import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location("acceptance", Path(__file__).parents[1] / "scripts/check_full_stack_acceptance.py")
 gate = importlib.util.module_from_spec(spec)
@@ -15,7 +21,8 @@ def run(identity=10):
     return {"id": identity, "head_sha": SHA, "head_branch": "main",
             "repository": {"full_name": gate.REPOSITORY}, "head_repository": {"full_name": gate.REPOSITORY},
             "path": gate.WORKFLOW, "name": "04 SteamOS", "event": "workflow_dispatch",
-            "run_attempt": 2, "status": "completed", "conclusion": "success"}
+            "run_attempt": 2, "run_started_at": f"2026-10-19T12:00:{identity:02d}Z",
+            "status": "completed", "conclusion": "success"}
 
 
 def fixture():
@@ -116,6 +123,44 @@ class FullStackAcceptance(unittest.TestCase):
             with self.assertRaises(gate.Refusal):
                 gate.evaluate(reader(value), SHA)
 
+    def test_later_rerun_of_lower_run_id_cannot_reuse_newer_id_success(self):
+        for status, conclusion in [("completed", "failure"), ("in_progress", None), ("queued", None)]:
+            with self.subTest(status=status):
+                value = fixture()
+                older = {**run(9), "run_attempt": 3, "run_started_at": "2026-10-19T12:01:00Z",
+                         "status": status, "conclusion": conclusion}
+                value["runs"].append(older)
+                with self.assertRaises(gate.Refusal): gate.evaluate(reader(value), SHA)
+
+    def test_changes_to_unselected_attempt_inventory_refused(self):
+        for field, changed in [("run_attempt", 3), ("conclusion", "failure"),
+                               ("status", "in_progress"), ("head_branch", "topic")]:
+            with self.subTest(field=field):
+                value = fixture()
+                value["runs"].append(run(9))
+                value["final_runs"] = copy.deepcopy(value["runs"])
+                value["final_runs"][1][field] = changed
+                with self.assertRaises(gate.Refusal): gate.evaluate(reader(value), SHA)
+
+    def test_lower_id_rerun_starting_between_samples_refused(self):
+        value = fixture()
+        value["runs"].append(run(9))
+        value["final_runs"] = [run(), {**run(9), "run_attempt": 3,
+            "run_started_at": "2026-10-19T12:01:00Z", "status": "in_progress", "conclusion": None}]
+        with self.assertRaises(gate.Refusal): gate.evaluate(reader(value), SHA)
+
+    def test_unchanged_historical_failure_does_not_poison_newer_success(self):
+        value = fixture()
+        value["runs"].append({**run(9), "conclusion": "failure"})
+        self.assertEqual(gate.evaluate(reader(value), SHA)["status"], "passed")
+
+    def test_attempt_order_missing_malformed_or_ambiguous_refused(self):
+        for started in [None, "unknown", "2026-02-30T12:00:10Z", "2026-10-19T12:00:10Z"]:
+            with self.subTest(started=started):
+                value = fixture()
+                value["runs"].append({**run(9), "run_started_at": started})
+                with self.assertRaises(gate.Refusal): gate.evaluate(reader(value), SHA)
+
     def test_incomplete_run_inventory_cannot_hide_newer_failure(self):
         def read(_):
             return {"total_count": 101, "workflow_runs": [run()]}
@@ -131,12 +176,84 @@ class FullStackAcceptance(unittest.TestCase):
     def test_workflow_run_cannot_green_current_main_from_an_older_commit(self):
         env = {"GITHUB_REPOSITORY": gate.REPOSITORY, "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": SHA,
                "GITHUB_EVENT_NAME": "workflow_run", "OPEMOS_UPSTREAM_SHA": "c" * 40,
-               "OPEMOS_UPSTREAM_REPOSITORY": gate.REPOSITORY}
+               "OPEMOS_UPSTREAM_REPOSITORY": gate.REPOSITORY, "OPEMOS_UPSTREAM_ACTION": "completed"}
         with self.assertRaises(gate.Refusal): gate.event_target(env)
         env["OPEMOS_UPSTREAM_SHA"] = SHA
         self.assertEqual(gate.event_target(env), SHA)
         env["GITHUB_REF"] = "refs/pull/1/merge"
         with self.assertRaises(gate.Refusal): gate.event_target(env)
+
+    def test_requested_or_running_event_refuses_previous_green_metadata(self):
+        env = {"GITHUB_REPOSITORY": gate.REPOSITORY, "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": SHA,
+               "GITHUB_EVENT_NAME": "workflow_run", "OPEMOS_UPSTREAM_SHA": SHA,
+               "OPEMOS_UPSTREAM_REPOSITORY": gate.REPOSITORY}
+        for action in ["requested", "in_progress", "unknown", None]:
+            with self.subTest(action=action):
+                env["OPEMOS_UPSTREAM_ACTION"] = action
+                with self.assertRaises(gate.Refusal): gate.event_target(env)
+
+    def _main_result(self):
+        env = {"GITHUB_REPOSITORY": gate.REPOSITORY, "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": SHA,
+               "GITHUB_EVENT_NAME": "push", "GITHUB_TOKEN": "PRIVATE_TEST_TOKEN"}
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, env, clear=True):
+            previous = os.getcwd()
+            try:
+                os.chdir(directory)
+                with redirect_stdout(output): numeric = gate.main()
+                result = json.loads(Path("full-stack-acceptance.json").read_text())
+            finally:
+                os.chdir(previous)
+        self.assertNotIn("PRIVATE_TEST_TOKEN", output.getvalue() + json.dumps(result))
+        return numeric, result
+
+    def test_main_retains_normal_positive_result(self):
+        with mock.patch.object(gate, "api_reader", return_value=reader(fixture())):
+            numeric, result = self._main_result()
+        self.assertEqual((numeric, result["status"]), (0, "passed"))
+
+    def test_incomplete_http_body_is_closed_and_retained_as_failed_result(self):
+        class Response:
+            closed = False
+            def __enter__(self): return self
+            def __exit__(self, *_): self.closed = True
+            def read(self, _): raise IncompleteRead(b"PRIVATE_PARTIAL_BODY", 100)
+        response = Response()
+        opener = mock.Mock()
+        opener.open.return_value = response
+        with mock.patch.object(gate.request, "build_opener", return_value=opener):
+            numeric, result = self._main_result()
+        self.assertEqual((numeric, result["status"]), (1, "failed"))
+        self.assertTrue(response.closed)
+        self.assertIn("IncompleteRead", result["reason"])
+        self.assertNotIn("PRIVATE_PARTIAL_BODY", json.dumps(result))
+
+    def test_http_refusal_closes_body_and_retains_numeric_reason(self):
+        for code in [404, 403]:
+            with self.subTest(code=code):
+                body = io.BytesIO(b"PRIVATE_ERROR_BODY")
+                fault = gate.error.HTTPError("https://api.github.com/", code, "private", {}, body)
+                opener = mock.Mock()
+                opener.open.side_effect = fault
+                with mock.patch.object(gate.request, "build_opener", return_value=opener):
+                    numeric, result = self._main_result()
+                self.assertEqual((numeric, result["status"]), (1, "failed"))
+                self.assertTrue(body.closed)
+                self.assertIn(str(code), result["reason"])
+                self.assertNotIn("PRIVATE_ERROR_BODY", json.dumps(result))
+
+    def test_redirect_refusal_closes_response_and_preserves_close_failure(self):
+        body = io.BytesIO(b"PRIVATE_REDIRECT_BODY")
+        with self.assertRaises(gate.Refusal):
+            gate.NoRedirect().redirect_request(None, body, 302, None, {}, "https://foreign.invalid/")
+        self.assertTrue(body.closed)
+        broken = mock.Mock()
+        broken.close.side_effect = OSError("PRIVATE_CLOSE_DETAIL")
+        with self.assertRaises(gate.Refusal) as result:
+            gate.NoRedirect().redirect_request(None, broken, 302, None, {}, "https://foreign.invalid/")
+        self.assertIn("redirected", str(result.exception))
+        self.assertIn("close failed: OSError", str(result.exception))
+        self.assertNotIn("PRIVATE_CLOSE_DETAIL", str(result.exception))
 
 
 if __name__ == "__main__":
