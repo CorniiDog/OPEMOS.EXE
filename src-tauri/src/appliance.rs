@@ -589,7 +589,16 @@ pub(crate) fn appimage_companion_root(image: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 pub(crate) fn appliance_path() -> PathBuf {
-    appliance_dir().join("fedora-builder.qcow2")
+    let name = if cfg!(target_os = "macos")
+        && !bundled_runtime_required()
+        && std::env::consts::ARCH == "aarch64"
+        && inspection_guest_arch() == Ok("x86_64")
+    {
+        "fedora-builder-x86_64.qcow2"
+    } else {
+        "fedora-builder.qcow2"
+    };
+    appliance_dir().join(name)
 }
 
 pub(crate) fn nvidia_build_appliance_path() -> PathBuf {
@@ -629,6 +638,9 @@ static VERIFIED_PACKAGED_APPLIANCE: std::sync::OnceLock<Result<(), String>> =
 fn verify_packaged_appliance() -> Result<(), String> {
     if !bundled_runtime_required() && linux_appimage_root().is_none() {
         return Ok(());
+    }
+    if cfg!(target_os = "macos") && inspection_guest_arch()? != "x86_64" {
+        return Err("This packaged companion is the pinned x86_64 Fedora appliance; compile the explicit Apple Silicon software-test lane or provide a separately reviewed native package.".into());
     }
     VERIFIED_PACKAGED_APPLIANCE
         .get_or_init(|| {
@@ -859,7 +871,21 @@ pub(crate) fn verify_nvidia_guest_device_timeout(
     validate_nvidia_guest_device_timeout_report(&run_guest_command(session, &command)?)
 }
 
+fn macos_packaged_cache_root() -> Option<PathBuf> {
+    if !cfg!(target_os = "macos") || !bundled_runtime_required() {
+        return None;
+    }
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| PathBuf::from("/opemos-invalid-macos-home"));
+    Some(home.join("Library/Caches/dev.cornidog.steamos-nvidia-image-builder"))
+}
+
 pub(crate) fn runtime_root() -> PathBuf {
+    if let Some(cache) = macos_packaged_cache_root() {
+        return cache.join("sessions/native");
+    }
     if let Some(root) = linux_appimage_root() {
         return root.join("sessions/native");
     }
@@ -870,6 +896,9 @@ pub(crate) fn runtime_root() -> PathBuf {
 }
 
 pub(crate) fn nvidia_build_runtime_root() -> PathBuf {
+    if let Some(cache) = macos_packaged_cache_root() {
+        return cache.join("sessions/x86_64");
+    }
     if let Some(root) = linux_appimage_root() {
         return root.join("sessions/x86_64");
     }
@@ -1094,7 +1123,7 @@ pub(crate) fn supported_image(path: &Path) -> bool {
 }
 
 pub(crate) fn qemu_binary_name() -> Result<&'static str, String> {
-    match std::env::consts::ARCH {
+    match inspection_guest_arch()? {
         "aarch64" => Ok("qemu-system-aarch64"),
         "x86_64" => Ok("qemu-system-x86_64"),
         arch => Err(format!("Unsupported host architecture: {arch}")),
@@ -1786,7 +1815,7 @@ pub(crate) fn prepare_session_with_output(
     cancel: Option<&AtomicBool>,
     plan_export: bool,
 ) -> Result<ApplianceSession, String> {
-    current_host_qemu(std::env::consts::ARCH, std::env::consts::ARCH)?;
+    current_host_qemu(std::env::consts::ARCH, inspection_guest_arch()?)?;
     if cfg!(target_os = "linux") {
         linux_host_prerequisites()?;
     }
@@ -1994,8 +2023,8 @@ pub(crate) fn prepare_session_with_output(
     }
 
     let (acceleration, machine, cpu_model) =
-        current_host_qemu(std::env::consts::ARCH, std::env::consts::ARCH)?;
-    let (uefi_code, vars_template) = host_firmware(std::env::consts::ARCH)?;
+        current_host_qemu(std::env::consts::ARCH, inspection_guest_arch()?)?;
+    let (uefi_code, vars_template) = host_firmware(inspection_guest_arch()?)?;
     let vars_image = runtime_dir.join("uefi-vars.fd");
     copy_writable_uefi_vars(&vars_template, &vars_image)?;
     let ssh_port = allocate_ssh_port()?;
@@ -3744,7 +3773,7 @@ pub(crate) fn check_builder_environment_blocking() -> BuilderEnvironment {
     let host_os = std::env::consts::OS.to_string();
     let host_arch = std::env::consts::ARCH.to_string();
     let experimental = host_os == "linux";
-    let host_plan = current_host_qemu(&host_arch, &host_arch);
+    let host_plan = inspection_guest_arch().and_then(|guest| current_host_qemu(&host_arch, guest));
     let acceleration = host_plan.as_ref().ok().map(|spec| spec.0.to_owned());
     let host_plan = host_plan.and_then(|spec| {
         if experimental {
@@ -3856,6 +3885,8 @@ pub(crate) fn check_builder_environment_blocking() -> BuilderEnvironment {
         appliance_path,
         message: if let Err(error) = appliance_validation {
             error
+        } else if ready && cfg!(target_os = "macos") && acceleration.as_deref() == Some("tcg") {
+            "Apple Silicon software-test lane: pinned x86_64 Fedora under TCG; no hardware-acceleration claim.".into()
         } else if ready {
             "Host prerequisites are ready.".into()
         } else {

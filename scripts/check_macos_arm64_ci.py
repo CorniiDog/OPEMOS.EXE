@@ -20,7 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "build/macos-arm64-evidence"
 TARGET = "aarch64-apple-darwin"
 CORE = "01407aa6174b80e92cb7f3dcb534ade5cdd7bf00"
-LOCKS = ["package-lock.json", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json"]
+# Reviewed source lock is part of this exact Git head, never caller supplied.
+RECOVERY_SHA256 = "f9aa0fa2dd618febf28a5e2a583d1e2b5a8ca3f1205be965da584602ac962f40"
+RECOVERY_BYTES = 8120172544
+LOCKS = ["package-lock.json", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json", "runtime/macos-arm64.sources.json"]
 
 
 def digest(path):
@@ -53,6 +56,11 @@ def main():
             "steamosBoot": "not_run: requires a separate admitted x86 boot target",
         }}
     children_closed = True
+    fullstack = os.environ.get("OPEMOS_MACOS_FULLSTACK") == "1"
+    receipt["requestedMode"] = "explicit-x86_64-tcg-cold-build" if fullstack else "native-app-chooser"
+    runtime = ROOT / "admitted-macos/runtime"
+    appliance = ROOT / "admitted-macos/appliance"
+    recovery = Path.home() / "Documents/opemos-pinned-recovery.img"
 
     def save():
         (OUT / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
@@ -104,6 +112,29 @@ def main():
                 ["git", "remote", "get-url", "origin"], core).rstrip("/") != (
                 "https://github.com/CorniiDog/open-gpu-kernel-modules-steamos-support"):
             raise RuntimeError("canonical immutable Core source mismatch")
+        if fullstack:
+            lock = ROOT / "runtime/macos-arm64.sources.json"
+            # Git checkout binds source bytes; producer validates closed exact
+            # provider identities and every downloaded bottle before extraction.
+            if not lock.is_file() or lock.is_symlink():
+                raise RuntimeError("Darwin runtime source lock missing")
+            receipt["runtimeSourceLockSHA256"] = digest(lock)
+            if not run("darwin-producer-boundaries", ["python3", "tests/test_macos_runtime_producer.py"], 120):
+                raise RuntimeError("Actual Darwin producer boundary tests failed")
+            if not run("fullstack-input-producer", ["python3", "scripts/prepare_macos_fullstack.py", str(OUT)], 3600):
+                raise RuntimeError("Exact fullstack input producer failed; preserve evidence, no chooser-only fallback")
+            from stage_runtime_bundle import validate_runtime
+            from stage_macos_app import verify_companion
+            validate_runtime(runtime, "macos")
+            verify_companion(appliance)
+            if recovery.is_symlink() or not recovery.is_file() or recovery.stat().st_size != RECOVERY_BYTES or digest(recovery) != RECOVERY_SHA256:
+                raise RuntimeError("Exact admitted Documents recovery image is unavailable")
+            # Full image/output storage accounting is also rechecked by the
+            # production consumer; do not replace its free-space guards.
+            if shutil.disk_usage(ROOT).free < 2 * RECOVERY_BYTES + 4 * 1024**3 + 64 * 1024**2:
+                raise RuntimeError("Insufficient actual free space for full raw-image transaction")
+            if not run("companion-filesystem-regressions", ["python3", "tests/test_macos_companion_staging.py"], 60):
+                raise RuntimeError("Mac companion filesystem regression failed")
         receipt.update(exe_source_commit=head, core_fixture_commit=CORE,
                        locks={name: digest(ROOT / name) for name in LOCKS},
                        freeBytesBefore=shutil.disk_usage(ROOT).free)
@@ -135,12 +166,17 @@ def main():
             ("rust-tests", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked", "--target", TARGET,
                             "installation_media_welcome_is_bundled_with_a_bounded_privilege_boundary"])]:
             run(name, args, 1200)
-        built = run("native-build", ["npm", "run", "build:app", "--", "--target", TARGET], 1800)
+        build_command = (["bash", "bundle_macos.sh", "--runtime-root", str(runtime),
+                          "--appliance-root", str(appliance), "--diagnostic-x86-tcg"] if fullstack
+                         else ["npm", "run", "build:app", "--", "--target", TARGET])
+        built = run("native-build", build_command, 1800)
         if receipt["locks"] != {name: digest(ROOT / name) for name in LOCKS}:
             raise RuntimeError("build changed pinned lock/config bytes")
         if not built:
             raise RuntimeError("native build failed; no stale app GUI fallback")
         app = ROOT / f"src-tauri/target/{TARGET}/release/bundle/macos/SteamOS NVIDIA Builder.app"
+        if fullstack:
+            app = ROOT / "dist/macos/SteamOS NVIDIA Builder.app"
         info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
         if info["CFBundleIdentifier"] != "dev.cornidog.steamos-nvidia-image-builder":
             raise RuntimeError("wrong bundle identifier")
@@ -157,7 +193,8 @@ def main():
             if app_processes(binary):
                 raise RuntimeError("pre-existing exact executable; refuse GUI interaction")
             try:
-                run("gui", [str(helper), str(app), str(OUT)], 150)
+                arguments = [str(helper), str(app), str(OUT)] + ([str(recovery)] if fullstack else [])
+                run("gui", arguments, 510 if fullstack else 150)
             finally:
                 survivors = app_processes(binary)
                 receipt["appProcessSurvivors"] = survivors
@@ -180,14 +217,32 @@ def main():
                         time.sleep(0.1)
                     receipt["appProcessSurvivorsAfterOwnedCleanup"] = app_processes(binary)
                     raise RuntimeError("GUI left app processes; cleanup evidence retained, not normal closure")
+        if fullstack:
+            qemu = subprocess.run(["/usr/bin/pgrep", "-f", "qemu-system-"], capture_output=True, text=True, timeout=10)
+            if qemu.returncode != 1:
+                receipt["qemuBeforeFault"] = qemu.stdout
+                raise RuntimeError("Graphical transaction left QEMU; refuse overlapping fault guest")
+            run("actual-guest-normal-wrong-marker-closure", ["python3", "scripts/run_macos_guest_fault.py"], 1500)
         if receipt["stages"].get("gui", {}).get("state") == "passed":
             events = json.loads((OUT / "gui-events.json").read_text())
             kinds = [event.get("kind") for event in events]
             clicks = [event.get("label") for event in events if event.get("kind") == "pointer-click"]
-            required_events = {"native-image-chooser-observed", "native-image-chooser-closed-observed",
-                               "normal-app-close"}
-            if not required_events.issubset(kinds) or not {"choose-image", "cancel-image-chooser"}.issubset(clicks):
-                raise RuntimeError("GUI exited without the actual chooser open/cancel and normal-close evidence")
+            required_events = ({"native-image-chooser-observed", "native-image-selected-observed",
+                                "cold-build-next-stage-observed", "normal-app-close"} if fullstack else
+                               {"native-image-chooser-observed", "native-image-chooser-closed-observed", "normal-app-close"})
+            required_clicks = ({"choose-image", "choose-pinned-image", "build-pinned-image", "cancel-after-next-stage"}
+                               if fullstack else {"choose-image", "cancel-image-chooser"})
+            if not required_events.issubset(kinds) or not required_clicks.issubset(clicks):
+                raise RuntimeError("GUI exited without the requested exact pointer/observed-stage/normal-close evidence")
+            if fullstack:
+                receipt["productAcceptance"]["coldBuildGuestHealthNextStage"] = "passed"
+                receipt["productAcceptance"]["imageBuild"] = "not_complete: cancelled after actual selected-image inspection milestone"
+                if digest(recovery) != RECOVERY_SHA256:
+                    raise RuntimeError("Original recovery bytes changed")
+                qemu = subprocess.run(["/usr/bin/pgrep", "-f", "qemu-system-"], capture_output=True, text=True, timeout=10)
+                receipt["qemuSurvivors"] = qemu.stdout.strip()
+                if qemu.returncode != 1:
+                    raise RuntimeError("QEMU closure unproven; no next job overlap")
             receipt["productAcceptance"]["nativeAppBuildAndGuiChooser"] = "passed"
         if digest(binary) != receipt["artifact"]["sha256"]:
             raise RuntimeError("executable changed during GUI transaction")
@@ -206,6 +261,8 @@ def main():
         receipt["finished"] = time.time()
         save()
     required = ["frontend", "docs", "hygiene", "format", "clippy", "darwin-cache-tests", "rust-tests", "native-build", "gui", "archive"]
+    if fullstack:
+        required += ["darwin-producer-boundaries", "fullstack-input-producer", "companion-filesystem-regressions", "actual-guest-normal-wrong-marker-closure"]
     return 0 if not receipt.get("error") and all(
         receipt["stages"].get(name, {}).get("state") == "passed" for name in required) else 1
 

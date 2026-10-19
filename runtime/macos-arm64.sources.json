@@ -1,0 +1,1049 @@
+{
+  "architecture": "arm64",
+  "bottle_tag": "arm64_sequoia",
+  "formulae": {
+    "bash": {
+      "bottle": {
+        "cellar": "/opt/homebrew/Cellar",
+        "sha256": "753bdd9943047829a2f8469ed2d29fc71d0de5572df2a6d0e7b3f30be71ae937",
+        "url": "https://ghcr.io/v2/homebrew/core/bash/blobs/sha256:753bdd9943047829a2f8469ed2d29fc71d0de5572df2a6d0e7b3f30be71ae937"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "ncurses",
+        "readline",
+        "gettext"
+      ],
+      "formula_sha256": "93070d9d6d116ab23653adfd72ef6ab4d2b8bde0beac258cbc7f335876d807c4",
+      "license": "GPL-3.0-or-later",
+      "name": "bash",
+      "revision": 0,
+      "source": {
+        "checksum": "0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba",
+        "revision": null,
+        "tag": null,
+        "url": "https://ftpmirror.gnu.org/bash/bash-5.3.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "5.3.20"
+    },
+    "ca-certificates": {
+      "bottle": {
+        "cellar": ":any_skip_relocation",
+        "sha256": "81804ad8a70a7a8d2a0a964d106765ff88716b310decaeffb4b4895a3252186a",
+        "url": "https://ghcr.io/v2/homebrew/core/ca-certificates/blobs/sha256:81804ad8a70a7a8d2a0a964d106765ff88716b310decaeffb4b4895a3252186a"
+      },
+      "bottle_tag": "all",
+      "dependencies": [],
+      "formula_sha256": "e7807634f02d41cfad036cdebb546daacd45e118fcb463acc6c6e4f6e07dcf3f",
+      "license": "MPL-2.0",
+      "name": "ca-certificates",
+      "revision": 0,
+      "source": {
+        "checksum": "a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505",
+        "revision": null,
+        "tag": null,
+        "url": "https://curl.se/ca/cacert-2026-09-25.pem",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "2026-09-25"
+    },
+    "capstone": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "a6fbf1343829afa5521e8fdba9f0d05246cad3c8caf4833af6d826baaf0db795",
+        "url": "https://ghcr.io/v2/homebrew/core/capstone/blobs/sha256:a6fbf1343829afa5521e8fdba9f0d05246cad3c8caf4833af6d826baaf0db795"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "gettext"
+      ],
+      "formula_sha256": "74d7afa733f1f748ad4b71e691b519b865f35e07da778f9b1bc111a5f926dfce",
+      "license": "BSD-3-Clause",
+      "name": "capstone",
+      "revision": 0,
+      "source": {
+        "checksum": "0619da31af08152600af95c481527ef6d756c0a8404fca7544a4fdf6dfc2c0f9",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/capstone-engine/capstone/archive/refs/tags/5.0.9.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "5.0.9"
+    },
+    "dtc": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "2b800aed01f5ebfc9cbb685536ad1625d1d702ab850bd34639865d3457c4f2e8",
+        "url": "https://ghcr.io/v2/homebrew/core/dtc/blobs/sha256:2b800aed01f5ebfc9cbb685536ad1625d1d702ab850bd34639865d3457c4f2e8"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "libyaml"
+      ],
+      "formula_sha256": "0996948d0919552f834245870a8fba81871c583becd2c3c16a15544927fc9060",
+      "license": "GPL-2.0-or-later OR BSD-2-Clause",
+      "name": "dtc",
+      "revision": 0,
+      "source": {
+        "checksum": "23526015a6f1550e0541a53fe7acea1b5a11e3697cdf3a3bdc076abc38f6045d",
+        "revision": null,
+        "tag": null,
+        "url": "https://mirrors.edge.kernel.org/pub/software/utils/dtc/dtc-1.8.1.tar.xz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "1.8.1"
+    },
+    "gettext": {
+      "bottle": {
+        "cellar": "/opt/homebrew/Cellar",
+        "sha256": "98a116d35792ccd730360ffc8c0d8fc5799b2282b96bb7696192c573f064a331",
+        "url": "https://ghcr.io/v2/homebrew/core/gettext/blobs/sha256:98a116d35792ccd730360ffc8c0d8fc5799b2282b96bb7696192c573f064a331"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "json-c",
+        "libunistring"
+      ],
+      "formula_sha256": "9c90f7cf5a45c828e2a66d9339b25b781302cf49316e939d029e6079e1b9d916",
+      "license": "GPL-3.0-or-later AND LGPL-2.1-or-later",
+      "name": "gettext",
+      "revision": 0,
+      "source": {
+        "checksum": "85d99b79c981a404874c02e0342176cf75c7698e2b51fe41031cf6526d974f1a",
+        "revision": null,
+        "tag": null,
+        "url": "https://ftpmirror.gnu.org/gettext/gettext-1.0.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "1.0"
+    },
+    "gh": {
+      "bottle": {
+        "cellar": ":any_skip_relocation",
+        "sha256": "18e4616fad2b57c7338c590ff74a5c04ea57667a5728e80a39ebd450647db38d",
+        "url": "https://ghcr.io/v2/homebrew/core/gh/blobs/sha256:18e4616fad2b57c7338c590ff74a5c04ea57667a5728e80a39ebd450647db38d"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "a55e1dbfe432c75de79a0eae6baa6294941a603e22789465084b7ce639e2a3ef",
+      "license": "MIT",
+      "name": "gh",
+      "revision": 0,
+      "source": {
+        "checksum": "08bf0ef8b4409893889175e0f5279d30d6edd96465816042c0d7c72eac598158",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/cli/cli/archive/refs/tags/v2.102.0.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "2.102.0"
+    },
+    "git": {
+      "bottle": {
+        "cellar": "/opt/homebrew/Cellar",
+        "sha256": "8761edfe7a24efa75e6ded6aa98489a0d978eeca053d51c1f7b2b74bf365a587",
+        "url": "https://ghcr.io/v2/homebrew/core/git/blobs/sha256:8761edfe7a24efa75e6ded6aa98489a0d978eeca053d51c1f7b2b74bf365a587"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "pcre2",
+        "gettext"
+      ],
+      "formula_sha256": "df39658f97fd2bb62ab681628d14c7e41b6c2dfbe220778c3d3b2712ff16b0a4",
+      "license": "GPL-2.0-only AND GPL-2.0-or-later AND LGPL-2.1-or-later AND BSD-3-Clause AND MIT",
+      "name": "git",
+      "revision": 1,
+      "source": {
+        "checksum": "26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3",
+        "revision": null,
+        "tag": null,
+        "url": "https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.56.0.tar.xz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "2.56.0"
+    },
+    "glib": {
+      "bottle": {
+        "cellar": "/opt/homebrew/Cellar",
+        "sha256": "ce9568a335281cb6bd12c48fd89d7a118a046f9df16761c120826fdae116e468",
+        "url": "https://ghcr.io/v2/homebrew/core/glib/blobs/sha256:ce9568a335281cb6bd12c48fd89d7a118a046f9df16761c120826fdae116e468"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "pcre2",
+        "gettext"
+      ],
+      "formula_sha256": "e6c6094ef287cd9dd51af16a4e69cb899b732cdf92da900eb9371339099df005",
+      "license": "LGPL-2.1-or-later",
+      "name": "glib",
+      "revision": 0,
+      "source": {
+        "checksum": "93c941aa17d5eb1d53fe838365f29a8b4e539c222a256d974ec8f30fc413e396",
+        "revision": null,
+        "tag": null,
+        "url": "https://download.gnome.org/sources/glib/2.90/glib-2.90.1.tar.xz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "2.90.1"
+    },
+    "gmp": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "b30bf31c50c294e0981d2a7cb4c149e9c43f50f3cf4f7f552c3dcf9da66b95b5",
+        "url": "https://ghcr.io/v2/homebrew/core/gmp/blobs/sha256:b30bf31c50c294e0981d2a7cb4c149e9c43f50f3cf4f7f552c3dcf9da66b95b5"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "a7a712aab26d2b88865ebd9c06f4eeb131c53815f3b6e467578b32ab66ac3b18",
+      "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
+      "name": "gmp",
+      "revision": 0,
+      "source": {
+        "checksum": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898",
+        "revision": null,
+        "tag": null,
+        "url": "https://ftpmirror.gnu.org/gmp/gmp-6.3.0.tar.xz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "6.3.0"
+    },
+    "gnu-tar": {
+      "bottle": {
+        "cellar": ":any_skip_relocation",
+        "sha256": "aa81f1c558381733e4506ec7b918d3cd39ad233ab74ed9b90bbeb6d709e47c21",
+        "url": "https://ghcr.io/v2/homebrew/core/gnu-tar/blobs/sha256:aa81f1c558381733e4506ec7b918d3cd39ad233ab74ed9b90bbeb6d709e47c21"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "e2fd1af456521265e21b6e60ba76c716f89311130aad1fae0729674f78680540",
+      "license": "GPL-3.0-or-later",
+      "name": "gnu-tar",
+      "revision": 1,
+      "source": {
+        "checksum": "14d55e32063ea9526e057fbf35fcabd53378e769787eff7919c3755b02d2b57e",
+        "revision": null,
+        "tag": null,
+        "url": "https://ftpmirror.gnu.org/tar/tar-1.35.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "1.35"
+    },
+    "gnutls": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "0c8ba0cb42636a98b28a2c173b33c4298a286972a9838d27602f0bbc860acdbb",
+        "url": "https://ghcr.io/v2/homebrew/core/gnutls/blobs/sha256:0c8ba0cb42636a98b28a2c173b33c4298a286972a9838d27602f0bbc860acdbb"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "ca-certificates",
+        "gmp",
+        "libidn2",
+        "libtasn1",
+        "libunistring",
+        "nettle",
+        "p11-kit",
+        "gettext"
+      ],
+      "formula_sha256": "720a0b82acbc9f97fe2950c6b919ea5e9383b491c8ef7b7f06a7f3e16c9b8c07",
+      "license": "LGPL-2.1-or-later AND GPL-3.0-only",
+      "name": "gnutls",
+      "revision": 2,
+      "source": {
+        "checksum": "ffed8ec1bf09c2426d4f14aae377de4753b53e537d685e604e99a8b16ca9c97e",
+        "revision": null,
+        "tag": null,
+        "url": "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.13.tar.xz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "3.8.13"
+    },
+    "jpeg-turbo": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "6dc55edcd33c693e474299ed2bba3c472ac1331cbe300066ec8ef99b88fab17c",
+        "url": "https://ghcr.io/v2/homebrew/core/jpeg-turbo/blobs/sha256:6dc55edcd33c693e474299ed2bba3c472ac1331cbe300066ec8ef99b88fab17c"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "7e2e90fde4b71193c517e87763b199f3ebf185afcce4b99d82eee7467e761b8d",
+      "license": "IJG AND Zlib AND BSD-3-Clause",
+      "name": "jpeg-turbo",
+      "revision": 0,
+      "source": {
+        "checksum": "6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "3.2.0"
+    },
+    "json-c": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "5624048dbb067f1a6d3784081029c3d738edeefd57188ce6724bb93d01aa53aa",
+        "url": "https://ghcr.io/v2/homebrew/core/json-c/blobs/sha256:5624048dbb067f1a6d3784081029c3d738edeefd57188ce6724bb93d01aa53aa"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "7b6c55b79158a98a41e376a39e05bbee827f425b67654af75db461f79402af37",
+      "license": "MIT",
+      "name": "json-c",
+      "revision": 0,
+      "source": {
+        "checksum": "37ad0249902e301bd9052bf712e511fcc6acff4ecaad4b5900aad9ce564e26de",
+        "revision": null,
+        "tag": null,
+        "url": "https://s3.amazonaws.com/json-c_releases/releases/json-c-0.19.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "0.19"
+    },
+    "ldns": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "ea5496fc061586e2b9f4547ed614d2f18ba10b771524fcff4ea3080c63447288",
+        "url": "https://ghcr.io/v2/homebrew/core/ldns/blobs/sha256:ea5496fc061586e2b9f4547ed614d2f18ba10b771524fcff4ea3080c63447288"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "openssl@4",
+        "python@3.15"
+      ],
+      "formula_sha256": "ad053fa13bcf235ccb9daa313c62bd7c251b7977eea85e67112eb0a2f0dfe29b",
+      "license": "BSD-3-Clause",
+      "name": "ldns",
+      "revision": 1,
+      "source": {
+        "checksum": "b524fa21994b6e834200ceb8c27f1b84bda5982fe35706f058196c079db94d5d",
+        "revision": null,
+        "tag": null,
+        "url": "https://nlnetlabs.nl/downloads/ldns/ldns-1.9.2.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "1.9.2"
+    },
+    "libcbor": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "90ad93678b0065b521b482896d8c4f07e8274c80ee0fdcd8bc7334506e578ec6",
+        "url": "https://ghcr.io/v2/homebrew/core/libcbor/blobs/sha256:90ad93678b0065b521b482896d8c4f07e8274c80ee0fdcd8bc7334506e578ec6"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "d54d3c9601ea3d00219616dd8a5123885851150a9ef9e461df7ce8fb1da8e8f5",
+      "license": "MIT",
+      "name": "libcbor",
+      "revision": 0,
+      "source": {
+        "checksum": "a8c1516e741562cf95aa4479c64916c3d4d2623e24fdc35e414e2320e7300aae",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/PJK/libcbor/archive/refs/tags/v0.14.0.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "0.14.0"
+    },
+    "libfido2": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "b404a7b93781536080839a6c16c23b757f540e1a0895ea8344bc39c34cea5edb",
+        "url": "https://ghcr.io/v2/homebrew/core/libfido2/blobs/sha256:b404a7b93781536080839a6c16c23b757f540e1a0895ea8344bc39c34cea5edb"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "libcbor",
+        "openssl@4"
+      ],
+      "formula_sha256": "ad8867ebdb4ff84bc801e694b5482a8cb7cc9b2ddb83443d10f18ac0df493141",
+      "license": "BSD-2-Clause",
+      "name": "libfido2",
+      "revision": 1,
+      "source": {
+        "checksum": "ace062d14a482ff9325410ff63d06c8b5fe87e79ebc18dda07add2bc0188c77f",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/Yubico/libfido2/archive/refs/tags/1.17.0.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "1.17.0"
+    },
+    "libidn2": {
+      "bottle": {
+        "cellar": "/opt/homebrew/Cellar",
+        "sha256": "1eb02bfa40ec00b7ea64d8608fcf2115069d99de5a35eb3e2b3ac444a695ea46",
+        "url": "https://ghcr.io/v2/homebrew/core/libidn2/blobs/sha256:1eb02bfa40ec00b7ea64d8608fcf2115069d99de5a35eb3e2b3ac444a695ea46"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "libunistring",
+        "gettext"
+      ],
+      "formula_sha256": "032d48cd71a4c81e9c6a7847b1dc2d3b0a1d1f21a8fa6fead4a7ff1b60df2160",
+      "license": "(GPL-2.0-or-later OR LGPL-3.0-or-later) AND (Unicode-TOU AND Unicode-DFS-2016) AND GPL-3.0-or-later AND LGPL-2.1-or-later AND FSFAP-no-warranty-disclaimer",
+      "name": "libidn2",
+      "revision": 0,
+      "source": {
+        "checksum": "f557911bf6171621e1f72ff35f5b1825bb35b52ed45325dcdee931e5d3c0787a",
+        "revision": null,
+        "tag": null,
+        "url": "https://ftpmirror.gnu.org/libidn/libidn2-2.3.8.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "2.3.8"
+    },
+    "libpng": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "6461c4dde6a693b559c531357b32126bd649ab67f53db5a5b70c25a5c12de4f1",
+        "url": "https://ghcr.io/v2/homebrew/core/libpng/blobs/sha256:6461c4dde6a693b559c531357b32126bd649ab67f53db5a5b70c25a5c12de4f1"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "b4c719b087e0ba9c8f724846b984b51e9edb2d71926bf65a654a0c54d339eac1",
+      "license": "libpng-2.0",
+      "name": "libpng",
+      "revision": 0,
+      "source": {
+        "checksum": "d80dd2a38a37f803cb9b6ac7b14bd6e74ddc3b654780a8380bdf93523fdb4389",
+        "revision": null,
+        "tag": null,
+        "url": "https://downloads.sourceforge.net/project/libpng/libpng16/1.6.59/libpng-1.6.59.tar.xz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "1.6.59"
+    },
+    "libslirp": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "af14169e3c82f790b4b3982e638d6e9fb261887ff5f315d640f812604012a7b3",
+        "url": "https://ghcr.io/v2/homebrew/core/libslirp/blobs/sha256:af14169e3c82f790b4b3982e638d6e9fb261887ff5f315d640f812604012a7b3"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "glib"
+      ],
+      "formula_sha256": "bb43caff8fd85c3ff9dcf0dd0cda7b56498e45ee1becbe6431230391b9f68ebb",
+      "license": "BSD-3-Clause",
+      "name": "libslirp",
+      "revision": 0,
+      "source": {
+        "checksum": "f43e68b60b580647574ec4a0e2b6c600a56281e6c39f79426510832dc810f483",
+        "revision": null,
+        "tag": null,
+        "url": "https://gitlab.freedesktop.org/slirp/libslirp/-/archive/v4.9.5/libslirp-v4.9.5.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "4.9.5"
+    },
+    "libssh": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "69507118740589ed52f4b4328694eeed6a07166527e001f0d43f9c6a86b09d1f",
+        "url": "https://ghcr.io/v2/homebrew/core/libssh/blobs/sha256:69507118740589ed52f4b4328694eeed6a07166527e001f0d43f9c6a86b09d1f"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "openssl@4"
+      ],
+      "formula_sha256": "77d11f59dc8fbf677e0be68be9a7711f1433e5d238ea02a3e4bbc759392ee8ba",
+      "license": "LGPL-2.1-or-later",
+      "name": "libssh",
+      "revision": 1,
+      "source": {
+        "checksum": "49560f677d96e3706a904ac2de1116e25f3680937d51e5c92198fcba4a1c1e9f",
+        "revision": null,
+        "tag": null,
+        "url": "https://www.libssh.org/files/0.12/libssh-0.12.2.tar.xz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "0.12.2"
+    },
+    "libtasn1": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "973e0fd7d529808f53fa9ae281020bcbcc750a1dff60e5e5bc37c0da274cca5e",
+        "url": "https://ghcr.io/v2/homebrew/core/libtasn1/blobs/sha256:973e0fd7d529808f53fa9ae281020bcbcc750a1dff60e5e5bc37c0da274cca5e"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "8c0814380e9449c0b9b5cfcbf12e7e44e25e581c8f3909f2467c63bb482bcd2d",
+      "license": "LGPL-2.1-or-later",
+      "name": "libtasn1",
+      "revision": 0,
+      "source": {
+        "checksum": "1d8a444a223cc5464240777346e125de51d8e6abf0b8bac742ac84609167dc87",
+        "revision": null,
+        "tag": null,
+        "url": "https://ftpmirror.gnu.org/libtasn1/libtasn1-4.21.0.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "4.21.0"
+    },
+    "libunistring": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "5001abe192babcfaf0f97ad322e2e59958d0d991de3da9f2e941b24924b8a2b8",
+        "url": "https://ghcr.io/v2/homebrew/core/libunistring/blobs/sha256:5001abe192babcfaf0f97ad322e2e59958d0d991de3da9f2e941b24924b8a2b8"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "e19b8847465634aa2ab365c7fa641216450ad26cc02bddfce08c8d17342d21dc",
+      "license": "GPL-2.0-or-later OR LGPL-3.0-or-later",
+      "name": "libunistring",
+      "revision": 0,
+      "source": {
+        "checksum": "5b0ecd46cbf225375f20ab4056197e66a7ac590e2684c069af407ae3383c9d81",
+        "revision": null,
+        "tag": null,
+        "url": "https://ftpmirror.gnu.org/libunistring/libunistring-1.5.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "1.5"
+    },
+    "libusb": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "a8d271bd5d9e7065987960caa52a9130d7fe6321ff1bad751499e465d0413e38",
+        "url": "https://ghcr.io/v2/homebrew/core/libusb/blobs/sha256:a8d271bd5d9e7065987960caa52a9130d7fe6321ff1bad751499e465d0413e38"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "513c20f992711ced872639a391fbb0b3194e397ffddc4968b9f9b1e4f03b48ee",
+      "license": "LGPL-2.1-or-later",
+      "name": "libusb",
+      "revision": 0,
+      "source": {
+        "checksum": "fea36f34f9156400209595e300840767ab1a385ede1dc7ee893015aea9c6dbaf",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.tar.bz2",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "1.0.30"
+    },
+    "libyaml": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "0ec9bf8082245c008803b42dcae3e6a0c8cd7a67aed589d9b6482b115c0a543b",
+        "url": "https://ghcr.io/v2/homebrew/core/libyaml/blobs/sha256:0ec9bf8082245c008803b42dcae3e6a0c8cd7a67aed589d9b6482b115c0a543b"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "dfad02f7f8f65dff0f00fee6ca2d99b59309ad8c7bc6f2148ae60788f2bf8a79",
+      "license": "MIT",
+      "name": "libyaml",
+      "revision": 0,
+      "source": {
+        "checksum": "fa240dbf262be053f3898006d502d514936c818e422afdcf33921c63bed9bf2e",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/yaml/libyaml/archive/refs/tags/0.2.5.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "0.2.5"
+    },
+    "lz4": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "91674f1c7407b1f7b73d5bd1d85ed1abaaca93be3b68607af4ef3df632540ac0",
+        "url": "https://ghcr.io/v2/homebrew/core/lz4/blobs/sha256:91674f1c7407b1f7b73d5bd1d85ed1abaaca93be3b68607af4ef3df632540ac0"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "b45023020f34ac622d84d10e44f1d972f742d5c741098f6ee828b6ab79bd19e4",
+      "license": "BSD-2-Clause",
+      "name": "lz4",
+      "revision": 0,
+      "source": {
+        "checksum": "537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/lz4/lz4/archive/refs/tags/v1.10.0.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "1.10.0"
+    },
+    "lzo": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "6bb0401c41a18fd37071ec9591fe053a808f07552ff7ea22542faa470eb8e589",
+        "url": "https://ghcr.io/v2/homebrew/core/lzo/blobs/sha256:6bb0401c41a18fd37071ec9591fe053a808f07552ff7ea22542faa470eb8e589"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "8acc83503bd65a1e198d16638fe911201c7922cf70b24b5db3015fcd948c54cd",
+      "license": "GPL-2.0-or-later",
+      "name": "lzo",
+      "revision": 0,
+      "source": {
+        "checksum": "c0f892943208266f9b6543b3ae308fab6284c5c90e627931446fb49b4221a072",
+        "revision": null,
+        "tag": null,
+        "url": "https://www.oberhumer.com/opensource/lzo/download/lzo-2.10.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "2.10"
+    },
+    "mpdecimal": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "9e2dc44e47e91465c3cefa8969baa6af53a1ec339eda8443b18a30786147203e",
+        "url": "https://ghcr.io/v2/homebrew/core/mpdecimal/blobs/sha256:9e2dc44e47e91465c3cefa8969baa6af53a1ec339eda8443b18a30786147203e"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "b7e3a231899466088e6dfc6ad4c82bffe8dc38c623b2a4a0ef4de388bd68c1fb",
+      "license": "BSD-2-Clause",
+      "name": "mpdecimal",
+      "revision": 0,
+      "source": {
+        "checksum": "96d33abb4bb0070c7be0fed4246cd38416188325f820468214471938545b1ac8",
+        "revision": null,
+        "tag": null,
+        "url": "https://www.bytereef.org/software/mpdecimal/releases/mpdecimal-4.0.1.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "4.0.1"
+    },
+    "ncurses": {
+      "bottle": {
+        "cellar": "/opt/homebrew/Cellar",
+        "sha256": "3fe0a6d4482023f880e9542af63e9229c6fcd7456b46e88b5d2d4703eb2ec943",
+        "url": "https://ghcr.io/v2/homebrew/core/ncurses/blobs/sha256:3fe0a6d4482023f880e9542af63e9229c6fcd7456b46e88b5d2d4703eb2ec943"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "2e35152ac8c0b209f90373090ad3d3a64d7818fc965d6f58142ab1d9fa95f824",
+      "license": "X11-distribute-modifications-variant",
+      "name": "ncurses",
+      "revision": 0,
+      "source": {
+        "checksum": "355b4cbbed880b0381a04c46617b7656e362585d52e9cf84a67e2009b749ff11",
+        "revision": null,
+        "tag": null,
+        "url": "https://invisible-mirror.net/archives/ncurses/ncurses-6.6.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "6.6"
+    },
+    "nettle": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "01050aa13ce3825fc1b81f1a3c5994a165301b9d5223a9fb9015d122bde5ca3e",
+        "url": "https://ghcr.io/v2/homebrew/core/nettle/blobs/sha256:01050aa13ce3825fc1b81f1a3c5994a165301b9d5223a9fb9015d122bde5ca3e"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "gmp"
+      ],
+      "formula_sha256": "8135edd1ccf828e5a9550a965bd5f11a862ad028335f451838998f3e5215e4f2",
+      "license": "GPL-2.0-or-later OR LGPL-3.0-or-later",
+      "name": "nettle",
+      "revision": 0,
+      "source": {
+        "checksum": "3addbc00da01846b232fb3bc453538ea5468da43033f21bb345cb1e9073f5094",
+        "revision": null,
+        "tag": null,
+        "url": "https://ftpmirror.gnu.org/nettle/nettle-4.0.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "4.0"
+    },
+    "openssh": {
+      "bottle": {
+        "cellar": "/opt/homebrew/Cellar",
+        "sha256": "08339f96e37c5d085b65df52a8a9cc33782a163fdf4537b09e55b17bf08b3697",
+        "url": "https://ghcr.io/v2/homebrew/core/openssh/blobs/sha256:08339f96e37c5d085b65df52a8a9cc33782a163fdf4537b09e55b17bf08b3697"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "ldns",
+        "libfido2",
+        "openssl@4"
+      ],
+      "formula_sha256": "830aaec6f582a6465192965732228d74c582bf2844ef493ac7034d51121faffa",
+      "license": "SSH-OpenSSH",
+      "name": "openssh",
+      "revision": 1,
+      "source": {
+        "checksum": "a9dc9565dffe8640f64d863cd29a32bc4a3dbdec0566a7fc44c5d6ee767d5f39",
+        "revision": null,
+        "tag": null,
+        "url": "https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-10.6p1.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "10.6p1"
+    },
+    "openssl@4": {
+      "bottle": {
+        "cellar": "/opt/homebrew/Cellar",
+        "sha256": "e9968c63732a4aa642c6131f120d0a89a119885f7ce3cfec796ae672369b98a6",
+        "url": "https://ghcr.io/v2/homebrew/core/openssl/4/blobs/sha256:e9968c63732a4aa642c6131f120d0a89a119885f7ce3cfec796ae672369b98a6"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "ca-certificates"
+      ],
+      "formula_sha256": "9e6998cc58157aa31b16144b11b67d686caccd3032d7882a76eccb53ce0730f7",
+      "license": "Apache-2.0",
+      "name": "openssl@4",
+      "revision": 0,
+      "source": {
+        "checksum": "325b5c806167c13b40b1ffeadfe0248197c00eccc4cf123ec1e28d2d2fd216d9",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/openssl/openssl/releases/download/openssl-4.0.3/openssl-4.0.3.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "4.0.3"
+    },
+    "p11-kit": {
+      "bottle": {
+        "cellar": "/opt/homebrew/Cellar",
+        "sha256": "6a61302c1be785c331903fe9252f87d0d4ca722fda0697c4e22f6063cd4f1be2",
+        "url": "https://ghcr.io/v2/homebrew/core/p11-kit/blobs/sha256:6a61302c1be785c331903fe9252f87d0d4ca722fda0697c4e22f6063cd4f1be2"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "ca-certificates",
+        "libtasn1"
+      ],
+      "formula_sha256": "f417ea91e494ec02cc2c79284c80dd4f1b214ba6678a0669af531243aacdaded",
+      "license": "BSD-3-Clause",
+      "name": "p11-kit",
+      "revision": 0,
+      "source": {
+        "checksum": "f2cc09111e44bf3fea58f023180b33acea90aa82d042d6fbb623fbc5ba033bb7",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/p11-glue/p11-kit/releases/download/0.26.5/p11-kit-0.26.5.tar.xz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "0.26.5"
+    },
+    "pcre2": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "0ec47d18c50f5770db2b3f07b5b85644284cc6ee8e07e23b11d2727e95932b77",
+        "url": "https://ghcr.io/v2/homebrew/core/pcre2/blobs/sha256:0ec47d18c50f5770db2b3f07b5b85644284cc6ee8e07e23b11d2727e95932b77"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "2dcb74b4bc19dc81ace51feac7bb626b679c7b730eca1d3492d73fe822134fb8",
+      "license": "BSD-3-Clause",
+      "name": "pcre2",
+      "revision": 0,
+      "source": {
+        "checksum": "53c156e1ba416a20da8e65395daa132da0d80e76910424caca3fcdae7831d384",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.49/pcre2-10.49.tar.bz2",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "10.49"
+    },
+    "pixman": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "86f5fc013d2b22bbe41c1c14661287bf8e8e4c3ac95cd05b08b886d24918fe34",
+        "url": "https://ghcr.io/v2/homebrew/core/pixman/blobs/sha256:86f5fc013d2b22bbe41c1c14661287bf8e8e4c3ac95cd05b08b886d24918fe34"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "a9957ff4b6518062d2e2697b5ff8b470b06e5a73f8f9076c9d3e7d1c8dbc1d85",
+      "license": "MIT",
+      "name": "pixman",
+      "revision": 0,
+      "source": {
+        "checksum": "d09c44ebc3bd5bee7021c79f922fe8fb2fb57f7320f55e97ff9914d2346a591c",
+        "revision": null,
+        "tag": null,
+        "url": "https://cairographics.org/releases/pixman-0.46.4.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "0.46.4"
+    },
+    "python@3.14": {
+      "bottle": {
+        "cellar": "/opt/homebrew/Cellar",
+        "sha256": "3985ddbb87c8cf928f0d081e4f44039bc604967462c2a5c2aa4991f94d9678e6",
+        "url": "https://ghcr.io/v2/homebrew/core/python/3.14/blobs/sha256:3985ddbb87c8cf928f0d081e4f44039bc604967462c2a5c2aa4991f94d9678e6"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "ca-certificates",
+        "mpdecimal",
+        "openssl@4",
+        "sqlite",
+        "xz",
+        "zstd"
+      ],
+      "formula_sha256": "2d533cbd3bf1931dabb2302627b88dc917b1c6c12dc5f41ece766ef17f82162e",
+      "license": "Python-2.0",
+      "name": "python@3.14",
+      "revision": 2,
+      "source": {
+        "checksum": "a65b20a728f169f4e66ae143f40b1bd3d33c38d770251663f627c9767b79b210",
+        "revision": null,
+        "tag": null,
+        "url": "https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tgz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "3.14.8"
+    },
+    "python@3.15": {
+      "bottle": {
+        "cellar": "/opt/homebrew/Cellar",
+        "sha256": "c072201ad7ecd98356242b2dbd2518c1966975e2c6211e85585720a873f5f0cd",
+        "url": "https://ghcr.io/v2/homebrew/core/python/3.15/blobs/sha256:c072201ad7ecd98356242b2dbd2518c1966975e2c6211e85585720a873f5f0cd"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "ca-certificates",
+        "mpdecimal",
+        "openssl@4",
+        "sqlite",
+        "xz",
+        "zstd"
+      ],
+      "formula_sha256": "c982fc23dc01373e23cb05620e63f78e88244c73690ef7db725e860f0e6bd5c9",
+      "license": "Python-2.0",
+      "name": "python@3.15",
+      "revision": 0,
+      "source": {
+        "checksum": "438596cac081036d3c1d532ab7e7335eeb35567bc961749a0d5797176db0db68",
+        "revision": null,
+        "tag": null,
+        "url": "https://www.python.org/ftp/python/3.15.0/Python-3.15.0.tgz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "3.15.0"
+    },
+    "qemu": {
+      "bottle": {
+        "cellar": "/opt/homebrew/Cellar",
+        "sha256": "ab7fc45b5fddc1a61b9cfd7a538753136f44051f1d4ffc32ea0f9037c04bb8df",
+        "url": "https://ghcr.io/v2/homebrew/core/qemu/blobs/sha256:ab7fc45b5fddc1a61b9cfd7a538753136f44051f1d4ffc32ea0f9037c04bb8df"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "capstone",
+        "dtc",
+        "glib",
+        "gnutls",
+        "jpeg-turbo",
+        "libpng",
+        "libslirp",
+        "libssh",
+        "libusb",
+        "lzo",
+        "ncurses",
+        "pixman",
+        "snappy",
+        "vde",
+        "zstd"
+      ],
+      "formula_sha256": "df8fe626603a12e042c0b33141343a3c36f059990addff1be4db4479fabe3561",
+      "license": "GPL-2.0-only",
+      "name": "qemu",
+      "revision": 0,
+      "source": {
+        "checksum": "731b5681e4bb18be313231579b8efd0296c5b015fa36dc533874b639ba838016",
+        "revision": null,
+        "tag": null,
+        "url": "https://download.qemu.org/qemu-11.1.2.tar.xz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "11.1.2"
+    },
+    "readline": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "461763fa21c050a59e5bbceedf67dcacf24e4aa4604490d73f0c9fa0f40e7fe5",
+        "url": "https://ghcr.io/v2/homebrew/core/readline/blobs/sha256:461763fa21c050a59e5bbceedf67dcacf24e4aa4604490d73f0c9fa0f40e7fe5"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "ead60941ba0f81334499b208e26382eefda15eb1b9614c417d70f1d827dc2e64",
+      "license": "GPL-3.0-or-later",
+      "name": "readline",
+      "revision": 0,
+      "source": {
+        "checksum": "fe5383204467828cd495ee8d1d3c037a7eba1389c22bc6a041f627976f9061cc",
+        "revision": null,
+        "tag": null,
+        "url": "https://ftpmirror.gnu.org/readline/readline-8.3.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "8.3.6"
+    },
+    "snappy": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "0b5ff66b47727b8af0cc62797ff3bd88632be5a6de6d03786a706114d8883488",
+        "url": "https://ghcr.io/v2/homebrew/core/snappy/blobs/sha256:0b5ff66b47727b8af0cc62797ff3bd88632be5a6de6d03786a706114d8883488"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "65ad62d494f32ebad469606114480e5aeb6e88cac51d6bd5067e7cfed4c86959",
+      "license": "BSD-3-Clause",
+      "name": "snappy",
+      "revision": 0,
+      "source": {
+        "checksum": "893f708a0bf4b5529d555ffcee390e940e932fcf90261f682604475a76cd0247",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/google/snappy/archive/refs/tags/1.3.1.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "1.3.1"
+    },
+    "sqlite": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "38bdb30f8e13a07cdcd86233de9ab4d8db29f2b81cb08c15c202ecea6835ab2f",
+        "url": "https://ghcr.io/v2/homebrew/core/sqlite/blobs/sha256:38bdb30f8e13a07cdcd86233de9ab4d8db29f2b81cb08c15c202ecea6835ab2f"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "readline"
+      ],
+      "formula_sha256": "cb22e585906d9ef444d357c8ae68e64697365447011333bd336d5fb15838a116",
+      "license": "blessing",
+      "name": "sqlite",
+      "revision": 0,
+      "source": {
+        "checksum": "926ef8d3eab93fbf6e06011901273eec076b25594a4e1cdadd50c987f4f6d64e",
+        "revision": null,
+        "tag": null,
+        "url": "https://www.sqlite.org/2026/sqlite-autoconf-3540100.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "3.54.1"
+    },
+    "vde": {
+      "bottle": {
+        "cellar": "/opt/homebrew/Cellar",
+        "sha256": "1e3ffe05a0f354b3909f74d3374fc036156c438147f5ac8dd34a8f747071e9f8",
+        "url": "https://ghcr.io/v2/homebrew/core/vde/blobs/sha256:1e3ffe05a0f354b3909f74d3374fc036156c438147f5ac8dd34a8f747071e9f8"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "1d48d707aaff08a2874c7180ff04df89f971210e6b60a7b5894257e6c5948e7f",
+      "license": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+      "name": "vde",
+      "revision": 0,
+      "source": {
+        "checksum": "a7d2cc4c3d0c0ffe6aff7eb0029212f2b098313029126dcd12dc542723972379",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/virtualsquare/vde-2/archive/refs/tags/v2.3.3.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "2.3.3"
+    },
+    "xz": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "c2724c0db0398134694b8366d30d14f4de376115fb54c559c331d5fd0474af76",
+        "url": "https://ghcr.io/v2/homebrew/core/xz/blobs/sha256:c2724c0db0398134694b8366d30d14f4de376115fb54c559c331d5fd0474af76"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [],
+      "formula_sha256": "e5b8bbf09dccb4a1f2ee333ed65b13ee773350a26735ef594ca859d2cf85248e",
+      "license": "0BSD AND GPL-2.0-or-later",
+      "name": "xz",
+      "revision": 0,
+      "source": {
+        "checksum": "0014c7886930454fe8bd4228665b51af55eeae560ea135c9c4cd33f55b2591d9",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/tukaani-project/xz/releases/download/v5.8.4/xz-5.8.4.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "5.8.4"
+    },
+    "zstd": {
+      "bottle": {
+        "cellar": ":any",
+        "sha256": "d72adf48460a8384b256f88061cd7b9df4977df7fa2e0794051d427db754a565",
+        "url": "https://ghcr.io/v2/homebrew/core/zstd/blobs/sha256:d72adf48460a8384b256f88061cd7b9df4977df7fa2e0794051d427db754a565"
+      },
+      "bottle_tag": "arm64_sequoia",
+      "dependencies": [
+        "lz4",
+        "xz"
+      ],
+      "formula_sha256": "e40f1de5b4e53faf64cad3d24dd74e28948d674caf96b3229310ce78e66b030e",
+      "license": "(BSD-3-Clause OR GPL-2.0-only) AND BSD-2-Clause AND MIT",
+      "name": "zstd",
+      "revision": 1,
+      "source": {
+        "checksum": "37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3",
+        "revision": null,
+        "tag": null,
+        "url": "https://github.com/facebook/zstd/archive/refs/tags/v1.5.7.tar.gz",
+        "using": null
+      },
+      "tap_git_head": "bf15382d54581a9a5f9836fbe141cdd1b57eff67",
+      "version": "1.5.7"
+    }
+  },
+  "platform": "macos",
+  "provider": "homebrew/core",
+  "roots": [
+    "qemu",
+    "python@3.14",
+    "git",
+    "gh",
+    "bash",
+    "gnu-tar",
+    "openssh"
+  ],
+  "schema_version": 1
+}

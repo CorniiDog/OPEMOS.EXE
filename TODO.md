@@ -1,5 +1,23 @@
 # OPEMOS.EXE — Product Checklist
 
+## Complete packaged Mac cold-Build transaction
+
+- [ ] User-released integrated recovery from reviewed r7: preserve PR188 Darwin
+  fixes and current PR189/PR190 output/vars/Windows CPU behavior on a disjoint
+  branch. Existing Homebrew provider now has exact 43-formula arm64 Sequoia/all
+  bottle identities, dependency closure and license declarations. Producer never
+  installs formulas: fetch/hash/extract owned tree, relocate/reseal Mach-O loader
+  dependencies and generate immutable final inventory, then package complete app
+  with existing exact EDK2/Fedora/cloud-init and official exact recovery input.
+  Fullstack workflow cannot silently become chooser-only; actual ignored
+  same-guest wrong-marker test is invoked and requires one executed test/marker.
+  Authored native filesystem/archive/loader regressions are NOT RUN on controller.
+  Required remote Linux/Windows/M1 checks and actual packaged pointer chooser,
+  Build, hashing/cold readiness/health/next stage, fault and closure remain open.
+  Normal fast-forward push to canonical CorniiDog/OPEMOS.EXE topic is necessary
+  for remote-only Darwin compiler/loader/GUI and exact counterpart review. No
+  PR190 ref change, original/media/GPU/new trust/merge/publication authority.
+
 ## Windows read-only package firmware handoff
 
 - [ ] Same complete Windows launch graph, subsequent actual OMEN r3/r4:

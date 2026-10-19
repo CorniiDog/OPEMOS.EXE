@@ -7036,6 +7036,23 @@ done"#
             assert!(Instant::now() < deadline, "guest handshake timed out");
             thread::sleep(Duration::from_secs(1));
         }
+        // Actual same-guest successful SSH command, then the production readiness
+        // consumer. A successful process with wrong output must fail closed.
+        let wrong = run_guest_command_with_timeout(
+            &session,
+            "printf 'OPEMOS_EXPECTED_WRONG_MARKER\\n'",
+            Duration::from_secs(5),
+        );
+        assert_eq!(wrong.as_deref(), Ok("OPEMOS_EXPECTED_WRONG_MARKER"));
+        assert_eq!(
+            appliance_readiness_outcome(
+                Instant::now(),
+                Instant::now() + Duration::from_secs(5),
+                &wrong
+            ),
+            ApplianceReadinessOutcome::Failed
+        );
+        println!("ACTUAL_GUEST_WRONG_MARKER exit=0 consumer=Failed");
         let health = collect_guest_health(&session).expect("guest health should pass");
         assert_eq!(health.protocol_version, "1");
         assert!(!health.required_tools.is_empty());

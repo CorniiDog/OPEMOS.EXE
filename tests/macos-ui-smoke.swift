@@ -4,7 +4,8 @@ import ApplicationServices
 import Foundation
 
 struct Refusal: Error { let message: String }
-let deadline = Date().addingTimeInterval(120)
+let fullStackImage: URL? = CommandLine.arguments.count == 4 ? URL(fileURLWithPath: CommandLine.arguments[3]).standardizedFileURL : nil
+let deadline = Date().addingTimeInterval(fullStackImage == nil ? 120 : 480)
 let bundleID = "dev.cornidog.steamos-nvidia-image-builder"
 var owned: NSRunningApplication?
 var events: [[String: Any]] = []
@@ -157,7 +158,7 @@ func click(_ element: AXUIElement, _ label: String, double: Bool = false) throws
 
 var failed = false
 do {
-    try require(CommandLine.arguments.count == 3, "app and output paths required")
+    try require([3, 4].contains(CommandLine.arguments.count), "app/output and optional exact Documents image paths required")
     let appURL = URL(fileURLWithPath: CommandLine.arguments[1]).standardizedFileURL
     out = URL(fileURLWithPath: CommandLine.arguments[2])
     let plist = appURL.appendingPathComponent("Contents/Info.plist")
@@ -257,10 +258,83 @@ do {
     while cancel == nil { cancel = try chooserCancel(); if cancel == nil { try guiWaitTick() } }
     try screenshot("native-image-chooser-open")
     record("native-image-chooser-observed", ["appPID": owned!.processIdentifier])
-    try click(cancel!, "cancel-image-chooser")
-    while try chooserCancel() != nil { try guiWaitTick() }
-    try screenshot("native-image-chooser-closed")
-    record("native-image-chooser-closed-observed")
+    if let image = fullStackImage {
+        let documents = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents").standardizedFileURL
+        try require(image.deletingLastPathComponent() == documents &&
+                    FileManager.default.fileExists(atPath: image.path), "full-stack input must be the admitted exact Documents file")
+        // Navigate with actual sidebar and file-cell clicks. No AX value writes,
+        // keyboard path shortcuts, direct selection invocation or hidden state.
+        if let documentsControl = try find(root, unique: true, { element in
+            ["AXRow", "AXButton"].contains(text(element, kAXRoleAttribute)) &&
+            [text(element, kAXTitleAttribute), text(element, kAXDescriptionAttribute)].contains("Documents")
+        }) { try click(documentsControl, "chooser-documents") }
+        var fileCell: AXUIElement?
+        let selectionEnd = Date().addingTimeInterval(15)
+        while fileCell == nil && Date() < selectionEnd {
+            fileCell = try find(root, unique: true) { element in
+                let file = value(element, kAXURLAttribute) as? URL
+                return ["AXCell", "AXRow", "AXImage"].contains(text(element, kAXRoleAttribute)) &&
+                    file?.standardizedFileURL == image
+            }
+            if fileCell == nil { try guiWaitTick() }
+        }
+        guard let fileCell = fileCell else { throw Refusal(message: "exact admitted file URL not visibly selectable in native chooser") }
+        try click(fileCell, "choose-pinned-image", double: true)
+        while try chooserCancel() != nil { try guiWaitTick() }
+        record("native-image-selected-observed", ["path": image.path])
+        try screenshot("pinned-image-selected")
+        var build: AXUIElement?
+        while build == nil {
+            if let candidate = try button("Build NVIDIA Image"),
+               (value(candidate, kAXEnabledAttribute) as? Bool) == true { build = candidate }
+            else { try guiWaitTick() }
+        }
+        try click(build!, "build-pinned-image")
+        var observedHashing = false
+        var observedReady = false
+        var observedHealth = false
+        var observedNext = false
+        var nextCapture = Date.distantPast
+        while !observedNext {
+            var strings: [String] = []
+            _ = try find(root) { element in
+                for attribute in [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute] {
+                    let string = text(element, attribute)
+                    if !string.isEmpty { strings.append(string) }
+                }
+                return false
+            }
+            let visible = strings.joined(separator: "\n")
+            observedHashing = observedHashing || visible.contains("Hashing") || visible.contains("hashing")
+            observedReady = observedReady || visible.contains("STEAMOS_BUILDER_READY received.")
+            observedHealth = observedHealth || visible.contains("Health: protocol 1;")
+            observedNext = visible.contains("Selected image:")
+            if Date() >= nextCapture {
+                record("visible-build-state", ["text": String(visible.prefix(65536)),
+                    "hashing": observedHashing, "ready": observedReady, "health": observedHealth, "nextStage": observedNext])
+                try screenshot("build-" + String(events.count))
+                nextCapture = Date().addingTimeInterval(10)
+            }
+            if visible.contains("Build failed") || visible.contains("timed out") || visible.contains("timedOut") {
+                throw Refusal(message: "actual Build failure; retained visible text and screenshot")
+            }
+            if !observedNext { try guiWaitTick() }
+        }
+        try require(observedHashing && observedReady && observedHealth,
+                    "next stage lacks observed hashing, cold readiness or guest health")
+        record("cold-build-next-stage-observed", ["outputAcceptance": false])
+        guard let cancelBuild = try button("Cancel Build") else { throw Refusal(message: "normal cancel control missing") }
+        try click(cancelBuild, "cancel-after-next-stage")
+        var closeProgress: AXUIElement?
+        while closeProgress == nil { closeProgress = try button("Close"); if closeProgress == nil { try guiWaitTick() } }
+        try screenshot("cancelled-build")
+        try click(closeProgress!, "close-build-progress")
+    } else {
+        try click(cancel!, "cancel-image-chooser")
+        while try chooserCancel() != nil { try guiWaitTick() }
+        try screenshot("native-image-chooser-closed")
+        record("native-image-chooser-closed-observed")
+    }
     guard let window = (value(root, kAXWindowsAttribute) as? [AXUIElement])?.first,
           let closeWindow = value(window, kAXCloseButtonAttribute) else {
         throw Refusal(message: "normal window close control unavailable")
