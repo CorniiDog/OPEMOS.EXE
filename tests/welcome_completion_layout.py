@@ -117,7 +117,7 @@ with tempfile.TemporaryDirectory(prefix='opemos-completion-render-') as temporar
                        host_html.index('<div class="build-side-column"')]
     nvidia = re.search(r'<label class="source-choice nvidia-choice".*?</label>',
                        host_html, re.S).group(0)
-    for width in (1280, 640):
+    for width in (1280, 760, 640):
         for custom in (False, True):
             fixture = directory / f'output-{width}-{custom}.html'
             setup = '''document.querySelector('#output-folder-label').textContent='/a/very-long-selected-folder/'.repeat(12);document.querySelector('#reset-output-folder').classList.remove('hidden');''' if custom else ''
