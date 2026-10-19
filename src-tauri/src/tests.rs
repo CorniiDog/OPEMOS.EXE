@@ -404,23 +404,31 @@ mod tests {
             loop {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        stream.set_read_timeout(Some(Duration::from_secs(8))).unwrap();
+                        // Winsock accept inherits the listener's nonblocking
+                        // mode. Restore blocking reads explicitly; otherwise
+                        // WouldBlock closes the peer before russh can time out.
+                        stream.set_nonblocking(false).unwrap();
                         let mut bytes = [0; 4096];
                         loop {
+                            let remaining = deadline.saturating_duration_since(Instant::now());
+                            if remaining.is_zero() {
+                                return Err("loopback peer absolute deadline expired".to_string());
+                            }
+                            stream.set_read_timeout(Some(remaining)).unwrap();
                             match stream.read(&mut bytes) {
-                                Ok(0) => return true,
+                                Ok(0) => return Ok(()),
                                 Ok(_) => {}
-                                Err(_) => return false,
+                                Err(error) => return Err(format!("loopback peer read: {error}")),
                             }
                         }
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         if Instant::now() >= deadline {
-                            return false;
+                            return Err("loopback peer accept deadline expired".to_string());
                         }
                         thread::sleep(Duration::from_millis(10));
                     }
-                    Err(_) => return false,
+                    Err(error) => return Err(format!("loopback peer accept: {error}")),
                 }
             }
         });
@@ -435,11 +443,12 @@ mod tests {
         // transport or method under test. The peer deliberately sends no banner.
         let timeout = handshake(&session);
         let peer_closed = server.join().expect("join bounded loopback peer");
-        assert!(peer_closed, "timed-out transport must close its socket");
+        println!("actual Windows handshake={timeout:?}; socket closure={peer_closed:?}");
         assert_eq!(
             timeout.as_ref().expect_err("cold SSH transport must expire"),
             "In-process SSH command timed out."
         );
+        peer_closed.expect("timed-out transport must close its socket");
         assert_eq!(seconds, 120);
         assert_eq!(deadline.duration_since(started), Duration::from_secs(120));
         assert_eq!(

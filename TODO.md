@@ -251,6 +251,12 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   any test or package execution; corrected comparison uses expect_err without
   changing production code. Initial Linux Rust/integration/frontend passes
   remain historical; corrected-head Windows and all required checks pending.
+  Head464f569b Windows compiled but the new fixture failed in0.32s before a
+  five-second timeout: accepted Winsock socket inherited nonblocking mode and
+  the peer treated WouldBlock as terminal. Preserve full run39202343957 log;
+  explicitly restore blocking reads, cap them by the original10s peer deadline,
+  and retain primary handshake plus structured closure diagnostics. Production
+  correction unchanged; native deployment superseded by newer VM-only target.
 
 - [ ] Correct the PR158 native USB lifecycle regression reported on
   `Current-df6c24e5-2026-10-01`. Ordinary SteamOS source selection must keep
