@@ -1,5 +1,24 @@
 # OPEMOS.EXE — Product Checklist
 
+## Selected output storage admission / Windows cleanup investigation
+
+- [ ] Root plan673819a7: actual disposable Windows GUI selected read-only D: input
+  and writable C: output, but first preflight measured D:. Resolve the selected
+  directory before normalization admission and reuse that exact operand for later
+  build admission; retain capacity/inode/reserve checks. Added real filesystem
+  readonly-source/output-write and measured insufficient-output regression. This
+  fixture is not proof of separate mounted-volume or graphical behavior.
+  Tests authored, not run on controller; required remote CI and packaged OMEN
+  D:-input/C:-output GUI validation remain pending. No original image changes.
+- [ ] Preserve PR188 Windows failure39206691144/job117911259550 (30.55s;
+  shutdown 100ms fixture violated 3s bound). Existing taskkill status was ignored
+  and pipe joins unmeasured, so logs cannot distinguish taskkill/child wait from
+  inherited-pipe delay. Added test-build-only stage/status diagnostics in actual
+  cleanup functions before the next diagnostic compiler run; no deadline change,
+  skip, method override or claim that cleanup is fixed. PR188 M1 passed evidence
+  and its source branch remain unchanged. Remote source CI requires this lead's
+  normal fast-forward topic push to canonical GitHub; no merge/publication.
+
 ## Cold-boot SSH readiness transport classification
 
 - [ ] Root causal plan f4a61c07: exact PR183 AppImage finished hashing original
