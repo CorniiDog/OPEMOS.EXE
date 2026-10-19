@@ -724,8 +724,28 @@ pub(crate) fn appliance_readiness_outcome(
     match handshake_result {
         Ok(output) if output == READY_MARKER => ApplianceReadinessOutcome::Ready,
         Ok(_) => ApplianceReadinessOutcome::Failed,
-        Err(_) => ApplianceReadinessOutcome::Pending,
+        Err(error) if transient_readiness_error(error) => ApplianceReadinessOutcome::Pending,
+        Err(_) => ApplianceReadinessOutcome::Failed,
     }
+}
+
+pub(crate) fn transient_readiness_error(error: &str) -> bool {
+    if error == "Guest readiness transport attempt timed out." {
+        return true;
+    }
+    let lower = error.to_ascii_lowercase();
+    ((error.contains("exit status: 255") || error.contains("status 255"))
+        && [
+            "connection refused",
+            "connection reset",
+            "connection timed out",
+            "connection closed",
+        ]
+        .iter()
+        .any(|message| lower.contains(message)))
+        || ((error.contains("exit status: 1:") || error.contains("status 1:"))
+            && error.contains("/etc/steamos-builder-ready")
+            && error.contains("No such file or directory"))
 }
 pub(crate) const FEDORA_ROOT_DEVICE_UNIT: &str =
     r"dev-disk-by\x2duuid-15c26993\x2dac30\x2d424a\x2d9c4b\x2dfaec4434d234.device";
@@ -2742,6 +2762,9 @@ pub(crate) fn finish_guest_readiness_attempt(
     mut child: Child,
     timeout: Duration,
 ) -> Result<String, String> {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or("Guest readiness attempt deadline overflowed.")?;
     let stdout = child
         .stdout
         .take()
@@ -2753,16 +2776,19 @@ pub(crate) fn finish_guest_readiness_attempt(
     let stderr_reader = read_bounded_guest_stream(stderr);
     let (sender, receiver) = mpsc::sync_channel(1);
     let stdout_reader = thread::spawn(move || {
-        let result = (|| {
+        let result: Result<(String, bool), String> = (|| {
             let mut stdout = BufReader::new(stdout);
             let mut lines = Vec::with_capacity(2);
             let mut captured_bytes = 0;
+            let mut eof = false;
             for _ in 0..2 {
                 let mut line = String::new();
-                let bytes = stdout
+                let bytes = (&mut stdout)
+                    .take(READINESS_ATTEMPT_OUTPUT_LIMIT + 1 - captured_bytes as u64)
                     .read_line(&mut line)
                     .map_err(|error| format!("Could not read guest readiness output: {error}"))?;
                 if bytes == 0 {
+                    eof = true;
                     break;
                 }
                 captured_bytes += bytes;
@@ -2771,11 +2797,11 @@ pub(crate) fn finish_guest_readiness_attempt(
                 }
                 lines.push(line.trim_end_matches(['\r', '\n']).to_string());
             }
-            Ok(lines.join("\n"))
+            Ok((lines.join("\n"), eof))
         })();
         let _ = sender.send(result);
     });
-    let result = match receiver.recv_timeout(timeout) {
+    let result = match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             stop_guest_command_group(&mut child);
@@ -2784,18 +2810,55 @@ pub(crate) fn finish_guest_readiness_attempt(
             return Err("Guest readiness transport attempt timed out.".into());
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
-            let _ = stdout_reader.join();
             Err("Guest readiness output reader stopped unexpectedly.".into())
         }
     };
+    // EOF can precede the child being reapable. Observe its actual status within
+    // the SAME attempt deadline before cleanup could replace it with SIGKILL.
+    // The existing two-complete-lines-before-EOF contract remains bounded: a
+    // still-open successful marker stream may be deliberately stopped below.
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if matches!(&result, Ok((_, true))) => {
+                if Instant::now() >= deadline {
+                    stop_guest_command_group(&mut child);
+                    let _ = stdout_reader.join();
+                    let _ = stderr_reader.join();
+                    return Err("Guest readiness transport attempt timed out.".into());
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) => break None,
+            Err(error) => {
+                stop_guest_command_group(&mut child);
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(format!(
+                    "Could not inspect guest readiness command: {error}"
+                ));
+            }
+        }
+    };
     stop_guest_command_group(&mut child);
+    let _ = stdout_reader.join();
     let stderr = stderr_reader
         .join()
         .map_err(|_| "Guest readiness diagnostics reader panicked.")??;
     if stderr.len() > READINESS_ATTEMPT_OUTPUT_LIMIT as usize {
         return Err("Guest readiness output exceeded its bound.".into());
     }
-    result
+    let (output, _) = result?;
+    if let Some(status) = status.filter(|status| !status.success()) {
+        return Err(format!(
+            "Guest readiness command exited with {status}: {}",
+            String::from_utf8_lossy(&stderr).trim()
+        ));
+    }
+    if output.is_empty() {
+        return Err("Guest readiness command returned no marker.".into());
+    }
+    Ok(output)
 }
 
 pub(crate) fn read_guest_command_ready_line(
@@ -3063,8 +3126,9 @@ pub(crate) fn handshake(session: &impl GuestConnection) -> Result<String, String
         )?;
         if output.status != 0 {
             return Err(format!(
-                "Guest readiness command exited with status {}.",
-                output.status
+                "Guest readiness command exited with status {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
             ));
         }
         if !output.stderr.is_empty() {
@@ -3945,7 +4009,9 @@ pub(crate) fn get_appliance_status_blocking(
         }
         ApplianceReadinessOutcome::Failed => {
             session.state = "failed".into();
-            session.message = "Builder handshake returned an unexpected marker.".into();
+            session.message = handshake_result
+                .err()
+                .unwrap_or_else(|| "Builder handshake returned an unexpected marker.".into());
         }
         ApplianceReadinessOutcome::TimedOut => {
             session.state = "timedOut".into();
@@ -3953,7 +4019,11 @@ pub(crate) fn get_appliance_status_blocking(
                 "Builder appliance did not become ready within {readiness_timeout_secs} seconds."
             );
         }
-        ApplianceReadinessOutcome::Pending => {}
+        ApplianceReadinessOutcome::Pending => {
+            if let Err(error) = handshake_result {
+                session.message = format!("Waiting for builder readiness: {error}");
+            }
+        }
     }
     Ok(session_status(session))
 }

@@ -1,5 +1,25 @@
 # OPEMOS.EXE — Product Checklist
 
+## Cold-boot SSH readiness transport classification
+
+- [ ] Root causal plan f4a61c07: exact PR183 AppImage finished hashing original
+  SteamOS3.8.14 IMG, then exit255/Connection refused with empty stdout became
+  Ok(empty) and terminal wrong-marker failure. Preserve numeric status before
+  cleanup, bounded stdout/stderr and original absolute attempt/session deadlines.
+  Only recognized cold-boot transport or absent marker-file errors retry;
+  successful wrong marker and authentication/fatal errors fail closed. Added
+  ordinary real-subprocess refused->ready plus wrong/empty/auth/fatal/expiry
+  regression without method overrides; authored, NOT RUN on controller.
+  Exact source CI/counterpart review and same IMG packaged GUI cold-boot/health/
+  fault/closure verification remain required. Original IMG/trust untouched.
+
+- [x] PR183 source merge/private desktop operation: protected squash90e37c64,
+  reviewed tree3d3bdd67, all10 source checks PASS. Exact AppImage108c107a and
+  pinned companion behind existing shortcut mapped760x800 KVM environment ready;
+  normal WM_DELETE closure and group absence, old0cbbbd0a rollback retained.
+  Evidence exe-pr183-merge-desktop-promotion-final-20261019.json. This does not
+  close VM/image/USB/GPU acceptance or the newly reproduced cold-boot failure.
+
 ## Linux AppImage KVM and appliance relocation regression
 
 - [ ] Root plan edcbad27: shipped099d AppImage issued KVM_GET_API_VERSION
