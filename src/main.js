@@ -233,7 +233,7 @@ async function revealUsbImaging({ focus = true, preferredTarget = null } = {}) {
     }
     if (firstShow) usbImagingAutoRetryPath = outputPath;
     if (!hasUsbTargets()) {
-      elements.usbPickerMessage.textContent = "No eligible removable drive is visible. Windows may still have a previously written drive safely ejected; reconnect it, then choose Refresh Drives.";
+      elements.usbPickerMessage.textContent = "No eligible removable drive is visible. If a previously written drive was removed, reconnect it, then choose Refresh Drives.";
       elements.usbMessage.textContent = elements.usbPickerMessage.textContent;
     }
   }
@@ -1199,7 +1199,7 @@ function renderUsbTargetSelection() {
   const canConfirm = Boolean(identifier && completedOutput?.path);
   renderUsbConfirmationPhase(false);
   elements.usbConfirmationHelp.textContent = canConfirm
-    ? `Type ERASE exactly to confirm ${identifier}. The single write action revalidates the image and drive before Windows authorization.`
+    ? `Type ERASE exactly to confirm ${identifier}. The single write action revalidates the image and drive before device authorization.`
     : "Select a target first.";
   elements.usbTargetDetail.textContent = elements.usbTarget.selectedOptions[0]?.dataset.detail
     || "Connect a USB drive, then refresh.";
@@ -1269,7 +1269,7 @@ async function writePreparedUsb() {
   elements.usbActiveWarning.classList.remove("hidden");
   elements.refreshUsbTargets.disabled = true;
   elements.buildButton.disabled = true;
-  elements.usbMessage.textContent = "Revalidating the exact image and removable drive. Windows authorization will appear next for only that selected disk.";
+  elements.usbMessage.textContent = "Revalidating the exact image and removable drive. Device authorization will apply only to that selected disk.";
   elements.usbPickerMessage.textContent = elements.usbMessage.textContent;
   renderUsbWriteProgress(null);
   const pollGeneration = ++usbProgressPollGeneration;
@@ -1306,7 +1306,7 @@ async function writePreparedUsb() {
     }
     usbPreflightSession = null;
     elements.usbMessage.textContent = result.message;
-    elements.usbMessage.className = `result-message ${result.ejected ? "success" : "error"}`;
+    elements.usbMessage.className = `result-message ${result.ejected ? "success" : "caution"}`;
     elements.usbPickerMessage.textContent = result.message;
   } catch (error) {
     usbPreflightSession = null;

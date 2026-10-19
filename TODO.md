@@ -1,5 +1,14 @@
 # OPEMOS.EXE — Product Checklist
 
+## Current-main Linux UDisks writer source qualification
+
+- [ ] Reconciled reviewed119fb3b4 onto exact Main00885837 in isolated EXE topic;
+  only known extra blank line corrected. Four Linux guards and unchanged common
+  copy/flush/full-readback require native source CI and current AppImage package.
+  Necessary normal topic push to https://github.com/CorniiDog/OPEMOS.EXE.git
+  enables remote-only checks/package and exact Core review. No controller tests,
+  Main merge, graphical VM, USB write, hardware or publication acceptance.
+
 ## Selected output storage admission / Windows cleanup investigation
 
 - [ ] Root plan673819a7: actual disposable Windows GUI selected read-only D: input
