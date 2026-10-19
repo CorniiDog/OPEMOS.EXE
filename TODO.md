@@ -9,6 +9,21 @@
   enables remote-only checks/package and exact Core review. No controller tests,
   Main merge, graphical VM, USB write, hardware or publication acceptance.
 
+## Windows read-only package firmware handoff
+
+- [ ] Root plan f978b8e1: actual PR189 Windows D:-input/C:-output GUI advanced
+  past storage admission, then QEMU denied write access to generated uefi-vars.fd.
+  Read-only-media template had Windows R attribute; fs::copy propagated it.
+  Both existing appliance producers now make only the generated vars copy
+  writable and open it for write before spawn; firmware/source templates stay
+  unchanged. Real Windows regression reproduces old copy write denial, exercises
+  both generated copies with write/flush/reread and unchanged template bytes/R,
+  plus missing-template/directory faults. Authored, not run on controller.
+  Exact remote CI/package and Core review, then actual read-only-media packaged
+  graphical Build/health/closure remain required. No timeout or trust changes.
+  Fresh topic push to canonical origin is necessary for remote Windows compiler,
+  package checks and exact counterpart review; no merge/publication in this step.
+
 ## Selected output storage admission / Windows cleanup investigation
 
 - [ ] Root plan673819a7: actual disposable Windows GUI selected read-only D: input
