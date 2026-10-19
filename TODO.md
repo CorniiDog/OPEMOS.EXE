@@ -54,6 +54,11 @@
 
 ## Cold-boot SSH readiness transport classification
 
+- [ ] EXE adopted reviewed31708efe onto frozen c439 in a disjoint topic for
+  native Windows loopback/timeout tests and portable package via existing CI.
+  Necessary normal push to https://github.com/CorniiDog/OPEMOS.EXE.git for remote
+  checks and exact review only; no Main merge, new GUI/VM/USB or runtime acceptance.
+
 - [ ] Isolated Windows native-reset candidate (basec439, 2026-10-19): preserve
   native russh stage, IO kind, OS code and original message through the normal
   readiness consumer. Only connect-stage reset/refused and the existing bounded
