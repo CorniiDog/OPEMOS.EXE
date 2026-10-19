@@ -163,8 +163,7 @@ def main():
                         "--target", TARGET, "--all-targets", "--all-features", "--", "-D", "warnings"]),
             ("darwin-cache-tests", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked",
                                    "--target", TARGET, "core_generation_cache"]),
-            ("rust-tests", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked", "--target", TARGET,
-                            "installation_media_welcome_is_bundled_with_a_bounded_privilege_boundary"])]:
+            ("rust-tests", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked", "--target", TARGET])]:
             run(name, args, 1200)
         build_command = (["bash", "bundle_macos.sh", "--runtime-root", str(runtime),
                           "--appliance-root", str(appliance), "--diagnostic-x86-tcg"] if fullstack
