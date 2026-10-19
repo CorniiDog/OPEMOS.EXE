@@ -4,6 +4,11 @@ Library    ../../scripts/OPEMOSRobot.py
 Suite Teardown    Retain Independent Outcomes
 
 *** Test Cases ***
+Scoped retained-package Ubuntu chooser connection only
+    [Documentation]    Real GitHub/broker/queue/pointer/native chooser connection using retained 01ae AppImage. NOT current-head image/USB/SteamOS/NVIDIA acceptance.
+    [Tags]    connection-only    old-artifact    no-fullstack-acceptance
+    Prove Scoped Ubuntu Connection
+
 OPEMOS-Agent-Boot
     [Tags]    inventory    transferred-hyperv
     Execute Exact VM    81688cb8-c3a5-41c3-b7a3-75a9f6ba0e25

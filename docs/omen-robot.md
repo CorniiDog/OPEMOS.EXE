@@ -122,3 +122,18 @@ runner availability.
    `role.robot` replaces `guest.robot` only for the declared non-GUI role.
    Every actual missing operand remains failed and concrete in the uploaded
    results. Genuine current Mac and GPU operands can be completed independently.
+# Confined host RPC and connection-only proof
+
+The GitHub job runs `robot_client.Engine`; the Root-installed, SHA-pinned host
+Engine owns queue, original-input, planner, permission and VM operations. The
+client accepts no caller command/path/plan and uses only the fixed Unix socket
+and read-only report exchange described in `ci/robot-installed-hook-contract.json`.
+Its ephemeral GitHub job token is read-only and belongs only to fixed API checks;
+it is never a new PAT or an uploaded diagnostic.
+
+The separately named retained-package Ubuntu chooser connection proves only
+GitHub-to-broker-to-ordinary-queue-to-pointer/native-observer/report transport.
+Its old `01ae` AppImage is not relabeled as current source. Its success cannot
+change the twenty VM or three current-platform acceptance outcomes. Missing or
+failed complete image, virtual USB, SteamOS and NVIDIA transactions stay red.
+The source adapter/Unix fixture tests are not graphical acceptance.

@@ -2,6 +2,16 @@
 
 ## Automatic OMEN Robot integration — 2026-10-19
 
+- [x] Reconciled protected Main `1e37a502` via topic commit `770c798e`,
+  preserving published history and all five reviewed Windows files. PR198 exact
+  approval/all eleven checks and squash parent/tree verified; source-only merge.
+- [ ] Frozen Root client `261c52ce` replaces confined local host execution with
+  fixed v2 Unix host RPC. Separately named connection-only chooser test uses
+  retained `01ae` AppImage; it cannot promote any current VM/platform outcome.
+  Current-head actual guest/client/producer faults and exact CI/Core gates remain
+  required. Earlier c390 source VM powered off with no returned test result;
+  its seed/COW/complete log and failure remain preserved, not a test pass.
+
 - [ ] Reconcile the complete 46-file Maxwell candidate on Main `b6bb53d9`,
   including automatic Main Windows/Ubuntu producer triggers. Existing Main has
   no macOS producer; do not import the held PR199 lifecycle implementation or

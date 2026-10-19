@@ -50,6 +50,9 @@ jobs:
     env:
       OPEMOS_SOURCE_SHA: ${{ needs.trusted-runner-route.outputs.source }}
       OPEMOS_ROBOT_REPORT_DIR: ${{ github.workspace }}/robot-results
+      OPEMOS_ROBOT_CONTROL_SOCKET: /run/opemos-ci/control/control.sock
+      OPEMOS_ROBOT_REPORT_EXCHANGE: /home/connor/.local/share/opemos-ci/github-runner/robot-private/reports
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       # Root-installed ACTIONS_RUNNER_HOOK_JOB_STARTED independently verifies
       # this workflow/ref/event/live Main BEFORE checkout; no PR/producer code.

@@ -149,5 +149,20 @@
     "current Apple Silicon Mac producer/native sender",
     "independently admitted existing shared GPU lease and render/recovery operands"
   ],
-  "qualification": "New Robot glue UNRUN. Existing CI11 modules copied byte-identically; historical126 actual passes are preserved, do not transfer to Robot glue/new head. Batch source+Robot fault tests and current normal pipeline in admitted OMEN lanes after primary review."
+  "qualification": "New Robot glue UNRUN. Existing CI11 modules copied byte-identically; historical126 actual passes are preserved, do not transfer to Robot glue/new head. Batch source+Robot fault tests and current normal pipeline in admitted OMEN lanes after primary review.",
+  "confined_client": {
+    "protocol": 2,
+    "socket": "/run/opemos-ci/control/control.sock",
+    "exchange": "/home/connor/.local/share/opemos-ci/github-runner/robot-private/reports",
+    "actions": [
+      "execute-vm",
+      "execute-platform",
+      "persist",
+      "connection-proof"
+    ],
+    "connection_subject": "ubuntu_native_chooser_connection",
+    "connection_scope": "CONNECTION_ONLY_OLD_ARTIFACT_NO_FULLSTACK_ACCEPTANCE",
+    "ownership": "Complete pinned Engine runs on trusted host broker, never inside confined runner. Root deploys matching final broker/source bundle. Caller cannot send argv/source/host paths.",
+    "proof_does_not_update_vm_platform_acceptance": true
+  }
 }

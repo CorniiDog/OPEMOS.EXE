@@ -3,7 +3,7 @@ from pathlib import Path
 import os
 import sys
 sys.path.insert(0,str(Path(__file__).parent))
-from omen_robot import Engine
+from robot_client import Engine
 
 class OPEMOSRobot:
     ROBOT_LIBRARY_SCOPE='SUITE'
@@ -15,8 +15,10 @@ class OPEMOSRobot:
             self.engine=Engine(os.environ['OPEMOS_ROBOT_PRIVATE_RESULTS'])
         return self.engine
     def get_keyword_names(self):
-        return ['Execute Exact VM','Execute Every Platform Artifact','Retain Independent Outcomes']
+        return ['Execute Exact VM','Execute Every Platform Artifact','Prove Scoped Ubuntu Connection','Retain Independent Outcomes']
     def run_keyword(self,name,args,kwargs=None):
+        if name=='Prove Scoped Ubuntu Connection':
+            return self._execute(lambda _: self._engine().connection(), 'connection-only-old-artifact')
         if name=='Execute Exact VM':return self._execute(self._engine().vm,args[0])
         if name=='Execute Every Platform Artifact':return self._execute(self._engine().platform,args[0])
         if name=='Retain Independent Outcomes':
