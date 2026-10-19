@@ -594,7 +594,7 @@ pub(crate) fn mutate_synthetic_marker(
 ) -> Result<MarkerMutation, String> {
     const MARKER_PATH: &str = "/etc/steamos-nvidia-image-builder-test";
     const MARKER_CONTENT: &str = "SteamOS NVIDIA Image Builder synthetic marker\nprotocol=1\n";
-    const MUTATE_COMMAND: &str = r#"set -eu
+    const MUTATE_COMMAND: &str = r#"set -eux
 SOURCE=/dev/disk/by-id/virtio-steamos-synthetic
 WORK=/dev/disk/by-id/virtio-steamos-working
 WORK_PART=/dev/disk/by-id/virtio-steamos-working-part1

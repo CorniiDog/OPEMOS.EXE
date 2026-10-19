@@ -20,6 +20,283 @@
   enables remote-only checks/package and exact Core review. No controller tests,
   Main merge, graphical VM, USB write, hardware or publication acceptance.
 
+## Complete guest-command lifecycle causal batch
+
+- [ ] Root complete recovery plan20261019: replace plain guest Child custody
+  with a producer-owned tree (Unix unreaped original group plus native birth/UID;
+  Windows suspended creation, kill-on-close Job assignment/verification before
+  resume). Observe original status concurrently with stdout framing, then stop
+  the bound tree and join bounded pipes before reaping/accepting success across
+  readiness, structured, shutdown, ready-line and mutation finalizers. Preserve
+  primary plus secondary errors and existing operation deadlines. Adapt native
+  fixtures to this same producer; add real native job-quota binding refusal and
+  cancellation/repeated-finalization cases. Source authored/format parsed only;
+  NO controller tests or claim that historical Darwin/Windows failures are fixed.
+  Batch actual Linux/Windows/M1 native tests before new package/GUI work. Reconcile
+  onto current Main with Windows/Ubuntu fixes before exact Core review/merge;
+  old PR191 WITHHOLD and original failures remain preserved, not approval.
+
+## Complete packaged Mac cold-Build transaction
+
+  R9 recovered exact5c M1 prerequisite: readiness/root cleanup ~3ms, full
+  stream join30.140986917s, original2s assertion FAILED (406pass1fail28ignored).
+  Exact writer/birth/group/FD remains UNKNOWN. Core e31ffeb7 withholds the
+  coherent readiness/structured-command/shutdown/ready-line lifecycle graph.
+  One finite existing hosted-M1 focused original-test observation now captures
+  current executable, actual root/reader FD numbers, owned UID/birth/PGID and
+  lsof pipe identity plus EOF/group closure; no runtime/app/guest acquisition,
+  target-method override, changed timeout/assertion or GUI replay. Diagnostic
+  source push to canonical work/exe-macos-fullstack is required for remote-only
+  M1 execution; [skip ci] is not a check waiver or acceptance. After actual
+  diagnostic, coherent same-deadline stream/child correction and new full
+  native prerequisite/package/Finder Build/fault/finalizer checks remain required.
+  Preserve all prior failures/passes, c439 stack, Main195 and governance pins.
+  Actual diagnostic70a7/run39314707968 collected once on M1 UID501: native
+  compile0/group absent, unchanged readiness fixture1pass0fail in0.12s,
+  outer test0/EOF0.1406s, original observed PID/birth/groups absent. No30s
+  stall reproduced; historical5c writer stays UNKNOWN, not blamed on Darwin.
+  Coherent appliance correction now bounds real pipe reads and every reader
+  completion with the same absolute budget; Unix waitid WNOWAIT retains original
+  leader/group until inherited-writer cleanup completes, then reaps actual status.
+  Structured commands, readiness, bounded shutdown and ready-line failures retain
+  primary and secondary failures and partial diagnostics; no detached reader,
+  longer timeout, assertion relaxation, QEMU recipe or trust input change.
+  Mutation-channel output is bounded64KiB/diagnostics32MiB and existing30min
+  structured-command ceiling now also bounds its formerly unbounded finish.
+  Native process cases cover retained writers/marker/actual255 stderr/ready-line
+  timeout and actual already-reaped ECHILD without adapter override; NOT RUN yet.
+  Exact changed-head all source/package/M1 normal+fault checks and Core review
+  are required. New ordinary full native transaction remains unverified.
+
+  R8 actual retained aac package diagnostic run39294172437/job118202265488
+  first verified whole app archive SHA8132e612, then exact native executable
+  SHA2f2c8d48 exited2 with stderr missing packaged runtime manifest. Process
+  group absent, independent archive/executable rehash unchanged, screenshot
+  captured. This direct diagnostic is NOT GUI acceptance. Confirms Root's
+  MacOS/runtime versus Resources/runtime finding; also correct incompatible,
+  outside-app provenance and signed-bundle mutable-state placement together.
+  Native Resources now carries closed source/runtime/executable-name provenance
+  before sealing; exact source compiled in and actual executable independently
+  hashed into cache identity (no circular final-executable/resource hash).
+  Mac state goes to real absolute HOME/Library/Application Support, Windows/Linux
+  portable layout unchanged. Real readonly-app/separate-home/schema/missing-file
+  regression authored; native GUI now detects owned app death, retains AX errors
+  and captures failure screen with separate bounded reserve, no deadline increase.
+  All changed-head tests/normal Finder Build/fault/closure remain pending.
+  Remote-only M1 diagnostic required normal fast-forward9000ee7e to canonical
+  CorniiDog/OPEMOS.EXE topic. Next coherent implementation push is likewise
+  necessary for current-head source/package/GUI checks and exact Core review;
+  no approval transfer from aac or c439, no frozen PR190/Root tree mutation.
+  Same-batch follow-up review found provenance dispatch must use the actual
+  platform, not just Contents/MacOS folder names. Explicit platform is now
+  passed through existing preparation/identity functions; Windows/Linux reject
+  the Mac schema even under such directory names. New real-case assertions use
+  that same consumer. First correction7b8bf0ee Linux all4PASS/411 tests retained;
+  active Windows and M1 are not cancelled. Final refinement needs its own exact
+  checks; no result or approval is silently transferred between heads.
+  Core exact82c review WITHHOLDS for DARWIN-STATE-PARENT-SYMLINK: HOME and
+  final-dir checks missed Library/Application Support ancestor redirects.
+  Same owning batch now opens every ancestor no-follow relative to held parent
+  descriptors, checks actual current UID/non-writable-by-other-UID permissions,
+  creates missing directories0700 and rechecks dev/inode/type before/after
+  population. New directories0700, existing owned non-world-writable0755 state
+  is reused without chmod/retirement. Actual symlink-at-both-parents
+  and world-writable-parent regressions authored, outside target stays empty;
+  no foreign-UID or adversarial same-UID race proof claimed. New in-app startup
+  provenance hash and whole native seal are independent post-attempt finalizers.
+  82c Linux all4PASS411 and Windows seed/buildPASS27 retained. Its pending M1
+  successor39297424545 was cancelled before any jobs to avoid replaying an
+  unknown failure; active7b8 attempt untouched, now terminal failure with full
+  artifact collection in progress. No unchanged retry until all actual findings
+  are consumed together; current-head review/CI/runtime still required.
+  Actual7b8 run39294846215 artifact12211241541 now consumed: startup/native
+  window and real Settings open/close PASS; native chooser visible with pinned
+  image, but strict AXURL selector finds no cell. Failure screenshot retained,
+  exact app requested termination and closed; no normal X/Build acceptance.
+  Ordinary Rust405PASS2FAIL28ignored: race result missing after5s and early-ready
+  pipe call exceeded2s assertion; cleanup group absence retained, causes UNKNOWN.
+  Actual guest reached ready/wrong-marker Failed/health/transfer/disk assertions,
+  then synthetic working-copy mutation exited1 without detailed stderr. Entire
+  test is FAILED, not passed. All original/package finalizers PASS. Retained
+  archiveee2d1300/native executablebed169ef are now finite diagnostic operands:
+  no producer replay or Valve download. Actual native chooser attribute dump
+  uses a labelled tiny diagnostic file and NEVER Build; focused failed tests
+  retain operation deadlines and now report timing/PID/group/status/guest shell
+  trace. This is causal investigation, not fullstack acceptance or a version/
+  timeout workaround. Remote exact diagnostic source push is necessary; final
+  owning source fix and complete normal transaction follow actual findings.
+  Finite retained diagnostic39302508827/head564fb449 collected actual metadata:
+  file row is AXTextField with file-reference CFURL file:///.file/id=..., not
+  a conventional path URL. Native actual chooser/app normal pointer close PASS;
+  NO Build/tiny labelled probe only. Selector now resolves existing file refs
+  through NSURL.filePathURL and includes observed AXTextField role, retaining
+  exact expected path/uniqueness/PID/hit guards. Real created/missing/non-file
+  native file-reference case added to the pre-GUI helper regression. Apple
+  primary contract: developer.apple.com/documentation/foundation/nsurl/filepathurl.
+  Focused reservation race passed0.29s, ready/pipe22.4ms, real state-path case
+  PASS; full actual guest fault/test PASS169.7s with hashes and QEMU/group closure.
+  Original full-suite timing and mutation failures remain UNKNOWN-cause, not
+  declared fixed; traces remain, deadlines unchanged. Compile/changed-case gates
+  now precede bulk acquisition so a new prerequisite failure cannot replay the
+  expensive producer. Same path guard now covers both native/x86 session caches
+  via Result propagation, no invalid fallback root; real Caches redirect and
+  available read-only foreign-UID operand cases authored for next exact head.
+  All82c source/Windows passes and7b8 failures preserved; final exact CI/normal
+  Finder Build/health/nextstage/fault/finalizers still NOT PASSED.
+  Next normal job consumes only the exact retained7b8 archiveee2d1300 and
+  post-relocation manifest eab631c9 after whole-archive, closed inventory,
+  current source-lock/license, firmware/companion and native loader/Python probe
+  checks. Old derivative provenance/version stays7b8; NO43-bottle acquisition
+  or relocation is relabelled current. Fresh private producer custody and
+  current .app staging/consumer still run; only the unstored original Valve
+  chooser image is reacquired and fully verified. Corrupt-size/same-size-hash/
+  symlink/directory archive faults authored; no arbitrary manifest or fallback.
+  GitHub token is scoped only to exact existing artifact acquisition step and
+  is not forwarded to the app/probes. Normal90min/GUI480s/guest deadlines stay.
+  Actual995 M139306607335 stopped before bulk producer/new VM: Swift compile,
+  real file-reference regression, Clippy/cache and state-path cases PASS.
+  Ordinary Rust406PASS1FAIL28ignored exposed PR189 test's volatile free+1
+  assumption: independent native measurement can gain a block before admission.
+  Correct test-only fault operand is native total volume capacity+1 via actual
+  statvfs/GetDiskFreeSpaceExW; production admission is unchanged/unoverridden,
+  no filesystem fill or deadline increase. Original failure/350KB receipt/logs
+  retained under scheduler/exe-pr191-tenth-mac-attempt. Exact995 Linux all4
+  and Windows seed/build PASS preserved, not proof of the next head. This
+  ordinary prerequisite failure caused NO bottle/Valve producer replay and
+  no prepared script is called a running VM or completed app build.
+
+  Consumed full exact Core1f62 disposition f495f488 (9472B): both blocking
+  DARWIN-GUI-BIRTH-480 and DARWIN-MANUAL-MODE are included in this correction.
+  Birth uses captured transaction start, not reconstructed deadline; pre-click
+  and observed bounds remain evidence. Removed the nonfunctional manual false
+  input: this workflow explicitly always runs fullstack on PR/manual invocation.
+  Source-contract regression authored; next manual dispatch has no -f input.
+  Preserve Root PR192/21a33 and its separate branch/candidate untouched; no
+  approval or runtime proof transfers. Prior fad42061/source checkpoints kept.
+
+  Actual first complete producer/build head1f62a052 M1 run39276928429:
+ 43 locked bottles,736 native loader records, command/Python/CA probes,
+ exact old firmware and Fedora/cloud-init,8,120,172,544-byte pinned recovery,
+ filesystem regressions, Swift helper, Clippy/cache/ordinary Rust suite and
+ native complete arm64 app build all PASS. Executable19,058,448B SHA
+ dce17df93590715831c7b9d3c8c5ea39aa93e61999446f5f214126a4b20cb6d5.
+ GUI failed before app custody: deadline480 minus literal120 placed birth
+ cutoff360s in the future. Finder pointer launched app; helper refused and
+ PID86644 remained after outer cleanup. Original receipt and all24 evidence
+ files rehashed and retained in scheduler/exe-pr191-seventh-mac-attempt.
+ Source hygiene also correctly saw untracked generated runtime under Git,
+ including public bottle installation SSH host-key state (not user credentials).
+ Grouped correction uses fresh private outside-Git mkdtemp plus bounded closed
+ receipt/current UID/dev/inode0700 consumer, excludes .bottle installation state,
+ and uses actual pre-click/observed launch birth independent of GUI deadline,
+ recording complete custody before later GUI actions. Native date-boundary
+ model and real archive metadata-exclusion cases added; NOT RUN on controller.
+ Hygiene method and governance remain unchanged. Actual graphical normal/fault
+ still NOT PASSED. Owned failed-run cancel refused already-completed, while GET
+ remained active: preserve contradictory lifecycle evidence, no Mac retry until
+ reconciled independent review. Original failure is not normal closure.
+ All four exact1f62 Linux Checks PASS, including410 Rust tests and actual Debian
+  executable/package artifact12197669033; Windows seed and build subsequently
+  PASS, package12200236381,27 tests PASS/4 ignored. New correction also rechecks
+  original and packaged inputs independently after a GUI refusal, retaining the
+  primary failure plus secondary finalizer errors. Actual root-custody/schema/
+  size/UID/mode/symlink regressions use the production receipt consumer, no
+  method override; not run on controller. All new-head checks remain pending.
+ Preserve these results and frozen PR190. Changed source requires fresh checks
+ and exact counterpart review; previous1f62 request cannot approve a new head.
+
+  Actual M1 ae2f2605/run39276295134: seven native boundary tests PASS,
+  including real ARM64 FAT lipo/sign/dyld load and Java rejection. Producer
+  exit1/group absent at GitHub firmware range HTTP503 account egress limit,
+  before runtime acquisition. Controller static inspection of the already
+  checksum-pinned QEMU bottle proves BOTH existing firmware pins byte-identical.
+  Consume those exact files from the existing provider instead: no new artifact,
+  firmware, source version, credential or fallback. Missing/corrupt/symlink/
+  directory faults added; actual positive whole producer remains pending M1.
+  Old range reader/test removed from active source; all prior successes/failures
+  retained in history and scheduler/exe-pr191-sixth-mac-attempt. Intermediate
+  [skip ci] commit needs actual manual M1 and final exact-head source/package
+  checks; skip is not pass. PR190 base/ref remains frozen.
+
+- [ ] User-released integrated recovery from reviewed r7: preserve PR188 Darwin
+  fixes and current PR189/PR190 output/vars/Windows CPU behavior on a disjoint
+  branch. Existing Homebrew provider now has exact 43-formula arm64 Sequoia/all
+  bottle identities, dependency closure and license declarations. Producer never
+  installs formulas: fetch/hash/extract owned tree, relocate/reseal Mach-O loader
+  dependencies and generate immutable final inventory, then package complete app
+  with existing exact EDK2/Fedora/cloud-init and official exact recovery input.
+  Fullstack workflow cannot silently become chooser-only; actual ignored
+  same-guest wrong-marker test is invoked and requires one executed test/marker.
+  Authored native filesystem/archive/loader regressions are NOT RUN on controller.
+  Required remote Linux/Windows/M1 checks and actual packaged pointer chooser,
+  Build, hashing/cold readiness/health/next stage, fault and closure remain open.
+  Normal fast-forward push to canonical CorniiDog/OPEMOS.EXE topic is necessary
+  for remote-only Darwin compiler/loader/GUI and exact counterpart review. No
+  PR190 ref change, original/media/GPU/new trust/merge/publication authority.
+
+  First actual head5a7a2e10: M1 run39265380279/job118103477439 passed three
+  real native archive/loader/signing tests, then mutable brew-info comparison
+  rejected bash before any bottle fetch (exit1, group absent). Logs/receipt
+  retained in scheduler/exe-pr191-first-mac-attempt; exact observed mismatching
+  tuple was not logged, so stale-version details are unknown. Changed strategy
+  consumes unchanged locked GHCR blob addresses directly; no repin/fallback.
+  Existing firmware full-archive success is retained; changed source uses bounded
+  ZIP ranges plus both exact file hashes to avoid replaying the 2.2GB transfer.
+  Linux push welcome fixture saw port before stderr event (89ms), while same-head
+  PR passed: join both within original2s, no production timeout change. Full
+  failure log retained, recovery plan exe-pr191-actual-provider-and-pipe-recovery-r1.json.
+  Independent original Windows package continues to terminal before changed push.
+
+  Headc41b911e actual M1 run39268239641 passed four real native/HTTP boundary
+  tests; firmware range consumer verified both old pins using4,784,790 bytes.
+  Producer acquired/hashed35 bottles, then correctly rejected Python's pip
+  certifi symlink outside its keg (exit1/group absent). Full static source audit
+  under heavy.sh then verified all43 exact archives (257,000,743 bytes), all
+  links/license names and460 Mach-O headers; no payload was executed on Linux.
+  Only two links escape the closure, both unused pip certificate aliases. Curate
+  noninteractive runtime, retaining versioned Python payload/stdlib and licenses
+  but not SDK/man/terminfo/test/pip trees or framework aliases; preserve the
+  pinned CA data only, never run postinstall or import host keychains. Retain
+  LICENCE/LGPL and SQLite's original header notice; vendor missing original
+  dtc GPL/BSD and steward MPL text with exact source/hash provenance. These are
+  license documents, not new executable providers/trust anchors. Mac producer
+  and shared path consumer now agree on Contents/Resources for data, not the
+  code directory. Same packaged resource tree is consumed by actual fault test.
+  Both source graphs and Windows package/startup atc41 passed and are retained;
+  new-head full required checks, exact Core review and actual GUI remain open.
+
+  Actual742c M1 run39271191530 again passed native boundary tests and acquired
+  all43 bottles, then failed at the strict curated-link check (exit1/group absent).
+  Independent static member-graph audit found exactly two remaining aliases to
+  deliberately omitted data: GNU tar's gnuman/tar.1 and ncurses lib/terminfo.
+  There are no other unknown dangling targets in that frozen archive graph.
+  Record omitted members and remove only generated aliases to those known
+  omissions; unknown dangling links/cycles still fail. Add actual filesystem
+  normal+unknown fault test, and verify native Python stdlib/extensions/CA loading
+  plus immutable manifest after command probes. No source/archive pin, firmware,
+  original, production deadline or trust endpoint change. Actual closure remains
+  required on the changed M1 head; prior attempts and independent CI are retained.
+
+  Actualdb353 M1 run39273354602: new real curated-alias regression failed before
+  acquisition because macOS /var resolves to /private/var while omitted paths
+  were lexical. Fix the production root/omission canonical identities; leave
+  the fixture unchanged. Native loader positives retained, parent group absent.
+  Intermediate commit uses [skip ci] plus existing explicit M1 dispatch so an
+  unrelated active Windows package is not auto-cancelled/replayed. This is NOT
+  a passed check or merge waiver: all named tier checks on the frozen final head
+  and exact Core review remain required before any protected merge. No workflow
+  policy/protection changes; first four failures/logs and passed jobs preserved.
+
+  Actual2b12 manual M1 run39274081959: all six boundary tests PASS, all43
+  bottle/curated alias/license phases advanced and actual native relocation/
+  signing ran, then gettext javaversion.class CAFEBABE data was misclassified
+  as fat Mach-O (lipo exit1; producer2139/group absent). Retain full656791B log
+  in exe-pr191-fifth-mac-attempt. Four-byte magic is not a format discriminator:
+  validate bounded architecture table/slice/header/role before native tools.
+  Add Java-data rejection plus an actual single-ARM64 FAT dylib that is consumed
+  by lipo/codesign/dyld; no invented x86 Mac lane or filename-suffix bypass.
+  Input/version/readiness pins unchanged; current source is not GUI acceptance.
+
 ## Windows read-only package firmware handoff
 
 - [ ] Same complete Windows launch graph, subsequent actual OMEN r3/r4:
@@ -64,6 +341,7 @@
   checks/local source candidate do not establish Windows CI or graphical Build.
   Owning EXE exact-head required CI, Core review and admitted six-GiB Windows
   graphical Build remain required; historical PR171 head is not merge authority.
+
 
 ## Selected output storage admission / Windows cleanup investigation
 
@@ -141,6 +419,74 @@
   packaged normal/opt-out/KVM denied/hash fault/screenshot/closure required.
   Source/required CI/exact Core review and final shipped byte validation remain
   open. No image build, VM/GPU/USB acceptance or merge/publication implied.
+## Current Apple Silicon hosted transaction
+
+- [ ] Current-main reconciliation: EXE owns `work/exe-macos-current-main` from
+  exact merged `1705be6659d8fc713e055541c414c496fc2d1070`. Reviewed isolated
+  Mac support candidate `d4f6083a` / patch SHA `9dde008c`; apply only its19-file
+  PR180/chooser reconciliation while preserving PR184/185/187 and all prior
+  history. New same-job Darwin cache tests cover the carried permission/rename
+  ordinary and interruption paths at the current head; prior PR180 passes are
+  historical, not fresh-current proof. Source diff-check PASS, no controller
+  project tests. Remote push to canonical EXE topic is necessary for native M1
+  compile/real chooser pointer open-cancel/app closure and required Linux/Windows
+  source/package CI plus exact counterpart review. No MacBook availability,
+  hosted appliance Build, image/USB/x86 boot, trust or publication claimed.
+
+- [ ] Establish native arm64 app build and actual graphical settings open/close
+  on the existing public `macos-15` runner. The bounded workflow binds the exact
+  PR head and canonical GitHub Core `01407aa6174b80e92cb7f3dcb534ade5cdd7bf00`,
+  records independent source-check/build/GUI failures, and uploads the app plus
+  screenshots and closure evidence for three days. It does not install a nested
+  appliance, sign/notarize/publish a release, or establish imaging/hardware support.
+  Reproduced preparation gap: no native arm64 job or real Mac mouse transaction
+  existed. Only remote Apple Silicon CI can validate Swift/GUI/toolchain behavior;
+  local source syntax/whitespace inspection is not a passed build. EXE lead push
+  of `work/exe-macos-arm64` to `https://github.com/CorniiDog/OPEMOS.EXE.git` is
+  necessary for that remote-only CI and exact counterpart review. Commit/job
+  results remain in this implementation PR and authenticated handoff, not an
+  evidence-only follow-up PR.
+  Initial PR180 head `4be10a2a7a3770aa6234c16d9bf148ce0ff772fd`
+  actually built an arm64 executable (18,950,672 bytes, SHA-256
+  `e4db9a4c10243383036f845785e26e2ddfde1f198e7bbad5a4d2f26a2ed07ab5`)
+  in Mac job `38679726926`; archive SHA-256
+  `47b0d12d75453a1cade6c1e608382a5b9c564ad6f4b8ef705303704643705a53`.
+  Preserve that success and initial 23 Rust/29 frontend/lint/Swift failures.
+  The coherent correction prepares/reseals only the pinned handoff directory
+  for Darwin create-only rename (including crash recovery), fixes adversarial
+  fixture modes/canonical paths, narrowly declares Linux runtime eligibility,
+  diagnoses the still-enabled portable mock startup, and tightens real pointer
+  and PID-birth custody. Corrected helper compiles first; affected cache tests,
+  changed frontend files and missing docs/hygiene run before the new exact app
+  and GUI attempt. These changes are unverified until corrected-head CI returns.
+  Head `4b28b628438364881882c3d41270caf53d44ef74` then built the native
+  app/archive and compiled the helper; real Finder launch and Settings-open
+  pointer click passed in run `38682740351`. Full GUI failed on Close-settings
+  geometry (retained screenshot includes a system Python local-network prompt),
+  followed by owned cleanup rather than normal app close. Preserve 132 passing
+  cache cases; fix only the remaining sealed-retirement fixture rename, the
+  two live Linux/Windows-only marker helper cfgs, numeric-loopback server startup
+  (no reverse DNS needed), and measured geometry settling/refusal capture.
+  The next native run selects the remaining retirement and welcome cases,
+  required lint/checks, current app build and full genuine GUI transaction;
+  prior passes are retained, not replayed or relabeled as corrected-head proof.
+  Final `02d6c95901dcbcecc7c7e21b0ca4495286a9facd` evidence identified
+  duplicate “Close settings” accessible names: the helper selected the full-window
+  scrim, not the visible X. Give the backdrop a distinct accessible action and
+  require unique native targets with AX ancestry diagnostics. Keep all geometry,
+  occlusion, enabled-state, real-pointer and normal-close gates. Reconcile the
+  welcome Rust source invariant with the real numeric-loopback TCP/HTTP-handler
+  metadata contract; retain token/authentication and same-head live HTTP checks.
+  At that correction stage, exact-head Settings close/app close remained
+  unverified; no timeout, clipped target or forced click was substituted.
+  Subsequently PR180 head `28c36055a51ae241b455757486bf838c5901e1d3`
+  passed the native M1 build, Finder launch, Settings pointer clicks and normal
+  app close in run `38691090335`. The app archive and screenshots are retained
+  in the authenticated Mac handback. That run did not select an image, click
+  Build, start an appliance, write USB media or boot SteamOS. The current-main
+  reconciliation retains main's merged cold-boot SSH-status fix and adds a
+  bounded native chooser open/cancel click to the M1 GUI job; that new combined
+  head and any full builder/USB/boot path remain untested until fresh CI/runtime.
 
 ## Foundation and change policy
 

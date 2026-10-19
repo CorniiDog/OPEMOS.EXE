@@ -72,7 +72,7 @@ function addGraphicsDevice(pci, address, vendor, { bootVga = "0", driver = "" } 
   if (driver) writeFileSync(join(device, "driver-name"), driver);
 }
 
-test("the recovery image Qt WebEngine shell is the primary fullscreen runtime", (context) => {
+test("the recovery image Qt WebEngine shell is the primary fullscreen runtime", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, (context) => {
   const { bin, launcher, qt6Qmlscene, visible } = fixture(context);
   writeFileSync(qt6Qmlscene, `#!/bin/sh
 qml=$1
@@ -88,7 +88,7 @@ exit 0
   assert.throws(() => readFileSync(visible, "utf8"), { code: "ENOENT" });
 });
 
-test("a graphical runtime that exits after completion presents a final notice", (context) => {
+test("a graphical runtime that exits after completion presents a final notice", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, (context) => {
   const { bin, launcher, qt6Qmlscene, visible } = fixture(context);
   writeFileSync(qt6Qmlscene, `#!/bin/sh
 runtime=$(dirname "$1")
@@ -103,7 +103,7 @@ exit 0
   assert.match(readFileSync(visible, "utf8"), /finished installing/);
 });
 
-test("an Intel display and NVIDIA render hybrid uses one OpenGL device path and records both devices", (context) => {
+test("an Intel display and NVIDIA render hybrid uses one OpenGL device path and records both devices", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, (context) => {
   const { bin, launcher, pci, qt6Qmlscene, state } = fixture(context);
   addGraphicsDevice(pci, "0000:00:02.0", "0x8086", { bootVga: "1" });
   addGraphicsDevice(pci, "0000:01:00.0", "0x10de");
@@ -129,7 +129,7 @@ sleep 2.1
   assert.match(log, /pci=0000:01:00\.0 vendor=0x10de/);
 });
 
-test("an NVIDIA boot display does not force the Intel-display hybrid policy", (context) => {
+test("an NVIDIA boot display does not force the Intel-display hybrid policy", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, (context) => {
   const { bin, launcher, pci, qt6Qmlscene, state } = fixture(context);
   addGraphicsDevice(pci, "0000:00:02.0", "0x8086");
   addGraphicsDevice(pci, "0000:01:00.0", "0x10de", { bootVga: "1" });
@@ -147,7 +147,7 @@ sleep 2.1
   assert.match(log, /automatic accelerated backend/);
 });
 
-test("a failed accelerated Qt launch retries with coherent software rendering", (context) => {
+test("a failed accelerated Qt launch retries with coherent software rendering", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, (context) => {
   const { bin, launcher, qt6Qmlscene, state } = fixture(context);
   writeFileSync(qt6Qmlscene, `#!/bin/sh
 if [ "\${QT_QUICK_BACKEND:-}" != software ]; then exit 24; fi
@@ -164,7 +164,7 @@ sleep 2.1
   assert.match(log, /software fallback/);
 });
 
-test("a hung accelerated renderer is bounded before the software retry", (context) => {
+test("a hung accelerated renderer is bounded before the software retry", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, (context) => {
   const { bin, launcher, qt6Qmlscene, state } = fixture(context);
   writeFileSync(qt6Qmlscene, `#!/bin/sh
 if [ "\${QT_QUICK_BACKEND:-}" != software ]; then
@@ -184,7 +184,7 @@ sleep 2.1
   assert.match(log, /software fallback/);
 });
 
-test("a PATH Qt 5 qmlscene is not mistaken for the recovery image Qt 6 runtime", (context) => {
+test("a PATH Qt 5 qmlscene is not mistaken for the recovery image Qt 6 runtime", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, (context) => {
   const { bin, launcher, visible } = fixture(context);
   writeFileSync(join(bin, "qmlscene"), "#!/bin/sh\nexit 99\n", { mode: 0o755 });
   const result = spawnSync("bash", [launcher], {
@@ -201,7 +201,7 @@ function testEnvironment(bin) {
   };
 }
 
-test("browser instant exit is logged and opens the existing fallback", (context) => {
+test("browser instant exit is logged and opens the existing fallback", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, (context) => {
   const { bin, launcher, state, visible } = fixture(context);
   const result = spawnSync("bash", [launcher], {
     encoding: "utf8", env: testEnvironment(bin), timeout: 5000,
@@ -212,7 +212,7 @@ test("browser instant exit is logged and opens the existing fallback", (context)
   assert.match(readFileSync(visible, "utf8"), /full-screen installer could not open/);
 });
 
-test("a failed Chromium runtime tries Firefox before opening the fallback", (context) => {
+test("a failed Chromium runtime tries Firefox before opening the fallback", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, (context) => {
   const { bin, launcher, visible } = fixture(context);
   writeFileSync(join(bin, "firefox"), `#!/bin/sh
 for argument in "$@"; do
@@ -232,7 +232,7 @@ exit 0
   assert.throws(() => readFileSync(visible, "utf8"), { code: "ENOENT" });
 });
 
-test("a second launch reports the held singleton instead of silently succeeding", async (context) => {
+test("a second launch reports the held singleton instead of silently succeeding", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, async (context) => {
   const { bin, launcher, lock, visible } = fixture(context);
   const holder = spawn("flock", [lock, "sleep", "5"], { stdio: "ignore" });
   context.after(() => holder.kill("SIGTERM"));
@@ -244,7 +244,7 @@ test("a second launch reports the held singleton instead of silently succeeding"
   assert.match(readFileSync(visible, "utf8"), /installer is already running/);
 });
 
-test("a stable browser window exits cleanly without opening the fallback", (context) => {
+test("a stable browser window exits cleanly without opening the fallback", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, (context) => {
   const { bin, launcher, visible } = fixture(context);
   writeFileSync(join(bin, "chromium"), `#!/bin/sh
 for argument in "$@"; do

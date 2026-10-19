@@ -1,0 +1,111 @@
+name: Apple Silicon app
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      stream-lifecycle-diagnostic:
+        description: 'One focused owned process/pipe observation; no runtime or GUI replay'
+        type: boolean
+        default: false
+      retained-startup-diagnostic:
+        description: 'Finite old-package diagnostic only; never satisfies native-app'
+        type: boolean
+        default: false
+    # This check always proves the admitted fullstack graph. No advertised
+    # chooser-only control may silently select a different execution mode.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-arm64-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  retained-startup-diagnostic:
+    if: github.event_name == 'workflow_dispatch' && (inputs.retained-startup-diagnostic || inputs.stream-lifecycle-diagnostic)
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: 1
+      RUST_TEST_THREADS: 1
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Acquire exact retained failed package
+        if: '!inputs.stream-lifecycle-diagnostic'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download 39294846215 --repo CorniiDog/OPEMOS.EXE --name macos-arm64-7b8bf0eea38d7ab548bf4746707d8ab38ade05bb-1 --dir "$RUNNER_TEMP/retained-7b8"
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-apple-darwin
+      - name: Bounded same-package startup evidence
+        if: '!inputs.stream-lifecycle-diagnostic'
+        run: python3 scripts/diagnose_macos_retained_startup.py "$RUNNER_TEMP/retained-7b8/SteamOS-NVIDIA-Builder-arm64.app.zip"
+      - name: One finite original readiness process and pipe diagnostic
+        if: inputs.stream-lifecycle-diagnostic
+        run: python3 scripts/diagnose_macos_stream_lifecycle.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: retained-7b8-causal-diagnostic-${{ github.run_id }}
+          path: build/retained-startup-diagnostic
+          retention-days: 3
+  native-app:
+    if: github.event_name != 'workflow_dispatch' || (!inputs.retained-startup-diagnostic && !inputs.stream-lifecycle-diagnostic)
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    env:
+      OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      OPEMOS_CORE_EXPECTED_COMMIT: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00
+      OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
+      OPEMOS_MACOS_FULLSTACK: '1'
+      CARGO_BUILD_JOBS: 1
+      RUST_TEST_THREADS: 1
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.OPEMOS_EXE_COMMIT }}
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: CorniiDog/open-gpu-kernel-modules-steamos-support
+          ref: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00
+          path: opemos-core-contracts
+          fetch-depth: 186
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.23.2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-apple-darwin
+          components: clippy, rustfmt
+      - name: Read exact previously measured runtime and companion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download 39294846215 --repo CorniiDog/OPEMOS.EXE --name macos-arm64-7b8bf0eea38d7ab548bf4746707d8ab38ade05bb-1 --dir "$RUNNER_TEMP/retained-7b8"
+      - name: Native build and actual graphical transaction
+        env:
+          OPEMOS_RETAINED_MAC_APP_ARCHIVE: ${{ runner.temp }}/retained-7b8/SteamOS-NVIDIA-Builder-arm64.app.zip
+        run: python3 scripts/check_macos_arm64_ci.py
+      - name: Preserve exact app, failures and GUI evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-arm64-${{ env.OPEMOS_EXE_COMMIT }}-${{ github.run_attempt }}
+          path: build/macos-arm64-evidence
+          retention-days: 3
+          if-no-files-found: error
+          compression-level: 0
