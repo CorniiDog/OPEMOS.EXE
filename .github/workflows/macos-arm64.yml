@@ -51,11 +51,11 @@ jobs:
         run: python3 scripts/diagnose_macos_retained_startup.py "$RUNNER_TEMP/retained-7b8/SteamOS-NVIDIA-Builder-arm64.app.zip"
       - name: One finite original readiness process and pipe diagnostic
         if: inputs.stream-lifecycle-diagnostic
-        run: python3 scripts/diagnose_macos_stream_lifecycle.py
+        run: python3 scripts/diagnose_macos_native_causal.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: retained-7b8-causal-diagnostic-${{ github.run_id }}
+          name: native-causal-diagnostic-${{ github.run_id }}
           path: build/retained-startup-diagnostic
           retention-days: 3
   native-app:

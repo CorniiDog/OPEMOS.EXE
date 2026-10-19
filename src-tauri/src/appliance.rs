@@ -3126,6 +3126,7 @@ fn spawn_guest_diagnostics(
     GuestDiagnosticDrain { reader, stop }
 }
 
+#[cfg(test)]
 pub(crate) fn finish_guest_command_bounded(
     child: GuestChild,
     timeout: Duration,

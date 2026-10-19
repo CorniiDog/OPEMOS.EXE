@@ -267,6 +267,116 @@ impl GuestChild {
     }
 }
 
+#[cfg(all(test, target_os = "macos"))]
+mod native_causal_diagnostic {
+    use super::*;
+    use std::{
+        io::Read,
+        os::fd::{AsRawFd, FromRawFd, OwnedFd},
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+
+    fn snapshot(label: &str, pid: u32) {
+        let pgid = unsafe { libc::getpgid(pid as i32) };
+        let pgid_error = if pgid < 0 {
+            Some(io::Error::last_os_error())
+        } else {
+            None
+        };
+        let sid = unsafe { libc::getsid(pid as i32) };
+        let sid_error = if sid < 0 {
+            Some(io::Error::last_os_error())
+        } else {
+            None
+        };
+        let mut bsd = unsafe { std::mem::zeroed::<libc::proc_bsdinfo>() };
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
+        let got = unsafe {
+            libc::proc_pidinfo(
+                pid as i32,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                (&mut bsd as *mut libc::proc_bsdinfo).cast(),
+                size,
+            )
+        };
+        let bsd_error = if got != size {
+            Some(io::Error::last_os_error())
+        } else {
+            None
+        };
+        eprintln!("NATIVE_SNAPSHOT {label} pid={pid} pgid={pgid} pgidError={pgid_error:?} sid={sid} sidError={sid_error:?} bsdBytes={got} bsdError={bsd_error:?} nativePid={} ppid={} bsdPGID={} uid={} gid={} ruid={} rgid={} status={} birth={}.{}", bsd.pbi_pid, bsd.pbi_ppid, bsd.pbi_pgid, bsd.pbi_uid, bsd.pbi_gid, bsd.pbi_ruid, bsd.pbi_rgid, bsd.pbi_status, bsd.pbi_start_tvsec, bsd.pbi_start_tvusec);
+    }
+
+    #[test]
+    fn native_causal_diagnostic_original_producer_groups_and_eof() {
+        eprintln!(
+            "COLLECTION_ONLY parent={} uid={} euid={} gid={} egid={}",
+            std::process::id(),
+            unsafe { libc::getuid() },
+            unsafe { libc::geteuid() },
+            unsafe { libc::getgid() },
+            unsafe { libc::getegid() }
+        );
+        snapshot("parent", std::process::id());
+        for (label, script) in [
+            ("normal-exited-root", "printf 'ROOT=%s\\n' $$; exit 7"),
+            ("live-root-writer", "sh -c 'sleep 0.4; exit 37' & w=$!; printf 'ROOT=%s WRITER=%s\\n' $$ $w; wait $w; printf 'WRITER_WAIT=%s\\n' $?; exit 9"),
+            ("exited-root-writer", "sh -c 'sleep 0.4; exit 37' & w=$!; printf 'ROOT=%s WRITER=%s\\n' $$ $w; exit 11"),
+        ] {
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", script]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+            let mut child = spawn_guest_process(&mut command).expect("actual unchanged owned producer");
+            let root = child.id();
+            let mut stdout = child.stdout.take().unwrap();
+            let mut stderr = child.stderr.take().unwrap();
+            for fd in [stdout.as_raw_fd(), stderr.as_raw_fd()] {
+                assert_eq!(unsafe { libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) }, 0);
+            }
+            std::thread::sleep(Duration::from_millis(40));
+            let mut raw = Vec::new(); let mut errors = Vec::new(); let mut block = [0; 8192];
+            match stdout.read(&mut block) { Ok(n) => raw.extend_from_slice(&block[..n]), Err(e) if e.kind()==io::ErrorKind::WouldBlock => {}, Err(e) => errors.push(format!("first read:{e}")) }
+            let text=String::from_utf8_lossy(&raw);
+            let writer=text.split_whitespace().find_map(|x| x.strip_prefix("WRITER=").and_then(|x|x.parse::<u32>().ok()));
+            snapshot(&format!("{label}-before"),root);
+            let kfd=unsafe { libc::kqueue() }; assert!(kfd>=0); let queue=unsafe { OwnedFd::from_raw_fd(kfd) };
+            if let Some(writer)=writer {
+                snapshot("writer-before",writer);
+                let event=libc::kevent { ident:writer as _, filter:libc::EVFILT_PROC, flags:libc::EV_ADD|libc::EV_ENABLE|libc::EV_ONESHOT, fflags:libc::NOTE_EXIT|libc::NOTE_EXITSTATUS, data:0, udata:std::ptr::null_mut() };
+                let result=unsafe { libc::kevent(queue.as_raw_fd(), &event, 1, std::ptr::null_mut(), 0, std::ptr::null()) };
+                eprintln!("WRITER_EXIT_WATCH writer={writer} registration={result} error={:?}",if result<0 {Some(io::Error::last_os_error())} else {None});
+            }
+            eprintln!("BEFORE_STOP case={label} root={root} writer={writer:?} stdoutFD={} stderrFD={} WNOWAIT={:?}",stdout.as_raw_fd(),stderr.as_raw_fd(),child.observed_exit());
+            let stopped=child.stop_tree();
+            eprintln!("ORIGINAL_STOP case={label} result={stopped:?} errno={:?}",stopped.as_ref().err().and_then(|e|e.raw_os_error()));
+            snapshot(&format!("{label}-after-stop"),root);
+            // Diagnostic-only bounded fallback uses the original unreaped Child
+            // handle. Writers are finite; no guessed descendant/group signal.
+            eprintln!("DIRECT_ROOT_HANDLE_KILL case={label} result={:?}",child.kill());
+            let deadline=Instant::now()+Duration::from_secs(3); let mut out_eof=false;let mut err_eof=false;let mut status=None;
+            while Instant::now()<deadline && (!out_eof || !err_eof || status.is_none()) {
+                if !out_eof { match stdout.read(&mut block) { Ok(0)=>out_eof=true, Ok(n)=>raw.extend_from_slice(&block[..n]), Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{}, Err(e)=>{errors.push(format!("stdout:{e}"));break;} } }
+                if !err_eof { match stderr.read(&mut block) { Ok(0)=>err_eof=true, Ok(n)=>eprintln!("CHILD_STDERR case={label} {:?}",String::from_utf8_lossy(&block[..n])), Err(e) if e.kind()==io::ErrorKind::WouldBlock=>{}, Err(e)=>{errors.push(format!("stderr:{e}"));break;} } }
+                if status.is_none(){status=child.reap_owned().expect("original root handle reap");}
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            if let Some(writer)=writer {
+                let mut event=unsafe { std::mem::zeroed::<libc::kevent>() }; let timeout=libc::timespec {tv_sec:0,tv_nsec:0};
+                let n=unsafe {libc::kevent(queue.as_raw_fd(),std::ptr::null(),0,&mut event,1,&timeout)};
+                let (event_flags,event_fflags,event_data)=(event.flags,event.fflags,event.data);
+                eprintln!("WRITER_EXIT_EVENT case={label} writer={writer} events={n} flags={} fflags={} rawWaitStatus={} errno={:?}; status UNKNOWN unless NOTE_EXITSTATUS delivered",event_flags,event_fflags,event_data,if n<0{Some(io::Error::last_os_error())}else{None});
+                snapshot("writer-after",writer);
+            }
+            let members=Command::new("/bin/ps").args(["-axo","pid=,ppid=,pgid=,uid=,stat=,command="]).output().unwrap();
+            let group_rows=String::from_utf8_lossy(&members.stdout).lines().filter(|line|line.split_whitespace().nth(2).and_then(|x|x.parse::<u32>().ok())==Some(root)).map(str::to_owned).collect::<Vec<_>>();
+            eprintln!("FINAL case={label} rootStatus={status:?} stdoutEOF={out_eof} stderrEOF={err_eof} sourceBytes={:?} readErrors={errors:?} groupMembers={group_rows:?} originalTreeAbsent={:?}",String::from_utf8_lossy(&raw),child.tree_absent());
+            drop(stdout);drop(stderr);drop(queue);
+            assert!(status.is_some() && out_eof && err_eof && errors.is_empty(),"finite diagnostic root/FD closure UNKNOWN");
+        }
+    }
+}
+
 #[cfg(windows)]
 mod windows_job {
     use super::*;

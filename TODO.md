@@ -1,5 +1,21 @@
 # OPEMOS.EXE — Product Checklist
 
+## Finite PR199 native causal collection — 2026-10-19
+
+- [ ] Root-reviewed `root-exe-pr199-finite-native-causal-diagnostic-20261019.json`
+  admits only one native hosted Darwin collection on exact PR199 `2ecd9162`.
+  Same unchanged GuestChild producer: three root/writer states, native UID/GID,
+  birth/PGID/SID, WNOWAIT, exact signal errno, kqueue exit-status availability,
+  nonblocking pipe EOF and actual direct-child reap. Finite writers expire;
+  original Child handle only for fallback, no guessed descendant signals.
+- [ ] Actual two original reservation workers: retain stdout/stderr and numeric
+  exits before result reads; missing result remains missing. Diagnostic success
+  means collection only, not repaired lifecycle/race or GUI acceptance.
+- [ ] Only cause-proven production annotation is test-only completion facade
+  `cfg(test)`. No cleanup/deadline/assertion changes. Normal topic push to
+  canonical GitHub is necessary for remote-only diagnostic dispatch; no PR,
+  merge, bulk runtime acquisition or host/controller project execution.
+
 - [ ] Preserve PR199 initial17e40b9c native Linux compiler101/E0308 at the
   x86 appliance shutdown caller: it still spawned an unbound plain Child.
   Formatter/static inspection could not typecheck and the first producer scan

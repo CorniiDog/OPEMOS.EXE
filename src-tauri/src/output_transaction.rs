@@ -4174,6 +4174,86 @@ mod tests {
         drop(reservation);
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_causal_diagnostic_reservation_two_worker_status_before_result() {
+        let fixture = Fixture::new("native-causal-race");
+        let start = fixture.0.join("race-start");
+        let mut children = Vec::new();
+        for (index, source) in ["source-a.img", "source-b.img"].iter().enumerate() {
+            let result = fixture.0.join(format!("race-result-{index}"));
+            let child = crate::child_command(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "output_transaction::tests::reservation_race_worker",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("RESERVATION_TEST_ROOT", fixture.root())
+                .env("RESERVATION_TEST_SOURCE", fixture.source(source))
+                .env("RESERVATION_TEST_OUTPUT", fixture.output())
+                .env("RESERVATION_TEST_START", &start)
+                .env("RESERVATION_TEST_RESULT", &result)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            eprintln!(
+                "CAUSAL_RACE_SPAWN index={index} pid={} parent={} uid={} euid={}",
+                child.id(),
+                std::process::id(),
+                unsafe { libc::getuid() },
+                unsafe { libc::geteuid() }
+            );
+            children.push((child, result));
+        }
+        fs::write(&start, b"start\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while children.iter().any(|(_, result)| !result.is_file()) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        for (child, result) in &mut children {
+            eprintln!(
+                "CAUSAL_RACE_BEFORE_RELEASE pid={} status={:?} resultExists={}",
+                child.id(),
+                child.try_wait(),
+                result.is_file()
+            );
+            drop(child.stdin.take());
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        for (child, _) in &mut children {
+            while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(2));
+            }
+            if child.try_wait().unwrap().is_none() {
+                eprintln!(
+                    "CAUSAL_RACE_HANDLE_CLEANUP pid={} kill={:?}",
+                    child.id(),
+                    child.kill()
+                );
+            }
+        }
+        // Collect every worker's actual status and stderr before any result
+        // read. A worker failure remains a failure, not a successful race.
+        let mut results = Vec::new();
+        for (child, path) in children {
+            let pid = child.id();
+            let output = child.wait_with_output().unwrap();
+            eprintln!(
+                "CAUSAL_RACE_REAP pid={pid} status={} stdout={:?} stderr={:?} pipesClosed=true",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            results.push((pid, path, output.status));
+        }
+        for (pid, path, status) in results {
+            eprintln!("CAUSAL_RACE_RESULT_AFTER_REAP pid={pid} actualStatus={status} result={:?} collectionOnly=true",fs::read_to_string(path));
+        }
+    }
+
     #[test]
     #[ignore = "subprocess helper for reservation contention"]
     fn reservation_worker() {
