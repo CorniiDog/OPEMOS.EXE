@@ -90,7 +90,7 @@ def stage(app, runtime, appliance, output, source_commit):
     binary = app / "Contents/MacOS" / name
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise ValueError("App executable missing")
-    for destination in [binary.parent / "runtime", binary.parent / "appliance"]:
+    for destination in [app / "Contents/Resources/runtime", app / "Contents/Resources/appliance"]:
         if destination.exists():
             raise ValueError("Source app already contains a companion; refuse stale overlay")
     verify_companion(appliance)
@@ -103,10 +103,12 @@ def stage(app, runtime, appliance, output, source_commit):
         staged_app = staging / app.name
         shutil.copytree(app, staged_app, symlinks=False)
         macos = staged_app / "Contents/MacOS"
-        shutil.copytree(runtime, macos / "runtime", symlinks=False)
-        shutil.copytree(appliance, macos / "appliance", symlinks=False)
-        validate_runtime(macos / "runtime", "macos")
-        verify_companion(macos / "appliance")
+        resources = staged_app / "Contents/Resources"
+        resources.mkdir(exist_ok=True)
+        shutil.copytree(runtime, resources / "runtime", symlinks=False)
+        shutil.copytree(appliance, resources / "appliance", symlinks=False)
+        validate_runtime(resources / "runtime", "macos")
+        verify_companion(resources / "appliance")
         if digest(macos / name) != digest(binary):
             raise ValueError("App bytes changed during staging")
         # Existing ad-hoc test identity only: no certificate, entitlement or release.
@@ -114,8 +116,8 @@ def stage(app, runtime, appliance, output, source_commit):
         subprocess.run(["codesign", "--verify", "--deep", "--strict", str(staged_app)], check=True, timeout=60)
         # Signing the outer app may change only its main executable/seal. The
         # accepted runtime and companion bytes must still match their contracts.
-        validate_runtime(macos / "runtime", "macos")
-        verify_companion(macos / "appliance")
+        validate_runtime(resources / "runtime", "macos")
+        verify_companion(resources / "appliance")
         (staging / "bundle-provenance.json").write_text(json.dumps({
             "schema_version": 1, "platform": "macos", "mode": "explicit-x86_64-tcg-diagnostic",
             "source_commit": source_commit, "runtime_manifest_sha256": manifest_hash,

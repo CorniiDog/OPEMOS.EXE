@@ -1,0 +1,31 @@
+{
+  "ca-certificates": [
+    {
+      "component": "ca-certificates",
+      "file": "MPL-2.0.txt",
+      "url": "https://www.mozilla.org/media/MPL/2.0/index.txt",
+      "bytes": 16726,
+      "sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04"
+    }
+  ],
+  "dtc": [
+    {
+      "component": "dtc",
+      "file": "dtc-BSD-2-Clause.txt",
+      "url": "https://mirrors.edge.kernel.org/pub/software/utils/dtc/dtc-1.8.1.tar.xz",
+      "archive_sha256": "23526015a6f1550e0541a53fe7acea1b5a11e3697cdf3a3bdc076abc38f6045d",
+      "member": "dtc-1.8.1/BSD-2-Clause",
+      "bytes": 1641,
+      "sha256": "6313108c23efffa36948f8b2cff1560a5935373b527b0e1a837cc77e6ed1bacd"
+    },
+    {
+      "component": "dtc",
+      "file": "dtc-GPL.txt",
+      "url": "https://mirrors.edge.kernel.org/pub/software/utils/dtc/dtc-1.8.1.tar.xz",
+      "archive_sha256": "23526015a6f1550e0541a53fe7acea1b5a11e3697cdf3a3bdc076abc38f6045d",
+      "member": "dtc-1.8.1/GPL",
+      "bytes": 18092,
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+    }
+  ]
+}

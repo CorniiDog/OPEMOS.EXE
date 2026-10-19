@@ -13,7 +13,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from acquire_runtime_macos import extract, load_lock, relocate
+from acquire_runtime_macos import extract, load_lock, relocate, relocated_relative
 from prepare_macos_fullstack import ArtifactRanges
 
 
@@ -89,6 +89,28 @@ class DarwinProducer(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     extract(archive, output)
             self.assertFalse((root / "escape").exists())
+
+    def test_real_provider_sdk_curation_does_not_follow_prefix_certificate_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "python.tar.gz"
+            prefix = "python@3.14/1/"
+            with tarfile.open(archive, "w:gz") as source:
+                for name in ["LICENSE", "Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/__init__.py"]:
+                    item = tarfile.TarInfo(prefix + name)
+                    item.size = 7
+                    source.addfile(item, io.BytesIO(b"fixture"))
+                item = tarfile.TarInfo(prefix + "lib/python3.14/site-packages/pip/_vendor/certifi/cacert.pem")
+                item.type, item.linkname = tarfile.SYMTYPE, "../../../../../../../../../etc/ca-certificates/cert.pem"
+                source.addfile(item)
+            output = root / "unpacked"
+            output.mkdir()
+            extract(archive, output, "python@3.14")
+            self.assertFalse((output / prefix / "lib/python3.14/site-packages/pip").exists())
+            self.assertEqual((output / prefix / "Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/__init__.py").read_bytes(), b"fixture")
+            self.assertEqual(len(list((output / "licenses/python@3.14").iterdir())), 1)
+            self.assertEqual(relocated_relative("Frameworks/Python.framework/Versions/3.14/Python"),
+                             Path("Frameworks/Python.framework-payload/Versions/3.14/Python"))
 
     @unittest.skipUnless(sys.platform == "darwin", "actual Darwin compiler/loader required")
     def test_real_native_library_relocation_signing_and_loader(self):

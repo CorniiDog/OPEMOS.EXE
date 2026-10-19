@@ -125,7 +125,28 @@ def acquire_bottle(item, cache):
     return target
 
 
-def extract(archive, root):
+def build_only_member(name):
+    """Noninteractive tool payload: retain code/data, not SDK/man/test/pip trees."""
+    path = "/" + name + "/"
+    if any(part in path for part in (
+            "/share/man/", "/share/doc/", "/share/info/", "/share/locale/", "/share/terminfo/",
+            "/include/", "/Headers/", "/lib/pkgconfig/", "/lib/cmake/",
+            "/lib/python3.14/test/", "/lib/python3.15/test/", "/idle_test/", "/tkinter/test/",
+            "/site-packages/pip/", "/site-packages/wheel/", "/ensurepip/")):
+        return True
+    if name.endswith((".a", ".la", ".pc", ".cmake", ".h", ".hpp")):
+        return True
+    # Framework aliases are duplicated SDK/bundle views, not CLI dependencies.
+    # Keep the actual versioned payload, not an invalid materialized framework.
+    return any(part in path for part in (
+        ".framework/Versions/Current/", ".framework/Resources/", ".framework/Python/"))
+
+
+def relocated_relative(value):
+    return Path(*(part + "-payload" if part.endswith(".framework") else part for part in Path(value).parts))
+
+
+def extract(archive, root, component=None):
     """No archive owner/mode/device restoration; no writes through links."""
     links = []
     seen = set()
@@ -137,10 +158,23 @@ def extract(archive, root):
             relative = PurePosixPath(member.name)
             if relative.is_absolute() or ".." in relative.parts or not relative.parts:
                 raise ValueError("Bottle member escapes root")
-            path = root / member.name
+            if component is not None and relative.parts[0] != component:
+                raise ValueError("Bottle member outside declared component")
             if member.name in seen:
                 raise ValueError("Duplicate bottle member")
             seen.add(member.name)
+            if member.isfile() and member.size and component is not None:
+                basename = relative.name.upper()
+                notice = basename.startswith(("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "LGPL", "GPL", "BSD-"))
+                notice = notice or (component == "sqlite" and relative.name == "sqlite3.h")
+                if notice:
+                    destination = root / "licenses" / component / (str(len(seen)) + "-" + relative.name)
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    with source.extractfile(member) as stream, destination.open("xb") as output:
+                        shutil.copyfileobj(stream, output)
+            if component is not None and build_only_member(member.name):
+                continue
+            path = root / member.name
             if member.isdir():
                 path.mkdir(parents=True, exist_ok=True)
             elif member.isfile():
@@ -192,11 +226,11 @@ def relocate(root, kegs):
                 for prefix in (f"/opt/homebrew/opt/{name}/", f"/opt/homebrew/Cellar/{name}/{keg.name}/",
                                f"@@HOMEBREW_PREFIX@@/opt/{name}/", f"@@HOMEBREW_CELLAR@@/{name}/{keg.name}/"):
                     if dep.startswith(prefix):
-                        target = keg / dep[len(prefix):]
+                        target = keg / relocated_relative(dep[len(prefix):])
             if dep.startswith("@loader_path/"):
                 target = path.parent / dep.removeprefix("@loader_path/")
             if dep.startswith("@rpath/"):
-                suffix = dep.removeprefix("@rpath/")
+                suffix = relocated_relative(dep.removeprefix("@rpath/")).as_posix()
                 choices = [p for p in native if p.as_posix().endswith("/" + suffix)]
                 if choices and len({initial_hashes[p] for p in choices}) == 1:
                     target = min(choices, key=lambda p: len(str(p)))
@@ -245,7 +279,7 @@ def construct(lock_path, output, evidence, firmware):
         archive = acquire_bottle(item, cache)
         provenance["bottles"].append({"name": name, "sha256": digest(archive), "bytes": archive.stat().st_size})
         save()
-        extract(archive, unpacked)
+        extract(archive, unpacked, name)
     # All link targets must resolve inside the exact pinned bottle closure.
     for path in unpacked.rglob("*"):
         if path.is_symlink():
@@ -253,15 +287,30 @@ def construct(lock_path, output, evidence, firmware):
             if not path.exists() or path.resolve() in path.parents:
                 raise ValueError("Dangling or recursive bottle link")
     shutil.copytree(unpacked, runtime / "kegs", symlinks=False)
+    # Framework CLI builds do not require CFBundle framework discovery when
+    # PYTHONHOME and all loader references are explicit. Preserve versioned data
+    # as ordinary payload: materialized Current/Resources aliases are invalid
+    # signed-framework structure (Apple TN2206), and aren't copied above.
+    for framework in sorted(runtime.rglob("*.framework"), key=lambda p: len(p.parts), reverse=True):
+        framework.rename(framework.with_name(framework.name + "-payload"))
     kegs = {}
     components = []
+    notice_root = Path(__file__).resolve().parents[1] / "runtime/macos-licenses"
+    notices = json.loads((notice_root / "source-notices.json").read_bytes())
     for name, item in sorted(lock["formulae"].items()):
         versions = list((runtime / "kegs" / name).iterdir())
         if len(versions) != 1 or not versions[0].is_dir():
             raise ValueError("Ambiguous bottle keg")
         kegs[name] = versions[0]
-        licenses = [p for p in versions[0].rglob("*") if p.is_file() and p.stat().st_size and
-                    (p.name.upper().startswith(("LICENSE", "COPYING", "COPYRIGHT")) or "licenses" in p.parts)]
+        licenses = list((runtime / "kegs/licenses" / name).glob("*"))
+        for notice in notices.get(name, []):
+            path = notice_root / notice["file"]
+            if path.stat().st_size != notice["bytes"] or digest(path) != notice["sha256"]:
+                raise ValueError("Vendored original license text changed")
+            target = runtime / "kegs/licenses" / name / notice["file"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, target)
+            licenses.append(target)
         if not licenses:
             raise ValueError("Bottle has no retained license text: " + name)
         components.append({"name": name, "version": item["version"],
@@ -269,7 +318,7 @@ def construct(lock_path, output, evidence, firmware):
     provenance["loader"] = relocate(runtime, kegs)
     # Nested Homebrew frameworks/apps need their own ad-hoc bundle seal before
     # the outer .app seal. Hash inventory is created only after these changes.
-    bundles = [p for p in runtime.rglob("*") if p.is_dir() and p.suffix in (".framework", ".app")]
+    bundles = [p for p in runtime.rglob("*") if p.is_dir() and p.suffix == ".app"]
     for bundle in sorted(bundles, key=lambda p: len(p.parts), reverse=True):
         run(["/usr/bin/codesign", "--force", "--sign", "-", bundle])
         run(["/usr/bin/codesign", "--verify", "--deep", "--strict", bundle])
@@ -285,6 +334,12 @@ def construct(lock_path, output, evidence, firmware):
         shutil.copyfile(source, runtime / relative)
     (runtime / "bin").mkdir()
     commands = {}
+    ca = kegs["ca-certificates"] / "share/ca-certificates/cacert.pem"
+    if ca.stat().st_size != 188900 or digest(ca) != "a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505":
+        raise ValueError("Pinned Mozilla CA data changed; no host keychain import")
+    provenance["caBundle"] = {"path": ca.relative_to(runtime).as_posix(), "sha256": digest(ca),
+                              "sourceBottleSHA256": lock["formulae"]["ca-certificates"]["bottle"]["sha256"],
+                              "hostKeychainsRead": False, "postinstallExecuted": False}
     for command, (name, relative) in COMMANDS.items():
         target = kegs[name] / relative
         if not target.is_file():
@@ -293,14 +348,17 @@ def construct(lock_path, output, evidence, firmware):
         if command == "scp":
             # OpenSSH's compiled prefix must not select a host-installed peer.
             options = ' -S "$root/bin/ssh"'
-        setup = ""
+        setup = f'export SSL_CERT_FILE="$root/{ca.relative_to(runtime)}"\n'
         if command == "python3":
-            homes = list(kegs[name].glob("Frameworks/Python.framework/Versions/3.14"))
+            homes = list(kegs[name].glob("Frameworks/Python.framework-payload/Versions/3.14"))
             if len(homes) != 1:
                 raise ValueError("Python framework home missing")
-            setup = f'export PYTHONHOME="$root/{homes[0].relative_to(runtime)}" PYTHONDONTWRITEBYTECODE=1\n'
+            setup += 'unset PYTHONPATH PYTHONSTARTUP PYTHONUSERBASE PYTHONINSPECT\n'
+            setup += f'export PYTHONHOME="$root/{homes[0].relative_to(runtime)}" PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1\n'
+            # No Homebrew sitecustomize or ambient host/user site-packages.
+            options = " -S"
         if command == "git":
-            setup = f'export GIT_EXEC_PATH="$root/{kegs[name].relative_to(runtime)}/libexec/git-core"\n'
+            setup += f'export GIT_EXEC_PATH="$root/{kegs[name].relative_to(runtime)}/libexec/git-core"\n'
         wrapper = runtime / "bin" / command
         wrapper.write_text('#!/bin/sh\nset -eu\nroot=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)\n' + setup +
                            f'exec "$root/{target.relative_to(runtime)}"{options} "$@"\n')
@@ -312,8 +370,9 @@ def construct(lock_path, output, evidence, firmware):
     commands["hdiutil"] = "bin/hdiutil"
     provenance["systemHdiutil"] = {"path": "/usr/bin/hdiutil", "sha256": digest(Path("/usr/bin/hdiutil")), "os": run(["sw_vers"])}
     license_target = runtime / "licenses/OPEMOS-LICENSE"
-    license_target.parent.mkdir()
+    license_target.parent.mkdir(exist_ok=True)
     shutil.copyfile(Path(__file__).resolve().parents[1] / "LICENSE", license_target)
+    shutil.copyfile(notice_root / "source-notices.json", runtime / "licenses/source-notices.json")
     components.append({"name": "opemos-darwin-adapters", "version": os.environ["OPEMOS_EXE_COMMIT"],
                        "license_files": ["licenses/OPEMOS-LICENSE"]})
     (runtime / "source-provenance.json").write_text(json.dumps(lock, sort_keys=True) + "\n")

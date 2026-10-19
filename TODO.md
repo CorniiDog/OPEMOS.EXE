@@ -31,6 +31,24 @@
   failure log retained, recovery plan exe-pr191-actual-provider-and-pipe-recovery-r1.json.
   Independent original Windows package continues to terminal before changed push.
 
+  Headc41b911e actual M1 run39268239641 passed four real native/HTTP boundary
+  tests; firmware range consumer verified both old pins using4,784,790 bytes.
+  Producer acquired/hashed35 bottles, then correctly rejected Python's pip
+  certifi symlink outside its keg (exit1/group absent). Full static source audit
+  under heavy.sh then verified all43 exact archives (257,000,743 bytes), all
+  links/license names and460 Mach-O headers; no payload was executed on Linux.
+  Only two links escape the closure, both unused pip certificate aliases. Curate
+  noninteractive runtime, retaining versioned Python payload/stdlib and licenses
+  but not SDK/man/terminfo/test/pip trees or framework aliases; preserve the
+  pinned CA data only, never run postinstall or import host keychains. Retain
+  LICENCE/LGPL and SQLite's original header notice; vendor missing original
+  dtc GPL/BSD and steward MPL text with exact source/hash provenance. These are
+  license documents, not new executable providers/trust anchors. Mac producer
+  and shared path consumer now agree on Contents/Resources for data, not the
+  code directory. Same packaged resource tree is consumed by actual fault test.
+  Both source graphs and Windows package/startup atc41 passed and are retained;
+  new-head full required checks, exact Core review and actual GUI remain open.
+
 ## Windows read-only package firmware handoff
 
 - [ ] Same complete Windows launch graph, subsequent actual OMEN r3/r4:

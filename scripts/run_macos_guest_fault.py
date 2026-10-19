@@ -15,8 +15,9 @@ from stage_macos_app import verify_companion
 from stage_runtime_bundle import digest, validate_runtime
 
 root = Path(__file__).resolve().parents[1]
-runtime = (root / "admitted-macos/runtime").resolve()
-appliance = root / "admitted-macos/appliance"
+resources = root / "dist/macos/SteamOS NVIDIA Builder.app/Contents/Resources"
+runtime = (resources / "runtime").resolve()
+appliance = resources / "appliance"
 validate_runtime(runtime, "macos")
 verify_companion(appliance)
 env = dict(os.environ, OPEMOS_RUNTIME_MANIFEST_SHA256=digest(runtime / "runtime-manifest.json"),

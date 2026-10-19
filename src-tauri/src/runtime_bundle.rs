@@ -58,12 +58,34 @@ fn runtime_root_path() -> Result<PathBuf, String> {
         None => {
             let executable = std::env::current_exe()
                 .map_err(|error| format!("Could not locate the packaged executable: {error}"))?;
-            executable
-                .parent()
-                .ok_or("The packaged executable has no parent directory.")?
-                .join("runtime")
+            packaged_resource_path(&executable, std::env::consts::OS, "runtime")?
         }
     })
+}
+
+pub(crate) fn packaged_resource_path(
+    executable: &Path,
+    platform: &str,
+    resource: &str,
+) -> Result<PathBuf, String> {
+    if !matches!(resource, "runtime" | "appliance") {
+        return Err("Unknown packaged resource role.".into());
+    }
+    let parent = executable
+        .parent()
+        .ok_or("The packaged executable has no parent directory.")?;
+    if platform == "macos"
+        && parent.file_name().and_then(|name| name.to_str()) == Some("MacOS")
+        && parent
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            == Some("Contents")
+    {
+        Ok(parent.parent().unwrap().join("Resources").join(resource))
+    } else {
+        Ok(parent.join(resource))
+    }
 }
 
 pub(crate) fn bundled_runtime_file(relative: &str) -> Result<PathBuf, String> {
@@ -264,6 +286,22 @@ fn verify_runtime_bundle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mac_app_resource_producer_and_consumer_share_resources_not_code_directory() {
+        let executable = Path::new("/tmp/Builder.app/Contents/MacOS/builder");
+        for resource in ["runtime", "appliance"] {
+            assert_eq!(
+                packaged_resource_path(executable, "macos", resource).unwrap(),
+                Path::new("/tmp/Builder.app/Contents/Resources").join(resource)
+            );
+            assert_eq!(
+                packaged_resource_path(executable, "linux", resource).unwrap(),
+                executable.parent().unwrap().join(resource)
+            );
+        }
+        assert!(packaged_resource_path(executable, "macos", "../outside").is_err());
+    }
 
     fn fixture() -> (PathBuf, String) {
         let root = std::env::temp_dir().join(format!(

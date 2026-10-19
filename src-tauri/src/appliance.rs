@@ -563,6 +563,13 @@ pub(crate) fn appliance_dir() -> PathBuf {
     if bundled_runtime_required() {
         if let Ok(executable) = std::env::current_exe() {
             if let Some(bundle) = executable.parent() {
+                if let Ok(root) = crate::runtime_bundle::packaged_resource_path(
+                    &executable,
+                    std::env::consts::OS,
+                    "appliance",
+                ) {
+                    return root;
+                }
                 return bundle.join("appliance");
             }
         }
