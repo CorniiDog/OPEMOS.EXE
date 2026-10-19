@@ -191,7 +191,9 @@ jobs:
           OPEMOS_DISPOSABLE_DEBIAN_CONTAINER: '1'
 
       - name: Stage current-source Linux packages with checksums and provenance
-        run: python3 scripts/stage_linux_packages.py --source-commit "${GITHUB_SHA}"
+        run: |
+          python3 scripts/acquire_appliance_windows.py --output build/appliance/linux
+          python3 scripts/stage_linux_packages.py --source-commit "${GITHUB_SHA}" --appliance-image build/appliance/linux/fedora-builder.qcow2
 
       - name: Retain the validated Linux packages
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

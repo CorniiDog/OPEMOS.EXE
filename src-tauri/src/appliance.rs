@@ -522,6 +522,9 @@ pub(crate) fn repository_root() -> PathBuf {
 }
 
 pub(crate) fn appliance_dir() -> PathBuf {
+    if let Some(root) = linux_appimage_root() {
+        return root.join("appliance");
+    }
     if bundled_runtime_required() {
         if let Ok(executable) = std::env::current_exe() {
             if let Some(bundle) = executable.parent() {
@@ -531,12 +534,31 @@ pub(crate) fn appliance_dir() -> PathBuf {
     }
     repository_root().join("builder/appliance")
 }
+
+pub(crate) fn linux_appimage_root() -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    if let Some(image) = std::env::var_os("APPIMAGE") {
+        return Some(appimage_companion_root(Path::new(&image)));
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn appimage_companion_root(image: &Path) -> PathBuf {
+    if !image.is_absolute() || image.file_name().is_none() {
+        // Never silently fall back to a developer checkout or working dir.
+        return PathBuf::from("/opemos-invalid-appimage-runtime");
+    }
+    let mut name = image.as_os_str().to_os_string();
+    name.push(".runtime");
+    PathBuf::from(name)
+}
 pub(crate) fn appliance_path() -> PathBuf {
     appliance_dir().join("fedora-builder.qcow2")
 }
 
 pub(crate) fn nvidia_build_appliance_path() -> PathBuf {
-    if bundled_runtime_required() {
+    if bundled_runtime_required() || linux_appimage_root().is_some() {
         return appliance_path();
     }
     appliance_dir().join("fedora-builder-x86_64.qcow2")
@@ -570,7 +592,7 @@ static VERIFIED_PACKAGED_APPLIANCE: std::sync::OnceLock<Result<(), String>> =
     std::sync::OnceLock::new();
 
 fn verify_packaged_appliance() -> Result<(), String> {
-    if !bundled_runtime_required() {
+    if !bundled_runtime_required() && linux_appimage_root().is_none() {
         return Ok(());
     }
     VERIFIED_PACKAGED_APPLIANCE
@@ -776,6 +798,9 @@ pub(crate) fn verify_nvidia_guest_device_timeout(
 }
 
 pub(crate) fn runtime_root() -> PathBuf {
+    if let Some(root) = linux_appimage_root() {
+        return root.join("sessions/native");
+    }
     if let Some(cache) = portable_cache_root() {
         return cache.join("appliance-runtime");
     }
@@ -783,6 +808,9 @@ pub(crate) fn runtime_root() -> PathBuf {
 }
 
 pub(crate) fn nvidia_build_runtime_root() -> PathBuf {
+    if let Some(root) = linux_appimage_root() {
+        return root.join("sessions/x86_64");
+    }
     if let Some(cache) = portable_cache_root() {
         return cache.join("appliance-runtime-x86_64");
     }

@@ -8,6 +8,10 @@ import os
 from pathlib import Path
 import shutil
 import stat
+if __package__:
+    from .acquire_appliance_windows import load_lock, exact_file, stage as stage_appliance
+else:
+    from acquire_appliance_windows import load_lock, exact_file, stage as stage_appliance
 
 
 def fail(message):
@@ -33,7 +37,7 @@ def digest(path):
     return value.hexdigest()
 
 
-def stage(root, output, source_commit):
+def stage(root, output, source_commit, appliance_image=None):
     if not source_commit or len(source_commit) != 40 or any(c not in "0123456789abcdef" for c in source_commit):
         fail("Source commit must be one lowercase 40-character Git commit")
     if output.exists():
@@ -54,6 +58,14 @@ def stage(root, output, source_commit):
     if header[:6] != b"\x7fELF\x02\x01" or int.from_bytes(header[18:20], "little") != 62:
         fail("AppImage is not an x86_64 ELF executable")
 
+    lock = None
+    if appliance_image is not None:
+        # Reuse the existing exact Fedora identity and closed appliance format;
+        # no new source, keys, schema or acquisition policy.
+        lock = load_lock(root / "runtime/windows-fedora-appliance.json")
+        if not exact_file(appliance_image, lock["size"], lock["sha256"]):
+            fail("Linux appliance differs from the existing authenticated Fedora pin")
+
     output.mkdir(mode=0o755)
     staged = []
     for source in (deb, appimage):
@@ -61,6 +73,11 @@ def stage(root, output, source_commit):
         shutil.copyfile(source, target)
         os.chmod(target, stat.S_IMODE(source.stat().st_mode))
         staged.append((target, digest(target)))
+    if appliance_image is not None:
+        appliance_output = output / (appimage.name + ".runtime") / "appliance"
+        stage_appliance(lock, appliance_image, root / "builder/appliance/cloud-init", appliance_output)
+        if not exact_file(appliance_output / lock["filename"], lock["size"], lock["sha256"]):
+            fail("Staged Linux appliance changed during copy; preserve failed artifact")
     (output / "SHA256SUMS.txt").write_text(
         "".join(f"{value}  {path.name}\n" for path, value in staged), encoding="utf-8"
     )
@@ -68,6 +85,12 @@ def stage(root, output, source_commit):
         "schemaVersion": 1,
         "kind": "opemos-exe-linux-packages",
         "sourceCommit": source_commit,
+        "appImageRuntime": None if lock is None else {
+            "directory": appimage.name + ".runtime",
+            "applianceSha256": lock["sha256"],
+            "applianceSize": lock["size"],
+            "validation": "existing closed appliance-manifest and compiled file pins",
+        },
         "packages": [
             {"filename": path.name, "sha256": value, "size": path.stat().st_size}
             for path, value in staged
@@ -85,8 +108,10 @@ def main():
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument("--output", type=Path, default=Path("linux-package-artifact"))
     parser.add_argument("--source-commit", default=os.environ.get("GITHUB_SHA", ""))
+    parser.add_argument("--appliance-image", type=Path)
     args = parser.parse_args()
-    print(json.dumps(stage(args.root.resolve(), args.output.resolve(), args.source_commit), indent=2))
+    print(json.dumps(stage(args.root.resolve(), args.output.resolve(), args.source_commit,
+                           args.appliance_image), indent=2))
 
 
 if __name__ == "__main__":
