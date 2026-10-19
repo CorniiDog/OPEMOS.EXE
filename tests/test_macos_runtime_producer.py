@@ -2,6 +2,7 @@
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import struct
@@ -13,10 +14,59 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from acquire_runtime_macos import extract, load_lock, relocate, relocated_relative, close_curated_links, is_macho_code, verify_firmware_pair
-from stage_macos_app import FIRMWARE
+from stage_macos_app import FIRMWARE, FEDORA
+from prepare_macos_fullstack import consume_input_receipt, RECOVERY_URL, RECOVERY_BYTES, RECOVERY_SHA256
 
 
 class DarwinProducer(unittest.TestCase):
+    def test_actual_private_directory_custody_and_receipt_faults(self):
+        # Metadata custody only; production subsequently verifies all real
+        # runtime/companion/recovery bytes. No fake payload acceptance.
+        with tempfile.TemporaryDirectory(prefix="opemos-macos-inputs-") as generated, tempfile.TemporaryDirectory() as evidence:
+            root = Path(generated).resolve(strict=True)
+            receipt = Path(evidence) / "inputs.json"
+            recovery = Path.home() / "Documents/opemos-pinned-recovery.img"
+            metadata = root.stat()
+            data = {"inputRoot": str(root), "identity": {"device": metadata.st_dev,
+                    "inode": metadata.st_ino, "uid": os.getuid(), "mode": 0o700},
+                    "complete": True, "firmwareSource": "locked-qemu-bottle-exact-existing-pair",
+                    "recovery": {"url": RECOVERY_URL, "path": str(recovery),
+                                 "bytes": RECOVERY_BYTES, "sha256": RECOVERY_SHA256},
+                    "applianceSHA256": FEDORA[2]}
+            receipt.write_text(json.dumps(data))
+            self.assertEqual(consume_input_receipt(receipt, ROOT, recovery)[1], root)
+            root.chmod(0o755)
+            with self.assertRaisesRegex(ValueError, "UID/directory identity"):
+                consume_input_receipt(receipt, ROOT, recovery)
+            root.chmod(0o700)
+            for field in ("uid", "inode"):
+                changed = json.loads(json.dumps(data))
+                changed["identity"][field] += 1
+                receipt.write_text(json.dumps(changed))
+                with self.assertRaises(ValueError):
+                    consume_input_receipt(receipt, ROOT, recovery)
+            for changed in (dict(data, unexpected=True), dict(data, complete="true"),
+                            dict(data, applianceSHA256="0" * 64), []):
+                receipt.write_text(json.dumps(changed))
+                with self.assertRaises(ValueError):
+                    consume_input_receipt(receipt, ROOT, recovery)
+            receipt.write_bytes(b"x" * 65537)
+            with self.assertRaisesRegex(ValueError, "bounded regular"):
+                consume_input_receipt(receipt, ROOT, recovery)
+            alias = root.with_name(root.name + "-link")
+            alias.symlink_to(root, target_is_directory=True)
+            try:
+                receipt.write_text(json.dumps(dict(data, inputRoot=str(alias))))
+                with self.assertRaisesRegex(ValueError, "custody"):
+                    consume_input_receipt(receipt, ROOT, recovery)
+            finally:
+                alias.unlink()
+            receipt.write_text(json.dumps(data))
+            linked = receipt.with_name("linked.json")
+            linked.symlink_to(receipt)
+            with self.assertRaisesRegex(ValueError, "bounded regular"):
+                consume_input_receipt(linked, ROOT, recovery)
+
     def test_firmware_missing_same_size_corruption_directory_and_link_faults(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -77,6 +127,24 @@ class DarwinProducer(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     extract(archive, output)
             self.assertFalse((root / "escape").exists())
+
+    def test_real_provider_installation_state_is_not_client_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "openssh.tar.gz"
+            with tarfile.open(archive, "w:gz") as source:
+                for name in ["openssh/1/LICENSE", "openssh/1/bin/ssh", "openssh/1/.bottle/etc/ssh/ssh_host_rsa_key"]:
+                    item = tarfile.TarInfo(name)
+                    item.size = 7
+                    source.addfile(item, io.BytesIO(b"fixture"))
+            original = archive.read_bytes()
+            output = root / "output"
+            output.mkdir()
+            omitted = extract(archive, output, "openssh")
+            self.assertTrue(omitted)
+            self.assertFalse((output / "openssh/1/.bottle").exists())
+            self.assertEqual((output / "openssh/1/bin/ssh").read_bytes(), b"fixture")
+            self.assertEqual(archive.read_bytes(), original)
 
     def test_real_provider_sdk_curation_does_not_follow_prefix_certificate_links(self):
         with tempfile.TemporaryDirectory() as directory:

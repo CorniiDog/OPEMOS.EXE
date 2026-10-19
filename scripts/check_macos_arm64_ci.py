@@ -58,8 +58,6 @@ def main():
     children_closed = True
     fullstack = os.environ.get("OPEMOS_MACOS_FULLSTACK") == "1"
     receipt["requestedMode"] = "explicit-x86_64-tcg-cold-build" if fullstack else "native-app-chooser"
-    runtime = ROOT / "admitted-macos/runtime"
-    appliance = ROOT / "admitted-macos/appliance"
     recovery = Path.home() / "Documents/opemos-pinned-recovery.img"
 
     def save():
@@ -123,10 +121,15 @@ def main():
                 raise RuntimeError("Actual Darwin producer boundary tests failed")
             if not run("fullstack-input-producer", ["python3", "scripts/prepare_macos_fullstack.py", str(OUT)], 3600):
                 raise RuntimeError("Exact fullstack input producer failed; preserve evidence, no chooser-only fallback")
+            from prepare_macos_fullstack import consume_input_receipt
+            inputs, input_root = consume_input_receipt(OUT / "macos-input-producer.json", ROOT, recovery)
+            runtime, appliance = input_root / "runtime", input_root / "appliance"
+            receipt["inputCustody"] = inputs
             from stage_runtime_bundle import validate_runtime
             from stage_macos_app import verify_companion
-            validate_runtime(runtime, "macos")
+            _, _, receipt["runtimeManifestSHA256"] = validate_runtime(runtime, "macos")
             verify_companion(appliance)
+            receipt["productAcceptance"]["imageBuild"] = "not_run: exact inputs admitted; graphical transaction pending"
             if recovery.is_symlink() or not recovery.is_file() or recovery.stat().st_size != RECOVERY_BYTES or digest(recovery) != RECOVERY_SHA256:
                 raise RuntimeError("Exact admitted Documents recovery image is unavailable")
             # Full image/output storage accounting is also rechecked by the
@@ -152,6 +155,8 @@ def main():
         helper = OUT / "macos-ui-smoke"
         helper_built = run("gui-helper-build", ["xcrun", "swiftc", "tests/macos-ui-smoke.swift",
                                               "-o", str(helper)], 120)
+        if helper_built:
+            helper_built = run("ownership-birth-boundaries", [str(helper), "--birth-regression"], 30)
         receipt["stages"]["gui"] = {"state": "not_run", "reason": "awaiting native app" if helper_built else "helper compilation failed"}
         save()
         for name, args in [
@@ -184,6 +189,7 @@ def main():
             raise RuntimeError("app is not arm64-only")
         receipt["artifact"] = {"app": str(app), "executable": str(binary),
             "bytes": binary.stat().st_size, "sha256": digest(binary), "architectures": "arm64"}
+        receipt["productAcceptance"]["nativeArm64PackagedBuild"] = "passed"
         run("artifact-inspection", ["/bin/sh", "-c",
             'file "$1"; otool -L "$1"; codesign -dv --verbose=2 "$2"',
             "inspect", str(binary), str(app)], 60)
@@ -253,16 +259,45 @@ def main():
     except Exception as error:
         receipt["error"] = str(error)
     finally:
+        # A GUI refusal must not skip the immutable-input post-state checks.
+        # Keep the primary failure and independently retain secondary failures.
+        if fullstack and receipt.get("inputCustody"):
+            try:
+                final_inputs, final_root = consume_input_receipt(OUT / "macos-input-producer.json", ROOT, recovery)
+                if final_inputs != receipt["inputCustody"] or final_root / "runtime" != runtime:
+                    raise RuntimeError("Producer custody changed during the transaction")
+                if (recovery.is_symlink() or not recovery.is_file() or recovery.stat().st_size != RECOVERY_BYTES
+                        or digest(recovery) != RECOVERY_SHA256):
+                    raise RuntimeError("Original recovery changed during the transaction")
+                _, _, final_manifest = validate_runtime(runtime, "macos")
+                if final_manifest != receipt.get("runtimeManifestSHA256"):
+                    raise RuntimeError("Original runtime manifest changed during the transaction")
+                verify_companion(appliance)
+                receipt["originalInputsUnchangedAfterAttempt"] = True
+            except Exception as error:
+                receipt.setdefault("finalizationErrors", []).append({"stage": "original-inputs", "error": str(error)})
+        if receipt.get("artifact"):
+            try:
+                if digest(binary) != receipt["artifact"]["sha256"]:
+                    raise RuntimeError("Packaged executable changed during the transaction")
+                if fullstack:
+                    _, _, packaged_manifest = validate_runtime(app / "Contents/Resources/runtime", "macos")
+                    if packaged_manifest != receipt.get("runtimeManifestSHA256"):
+                        raise RuntimeError("Packaged runtime manifest changed during the transaction")
+                    verify_companion(app / "Contents/Resources/appliance")
+                receipt["packagedInputsUnchangedAfterAttempt"] = True
+            except Exception as error:
+                receipt.setdefault("finalizationErrors", []).append({"stage": "packaged-inputs", "error": str(error)})
         receipt["evidenceFiles"] = {p.name: {"bytes": p.stat().st_size, "sha256": digest(p)}
             for p in OUT.iterdir() if p.is_file() and p.name != "receipt.json"}
         receipt["freeBytesAfter"] = shutil.disk_usage(ROOT).free
         receipt["childProcessGroupsClosed"] = children_closed
         receipt["finished"] = time.time()
         save()
-    required = ["frontend", "docs", "hygiene", "format", "clippy", "darwin-cache-tests", "rust-tests", "native-build", "gui", "archive"]
+    required = ["frontend", "docs", "hygiene", "format", "clippy", "darwin-cache-tests", "rust-tests", "native-build", "ownership-birth-boundaries", "gui", "archive"]
     if fullstack:
         required += ["darwin-producer-boundaries", "fullstack-input-producer", "companion-filesystem-regressions", "actual-guest-normal-wrong-marker-closure"]
-    return 0 if not receipt.get("error") and all(
+    return 0 if not receipt.get("error") and not receipt.get("finalizationErrors") and all(
         receipt["stages"].get(name, {}).get("state") == "passed" for name in required) else 1
 
 

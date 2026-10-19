@@ -5,7 +5,8 @@ import Foundation
 
 struct Refusal: Error { let message: String }
 let fullStackImage: URL? = CommandLine.arguments.count == 4 ? URL(fileURLWithPath: CommandLine.arguments[3]).standardizedFileURL : nil
-let deadline = Date().addingTimeInterval(fullStackImage == nil ? 120 : 480)
+let transactionStarted = Date()
+let deadline = transactionStarted.addingTimeInterval(fullStackImage == nil ? 120 : 480)
 let bundleID = "dev.cornidog.steamos-nvidia-image-builder"
 var owned: NSRunningApplication?
 var events: [[String: Any]] = []
@@ -23,6 +24,21 @@ func record(_ kind: String, _ fields: [String: Any] = [:]) {
 }
 func require(_ ok: Bool, _ message: String) throws {
     if !ok { throw Refusal(message: message) }
+}
+func ownedBirth(_ birth: Date?, since start: Date, observed: Date) -> Bool {
+    guard let birth = birth else { return false }
+    return birth >= start && birth <= observed
+}
+if CommandLine.arguments == [CommandLine.arguments[0], "--birth-regression"] {
+    let start = Date(timeIntervalSince1970: 1_800_000_000)
+    for window in [120.0, 480.0] {
+        precondition(ownedBirth(start.addingTimeInterval(1), since: start, observed: start.addingTimeInterval(2)))
+        precondition(!ownedBirth(nil, since: start, observed: start.addingTimeInterval(window)))
+        precondition(!ownedBirth(start.addingTimeInterval(-1), since: start, observed: start.addingTimeInterval(window)))
+        precondition(!ownedBirth(start.addingTimeInterval(window + 1), since: start, observed: start.addingTimeInterval(window)))
+    }
+    print("Owned birth boundaries passed; model only, actual app custody/closure still required")
+    exit(0)
 }
 func guiWaitTick() throws {
     try require(Date() < deadline, "absolute GUI deadline")
@@ -164,6 +180,11 @@ do {
     let plist = appURL.appendingPathComponent("Contents/Info.plist")
     let info = try PropertyListSerialization.propertyList(from: Data(contentsOf: plist), format: nil) as? [String: Any]
     try require(info?["CFBundleIdentifier"] as? String == bundleID, "wrong input bundle identity")
+    guard let executableName = info?["CFBundleExecutable"] as? String,
+          !executableName.isEmpty, !executableName.contains("/"), ![".", ".."].contains(executableName) else {
+        throw Refusal(message: "invalid bundle executable identity")
+    }
+    let expectedExecutable = appURL.appendingPathComponent("Contents/MacOS").appendingPathComponent(executableName)
     try require(NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty,
                 "pre-existing app: no ownership, do not interact")
     let ax = AXIsProcessTrusted()
@@ -193,12 +214,24 @@ do {
         if icon == nil { try guiWaitTick() }
     }
     try screenshot("finder-before-launch")
+    let launchNotBefore = Date()
+    record("launch-not-before", ["timeBoundary": launchNotBefore.timeIntervalSince1970,
+                                 "transactionStarted": transactionStarted.timeIntervalSince1970,
+                                 "deadline": deadline.timeIntervalSince1970])
     try click(icon!, "finder-app", double: true)
     while owned == nil {
         if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
             // A foreign app with the same identifier never becomes an owned target.
             try require(app.bundleURL?.standardizedFileURL == appURL, "launched wrong bundle path")
-            try require((app.launchDate ?? .distantPast) > deadline.addingTimeInterval(-120), "app predates owned transaction")
+            try require(app.executableURL?.standardizedFileURL == expectedExecutable, "launched wrong executable path")
+            let observed = Date()
+            let observedBirth: Any = app.launchDate.map { $0.timeIntervalSince1970 as Any } ?? "unknown"
+            record("birth-observed", ["pid": app.processIdentifier,
+                "launchDate": observedBirth,
+                "notBefore": launchNotBefore.timeIntervalSince1970, "observed": observed.timeIntervalSince1970,
+                "bundle": app.bundleURL?.path ?? "unknown", "executable": app.executableURL?.path ?? "unknown"])
+            try require(ownedBirth(app.launchDate, since: launchNotBefore, observed: observed),
+                        "app birth unavailable or outside observed owned launch window")
             owned = app
             record("app", ["pid": app.processIdentifier, "bundle": appURL.path,
                            "executable": app.executableURL?.path ?? "", "architecture": app.executableArchitecture,

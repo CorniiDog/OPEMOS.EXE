@@ -2,6 +2,37 @@
 
 ## Complete packaged Mac cold-Build transaction
 
+  Actual first complete producer/build head1f62a052 M1 run39276928429:
+ 43 locked bottles,736 native loader records, command/Python/CA probes,
+ exact old firmware and Fedora/cloud-init,8,120,172,544-byte pinned recovery,
+ filesystem regressions, Swift helper, Clippy/cache/ordinary Rust suite and
+ native complete arm64 app build all PASS. Executable19,058,448B SHA
+ dce17df93590715831c7b9d3c8c5ea39aa93e61999446f5f214126a4b20cb6d5.
+ GUI failed before app custody: deadline480 minus literal120 placed birth
+ cutoff360s in the future. Finder pointer launched app; helper refused and
+ PID86644 remained after outer cleanup. Original receipt and all24 evidence
+ files rehashed and retained in scheduler/exe-pr191-seventh-mac-attempt.
+ Source hygiene also correctly saw untracked generated runtime under Git,
+ including public bottle installation SSH host-key state (not user credentials).
+ Grouped correction uses fresh private outside-Git mkdtemp plus bounded closed
+ receipt/current UID/dev/inode0700 consumer, excludes .bottle installation state,
+ and uses actual pre-click/observed launch birth independent of GUI deadline,
+ recording complete custody before later GUI actions. Native date-boundary
+ model and real archive metadata-exclusion cases added; NOT RUN on controller.
+ Hygiene method and governance remain unchanged. Actual graphical normal/fault
+ still NOT PASSED. Owned failed-run cancel refused already-completed, while GET
+ remained active: preserve contradictory lifecycle evidence, no Mac retry until
+ reconciled independent review. Original failure is not normal closure.
+ All four exact1f62 Linux Checks PASS, including410 Rust tests and actual Debian
+  executable/package artifact12197669033; Windows seed and build subsequently
+  PASS, package12200236381,27 tests PASS/4 ignored. New correction also rechecks
+  original and packaged inputs independently after a GUI refusal, retaining the
+  primary failure plus secondary finalizer errors. Actual root-custody/schema/
+  size/UID/mode/symlink regressions use the production receipt consumer, no
+  method override; not run on controller. All new-head checks remain pending.
+ Preserve these results and frozen PR190. Changed source requires fresh checks
+ and exact counterpart review; previous1f62 request cannot approve a new head.
+
   Actual M1 ae2f2605/run39276295134: seven native boundary tests PASS,
   including real ARM64 FAT lipo/sign/dyld load and Java rejection. Producer
   exit1/group absent at GitHub firmware range HTTP503 account egress limit,

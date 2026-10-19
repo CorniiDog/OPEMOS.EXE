@@ -129,7 +129,7 @@ def build_only_member(name):
     """Noninteractive tool payload: retain code/data, not SDK/man/test/pip trees."""
     path = "/" + name + "/"
     if any(part in path for part in (
-            "/share/man/", "/share/doc/", "/share/info/", "/share/locale/", "/share/terminfo/",
+            "/.bottle/", "/share/man/", "/share/doc/", "/share/info/", "/share/locale/", "/share/terminfo/",
             "/include/", "/Headers/", "/lib/pkgconfig/", "/lib/cmake/",
             "/lib/python3.14/test/", "/lib/python3.15/test/", "/idle_test/", "/tkinter/test/",
             "/site-packages/pip/", "/site-packages/wheel/", "/ensurepip/")):
@@ -485,6 +485,8 @@ def construct(lock_path, output, evidence, firmware=None):
             path.unlink()
     files = [{"path": p.relative_to(runtime).as_posix(), "size": p.stat().st_size, "sha256": digest(p)}
              for p in sorted(runtime.rglob("*")) if p.is_file()]
+    if any(".bottle" in Path(row["path"]).parts for row in files):
+        raise ValueError("Provider installation state must not enter the client runtime")
     manifest = {"schema_version": 1, "platform": "macos", "commands": commands, "files": files, "components": components}
     (runtime / "runtime-manifest.json").write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n")
     validate_runtime(runtime, "macos")
