@@ -1,5 +1,20 @@
 # OPEMOS.EXE — Product Checklist
 
+## Linux AppImage KVM and appliance relocation regression
+
+- [ ] Root plan edcbad27: shipped099d AppImage issued KVM_GET_API_VERSION
+  without variadic arg and received EINVAL; appliance lookup used absent CI
+  checkout. Fix both on work/exe-linux-appimage-runtime from fetched099d.
+  Explicit zero ioctl arg; relocated `<AppImage>.runtime/appliance` reuses exact
+  existing compiled Fedora/cloud-init/closed manifest validation. Separate
+  generated sessions keep immutable appliance inventory closed. CI stages the
+  same already pinned Fedora image with packages, not new trust or TCG fallback.
+  Added moved-path/invalid-path, wrong-image pre-output refusal and ignored real
+  production KVM test. Tests/build/AppImage GUI NOT RUN locally; OMEN VM actual
+  packaged normal/opt-out/KVM denied/hash fault/screenshot/closure required.
+  Source/required CI/exact Core review and final shipped byte validation remain
+  open. No image build, VM/GPU/USB acceptance or merge/publication implied.
+
 ## Foundation and change policy
 
 Commit `e0502833282ffd9055ecf46f75df82f71a9ee20f` is the current tested

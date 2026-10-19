@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import shutil
 
 from scripts.stage_linux_packages import stage
 
@@ -10,6 +11,18 @@ COMMIT = "a" * 40
 
 
 class LinuxPackageArtifactTests(unittest.TestCase):
+    def test_bad_pinned_appliance_refuses_before_creating_artifact(self):
+        temporary, root, _, _ = self.fixture()
+        self.addCleanup(temporary.cleanup)
+        (root / 'runtime').mkdir()
+        shutil.copyfile(Path(__file__).resolve().parents[1] / 'runtime/windows-fedora-appliance.json',
+                        root / 'runtime/windows-fedora-appliance.json')
+        bad = root / 'wrong.qcow2'
+        bad.write_bytes(b'not the pinned Fedora image')
+        with self.assertRaisesRegex(SystemExit, 'existing authenticated Fedora pin'):
+            stage(root, root / 'artifact', COMMIT, bad)
+        self.assertFalse((root / 'artifact').exists())
+
     def fixture(self):
         temporary = tempfile.TemporaryDirectory()
         root = Path(temporary.name)

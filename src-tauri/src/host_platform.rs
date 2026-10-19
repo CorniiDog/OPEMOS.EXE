@@ -103,7 +103,10 @@ pub(crate) fn kvm_usable() -> bool {
             return false;
         }
         // KVM_GET_API_VERSION is a read-only capability query; Linux ABI version 12.
-        unsafe { libc::ioctl(file.as_raw_fd(), 0xae00) == 12 }
+        // The kernel rejects a nonzero generic ioctl argument even for this
+        // no-payload request. Omitting the variadic argument left a garbage
+        // register in the shipped AppImage and produced EINVAL.
+        unsafe { libc::ioctl(file.as_raw_fd(), 0xae00, 0 as libc::c_ulong) == 12 }
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -593,6 +596,18 @@ mod tests {
         } else {
             assert!(result.is_err());
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires actual accessible KVM in an admitted OMEN test VM"]
+    fn live_linux_kvm_query_matches_kernel_api() {
+        // Exercise the production method, not a fake adapter or replaced ioctl.
+        assert!(kvm_usable(), "actual /dev/kvm query must return API12");
+        assert!(
+            current_host_qemu("x86_64", "x86_64").is_ok(),
+            "run with explicit Linux opt-in and KVM selected"
+        );
     }
 
     #[cfg(target_os = "linux")]
