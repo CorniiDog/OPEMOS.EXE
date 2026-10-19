@@ -360,12 +360,21 @@ pub(crate) fn kill_owned_process_group(child: &Child) {
     }
     #[cfg(windows)]
     {
-        let _ = child_command("taskkill")
+        #[cfg(test)]
+        let started = Instant::now();
+        let result = child_command("taskkill")
             .args(["/PID", &child.id().to_string(), "/T", "/F"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+        #[cfg(test)]
+        eprintln!(
+            "owned cleanup pid={} taskkill={result:?} elapsed={:?}",
+            child.id(),
+            started.elapsed()
+        );
+        let _ = result;
     }
     #[cfg(all(not(unix), not(windows)))]
     let _ = child;
@@ -1879,12 +1888,10 @@ pub(crate) fn prepare_session_with_output(
     let input_format = detect_input_format(&input_image)?;
     let measured_image_bytes =
         measure_normalized_input(&input_image, input_format, progress, cancel)?;
-    let output_parent = input_image
-        .parent()
-        .ok_or("Could not determine the future output folder.")?;
+    let output_directory = resolve_build_output_directory(&input_image, output_directory)?;
     preflight_normalization_and_build(
         &runtime_dir,
-        output_parent,
+        &output_directory,
         measured_image_bytes,
         input_format != InputFormat::Raw,
         plan_export,
@@ -1918,17 +1925,6 @@ pub(crate) fn prepare_session_with_output(
         return Err(format!(
             "Normalized image size changed between measurement ({measured_image_bytes} bytes) and staging ({image_bytes} bytes)."
         ));
-    }
-    let output_directory = match output_directory {
-        Some(directory) => fs::canonicalize(directory)
-            .map_err(|error| format!("Could not resolve the output folder: {error}"))?,
-        None => input_image
-            .parent()
-            .ok_or("Could not determine the future output folder.")?
-            .to_path_buf(),
-    };
-    if !output_directory.is_dir() {
-        return Err("The output folder is not a safe directory.".into());
     }
     if plan_export {
         preflight_host_build_space(&runtime_dir, &output_directory, image_bytes)?;
@@ -2515,9 +2511,18 @@ pub(crate) fn start_guest_command(
 }
 
 pub(crate) fn stop_guest_command_group(child: &mut Child) {
+    #[cfg(test)]
+    let started = Instant::now();
     kill_owned_process_group(child);
-    let _ = child.kill();
-    let _ = child.wait();
+    let killed = child.kill();
+    let waited = child.wait();
+    #[cfg(test)]
+    eprintln!(
+        "owned cleanup pid={} kill={killed:?} wait={waited:?} elapsed={:?}",
+        child.id(),
+        started.elapsed()
+    );
+    let _ = (killed, waited);
 }
 
 #[cfg(test)]
@@ -2734,9 +2739,23 @@ pub(crate) fn finish_guest_command_bounded(
             break status;
         }
         if Instant::now() >= deadline {
+            #[cfg(test)]
+            let cleanup_started = Instant::now();
             stop_guest_command_group(&mut child);
             let _ = stdout_reader.join();
+            #[cfg(test)]
+            eprintln!(
+                "bounded command pid={} stdout joined at {:?}",
+                child.id(),
+                cleanup_started.elapsed()
+            );
             let _ = stderr_reader.join();
+            #[cfg(test)]
+            eprintln!(
+                "bounded command pid={} stderr joined at {:?}",
+                child.id(),
+                cleanup_started.elapsed()
+            );
             return Err(timeout_message.into());
         }
         thread::sleep(Duration::from_millis(10));
