@@ -40,6 +40,149 @@ pub(crate) fn run_transfer_proof(session: &impl GuestConnection) -> Result<Trans
     })
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod linux_usb_guard_tests {
+    use super::*;
+
+    fn inventory() -> serde_json::Value {
+        serde_json::json!({
+            "blockdevices": [{
+                "name": "sdb", "path": "/dev/sdb", "type": "disk",
+                "size": 32768000u64, "tran": "usb", "rm": true,
+                "hotplug": true, "ro": false, "model": "Disposable USB",
+                "serial": "owned-virtual-1", "wwn": null, "log-sec": 512,
+                "mountpoints": [null], "pkname": null,
+                "children": [{
+                    "name": "sdb1", "path": "/dev/sdb1", "type": "part",
+                    "mountpoints": [null]
+                }]
+            }]
+        })
+    }
+
+    #[test]
+    fn linux_usb_discovery_requires_idle_whole_removable_usb() {
+        let valid = inventory();
+        assert_eq!(
+            linux_usb_rows(valid.to_string().as_bytes(), 8_120_172_544)
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(
+            linux_usb_rows(valid.to_string().as_bytes(), 8_192)
+                .unwrap()
+                .len(),
+            1
+        );
+        for (field, value) in [
+            ("tran", serde_json::json!("nvme")),
+            ("rm", serde_json::json!(false)),
+            ("hotplug", serde_json::json!(false)),
+            ("ro", serde_json::json!(true)),
+            ("type", serde_json::json!("part")),
+            ("pkname", serde_json::json!("sda")),
+            ("log-sec", serde_json::json!(999)),
+            ("name", serde_json::json!("sdb1")),
+        ] {
+            let mut bad = valid.clone();
+            bad["blockdevices"][0][field] = value;
+            assert!(
+                linux_usb_rows(bad.to_string().as_bytes(), 8192)
+                    .unwrap()
+                    .is_empty(),
+                "{field}"
+            );
+        }
+        let mut mounted = valid.clone();
+        mounted["blockdevices"][0]["children"][0]["mountpoints"] =
+            serde_json::json!(["/media/test"]);
+        assert!(linux_usb_rows(mounted.to_string().as_bytes(), 8192)
+            .unwrap()
+            .is_empty());
+        let mut layered = valid;
+        layered["blockdevices"][0]["children"][0]["type"] = serde_json::json!("crypt");
+        assert!(linux_usb_rows(layered.to_string().as_bytes(), 8192)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn linux_usb_intent_is_exact_and_replaced_identity_fails() {
+        let target = UsbTargetCandidate {
+            device_identifier: "sdb".into(),
+            device_node: "/dev/sdb".into(),
+            media_name: "Disposable USB".into(),
+            bus_protocol: "USB".into(),
+            bytes: 32768000,
+            block_size: 512,
+            identity_token: "a".repeat(64),
+        };
+        validate_usb_write_intent(&target, 8192, "sdb", &"a".repeat(64), "ERASE sdb")
+            .expect("exact disposable USB intent");
+        for (identifier, token, confirmation) in [
+            ("sda", "a".repeat(64), "ERASE sda"),
+            ("sdb1", "a".repeat(64), "ERASE sdb1"),
+            ("sdb", "b".repeat(64), "ERASE sdb"),
+            ("sdb", "a".repeat(64), "ERASE sdc"),
+        ] {
+            assert!(
+                validate_usb_write_intent(&target, 8192, identifier, &token, confirmation).is_err()
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_usb_authorized_descriptor_must_match_selected_disk() {
+        let valid = (
+            2064_u64,
+            2064_u64,
+            32_768_000_u64,
+            32_768_000_u64,
+            512_i32,
+            512_u64,
+            libc::O_RDWR | libc::O_SYNC,
+            libc::FD_CLOEXEC,
+        );
+        assert!(linux_usb_opened_fd_matches(
+            valid.0, valid.1, valid.2, valid.3, valid.4, valid.5, valid.6, valid.7
+        ));
+        assert!(!linux_usb_opened_fd_matches(
+            2065, valid.1, valid.2, valid.3, valid.4, valid.5, valid.6, valid.7
+        ));
+        assert!(!linux_usb_opened_fd_matches(
+            valid.0, valid.1, 16_384_000, valid.3, valid.4, valid.5, valid.6, valid.7
+        ));
+        assert!(!linux_usb_opened_fd_matches(
+            valid.0, valid.1, valid.2, valid.3, 4096, valid.5, valid.6, valid.7
+        ));
+        assert!(!linux_usb_opened_fd_matches(
+            valid.0,
+            valid.1,
+            valid.2,
+            valid.3,
+            valid.4,
+            valid.5,
+            libc::O_RDONLY,
+            valid.7
+        ));
+        assert!(!linux_usb_opened_fd_matches(
+            valid.0,
+            valid.1,
+            valid.2,
+            valid.3,
+            valid.4,
+            valid.5,
+            libc::O_RDWR,
+            valid.7
+        ));
+        assert!(!linux_usb_opened_fd_matches(
+            valid.0, valid.1, valid.2, valid.3, valid.4, valid.5, valid.6, 0
+        ));
+    }
+}
+
 pub(crate) fn inspect_synthetic_disk(
     session: &impl GuestConnection,
 ) -> Result<SyntheticDiskInspection, String> {
@@ -2078,7 +2221,11 @@ pub(crate) fn physical_usb_writes_allowed() -> bool {
 pub(crate) fn physical_usb_writes_allowed() -> bool {
     true
 }
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
+pub(crate) fn physical_usb_writes_allowed() -> bool {
+    zbus::blocking::Connection::system().is_ok()
+}
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 pub(crate) fn physical_usb_writes_allowed() -> bool {
     false
 }
@@ -2093,7 +2240,12 @@ fn usb_write_permission_message() -> &'static str {
     "Windows will request administrator approval for only this exact revalidated USB write."
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
+fn usb_write_permission_message() -> &'static str {
+    "Linux will request UDisks permission for an exclusive descriptor to only this exact USB disk."
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn usb_write_permission_message() -> &'static str {
     "Physical writing is not available on this platform yet."
 }
@@ -3186,20 +3338,306 @@ fn revalidate_windows_usb_target_state(
         .expect("one guarded Windows target"))
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn discover_usb_targets(_image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
-    Err(
-        "Read-only USB target discovery is currently implemented only for macOS and Windows."
-            .into(),
-    )
+fn linux_usb_name(name: &str) -> bool {
+    name.strip_prefix("sd").is_some_and(|suffix| {
+        !suffix.is_empty()
+            && suffix.len() <= 6
+            && suffix.bytes().all(|byte| byte.is_ascii_lowercase())
+    })
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(any(target_os = "linux", test))]
+fn linux_usb_tree_unmounted(row: &serde_json::Value, root: bool) -> bool {
+    let node_type = row.get("type").and_then(serde_json::Value::as_str);
+    if node_type != Some(if root { "disk" } else { "part" }) {
+        return false;
+    }
+    let Some(mountpoints) = row.get("mountpoints").and_then(serde_json::Value::as_array) else {
+        return false;
+    };
+    if mountpoints.iter().any(|point| !point.is_null()) {
+        return false;
+    }
+    row.get("children")
+        .map(|children| {
+            children.as_array().is_some_and(|children| {
+                children.len() <= 128
+                    && children
+                        .iter()
+                        .all(|child| linux_usb_tree_unmounted(child, false))
+            })
+        })
+        .unwrap_or(true)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_usb_lsblk_candidate(row: &serde_json::Value, image_bytes: u64) -> bool {
+    let Some(name) = row.get("name").and_then(serde_json::Value::as_str) else {
+        return false;
+    };
+    let Some(bytes) = row.get("size").and_then(serde_json::Value::as_u64) else {
+        return false;
+    };
+    let Some(sector) = row.get("log-sec").and_then(serde_json::Value::as_u64) else {
+        return false;
+    };
+    linux_usb_name(name)
+        && row.get("path").and_then(serde_json::Value::as_str)
+            == Some(format!("/dev/{name}").as_str())
+        && row.get("tran").and_then(serde_json::Value::as_str) == Some("usb")
+        && row.get("rm").and_then(serde_json::Value::as_bool) == Some(true)
+        && row.get("hotplug").and_then(serde_json::Value::as_bool) == Some(true)
+        && row.get("ro").and_then(serde_json::Value::as_bool) == Some(false)
+        && row.get("pkname").is_some_and(serde_json::Value::is_null)
+        && bytes >= image_bytes
+        && bytes <= 2 * 1024 * 1024 * 1024 * 1024
+        && matches!(sector, 512 | 1024 | 2048 | 4096)
+        && image_bytes.is_multiple_of(sector)
+        && linux_usb_tree_unmounted(row, true)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_usb_rows(bytes: &[u8], image_bytes: u64) -> Result<Vec<serde_json::Value>, String> {
+    if bytes.len() > 4 * 1024 * 1024 {
+        return Err("Linux returned more than 4 MiB of block metadata.".into());
+    }
+    let inventory: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("Linux returned malformed block metadata: {error}"))?;
+    let rows = inventory
+        .get("blockdevices")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("Linux did not return a block-device list.")?;
+    if rows.len() > 256 {
+        return Err("Linux returned too many block devices to inspect safely.".into());
+    }
+    Ok(rows
+        .iter()
+        .filter(|row| linux_usb_lsblk_candidate(row, image_bytes))
+        .cloned()
+        .collect())
+}
+
+#[cfg(target_os = "linux")]
+const LINUX_USB_LSBLK_COLUMNS: &str =
+    "NAME,PATH,TYPE,SIZE,TRAN,RM,HOTPLUG,RO,MODEL,SERIAL,WWN,LOG-SEC,MOUNTPOINTS,PKNAME";
+
+#[cfg(target_os = "linux")]
+fn linux_usb_lsblk_rows(image_bytes: u64) -> Result<Vec<serde_json::Value>, String> {
+    let (status, stdout, _) = bounded_command_output_with_limits(
+        Path::new("/usr/bin/lsblk"),
+        &["--json", "--bytes", "--output", LINUX_USB_LSBLK_COLUMNS],
+        "inspect Linux removable drives",
+        Duration::from_secs(15),
+        4 * 1024 * 1024,
+    )?;
+    if !status.success() {
+        return Err("Linux removable-drive inspection failed.".into());
+    }
+    linux_usb_rows(&stdout, image_bytes)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_usb_no_holders(row: &serde_json::Value) -> Result<(), String> {
+    let name = row
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("Linux USB metadata omitted a block name.")?;
+    if !name.bytes().all(|byte| byte.is_ascii_alphanumeric()) || name.len() > 16 {
+        return Err("Linux USB metadata returned an invalid block name.".into());
+    }
+    let holders = fs::read_dir(format!("/sys/class/block/{name}/holders"))
+        .map_err(|error| format!("Could not inspect selected USB holders: {error}"))?;
+    if holders.into_iter().next().is_some() {
+        return Err("The selected USB disk or a partition has an active holder.".into());
+    }
+    if let Some(children) = row.get("children").and_then(serde_json::Value::as_array) {
+        for child in children {
+            linux_usb_no_holders(child)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_usb_candidate(
+    connection: &zbus::blocking::Connection,
+    row: &serde_json::Value,
+) -> Result<UsbTargetCandidate, String> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let name = row
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("Linux USB metadata omitted a block name.")?;
+    let device_node = format!("/dev/{name}");
+    let metadata = fs::symlink_metadata(&device_node)
+        .map_err(|error| format!("Could not inspect selected USB node: {error}"))?;
+    if !metadata.file_type().is_block_device() || metadata.file_type().is_symlink() {
+        return Err("The selected USB node is not a direct whole block device.".into());
+    }
+    linux_usb_no_holders(row)?;
+    let sysfs_path = fs::canonicalize(format!("/sys/class/block/{name}/device"))
+        .map_err(|error| format!("Could not resolve selected USB sysfs identity: {error}"))?;
+    let sysfs = sysfs_path.to_string_lossy();
+    if !sysfs.contains("/usb") {
+        return Err("The selected block device is not under a USB controller.".into());
+    }
+    let block_path = format!("/org/freedesktop/UDisks2/block_devices/{name}");
+    let block = zbus::blocking::Proxy::new(
+        connection,
+        "org.freedesktop.UDisks2",
+        block_path.as_str(),
+        "org.freedesktop.UDisks2.Block",
+    )
+    .map_err(|error| format!("Could not inspect selected UDisks block: {error}"))?;
+    let raw_device: Vec<u8> = block
+        .get_property("Device")
+        .map_err(|error| format!("Could not read selected UDisks device: {error}"))?;
+    let raw_device = raw_device.strip_suffix(&[0]).unwrap_or(&raw_device);
+    let disk_bytes: u64 = block
+        .get_property("Size")
+        .map_err(|error| format!("Could not read selected UDisks capacity: {error}"))?;
+    let device_number: u64 = block
+        .get_property("DeviceNumber")
+        .map_err(|error| format!("Could not read selected UDisks device number: {error}"))?;
+    let read_only: bool = block
+        .get_property("ReadOnly")
+        .map_err(|error| format!("Could not read selected UDisks read-only state: {error}"))?;
+    let system: bool = block
+        .get_property("HintSystem")
+        .map_err(|error| format!("Could not read selected UDisks system hint: {error}"))?;
+    let drive_path: zbus::zvariant::OwnedObjectPath = block
+        .get_property("Drive")
+        .map_err(|error| format!("Could not read selected UDisks drive identity: {error}"))?;
+    if raw_device != device_node.as_bytes()
+        || disk_bytes
+            != row
+                .get("size")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        || metadata.rdev() != device_number
+        || read_only
+        || system
+        || drive_path.as_str() == "/"
+    {
+        return Err("The selected UDisks block does not match an eligible whole USB disk.".into());
+    }
+    let drive = zbus::blocking::Proxy::new(
+        connection,
+        "org.freedesktop.UDisks2",
+        drive_path.as_str(),
+        "org.freedesktop.UDisks2.Drive",
+    )
+    .map_err(|error| format!("Could not inspect selected UDisks drive: {error}"))?;
+    let bus: String = drive
+        .get_property("ConnectionBus")
+        .map_err(|error| format!("Could not read selected UDisks bus: {error}"))?;
+    let removable: bool = drive
+        .get_property("Removable")
+        .map_err(|error| format!("Could not read selected UDisks removable state: {error}"))?;
+    let media_available: bool = drive
+        .get_property("MediaAvailable")
+        .map_err(|error| format!("Could not read selected UDisks media state: {error}"))?;
+    let drive_id: String = drive
+        .get_property("Id")
+        .map_err(|error| format!("Could not read selected UDisks drive ID: {error}"))?;
+    let serial: String = drive
+        .get_property("Serial")
+        .map_err(|error| format!("Could not read selected UDisks serial: {error}"))?;
+    let sibling_id: String = drive
+        .get_property("SiblingId")
+        .map_err(|error| format!("Could not read selected UDisks USB topology: {error}"))?;
+    if bus != "usb"
+        || !removable
+        || !media_available
+        || drive_id.trim().is_empty()
+        || serial.trim().is_empty()
+        || sibling_id.trim().is_empty()
+    {
+        return Err("The selected UDisks drive lacks a stable removable USB identity.".into());
+    }
+    let block_size = row
+        .get("log-sec")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("Linux USB metadata omitted the sector size.")?;
+    let identity = format!(
+        "{name}\0{device_node}\0{device_number}\0{disk_bytes}\0{block_size}\0{drive_id}\0{serial}\0{sibling_id}\0{sysfs}"
+    );
+    Ok(UsbTargetCandidate {
+        device_identifier: name.into(),
+        device_node,
+        media_name: row
+            .get("model")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("USB removable media")
+            .chars()
+            .take(120)
+            .collect(),
+        bus_protocol: "USB".into(),
+        bytes: disk_bytes,
+        block_size,
+        identity_token: format!("{:x}", Sha256::digest(identity.as_bytes())),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_usb_opened_fd_matches(
+    opened_device_number: u64,
+    selected_device_number: u64,
+    opened_bytes: u64,
+    selected_bytes: u64,
+    opened_sector: i32,
+    selected_sector: u64,
+    access_flags: i32,
+    descriptor_flags: i32,
+) -> bool {
+    opened_device_number == selected_device_number
+        && opened_bytes == selected_bytes
+        && u64::try_from(opened_sector).ok() == Some(selected_sector)
+        && access_flags >= 0
+        && access_flags & libc::O_ACCMODE == libc::O_RDWR
+        && access_flags & libc::O_SYNC != 0
+        && descriptor_flags >= 0
+        && descriptor_flags & libc::FD_CLOEXEC != 0
+}
+
+#[cfg(target_os = "linux")]
+fn discover_usb_targets(image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
+    let connection = zbus::blocking::Connection::system()
+        .map_err(|error| format!("Could not connect to Linux disk authorization: {error}"))?;
+    let mut targets = Vec::new();
+    for row in linux_usb_lsblk_rows(image_bytes)? {
+        targets.push(linux_usb_candidate(&connection, &row)?);
+    }
+    targets.sort_by(|left, right| left.device_identifier.cmp(&right.device_identifier));
+    Ok(targets)
+}
+
+#[cfg(target_os = "linux")]
+fn revalidate_usb_target(identifier: &str, image_bytes: u64) -> Result<UsbTargetCandidate, String> {
+    if !linux_usb_name(identifier) {
+        return Err("The selected Linux device identifier is invalid.".into());
+    }
+    let connection = zbus::blocking::Connection::system()
+        .map_err(|error| format!("Could not connect to Linux disk authorization: {error}"))?;
+    let row = linux_usb_lsblk_rows(image_bytes)?
+        .into_iter()
+        .find(|row| row.get("name").and_then(serde_json::Value::as_str) == Some(identifier))
+        .ok_or("The selected USB disk is no longer an eligible whole unmounted device.")?;
+    linux_usb_candidate(&connection, &row)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn discover_usb_targets(_image_bytes: u64) -> Result<Vec<UsbTargetCandidate>, String> {
+    Err("Read-only USB target discovery is unavailable on this platform.".into())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn revalidate_usb_target(
     _identifier: &str,
     _image_bytes: u64,
 ) -> Result<UsbTargetCandidate, String> {
-    Err("Read-only USB target revalidation is currently implemented only for macOS.".into())
+    Err("Read-only USB target revalidation is unavailable on this platform.".into())
 }
 
 pub(crate) fn validate_usb_image_identity(
@@ -3445,7 +3883,10 @@ pub(crate) fn validate_usb_write_intent(
                 && (digits == "0" || !digits.starts_with('0'))
         })
         && target.device_node == format!(r"\\.\PHYSICALDRIVE{}", &requested_identifier[13..]);
-    if !macos_shape && !windows_shape {
+    let linux_shape = cfg!(target_os = "linux")
+        && linux_usb_name(requested_identifier)
+        && target.device_node == format!("/dev/{requested_identifier}");
+    if !macos_shape && !windows_shape && !linux_shape {
         return Err("The selected device identifier is invalid.".into());
     }
     let expected_confirmation = format!("ERASE {requested_identifier}");
@@ -5619,27 +6060,147 @@ fn open_usb_raw_device(
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn unmount_usb_target(_identifier: &str) -> Result<(), String> {
-    Err("USB writing is currently implemented only for macOS.".into())
+#[cfg(target_os = "linux")]
+fn unmount_usb_target(identifier: &str) -> Result<(), String> {
+    // Do not silently unmount user volumes. The selected disk must already be
+    // idle; OpenDevice's O_EXCL holds that state while its descriptor is open.
+    revalidate_usb_target(identifier, 0).map(|_| ())
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
 fn eject_usb_target(_identifier: &str) -> bool {
+    // A node name alone is not enough to bind a later power-off operation to
+    // the written drive. Keep the verified FD receipt and ask for safe removal.
     false
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
 fn remount_usb_target(_identifier: &str) -> bool {
     false
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
+fn open_usb_raw_device(
+    target: &UsbTargetCandidate,
+    cancel: &AtomicBool,
+) -> Result<(File, Vec<File>, bool), String> {
+    use std::os::fd::AsRawFd as _;
+    use std::os::unix::fs::MetadataExt as _;
+
+    if cancel.load(Ordering::Relaxed) {
+        return Err("USB writing was cancelled before Linux authorization.".into());
+    }
+    let before = revalidate_usb_target(&target.device_identifier, 0)?;
+    if before.identity_token != target.identity_token {
+        return Err("The selected Linux USB disk changed before authorization.".into());
+    }
+    let connection = zbus::blocking::Connection::system()
+        .map_err(|error| format!("Could not connect to Linux disk authorization: {error}"))?;
+    let block_path = format!(
+        "/org/freedesktop/UDisks2/block_devices/{}",
+        target.device_identifier
+    );
+    let block = zbus::blocking::Proxy::new(
+        &connection,
+        "org.freedesktop.UDisks2",
+        block_path.as_str(),
+        "org.freedesktop.UDisks2.Block",
+    )
+    .map_err(|error| format!("Could not inspect selected UDisks block: {error}"))?;
+    // UDisks performs the Polkit decision and opens the selected block object,
+    // returning the descriptor over the system bus. No privileged command is
+    // given a user-controlled device pathname. O_EXCL refuses mounted/in-use
+    // media and prevents new mounts until this descriptor closes.
+    let flags = libc::O_EXCL | libc::O_SYNC | libc::O_CLOEXEC | libc::O_NOFOLLOW;
+    let options = std::collections::HashMap::from([("flags", zbus::zvariant::Value::from(flags))]);
+    let (owned_fd,): (zbus::zvariant::OwnedFd,) = block
+        .call("OpenDevice", &("rw", options))
+        .map_err(|error| {
+            format!("Linux did not authorize exclusive access to the selected USB disk: {error}")
+        })?;
+    let fd: std::os::fd::OwnedFd = owned_fd.into();
+    let file = File::from(fd);
+    if cancel.load(Ordering::Relaxed) {
+        return Err("USB writing was cancelled after Linux authorization.".into());
+    }
+    let opened = file
+        .metadata()
+        .map_err(|error| format!("Could not inspect authorized USB descriptor: {error}"))?;
+    let device_number: u64 = block
+        .get_property("DeviceNumber")
+        .map_err(|error| format!("Could not recheck authorized UDisks device number: {error}"))?;
+    let mut opened_bytes = 0_u64;
+    let mut opened_sector = 0_i32;
+    #[cfg(target_arch = "x86_64")]
+    const BLKGETSIZE64: libc::c_ulong = 0x8008_1272;
+    #[cfg(not(target_arch = "x86_64"))]
+    compile_error!(
+        "Linux raw USB descriptor verification needs an architecture-specific BLKGETSIZE64 request"
+    );
+    let capacity_ok =
+        unsafe { libc::ioctl(file.as_raw_fd(), BLKGETSIZE64, &mut opened_bytes) } == 0;
+    let sector_ok =
+        unsafe { libc::ioctl(file.as_raw_fd(), libc::BLKSSZGET as _, &mut opened_sector) } == 0;
+    let access_flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL) };
+    let inherited_descriptor_flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFD) };
+    if inherited_descriptor_flags < 0
+        || unsafe {
+            libc::fcntl(
+                file.as_raw_fd(),
+                libc::F_SETFD,
+                inherited_descriptor_flags | libc::FD_CLOEXEC,
+            )
+        } < 0
+    {
+        return Err(
+            "Could not keep the authorized Linux USB descriptor private to this process.".into(),
+        );
+    }
+    let descriptor_flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFD) };
+    if !opened.file_type().is_block_device()
+        || !capacity_ok
+        || !sector_ok
+        || !linux_usb_opened_fd_matches(
+            opened.rdev(),
+            device_number,
+            opened_bytes,
+            target.bytes,
+            opened_sector,
+            target.block_size,
+            access_flags,
+            descriptor_flags,
+        )
+    {
+        return Err("The authorized Linux descriptor does not match the selected whole USB disk, capacity, sector size and access mode.".into());
+    }
+    let after = revalidate_usb_target(&target.device_identifier, 0)?;
+    if after.identity_token != target.identity_token {
+        return Err("The selected Linux USB identity changed during authorization.".into());
+    }
+    Ok((file, Vec::new(), false))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn unmount_usb_target(_identifier: &str) -> Result<(), String> {
+    Err("USB writing is unavailable on this platform.".into())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn eject_usb_target(_identifier: &str) -> bool {
+    false
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn remount_usb_target(_identifier: &str) -> bool {
+    false
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn open_usb_raw_device(
     _target: &UsbTargetCandidate,
     _cancel: &AtomicBool,
 ) -> Result<(File, Vec<File>, bool), String> {
-    Err("USB writing is currently implemented only for macOS.".into())
+    Err("USB writing is unavailable on this platform.".into())
 }
 
 fn emit_usb_write_progress<R: tauri::Runtime>(
@@ -5662,6 +6223,9 @@ pub(crate) async fn write_image_to_usb(
     if !physical_usb_writes_allowed() {
         return Err(if cfg!(target_os = "windows") {
             "Windows USB writing requires running OPEMOS as administrator.".into()
+        } else if cfg!(target_os = "linux") {
+            "Linux USB writing requires the UDisks2 system bus and an authorized desktop session."
+                .into()
         } else {
             "Physical USB writing is not available on this platform yet.".into()
         });
@@ -5725,7 +6289,11 @@ pub(crate) async fn write_image_to_usb(
                 phase: "unmounting".into(),
                 bytes_completed: 0,
                 bytes_total: image_bytes,
-                message: "Unmounting the selected removable disk without writing to it.".into(),
+                message: if cfg!(target_os = "linux") {
+                    "Checking that the selected removable disk is idle and unmounted."
+                } else {
+                    "Unmounting the selected removable disk without writing to it."
+                }.into(),
             });
         unmount_usb_target(&target.device_identifier)?;
         let revalidated = revalidate_usb_target(&target.device_identifier, image_bytes)?;
@@ -5838,7 +6406,11 @@ pub(crate) async fn write_image_to_usb(
                     "USB writing and byte-for-byte verification completed; the device was ejected safely."
                 }
             } else {
-                "USB writing and byte-for-byte verification completed, but the operating system could not eject the device; use its safe-removal workflow before unplugging it."
+                if cfg!(target_os = "linux") {
+                    "USB writing and byte-for-byte verification completed. The drive remains connected; use Ubuntu's safe-removal workflow before unplugging it."
+                } else {
+                    "USB writing and byte-for-byte verification completed, but the operating system could not eject the device; use its safe-removal workflow before unplugging it."
+                }
             }
             .into(),
         })
