@@ -53,9 +53,11 @@ def native_binding(path, fd, before, opened):
         return (identity.VolumeSerialNumber, bytes(identity.FileId), basic.CreationTime,
                 basic.LastWriteTime, basic.ChangeTime, basic.FileAttributes)
 
-    # READ_ATTRIBUTES + FILE_SHARE_READ only: no writer or delete/replacement
-    # can overlap the hash. OPEN_REPARSE_POINT refuses following a swapped link.
-    handle = kernel.CreateFileW(str(path), 0x80, 1, None, 3, 0x00200000, None)
+    # GENERIC_READ + FILE_SHARE_READ only: actual data access participates in
+    # sharing enforcement. Attribute-only access does NOT exclude writers
+    # (measured native fault cases, documented CreateFileW attribute exception).
+    # OPEN_REPARSE_POINT refuses following a swapped link.
+    handle = kernel.CreateFileW(str(path), 0x80000000, 1, None, 3, 0x00200000, None)
     if handle == ctypes.c_void_p(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())
     try:

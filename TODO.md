@@ -23,6 +23,12 @@
   attributes before/after hash. Real readonly full producer transaction plus
   hardlink/reparse/size/directory/live-writer/write/replace/closure cases required.
   Diagnostic-only capture is not production acceptance; new checks NOT RUN yet.
+  Actual952 Windows39344034028 native10 cases:8PASS including readonly/full
+  record and real symlink/hardlink;2new sharing faults FAIL, before bulk build.
+  Cause: FILE_READ_ATTRIBUTES-only handle is exempt from data sharing rules
+  (CreateFileW documented attribute exception); writer actually opened. Use
+  GENERIC_READ (already needed by held data FD) with same share-read-only mask;
+  unchanged refusal tests must verify the correction, no assertion weakening.
 
 - [ ] Preserve actual09d Windows package/startup/upload success and subsequent
   producer-binding failure: run39338115494/job118352964667 exit1 at held
