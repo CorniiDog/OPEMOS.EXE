@@ -13,7 +13,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from acquire_runtime_macos import extract, load_lock, relocate, relocated_relative
+from acquire_runtime_macos import extract, load_lock, relocate, relocated_relative, close_curated_links
 from prepare_macos_fullstack import ArtifactRanges
 
 
@@ -111,6 +111,27 @@ class DarwinProducer(unittest.TestCase):
             self.assertEqual(len(list((output / "licenses/python@3.14").iterdir())), 1)
             self.assertEqual(relocated_relative("Frameworks/Python.framework/Versions/3.14/Python"),
                              Path("Frameworks/Python.framework-payload/Versions/3.14/Python"))
+
+    def test_real_curated_directory_alias_closure_and_unknown_dangling_fault(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "bottle.tar.gz"
+            with tarfile.open(archive, "w:gz") as source:
+                item = tarfile.TarInfo("fixture/1/share/man")
+                item.type = tarfile.DIRTYPE
+                source.addfile(item)
+                item = tarfile.TarInfo("fixture/1/lib/documentation-alias")
+                item.type, item.linkname = tarfile.SYMTYPE, "../share/man"
+                source.addfile(item)
+            output = root / "output"
+            output.mkdir()
+            omitted = extract(archive, output, "fixture")
+            removed = close_curated_links(output, omitted)
+            self.assertEqual(len(removed), 1)
+            self.assertFalse((output / "fixture/1/lib/documentation-alias").is_symlink())
+            (output / "unknown").symlink_to(output / "never-declared")
+            with self.assertRaisesRegex(ValueError, "Unknown dangling"):
+                close_curated_links(output, omitted)
 
     @unittest.skipUnless(sys.platform == "darwin", "actual Darwin compiler/loader required")
     def test_real_native_library_relocation_signing_and_loader(self):

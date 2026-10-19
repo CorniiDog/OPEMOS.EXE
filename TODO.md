@@ -49,6 +49,18 @@
   Both source graphs and Windows package/startup atc41 passed and are retained;
   new-head full required checks, exact Core review and actual GUI remain open.
 
+  Actual742c M1 run39271191530 again passed native boundary tests and acquired
+  all43 bottles, then failed at the strict curated-link check (exit1/group absent).
+  Independent static member-graph audit found exactly two remaining aliases to
+  deliberately omitted data: GNU tar's gnuman/tar.1 and ncurses lib/terminfo.
+  There are no other unknown dangling targets in that frozen archive graph.
+  Record omitted members and remove only generated aliases to those known
+  omissions; unknown dangling links/cycles still fail. Add actual filesystem
+  normal+unknown fault test, and verify native Python stdlib/extensions/CA loading
+  plus immutable manifest after command probes. No source/archive pin, firmware,
+  original, production deadline or trust endpoint change. Actual closure remains
+  required on the changed M1 head; prior attempts and independent CI are retained.
+
 ## Windows read-only package firmware handoff
 
 - [ ] Same complete Windows launch graph, subsequent actual OMEN r3/r4:

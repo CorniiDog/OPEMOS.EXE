@@ -150,6 +150,7 @@ def extract(archive, root, component=None):
     """No archive owner/mode/device restoration; no writes through links."""
     links = []
     seen = set()
+    omitted = set()
     with tarfile.open(archive, "r:gz") as source:
         members = source.getmembers()
         if len(members) > 200000 or sum(m.size for m in members) > 8 * 1024**3:
@@ -173,6 +174,7 @@ def extract(archive, root, component=None):
                     with source.extractfile(member) as stream, destination.open("xb") as output:
                         shutil.copyfileobj(stream, output)
             if component is not None and build_only_member(member.name):
+                omitted.add(root / member.name)
                 continue
             path = root / member.name
             if member.isdir():
@@ -196,6 +198,31 @@ def extract(archive, root, component=None):
             target = path.parent / name
         confined(root, target)
         path.symlink_to(os.path.relpath(target, path.parent))
+    return omitted
+
+
+def close_curated_links(root, omitted):
+    """Remove only generated aliases to explicitly omitted SDK/data members.
+
+    An unknown missing target or cycle still fails closed. Original archives,
+    native command identities and external paths are never altered.
+    """
+    removed = []
+    for path in root.rglob("*"):
+        if not path.is_symlink():
+            continue
+        target = confined(root, path).resolve()
+        if target in path.parents:
+            raise ValueError("Recursive bottle link: " + path.relative_to(root).as_posix())
+        if not target.exists():
+            if target in omitted or any(parent in omitted for parent in target.parents):
+                removed.append({"path": path.relative_to(root).as_posix(),
+                                "omittedTarget": target.relative_to(root).as_posix()})
+                omitted.add(path)
+                path.unlink()
+            else:
+                raise ValueError("Unknown dangling bottle link: " + path.relative_to(root).as_posix())
+    return removed
 
 
 def dependencies(path):
@@ -274,18 +301,17 @@ def construct(lock_path, output, evidence, firmware):
     runtime.mkdir()
     cache = stage / "bottles"
     cache.mkdir()
+    omitted = set()
     for name, item in sorted(lock["formulae"].items()):
         print("Acquiring exact Homebrew bottle", name, item["bottle"]["sha256"], flush=True)
         archive = acquire_bottle(item, cache)
         provenance["bottles"].append({"name": name, "sha256": digest(archive), "bytes": archive.stat().st_size})
         save()
-        extract(archive, unpacked, name)
+        omitted.update(extract(archive, unpacked, name))
     # All link targets must resolve inside the exact pinned bottle closure.
-    for path in unpacked.rglob("*"):
-        if path.is_symlink():
-            confined(unpacked, path)
-            if not path.exists() or path.resolve() in path.parents:
-                raise ValueError("Dangling or recursive bottle link")
+    provenance["curatedMemberCount"] = len(omitted)
+    provenance["curatedAliases"] = close_curated_links(unpacked, omitted)
+    save()
     shutil.copytree(unpacked, runtime / "kegs", symlinks=False)
     # Framework CLI builds do not require CFBundle framework discovery when
     # PYTHONHOME and all loader references are explicit. Preserve versioned data
@@ -387,6 +413,11 @@ def construct(lock_path, output, evidence, firmware):
     # Real native loader invocation, no provider PATH fallback.
     for command in ["qemu-img", "qemu-system-aarch64", "qemu-system-x86_64", "python3", "git", "gh", "bash", "tar"]:
         run([runtime / commands[command], "--version"])
+    run([runtime / commands["python3"], "-c",
+         "import sys,json,ssl,sqlite3,ctypes,bz2,lzma; "
+         "assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0; "
+         "print(json.dumps({'prefix':sys.prefix,'path':sys.path,'openssl':ssl.OPENSSL_VERSION}))"])
+    validate_runtime(runtime, "macos")
     provenance.update(complete=True, runtimeManifestSHA256=digest(runtime / "runtime-manifest.json"))
     save()
     if output.exists():
