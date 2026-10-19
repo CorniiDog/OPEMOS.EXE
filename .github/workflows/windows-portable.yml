@@ -9,7 +9,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: windows-portable-${{ github.workflow }}-${{ github.ref }}
+  group: windows-portable-Windows portable artifact-${{ github.ref }}
   cancel-in-progress: true
 
 env:
