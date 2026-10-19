@@ -246,6 +246,11 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   and exact counterpart review; no private input, Core, governance or trust edits.
   Root diagnosis/recovery plan retained under
   `root-native-windows-ssh-regression-r1`; prior PR184/185 evidence preserved.
+  Initial remote Windows job117896697356/run39201910952 at `fa8e82e3`
+  failed E0308 in the new test assertion (Result error reference type), before
+  any test or package execution; corrected comparison uses expect_err without
+  changing production code. Initial Linux Rust/integration/frontend passes
+  remain historical; corrected-head Windows and all required checks pending.
 
 - [ ] Correct the PR158 native USB lifecycle regression reported on
   `Current-df6c24e5-2026-10-01`. Ordinary SteamOS source selection must keep

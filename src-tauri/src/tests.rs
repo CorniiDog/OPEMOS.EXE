@@ -436,7 +436,10 @@ mod tests {
         let timeout = handshake(&session);
         let peer_closed = server.join().expect("join bounded loopback peer");
         assert!(peer_closed, "timed-out transport must close its socket");
-        assert_eq!(timeout.as_deref(), Err("In-process SSH command timed out."));
+        assert_eq!(
+            timeout.as_ref().expect_err("cold SSH transport must expire"),
+            "In-process SSH command timed out."
+        );
         assert_eq!(seconds, 120);
         assert_eq!(deadline.duration_since(started), Duration::from_secs(120));
         assert_eq!(
