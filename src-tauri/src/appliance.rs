@@ -2834,7 +2834,9 @@ pub(crate) fn finish_guest_readiness_attempt(
                 stop_guest_command_group(&mut child);
                 let _ = stdout_reader.join();
                 let _ = stderr_reader.join();
-                return Err(format!("Could not inspect guest readiness command: {error}"));
+                return Err(format!(
+                    "Could not inspect guest readiness command: {error}"
+                ));
             }
         }
     };
