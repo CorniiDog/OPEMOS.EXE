@@ -335,7 +335,90 @@ fn prepare_at(executable: &Path) -> Result<(PathBuf, PathBuf), String> {
     )
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", all(test, unix)))]
+fn macos_state_directories(home: &Path) -> Result<Vec<(PathBuf, File)>, String> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    fn owned_directory(file: &File, private: bool) -> Result<(), String> {
+        let metadata = file.metadata().map_err(|e| e.to_string())?;
+        // Other UIDs must not be able to redirect these mutable-state parents.
+        if !metadata.is_dir()
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.mode() & 0o022 != 0
+            || (private && metadata.mode() & 0o077 != 0)
+        {
+            return Err("Mac state ancestors must be real, owned, non-writable by other UIDs; state must be private.".into());
+        }
+        Ok(())
+    }
+
+    let canonical = fs::canonicalize(home).map_err(|e| e.to_string())?;
+    let home_file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&canonical)
+        .map_err(|e| format!("Could not bind Mac home: {e}"))?;
+    owned_directory(&home_file, false)?;
+    let mut directories = vec![(canonical, home_file)];
+    for name in [
+        "Library",
+        "Application Support",
+        "dev.cornidog.steamos-nvidia-image-builder",
+    ] {
+        let (parent_path, parent) = directories.last().unwrap();
+        let name_c = CString::new(name).map_err(|e| e.to_string())?;
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        let mut fd = unsafe { libc::openat(parent.as_raw_fd(), name_c.as_ptr(), flags) };
+        if fd < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound {
+            let made = unsafe { libc::mkdirat(parent.as_raw_fd(), name_c.as_ptr(), 0o700) };
+            if made != 0
+                && std::io::Error::last_os_error().kind() != std::io::ErrorKind::AlreadyExists
+            {
+                return Err(format!(
+                    "Could not create owned Mac state ancestor: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            fd = unsafe { libc::openat(parent.as_raw_fd(), name_c.as_ptr(), flags) };
+        }
+        if fd < 0 {
+            return Err(format!(
+                "Mac state ancestor refused (no symlink traversal): {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let child = unsafe { File::from_raw_fd(fd) };
+        owned_directory(&child, name == "dev.cornidog.steamos-nvidia-image-builder")?;
+        let child_path = parent_path.join(name);
+        directories.push((child_path, child));
+    }
+    verify_macos_state_directories(&directories)?;
+    Ok(directories)
+}
+
+#[cfg(any(target_os = "macos", all(test, unix)))]
+fn verify_macos_state_directories(directories: &[(PathBuf, File)]) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    for (index, (path, file)) in directories.iter().enumerate() {
+        let observed = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+        let bound = file.metadata().map_err(|e| e.to_string())?;
+        if !observed.is_dir()
+            || observed.file_type().is_symlink()
+            || observed.dev() != bound.dev()
+            || observed.ino() != bound.ino()
+            || observed.uid() != unsafe { libc::geteuid() }
+            || observed.mode() & 0o022 != 0
+            || (index + 1 == directories.len() && observed.mode() & 0o077 != 0)
+        {
+            return Err("Mac state ancestor identity changed while held.".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", all(test, unix)))]
 fn prepare_macos_at(executable: &Path, home: &Path) -> Result<(PathBuf, PathBuf), String> {
     if !is_macos_app(executable) || !home.is_absolute() || !real_directory(home) {
         return Err(
@@ -343,8 +426,13 @@ fn prepare_macos_at(executable: &Path, home: &Path) -> Result<(PathBuf, PathBuf)
         );
     }
     let runtime = runtime_bundle::packaged_resource_path(executable, "macos", "runtime")?;
-    let state = home.join("Library/Application Support/dev.cornidog.steamos-nvidia-image-builder");
-    prepare_layout(executable, &runtime, state, "macos")
+    expected_manifest_for_platform(executable, &runtime, "macos")?;
+    // Keep each no-follow, current-UID ancestor open through preparation.
+    let directories = macos_state_directories(home)?;
+    let state = directories.last().unwrap().0.clone();
+    let result = prepare_layout(executable, &runtime, state, "macos");
+    verify_macos_state_directories(&directories)?;
+    result
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -391,6 +479,7 @@ pub(crate) fn portable_settings_path() -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn mac_resources_provenance_and_readonly_app_use_separate_user_state() {
         let (root, old_executable) = fixture("mac-resources");
@@ -412,6 +501,7 @@ mod tests {
         fs::write(&provenance, &bytes).unwrap();
         let home = root.join("home");
         fs::create_dir(&home).unwrap();
+        let home = fs::canonicalize(home).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -441,6 +531,34 @@ mod tests {
             fs::read(old_executable).unwrap()
         );
         assert!(prepare_macos_at(&executable, Path::new("relative-home")).is_err());
+        // A real HOME is insufficient: neither intermediate symlink may be followed.
+        let outside = root.join("outside");
+        fs::create_dir(&outside).unwrap();
+        for (index, parent) in ["Library", "Library/Application Support"]
+            .iter()
+            .enumerate()
+        {
+            let fault_home = root.join(format!("fault-home-{index}"));
+            fs::create_dir(&fault_home).unwrap();
+            if index == 1 {
+                fs::create_dir(fault_home.join("Library")).unwrap();
+            }
+            std::os::unix::fs::symlink(&outside, fault_home.join(parent)).unwrap();
+            assert!(prepare_macos_at(&executable, &fault_home).is_err());
+            assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        }
+        let insecure_home = root.join("insecure-home");
+        fs::create_dir_all(insecure_home.join("Library")).unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                insecure_home.join("Library"),
+                fs::Permissions::from_mode(0o777),
+            )
+            .unwrap();
+        }
+        assert!(prepare_macos_at(&executable, &insecure_home).is_err());
+        assert!(!insecure_home.join("Library/Application Support").exists());
         fs::write(&provenance, b"{}").unwrap();
         assert!(prepare_macos_at(&executable, &home).is_err());
         fs::write(&provenance, &bytes).unwrap();

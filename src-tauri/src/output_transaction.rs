@@ -4093,6 +4093,15 @@ mod tests {
         while children.iter().any(|(_, result)| !result.is_file()) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(10));
         }
+        for (child, result) in &mut children {
+            eprintln!(
+                "reservation-race pid={} status={:?} resultExists={} path={:?}",
+                child.id(),
+                child.try_wait(),
+                result.is_file(),
+                result
+            );
+        }
         let mut outcomes = children
             .iter()
             .map(|(_, result)| fs::read_to_string(result).unwrap())

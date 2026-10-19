@@ -22,7 +22,10 @@ jobs:
   retained-startup-diagnostic:
     if: github.event_name == 'workflow_dispatch' && inputs.retained-startup-diagnostic
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: 1
+      RUST_TEST_THREADS: 1
     permissions:
       contents: read
       actions: read
@@ -33,13 +36,17 @@ jobs:
       - name: Acquire exact retained failed package
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run download 39286678202 --repo CorniiDog/OPEMOS.EXE --name macos-arm64-aac683146c17a096e3a8b4ec7c6674e35516c700-1 --dir "$RUNNER_TEMP/retained-aac"
+        run: gh run download 39294846215 --repo CorniiDog/OPEMOS.EXE --name macos-arm64-7b8bf0eea38d7ab548bf4746707d8ab38ade05bb-1 --dir "$RUNNER_TEMP/retained-7b8"
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-apple-darwin
       - name: Bounded same-package startup evidence
-        run: python3 scripts/diagnose_macos_retained_startup.py "$RUNNER_TEMP/retained-aac/SteamOS-NVIDIA-Builder-arm64.app.zip"
+        run: python3 scripts/diagnose_macos_retained_startup.py "$RUNNER_TEMP/retained-7b8/SteamOS-NVIDIA-Builder-arm64.app.zip"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: retained-aac-startup-diagnostic-${{ github.run_id }}
+          name: retained-7b8-causal-diagnostic-${{ github.run_id }}
           path: build/retained-startup-diagnostic
           retention-days: 3
   native-app:

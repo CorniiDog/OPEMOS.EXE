@@ -4,9 +4,10 @@ import ApplicationServices
 import Foundation
 
 struct Refusal: Error { let message: String }
-let fullStackImage: URL? = CommandLine.arguments.count == 4 ? URL(fileURLWithPath: CommandLine.arguments[3]).standardizedFileURL : nil
+let chooserDiagnostic = CommandLine.arguments.count == 5 && CommandLine.arguments[4] == "--chooser-diagnostic"
+let fullStackImage: URL? = [4, 5].contains(CommandLine.arguments.count) ? URL(fileURLWithPath: CommandLine.arguments[3]).standardizedFileURL : nil
 let transactionStarted = Date()
-let deadline = transactionStarted.addingTimeInterval(fullStackImage == nil ? 120 : 480)
+let deadline = transactionStarted.addingTimeInterval(chooserDiagnostic || fullStackImage == nil ? 120 : 480)
 let bundleID = "dev.cornidog.steamos-nvidia-image-builder"
 var owned: NSRunningApplication?
 var events: [[String: Any]] = []
@@ -189,7 +190,7 @@ func click(_ element: AXUIElement, _ label: String, double: Bool = false) throws
 
 var failed = false
 do {
-    try require([3, 4].contains(CommandLine.arguments.count), "app/output and optional exact Documents image paths required")
+    try require([3, 4].contains(CommandLine.arguments.count) || chooserDiagnostic, "app/output and optional exact Documents image paths required")
     let appURL = URL(fileURLWithPath: CommandLine.arguments[1]).standardizedFileURL
     out = URL(fileURLWithPath: CommandLine.arguments[2])
     let plist = appURL.appendingPathComponent("Contents/Info.plist")
@@ -306,7 +307,25 @@ do {
     while cancel == nil { cancel = try chooserCancel(); if cancel == nil { try guiWaitTick() } }
     try screenshot("native-image-chooser-open")
     record("native-image-chooser-observed", ["appPID": owned!.processIdentifier])
-    if let image = fullStackImage {
+    if chooserDiagnostic {
+        _ = try find(root) { element in
+            let role = text(element, kAXRoleAttribute)
+            if ["AXRow", "AXCell", "AXImage", "AXStaticText", "AXTextField", "AXColumn", "AXBrowser"].contains(role) {
+                var fields: [String: Any] = ["role": role]
+                for attribute in [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute, kAXURLAttribute, "AXFilename"] {
+                    if let observed = value(element, attribute) {
+                        fields[attribute] = String(describing: observed).prefix(512).description
+                        fields[attribute + "TypeID"] = CFGetTypeID(observed)
+                    }
+                }
+                record("chooser-native-node", fields)
+            }
+            return false
+        }
+        try click(cancel!, "cancel-diagnostic-chooser")
+        while try chooserCancel() != nil { try guiWaitTick() }
+        record("chooser-diagnostic-only", ["BuildInvoked": false, "acceptance": false])
+    } else if let image = fullStackImage {
         let documents = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents").standardizedFileURL
         try require(image.deletingLastPathComponent() == documents &&
                     FileManager.default.fileExists(atPath: image.path), "full-stack input must be the admitted exact Documents file")

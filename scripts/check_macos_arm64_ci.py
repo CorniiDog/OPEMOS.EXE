@@ -189,6 +189,11 @@ def main():
             raise RuntimeError("app is not arm64-only")
         receipt["artifact"] = {"app": str(app), "executable": str(binary),
             "bytes": binary.stat().st_size, "sha256": digest(binary), "architectures": "arm64"}
+        if fullstack:
+            provenance = app / "Contents/Resources/bundle-provenance.json"
+            if provenance.is_symlink() or not provenance.is_file() or provenance.stat().st_size > 65536:
+                raise RuntimeError("Packaged startup provenance missing or unbounded")
+            receipt["artifact"]["startupProvenanceSHA256"] = digest(provenance)
         receipt["productAcceptance"]["nativeArm64PackagedBuild"] = "passed"
         run("artifact-inspection", ["/bin/sh", "-c",
             'file "$1"; otool -L "$1"; codesign -dv --verbose=2 "$2"',
@@ -281,10 +286,14 @@ def main():
                 if digest(binary) != receipt["artifact"]["sha256"]:
                     raise RuntimeError("Packaged executable changed during the transaction")
                 if fullstack:
+                    if digest(provenance) != receipt["artifact"]["startupProvenanceSHA256"]:
+                        raise RuntimeError("Packaged startup provenance changed during the transaction")
                     _, _, packaged_manifest = validate_runtime(app / "Contents/Resources/runtime", "macos")
                     if packaged_manifest != receipt.get("runtimeManifestSHA256"):
                         raise RuntimeError("Packaged runtime manifest changed during the transaction")
                     verify_companion(app / "Contents/Resources/appliance")
+                    if not run("packaged-seal-finalizer", ["codesign", "--verify", "--deep", "--strict", str(app)], 60):
+                        raise RuntimeError("Packaged native resource seal changed during the transaction")
                 receipt["packagedInputsUnchangedAfterAttempt"] = True
             except Exception as error:
                 receipt.setdefault("finalizationErrors", []).append({"stage": "packaged-inputs", "error": str(error)})

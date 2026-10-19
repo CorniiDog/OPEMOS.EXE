@@ -28,6 +28,36 @@
   that same consumer. First correction7b8bf0ee Linux all4PASS/411 tests retained;
   active Windows and M1 are not cancelled. Final refinement needs its own exact
   checks; no result or approval is silently transferred between heads.
+  Core exact82c review WITHHOLDS for DARWIN-STATE-PARENT-SYMLINK: HOME and
+  final-dir checks missed Library/Application Support ancestor redirects.
+  Same owning batch now opens every ancestor no-follow relative to held parent
+  descriptors, checks actual current UID/non-writable-by-other-UID permissions,
+  creates missing directories0700 and rechecks dev/inode/type before/after
+  population. State leaf must remain private. Actual symlink-at-both-parents
+  and world-writable-parent regressions authored, outside target stays empty;
+  no foreign-UID or adversarial same-UID race proof claimed. New in-app startup
+  provenance hash and whole native seal are independent post-attempt finalizers.
+  82c Linux all4PASS411 and Windows seed/buildPASS27 retained. Its pending M1
+  successor39297424545 was cancelled before any jobs to avoid replaying an
+  unknown failure; active7b8 attempt untouched, now terminal failure with full
+  artifact collection in progress. No unchanged retry until all actual findings
+  are consumed together; current-head review/CI/runtime still required.
+  Actual7b8 run39294846215 artifact12211241541 now consumed: startup/native
+  window and real Settings open/close PASS; native chooser visible with pinned
+  image, but strict AXURL selector finds no cell. Failure screenshot retained,
+  exact app requested termination and closed; no normal X/Build acceptance.
+  Ordinary Rust405PASS2FAIL28ignored: race result missing after5s and early-ready
+  pipe call exceeded2s assertion; cleanup group absence retained, causes UNKNOWN.
+  Actual guest reached ready/wrong-marker Failed/health/transfer/disk assertions,
+  then synthetic working-copy mutation exited1 without detailed stderr. Entire
+  test is FAILED, not passed. All original/package finalizers PASS. Retained
+  archiveee2d1300/native executablebed169ef are now finite diagnostic operands:
+  no producer replay or Valve download. Actual native chooser attribute dump
+  uses a labelled tiny diagnostic file and NEVER Build; focused failed tests
+  retain operation deadlines and now report timing/PID/group/status/guest shell
+  trace. This is causal investigation, not fullstack acceptance or a version/
+  timeout workaround. Remote exact diagnostic source push is necessary; final
+  owning source fix and complete normal transaction follow actual findings.
 
   Consumed full exact Core1f62 disposition f495f488 (9472B): both blocking
   DARWIN-GUI-BIRTH-480 and DARWIN-MANUAL-MODE are included in this correction.

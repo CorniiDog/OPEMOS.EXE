@@ -398,6 +398,10 @@ mod tests {
                 .expect("accept exact marker before EOF"),
             READY_MARKER
         );
+        eprintln!(
+            "ready-before-EOF complete elapsed={:?} pid={ready_pid}",
+            started.elapsed()
+        );
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(!process_is_alive(ready_pid));
 

@@ -1,4 +1,7 @@
-"""One finite diagnostic of the retained failed aac app, NOT GUI acceptance."""
+"""Finite R8 investigation with retained exact 7b8 inputs, NOT acceptance.
+No bottle relocation/acquisition, Valve download, Build or deadline increase.
+The original aac numeric exit2 diagnostic remains immutable in Git/run history.
+"""
 import hashlib
 import json
 import os
@@ -9,49 +12,83 @@ import sys
 import tempfile
 
 archive = Path(sys.argv[1])
-out = Path('build/retained-startup-diagnostic').resolve()
+root = Path(__file__).resolve().parents[1]
+out = root / 'build/retained-startup-diagnostic'
 out.mkdir(parents=True, exist_ok=False)
+receipt = {'acceptance': False, 'stages': {}, 'noBuild': True, 'noProducerReplay': True}
+def save():
+    (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
 def digest(path):
     h = hashlib.sha256()
     with path.open('rb') as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b''):
             h.update(block)
     return h.hexdigest()
-expected = '8132e612ad392ab4617b05eb0a67de3462a7a0e794995b663267d729c622abf8'
-if archive.stat().st_size != 1102475167 or digest(archive) != expected:
-    raise ValueError('Retained full archive identity mismatch; no execution')
-root = Path(tempfile.mkdtemp(prefix='opemos-aac-diagnostic-')).resolve()
-subprocess.run(['ditto', '-x', '-k', str(archive), str(root)], check=True, timeout=120)
-app = root / 'SteamOS NVIDIA Builder.app'
-exe = app / 'Contents/MacOS/steamos-nvidia-image-builder'
-if digest(exe) != '2f2c8d482a2a1e81e1f6d61e90966ec70ce62ed57eb95ff60d886080da0b6246':
-    raise ValueError('Retained executable identity mismatch')
-receipt = {'acceptance': False, 'archiveSHA256': expected, 'command': [str(exe)], 'app': str(app)}
-with (out / 'stdout.log').open('wb') as stdout, (out / 'stderr.log').open('wb') as stderr:
-    child = subprocess.Popen([str(exe)], stdout=stdout, stderr=stderr, start_new_session=True)
-    receipt['pid'] = child.pid
-    try:
-        receipt['exit'] = child.wait(timeout=20)
-    except subprocess.TimeoutExpired:
-        receipt['timedOut'] = True
-        os.killpg(child.pid, signal.SIGTERM)
+def run(name, command, timeout):
+    row = {'command': command}
+    receipt['stages'][name] = row
+    with (out / (name + '.log')).open('wb') as log:
+        child = subprocess.Popen(command, cwd=root, stdout=log, stderr=subprocess.STDOUT,
+                                 start_new_session=True)
+        row['pid'] = child.pid
         try:
-            child.wait(timeout=5)
+            row['exit'] = child.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            row['timedOut'] = True
             os.killpg(child.pid, signal.SIGKILL)
-            child.wait(timeout=5)
-        receipt['cleanupExit'] = child.returncode
-    try:
-        os.killpg(child.pid, 0)
-        receipt['processGroupAbsent'] = False
-    except ProcessLookupError:
-        receipt['processGroupAbsent'] = True
-receipt['archiveUnchanged'] = digest(archive) == expected
-receipt['executableUnchanged'] = digest(exe) == '2f2c8d482a2a1e81e1f6d61e90966ec70ce62ed57eb95ff60d886080da0b6246'
-# Capture actual display after diagnostic, under an independent finite reserve.
-shot = subprocess.run(['/usr/sbin/screencapture', '-x', str(out / 'after-startup.png')], timeout=10)
-receipt['screenshotExit'] = shot.returncode
-(out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
-print(json.dumps(receipt))
-if not receipt['processGroupAbsent'] or not receipt['archiveUnchanged'] or not receipt['executableUnchanged']:
-    raise RuntimeError('Diagnostic closure or immutable input failure')
+            row['cleanupExit'] = child.wait(timeout=10)
+        try:
+            os.killpg(child.pid, 0)
+            row['processGroupAbsent'] = False
+        except ProcessLookupError:
+            row['processGroupAbsent'] = True
+    save()
+    if not row['processGroupAbsent']:
+        raise RuntimeError('Diagnostic group survives; stop affected session')
+    return row.get('exit') == 0
+
+expected = 'ee2d1300f4277ae32e7ea15bab1c72525a79fd63304fc6c096be8f551e1c74e4'
+if archive.stat().st_size != 1102474395 or digest(archive) != expected:
+    raise ValueError('Retained whole archive mismatch; no execution')
+receipt['archiveSHA256'] = expected
+scratch = Path(tempfile.mkdtemp(prefix='opemos-7b8-diagnostic-')).resolve()
+subprocess.run(['ditto', '-x', '-k', str(archive), str(scratch)], check=True, timeout=120)
+destination = root / 'dist/macos'
+destination.mkdir(parents=True, exist_ok=False)
+app = destination / 'SteamOS NVIDIA Builder.app'
+(scratch / app.name).rename(app)
+exe = app / 'Contents/MacOS/steamos-nvidia-image-builder'
+expected_exe = 'bed169ef62af88d8066fcc9e431fc87889d1c7b3617e09c927434c48dfec6812'
+if digest(exe) != expected_exe:
+    raise ValueError('Retained executable mismatch')
+probe = Path.home() / 'Documents/opemos-chooser-diagnostic.img'
+probe.parent.mkdir(exist_ok=True)
+with probe.open('xb') as stream:
+    stream.write(b'Chooser attribute probe only; never an accepted recovery image.\n')
+probe.chmod(0o444)
+try:
+    helper = out / 'macos-ui-smoke'
+    if run('helper-build', ['xcrun', 'swiftc', 'tests/macos-ui-smoke.swift', '-o', str(helper)], 90):
+        run('native-chooser-observation', [str(helper), str(app), str(out), str(probe), '--chooser-diagnostic'], 150)
+    if subprocess.run(['/usr/bin/pgrep', '-f', str(exe)], capture_output=True).returncode != 1:
+        raise RuntimeError('Retained app survives; no guest launch')
+    command = ['cargo', 'test', '--manifest-path', 'src-tauri/Cargo.toml', '--locked',
+               '--target', 'aarch64-apple-darwin', '--lib']
+    for name, test in [
+        ('reservation-race', 'output_transaction::tests::simultaneous_processes_cannot_reserve_the_same_output_pair'),
+        ('readiness-pipes', 'tests::guest_readiness_attempt_is_bounded_reaped_and_output_limited'),
+        ('mac-state-paths', 'portable_state::tests::mac_resources_provenance_and_readonly_app_use_separate_user_state'),
+    ]:
+        run(name, command + [test, '--', '--exact', '--nocapture', '--test-threads=1'], 1200)
+    run('actual-guest-traced-fault', ['python3', 'scripts/run_macos_guest_fault.py'], 1200)
+except Exception as error:
+    receipt['error'] = str(error)
+    raise
+finally:
+    receipt['archiveUnchanged'] = digest(archive) == expected
+    receipt['executableUnchanged'] = digest(exe) == expected_exe
+    receipt['probeUnchanged'] = probe.read_bytes() == b'Chooser attribute probe only; never an accepted recovery image.\n'
+    receipt['qemuAbsent'] = subprocess.run(['/usr/bin/pgrep', '-f', 'qemu-system-'], capture_output=True).returncode == 1
+    save()
+if not all(receipt[k] for k in ['archiveUnchanged', 'executableUnchanged', 'probeUnchanged', 'qemuAbsent']):
+    raise RuntimeError('Immutable input or guest closure failure')

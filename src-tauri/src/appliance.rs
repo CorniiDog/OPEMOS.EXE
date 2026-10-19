@@ -381,7 +381,15 @@ pub(crate) fn kill_owned_process_group(child: &Child) {
     #[cfg(unix)]
     if let Ok(pid) = i32::try_from(child.id()) {
         if pid > 0 {
-            unsafe { libc::kill(-pid, libc::SIGKILL) };
+            #[cfg(test)]
+            let actual_group = unsafe { libc::getpgid(pid) };
+            let result = unsafe { libc::kill(-pid, libc::SIGKILL) };
+            #[cfg(test)]
+            {
+                let error = (result != 0).then(std::io::Error::last_os_error);
+                eprintln!("owned group kill pid={pid} actualGroup={actual_group} result={result} error={error:?}");
+            }
+            let _ = result;
         }
     }
     #[cfg(windows)]
@@ -2848,6 +2856,8 @@ pub(crate) fn finish_guest_readiness_attempt(
     mut child: Child,
     timeout: Duration,
 ) -> Result<String, String> {
+    #[cfg(test)]
+    let phase_started = Instant::now();
     let deadline = Instant::now()
         .checked_add(timeout)
         .ok_or("Guest readiness attempt deadline overflowed.")?;
@@ -2899,6 +2909,12 @@ pub(crate) fn finish_guest_readiness_attempt(
             Err("Guest readiness output reader stopped unexpectedly.".into())
         }
     };
+    #[cfg(test)]
+    eprintln!(
+        "readiness phase=received pid={} elapsed={:?}",
+        child.id(),
+        phase_started.elapsed()
+    );
     // EOF can precede the child being reapable. Observe its actual status within
     // the SAME attempt deadline before cleanup could replace it with SIGKILL.
     // The existing two-complete-lines-before-EOF contract remains bounded: a
@@ -2927,10 +2943,22 @@ pub(crate) fn finish_guest_readiness_attempt(
         }
     };
     stop_guest_command_group(&mut child);
+    #[cfg(test)]
+    eprintln!(
+        "readiness phase=stopped pid={} elapsed={:?}",
+        child.id(),
+        phase_started.elapsed()
+    );
     let _ = stdout_reader.join();
     let stderr = stderr_reader
         .join()
         .map_err(|_| "Guest readiness diagnostics reader panicked.")??;
+    #[cfg(test)]
+    eprintln!(
+        "readiness phase=streams-joined pid={} elapsed={:?}",
+        child.id(),
+        phase_started.elapsed()
+    );
     if stderr.len() > READINESS_ATTEMPT_OUTPUT_LIMIT as usize {
         return Err("Guest readiness output exceeded its bound.".into());
     }
