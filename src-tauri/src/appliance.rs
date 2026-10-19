@@ -1,6 +1,32 @@
 use super::*;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 
+// The bundled template can be read-only (notably after Windows ISO transfer).
+// Only the session-owned pflash copy is writable; never alter the template.
+pub(crate) fn copy_writable_uefi_vars(template: &Path, destination: &Path) -> Result<(), String> {
+    fs::copy(template, destination)
+        .map_err(|error| format!("Could not copy the session UEFI variable store: {error}"))?;
+    let mut permissions = fs::metadata(destination)
+        .map_err(|error| format!("Could not inspect session UEFI permissions: {error}"))?
+        .permissions();
+    #[cfg(windows)]
+    permissions.set_readonly(false);
+    #[cfg(unix)]
+    permissions.set_mode(permissions.mode() | 0o200);
+    fs::set_permissions(destination, permissions).map_err(|error| {
+        format!("Could not make the session UEFI variable store writable: {error}")
+    })?;
+    // Check the same write access that QEMU's writable pflash needs, without
+    // truncating or changing any firmware bytes before launch.
+    OpenOptions::new()
+        .write(true)
+        .open(destination)
+        .map_err(|error| {
+            format!("Could not open the session UEFI variable store for writing: {error}")
+        })?;
+    Ok(())
+}
+
 pub(crate) struct ApplianceSession {
     pub(crate) child: Child,
     pub(crate) watchdog: QemuWatchdog,
@@ -1971,8 +1997,7 @@ pub(crate) fn prepare_session_with_output(
         current_host_qemu(std::env::consts::ARCH, std::env::consts::ARCH)?;
     let (uefi_code, vars_template) = host_firmware(std::env::consts::ARCH)?;
     let vars_image = runtime_dir.join("uefi-vars.fd");
-    fs::copy(&vars_template, &vars_image)
-        .map_err(|e| format!("Could not create the writable UEFI variable store: {e}"))?;
+    copy_writable_uefi_vars(&vars_template, &vars_image)?;
     let ssh_port = allocate_ssh_port()?;
     let mut qmp_port = allocate_ssh_port()?;
     while qmp_port == ssh_port {
@@ -2253,8 +2278,7 @@ pub(crate) fn prepare_nvidia_build_session(
 
     let (uefi_code, vars_template) = host_firmware("x86_64")?;
     let vars_image = runtime_dir.join("uefi-vars.fd");
-    fs::copy(&vars_template, &vars_image)
-        .map_err(|e| format!("Could not create the x86 UEFI variable store: {e}"))?;
+    copy_writable_uefi_vars(&vars_template, &vars_image)?;
     let ssh_port = allocate_ssh_port()?;
     let mut qmp_port = allocate_ssh_port()?;
     while qmp_port == ssh_port {

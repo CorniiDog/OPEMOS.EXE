@@ -3,6 +3,65 @@
 mod tests {
     use super::*;
 
+    #[test]
+    fn windows_readonly_firmware_template_yields_writable_session_copies() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-uefi-vars-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let template = root.join("readonly-template.fd");
+        let bytes = vec![0x5a; 4096];
+        fs::write(&template, &bytes).unwrap();
+        let original_permissions = fs::metadata(&template).unwrap().permissions();
+        let mut readonly = original_permissions.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&template, readonly).unwrap();
+
+        // Reproduce the Windows CopyFile attribute propagation and write denial
+        // before testing the corrected producer; no permission/OS adapter mock.
+        #[cfg(windows)]
+        {
+            let old_copy = root.join("old-copy.fd");
+            fs::copy(&template, &old_copy).unwrap();
+            assert!(fs::metadata(&old_copy).unwrap().permissions().readonly());
+            let denied = OpenOptions::new()
+                .write(true)
+                .open(&old_copy)
+                .expect_err("old read-only pflash copy must reproduce write denial");
+            assert_eq!(denied.kind(), io::ErrorKind::PermissionDenied);
+            eprintln!("Original pflash copy write failed as expected: {denied}");
+            fs::set_permissions(&old_copy, original_permissions.clone()).unwrap();
+        }
+
+        for name in ["image-session-vars.fd", "x86-worker-vars.fd"] {
+            let destination = root.join(name);
+            copy_writable_uefi_vars(&template, &destination).unwrap();
+            assert_eq!(fs::read(&destination).unwrap(), bytes);
+            let mut writer = OpenOptions::new().write(true).open(&destination).unwrap();
+            writer.write_all(b"QEMU").unwrap();
+            writer.sync_all().unwrap();
+            drop(writer);
+            assert_eq!(&fs::read(&destination).unwrap()[..4], b"QEMU");
+            assert_eq!(fs::read(&template).unwrap(), bytes);
+            assert!(fs::metadata(&template).unwrap().permissions().readonly());
+        }
+        assert!(
+            copy_writable_uefi_vars(&root.join("missing.fd"), &root.join("missing-output.fd"))
+                .is_err()
+        );
+        assert!(!root.join("missing-output.fd").exists());
+        assert!(copy_writable_uefi_vars(&template, &root).is_err());
+        assert!(fs::metadata(&template).unwrap().permissions().readonly());
+        assert_eq!(fs::read(&template).unwrap(), bytes);
+        fs::set_permissions(&template, original_permissions).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn relocated_appimage_uses_exact_adjacent_companion_not_checkout() {
