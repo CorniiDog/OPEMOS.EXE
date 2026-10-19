@@ -15,7 +15,7 @@
   },
   "files": [
     {
-      "relative_path": "omen-ci-nested/a-outer-serial.log",
+      "relative_path": "omen-ci-nested/a-outer-serial.sanitized.log",
       "original_sha256": "535b740fe58224c9785ebcb9f218727e781b71a50027b97b4da2a1e5f20271b4",
       "original_bytes": 126637,
       "generated_sha256": "0a04b861a7be8b44587944fb788dd78a30375494a32b9948e1fc16932806af39",
@@ -36,7 +36,7 @@
       "generated_bytes": 2299
     },
     {
-      "relative_path": "omen-ci-nested/b-outer-serial.log",
+      "relative_path": "omen-ci-nested/b-outer-serial.sanitized.log",
       "original_sha256": "0339ddf95a3215d26c4de29e459006863123911567b50221b81cf4a2ad66be91",
       "original_bytes": 126287,
       "generated_sha256": "8a8175322ff87e6a57f14ee8f77f5d7325ce88daa52ccf483ff58ef80c4b2f8f",

@@ -2,6 +2,18 @@
 
 ## Automatic OMEN Robot integration — 2026-10-19
 
+- [ ] Complete changed-head VM source qualification after measured c390 harness
+  omissions: filename filtering excluded required `ci/required-vms.json`, and
+  test stdout/stderr existed only in RAM before one serial write/poweroff.
+  Read-only stopped-COW recovery proved canonical three-case exit0 receipt
+  `4f927af5`, not the missing nineteen-test result. New complete source manifest
+  and durable fsynced per-batch logs/results must be consumed after shutdown;
+  preserve c390 failure/COW and unchanged inputs, no deadline relaxation.
+- [ ] Original 09d source CI passed all147 public Python cases and389 frontend
+  cases; hygiene rejected two nonconforming log filenames. Retained public
+  nested boot fixtures now use `.sanitized.log` names and matching provenance;
+  exact bytes/hashes remain unchanged and the hygiene authority is not relaxed.
+
 - [x] Reconciled protected Main `1e37a502` via topic commit `770c798e`,
   preserving published history and all five reviewed Windows files. PR198 exact
   approval/all eleven checks and squash parent/tree verified; source-only merge.
