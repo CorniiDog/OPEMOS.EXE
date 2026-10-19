@@ -54,6 +54,17 @@
 
 ## Cold-boot SSH readiness transport classification
 
+- [ ] Isolated Windows native-reset candidate (basec439, 2026-10-19): preserve
+  native russh stage, IO kind, OS code and original message through the normal
+  readiness consumer. Only connect-stage reset/refused and the existing bounded
+  attempt timeout can remain pending under the unchanged absolute300s session
+  deadline; key/auth/protocol/output/semantic/wrong-marker failures stay strict.
+  Real Windows loopback abortive-close RST/refusal, clean closure/invalid banner,
+  strict typed faults and the existing5s silent-banner/deadline case are authored,
+  NOT RUN on the controller. Exact EXE integration, required Windows checks/Core
+  approval/new package and actual GUI Build/image/virtualUSB write/readback remain
+  pending. Peer-reset mechanism is UNKNOWN; no firmware/CPU/network/trust patch.
+
 - [ ] Root causal plan f4a61c07: exact PR183 AppImage finished hashing original
   SteamOS3.8.14 IMG, then exit255/Connection refused with empty stdout became
   Ok(empty) and terminal wrong-marker failure. Preserve numeric status before
