@@ -26,7 +26,11 @@ def held(path, cap, keep=False):
     fd = os.open(path, flags)
     try:
         ident = lambda x: tuple(getattr(x, k) for k in FIELDS)
-        require(ident(before) == ident(os.fstat(fd)), "Producer path changed before held descriptor")
+        opened = os.fstat(fd)
+        differences = {key: [getattr(before, key), getattr(opened, key)]
+                       for key in FIELDS if getattr(before, key) != getattr(opened, key)}
+        require(not differences, "Producer path changed before held descriptor: " +
+                json.dumps(differences, sort_keys=True))
         digest, total, raw = hashlib.sha256(), 0, bytearray()
         while block := os.read(fd, 1024**2):
             total += len(block)

@@ -78,6 +78,9 @@ jobs:
             throw "EXE checkout mismatch: $actual"
           }
 
+      - name: Verify native producer descriptor custody before expensive build
+        run: python -m unittest discover -s tests -p test_omen_producer_native.py -v
+
       - name: Preserve canonical Core bytes
         shell: pwsh
         run: git config --global core.autocrlf false

@@ -2,6 +2,14 @@
 
 ## Automatic OMEN Robot integration — 2026-10-19
 
+- [ ] Preserve actual09d Windows package/startup/upload success and subsequent
+  producer-binding failure: run39338115494/job118352964667 exit1 at held
+  path-vs-descriptor full9 equality. Artifact12227379805 SHA6148d3a4557e277e91e05f0f911dde8522fa41c511209b7638056d266c79570a
+  retained. Exact differing fields/mechanism UNKNOWN, no custody relaxation.
+  New native regular `.exe` transaction runs before expensive Windows build;
+  failure reports exact bounded field values, with no stat-method override.
+  Earlier Linux-only consumer cases did not exercise native producer metadata.
+
 - [ ] Complete changed-head VM source qualification after measured c390 harness
   omissions: filename filtering excluded required `ci/required-vms.json`, and
   test stdout/stderr existed only in RAM before one serial write/poweroff.
