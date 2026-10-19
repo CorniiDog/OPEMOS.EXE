@@ -730,6 +730,13 @@ pub(crate) fn appliance_readiness_outcome(
 }
 
 pub(crate) fn transient_readiness_error(error: &str) -> bool {
+    // This classifier is used only while an appliance is booting. The Windows
+    // in-process transport has its own bounded-attempt error; it must not end
+    // cold boot before the existing absolute readiness deadline.
+    #[cfg(windows)]
+    if error == "In-process SSH command timed out." {
+        return true;
+    }
     if error == "Guest readiness transport attempt timed out." {
         return true;
     }

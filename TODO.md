@@ -234,6 +234,38 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
 
 ## Immediate work
 
+- [ ] Native Windows cold-boot readiness repair (user-requested): exact shipped
+  `f46424a1` executable `7bb6150b` stopped Fedora at kernel seconds1.154/1.322
+  because the real five-second russh timeout was not classified as pending by
+  the booting-only caller. Recognize only the exact Windows timeout; retain
+  five-second attempts, absolute120s, strict marker/auth/output failure handling.
+  Add actual handshake/socket timeout-to-classifier normal/fault regression.
+  No local project tests: changed-head Windows CI/package and admitted native
+  graphical chooser/Build/readiness/health/next-stage/closure remain required.
+  Necessary push: canonical EXE role branch for remote Windows-only CI/package
+  and exact counterpart review; no private input, Core, governance or trust edits.
+  Root diagnosis/recovery plan retained under
+  `root-native-windows-ssh-regression-r1`; prior PR184/185 evidence preserved.
+  Initial remote Windows job117896697356/run39201910952 at `fa8e82e3`
+  failed E0308 in the new test assertion (Result error reference type), before
+  any test or package execution; corrected comparison uses expect_err without
+  changing production code. Initial Linux Rust/integration/frontend passes
+  remain historical; corrected-head Windows and all required checks pending.
+  Head464f569b Windows compiled but the new fixture failed in0.32s before a
+  five-second timeout: accepted Winsock socket inherited nonblocking mode and
+  the peer treated WouldBlock as terminal. Preserve full run39202343957 log;
+  explicitly restore blocking reads, cap them by the original10s peer deadline,
+  and retain primary handshake plus structured closure diagnostics. Production
+  correction unchanged; native deployment superseded by newer VM-only target.
+  Actual Windows run39203000895 now proves the real five-second timeout and
+  socket EOF/closure, then fails stale120s test premise: baseline Windows
+  lib.rs508 and existing default-deadline test already specify300s (non-Windows
+  is120s). Correct the new test to preserve existing300s, not increase/change a
+  production deadline. Earlier Root/PR120s descriptions remain historical and
+  explicitly superseded by this measured source/runtime evidence. Whole graph
+  reviewed: exact Windows timeout only; deadline precedes Ready/Pending; caller
+  booting-state gate and wrong/empty/auth/output/semantic failures unchanged.
+
 - [ ] Correct the PR158 native USB lifecycle regression reported on
   `Current-df6c24e5-2026-10-01`. Ordinary SteamOS source selection must keep
   USB Imaging hidden and perform no drive scan; only an independently
