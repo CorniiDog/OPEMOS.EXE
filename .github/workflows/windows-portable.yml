@@ -1,4 +1,4 @@
-name: Windows portable artifact
+name: 01 Windows EXE
 
 on:
   pull_request:
@@ -9,7 +9,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: windows-portable-${{ github.workflow }}-${{ github.ref }}
+  group: windows-portable-Windows portable artifact-${{ github.ref }}
   cancel-in-progress: true
 
 env:
