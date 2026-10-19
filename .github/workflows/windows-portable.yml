@@ -1,4 +1,4 @@
-name: Windows portable artifact
+name: "Windows — OPEMOS desktop executable (.exe)"
 
 on:
   pull_request:

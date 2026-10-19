@@ -1,0 +1,70 @@
+name: "Ubuntu — OPEMOS desktop executable (AppImage)"
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ubuntu-executable-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  appimage-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      OPEMOS_EXPERIMENTAL_LINUX: '1'
+      OPEMOS_LINUX_ACCEL: tcg
+      OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
+    steps:
+      - name: Check out exact executable source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Check out immutable Core contracts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: CorniiDog/OPEMOS
+          ref: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00
+          path: opemos-core-contracts
+          fetch-depth: 186
+          persist-credentials: false
+      - name: Install Ubuntu packaging dependencies
+        run: >-
+          sudo apt-get update && sudo apt-get install --yes
+          build-essential ca-certificates curl file genisoimage git
+          libayatana-appindicator3-dev librsvg2-dev libssl-dev
+          libwebkit2gtk-4.1-dev openssh-client ovmf patchelf
+          pkg-config python3 qemu-system-x86 qemu-utils xdg-utils xz-utils
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.23.2
+          cache: npm
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
+      - name: Install locked JavaScript dependencies
+        run: npm ci
+      - name: Build Ubuntu AppImage and Debian package
+        run: npm run build:linux-test
+      - name: Stage packages with checksums, source provenance and pinned appliance
+        run: |
+          python3 scripts/acquire_appliance_windows.py --output build/appliance/linux
+          python3 scripts/stage_linux_packages.py --source-commit "${{ github.event.pull_request.head.sha || github.sha }}" --appliance-image build/appliance/linux/fedora-builder.qcow2
+      - name: Retain Ubuntu executable packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: OPEMOS-Ubuntu-AppImage-${{ github.event.pull_request.head.sha || github.sha }}
+          path: linux-package-artifact
+          if-no-files-found: error
+          compression-level: 0
+      - name: Explain the result scope
+        if: always()
+        run: |
+          echo 'Ubuntu executable packaging is separate from the OMEN graphical Build, virtual USB, SteamOS installation and NVIDIA recovery acceptance gates.' >> "$GITHUB_STEP_SUMMARY"
