@@ -1,4 +1,4 @@
-name: Windows portable artifact
+name: 01 Windows EXE
 
 on:
   pull_request:
