@@ -13,6 +13,16 @@
   requires normal source push to canonical origin, no PR200 push/approval or
   new OS/VM/trust/credential/provider/physical effect. Correction only after
   measured cause; fresh exact current-Main Core gates remain required.
+  Actual finite Windows39343734396/6f68cb59 exited0 with seed/build SKIPPED;
+  native Python3.12.10 record c8065aa3: same Win32 volume/FileID, pathctime
+  equals CreationTime, FDctime equals ChangeTime after readonly chmod, stable
+  before/after native observer/read/close. No delay/cache speculation needed.
+  Source correction compares creation with creation across views, keeps EACH
+  original full9 stable, and additionally holds native read-only/nonreparse
+  share-read-only handle while checking native FileID/creation/change/write/
+  attributes before/after hash. Real readonly full producer transaction plus
+  hardlink/reparse/size/directory/live-writer/write/replace/closure cases required.
+  Diagnostic-only capture is not production acceptance; new checks NOT RUN yet.
 
 - [ ] Preserve actual09d Windows package/startup/upload success and subsequent
   producer-binding failure: run39338115494/job118352964667 exit1 at held

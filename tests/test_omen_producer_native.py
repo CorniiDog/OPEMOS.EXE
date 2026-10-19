@@ -58,6 +58,12 @@ class NativeProducerCustody(unittest.TestCase):
                 M.held(Path(root).resolve(), 128)
 
     def test_actual_windows_layout_producer_to_descriptor(self):
+        self._producer_transaction(False)
+
+    def test_actual_readonly_windows_layout_producer_to_descriptor(self):
+        self._producer_transaction(True)
+
+    def _producer_transaction(self, readonly):
         with tempfile.TemporaryDirectory() as root:
             previous = Path.cwd()
             os.chdir(Path(root).resolve())
@@ -65,6 +71,8 @@ class NativeProducerCustody(unittest.TestCase):
                 path = Path('dist/windows/OPEMOS.EXE-windows-x86_64-unsigned.exe')
                 path.parent.mkdir(parents=True)
                 path.write_bytes(b'ordinary native producer transaction fixture')
+                if readonly:
+                    path.chmod(0o444)
                 env = {'GITHUB_REPOSITORY': 'CorniiDog/OPEMOS.EXE',
                        'GITHUB_RUN_ID': '101', 'GITHUB_RUN_ATTEMPT': '2',
                        'GITHUB_WORKFLOW_REF': 'CorniiDog/OPEMOS.EXE/' +
@@ -76,7 +84,72 @@ class NativeProducerCustody(unittest.TestCase):
                 self.assertEqual(value['package_sha256'], value['executable_sha256'])
                 self.assertTrue(Path('producer-result/executable-producer.json').is_file())
             finally:
+                path.chmod(0o600)
                 os.chdir(previous)
+
+    def test_actual_hardlink_is_refused(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root).resolve() / 'producer.exe'
+            path.write_bytes(b'single link required')
+            os.link(path, path.with_suffix('.alias'))
+            with self.assertRaisesRegex(ValueError, 'Actual non-reparse'):
+                M.held(path, 128)
+
+    def test_actual_symlink_is_refused(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root).resolve() / 'producer.exe'
+            path.write_bytes(b'no reparse substitution')
+            link = path.with_suffix('.link')
+            try:
+                link.symlink_to(path)
+            except OSError as error:
+                if os.name == 'nt' and getattr(error, 'winerror', None) == 1314:
+                    self.skipTest('Windows symlink privilege unavailable; not a reparse pass')
+                raise
+            with self.assertRaises(ValueError):
+                M.held(link, 128)
+
+    @unittest.skipUnless(os.name == 'nt', 'Actual Win32 sharing contract')
+    def test_full_hash_refuses_existing_writer_then_succeeds_after_close(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root).resolve() / 'producer.exe'
+            path.write_bytes(b'no overlapping writer')
+            writer = os.open(path, os.O_WRONLY | os.O_BINARY)
+            try:
+                with self.assertRaises(PermissionError):
+                    M.held(path, 128)
+                self.assertEqual(os.fstat(writer).st_size, 21)
+            finally:
+                os.close(writer)
+            value, raw = M.held(path, 128, keep=True)
+            self.assertEqual(raw, b'no overlapping writer')
+            self.assertEqual(value['sha256'], hashlib.sha256(raw).hexdigest())
+
+    @unittest.skipUnless(os.name == 'nt', 'Actual Win32 sharing contract')
+    def test_native_binding_refuses_real_write_and_replacement(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root).resolve() / 'producer.exe'
+            path.write_bytes(b'held bytes')
+            replacement = path.with_suffix('.replacement')
+            replacement.write_bytes(b'other bytes')
+            before = path.lstat()
+            fd = os.open(path, os.O_RDONLY | os.O_BINARY)
+            try:
+                with M.native_binding(path, fd, before, os.fstat(fd)):
+                    with self.assertRaises(PermissionError):
+                        with path.open('wb'):
+                            self.fail('Writer opened during native read custody')
+                    with self.assertRaises(PermissionError):
+                        os.replace(replacement, path)
+                    self.assertEqual(os.read(fd, 128), b'held bytes')
+                # The real sharing restriction ends only when the context closes.
+                os.close(fd)
+                fd = None
+                os.replace(replacement, path)
+                self.assertEqual(path.read_bytes(), b'other bytes')
+            finally:
+                if fd is not None:
+                    os.close(fd)
 
 
 if __name__ == '__main__':
