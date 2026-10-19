@@ -375,6 +375,102 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn windows_in_process_cold_boot_timeout_preserves_readiness_deadline() {
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = Fixture(std::env::temp_dir().join(format!(
+            "opemos-windows-readiness-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        )));
+        fs::create_dir(&root.0).expect("create private test identity directory");
+        let key = root.0.join("builder_key");
+        run_checked(
+            child_command(find_binary("ssh-keygen").expect("existing OpenSSH keygen"))
+                .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+                .arg(&key),
+            "generate disposable loopback test identity",
+        )
+        .expect("generate test identity");
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind cold SSH listener");
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_read_timeout(Some(Duration::from_secs(8))).unwrap();
+                        let mut bytes = [0; 4096];
+                        loop {
+                            match stream.read(&mut bytes) {
+                                Ok(0) => return true,
+                                Ok(_) => {}
+                                Err(_) => return false,
+                            }
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() >= deadline {
+                            return false;
+                        }
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => return false,
+                }
+            }
+        });
+        let session = ScpTestConnection {
+            ssh_key: key,
+            runtime_dir: root.0.clone(),
+            ssh_port: port,
+        };
+        let started = Instant::now();
+        let (deadline, seconds) = appliance_readiness_deadline(started, None).unwrap();
+        // Actual current handshake -> russh -> socket boundary, no overridden
+        // transport or method under test. The peer deliberately sends no banner.
+        let timeout = handshake(&session);
+        let peer_closed = server.join().expect("join bounded loopback peer");
+        assert!(peer_closed, "timed-out transport must close its socket");
+        assert_eq!(timeout.as_deref(), Err("In-process SSH command timed out."));
+        assert_eq!(seconds, 120);
+        assert_eq!(deadline.duration_since(started), Duration::from_secs(120));
+        assert_eq!(
+            appliance_readiness_outcome(Instant::now(), deadline, &timeout),
+            ApplianceReadinessOutcome::Pending
+        );
+        assert_eq!(
+            appliance_readiness_outcome(Instant::now(), deadline, &Ok(READY_MARKER.into())),
+            ApplianceReadinessOutcome::Ready
+        );
+        for result in [
+            Ok("WRONG".into()),
+            Ok(String::new()),
+            Err("The appliance rejected the ephemeral SSH identity.".into()),
+            Err("In-process SSH command stdout exceeded its bound.".into()),
+            Err("Guest readiness command exited with status 7: failure".into()),
+            Err("prefix In-process SSH command timed out.".into()),
+            Err("In-process SSH command timed out. suffix".into()),
+        ] {
+            assert_eq!(
+                appliance_readiness_outcome(Instant::now(), deadline, &result),
+                ApplianceReadinessOutcome::Failed
+            );
+        }
+        for result in [timeout, Ok(READY_MARKER.into())] {
+            assert_eq!(
+                appliance_readiness_outcome(deadline, deadline, &result),
+                ApplianceReadinessOutcome::TimedOut
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn windows_guest_readiness_attempt_timeout_reaps_the_child() {
         struct ReadinessFixture(PathBuf);
         impl Drop for ReadinessFixture {
