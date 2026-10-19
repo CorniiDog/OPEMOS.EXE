@@ -123,7 +123,7 @@ with tempfile.TemporaryDirectory(prefix='opemos-completion-render-') as temporar
             setup = '''document.querySelector('#output-folder-label').textContent='/a/very-long-selected-folder/'.repeat(12);document.querySelector('#reset-output-folder').classList.remove('hidden');''' if custom else ''
             fixture.write_text('<style>' + host_css + '</style><div class="build-options-grid">'
                 + output + '<div class="build-side-column">' + nvidia + '</div></div><script>'
-                + setup + '''const outer=document.querySelector('.export-choice'),inner=document.querySelector('.output-destination'),other=document.querySelector('.nvidia-choice');const rect=e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,right:r.right};};const o=document.createElement('output');o.id='result';o.textContent=JSON.stringify({outer:rect(outer),other:rect(other),innerBorder:getComputedStyle(inner).borderTopWidth,innerBackground:getComputedStyle(inner).backgroundColor,resetVisible:document.querySelector('#reset-output-folder').getBoundingClientRect().width>0,buttons:[...inner.querySelectorAll('button')].filter(e=>e.getBoundingClientRect().width>0).map(rect),scroll:document.documentElement.scrollWidth,viewport:innerWidth});document.body.append(o);</script>''')
+                + setup + '''const outer=document.querySelector('.export-choice'),inner=document.querySelector('.output-destination'),other=document.querySelector('.nvidia-choice');const rect=e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,right:r.right,bottom:r.bottom};};const o=document.createElement('output');o.id='result';o.textContent=JSON.stringify({outer:rect(outer),other:rect(other),contentBottom:Math.max(...[...outer.children].map(e=>e.getBoundingClientRect().bottom)),innerBorder:getComputedStyle(inner).borderTopWidth,innerBackground:getComputedStyle(inner).backgroundColor,resetVisible:document.querySelector('#reset-output-folder').getBoundingClientRect().width>0,buttons:[...inner.querySelectorAll('button')].filter(e=>e.getBoundingClientRect().width>0).map(rect),scroll:document.documentElement.scrollWidth,viewport:innerWidth});document.body.append(o);</script>''')
             run = subprocess.run(['google-chrome', '--headless=new', '--no-sandbox',
                 '--disable-gpu', f'--user-data-dir={directory / f"output-{width}-{custom}"}',
                 f'--window-size={width},800', '--dump-dom', fixture.as_uri()],
@@ -136,11 +136,9 @@ with tempfile.TemporaryDirectory(prefix='opemos-completion-render-') as temporar
             assert result['innerBackground'] == 'rgba(0, 0, 0, 0)', result
             assert result['resetVisible'] == custom, result
             assert result['scroll'] <= result['viewport'], result
-            if width > 680:
-                assert abs(result['outer']['width'] - result['other']['width']) < 1, result
-                assert abs(result['outer']['y'] - result['other']['y']) < 1, result
-            else:
-                assert result['other']['y'] > result['outer']['y'], result
+            assert abs(result['outer']['width'] - result['other']['width']) < 1, result
+            assert result['other']['y'] >= result['outer']['bottom'], result
+            assert result['outer']['bottom'] - result['contentBottom'] < 16, result
             for button_rect in result['buttons']:
                 assert button_rect['x'] >= result['outer']['x'], result
                 assert button_rect['right'] <= result['outer']['right'], result
