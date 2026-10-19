@@ -29,6 +29,10 @@
   (CreateFileW documented attribute exception); writer actually opened. Use
   GENERIC_READ (already needed by held data FD) with same share-read-only mask;
   unchanged refusal tests must verify the correction, no assertion weakening.
+  Diagnostic receipt bookkeeping correction: earlier `children_started=false`
+  omitted its synchronous git identity query (check_output returned/reaped0).
+  Current script explicitly records that child and bounds it15s. Earlier native
+  file/FD observations remain valid, but the zero-child flag is not relied on.
 
 - [ ] Preserve actual09d Windows package/startup/upload success and subsequent
   producer-binding failure: run39338115494/job118352964667 exit1 at held

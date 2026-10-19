@@ -69,7 +69,9 @@ def main():
             value['native_descriptor'] = native(msvcrt.get_osfhandle(fd))
         return value
 
-    source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+    git_result = subprocess.run(['git', 'rev-parse', 'HEAD'], text=True,
+                                capture_output=True, timeout=15, check=True)
+    source = git_result.stdout.strip()
     if source != os.environ['OPEMOS_EXE_COMMIT']:
         raise RuntimeError('Exact diagnostic source mismatch')
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -78,7 +80,10 @@ def main():
     spec.loader.exec_module(producer)
     result = {'diagnostic_only': True, 'source': source, 'argv': sys.argv,
               'python': sys.version, 'platform': platform.platform(), 'pid': os.getpid(), 'cases': [],
-              'children_started': False, 'normal_or_readonly_producer_acceptance': False}
+              'children_started': True,
+              'children': [{'command': git_result.args, 'exit': git_result.returncode,
+                            'reaped': True, 'pipes_closed': True}],
+              'normal_or_readonly_producer_acceptance': False}
     output = Path('build/windows-metadata-diagnostic')
     output.mkdir(parents=True, exist_ok=False)
     try:
