@@ -77,8 +77,6 @@ mod linux_usb_guard_tests {
         );
         for (field, value) in [
             ("tran", serde_json::json!("nvme")),
-            ("rm", serde_json::json!(false)),
-            ("hotplug", serde_json::json!(false)),
             ("ro", serde_json::json!(true)),
             ("type", serde_json::json!("part")),
             ("pkname", serde_json::json!("sda")),
@@ -94,6 +92,20 @@ mod linux_usb_guard_tests {
                 "{field}"
             );
         }
+        let mut nonremovable = valid.clone();
+        nonremovable["blockdevices"][0]["rm"] = serde_json::json!(false);
+        nonremovable["blockdevices"][0]["hotplug"] = serde_json::json!(false);
+        assert!(linux_usb_rows(nonremovable.to_string().as_bytes(), 8192)
+            .unwrap()
+            .is_empty());
+        let mut hotplugged = valid.clone();
+        hotplugged["blockdevices"][0]["rm"] = serde_json::json!(false);
+        assert_eq!(
+            linux_usb_rows(hotplugged.to_string().as_bytes(), 8192)
+                .unwrap()
+                .len(),
+            1
+        );
         let mut mounted = valid.clone();
         mounted["blockdevices"][0]["children"][0]["mountpoints"] =
             serde_json::json!(["/media/test"]);
@@ -3385,8 +3397,8 @@ fn linux_usb_lsblk_candidate(row: &serde_json::Value, image_bytes: u64) -> bool 
         && row.get("path").and_then(serde_json::Value::as_str)
             == Some(format!("/dev/{name}").as_str())
         && row.get("tran").and_then(serde_json::Value::as_str) == Some("usb")
-        && row.get("rm").and_then(serde_json::Value::as_bool) == Some(true)
-        && row.get("hotplug").and_then(serde_json::Value::as_bool) == Some(true)
+        && (row.get("rm").and_then(serde_json::Value::as_bool) == Some(true)
+            || row.get("hotplug").and_then(serde_json::Value::as_bool) == Some(true))
         && row.get("ro").and_then(serde_json::Value::as_bool) == Some(false)
         && row.get("pkname").is_some_and(serde_json::Value::is_null)
         && bytes >= image_bytes
@@ -3552,7 +3564,6 @@ fn linux_usb_candidate(
         || !media_available
         || drive_id.trim().is_empty()
         || serial.trim().is_empty()
-        || sibling_id.trim().is_empty()
     {
         return Err("The selected UDisks drive lacks a stable removable USB identity.".into());
     }
