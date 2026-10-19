@@ -15,11 +15,11 @@ import sys
 from urllib import error, request
 
 REPOSITORY = "CorniiDog/OPEMOS.EXE"
-WORKFLOW = ".github/workflows/steamos.yml"
-JOB = "every-executable-steamos-output"
+WORKFLOW = ".github/workflows/omen-robot.yml"
+JOB = "actual-robot-transactions"
 PROOF_STEPS = {
-    "Bind all three exact protected-main executable producers",
-    "Await every exact VM and each executable's actual SteamOS output",
+    "Execute fresh admitted Robot queue cases and actual pointer drivers",
+    "Always return Robot reports, actual screenshots, argv, logs and guest NVIDIA evidence",
 }
 MAX_RESPONSE = 2 * 1024 * 1024
 
@@ -72,7 +72,7 @@ def api_reader(token):
             with opener.open(req, timeout=20) as response:
                 return parse_response(response.read(MAX_RESPONSE + 1))
         except error.HTTPError as exc:
-            if exc.code == 404 and path.startswith("actions/workflows/steamos.yml/runs?"):
+            if exc.code == 404 and path.startswith("actions/workflows/omen-robot.yml/runs?"):
                 reason = "04 SteamOS is not installed; full-stack acceptance is missing (HTTP 404)"
             else:
                 reason = "GitHub acceptance API refused HTTP " + str(exc.code)
@@ -84,7 +84,7 @@ def api_reader(token):
 
 
 def run_inventory(read, sha):
-    payload = read("actions/workflows/steamos.yml/runs?head_sha=" + sha + "&per_page=100")
+    payload = read("actions/workflows/omen-robot.yml/runs?head_sha=" + sha + "&per_page=100")
     runs = payload["workflow_runs"]
     require(type(payload["total_count"]) is int and isinstance(runs, list)
             and payload["total_count"] == len(runs) <= 100,
@@ -156,7 +156,7 @@ def evaluate(read, sha):
             and artifacts["total_count"] == len(artifacts["artifacts"]) <= 100,
             "SteamOS acceptance artifact inventory is incomplete")
     proof = [item for item in artifacts["artifacts"]
-             if item.get("name") == f"steamos-acceptance-{run_id}-{attempt}"]
+             if item.get("name") == f"robot-actual-{run_id}-{attempt}"]
     require(len(proof) == 1 and proof[0].get("expired") is False
             and type(proof[0].get("size_in_bytes")) is int and 0 < proof[0]["size_in_bytes"] <= 16 * 1024**2
             and re.fullmatch(r"sha256:[0-9a-f]{64}", proof[0].get("digest", "")),

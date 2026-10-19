@@ -1,0 +1,117 @@
+name: 04 SteamOS
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [01 Windows EXE, 02 Ubuntu AppImage, 03 macOS Executable]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: opemos-omen-robot
+  cancel-in-progress: false
+
+jobs:
+  trusted-runner-route:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      ready: ${{ steps.guard.outputs.ready }}
+      source: ${{ steps.guard.outputs.source }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify the complete Robot producer is present
+        run: |
+          python3 - <<'PYREADY'
+          import json
+          import os
+          from pathlib import Path
+          required = ['scripts/omen_robot_gate.py', 'scripts/robot_client.py',
+                      'scripts/OPEMOSRobot.py', 'scripts/OPEMOSGuest.py',
+                      'scripts/OPEMOSPointer.py', 'scripts/run_omen_robot_guest.py',
+                      'scripts/omen_robot.py', 'scripts/omen_ci.py',
+                      'scripts/omen_ci_executables.py', 'scripts/omen_ci_inventory.py',
+                      'scripts/omen_ci_reader.py', 'scripts/omen_ci_result.py',
+                      'scripts/omen_ci_stage.py', 'tests/robot/inventory.robot',
+                      'tests/robot/role.robot', 'tests/robot/guest.robot',
+                      'ci/gui-pointer-contract.json', 'ci/robot-installed-hook-contract.json']
+          missing = [name for name in required if not Path(name).is_file()]
+          out = Path('robot-preflight')
+          out.mkdir(exist_ok=True)
+          readiness = {'source_commit': os.environ['GITHUB_SHA'],
+                       'producer_ready': not missing, 'missing_files': missing,
+                       'full_stack_passed': False}
+          (out / 'producer-readiness.json').write_text(json.dumps(readiness, indent=2) + '\n')
+          if missing:
+              rows = json.loads(Path('ci/required-vms.json').read_text())['required_vms']
+              reason = 'Complete Robot producer is not integrated on this source'
+              value = {'status': 'failed', 'source_commit': os.environ['GITHUB_SHA'],
+                       'vms': {row['id']: {'name': row['name'], 'status': 'unavailable',
+                                           'reason': reason} for row in rows},
+                       'executable_acceptance': {name: {'status': 'unavailable', 'reason': reason}
+                                                for name in ('windows', 'ubuntu', 'macos')}}
+              (out / 'all20.json').write_text(json.dumps(value, indent=2) + '\n')
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as report:
+                  report.write('| Required VM | Result |\n|---|---|\n')
+                  for row in rows:
+                      report.write('| ' + row['name'] + ' | unavailable: producer not integrated |\n')
+                  report.write('\nNo VM, pointer, USB, SteamOS or NVIDIA pass has been established.\n')
+              raise SystemExit(reason + ': ' + ', '.join(missing))
+          PYREADY
+      - id: guard
+        name: Verify trusted event, current protected Main and fresh dedicated runner heartbeat
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPEMOS_OMEN_ROBOT_RUNNER_STATE: ${{ vars.OPEMOS_OMEN_ROBOT_RUNNER_STATE }}
+        run: python3 scripts/omen_robot_gate.py
+      - name: Always retain explicit all20 preflight outcomes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: robot-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: robot-preflight/
+          if-no-files-found: error
+          retention-days: 1
+
+  actual-robot-transactions:
+    needs: trusted-runner-route
+    if: needs.trusted-runner-route.outputs.ready == 'true'
+    runs-on: [self-hosted, Linux, X64, opemos-omen-robot]
+    timeout-minutes: 240
+    env:
+      OPEMOS_SOURCE_SHA: ${{ needs.trusted-runner-route.outputs.source }}
+      OPEMOS_ROBOT_REPORT_DIR: ${{ github.workspace }}/robot-results
+      OPEMOS_ROBOT_CONTROL_SOCKET: /run/opemos-ci/control/control.sock
+      OPEMOS_ROBOT_REPORT_EXCHANGE: /home/connor/.local/share/opemos-ci/github-runner/robot-private/reports
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      # Root-installed ACTIONS_RUNNER_HOOK_JOB_STARTED independently verifies
+      # this workflow/ref/event/live Main BEFORE checkout; no PR/producer code.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.trusted-runner-route.outputs.source }}
+          persist-credentials: false
+      - name: Execute fresh admitted Robot queue cases and actual pointer drivers
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${OPEMOS_ROBOT_PYTHON:?Fixed job guard must expose the official pinned RF7.5 runtime}"
+          : "${OPEMOS_ROBOT_PRIVATE_RESULTS:?Fixed job guard must reserve private current-run metadata}"
+          export OPEMOS_CONSUMER_STARTED_EPOCH="$(date +%s)"
+          "$OPEMOS_ROBOT_PYTHON" -c "import importlib.metadata; assert importlib.metadata.version('robotframework') == '7.5'"
+          "$OPEMOS_ROBOT_PYTHON" -m robot --outputdir robot-results --output output.xml --report report.html --log log.html --xunit xunit.xml tests/robot/inventory.robot
+      - name: Always return Robot reports, actual screenshots, argv, logs and guest NVIDIA evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: robot-actual-${{ github.run_id }}-${{ github.run_attempt }}
+          path: robot-results/
+          if-no-files-found: error
+          retention-days: 1
