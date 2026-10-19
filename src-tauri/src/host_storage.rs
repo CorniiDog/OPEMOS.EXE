@@ -1,7 +1,5 @@
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
-#[cfg(target_os = "macos")]
-use std::process::Command;
 use std::{collections::BTreeMap, fs, path::Path};
 #[cfg(unix)]
 use std::{

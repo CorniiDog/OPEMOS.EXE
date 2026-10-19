@@ -75,7 +75,7 @@ test("install helper binds and revalidates a physical device identity", () => {
   assert.match(helper, /ui_stage "Installing the recovery guardian into rootfs-\$slot/);
 });
 
-test("read-only disk discovery does not require install-only recovery tools", (context) => {
+test("read-only disk discovery does not require install-only recovery tools", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, (context) => {
   const directory = mkdtempSync(join(tmpdir(), "opemos-inventory-tools-"));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
   for (const tool of ["bash", "awk", "findmnt", "lsblk", "readlink", "sed", "sha256sum", "tr"]) {

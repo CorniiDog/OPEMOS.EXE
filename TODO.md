@@ -86,6 +86,74 @@
   packaged normal/opt-out/KVM denied/hash fault/screenshot/closure required.
   Source/required CI/exact Core review and final shipped byte validation remain
   open. No image build, VM/GPU/USB acceptance or merge/publication implied.
+## Current Apple Silicon hosted transaction
+
+- [ ] Current-main reconciliation: EXE owns `work/exe-macos-current-main` from
+  exact merged `1705be6659d8fc713e055541c414c496fc2d1070`. Reviewed isolated
+  Mac support candidate `d4f6083a` / patch SHA `9dde008c`; apply only its19-file
+  PR180/chooser reconciliation while preserving PR184/185/187 and all prior
+  history. New same-job Darwin cache tests cover the carried permission/rename
+  ordinary and interruption paths at the current head; prior PR180 passes are
+  historical, not fresh-current proof. Source diff-check PASS, no controller
+  project tests. Remote push to canonical EXE topic is necessary for native M1
+  compile/real chooser pointer open-cancel/app closure and required Linux/Windows
+  source/package CI plus exact counterpart review. No MacBook availability,
+  hosted appliance Build, image/USB/x86 boot, trust or publication claimed.
+
+- [ ] Establish native arm64 app build and actual graphical settings open/close
+  on the existing public `macos-15` runner. The bounded workflow binds the exact
+  PR head and canonical GitHub Core `01407aa6174b80e92cb7f3dcb534ade5cdd7bf00`,
+  records independent source-check/build/GUI failures, and uploads the app plus
+  screenshots and closure evidence for three days. It does not install a nested
+  appliance, sign/notarize/publish a release, or establish imaging/hardware support.
+  Reproduced preparation gap: no native arm64 job or real Mac mouse transaction
+  existed. Only remote Apple Silicon CI can validate Swift/GUI/toolchain behavior;
+  local source syntax/whitespace inspection is not a passed build. EXE lead push
+  of `work/exe-macos-arm64` to `https://github.com/CorniiDog/OPEMOS.EXE.git` is
+  necessary for that remote-only CI and exact counterpart review. Commit/job
+  results remain in this implementation PR and authenticated handoff, not an
+  evidence-only follow-up PR.
+  Initial PR180 head `4be10a2a7a3770aa6234c16d9bf148ce0ff772fd`
+  actually built an arm64 executable (18,950,672 bytes, SHA-256
+  `e4db9a4c10243383036f845785e26e2ddfde1f198e7bbad5a4d2f26a2ed07ab5`)
+  in Mac job `38679726926`; archive SHA-256
+  `47b0d12d75453a1cade6c1e608382a5b9c564ad6f4b8ef705303704643705a53`.
+  Preserve that success and initial 23 Rust/29 frontend/lint/Swift failures.
+  The coherent correction prepares/reseals only the pinned handoff directory
+  for Darwin create-only rename (including crash recovery), fixes adversarial
+  fixture modes/canonical paths, narrowly declares Linux runtime eligibility,
+  diagnoses the still-enabled portable mock startup, and tightens real pointer
+  and PID-birth custody. Corrected helper compiles first; affected cache tests,
+  changed frontend files and missing docs/hygiene run before the new exact app
+  and GUI attempt. These changes are unverified until corrected-head CI returns.
+  Head `4b28b628438364881882c3d41270caf53d44ef74` then built the native
+  app/archive and compiled the helper; real Finder launch and Settings-open
+  pointer click passed in run `38682740351`. Full GUI failed on Close-settings
+  geometry (retained screenshot includes a system Python local-network prompt),
+  followed by owned cleanup rather than normal app close. Preserve 132 passing
+  cache cases; fix only the remaining sealed-retirement fixture rename, the
+  two live Linux/Windows-only marker helper cfgs, numeric-loopback server startup
+  (no reverse DNS needed), and measured geometry settling/refusal capture.
+  The next native run selects the remaining retirement and welcome cases,
+  required lint/checks, current app build and full genuine GUI transaction;
+  prior passes are retained, not replayed or relabeled as corrected-head proof.
+  Final `02d6c95901dcbcecc7c7e21b0ca4495286a9facd` evidence identified
+  duplicate “Close settings” accessible names: the helper selected the full-window
+  scrim, not the visible X. Give the backdrop a distinct accessible action and
+  require unique native targets with AX ancestry diagnostics. Keep all geometry,
+  occlusion, enabled-state, real-pointer and normal-close gates. Reconcile the
+  welcome Rust source invariant with the real numeric-loopback TCP/HTTP-handler
+  metadata contract; retain token/authentication and same-head live HTTP checks.
+  At that correction stage, exact-head Settings close/app close remained
+  unverified; no timeout, clipped target or forced click was substituted.
+  Subsequently PR180 head `28c36055a51ae241b455757486bf838c5901e1d3`
+  passed the native M1 build, Finder launch, Settings pointer clicks and normal
+  app close in run `38691090335`. The app archive and screenshots are retained
+  in the authenticated Mac handback. That run did not select an image, click
+  Build, start an appliance, write USB media or boot SteamOS. The current-main
+  reconciliation retains main's merged cold-boot SSH-status fix and adds a
+  bounded native chooser open/cancel click to the M1 GUI job; that new combined
+  head and any full builder/USB/boot path remain untested until fresh CI/runtime.
 
 ## Foundation and change policy
 
