@@ -42,6 +42,18 @@
   Fresh topic push to canonical origin is necessary for remote Windows compiler,
   package checks and exact counterpart review; no merge/publication in this step.
 
+## Windows minimum RAM admission (current-Main PR171 port)
+
+- [ ] Correct only verified installed RAM >=6 GiB with usable RAM below6 GiB
+  and total installed-minus-usable reservation <=2 MiB (R19:1,114,112 bytes).
+  Missing usable-memory API, zero/overflow/inconsistent reports still refuse;
+  missing installed-memory API retains usable-only admission. Guest RAM/CPU
+  allocation and non-Windows detection stay unchanged. Boundary/API-outcome/
+  allocation regressions and native Windows API case authored, UNRUN. Static
+  checks/local source candidate do not establish Windows CI or graphical Build.
+  Owning EXE exact-head required CI, Core review and admitted six-GiB Windows
+  graphical Build remain required; historical PR171 head is not merge authority.
+
 ## Selected output storage admission / Windows cleanup investigation
 
 - [ ] Root plan673819a7: actual disposable Windows GUI selected read-only D: input

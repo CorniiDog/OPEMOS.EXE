@@ -4020,6 +4020,102 @@ esac
     }
 
     #[test]
+    fn windows_ram_admission_corrects_only_verified_minimum_reservation() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        const MIB: u64 = 1024 * 1024;
+        for usable in [6_441_336_832, 6 * GIB - 2 * MIB, 6 * GIB - 1] {
+            let admitted = windows_memory_admission_bytes(Some(usable), Some(6 * GIB / 1024))
+                .expect("verified minimum-boundary reservation");
+            assert_eq!(admitted, 6 * GIB);
+            let inspection = plan_guest_resources(admitted, 2, false).expect("inspection plan");
+            assert_eq!(inspection.guest_memory_mib, 2048);
+            assert_eq!(inspection.guest_vcpus, 1);
+            let build = plan_guest_resources(admitted, 2, true).expect("build plan");
+            assert_eq!(build.guest_memory_mib, 4096);
+            assert_eq!(build.guest_vcpus, 1);
+        }
+        for (installed, usable) in [
+            (6 * GIB, 6 * GIB - 2 * MIB - 1),
+            (6 * GIB - 1024, 6 * GIB - 1024),
+            (5 * GIB, 5 * GIB),
+            (16 * GIB, 6 * GIB - MIB),
+        ] {
+            let admitted = windows_memory_admission_bytes(Some(usable), Some(installed / 1024))
+                .expect("valid reports outside the narrow correction");
+            assert_eq!(admitted, usable);
+            for build in [false, true] {
+                assert!(plan_guest_resources(admitted, 2, build).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn windows_ram_api_failure_and_invalid_reports_do_not_inflate_admission() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        // These are the exact Option reports used by the native API producer:
+        // None means the corresponding API returned failure, not zero RAM.
+        for installed in [None, Some(6 * GIB / 1024)] {
+            for usable in [None, Some(0)] {
+                assert_eq!(
+                    windows_memory_admission_bytes(usable, installed).unwrap_err(),
+                    "Windows host RAM could not be determined."
+                );
+            }
+        }
+        for usable in [6_441_336_832, 6 * GIB, 16 * GIB] {
+            let admitted = windows_memory_admission_bytes(Some(usable), None)
+                .expect("installed API failure retains usable RAM");
+            assert_eq!(admitted, usable);
+            for build in [false, true] {
+                assert_eq!(
+                    plan_guest_resources(admitted, 2, build).is_ok(),
+                    usable >= 6 * GIB
+                );
+            }
+        }
+        for (installed_kib, usable) in [(0, 1), (1, 2048), (u64::MAX, 1)] {
+            assert_eq!(
+                windows_memory_admission_bytes(Some(usable), Some(installed_kib)).unwrap_err(),
+                "Windows installed/usable RAM reports are invalid."
+            );
+        }
+    }
+
+    #[test]
+    fn windows_ram_admission_preserves_usable_sizing_and_cpu_limits() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        for usable in [6 * GIB, 8 * GIB, 16 * GIB, 32 * GIB] {
+            let admitted = windows_memory_admission_bytes(Some(usable), Some(32 * GIB / 1024))
+                .expect("ordinary usable budget");
+            assert_eq!(admitted, usable);
+            for cpus in [0, 1, 2, 10, 12] {
+                for build in [false, true] {
+                    let actual = plan_guest_resources(admitted, cpus, build);
+                    let baseline = plan_guest_resources(usable, cpus, build);
+                    if cpus == 0 {
+                        assert_eq!(actual.err(), baseline.err());
+                    } else {
+                        let actual = actual.unwrap();
+                        let baseline = baseline.unwrap();
+                        assert_eq!(actual.schema_version, baseline.schema_version);
+                        assert_eq!(actual.workload, baseline.workload);
+                        assert_eq!(actual.host_memory_bytes, baseline.host_memory_bytes);
+                        assert_eq!(actual.host_logical_cpus, baseline.host_logical_cpus);
+                        assert_eq!(actual.guest_memory_mib, baseline.guest_memory_mib);
+                        assert_eq!(actual.guest_vcpus, baseline.guest_vcpus);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_ram_native_api_producer_reports_nonzero_memory() {
+        assert!(windows_physical_memory_bytes().expect("actual Windows memory APIs") > 0);
+    }
+
+    #[test]
     fn validates_and_names_exact_nvidia_target_builds() {
         let spec = NvidiaTargetBuildSpec {
             steamos_version: "3.8.14".into(),

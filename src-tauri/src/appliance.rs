@@ -233,13 +233,44 @@ pub(crate) fn windows_physical_memory_bytes() -> Result<u64, String> {
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn GlobalMemoryStatusEx(status: *mut MemoryStatusEx) -> i32;
+        fn GetPhysicallyInstalledSystemMemory(total_kib: *mut u64) -> i32;
     }
     let mut status: MemoryStatusEx = unsafe { std::mem::zeroed() };
     status.length = std::mem::size_of::<MemoryStatusEx>() as u32;
     if unsafe { GlobalMemoryStatusEx(&mut status) } == 0 || status.total_phys == 0 {
-        return Err("Windows host RAM could not be determined.".into());
+        return windows_memory_admission_bytes(None, None);
     }
-    Ok(status.total_phys)
+    let mut installed_kib = 0;
+    let installed = (unsafe { GetPhysicallyInstalledSystemMemory(&mut installed_kib) } != 0)
+        .then_some(installed_kib);
+    windows_memory_admission_bytes(Some(status.total_phys), installed)
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn windows_memory_admission_bytes(
+    usable_bytes: Option<u64>,
+    installed_kib: Option<u64>,
+) -> Result<u64, String> {
+    let usable = usable_bytes
+        .filter(|bytes| *bytes != 0)
+        .ok_or_else(|| "Windows host RAM could not be determined.".to_string())?;
+    let Some(installed_kib) = installed_kib else {
+        // An unavailable firmware API must not increase the usable budget.
+        return Ok(usable);
+    };
+    let installed = installed_kib
+        .checked_mul(1024)
+        .filter(|bytes| *bytes >= usable)
+        .ok_or_else(|| "Windows installed/usable RAM reports are invalid.".to_string())?;
+    const MINIMUM: u64 = 6 * 1024 * 1024 * 1024;
+    // R19's configured 6-GiB Windows guest reserves 1,114,112 bytes. Correct
+    // only the minimum boundary with independently verified installed RAM and
+    // at most 2 MiB reserved. All other budgets retain usable-memory sizing.
+    if installed >= MINIMUM && usable < MINIMUM && installed - usable <= 2 * 1024 * 1024 {
+        Ok(MINIMUM)
+    } else {
+        Ok(usable)
+    }
 }
 
 pub(crate) type ProgressCallback<'a> = dyn Fn(&str, u64, u64) + 'a;
