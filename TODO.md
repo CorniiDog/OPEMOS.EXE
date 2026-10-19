@@ -2,6 +2,20 @@
 
 ## Complete packaged Mac cold-Build transaction
 
+  R9 recovered exact5c M1 prerequisite: readiness/root cleanup ~3ms, full
+  stream join30.140986917s, original2s assertion FAILED (406pass1fail28ignored).
+  Exact writer/birth/group/FD remains UNKNOWN. Core e31ffeb7 withholds the
+  coherent readiness/structured-command/shutdown/ready-line lifecycle graph.
+  One finite existing hosted-M1 focused original-test observation now captures
+  current executable, actual root/reader FD numbers, owned UID/birth/PGID and
+  lsof pipe identity plus EOF/group closure; no runtime/app/guest acquisition,
+  target-method override, changed timeout/assertion or GUI replay. Diagnostic
+  source push to canonical work/exe-macos-fullstack is required for remote-only
+  M1 execution; [skip ci] is not a check waiver or acceptance. After actual
+  diagnostic, coherent same-deadline stream/child correction and new full
+  native prerequisite/package/Finder Build/fault/finalizer checks remain required.
+  Preserve all prior failures/passes, c439 stack, Main195 and governance pins.
+
   R8 actual retained aac package diagnostic run39294172437/job118202265488
   first verified whole app archive SHA8132e612, then exact native executable
   SHA2f2c8d48 exited2 with stderr missing packaged runtime manifest. Process

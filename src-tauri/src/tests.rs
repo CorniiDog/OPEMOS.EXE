@@ -392,6 +392,14 @@ mod tests {
             .spawn()
             .expect("start ready-before-EOF fixture");
         let ready_pid = ready_then_stalled.id();
+        #[cfg(target_os = "macos")]
+        eprintln!(
+            "STREAM_DIAGNOSTIC root={} reader={} stdoutFD={} stderrFD={}",
+            ready_pid,
+            std::process::id(),
+            std::os::fd::AsRawFd::as_raw_fd(ready_then_stalled.stdout.as_ref().unwrap()),
+            std::os::fd::AsRawFd::as_raw_fd(ready_then_stalled.stderr.as_ref().unwrap())
+        );
         let started = Instant::now();
         assert_eq!(
             finish_guest_readiness_attempt(ready_then_stalled, Duration::from_secs(1))

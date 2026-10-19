@@ -4,6 +4,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      stream-lifecycle-diagnostic:
+        description: 'One focused owned process/pipe observation; no runtime or GUI replay'
+        type: boolean
+        default: false
       retained-startup-diagnostic:
         description: 'Finite old-package diagnostic only; never satisfies native-app'
         type: boolean
@@ -20,7 +24,7 @@ concurrency:
 
 jobs:
   retained-startup-diagnostic:
-    if: github.event_name == 'workflow_dispatch' && inputs.retained-startup-diagnostic
+    if: github.event_name == 'workflow_dispatch' && (inputs.retained-startup-diagnostic || inputs.stream-lifecycle-diagnostic)
     runs-on: macos-15
     timeout-minutes: 35
     env:
@@ -34,6 +38,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Acquire exact retained failed package
+        if: '!inputs.stream-lifecycle-diagnostic'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh run download 39294846215 --repo CorniiDog/OPEMOS.EXE --name macos-arm64-7b8bf0eea38d7ab548bf4746707d8ab38ade05bb-1 --dir "$RUNNER_TEMP/retained-7b8"
@@ -42,7 +47,11 @@ jobs:
           toolchain: 1.98.1
           targets: aarch64-apple-darwin
       - name: Bounded same-package startup evidence
+        if: '!inputs.stream-lifecycle-diagnostic'
         run: python3 scripts/diagnose_macos_retained_startup.py "$RUNNER_TEMP/retained-7b8/SteamOS-NVIDIA-Builder-arm64.app.zip"
+      - name: One finite original readiness process and pipe diagnostic
+        if: inputs.stream-lifecycle-diagnostic
+        run: python3 scripts/diagnose_macos_stream_lifecycle.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -50,7 +59,7 @@ jobs:
           path: build/retained-startup-diagnostic
           retention-days: 3
   native-app:
-    if: github.event_name != 'workflow_dispatch' || !inputs.retained-startup-diagnostic
+    if: github.event_name != 'workflow_dispatch' || (!inputs.retained-startup-diagnostic && !inputs.stream-lifecycle-diagnostic)
     runs-on: macos-15
     timeout-minutes: 90
     permissions:
