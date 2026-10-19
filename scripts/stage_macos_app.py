@@ -111,6 +111,13 @@ def stage(app, runtime, appliance, output, source_commit):
         verify_companion(resources / "appliance")
         if digest(macos / name) != digest(binary):
             raise ValueError("App bytes changed during staging")
+        # Strict native startup contract, inside the archive and resource seal.
+        # Final executable digest belongs to independent outer evidence/cache,
+        # not inside its own signed resources (which would be self-referential).
+        (resources / "bundle-provenance.json").write_text(json.dumps({
+            "schema_version": 1, "platform": "macos", "source_commit": source_commit,
+            "runtime_manifest_sha256": manifest_hash, "executable_name": name,
+        }, indent=2) + "\n")
         # Existing ad-hoc test identity only: no certificate, entitlement or release.
         subprocess.run(["codesign", "--force", "--sign", "-", str(staged_app)], check=True, timeout=60)
         subprocess.run(["codesign", "--verify", "--deep", "--strict", str(staged_app)], check=True, timeout=60)

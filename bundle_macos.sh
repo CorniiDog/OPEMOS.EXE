@@ -12,7 +12,7 @@ root=$(cd -- "$2" && pwd -P)
 appliance=$(cd -- "$4" && pwd -P)
 source_commit=$(git rev-parse HEAD)
 manifest_hash=$(shasum -a 256 "$root/runtime-manifest.json" | cut -d' ' -f1)
-OPEMOS_RUNTIME_MANIFEST_SHA256=$manifest_hash OPEMOS_MACOS_X86_TCG=1 \
+OPEMOS_RUNTIME_MANIFEST_SHA256=$manifest_hash OPEMOS_MACOS_X86_TCG=1 OPEMOS_EXE_SOURCE_COMMIT=$source_commit \
   npm run build:app -- --target aarch64-apple-darwin
 apps=(src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app)
 [[ ${#apps[@]} -eq 1 && -d ${apps[0]} ]] || { echo "Expected one complete native .app." >&2; exit 1; }

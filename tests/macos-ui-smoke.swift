@@ -41,12 +41,24 @@ if CommandLine.arguments == [CommandLine.arguments[0], "--birth-regression"] {
     exit(0)
 }
 func guiWaitTick() throws {
+    if let app = owned, app.isTerminated {
+        record("owned-app-exited-before-control", ["pid": app.processIdentifier, "numericExit": "unknown"])
+        throw Refusal(message: "owned app exited before required graphical transaction")
+    }
     try require(Date() < deadline, "absolute GUI deadline")
     RunLoop.current.run(until: Date().addingTimeInterval(0.2))
 }
+var observedAXErrors = Set<String>()
 func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
     var result: CFTypeRef?
-    return AXUIElementCopyAttributeValue(element, attribute as CFString, &result) == .success ? result : nil
+    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &result)
+    if error != .success {
+        let key = attribute + ":" + String(error.rawValue)
+        if observedAXErrors.insert(key).inserted {
+            record("AX-read-error", ["attribute": attribute, "error": error.rawValue])
+        }
+    }
+    return error == .success ? result : nil
 }
 func text(_ element: AXUIElement, _ attribute: String) -> String {
     return value(element, attribute) as? String ?? ""
@@ -116,12 +128,15 @@ func settledGeometry(_ element: AXUIElement) throws -> CGRect {
     }
     throw Refusal(message: "target geometry never settled inside actual display")
 }
-func screenshot(_ name: String) throws {
+func screenshot(_ name: String, failureEvidence: Bool = false) throws {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
     p.arguments = ["-x", out!.appendingPathComponent(name + ".png").path]
     try p.run()
-    while p.isRunning && Date() < deadline { try guiWaitTick() }
+    let captureEnd = failureEvidence ? Date().addingTimeInterval(10) : deadline
+    while p.isRunning && Date() < captureEnd {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    }
     if p.isRunning { p.terminate(); p.waitUntilExit(); throw Refusal(message: "screenshot timeout") }
     try require(p.terminationStatus == 0, "screen capture refused")
     let url = out!.appendingPathComponent(name + ".png")
@@ -380,7 +395,11 @@ do {
     record("failure", ["error": String(describing: error)])
     // Preserve actual occluding prompts/layout on refusal, without interacting
     // with permission dialogs or forcing a disabled/foreign target.
-    if out != nil && CGPreflightScreenCaptureAccess() { try? screenshot("failure-desktop") }
+    if out != nil && CGPreflightScreenCaptureAccess() { try? screenshot("failure-desktop", failureEvidence: true) }
+}
+if let app = owned {
+    record("owned-app-final-state", ["pid": app.processIdentifier, "terminated": app.isTerminated,
+                                     "numericExit": "unknown"])
 }
 // Independently close only the exact new process; forced cleanup never passes.
 if let app = owned, !app.isTerminated {

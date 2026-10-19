@@ -2,6 +2,26 @@
 
 ## Complete packaged Mac cold-Build transaction
 
+  R8 actual retained aac package diagnostic run39294172437/job118202265488
+  first verified whole app archive SHA8132e612, then exact native executable
+  SHA2f2c8d48 exited2 with stderr missing packaged runtime manifest. Process
+  group absent, independent archive/executable rehash unchanged, screenshot
+  captured. This direct diagnostic is NOT GUI acceptance. Confirms Root's
+  MacOS/runtime versus Resources/runtime finding; also correct incompatible,
+  outside-app provenance and signed-bundle mutable-state placement together.
+  Native Resources now carries closed source/runtime/executable-name provenance
+  before sealing; exact source compiled in and actual executable independently
+  hashed into cache identity (no circular final-executable/resource hash).
+  Mac state goes to real absolute HOME/Library/Application Support, Windows/Linux
+  portable layout unchanged. Real readonly-app/separate-home/schema/missing-file
+  regression authored; native GUI now detects owned app death, retains AX errors
+  and captures failure screen with separate bounded reserve, no deadline increase.
+  All changed-head tests/normal Finder Build/fault/closure remain pending.
+  Remote-only M1 diagnostic required normal fast-forward9000ee7e to canonical
+  CorniiDog/OPEMOS.EXE topic. Next coherent implementation push is likewise
+  necessary for current-head source/package/GUI checks and exact Core review;
+  no approval transfer from aac or c439, no frozen PR190/Root tree mutation.
+
   Consumed full exact Core1f62 disposition f495f488 (9472B): both blocking
   DARWIN-GUI-BIRTH-480 and DARWIN-MANUAL-MODE are included in this correction.
   Birth uses captured transaction start, not reconstructed deadline; pre-click

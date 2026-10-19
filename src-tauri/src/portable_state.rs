@@ -41,6 +41,19 @@ struct BundleApplication {
     sha256: String,
 }
 
+// Sealed inside Resources before signing. Do not embed the final executable
+// hash in its own resource seal (a circular signature dependency). The actual
+// executable is independently hashed into CacheManifest below.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MacBundleProvenance {
+    schema_version: u32,
+    platform: String,
+    source_commit: String,
+    runtime_manifest_sha256: String,
+    executable_name: String,
+}
+
 fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file = File::open(path)
         .map_err(|error| format!("Could not open portable-state identity file: {error}"))?;
@@ -77,9 +90,9 @@ fn expected_manifest(executable: &Path, runtime: &Path) -> Result<CacheManifest,
     }
     let executable_sha256 = sha256_file(executable)?;
     let runtime_manifest_sha256 = sha256_file(&runtime_manifest)?;
-    let provenance_path = executable
+    let provenance_path = runtime
         .parent()
-        .ok_or("The packaged executable has no bundle directory.")?
+        .ok_or("The packaged runtime has no resource directory.")?
         .join("bundle-provenance.json");
     let provenance_metadata = fs::symlink_metadata(&provenance_path)
         .map_err(|error| format!("Could not inspect packaged build provenance: {error}"))?;
@@ -97,31 +110,56 @@ fn expected_manifest(executable: &Path, runtime: &Path) -> Result<CacheManifest,
     let provenance_json = provenance_bytes
         .strip_prefix(b"\xef\xbb\xbf")
         .unwrap_or(&provenance_bytes);
-    let provenance: BundleProvenance = serde_json::from_slice(provenance_json)
-        .map_err(|error| format!("Packaged build provenance is invalid: {error}"))?;
     let filename = executable
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or("The packaged executable filename is invalid.")?;
-    if provenance.schema_version != 1
-        || provenance.platform != std::env::consts::OS
-        || provenance.source_commit.len() != 40
-        || !provenance
-            .source_commit
+    let source_commit = if is_macos_app(executable) {
+        let provenance: MacBundleProvenance = serde_json::from_slice(provenance_json)
+            .map_err(|error| format!("Packaged Mac provenance is invalid: {error}"))?;
+        if provenance.schema_version != 1
+            || provenance.platform != "macos"
+            || provenance.runtime_manifest_sha256 != runtime_manifest_sha256
+            || provenance.executable_name != filename
+            || option_env!("OPEMOS_EXE_SOURCE_COMMIT")
+                .is_some_and(|expected| provenance.source_commit != expected)
+        {
+            return Err("Packaged Mac provenance does not match the source and runtime.".into());
+        }
+        provenance.source_commit
+    } else {
+        let provenance: BundleProvenance = serde_json::from_slice(provenance_json)
+            .map_err(|error| format!("Packaged build provenance is invalid: {error}"))?;
+        if provenance.schema_version != 1
+            || provenance.platform != std::env::consts::OS
+            || provenance.source_commit.len() != 40
+            || !provenance
+                .source_commit
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || provenance.runtime_manifest_sha256 != runtime_manifest_sha256
+            || provenance.applications.len() != 1
+            || provenance.applications[0].filename != filename
+            || provenance.applications[0].size != executable_metadata.len()
+            || provenance.applications[0].sha256 != executable_sha256
+        {
+            return Err(
+                "Packaged build provenance does not match the executable and runtime.".into(),
+            );
+        }
+        provenance.source_commit
+    };
+    if source_commit.len() != 40
+        || !source_commit
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        || provenance.runtime_manifest_sha256 != runtime_manifest_sha256
-        || provenance.applications.len() != 1
-        || provenance.applications[0].filename != filename
-        || provenance.applications[0].size != executable_metadata.len()
-        || provenance.applications[0].sha256 != executable_sha256
     {
-        return Err("Packaged build provenance does not match the executable and runtime.".into());
+        return Err("Packaged source identity is invalid.".into());
     }
     Ok(CacheManifest {
         schema_version: CACHE_SCHEMA,
         package_version: env!("CARGO_PKG_VERSION").into(),
-        source_commit: provenance.source_commit,
+        source_commit,
         executable_sha256,
         executable_size: executable_metadata.len(),
         runtime_manifest_sha256,
@@ -241,14 +279,24 @@ fn populate_cache(root: &Path, expected: &CacheManifest) -> Result<(), String> {
     Ok(())
 }
 
-fn prepare_at(executable: &Path) -> Result<(PathBuf, PathBuf), String> {
-    let bundle = executable
-        .parent()
-        .ok_or("The packaged executable has no bundle directory.")?;
-    let runtime = bundle.join("runtime");
-    let state = bundle.join("state");
+fn is_macos_app(executable: &Path) -> bool {
+    executable.parent().is_some_and(|parent| {
+        parent.file_name().is_some_and(|name| name == "MacOS")
+            && parent
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|name| name == "Contents")
+    })
+}
+
+fn prepare_layout(
+    executable: &Path,
+    runtime: &Path,
+    state: PathBuf,
+) -> Result<(PathBuf, PathBuf), String> {
     let cache = state.join("cache-v1");
-    let expected = expected_manifest(executable, &runtime)?;
+    // Validate all immutable package operands before creating mutable state.
+    let expected = expected_manifest(executable, runtime)?;
     if !cache_is_valid(&cache, &expected) {
         populate_cache(&cache, &expected)?;
     }
@@ -264,6 +312,26 @@ fn prepare_at(executable: &Path) -> Result<(PathBuf, PathBuf), String> {
     Ok((state, cache))
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
+fn prepare_at(executable: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let bundle = executable
+        .parent()
+        .ok_or("The packaged executable has no bundle directory.")?;
+    prepare_layout(executable, &bundle.join("runtime"), bundle.join("state"))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn prepare_macos_at(executable: &Path, home: &Path) -> Result<(PathBuf, PathBuf), String> {
+    if !is_macos_app(executable) || !home.is_absolute() || !real_directory(home) {
+        return Err(
+            "Packaged Mac state requires a real absolute home and native app layout.".into(),
+        );
+    }
+    let runtime = runtime_bundle::packaged_resource_path(executable, "macos", "runtime")?;
+    let state = home.join("Library/Application Support/dev.cornidog.steamos-nvidia-image-builder");
+    prepare_layout(executable, &runtime, state)
+}
+
 #[cfg(any(target_os = "windows", test))]
 fn webview_data_path(state: &Path) -> PathBuf {
     state.join("webview-v1")
@@ -275,6 +343,15 @@ pub fn prepare_portable_state() -> Result<(), String> {
     }
     let executable = std::env::current_exe()
         .map_err(|error| format!("Could not locate the packaged executable: {error}"))?;
+    #[cfg(target_os = "macos")]
+    let (state, cache) = {
+        if option_env!("OPEMOS_EXE_SOURCE_COMMIT").is_none() {
+            return Err("Packaged Mac source identity was not compiled in.".into());
+        }
+        let home = std::env::var_os("HOME").ok_or("Mac home is unavailable.")?;
+        prepare_macos_at(&executable, Path::new(&home))?
+    };
+    #[cfg(not(target_os = "macos"))]
     let (state, cache) = prepare_at(&executable)?;
     #[cfg(target_os = "windows")]
     std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", webview_data_path(&state));
@@ -298,6 +375,59 @@ pub(crate) fn portable_settings_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mac_resources_provenance_and_readonly_app_use_separate_user_state() {
+        let (root, old_executable) = fixture("mac-resources");
+        let contents = root.join("Builder.app/Contents");
+        let macos = contents.join("MacOS");
+        let resources = contents.join("Resources");
+        fs::create_dir_all(&macos).unwrap();
+        fs::create_dir_all(&resources).unwrap();
+        let executable = macos.join("Builder");
+        fs::copy(&old_executable, &executable).unwrap();
+        fs::rename(root.join("runtime"), resources.join("runtime")).unwrap();
+        let provenance = resources.join("bundle-provenance.json");
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1, "platform": "macos",
+            "source_commit": option_env!("OPEMOS_EXE_SOURCE_COMMIT").unwrap_or("0123456789abcdef0123456789abcdef01234567"),
+            "runtime_manifest_sha256": format!("{:x}", Sha256::digest(b"runtime-v1")),
+            "executable_name": "Builder"
+        })).unwrap();
+        fs::write(&provenance, &bytes).unwrap();
+        let home = root.join("home");
+        fs::create_dir(&home).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&macos, fs::Permissions::from_mode(0o555)).unwrap();
+        }
+        let (state, cache) = prepare_macos_at(&executable, &home).unwrap();
+        assert!(state.starts_with(&home));
+        assert!(cache_is_valid(
+            &cache,
+            &expected_manifest(&executable, &resources.join("runtime")).unwrap()
+        ));
+        assert!(!macos.join("state").exists());
+        assert!(!macos.join("runtime").exists());
+        assert_eq!(fs::read(&provenance).unwrap(), bytes);
+        assert_eq!(
+            fs::read(&executable).unwrap(),
+            fs::read(old_executable).unwrap()
+        );
+        assert!(prepare_macos_at(&executable, Path::new("relative-home")).is_err());
+        fs::write(&provenance, b"{}").unwrap();
+        assert!(prepare_macos_at(&executable, &home).is_err());
+        fs::write(&provenance, &bytes).unwrap();
+        fs::remove_file(resources.join("runtime/runtime-manifest.json")).unwrap();
+        assert!(prepare_macos_at(&executable, &home).is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&macos, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn fixture(name: &str) -> (PathBuf, PathBuf) {
         let root = std::env::temp_dir().join(format!(
