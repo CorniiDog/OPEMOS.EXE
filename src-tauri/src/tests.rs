@@ -449,8 +449,10 @@ mod tests {
             "In-process SSH command timed out."
         );
         peer_closed.expect("timed-out transport must close its socket");
-        assert_eq!(seconds, 120);
-        assert_eq!(deadline.duration_since(started), Duration::from_secs(120));
+        // Preserve the existing Windows default (non-Windows uses120s).
+        // Do not import a controller/other-platform deadline into this join.
+        assert_eq!(seconds, 300);
+        assert_eq!(deadline.duration_since(started), Duration::from_secs(300));
         assert_eq!(
             appliance_readiness_outcome(Instant::now(), deadline, &timeout),
             ApplianceReadinessOutcome::Pending

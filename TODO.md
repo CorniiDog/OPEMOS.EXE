@@ -257,6 +257,14 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   explicitly restore blocking reads, cap them by the original10s peer deadline,
   and retain primary handshake plus structured closure diagnostics. Production
   correction unchanged; native deployment superseded by newer VM-only target.
+  Actual Windows run39203000895 now proves the real five-second timeout and
+  socket EOF/closure, then fails stale120s test premise: baseline Windows
+  lib.rs508 and existing default-deadline test already specify300s (non-Windows
+  is120s). Correct the new test to preserve existing300s, not increase/change a
+  production deadline. Earlier Root/PR120s descriptions remain historical and
+  explicitly superseded by this measured source/runtime evidence. Whole graph
+  reviewed: exact Windows timeout only; deadline precedes Ready/Pending; caller
+  booting-state gate and wrong/empty/auth/output/semantic failures unchanged.
 
 - [ ] Correct the PR158 native USB lifecycle regression reported on
   `Current-df6c24e5-2026-10-01`. Ordinary SteamOS source selection must keep
