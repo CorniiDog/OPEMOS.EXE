@@ -27,6 +27,10 @@
   cases; hygiene rejected two nonconforming log filenames. Retained public
   nested boot fixtures now use `.sanitized.log` names and matching provenance;
   exact bytes/hashes remain unchanged and the hygiene authority is not relaxed.
+  Actual1b Linux integration118359348882 exposed computed fixture suffix still
+  `.log`: prior literal full-name search missed `label + suffix`. Update that
+  consumer to the exact sanitized filename; failure149cases/1error retained.
+  Already queued immutable6d qualification remains unchanged, no job rewrite.
 
 - [x] Reconciled protected Main `1e37a502` via topic commit `770c798e`,
   preserving published history and all five reviewed Windows files. PR198 exact

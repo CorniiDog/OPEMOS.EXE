@@ -607,7 +607,7 @@ class CompleteMetadataAndNestedRoles(unittest.TestCase):
         for label in ("a", "b"):
             actual = json.loads((fixture / (label + "-result.json")).read_bytes())
             queue = json.loads((fixture / (label + "-queue-result.json")).read_bytes())
-            serial = (fixture / (label + "-outer-serial.log")).read_bytes()
+            serial = (fixture / (label + "-outer-serial.sanitized.log")).read_bytes()
             vm = "OPEMOS-Ubuntu-KVM-" + label.upper()
             role = stage.validate_nested_actual(actual, queue, serial, vm, actual["sourcePins"])
             self.assertEqual(role["role"], "nested_linux")
