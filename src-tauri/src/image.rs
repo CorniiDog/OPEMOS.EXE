@@ -135,51 +135,51 @@ mod linux_usb_guard_tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_usb_authorized_descriptor_must_match_selected_disk() {
-        let valid = (
-            2064_u64,
-            2064_u64,
-            32_768_000_u64,
-            32_768_000_u64,
-            512_i32,
-            512_u64,
-            libc::O_RDWR | libc::O_SYNC,
-            libc::FD_CLOEXEC,
-        );
-        assert!(linux_usb_opened_fd_matches(
-            valid.0, valid.1, valid.2, valid.3, valid.4, valid.5, valid.6, valid.7
-        ));
-        assert!(!linux_usb_opened_fd_matches(
-            2065, valid.1, valid.2, valid.3, valid.4, valid.5, valid.6, valid.7
-        ));
-        assert!(!linux_usb_opened_fd_matches(
-            valid.0, valid.1, 16_384_000, valid.3, valid.4, valid.5, valid.6, valid.7
-        ));
-        assert!(!linux_usb_opened_fd_matches(
-            valid.0, valid.1, valid.2, valid.3, 4096, valid.5, valid.6, valid.7
-        ));
-        assert!(!linux_usb_opened_fd_matches(
-            valid.0,
-            valid.1,
-            valid.2,
-            valid.3,
-            valid.4,
-            valid.5,
-            libc::O_RDONLY,
-            valid.7
-        ));
-        assert!(!linux_usb_opened_fd_matches(
-            valid.0,
-            valid.1,
-            valid.2,
-            valid.3,
-            valid.4,
-            valid.5,
-            libc::O_RDWR,
-            valid.7
-        ));
-        assert!(!linux_usb_opened_fd_matches(
-            valid.0, valid.1, valid.2, valid.3, valid.4, valid.5, valid.6, 0
-        ));
+        let target = UsbTargetCandidate {
+            device_identifier: "sdb".into(),
+            device_node: "/dev/sdb".into(),
+            media_name: "Disposable USB".into(),
+            bus_protocol: "USB".into(),
+            bytes: 32_768_000,
+            block_size: 512,
+            identity_token: "a".repeat(64),
+        };
+        let valid = LinuxUsbFdObservation {
+            device_number: 2064,
+            bytes: target.bytes,
+            sector: 512,
+            access_flags: libc::O_RDWR | libc::O_SYNC,
+            descriptor_flags: libc::FD_CLOEXEC,
+        };
+        assert!(linux_usb_opened_fd_matches(&valid, &target, 2064));
+        for changed in [
+            LinuxUsbFdObservation {
+                device_number: 2065,
+                ..valid
+            },
+            LinuxUsbFdObservation {
+                bytes: 16_384_000,
+                ..valid
+            },
+            LinuxUsbFdObservation {
+                sector: 4096,
+                ..valid
+            },
+            LinuxUsbFdObservation {
+                access_flags: libc::O_RDONLY,
+                ..valid
+            },
+            LinuxUsbFdObservation {
+                access_flags: libc::O_RDWR,
+                ..valid
+            },
+            LinuxUsbFdObservation {
+                descriptor_flags: 0,
+                ..valid
+            },
+        ] {
+            assert!(!linux_usb_opened_fd_matches(&changed, &target, 2064));
+        }
     }
 }
 
@@ -3581,24 +3581,29 @@ fn linux_usb_candidate(
 }
 
 #[cfg(target_os = "linux")]
-fn linux_usb_opened_fd_matches(
-    opened_device_number: u64,
-    selected_device_number: u64,
-    opened_bytes: u64,
-    selected_bytes: u64,
-    opened_sector: i32,
-    selected_sector: u64,
+#[derive(Clone, Copy)]
+struct LinuxUsbFdObservation {
+    device_number: u64,
+    bytes: u64,
+    sector: i32,
     access_flags: i32,
     descriptor_flags: i32,
+}
+
+#[cfg(target_os = "linux")]
+fn linux_usb_opened_fd_matches(
+    opened: &LinuxUsbFdObservation,
+    target: &UsbTargetCandidate,
+    selected_device_number: u64,
 ) -> bool {
-    opened_device_number == selected_device_number
-        && opened_bytes == selected_bytes
-        && u64::try_from(opened_sector).ok() == Some(selected_sector)
-        && access_flags >= 0
-        && access_flags & libc::O_ACCMODE == libc::O_RDWR
-        && access_flags & libc::O_SYNC != 0
-        && descriptor_flags >= 0
-        && descriptor_flags & libc::FD_CLOEXEC != 0
+    opened.device_number == selected_device_number
+        && opened.bytes == target.bytes
+        && u64::try_from(opened.sector).ok() == Some(target.block_size)
+        && opened.access_flags >= 0
+        && opened.access_flags & libc::O_ACCMODE == libc::O_RDWR
+        && opened.access_flags & libc::O_SYNC != 0
+        && opened.descriptor_flags >= 0
+        && opened.descriptor_flags & libc::FD_CLOEXEC != 0
 }
 
 #[cfg(target_os = "linux")]
@@ -6161,14 +6166,15 @@ fn open_usb_raw_device(
         || !capacity_ok
         || !sector_ok
         || !linux_usb_opened_fd_matches(
-            opened.rdev(),
+            &LinuxUsbFdObservation {
+                device_number: opened.rdev(),
+                bytes: opened_bytes,
+                sector: opened_sector,
+                access_flags,
+                descriptor_flags,
+            },
+            target,
             device_number,
-            opened_bytes,
-            target.bytes,
-            opened_sector,
-            target.block_size,
-            access_flags,
-            descriptor_flags,
         )
     {
         return Err("The authorized Linux descriptor does not match the selected whole USB disk, capacity, sector size and access mode.".into());
