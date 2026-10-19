@@ -21,6 +21,13 @@
   CorniiDog/OPEMOS.EXE topic. Next coherent implementation push is likewise
   necessary for current-head source/package/GUI checks and exact Core review;
   no approval transfer from aac or c439, no frozen PR190/Root tree mutation.
+  Same-batch follow-up review found provenance dispatch must use the actual
+  platform, not just Contents/MacOS folder names. Explicit platform is now
+  passed through existing preparation/identity functions; Windows/Linux reject
+  the Mac schema even under such directory names. New real-case assertions use
+  that same consumer. First correction7b8bf0ee Linux all4PASS/411 tests retained;
+  active Windows and M1 are not cancelled. Final refinement needs its own exact
+  checks; no result or approval is silently transferred between heads.
 
   Consumed full exact Core1f62 disposition f495f488 (9472B): both blocking
   DARWIN-GUI-BIRTH-480 and DARWIN-MANUAL-MODE are included in this correction.

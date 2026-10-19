@@ -73,7 +73,16 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", digest.finalize()))
 }
 
+#[cfg(test)]
 fn expected_manifest(executable: &Path, runtime: &Path) -> Result<CacheManifest, String> {
+    expected_manifest_for_platform(executable, runtime, std::env::consts::OS)
+}
+
+fn expected_manifest_for_platform(
+    executable: &Path,
+    runtime: &Path,
+    platform: &str,
+) -> Result<CacheManifest, String> {
     let executable_metadata = fs::symlink_metadata(executable)
         .map_err(|error| format!("Could not inspect the packaged executable: {error}"))?;
     if !executable_metadata.is_file() || executable_metadata.file_type().is_symlink() {
@@ -114,7 +123,7 @@ fn expected_manifest(executable: &Path, runtime: &Path) -> Result<CacheManifest,
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or("The packaged executable filename is invalid.")?;
-    let source_commit = if is_macos_app(executable) {
+    let source_commit = if platform == "macos" && is_macos_app(executable) {
         let provenance: MacBundleProvenance = serde_json::from_slice(provenance_json)
             .map_err(|error| format!("Packaged Mac provenance is invalid: {error}"))?;
         if provenance.schema_version != 1
@@ -131,7 +140,7 @@ fn expected_manifest(executable: &Path, runtime: &Path) -> Result<CacheManifest,
         let provenance: BundleProvenance = serde_json::from_slice(provenance_json)
             .map_err(|error| format!("Packaged build provenance is invalid: {error}"))?;
         if provenance.schema_version != 1
-            || provenance.platform != std::env::consts::OS
+            || provenance.platform != platform
             || provenance.source_commit.len() != 40
             || !provenance
                 .source_commit
@@ -293,10 +302,11 @@ fn prepare_layout(
     executable: &Path,
     runtime: &Path,
     state: PathBuf,
+    platform: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
     let cache = state.join("cache-v1");
     // Validate all immutable package operands before creating mutable state.
-    let expected = expected_manifest(executable, runtime)?;
+    let expected = expected_manifest_for_platform(executable, runtime, platform)?;
     if !cache_is_valid(&cache, &expected) {
         populate_cache(&cache, &expected)?;
     }
@@ -317,7 +327,12 @@ fn prepare_at(executable: &Path) -> Result<(PathBuf, PathBuf), String> {
     let bundle = executable
         .parent()
         .ok_or("The packaged executable has no bundle directory.")?;
-    prepare_layout(executable, &bundle.join("runtime"), bundle.join("state"))
+    prepare_layout(
+        executable,
+        &bundle.join("runtime"),
+        bundle.join("state"),
+        std::env::consts::OS,
+    )
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -329,7 +344,7 @@ fn prepare_macos_at(executable: &Path, home: &Path) -> Result<(PathBuf, PathBuf)
     }
     let runtime = runtime_bundle::packaged_resource_path(executable, "macos", "runtime")?;
     let state = home.join("Library/Application Support/dev.cornidog.steamos-nvidia-image-builder");
-    prepare_layout(executable, &runtime, state)
+    prepare_layout(executable, &runtime, state, "macos")
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -406,11 +421,21 @@ mod tests {
         assert!(state.starts_with(&home));
         assert!(cache_is_valid(
             &cache,
-            &expected_manifest(&executable, &resources.join("runtime")).unwrap()
+            &expected_manifest_for_platform(&executable, &resources.join("runtime"), "macos")
+                .unwrap()
         ));
         assert!(!macos.join("state").exists());
         assert!(!macos.join("runtime").exists());
         assert_eq!(fs::read(&provenance).unwrap(), bytes);
+        // Folder names alone cannot select Mac provenance on Windows/Linux.
+        assert!(
+            expected_manifest_for_platform(&executable, &resources.join("runtime"), "windows")
+                .is_err()
+        );
+        assert!(
+            expected_manifest_for_platform(&executable, &resources.join("runtime"), "linux")
+                .is_err()
+        );
         assert_eq!(
             fs::read(&executable).unwrap(),
             fs::read(old_executable).unwrap()
