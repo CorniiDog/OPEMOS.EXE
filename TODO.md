@@ -16,6 +16,17 @@
   Robot pointer, image, virtual USB, SteamOS and NVIDIA results remain separate.
   No physical USB/GPU/trust/publication authority is added.
 
+## Current-Main Windows causal batch
+
+- [ ] Reconcile only PR190 generated-VARS/WHPX, PR196 typed native readiness,
+  and reviewed RAM449145ed onto Mainb6bb53d9; preserve merged Linux197 and
+  existing source workflows. Historical notes below remain evidence, not current
+  merge authority. Native Windows four RAM cases plus readiness/permissions and
+  all required current-head source/package checks must pass; exact new Core
+  approval is required before owning protected merge. Normal topic push to
+  canonical origin is necessary for remote-only CI/review, not publication.
+  Mac lifecycle/native/GUI failures do not hold this independent source scope.
+
 ## Current-main Linux UDisks writer source qualification
 
 - [ ] Reconciled reviewed119fb3b4 onto exact Main00885837 in isolated EXE topic;
@@ -24,6 +35,51 @@
   Necessary normal topic push to https://github.com/CorniiDog/OPEMOS.EXE.git
   enables remote-only checks/package and exact Core review. No controller tests,
   Main merge, graphical VM, USB write, hardware or publication acceptance.
+
+## Windows read-only package firmware handoff
+
+- [ ] Same complete Windows launch graph, subsequent actual OMEN r3/r4:
+  pinned WHPX/max reproduces PlatformPei #GP; WHPX/max,vmx=off passes firmware
+  into Fedora with unchanged firmware/Fedora/original pins. Windows plan now
+  keeps WHPX but disables unneeded nested VMX exposure, shared by image and
+  x86 build-worker producers; Linux/macOS plans and deadlines stay unchanged.
+  Plan regression remains selected by Windows `windows_` and full Rust CI.
+  r4 receipt SHA9488b10aca075c3a52b49b178cb6dc9876ed78f7bb58f4bf6eca10ec9eb76f5e
+  is diagnostic, not package acceptance: Fedora mounts its correct root UUID,
+  then main systemd times out on device units and enters emergency mode.
+  Exact in-guest udev/device-state inspection requested once from existing idle
+  Resolver under r5 before selecting any storage or timing correction. No
+  timeout patch, new runtime/trust input, original mutation or automatic TCG
+  fallback. Prior PR190 ten checks/Core source-only approval apply only to old
+  head31af2835; changed scope/head requires fresh CI and exact Core review.
+  Coherent changed-package graphical normal/fault Build/health/closure and
+  protected source merge remain held. Necessary fast-forward topic push to
+  canonical origin enables remote-only compiler/package checks, not publication.
+
+- [ ] Root plan f978b8e1: actual PR189 Windows D:-input/C:-output GUI advanced
+  past storage admission, then QEMU denied write access to generated uefi-vars.fd.
+  Read-only-media template had Windows R attribute; fs::copy propagated it.
+  Both existing appliance producers now make only the generated vars copy
+  writable and open it for write before spawn; firmware/source templates stay
+  unchanged. Real Windows regression reproduces old copy write denial, exercises
+  both generated copies with write/flush/reread and unchanged template bytes/R,
+  plus missing-template/directory faults. Authored, not run on controller.
+  Exact remote CI/package and Core review, then actual read-only-media packaged
+  graphical Build/health/closure remain required. No timeout or trust changes.
+  Fresh topic push to canonical origin is necessary for remote Windows compiler,
+  package checks and exact counterpart review; no merge/publication in this step.
+
+## Windows minimum RAM admission (current-Main PR171 port)
+
+- [ ] Correct only verified installed RAM >=6 GiB with usable RAM below6 GiB
+  and total installed-minus-usable reservation <=2 MiB (R19:1,114,112 bytes).
+  Missing usable-memory API, zero/overflow/inconsistent reports still refuse;
+  missing installed-memory API retains usable-only admission. Guest RAM/CPU
+  allocation and non-Windows detection stay unchanged. Boundary/API-outcome/
+  allocation regressions and native Windows API case authored, UNRUN. Static
+  checks/local source candidate do not establish Windows CI or graphical Build.
+  Owning EXE exact-head required CI, Core review and admitted six-GiB Windows
+  graphical Build remain required; historical PR171 head is not merge authority.
 
 ## Selected output storage admission / Windows cleanup investigation
 
@@ -45,6 +101,29 @@
   normal fast-forward topic push to canonical GitHub; no merge/publication.
 
 ## Cold-boot SSH readiness transport classification
+
+- [ ] Native Windows run39320767092 failed compile E0277 before tests/package:
+  five existing string literals inferred the new typed readiness error, but
+  From<&str> is absent. Correct only explicit Message test construction; Linux
+  excludes this Windows test and could not detect the error. Original full log
+  retained in exe-pr196-windows-e0277-causal-recovery-20261019.json. Production
+  typed classification and all timeouts unchanged; exact new-head CI required.
+
+- [ ] EXE adopted reviewed31708efe onto frozen c439 in a disjoint topic for
+  native Windows loopback/timeout tests and portable package via existing CI.
+  Necessary normal push to https://github.com/CorniiDog/OPEMOS.EXE.git for remote
+  checks and exact review only; no Main merge, new GUI/VM/USB or runtime acceptance.
+
+- [ ] Isolated Windows native-reset candidate (basec439, 2026-10-19): preserve
+  native russh stage, IO kind, OS code and original message through the normal
+  readiness consumer. Only connect-stage reset/refused and the existing bounded
+  attempt timeout can remain pending under the unchanged absolute300s session
+  deadline; key/auth/protocol/output/semantic/wrong-marker failures stay strict.
+  Real Windows loopback abortive-close RST/refusal, clean closure/invalid banner,
+  strict typed faults and the existing5s silent-banner/deadline case are authored,
+  NOT RUN on the controller. Exact EXE integration, required Windows checks/Core
+  approval/new package and actual GUI Build/image/virtualUSB write/readback remain
+  pending. Peer-reset mechanism is UNKNOWN; no firmware/CPU/network/trust patch.
 
 - [ ] Root causal plan f4a61c07: exact PR183 AppImage finished hashing original
   SteamOS3.8.14 IMG, then exit255/Connection refused with empty stdout became
