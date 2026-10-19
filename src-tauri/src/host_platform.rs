@@ -604,8 +604,10 @@ mod tests {
     fn live_linux_kvm_query_matches_kernel_api() {
         // Exercise the production method, not a fake adapter or replaced ioctl.
         assert!(kvm_usable(), "actual /dev/kvm query must return API12");
-        assert!(current_host_qemu("x86_64", "x86_64").is_ok(),
-            "run with explicit Linux opt-in and KVM selected");
+        assert!(
+            current_host_qemu("x86_64", "x86_64").is_ok(),
+            "run with explicit Linux opt-in and KVM selected"
+        );
     }
 
     #[cfg(target_os = "linux")]

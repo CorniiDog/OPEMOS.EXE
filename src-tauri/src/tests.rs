@@ -6,10 +6,14 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn relocated_appimage_uses_exact_adjacent_companion_not_checkout() {
-        assert_eq!(appimage_companion_root(Path::new("/tmp/moved/OPEMOS test.AppImage")),
-            PathBuf::from("/tmp/moved/OPEMOS test.AppImage.runtime"));
-        assert_eq!(appimage_companion_root(Path::new("relative.AppImage")),
-            PathBuf::from("/opemos-invalid-appimage-runtime"));
+        assert_eq!(
+            appimage_companion_root(Path::new("/tmp/moved/OPEMOS test.AppImage")),
+            PathBuf::from("/tmp/moved/OPEMOS test.AppImage.runtime")
+        );
+        assert_eq!(
+            appimage_companion_root(Path::new("relative.AppImage")),
+            PathBuf::from("/opemos-invalid-appimage-runtime")
+        );
     }
 
     struct ScpTestConnection {
