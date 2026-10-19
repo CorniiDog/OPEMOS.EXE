@@ -2673,13 +2673,9 @@ pub(crate) fn start_guest_command(
     Ok(child)
 }
 
-pub(crate) fn stop_guest_command_group(child: &mut GuestChild) {
+pub(crate) fn stop_guest_command_group(child: &mut GuestChild) -> Result<(), String> {
     let deadline = Instant::now() + SHUTDOWN_COMMAND_TIMEOUT;
-    if let Err(error) = stop_guest_command_before(child, deadline, || true) {
-        // Existing cancellation callers retain their primary error. Never hide
-        // failed owned cleanup or turn it into an unbounded wait.
-        eprintln!("Owned guest cleanup failed pid={}: {error}", child.id());
-    }
+    stop_guest_command_before(child, deadline, || true).map(|_| ())
 }
 
 #[cfg(test)]
@@ -2899,6 +2895,7 @@ fn stop_guest_command_before(
     deadline: Instant,
     readers_done: impl Fn() -> bool,
 ) -> Result<std::process::ExitStatus, String> {
+    drop(child.stdin.take());
     child
         .stop_tree()
         .map_err(|e| format!("Could not stop owned guest tree: {e}"))?;
@@ -2933,7 +2930,7 @@ fn stop_guest_command_before(
     }
 }
 
-fn guest_cleanup_result<T>(
+pub(crate) fn guest_cleanup_result<T>(
     primary: Result<T, String>,
     cleanup: Result<(), String>,
 ) -> Result<T, String> {
@@ -3130,10 +3127,23 @@ fn spawn_guest_diagnostics(
 }
 
 pub(crate) fn finish_guest_command_bounded(
-    mut child: GuestChild,
+    child: GuestChild,
     timeout: Duration,
     timeout_message: &str,
 ) -> Result<String, String> {
+    finish_guest_command_bounded_observed(child, timeout, timeout_message)?.result
+}
+
+pub(crate) struct GuestCommandCompletion {
+    pub(crate) result: Result<String, String>,
+    pub(crate) closure: Result<(), String>,
+}
+
+pub(crate) fn finish_guest_command_bounded_observed(
+    mut child: GuestChild,
+    timeout: Duration,
+    timeout_message: &str,
+) -> Result<GuestCommandCompletion, String> {
     let (operation_deadline, deadline) = guest_command_deadlines(timeout)?;
     let (stdout, stderr) = prepare_guest_pipes(&mut child, deadline)?;
     let stdout_reader = spawn_guest_diagnostics(stdout, READINESS_ATTEMPT_OUTPUT_LIMIT);
@@ -3176,9 +3186,17 @@ pub(crate) fn finish_guest_command_bounded(
             }
             Ok(String::from_utf8_lossy(stdout).trim().to_string())
         });
+    let closure = guest_cleanup_result(
+        cleanup.map(|_| ()),
+        stdout.as_ref().map(|_| ()).map_err(Clone::clone),
+    );
+    let closure = guest_cleanup_result(closure, stderr.as_ref().map(|_| ()).map_err(Clone::clone));
     let result = guest_cleanup_result(result, stdout.map(|_| ()));
     let result = guest_cleanup_result(result, stderr.map(|_| ()));
-    guest_cleanup_result(result, cleanup.map(|_| ()))
+    Ok(GuestCommandCompletion {
+        result: guest_cleanup_result(result, closure.clone()),
+        closure,
+    })
 }
 
 pub(crate) fn finish_guest_readiness_attempt(
@@ -5157,6 +5175,7 @@ pub(crate) async fn prepare_nvidia_installer_bundle(
 }
 
 pub(crate) fn stop_session_process(session: &mut ApplianceSession) -> Result<(), String> {
+    let mut shutdown_closure = Ok(());
     if session
         .child
         .try_wait()
@@ -5164,12 +5183,20 @@ pub(crate) fn stop_session_process(session: &mut ApplianceSession) -> Result<(),
         .is_none()
     {
         let _ = qmp_quit(session.qmp_port);
-        if let Ok(child) = start_guest_command(session, "sudo systemctl poweroff") {
-            let _ = finish_guest_command_bounded(
+        match start_guest_command(session, "sudo systemctl poweroff").and_then(|child| {
+            finish_guest_command_bounded_observed(
                 child,
                 SHUTDOWN_COMMAND_TIMEOUT,
                 "Guest shutdown command timed out.",
-            );
+            )
+        }) {
+            Ok(completion) => {
+                if let Err(error) = completion.result {
+                    eprintln!("Guest poweroff transport: {error}");
+                }
+                shutdown_closure = completion.closure;
+            }
+            Err(error) => shutdown_closure = Err(error),
         }
         for _ in 0..20 {
             if session
@@ -5199,7 +5226,7 @@ pub(crate) fn stop_session_process(session: &mut ApplianceSession) -> Result<(),
         }
     }
     session.watchdog.finish();
-    Ok(())
+    shutdown_closure
 }
 
 pub(crate) fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, String> {
@@ -5210,27 +5237,27 @@ pub(crate) fn stop_session(session: &mut ApplianceSession) -> Result<Option<Path
 pub(crate) fn stop_nvidia_build_session(
     session: &mut NvidiaBuildSession,
 ) -> Result<Option<PathBuf>, String> {
+    let mut shutdown_closure = Ok(());
     if session
         .child
         .try_wait()
         .map_err(|e| format!("Could not inspect the x86 build appliance: {e}"))?
         .is_none()
     {
-        if let Ok(mut command) = ssh_command(session) {
-            command
-                .arg("sudo systemctl poweroff")
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-            configure_guest_command_stdin(&mut command);
-            isolate_process_group(&mut command);
-            if let Ok(mut child) = command.spawn() {
-                close_guest_command_stdin(&mut child);
-                let _ = finish_guest_command_bounded(
-                    child,
-                    SHUTDOWN_COMMAND_TIMEOUT,
-                    "Guest shutdown command timed out.",
-                );
+        match start_guest_command(session, "sudo systemctl poweroff").and_then(|child| {
+            finish_guest_command_bounded_observed(
+                child,
+                SHUTDOWN_COMMAND_TIMEOUT,
+                "Guest shutdown command timed out.",
+            )
+        }) {
+            Ok(completion) => {
+                if let Err(error) = completion.result {
+                    eprintln!("Guest poweroff transport: {error}");
+                }
+                shutdown_closure = completion.closure;
             }
+            Err(error) => shutdown_closure = Err(error),
         }
         for _ in 0..40 {
             if session
@@ -5260,6 +5287,7 @@ pub(crate) fn stop_nvidia_build_session(
         }
     }
     session.watchdog.finish();
+    shutdown_closure?;
     archive_and_remove_nvidia_build_runtime(&session.runtime_dir)
 }
 

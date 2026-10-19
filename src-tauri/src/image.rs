@@ -913,28 +913,63 @@ test "$MOUNTED" = 0"#;
     let output = {
         let mut mutation = start_guest_command(session, MUTATE_COMMAND)?;
         let stderr_drain = start_guest_stderr_drain(&mut mutation)?;
-        let stdout = mutation
-            .stdout
-            .take()
-            .ok_or("Could not capture the mutation guest command output.")?;
+        let stdout = match mutation.stdout.take() {
+            Some(stdout) => stdout,
+            None => {
+                let cleanup = stop_guest_command_group(&mut mutation);
+                let diagnostics = stderr_drain
+                    .join()
+                    .map_err(|_| "Mutation diagnostics reader panicked.".to_string())
+                    .and_then(|result| result)
+                    .map(|_| ());
+                return guest_cleanup_result(
+                    guest_cleanup_result(
+                        Err("Could not capture the mutation guest command output.".into()),
+                        cleanup,
+                    ),
+                    diagnostics,
+                );
+            }
+        };
         let readiness =
             read_guest_command_ready_line(&mut mutation, stdout, Duration::from_secs(30));
         let (stdout, channel_ready) = match readiness {
             Ok(readiness) => readiness,
             Err(error) => {
-                let _ = stderr_drain.join();
-                return Err(format!("Could not establish the mutation channel: {error}"));
+                let diagnostics = stderr_drain
+                    .join()
+                    .map_err(|_| "Mutation diagnostics reader panicked.".to_string())
+                    .and_then(|result| result)
+                    .map(|_| ());
+                return guest_cleanup_result(
+                    Err(format!("Could not establish the mutation channel: {error}")),
+                    diagnostics,
+                );
             }
         };
         if channel_ready.trim() != "OPEMOS_MUTATION_CHANNEL_READY" {
-            stop_guest_command_group(&mut mutation);
-            let _ = stderr_drain.join();
-            return Err("Mutation guest command omitted the channel readiness marker.".into());
+            let cleanup = stop_guest_command_group(&mut mutation);
+            let diagnostics = stderr_drain
+                .join()
+                .map_err(|_| "Mutation diagnostics reader panicked.".to_string())
+                .and_then(|result| result)
+                .map(|_| ());
+            return guest_cleanup_result(
+                guest_cleanup_result(
+                    Err("Mutation guest command omitted the channel readiness marker.".into()),
+                    cleanup,
+                ),
+                diagnostics,
+            );
         }
         if let Err(error) = qmp_remove_user_input(session) {
-            stop_guest_command_group(&mut mutation);
-            let _ = stderr_drain.join();
-            return Err(error);
+            let cleanup = stop_guest_command_group(&mut mutation);
+            let diagnostics = stderr_drain
+                .join()
+                .map_err(|_| "Mutation diagnostics reader panicked.".to_string())
+                .and_then(|result| result)
+                .map(|_| ());
+            return guest_cleanup_result(guest_cleanup_result(Err(error), cleanup), diagnostics);
         }
         finish_guest_command_with_stdout(mutation, stdout, String::new(), stderr_drain)?
     };

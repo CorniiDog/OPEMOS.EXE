@@ -320,6 +320,31 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn guest_shutdown_observation_retains_transport_and_closure_separately() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "printf exact-poweroff-error >&2; exit 7"])
+            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let child = spawn_guest_process(&mut command).unwrap();
+        let completion = finish_guest_command_bounded_observed(child,
+            Duration::from_secs(1), "shutdown timeout").unwrap();
+        eprintln!("actual poweroff observation result={:?} closure={:?}", completion.result, completion.closure);
+        assert!(completion.result.unwrap_err().contains("exact-poweroff-error"));
+        assert!(completion.closure.is_ok());
+
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exit 0"]).stdin(Stdio::null())
+            .stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = spawn_guest_process(&mut command).unwrap();
+        child.wait().unwrap(); // Real external reap/ECHILD, not a status adapter.
+        let completion = finish_guest_command_bounded_observed(child,
+            Duration::from_millis(100), "shutdown timeout").unwrap();
+        eprintln!("actual lost-custody observation result={:?} closure={:?}", completion.result, completion.closure);
+        assert!(completion.result.unwrap_err().contains("inspect"));
+        assert!(completion.closure.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn cold_boot_refused_transport_then_marker_is_not_a_wrong_marker_failure() {
         fn attempt(script: &str) -> Result<String, String> {
             let mut command = Command::new("/bin/sh");

@@ -1,5 +1,16 @@
 # OPEMOS.EXE — Product Checklist
 
+- [ ] Preserve PR199 initial17e40b9c native Linux compiler101/E0308 at the
+  x86 appliance shutdown caller: it still spawned an unbound plain Child.
+  Formatter/static inspection could not typecheck and the first producer scan
+  stopped before this later caller. Reuse start_guest_command there, rather than
+  permit raw Child conversion. Keep poweroff transport failure separate from
+  actual command-tree/pipe closure, so QEMU/watchdog cleanup still completes but
+  unknown SSH closure cannot be accepted. Also retain mutation cancellation and
+  diagnostic-drain secondary errors instead of discarding them. Native tests now
+  capture actual UID/birth/group/job/status evidence with unchanged assertions
+  and deadlines; no old unknown numeric exit or kernel mechanism is invented.
+
 ## Current-Main Windows causal batch
 
 - [ ] Reconcile only PR190 generated-VARS/WHPX, PR196 typed native readiness,

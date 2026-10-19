@@ -140,7 +140,7 @@ def main():
                         "--target", TARGET, "--all-targets", "--all-features", "--", "-D", "warnings"]),
             ("darwin-cache-tests", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked",
                                    "--target", TARGET, "core_generation_cache"]),
-            ("rust-tests", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked", "--target", TARGET])]:
+            ("rust-tests", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked", "--target", TARGET, "--", "--nocapture", "--test-threads=1"])]:
             run(name, args, 1200)
         # Compile and exercise changed cases before acquiring unchanged bulk inputs.
         # Failures retain their evidence; independent platform jobs continue.
