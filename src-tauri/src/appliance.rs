@@ -2776,7 +2776,7 @@ pub(crate) fn finish_guest_readiness_attempt(
     let stderr_reader = read_bounded_guest_stream(stderr);
     let (sender, receiver) = mpsc::sync_channel(1);
     let stdout_reader = thread::spawn(move || {
-        let result = (|| {
+        let result: Result<(String, bool), String> = (|| {
             let mut stdout = BufReader::new(stdout);
             let mut lines = Vec::with_capacity(2);
             let mut captured_bytes = 0;
