@@ -20,7 +20,10 @@ pub(crate) fn plan_host_qemu(
         ("macos", "aarch64", "aarch64") => Ok(("hvf", "virt,accel=hvf", "host")),
         ("macos", "x86_64", "x86_64") => Ok(("hvf", "q35,accel=hvf", "host")),
         ("macos", "aarch64", "x86_64") => Ok(("tcg", "q35,accel=tcg", "max")),
-        ("windows", "x86_64", "x86_64") => Ok(("whpx", "q35,accel=whpx", "max")),
+        // The pinned Windows WHPX/OVMF pair faults in PlatformPei when VMX is
+        // exposed. The same full appliance graph with VMX off reaches Fedora.
+        // Appliances do not need nested VMX; keep WHPX (no software fallback).
+        ("windows", "x86_64", "x86_64") => Ok(("whpx", "q35,accel=whpx", "max,vmx=off")),
         ("linux", "x86_64", "x86_64") => {
             if !enabled {
                 return Err("Experimental Linux testing is disabled. Set OPEMOS_EXPERIMENTAL_LINUX=1 to opt in.".into());
@@ -455,10 +458,14 @@ mod tests {
     }
     #[test]
     fn windows_x86_64_plan_requires_whpx_without_software_fallback() {
-        assert_eq!(
-            plan_host_qemu("windows", "x86_64", "x86_64", false, "", false).unwrap(),
-            ("whpx", "q35,accel=whpx", "max")
-        );
+        // Linux opt-in/mode/KVM inputs must not select software acceleration or
+        // re-expose nested VMX on the Windows appliance path.
+        for (enabled, mode, kvm) in [(false, "", false), (true, "tcg", true)] {
+            assert_eq!(
+                plan_host_qemu("windows", "x86_64", "x86_64", enabled, mode, kvm).unwrap(),
+                ("whpx", "q35,accel=whpx", "max,vmx=off")
+            );
+        }
         for (host, guest) in [("aarch64", "x86_64"), ("x86_64", "aarch64")] {
             assert!(plan_host_qemu("windows", host, guest, false, "", false).is_err());
         }

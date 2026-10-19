@@ -2,6 +2,24 @@
 
 ## Windows read-only package firmware handoff
 
+- [ ] Same complete Windows launch graph, subsequent actual OMEN r3/r4:
+  pinned WHPX/max reproduces PlatformPei #GP; WHPX/max,vmx=off passes firmware
+  into Fedora with unchanged firmware/Fedora/original pins. Windows plan now
+  keeps WHPX but disables unneeded nested VMX exposure, shared by image and
+  x86 build-worker producers; Linux/macOS plans and deadlines stay unchanged.
+  Plan regression remains selected by Windows `windows_` and full Rust CI.
+  r4 receipt SHA9488b10aca075c3a52b49b178cb6dc9876ed78f7bb58f4bf6eca10ec9eb76f5e
+  is diagnostic, not package acceptance: Fedora mounts its correct root UUID,
+  then main systemd times out on device units and enters emergency mode.
+  Exact in-guest udev/device-state inspection requested once from existing idle
+  Resolver under r5 before selecting any storage or timing correction. No
+  timeout patch, new runtime/trust input, original mutation or automatic TCG
+  fallback. Prior PR190 ten checks/Core source-only approval apply only to old
+  head31af2835; changed scope/head requires fresh CI and exact Core review.
+  Coherent changed-package graphical normal/fault Build/health/closure and
+  protected source merge remain held. Necessary fast-forward topic push to
+  canonical origin enables remote-only compiler/package checks, not publication.
+
 - [ ] Root plan f978b8e1: actual PR189 Windows D:-input/C:-output GUI advanced
   past storage admission, then QEMU denied write access to generated uefi-vars.fd.
   Read-only-media template had Windows R attribute; fs::copy propagated it.
