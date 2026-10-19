@@ -743,7 +743,7 @@ pub(crate) fn transient_readiness_error(error: &str) -> bool {
         ]
         .iter()
         .any(|message| lower.contains(message)))
-        || (error.contains("exit status: 1:")
+        || ((error.contains("exit status: 1:") || error.contains("status 1:"))
             && error.contains("/etc/steamos-builder-ready")
             && error.contains("No such file or directory"))
 }
