@@ -886,41 +886,38 @@ pub(crate) fn verify_nvidia_guest_device_timeout(
     validate_nvidia_guest_device_timeout_report(&run_guest_command(session, &command)?)
 }
 
-fn macos_packaged_cache_root() -> Option<PathBuf> {
-    if !cfg!(target_os = "macos") || !bundled_runtime_required() {
-        return None;
+fn macos_packaged_cache_root() -> Result<Option<PathBuf>, String> {
+    #[cfg(target_os = "macos")]
+    if bundled_runtime_required() {
+        return portable_state::macos_owned_cache_root().map(Some);
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .unwrap_or_else(|| PathBuf::from("/opemos-invalid-macos-home"));
-    Some(home.join("Library/Caches/dev.cornidog.steamos-nvidia-image-builder"))
+    Ok(None)
 }
 
-pub(crate) fn runtime_root() -> PathBuf {
-    if let Some(cache) = macos_packaged_cache_root() {
-        return cache.join("sessions/native");
+pub(crate) fn runtime_root() -> Result<PathBuf, String> {
+    if let Some(cache) = macos_packaged_cache_root()? {
+        return Ok(cache.join("sessions/native"));
     }
     if let Some(root) = linux_appimage_root() {
-        return root.join("sessions/native");
+        return Ok(root.join("sessions/native"));
     }
     if let Some(cache) = portable_cache_root() {
-        return cache.join("appliance-runtime");
+        return Ok(cache.join("appliance-runtime"));
     }
-    appliance_dir().join("runtime")
+    Ok(appliance_dir().join("runtime"))
 }
 
-pub(crate) fn nvidia_build_runtime_root() -> PathBuf {
-    if let Some(cache) = macos_packaged_cache_root() {
-        return cache.join("sessions/x86_64");
+pub(crate) fn nvidia_build_runtime_root() -> Result<PathBuf, String> {
+    if let Some(cache) = macos_packaged_cache_root()? {
+        return Ok(cache.join("sessions/x86_64"));
     }
     if let Some(root) = linux_appimage_root() {
-        return root.join("sessions/x86_64");
+        return Ok(root.join("sessions/x86_64"));
     }
     if let Some(cache) = portable_cache_root() {
-        return cache.join("appliance-runtime-x86_64");
+        return Ok(cache.join("appliance-runtime-x86_64"));
     }
-    appliance_dir().join("runtime-x86_64-managed")
+    Ok(appliance_dir().join("runtime-x86_64-managed"))
 }
 
 pub(crate) fn nvidia_build_qemu_spec(
@@ -970,7 +967,7 @@ pub(crate) fn archive_and_remove_runtime(runtime_dir: &Path) -> Result<Option<Pa
     let log_source = runtime_dir.join("qemu.log");
     let resources_source = runtime_dir.join("resources.json");
     let archive = if log_source.is_file() || resources_source.is_file() {
-        let archive_dir = runtime_root().join("logs");
+        let archive_dir = runtime_root()?.join("logs");
         fs::create_dir_all(&archive_dir)
             .map_err(|e| format!("Could not create the appliance log archive: {e}"))?;
         let session_name = runtime_dir
@@ -1026,7 +1023,7 @@ pub(crate) fn archive_and_remove_nvidia_build_runtime(
         .iter()
         .any(|(_, source)| source.is_file())
     {
-        let archive_dir = nvidia_build_runtime_root().join("logs");
+        let archive_dir = nvidia_build_runtime_root()?.join("logs");
         fs::create_dir_all(&archive_dir)
             .map_err(|e| format!("Could not create the x86 build log archive: {e}"))?;
         let session_name = runtime_dir
@@ -1063,7 +1060,7 @@ pub(crate) fn archive_and_remove_nvidia_build_runtime(
 }
 
 pub(crate) fn cleanup_abandoned_runtimes() -> Result<(), String> {
-    let root = runtime_root();
+    let root = runtime_root()?;
     if !root.is_dir() {
         return Ok(());
     }
@@ -1094,7 +1091,7 @@ pub(crate) fn cleanup_abandoned_runtimes() -> Result<(), String> {
 }
 
 pub(crate) fn cleanup_abandoned_nvidia_build_runtimes() -> Result<(), String> {
-    let root = nvidia_build_runtime_root();
+    let root = nvidia_build_runtime_root()?;
     if !root.is_dir() {
         return Ok(());
     }
@@ -1858,7 +1855,7 @@ pub(crate) fn prepare_session_with_output(
         .duration_since(UNIX_EPOCH)
         .map_err(|e| format!("System clock error: {e}"))?
         .as_millis();
-    let runtime_dir = runtime_root().join(format!("session-{timestamp}-{}", std::process::id()));
+    let runtime_dir = runtime_root()?.join(format!("session-{timestamp}-{}", std::process::id()));
     let cloud_init_dir = runtime_dir.join("cloud-init");
     fs::create_dir_all(&cloud_init_dir)
         .map_err(|e| format!("Could not create runtime directory: {e}"))?;
@@ -2255,7 +2252,7 @@ pub(crate) fn prepare_nvidia_build_session(
         .map_err(|e| format!("System clock error: {e}"))?
         .as_millis();
     let runtime_dir =
-        nvidia_build_runtime_root().join(format!("session-{timestamp}-{}", std::process::id()));
+        nvidia_build_runtime_root()?.join(format!("session-{timestamp}-{}", std::process::id()));
     let cloud_init_dir = runtime_dir.join("cloud-init");
     fs::create_dir_all(&cloud_init_dir)
         .map_err(|e| format!("Could not create the x86 build runtime: {e}"))?;

@@ -53,6 +53,9 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || !inputs.retained-startup-diagnostic
     runs-on: macos-15
     timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
     env:
       OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
       OPEMOS_CORE_EXPECTED_COMMIT: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00
@@ -80,7 +83,13 @@ jobs:
           toolchain: 1.98.1
           targets: aarch64-apple-darwin
           components: clippy, rustfmt
+      - name: Read exact previously measured runtime and companion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download 39294846215 --repo CorniiDog/OPEMOS.EXE --name macos-arm64-7b8bf0eea38d7ab548bf4746707d8ab38ade05bb-1 --dir "$RUNNER_TEMP/retained-7b8"
       - name: Native build and actual graphical transaction
+        env:
+          OPEMOS_RETAINED_MAC_APP_ARCHIVE: ${{ runner.temp }}/retained-7b8/SteamOS-NVIDIA-Builder-arm64.app.zip
         run: python3 scripts/check_macos_arm64_ci.py
       - name: Preserve exact app, failures and GUI evidence
         if: always()

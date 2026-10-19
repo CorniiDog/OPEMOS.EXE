@@ -110,34 +110,6 @@ def main():
                 ["git", "remote", "get-url", "origin"], core).rstrip("/") != (
                 "https://github.com/CorniiDog/open-gpu-kernel-modules-steamos-support"):
             raise RuntimeError("canonical immutable Core source mismatch")
-        if fullstack:
-            lock = ROOT / "runtime/macos-arm64.sources.json"
-            # Git checkout binds source bytes; producer validates closed exact
-            # provider identities and every downloaded bottle before extraction.
-            if not lock.is_file() or lock.is_symlink():
-                raise RuntimeError("Darwin runtime source lock missing")
-            receipt["runtimeSourceLockSHA256"] = digest(lock)
-            if not run("darwin-producer-boundaries", ["python3", "tests/test_macos_runtime_producer.py"], 120):
-                raise RuntimeError("Actual Darwin producer boundary tests failed")
-            if not run("fullstack-input-producer", ["python3", "scripts/prepare_macos_fullstack.py", str(OUT)], 3600):
-                raise RuntimeError("Exact fullstack input producer failed; preserve evidence, no chooser-only fallback")
-            from prepare_macos_fullstack import consume_input_receipt
-            inputs, input_root = consume_input_receipt(OUT / "macos-input-producer.json", ROOT, recovery)
-            runtime, appliance = input_root / "runtime", input_root / "appliance"
-            receipt["inputCustody"] = inputs
-            from stage_runtime_bundle import validate_runtime
-            from stage_macos_app import verify_companion
-            _, _, receipt["runtimeManifestSHA256"] = validate_runtime(runtime, "macos")
-            verify_companion(appliance)
-            receipt["productAcceptance"]["imageBuild"] = "not_run: exact inputs admitted; graphical transaction pending"
-            if recovery.is_symlink() or not recovery.is_file() or recovery.stat().st_size != RECOVERY_BYTES or digest(recovery) != RECOVERY_SHA256:
-                raise RuntimeError("Exact admitted Documents recovery image is unavailable")
-            # Full image/output storage accounting is also rechecked by the
-            # production consumer; do not replace its free-space guards.
-            if shutil.disk_usage(ROOT).free < 2 * RECOVERY_BYTES + 4 * 1024**3 + 64 * 1024**2:
-                raise RuntimeError("Insufficient actual free space for full raw-image transaction")
-            if not run("companion-filesystem-regressions", ["python3", "tests/test_macos_companion_staging.py"], 60):
-                raise RuntimeError("Mac companion filesystem regression failed")
         receipt.update(exe_source_commit=head, core_fixture_commit=CORE,
                        locks={name: digest(ROOT / name) for name in LOCKS},
                        freeBytesBefore=shutil.disk_usage(ROOT).free)
@@ -170,6 +142,39 @@ def main():
                                    "--target", TARGET, "core_generation_cache"]),
             ("rust-tests", ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml", "--locked", "--target", TARGET])]:
             run(name, args, 1200)
+        # Compile and exercise changed cases before acquiring unchanged bulk inputs.
+        # Failures retain their evidence; independent platform jobs continue.
+        prerequisite_names = ["frontend", "docs", "hygiene", "format", "clippy", "darwin-cache-tests", "rust-tests"]
+        if not helper_built or any(receipt["stages"][name]["state"] != "passed" for name in prerequisite_names):
+            raise RuntimeError("Native source/changed-case prerequisite failed; no bulk producer replay")
+        if fullstack:
+            lock = ROOT / "runtime/macos-arm64.sources.json"
+            # Git checkout binds source bytes; producer validates closed exact
+            # provider identities and every downloaded bottle before extraction.
+            if not lock.is_file() or lock.is_symlink():
+                raise RuntimeError("Darwin runtime source lock missing")
+            receipt["runtimeSourceLockSHA256"] = digest(lock)
+            if not run("darwin-producer-boundaries", ["python3", "tests/test_macos_runtime_producer.py"], 120):
+                raise RuntimeError("Actual Darwin producer boundary tests failed")
+            if not run("fullstack-input-producer", ["python3", "scripts/prepare_macos_fullstack.py", str(OUT)], 3600):
+                raise RuntimeError("Exact fullstack input producer failed; preserve evidence, no chooser-only fallback")
+            from prepare_macos_fullstack import consume_input_receipt
+            inputs, input_root = consume_input_receipt(OUT / "macos-input-producer.json", ROOT, recovery)
+            runtime, appliance = input_root / "runtime", input_root / "appliance"
+            receipt["inputCustody"] = inputs
+            from stage_runtime_bundle import validate_runtime
+            from stage_macos_app import verify_companion
+            _, _, receipt["runtimeManifestSHA256"] = validate_runtime(runtime, "macos")
+            verify_companion(appliance)
+            receipt["productAcceptance"]["imageBuild"] = "not_run: exact inputs admitted; graphical transaction pending"
+            if recovery.is_symlink() or not recovery.is_file() or recovery.stat().st_size != RECOVERY_BYTES or digest(recovery) != RECOVERY_SHA256:
+                raise RuntimeError("Exact admitted Documents recovery image is unavailable")
+            # Full image/output storage accounting is also rechecked by the
+            # production consumer; do not replace its free-space guards.
+            if shutil.disk_usage(ROOT).free < 2 * RECOVERY_BYTES + 4 * 1024**3 + 64 * 1024**2:
+                raise RuntimeError("Insufficient actual free space for full raw-image transaction")
+            if not run("companion-filesystem-regressions", ["python3", "tests/test_macos_companion_staging.py"], 60):
+                raise RuntimeError("Mac companion filesystem regression failed")
         build_command = (["bash", "bundle_macos.sh", "--runtime-root", str(runtime),
                           "--appliance-root", str(appliance), "--diagnostic-x86-tcg"] if fullstack
                          else ["npm", "run", "build:app", "--", "--target", TARGET])

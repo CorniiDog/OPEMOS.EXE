@@ -336,20 +336,21 @@ fn prepare_at(executable: &Path) -> Result<(PathBuf, PathBuf), String> {
 }
 
 #[cfg(any(target_os = "macos", all(test, unix)))]
-fn macos_state_directories(home: &Path) -> Result<Vec<(PathBuf, File)>, String> {
+fn macos_state_directories(home: &Path, cache: bool) -> Result<Vec<(PathBuf, File)>, String> {
     use std::ffi::CString;
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
-    fn owned_directory(file: &File, private: bool) -> Result<(), String> {
+    fn owned_directory(file: &File) -> Result<(), String> {
         let metadata = file.metadata().map_err(|e| e.to_string())?;
         // Other UIDs must not be able to redirect these mutable-state parents.
         if !metadata.is_dir()
             || metadata.uid() != unsafe { libc::geteuid() }
             || metadata.mode() & 0o022 != 0
-            || (private && metadata.mode() & 0o077 != 0)
         {
-            return Err("Mac state ancestors must be real, owned, non-writable by other UIDs; state must be private.".into());
+            return Err(
+                "Mac state ancestors must be real, owned and non-writable by other UIDs.".into(),
+            );
         }
         Ok(())
     }
@@ -360,11 +361,15 @@ fn macos_state_directories(home: &Path) -> Result<Vec<(PathBuf, File)>, String> 
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(&canonical)
         .map_err(|e| format!("Could not bind Mac home: {e}"))?;
-    owned_directory(&home_file, false)?;
+    owned_directory(&home_file)?;
     let mut directories = vec![(canonical, home_file)];
     for name in [
         "Library",
-        "Application Support",
+        if cache {
+            "Caches"
+        } else {
+            "Application Support"
+        },
         "dev.cornidog.steamos-nvidia-image-builder",
     ] {
         let (parent_path, parent) = directories.last().unwrap();
@@ -390,7 +395,7 @@ fn macos_state_directories(home: &Path) -> Result<Vec<(PathBuf, File)>, String> 
             ));
         }
         let child = unsafe { File::from_raw_fd(fd) };
-        owned_directory(&child, name == "dev.cornidog.steamos-nvidia-image-builder")?;
+        owned_directory(&child)?;
         let child_path = parent_path.join(name);
         directories.push((child_path, child));
     }
@@ -401,7 +406,7 @@ fn macos_state_directories(home: &Path) -> Result<Vec<(PathBuf, File)>, String> 
 #[cfg(any(target_os = "macos", all(test, unix)))]
 fn verify_macos_state_directories(directories: &[(PathBuf, File)]) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
-    for (index, (path, file)) in directories.iter().enumerate() {
+    for (path, file) in directories {
         let observed = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
         let bound = file.metadata().map_err(|e| e.to_string())?;
         if !observed.is_dir()
@@ -410,7 +415,6 @@ fn verify_macos_state_directories(directories: &[(PathBuf, File)]) -> Result<(),
             || observed.ino() != bound.ino()
             || observed.uid() != unsafe { libc::geteuid() }
             || observed.mode() & 0o022 != 0
-            || (index + 1 == directories.len() && observed.mode() & 0o077 != 0)
         {
             return Err("Mac state ancestor identity changed while held.".into());
         }
@@ -428,11 +432,23 @@ fn prepare_macos_at(executable: &Path, home: &Path) -> Result<(PathBuf, PathBuf)
     let runtime = runtime_bundle::packaged_resource_path(executable, "macos", "runtime")?;
     expected_manifest_for_platform(executable, &runtime, "macos")?;
     // Keep each no-follow, current-UID ancestor open through preparation.
-    let directories = macos_state_directories(home)?;
+    let directories = macos_state_directories(home, false)?;
     let state = directories.last().unwrap().0.clone();
     let result = prepare_layout(executable, &runtime, state, "macos");
     verify_macos_state_directories(&directories)?;
     result
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_owned_cache_root() -> Result<PathBuf, String> {
+    let home = std::env::var_os("HOME").ok_or("Mac home is unavailable.")?;
+    let home = Path::new(&home);
+    if !home.is_absolute() || !real_directory(home) {
+        return Err("Mac session cache requires a real absolute HOME.".into());
+    }
+    let directories = macos_state_directories(home, true)?;
+    verify_macos_state_directories(&directories)?;
+    Ok(directories.last().unwrap().0.clone())
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -516,6 +532,38 @@ mod tests {
         ));
         assert!(!macos.join("state").exists());
         assert!(!macos.join("runtime").exists());
+        // Existing own 0755 application state is safe to reuse, never chmod or
+        // retire user data merely to adopt the new create-only 0700 default.
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&state, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        prepare_macos_at(&executable, &home).unwrap();
+        let cache_directories = macos_state_directories(&home, true).unwrap();
+        verify_macos_state_directories(&cache_directories).unwrap();
+        let legacy_cache = cache_directories.last().unwrap().0.clone();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&legacy_cache, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        fs::write(legacy_cache.join("kept"), b"existing-owned-cache").unwrap();
+        macos_state_directories(&home, true).unwrap();
+        assert_eq!(
+            fs::read(legacy_cache.join("kept")).unwrap(),
+            b"existing-owned-cache"
+        );
+        {
+            use std::os::unix::fs::MetadataExt;
+            // Read-only foreign-UID operand, available on ordinary nonroot M1:
+            // the policy must refuse at the opened root before any child write.
+            if fs::metadata("/").unwrap().uid() != unsafe { libc::geteuid() } {
+                let error = macos_state_directories(Path::new("/"), false).unwrap_err();
+                assert!(
+                    error.contains("owned"),
+                    "wrong foreign-UID refusal: {error}"
+                );
+            }
+        }
         assert_eq!(fs::read(&provenance).unwrap(), bytes);
         // Folder names alone cannot select Mac provenance on Windows/Linux.
         assert!(
@@ -547,6 +595,11 @@ mod tests {
             assert!(prepare_macos_at(&executable, &fault_home).is_err());
             assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
         }
+        let cache_fault_home = root.join("cache-fault-home");
+        fs::create_dir_all(cache_fault_home.join("Library")).unwrap();
+        std::os::unix::fs::symlink(&outside, cache_fault_home.join("Library/Caches")).unwrap();
+        assert!(macos_state_directories(&cache_fault_home, true).is_err());
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
         let insecure_home = root.join("insecure-home");
         fs::create_dir_all(insecure_home.join("Library")).unwrap();
         {

@@ -30,6 +30,12 @@ func ownedBirth(_ birth: Date?, since start: Date, observed: Date) -> Bool {
     guard let birth = birth else { return false }
     return birth >= start && birth <= observed
 }
+func nativeFilePath(_ file: URL?) -> URL? {
+    guard let file = file, file.isFileURL,
+          let path = (file as NSURL).filePathURL,
+          FileManager.default.fileExists(atPath: path.path) else { return nil }
+    return path.standardizedFileURL
+}
 if CommandLine.arguments == [CommandLine.arguments[0], "--birth-regression"] {
     let start = Date(timeIntervalSince1970: 1_800_000_000)
     for window in [120.0, 480.0] {
@@ -38,6 +44,22 @@ if CommandLine.arguments == [CommandLine.arguments[0], "--birth-regression"] {
         precondition(!ownedBirth(start.addingTimeInterval(-1), since: start, observed: start.addingTimeInterval(window)))
         precondition(!ownedBirth(start.addingTimeInterval(window + 1), since: start, observed: start.addingTimeInterval(window)))
     }
+    do {
+        let directory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("opemos-file-reference-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("actual-file.img")
+        try Data("actual file-reference boundary".utf8).write(to: file, options: .withoutOverwriting)
+        guard let reference = (file as NSURL).fileReferenceURL() else {
+            throw Refusal(message: "native file-reference creation unavailable")
+        }
+        try require(nativeFilePath(reference) == file.standardizedFileURL,
+                    "file-reference path mismatch expected=\(file.path) observed=\(String(describing: nativeFilePath(reference)))")
+        precondition(nativeFilePath(URL(string: "https://example.invalid/")) == nil)
+        try FileManager.default.removeItem(at: file)
+        precondition(nativeFilePath(reference) == nil)
+        print("Actual same-UID file-reference conversion/missing/nonfile cases passed")
+    } catch { fatalError("Actual native file-reference boundary failed: \(error)") }
     print("Owned birth boundaries passed; model only, actual app custody/closure still required")
     exit(0)
 }
@@ -340,8 +362,14 @@ do {
         while fileCell == nil && Date() < selectionEnd {
             fileCell = try find(root, unique: true) { element in
                 let file = value(element, kAXURLAttribute) as? URL
-                return ["AXCell", "AXRow", "AXImage"].contains(text(element, kAXRoleAttribute)) &&
-                    file?.standardizedFileURL == image
+                let resolved = nativeFilePath(file)
+                let matches = ["AXCell", "AXRow", "AXImage", "AXTextField"].contains(text(element, kAXRoleAttribute)) && resolved == image
+                if matches {
+                    record("chooser-exact-file-identity", ["observedURL": file?.absoluteString ?? "",
+                        "resolvedPath": resolved?.path ?? "", "expectedPath": image.path,
+                        "role": text(element, kAXRoleAttribute)])
+                }
+                return matches
             }
             if fileCell == nil { try guiWaitTick() }
         }

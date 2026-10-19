@@ -10,12 +10,14 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 archive = Path(sys.argv[1])
 root = Path(__file__).resolve().parents[1]
 out = root / 'build/retained-startup-diagnostic'
 out.mkdir(parents=True, exist_ok=False)
 receipt = {'acceptance': False, 'stages': {}, 'noBuild': True, 'noProducerReplay': True}
+diagnostic_deadline = time.monotonic() + 25 * 60
 def save():
     (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
 def digest(path):
@@ -27,6 +29,13 @@ def digest(path):
 def run(name, command, timeout):
     row = {'command': command}
     receipt['stages'][name] = row
+    remaining = diagnostic_deadline - time.monotonic() - 30
+    if remaining <= 0:
+        row['notStarted'] = 'aggregate diagnostic execution budget exhausted'
+        save()
+        raise RuntimeError(row['notStarted'])
+    timeout = min(timeout, remaining)
+    row['outerTimeoutSeconds'] = timeout
     with (out / (name + '.log')).open('wb') as log:
         child = subprocess.Popen(command, cwd=root, stdout=log, stderr=subprocess.STDOUT,
                                  start_new_session=True)

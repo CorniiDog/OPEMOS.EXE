@@ -8,11 +8,59 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import shutil
+import subprocess
 import urllib.request
 
 from acquire_appliance_windows import acquire, load_lock, stage
-from acquire_runtime_macos import construct
-from stage_runtime_bundle import digest
+from acquire_runtime_macos import construct, load_lock as load_runtime_lock, probe_runtime, verify_firmware_pair
+from stage_runtime_bundle import digest, validate_runtime
+
+RETAINED_ARCHIVE_BYTES = 1102474395
+RETAINED_ARCHIVE_SHA256 = "ee2d1300f4277ae32e7ea15bab1c72525a79fd63304fc6c096be8f551e1c74e4"
+RETAINED_MANIFEST_SHA256 = "eab631c9b4e277d9050c1d28fe448ac3c002be30fba025f56bc3beb274d7e9d5"
+
+
+def reuse_retained(root, output, evidence, archive):
+    """Only the previously measured 7b8 derivative, never an arbitrary manifest."""
+    from stage_macos_app import verify_companion
+    if (archive.is_symlink() or not archive.is_file()
+            or archive.stat().st_size != RETAINED_ARCHIVE_BYTES
+            or digest(archive) != RETAINED_ARCHIVE_SHA256):
+        raise ValueError("Retained complete runtime archive identity mismatch")
+    scratch = Path(tempfile.mkdtemp(prefix="opemos-retained-runtime-")).resolve()
+    subprocess.run(["ditto", "-x", "-k", str(archive), str(scratch)], check=True, timeout=120)
+    app = scratch / "SteamOS NVIDIA Builder.app"
+    resources = app / "Contents/Resources"
+    runtime = resources / "runtime"
+    _, _, manifest_hash = validate_runtime(runtime, "macos")
+    if (manifest_hash != RETAINED_MANIFEST_SHA256
+            or json.loads((runtime / "source-provenance.json").read_bytes())
+                != load_runtime_lock(root / "runtime/macos-arm64.sources.json")
+            or digest(runtime / "licenses/OPEMOS-LICENSE") != digest(root / "LICENSE")
+            or digest(runtime / "licenses/source-notices.json")
+                != digest(root / "runtime/macos-licenses/source-notices.json")):
+        raise ValueError("Retained runtime/source/license contract changed")
+    verify_companion(resources / "appliance")
+    subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True, timeout=60)
+    shutil.copytree(runtime, output / "runtime", symlinks=False)
+    shutil.copytree(resources / "appliance", output / "appliance", symlinks=False)
+    verify_firmware_pair(output / "runtime/share/qemu")
+    probe_runtime(output / "runtime")
+    if validate_runtime(output / "runtime", "macos")[2] != RETAINED_MANIFEST_SHA256:
+        raise ValueError("Reused runtime manifest changed during native probes")
+    verify_companion(output / "appliance")
+    if digest(archive) != RETAINED_ARCHIVE_SHA256:
+        raise ValueError("Retained original archive changed")
+    (evidence / "darwin-runtime-producer.json").write_text(json.dumps({
+        "mode": "reuse-exact-previously-measured-derivative", "complete": True,
+        "originalProducerHead": "7b8bf0eea38d7ab548bf4746707d8ab38ade05bb",
+        "archiveSHA256": RETAINED_ARCHIVE_SHA256, "runtimeManifestSHA256": manifest_hash,
+        "sourceLockSHA256": digest(root / "runtime/macos-arm64.sources.json"),
+        "bottleAcquisitionOrRelocationExecuted": False, "currentNativeProbesPassed": True,
+    }, indent=2) + "\n")
+    # Only this producer's exact fresh extraction, never the retained archive.
+    shutil.rmtree(scratch)
 
 RECOVERY_URL = "https://steamdeck-images.steamos.cloud/recovery/steamdeck-oobe-repair-20260707.10-3.8.14.img.bz2"
 RECOVERY_BYTES = 8120172544
@@ -60,10 +108,14 @@ def prepare(root, evidence):
     # Both exact firmware pins are already present in the locked Homebrew QEMU
     # bottle. The producer verifies them after acquisition; no Actions artifact
     # download, mutable lookup or firmware fallback is necessary.
-    construct(root / "runtime/macos-arm64.sources.json", output / "runtime", evidence)
     lock = load_lock(root / "runtime/windows-fedora-appliance.json")
-    image = acquire(lock, output / "fedora-cache", deadline_seconds=1800)
-    stage(lock, image, root / "builder/appliance/cloud-init", output / "appliance")
+    retained = os.environ.get("OPEMOS_RETAINED_MAC_APP_ARCHIVE")
+    if retained:
+        reuse_retained(root, output, evidence, Path(retained))
+    else:
+        construct(root / "runtime/macos-arm64.sources.json", output / "runtime", evidence)
+        image = acquire(lock, output / "fedora-cache", deadline_seconds=1800)
+        stage(lock, image, root / "builder/appliance/cloud-init", output / "appliance")
     documents = Path.home() / "Documents"
     documents.mkdir(exist_ok=True)
     recovery = documents / "opemos-pinned-recovery.img"

@@ -15,10 +15,35 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from acquire_runtime_macos import extract, load_lock, relocate, relocated_relative, close_curated_links, is_macho_code, verify_firmware_pair
 from stage_macos_app import FIRMWARE, FEDORA
-from prepare_macos_fullstack import consume_input_receipt, RECOVERY_URL, RECOVERY_BYTES, RECOVERY_SHA256
+from prepare_macos_fullstack import consume_input_receipt, RECOVERY_URL, RECOVERY_BYTES, RECOVERY_SHA256, reuse_retained, RETAINED_ARCHIVE_BYTES
 
 
 class DarwinProducer(unittest.TestCase):
+    def test_retained_derivative_refuses_size_hash_directory_and_symlink(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "archive.zip"
+            output, evidence = root / "output", root / "evidence"
+            archive.write_bytes(b"not the accepted archive")
+            with self.assertRaisesRegex(ValueError, "archive identity mismatch"):
+                reuse_retained(ROOT, output, evidence, archive)
+            # Same logical size, sparse wrong bytes: exercise the hash branch
+            # without allocating another full archive or overriding the producer.
+            with archive.open("wb") as stream:
+                stream.truncate(RETAINED_ARCHIVE_BYTES)
+            with self.assertRaisesRegex(ValueError, "archive identity mismatch"):
+                reuse_retained(ROOT, output, evidence, archive)
+            link = root / "link.zip"
+            link.symlink_to(archive)
+            with self.assertRaisesRegex(ValueError, "archive identity mismatch"):
+                reuse_retained(ROOT, output, evidence, link)
+            directory = root / "directory.zip"
+            directory.mkdir()
+            with self.assertRaisesRegex(ValueError, "archive identity mismatch"):
+                reuse_retained(ROOT, output, evidence, directory)
+            self.assertFalse(output.exists())
+            self.assertFalse(evidence.exists())
+
     def test_actual_private_directory_custody_and_receipt_faults(self):
         # Metadata custody only; production subsequently verifies all real
         # runtime/companion/recovery bytes. No fake payload acceptance.

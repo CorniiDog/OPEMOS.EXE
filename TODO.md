@@ -33,7 +33,8 @@
   Same owning batch now opens every ancestor no-follow relative to held parent
   descriptors, checks actual current UID/non-writable-by-other-UID permissions,
   creates missing directories0700 and rechecks dev/inode/type before/after
-  population. State leaf must remain private. Actual symlink-at-both-parents
+  population. New directories0700, existing owned non-world-writable0755 state
+  is reused without chmod/retirement. Actual symlink-at-both-parents
   and world-writable-parent regressions authored, outside target stays empty;
   no foreign-UID or adversarial same-UID race proof claimed. New in-app startup
   provenance hash and whole native seal are independent post-attempt finalizers.
@@ -58,6 +59,34 @@
   trace. This is causal investigation, not fullstack acceptance or a version/
   timeout workaround. Remote exact diagnostic source push is necessary; final
   owning source fix and complete normal transaction follow actual findings.
+  Finite retained diagnostic39302508827/head564fb449 collected actual metadata:
+  file row is AXTextField with file-reference CFURL file:///.file/id=..., not
+  a conventional path URL. Native actual chooser/app normal pointer close PASS;
+  NO Build/tiny labelled probe only. Selector now resolves existing file refs
+  through NSURL.filePathURL and includes observed AXTextField role, retaining
+  exact expected path/uniqueness/PID/hit guards. Real created/missing/non-file
+  native file-reference case added to the pre-GUI helper regression. Apple
+  primary contract: developer.apple.com/documentation/foundation/nsurl/filepathurl.
+  Focused reservation race passed0.29s, ready/pipe22.4ms, real state-path case
+  PASS; full actual guest fault/test PASS169.7s with hashes and QEMU/group closure.
+  Original full-suite timing and mutation failures remain UNKNOWN-cause, not
+  declared fixed; traces remain, deadlines unchanged. Compile/changed-case gates
+  now precede bulk acquisition so a new prerequisite failure cannot replay the
+  expensive producer. Same path guard now covers both native/x86 session caches
+  via Result propagation, no invalid fallback root; real Caches redirect and
+  available read-only foreign-UID operand cases authored for next exact head.
+  All82c source/Windows passes and7b8 failures preserved; final exact CI/normal
+  Finder Build/health/nextstage/fault/finalizers still NOT PASSED.
+  Next normal job consumes only the exact retained7b8 archiveee2d1300 and
+  post-relocation manifest eab631c9 after whole-archive, closed inventory,
+  current source-lock/license, firmware/companion and native loader/Python probe
+  checks. Old derivative provenance/version stays7b8; NO43-bottle acquisition
+  or relocation is relabelled current. Fresh private producer custody and
+  current .app staging/consumer still run; only the unstored original Valve
+  chooser image is reacquired and fully verified. Corrupt-size/same-size-hash/
+  symlink/directory archive faults authored; no arbitrary manifest or fallback.
+  GitHub token is scoped only to exact existing artifact acquisition step and
+  is not forwarded to the app/probes. Normal90min/GUI480s/guest deadlines stay.
 
   Consumed full exact Core1f62 disposition f495f488 (9472B): both blocking
   DARWIN-GUI-BIRTH-480 and DARWIN-MANUAL-MODE are included in this correction.

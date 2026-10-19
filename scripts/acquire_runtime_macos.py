@@ -354,6 +354,19 @@ def verify_firmware_pair(root):
     return rows
 
 
+def probe_runtime(runtime):
+    _, raw, _ = validate_runtime(runtime, "macos")
+    commands = json.loads(raw)["commands"]
+    # Real native loader invocation, no provider PATH fallback.
+    for command in ["qemu-img", "qemu-system-aarch64", "qemu-system-x86_64", "python3", "git", "gh", "bash", "tar"]:
+        run([runtime / commands[command], "--version"])
+    run([runtime / commands["python3"], "-c",
+         "import sys,json,ssl,sqlite3,ctypes,bz2,lzma; "
+         "assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0; "
+         "print(json.dumps({'prefix':sys.prefix,'path':sys.path,'openssl':ssl.OPENSSL_VERSION}))"])
+    validate_runtime(runtime, "macos")
+
+
 def construct(lock_path, output, evidence, firmware=None):
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("Native Apple Silicon required")
@@ -490,14 +503,7 @@ def construct(lock_path, output, evidence, firmware=None):
     manifest = {"schema_version": 1, "platform": "macos", "commands": commands, "files": files, "components": components}
     (runtime / "runtime-manifest.json").write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n")
     validate_runtime(runtime, "macos")
-    # Real native loader invocation, no provider PATH fallback.
-    for command in ["qemu-img", "qemu-system-aarch64", "qemu-system-x86_64", "python3", "git", "gh", "bash", "tar"]:
-        run([runtime / commands[command], "--version"])
-    run([runtime / commands["python3"], "-c",
-         "import sys,json,ssl,sqlite3,ctypes,bz2,lzma; "
-         "assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0; "
-         "print(json.dumps({'prefix':sys.prefix,'path':sys.path,'openssl':ssl.OPENSSL_VERSION}))"])
-    validate_runtime(runtime, "macos")
+    probe_runtime(runtime)
     provenance.update(complete=True, runtimeManifestSHA256=digest(runtime / "runtime-manifest.json"))
     save()
     if output.exists():
