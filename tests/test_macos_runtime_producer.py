@@ -1,6 +1,5 @@
 """Actual filesystem/archive and native loader boundary tests, on hosted M1."""
 import importlib.util
-import http.server
 import io
 import json
 from pathlib import Path
@@ -9,16 +8,34 @@ import struct
 import sys
 import tarfile
 import tempfile
-import threading
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from acquire_runtime_macos import extract, load_lock, relocate, relocated_relative, close_curated_links, is_macho_code
-from prepare_macos_fullstack import ArtifactRanges
+from acquire_runtime_macos import extract, load_lock, relocate, relocated_relative, close_curated_links, is_macho_code, verify_firmware_pair
+from stage_macos_app import FIRMWARE
 
 
 class DarwinProducer(unittest.TestCase):
+    def test_firmware_missing_same_size_corruption_directory_and_link_faults(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(ValueError, "firmware pin mismatch"):
+                verify_firmware_pair(root)
+            name = Path(next(iter(FIRMWARE))).name
+            path = root / name
+            path.write_bytes(b"\0" * FIRMWARE[next(iter(FIRMWARE))][0])
+            with self.assertRaisesRegex(ValueError, "firmware pin mismatch"):
+                verify_firmware_pair(root)
+            path.unlink()
+            path.mkdir()
+            with self.assertRaisesRegex(ValueError, "firmware pin mismatch"):
+                verify_firmware_pair(root)
+            path.rmdir()
+            path.symlink_to(ROOT / "LICENSE")
+            with self.assertRaisesRegex(ValueError, "firmware pin mismatch"):
+                verify_firmware_pair(root)
+
     def test_java_magic_is_not_a_macho_architecture_table(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "javaversion.class"
@@ -26,43 +43,6 @@ class DarwinProducer(unittest.TestCase):
             self.assertFalse(is_macho_code(path))
             path.write_bytes(bytes.fromhex("cafebabe00000001") + b"\0" * 20)
             self.assertFalse(is_macho_code(path))
-    def test_actual_http_range_consumer_and_ignored_range_fault(self):
-        payload = b"bounded exact immutable artifact bytes"
-        class Handler(http.server.BaseHTTPRequestHandler):
-            def log_message(self, *args):
-                pass
-
-            def do_GET(self):
-                if self.path == "/ignores-range":
-                    self.send_response(200)
-                    self.end_headers()
-                    self.wfile.write(payload)
-                    return
-                start, end = map(int, self.headers["Range"].removeprefix("bytes=").split("-"))
-                self.send_response(206)
-                self.send_header("Content-Range", f"bytes {start}-{end}/{len(payload)}")
-                self.end_headers()
-                self.wfile.write(payload[start:end + 1])
-        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
-        thread = threading.Thread(target=server.serve_forever)
-        thread.start()
-        try:
-            origin = f"http://127.0.0.1:{server.server_port}"
-            reader = ArtifactRanges(origin + "/exact", len(payload))
-            self.assertEqual(reader.read(7), payload[:7])
-            reader.seek(-5, 2)
-            self.assertEqual(reader.read(), payload[-5:])
-            self.assertEqual(reader.bytes_read, 12)
-            with self.assertRaises(ValueError):
-                reader.seek(len(payload) + 1)
-            with self.assertRaisesRegex(ValueError, "exact byte range"):
-                ArtifactRanges(origin + "/ignores-range", len(payload)).read(7)
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=2)
-            self.assertFalse(thread.is_alive())
-
     def test_locked_provider_graph_and_missing_dependency(self):
         lock = load_lock(ROOT / "runtime/macos-arm64.sources.json")
         self.assertIn("qemu", lock["formulae"])

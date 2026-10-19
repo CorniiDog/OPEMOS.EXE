@@ -4,114 +4,27 @@ Only existing official Homebrew/Fedora/Valve and immutable GitHub inputs. No
 formula installation, private endpoint, credential enrollment or original write.
 """
 import bz2
-import io
 import json
 import os
 from pathlib import Path
-import subprocess
-import urllib.error
 import urllib.request
-import zipfile
 
 from acquire_appliance_windows import acquire, load_lock, stage
 from acquire_runtime_macos import construct
-from stage_macos_app import FIRMWARE
 from stage_runtime_bundle import digest
 
-ARTIFACT = 12187147443
-ARTIFACT_BYTES = 2237313105
-ARTIFACT_SHA256 = "4009e7a432b7f757542c38e7698577aff8b9f461ad8606f84bea1243305c66e5"
 RECOVERY_URL = "https://steamdeck-images.steamos.cloud/recovery/steamdeck-oobe-repair-20260707.10-3.8.14.img.bz2"
 RECOVERY_BYTES = 8120172544
 RECOVERY_SHA256 = "f9aa0fa2dd618febf28a5e2a583d1e2b5a8ca3f1205be965da584602ac962f40"
 
 
-class ArtifactRanges(io.RawIOBase):
-    """Bounded real ZIP consumer over immutable provider byte ranges."""
-    def __init__(self, url, size):
-        self.url, self.size, self.position = url, size, 0
-        self.bytes_read = 0
-
-    def seekable(self):
-        return True
-
-    def seek(self, offset, whence=0):
-        self.position = offset + (self.position if whence == 1 else self.size if whence == 2 else 0)
-        if self.position < 0 or self.position > self.size:
-            raise ValueError("ZIP seek outside immutable artifact")
-        return self.position
-
-    def tell(self):
-        return self.position
-
-    def read(self, size=-1):
-        size = self.size - self.position if size < 0 else min(size, self.size - self.position)
-        if not size:
-            return b""
-        if size > 16 * 1024**2 or self.bytes_read + size > 32 * 1024**2:
-            raise ValueError("Firmware ZIP range budget exceeded")
-        start, end = self.position, self.position + size - 1
-        request = urllib.request.Request(self.url, headers={"Range": f"bytes={start}-{end}", "Accept-Encoding": "identity"})
-        with urllib.request.urlopen(request, timeout=60) as response:
-            if response.status != 206 or response.headers.get("Content-Range") != f"bytes {start}-{end}/{self.size}":
-                raise ValueError("Artifact server did not honor exact byte range")
-            data = response.read(size + 1)
-        if len(data) != size:
-            raise ValueError("Artifact range length mismatch")
-        self.position += size
-        self.bytes_read += size
-        return data
-
-
-def artifact_storage_url():
-    class NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            return None
-    request = urllib.request.Request(f"https://api.github.com/repos/CorniiDog/OPEMOS.EXE/actions/artifacts/{ARTIFACT}/zip",
-                                     headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"})
-    try:
-        urllib.request.build_opener(NoRedirect()).open(request, timeout=30)
-    except urllib.error.HTTPError as error:
-        if error.code != 302:
-            raise
-        url = error.headers["Location"]
-        error.close()
-        if not url.startswith("https://"):
-            raise ValueError("Non-TLS artifact storage redirect")
-        return url
-    raise ValueError("Missing immutable artifact storage redirect")
-
-
 def prepare(root, evidence):
     output = root / "admitted-macos"
     output.mkdir(exist_ok=False)
-    firmware = output / "firmware"
-    firmware.mkdir()
-    # gh uses only the existing readonly Actions token and never prints it.
-    metadata = json.loads(subprocess.check_output([
-        "gh", "api", f"repos/CorniiDog/OPEMOS.EXE/actions/artifacts/{ARTIFACT}"], text=True, timeout=30))
-    if (metadata["id"], metadata["size_in_bytes"], metadata["workflow_run"]["head_sha"]) != (
-            ARTIFACT, ARTIFACT_BYTES, "c439b20243bb053706769bac60b3921941a32cb6"):
-        raise ValueError("Immutable firmware artifact identity changed")
-    if metadata.get("digest") != "sha256:" + ARTIFACT_SHA256 or metadata.get("expired"):
-        raise ValueError("Original firmware artifact digest or lifecycle changed")
-    ranges = ArtifactRanges(artifact_storage_url(), ARTIFACT_BYTES)
-    with zipfile.ZipFile(ranges) as source:
-        for relative, (size, sha256) in FIRMWARE.items():
-            name = Path(relative).name
-            matches = [i for i in source.infolist() if i.filename.endswith("/qemu/share/" + name)]
-            if len(matches) != 1 or matches[0].file_size != size:
-                raise ValueError("Ambiguous firmware artifact member")
-            target = firmware / name
-            with target.open("xb") as stream:
-                stream.write(source.read(matches[0]))
-            if digest(target) != sha256:
-                raise ValueError("Original firmware bytes changed")
-    (evidence / "existing-firmware-consumer.json").write_text(json.dumps({
-        "artifact": ARTIFACT, "providerArchiveDigest": ARTIFACT_SHA256,
-        "wholeArchiveRehashed": False, "rangeBytes": ranges.bytes_read,
-        "files": {p.name: {"size": p.stat().st_size, "sha256": digest(p)} for p in firmware.iterdir()}}, indent=2) + "\n")
-    construct(root / "runtime/macos-arm64.sources.json", output / "runtime", evidence, firmware)
+    # Both exact firmware pins are already present in the locked Homebrew QEMU
+    # bottle. The producer verifies them after acquisition; no Actions artifact
+    # download, mutable lookup or firmware fallback is necessary.
+    construct(root / "runtime/macos-arm64.sources.json", output / "runtime", evidence)
     lock = load_lock(root / "runtime/windows-fedora-appliance.json")
     image = acquire(lock, output / "fedora-cache", deadline_seconds=1800)
     stage(lock, image, root / "builder/appliance/cloud-init", output / "appliance")
@@ -148,7 +61,7 @@ def prepare(root, evidence):
     partial.chmod(0o444)
     partial.rename(recovery)
     (evidence / "macos-input-producer.json").write_text(json.dumps({
-        "firmwareArtifact": ARTIFACT, "providerArchiveSHA256": ARTIFACT_SHA256, "wholeArchiveRehashed": False,
+        "firmwareSource": "locked-qemu-bottle-exact-existing-pair",
         "recovery": {"url": RECOVERY_URL, "path": str(recovery), "bytes": RECOVERY_BYTES, "sha256": digest(recovery)},
         "applianceSHA256": lock["sha256"], "complete": True}, indent=2) + "\n")
 

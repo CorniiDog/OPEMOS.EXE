@@ -2,6 +2,19 @@
 
 ## Complete packaged Mac cold-Build transaction
 
+  Actual M1 ae2f2605/run39276295134: seven native boundary tests PASS,
+  including real ARM64 FAT lipo/sign/dyld load and Java rejection. Producer
+  exit1/group absent at GitHub firmware range HTTP503 account egress limit,
+  before runtime acquisition. Controller static inspection of the already
+  checksum-pinned QEMU bottle proves BOTH existing firmware pins byte-identical.
+  Consume those exact files from the existing provider instead: no new artifact,
+  firmware, source version, credential or fallback. Missing/corrupt/symlink/
+  directory faults added; actual positive whole producer remains pending M1.
+  Old range reader/test removed from active source; all prior successes/failures
+  retained in history and scheduler/exe-pr191-sixth-mac-attempt. Intermediate
+  [skip ci] commit needs actual manual M1 and final exact-head source/package
+  checks; skip is not pass. PR190 base/ref remains frozen.
+
 - [ ] User-released integrated recovery from reviewed r7: preserve PR188 Darwin
   fixes and current PR189/PR190 output/vars/Windows CPU behavior on a disjoint
   branch. Existing Homebrew provider now has exact 43-formula arm64 Sequoia/all

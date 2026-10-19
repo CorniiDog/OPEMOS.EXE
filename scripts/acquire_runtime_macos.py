@@ -341,7 +341,20 @@ def relocate(root, kegs):
     return records
 
 
-def construct(lock_path, output, evidence, firmware):
+def verify_firmware_pair(root):
+    from stage_macos_app import FIRMWARE
+    rows = {}
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("Existing firmware root is not a real directory")
+    for relative, (size, sha256) in FIRMWARE.items():
+        source = root / Path(relative).name
+        if source.is_symlink() or not source.is_file() or source.stat().st_size != size or digest(source) != sha256:
+            raise ValueError("Existing firmware pin mismatch: " + relative)
+        rows[relative] = {"bytes": size, "sha256": sha256}
+    return rows
+
+
+def construct(lock_path, output, evidence, firmware=None):
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("Native Apple Silicon required")
     if output.exists() or output.is_symlink():
@@ -412,11 +425,17 @@ def construct(lock_path, output, evidence, firmware):
     qemu_share = kegs["qemu"] / "share/qemu"
     shutil.copytree(qemu_share, runtime / "share/qemu", symlinks=False)
     from stage_macos_app import FIRMWARE
-    for relative, (size, sha256) in FIRMWARE.items():
-        source = firmware / Path(relative).name
-        if source.is_symlink() or source.stat().st_size != size or digest(source) != sha256:
-            raise ValueError("Existing firmware pin mismatch")
+    firmware_root = firmware if firmware is not None else qemu_share
+    firmware_rows = verify_firmware_pair(firmware_root)
+    for relative in FIRMWARE:
+        # The already-locked QEMU bottle contains the exact previously reviewed
+        # pair. Verify bytes, never substitute a newer provider firmware.
+        source = firmware_root / Path(relative).name
         shutil.copyfile(source, runtime / relative)
+    provenance["firmware"] = {"files": firmware_rows,
+                              "source": "explicit-directory" if firmware is not None else "locked-qemu-bottle",
+                              "qemuBottleSHA256": lock["formulae"]["qemu"]["bottle"]["sha256"]}
+    save()
     (runtime / "bin").mkdir()
     commands = {}
     ca = kegs["ca-certificates"] / "share/ca-certificates/cacert.pem"
@@ -492,6 +511,6 @@ if __name__ == "__main__":
     parser.add_argument("--lock", type=Path, default=Path("runtime/macos-arm64.sources.json"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--evidence", type=Path, required=True)
-    parser.add_argument("--firmware", type=Path, required=True)
+    parser.add_argument("--firmware", type=Path)
     args = parser.parse_args()
     construct(args.lock, args.output, args.evidence, args.firmware)

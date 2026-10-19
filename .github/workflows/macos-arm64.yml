@@ -11,7 +11,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
   group: macos-arm64-${{ github.ref }}
@@ -26,7 +25,6 @@ jobs:
       OPEMOS_CORE_EXPECTED_COMMIT: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00
       OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
       OPEMOS_MACOS_FULLSTACK: '1'
-      GH_TOKEN: ${{ github.token }}
       CARGO_BUILD_JOBS: 1
       RUST_TEST_THREADS: 1
     steps:
