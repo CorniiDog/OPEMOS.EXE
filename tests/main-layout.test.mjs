@@ -40,7 +40,7 @@ test("narrow effective widths and high zoom reflow without horizontal clipping",
   assert.match(css, /\.readiness-grid,[\s\S]*\.build-options-grid,[\s\S]*\.download-card\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\);/);
   assert.match(css, /\.output-destination-actions\s*\{[^}]*width:\s*100%;[^}]*flex-wrap:\s*wrap;/s);
   assert.match(css, /\.output-destination\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
-  assert.match(css, /\.output-destination-actions button\s*\{[^}]*flex:\s*1 1 0/s);
+  assert.match(css, /@media \(max-width: 680px\)[\s\S]*\.output-destination-actions button\s*\{[^}]*flex:\s*1 1 140px/s);
   assert.match(css, /\.path,[\s\S]*\.output-destination small,[\s\S]*\.build-summary strong\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/s);
 });
 
@@ -172,13 +172,14 @@ test("output folder is the top-level destination heading without a duplicate nes
   assert.doesNotMatch(html, /<strong>Output folder<\/strong>/);
 });
 
-test("output folder and NVIDIA source share the wide layout and stack responsively", () => {
+test("output folder and NVIDIA source form compact full-width rows", () => {
   const mainWindow = tauriConfig.app.windows.find((window) => window.label === "main");
   assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*grid-column:\s*1;/);
-  assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*2;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*1;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
   const breakpoint = Number(css.match(/@media \(max-width: (\d+)px\)[\s\S]*\.build-options-grid \.export-choice,[\s\S]*\.build-side-column[\s\S]*grid-column:\s*1;/)?.[1]);
   assert.ok(Number.isFinite(breakpoint));
-  assert.ok(breakpoint < mainWindow.width, "the default main window must render the groups side by side");
+  assert.ok(breakpoint < mainWindow.width, "the default main window must use compact inline controls");
+  assert.doesNotMatch(css, /\.build-options-grid \.export-choice\s*\{[^}]*height:\s*100%/);
   assert.doesNotMatch(css, /@media[^\{]*max-height[^\{]*\{[\s\S]*?\.build-side-column/);
 });
 
