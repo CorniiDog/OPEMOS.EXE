@@ -87,6 +87,17 @@
   symlink/directory archive faults authored; no arbitrary manifest or fallback.
   GitHub token is scoped only to exact existing artifact acquisition step and
   is not forwarded to the app/probes. Normal90min/GUI480s/guest deadlines stay.
+  Actual995 M139306607335 stopped before bulk producer/new VM: Swift compile,
+  real file-reference regression, Clippy/cache and state-path cases PASS.
+  Ordinary Rust406PASS1FAIL28ignored exposed PR189 test's volatile free+1
+  assumption: independent native measurement can gain a block before admission.
+  Correct test-only fault operand is native total volume capacity+1 via actual
+  statvfs/GetDiskFreeSpaceExW; production admission is unchanged/unoverridden,
+  no filesystem fill or deadline increase. Original failure/350KB receipt/logs
+  retained under scheduler/exe-pr191-tenth-mac-attempt. Exact995 Linux all4
+  and Windows seed/build PASS preserved, not proof of the next head. This
+  ordinary prerequisite failure caused NO bottle/Valve producer replay and
+  no prepared script is called a running VM or completed app build.
 
   Consumed full exact Core1f62 disposition f495f488 (9472B): both blocking
   DARWIN-GUI-BIRTH-480 and DARWIN-MANUAL-MODE are included in this correction.
