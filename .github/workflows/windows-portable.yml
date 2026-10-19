@@ -1,4 +1,4 @@
-name: "Windows — OPEMOS desktop executable (.exe)"
+name: 01 Windows EXE
 
 on:
   pull_request:

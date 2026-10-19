@@ -1,4 +1,4 @@
-name: "macOS — OPEMOS desktop executable (.app, Apple silicon)"
+name: 03 macOS Executable
 
 on:
   pull_request:
