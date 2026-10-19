@@ -444,6 +444,96 @@ mod tests {
         assert_eq!(error, "Guest readiness output exceeded its bound.");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn guest_stream_lifecycle_joins_inherited_writers_and_retains_primary_failures() {
+        struct Fixture { directory: PathBuf, root: u32, writer: i32 }
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                if unsafe { libc::getpgid(self.writer) } == self.root as i32 {
+                    eprintln!("fixture cleanup writer={} group={}", self.writer, self.root);
+                    unsafe { libc::kill(self.writer, libc::SIGKILL); }
+                }
+                // This process is the original direct parent; never a guessed
+                // external PID wait. Nonblocking even on a failed assertion.
+                unsafe { libc::waitpid(self.root as i32, std::ptr::null_mut(), libc::WNOHANG); }
+                let _ = fs::remove_file(self.directory.join("writer"));
+                let _ = fs::remove_dir(&self.directory);
+            }
+        }
+        fn fixture(script: &str) -> (Child, Fixture) {
+            let directory = std::env::temp_dir().join(format!("opemos-stream-{}-{}",
+                std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+            fs::create_dir(&directory).unwrap();
+            let mut command = Command::new("/bin/sh");
+            command.current_dir(&directory).args(["-c", &format!(
+                "sleep 30 & writer=$!; printf '%s' \"$writer\" > writer; {script}")])
+                .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+            isolate_process_group(&mut command);
+            let child = command.spawn().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(1);
+            let writer = loop {
+                if let Ok(value) = fs::read_to_string(directory.join("writer")) {
+                    if let Ok(pid) = value.parse::<i32>() { break pid; }
+                }
+                assert!(Instant::now() < deadline, "actual writer identity was not published");
+                thread::sleep(Duration::from_millis(1));
+            };
+            assert_eq!(unsafe { libc::getpgid(writer) }, child.id() as i32);
+            eprintln!("actual inherited writer={writer} root={} group={} uid={}",
+                child.id(), unsafe { libc::getpgid(writer) }, unsafe { libc::geteuid() });
+            let guard = Fixture { directory, root: child.id(), writer };
+            (child, guard)
+        }
+        fn closed(guard: &Fixture, started: Instant) {
+            assert!(started.elapsed() < Duration::from_secs(2));
+            assert!(!process_is_alive(guard.root));
+            assert_eq!(unsafe { libc::kill(-i32::try_from(guard.root).unwrap(), 0) }, -1);
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+        }
+        let (child, guard) = fixture("printf 'SteamOS NVIDIA Image Builder appliance\\nREADY\\n'; wait");
+        let started = Instant::now();
+        assert_eq!(finish_guest_readiness_attempt(child, Duration::from_secs(1)).unwrap(), READY_MARKER);
+        closed(&guard, started);
+
+        let (child, guard) = fixture("printf 'payload\\nOWNED_DONE:0\\n'; wait");
+        let started = Instant::now();
+        assert_eq!(finish_structured_guest_command(child, Duration::from_secs(1), "OWNED_DONE").unwrap(), "payload");
+        closed(&guard, started);
+
+        let (child, guard) = fixture("exit 0");
+        let started = Instant::now();
+        assert_eq!(finish_guest_command_bounded(child, Duration::from_secs(1), "shutdown timed out").unwrap(), "");
+        closed(&guard, started);
+
+        let (child, guard) = fixture("printf 'primary transport failure\\n' >&2; exit 255");
+        let started = Instant::now();
+        let error = finish_guest_readiness_attempt(child, Duration::from_secs(1)).unwrap_err();
+        assert!(error.contains("exit status: 255"), "{error}");
+        assert!(error.contains("primary transport failure"), "{error}");
+        closed(&guard, started);
+
+        let (mut child, guard) = fixture("printf 'partial'; wait");
+        let drain = start_guest_stderr_drain(&mut child).unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let started = Instant::now();
+        let error = read_guest_command_ready_line(&mut child, stdout, Duration::from_millis(100)).unwrap_err();
+        assert!(error.contains("timed out"), "{error}");
+        assert!(drain.join().unwrap().is_ok());
+        closed(&guard, started);
+
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exit 0"]).stdout(Stdio::piped()).stderr(Stdio::piped());
+        isolate_process_group(&mut command);
+        let mut child = command.spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap(); // Actual already-reaped/ECHILD fault, not a fake try_wait adapter.
+        let error = finish_guest_command_bounded(child, Duration::from_millis(100), "timeout").unwrap_err();
+        assert!(error.contains("inspect"), "{error}");
+        assert!(error.contains("cleanup"), "{error}");
+        assert!(!process_is_alive(pid));
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_in_process_cold_boot_timeout_preserves_readiness_deadline() {

@@ -15,6 +15,22 @@
   diagnostic, coherent same-deadline stream/child correction and new full
   native prerequisite/package/Finder Build/fault/finalizer checks remain required.
   Preserve all prior failures/passes, c439 stack, Main195 and governance pins.
+  Actual diagnostic70a7/run39314707968 collected once on M1 UID501: native
+  compile0/group absent, unchanged readiness fixture1pass0fail in0.12s,
+  outer test0/EOF0.1406s, original observed PID/birth/groups absent. No30s
+  stall reproduced; historical5c writer stays UNKNOWN, not blamed on Darwin.
+  Coherent appliance correction now bounds real pipe reads and every reader
+  completion with the same absolute budget; Unix waitid WNOWAIT retains original
+  leader/group until inherited-writer cleanup completes, then reaps actual status.
+  Structured commands, readiness, bounded shutdown and ready-line failures retain
+  primary and secondary failures and partial diagnostics; no detached reader,
+  longer timeout, assertion relaxation, QEMU recipe or trust input change.
+  Mutation-channel output is bounded64KiB/diagnostics32MiB and existing30min
+  structured-command ceiling now also bounds its formerly unbounded finish.
+  Native process cases cover retained writers/marker/actual255 stderr/ready-line
+  timeout and actual already-reaped ECHILD without adapter override; NOT RUN yet.
+  Exact changed-head all source/package/M1 normal+fault checks and Core review
+  are required. New ordinary full native transaction remains unverified.
 
   R8 actual retained aac package diagnostic run39294172437/job118202265488
   first verified whole app archive SHA8132e612, then exact native executable
