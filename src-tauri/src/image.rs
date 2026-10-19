@@ -233,7 +233,6 @@ mod linux_usb_guard_tests {
         fs::remove_file(&path).expect("remove only the new generated regular file");
         assert!(refused.is_err());
     }
-
 }
 
 pub(crate) fn inspect_synthetic_disk(
