@@ -157,8 +157,8 @@ class DarwinProducer(unittest.TestCase):
             data = library.read_bytes()
             cpu, subtype = struct.unpack_from("<II", data, 4)
             fat_library = keg / "lib/libfatfixture.dylib"
-            fat_header = struct.pack(">IIIIIII", 0xcafebabe, 1, cpu, subtype, 4096, len(data), 12)
-            fat_library.write_bytes(fat_header + b"\0" * (4096 - len(fat_header)) + data)
+            fat_header = struct.pack(">IIIIIII", 0xcafebabe, 1, cpu, subtype, 16384, len(data), 14)
+            fat_library.write_bytes(fat_header + b"\0" * (16384 - len(fat_header)) + data)
             fat_library.chmod(0o755)
             self.assertTrue(is_macho_code(fat_library))
             main = root / "main.c"
