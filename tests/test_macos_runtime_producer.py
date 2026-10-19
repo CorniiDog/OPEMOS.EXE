@@ -1,5 +1,6 @@
 """Actual filesystem/archive and native loader boundary tests, on hosted M1."""
 import importlib.util
+import http.server
 import io
 import json
 from pathlib import Path
@@ -7,14 +8,53 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from acquire_runtime_macos import extract, load_lock, relocate
+from prepare_macos_fullstack import ArtifactRanges
 
 
 class DarwinProducer(unittest.TestCase):
+    def test_actual_http_range_consumer_and_ignored_range_fault(self):
+        payload = b"bounded exact immutable artifact bytes"
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                if self.path == "/ignores-range":
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
+                start, end = map(int, self.headers["Range"].removeprefix("bytes=").split("-"))
+                self.send_response(206)
+                self.send_header("Content-Range", f"bytes {start}-{end}/{len(payload)}")
+                self.end_headers()
+                self.wfile.write(payload[start:end + 1])
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            origin = f"http://127.0.0.1:{server.server_port}"
+            reader = ArtifactRanges(origin + "/exact", len(payload))
+            self.assertEqual(reader.read(7), payload[:7])
+            reader.seek(-5, 2)
+            self.assertEqual(reader.read(), payload[-5:])
+            self.assertEqual(reader.bytes_read, 12)
+            with self.assertRaises(ValueError):
+                reader.seek(len(payload) + 1)
+            with self.assertRaisesRegex(ValueError, "exact byte range"):
+                ArtifactRanges(origin + "/ignores-range", len(payload)).read(7)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+
     def test_locked_provider_graph_and_missing_dependency(self):
         lock = load_lock(ROOT / "runtime/macos-arm64.sources.json")
         self.assertIn("qemu", lock["formulae"])
@@ -61,9 +101,17 @@ class DarwinProducer(unittest.TestCase):
             source.write_text("int answer(void) { return 42; }\n")
             subprocess.run(["xcrun", "clang", "-dynamiclib", str(source), "-o", str(library),
                             "-Wl,-install_name,/opt/homebrew/opt/fixture/lib/libfixture.dylib"], check=True)
+            main = root / "main.c"
+            main.write_text("extern int answer(void); int main(void) { return answer() == 42 ? 0 : 1; }\n")
+            executable = keg / "consumer"
+            subprocess.run(["xcrun", "clang", str(main), "-L" + str(library.parent), "-lfixture",
+                            "-o", str(executable)], check=True)
+            before = subprocess.check_output(["/usr/bin/otool", "-L", str(executable)], text=True)
+            self.assertIn("/opt/homebrew/opt/fixture/lib/libfixture.dylib", before)
             rows = relocate(root, {"fixture": keg})
-            self.assertEqual(len(rows), 1)
+            self.assertEqual(len(rows), 2)
             self.assertNotEqual(rows[0]["before"], rows[0]["after"])
+            subprocess.run([str(executable)], check=True)
             # A separate actual process loads the transformed library.
             subprocess.run([sys.executable, "-c", "import ctypes,sys; assert ctypes.CDLL(sys.argv[1]).answer()==42", str(library)], check=True)
 

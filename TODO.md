@@ -18,6 +18,19 @@
   for remote-only Darwin compiler/loader/GUI and exact counterpart review. No
   PR190 ref change, original/media/GPU/new trust/merge/publication authority.
 
+  First actual head5a7a2e10: M1 run39265380279/job118103477439 passed three
+  real native archive/loader/signing tests, then mutable brew-info comparison
+  rejected bash before any bottle fetch (exit1, group absent). Logs/receipt
+  retained in scheduler/exe-pr191-first-mac-attempt; exact observed mismatching
+  tuple was not logged, so stale-version details are unknown. Changed strategy
+  consumes unchanged locked GHCR blob addresses directly; no repin/fallback.
+  Existing firmware full-archive success is retained; changed source uses bounded
+  ZIP ranges plus both exact file hashes to avoid replaying the 2.2GB transfer.
+  Linux push welcome fixture saw port before stderr event (89ms), while same-head
+  PR passed: join both within original2s, no production timeout change. Full
+  failure log retained, recovery plan exe-pr191-actual-provider-and-pipe-recovery-r1.json.
+  Independent original Windows package continues to terminal before changed push.
+
 ## Windows read-only package firmware handoff
 
 - [ ] Same complete Windows launch graph, subsequent actual OMEN r3/r4:

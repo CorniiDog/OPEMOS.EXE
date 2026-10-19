@@ -23,6 +23,15 @@ class CompanionFilesystemGuards(unittest.TestCase):
             expected = [(source.name, len(data), hashlib.sha256(data).hexdigest())]
             stage_macos_app.verify_files(root, expected)
             self.assertEqual(source.read_bytes(), data)
+            outside = root.parent / (root.name + "-external")
+            outside.mkdir()
+            try:
+                (root / "undeclared-directory-link").symlink_to(outside, target_is_directory=True)
+                with self.assertRaises(ValueError):
+                    stage_macos_app.verify_files(root, expected)
+                (root / "undeclared-directory-link").unlink()
+            finally:
+                outside.rmdir()
             (root / "extra").write_bytes(b"undeclared")
             with self.assertRaises(ValueError):
                 stage_macos_app.verify_files(root, expected)

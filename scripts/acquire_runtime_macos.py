@@ -15,6 +15,9 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+import time
+import urllib.parse
+import urllib.request
 
 from stage_runtime_bundle import digest, validate_runtime
 
@@ -68,6 +71,58 @@ def load_lock(path):
 def confined(root, path):
     path.resolve().relative_to(root.resolve())
     return path
+
+
+def acquire_bottle(item, cache):
+    """Use the frozen provider address, not mutable installed brew metadata.
+
+    GHCR's anonymous public-read bearer is transport-only, never a user identity
+    or persisted credential. It is neither logged nor sent to another endpoint.
+    """
+    sha = item["bottle"]["sha256"]
+    target = cache / (sha + ".tar.gz")
+    if target.exists() or target.is_symlink():
+        if target.is_symlink() or not target.is_file() or digest(target) != sha:
+            raise ValueError("Retained bottle cache identity changed")
+        return target
+    repository = "homebrew/core/" + item["name"].replace("@", "/")
+    token_url = "https://ghcr.io/token?" + urllib.parse.urlencode({
+        "service": "ghcr.io", "scope": "repository:" + repository + ":pull"})
+    with urllib.request.urlopen(token_url, timeout=30) as response:
+        raw = response.read(65537)
+    if len(raw) > 65536:
+        raise ValueError("Public registry token response exceeds bound")
+    token = json.loads(raw)["token"]
+    request = urllib.request.Request(item["bottle"]["url"], headers={"Authorization": "Bearer " + token})
+    # Never forward an authorization header across a registry storage redirect.
+    class StorageRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            if not newurl.startswith("https://"):
+                raise ValueError("Registry storage redirect must retain TLS")
+            result = super().redirect_request(req, fp, code, msg, headers, newurl)
+            if result is not None:
+                result.remove_header("Authorization")
+            return result
+    partial = cache / (sha + ".partial")
+    deadline = time.monotonic() + 600
+    with urllib.request.build_opener(StorageRedirect()).open(request, timeout=60) as response, partial.open("xb") as output:
+        received = 0
+        while True:
+            if time.monotonic() >= deadline:
+                raise ValueError("Pinned bottle acquisition deadline")
+            block = response.read(1024**2)
+            if not block:
+                break
+            received += len(block)
+            if received > 2 * 1024**3:
+                raise ValueError("Pinned bottle exceeds storage bound")
+            output.write(block)
+        output.flush()
+        os.fsync(output.fileno())
+    if digest(partial) != sha:
+        raise ValueError("Exact public bottle hash mismatch: " + item["name"])
+    partial.rename(target)
+    return target
 
 
 def extract(archive, root):
@@ -172,7 +227,6 @@ def construct(lock_path, output, evidence, firmware):
     if output.exists() or output.is_symlink():
         raise ValueError("Runtime output must be create-only")
     lock = load_lock(lock_path)
-    os.environ.update(HOMEBREW_NO_AUTO_UPDATE="1", HOMEBREW_NO_INSTALL_CLEANUP="1")
     output.parent.mkdir(parents=True, exist_ok=True)
     evidence.mkdir(parents=True, exist_ok=True)
     provenance = {"sourceLockSHA256": digest(lock_path), "bottles": [], "loader": [], "complete": False}
@@ -184,15 +238,11 @@ def construct(lock_path, output, evidence, firmware):
     unpacked, runtime = stage / "unpacked", stage / "runtime"
     unpacked.mkdir()
     runtime.mkdir()
+    cache = stage / "bottles"
+    cache.mkdir()
     for name, item in sorted(lock["formulae"].items()):
-        info = json.loads(run(["brew", "info", "--json=v2", name]))["formulae"][0]
-        actual = info["bottle"]["stable"]["files"][item["bottle_tag"]]
-        if (info["versions"]["stable"], info["revision"], actual["sha256"]) != (item["version"], item["revision"], item["bottle"]["sha256"]):
-            raise ValueError("Provider formula drift; no guessed pin or source fallback: " + name)
-        run(["brew", "fetch", "--force-bottle", "--bottle-tag=" + item["bottle_tag"], name], 600)
-        archive = Path(run(["brew", "--cache", "--force-bottle", "--bottle-tag=" + item["bottle_tag"], name]))
-        if digest(archive) != item["bottle"]["sha256"]:
-            raise ValueError("Bottle hash mismatch: " + name)
+        print("Acquiring exact Homebrew bottle", name, item["bottle"]["sha256"], flush=True)
+        archive = acquire_bottle(item, cache)
         provenance["bottles"].append({"name": name, "sha256": digest(archive), "bytes": archive.stat().st_size})
         save()
         extract(archive, unpacked)
@@ -240,6 +290,9 @@ def construct(lock_path, output, evidence, firmware):
         if not target.is_file():
             raise ValueError("Command missing from exact bottle: " + command)
         options = ' -L "$root/share/qemu"' if command.startswith("qemu-system-") else ""
+        if command == "scp":
+            # OpenSSH's compiled prefix must not select a host-installed peer.
+            options = ' -S "$root/bin/ssh"'
         setup = ""
         if command == "python3":
             homes = list(kegs[name].glob("Frameworks/Python.framework/Versions/3.14"))
@@ -258,6 +311,11 @@ def construct(lock_path, output, evidence, firmware):
     wrapper.chmod(0o755)
     commands["hdiutil"] = "bin/hdiutil"
     provenance["systemHdiutil"] = {"path": "/usr/bin/hdiutil", "sha256": digest(Path("/usr/bin/hdiutil")), "os": run(["sw_vers"])}
+    license_target = runtime / "licenses/OPEMOS-LICENSE"
+    license_target.parent.mkdir()
+    shutil.copyfile(Path(__file__).resolve().parents[1] / "LICENSE", license_target)
+    components.append({"name": "opemos-darwin-adapters", "version": os.environ["OPEMOS_EXE_COMMIT"],
+                       "license_files": ["licenses/OPEMOS-LICENSE"]})
     (runtime / "source-provenance.json").write_text(json.dumps(lock, sort_keys=True) + "\n")
     for path in runtime.rglob("*"):
         if path.is_file() and path.stat().st_size == 0:
@@ -275,6 +333,9 @@ def construct(lock_path, output, evidence, firmware):
     if output.exists():
         raise ValueError("Runtime output appeared")
     runtime.rename(output)
+    # Only this create-only producer's temporary extraction copy; original
+    # checksum-bound bottle cache and durable evidence remain untouched.
+    shutil.rmtree(stage)
 
 
 if __name__ == "__main__":

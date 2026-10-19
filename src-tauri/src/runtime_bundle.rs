@@ -401,6 +401,7 @@ mod tests {
                 "bash",
                 "gh",
                 "git",
+                "hdiutil",
                 "python3",
                 "qemu-img",
                 "qemu-system-aarch64",

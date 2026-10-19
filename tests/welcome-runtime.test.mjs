@@ -33,7 +33,11 @@ test("mock welcome controller serves and completes the real UI contract safely",
   while (performance.now() < deadline && !spawnError && child.exitCode === null && child.signalCode === null) {
     try {
       port = readFileSync(join(runtime, "port"), "utf8").trim();
-      if (/^\d+$/.test(port)) break;
+      // The port file and stderr pipe are independent process boundaries.
+      // Both are emitted by the real producer, but Node may observe the file
+      // before dispatching the pipe's data event. Join both within the same
+      // original two-second bound; do not assert on an undrained pipe.
+      if (/^\d+$/.test(port) && /OPEMOS_STARTUP numeric-loopback-bound [0-9.]+/.test(stderr)) break;
     }
     catch {
       if (child.exitCode !== null || child.signalCode !== null) break;

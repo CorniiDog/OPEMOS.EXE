@@ -34,6 +34,9 @@ def verify_files(root, expected):
     root = Path(root)
     if root.is_symlink() or not root.is_dir():
         raise ValueError("Companion root must be a real directory")
+    for entry in root.rglob("*"):
+        if entry.is_symlink() or not (entry.is_file() or entry.is_dir()):
+            raise ValueError("Companion contains a symlink or special file")
     for relative, size, sha256 in expected:
         path = root / relative
         if any(parent.is_symlink() for parent in [path, *path.parents]
@@ -69,6 +72,8 @@ def stage(app, runtime, appliance, output, source_commit):
     if len(source_commit) != 40 or any(c not in "0123456789abcdef" for c in source_commit):
         raise ValueError("Exact source commit required")
     runtime, raw, manifest_hash = validate_runtime(runtime, "macos")
+    if any(p.is_symlink() or not (p.is_file() or p.is_dir()) for p in runtime.rglob("*")):
+        raise ValueError("Mac runtime may not follow undeclared symlinks or special files")
     manifest = json.loads(raw)
     declared = {f["path"]: (f["size"], f["sha256"]) for f in manifest["files"]}
     if any(declared.get(path) != identity for path, identity in FIRMWARE.items()):
