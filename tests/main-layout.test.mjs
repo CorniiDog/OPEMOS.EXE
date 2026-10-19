@@ -8,14 +8,14 @@ const chromeCss = await readFile(new URL("../src/window-chrome.css", import.meta
 const script = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
-test("main workflow groups output destination beside the NVIDIA controls", () => {
+test("main workflow keeps output, NVIDIA controls, and summary in compact rows", () => {
   assert.match(html, /id="readiness-grid"[\s\S]*class="environment-card"[\s\S]*id="selection-card"[\s\S]*id="drop-zone"/);
   assert.match(html, /class="build-options-grid"[\s\S]*class="source-choice export-choice"[\s\S]*class="build-side-column"[\s\S]*for="nvidia-source"[\s\S]*id="summary-output"[\s\S]*id="usb-picker"[\s\S]*id="usb-target"[\s\S]*id="build-button"/);
   assert.match(css, /\.readiness-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/);
-  assert.match(css, /\.build-options-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
-  assert.match(css, /\.build-side-column \.build-summary\s*\{[^}]*grid-column:\s*1;[^}]*grid-row:\s*auto;[^}]*grid-template-columns:\s*1fr;/);
-  assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*grid-column:\s*1;[^}]*width:\s*100%;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*justify-content:\s*stretch;[^}]*justify-self:\s*stretch;/);
-  assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*2;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(css, /\.build-options-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*grid-column:\s*1;[^}]*width:\s*100%;[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\);/);
+  assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*1;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.doesNotMatch(css, /\.build-options-grid \.export-choice\s*\{[^}]*height:\s*100%/);
   assert.match(css, /\.build-options-grid \.export-choice,[\s\S]*\.output-destination\s*\{\s*box-sizing:\s*border-box;/);
   assert.match(css, /\.output-destination\s*\{[^}]*width:\s*100%;/);
 });
@@ -40,7 +40,7 @@ test("narrow effective widths and high zoom reflow without horizontal clipping",
   assert.match(css, /\.readiness-grid,[\s\S]*\.build-options-grid,[\s\S]*\.download-card\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\);/);
   assert.match(css, /\.output-destination-actions\s*\{[^}]*width:\s*100%;[^}]*flex-wrap:\s*wrap;/s);
   assert.match(css, /\.output-destination\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
-  assert.match(css, /\.output-destination-actions button\s*\{[^}]*flex:\s*1 1 0/s);
+  assert.match(css, /@media \(max-width: 680px\)[\s\S]*\.output-destination-actions button\s*\{[^}]*flex:\s*1 1 140px/s);
   assert.match(css, /\.path,[\s\S]*\.output-destination small,[\s\S]*\.build-summary strong\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/s);
 });
 
@@ -172,13 +172,14 @@ test("output folder is the top-level destination heading without a duplicate nes
   assert.doesNotMatch(html, /<strong>Output folder<\/strong>/);
 });
 
-test("output folder and NVIDIA source share the wide layout and stack responsively", () => {
+test("output folder and NVIDIA source form compact full-width rows", () => {
   const mainWindow = tauriConfig.app.windows.find((window) => window.label === "main");
   assert.match(css, /\.build-options-grid \.export-choice\s*\{[^}]*grid-column:\s*1;/);
-  assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*2;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(css, /\.build-side-column\s*\{[^}]*grid-column:\s*1;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
   const breakpoint = Number(css.match(/@media \(max-width: (\d+)px\)[\s\S]*\.build-options-grid \.export-choice,[\s\S]*\.build-side-column[\s\S]*grid-column:\s*1;/)?.[1]);
   assert.ok(Number.isFinite(breakpoint));
-  assert.ok(breakpoint < mainWindow.width, "the default main window must render the groups side by side");
+  assert.ok(breakpoint < mainWindow.width, "the default main window must use compact inline controls");
+  assert.doesNotMatch(css, /\.build-options-grid \.export-choice\s*\{[^}]*height:\s*100%/);
   assert.doesNotMatch(css, /@media[^\{]*max-height[^\{]*\{[\s\S]*?\.build-side-column/);
 });
 
