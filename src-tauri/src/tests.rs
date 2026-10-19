@@ -535,11 +535,11 @@ mod tests {
         for result in [
             Ok("WRONG".into()),
             Ok(String::new()),
-            Err("The appliance rejected the ephemeral SSH identity.".into()),
-            Err("In-process SSH command stdout exceeded its bound.".into()),
-            Err("Guest readiness command exited with status 7: failure".into()),
-            Err("prefix In-process SSH command timed out.".into()),
-            Err("In-process SSH command timed out. suffix".into()),
+            Err(ReadinessFailure::Message("The appliance rejected the ephemeral SSH identity.".into())),
+            Err(ReadinessFailure::Message("In-process SSH command stdout exceeded its bound.".into())),
+            Err(ReadinessFailure::Message("Guest readiness command exited with status 7: failure".into())),
+            Err(ReadinessFailure::Message("prefix In-process SSH command timed out.".into())),
+            Err(ReadinessFailure::Message("In-process SSH command timed out. suffix".into())),
         ] {
             assert_eq!(
                 readiness_attempt_outcome(Instant::now(), deadline, &result),

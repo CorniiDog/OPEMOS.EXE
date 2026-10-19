@@ -63,6 +63,13 @@
 
 ## Cold-boot SSH readiness transport classification
 
+- [ ] Native Windows run39320767092 failed compile E0277 before tests/package:
+  five existing string literals inferred the new typed readiness error, but
+  From<&str> is absent. Correct only explicit Message test construction; Linux
+  excludes this Windows test and could not detect the error. Original full log
+  retained in exe-pr196-windows-e0277-causal-recovery-20261019.json. Production
+  typed classification and all timeouts unchanged; exact new-head CI required.
+
 - [ ] EXE adopted reviewed31708efe onto frozen c439 in a disjoint topic for
   native Windows loopback/timeout tests and portable package via existing CI.
   Necessary normal push to https://github.com/CorniiDog/OPEMOS.EXE.git for remote
