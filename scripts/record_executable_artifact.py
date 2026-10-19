@@ -27,9 +27,18 @@ def held(path, cap, keep=False):
     try:
         ident = lambda x: tuple(getattr(x, k) for k in FIELDS)
         opened = os.fstat(fd)
+        # Windows lstat synthesizes execute bits from the .exe filename;
+        # fstat has no filename and reports no such bits. Actual Windows
+        # producer reproduction: 33279 versus 33206, all other fields equal.
+        # Retain full9 stability independently for EACH native view below.
+        def cross_identity(value):
+            return tuple((getattr(value, key) & ~0o111
+                          if os.name == 'nt' and key == 'st_mode'
+                          else getattr(value, key)) for key in FIELDS)
         differences = {key: [getattr(before, key), getattr(opened, key)]
                        for key in FIELDS if getattr(before, key) != getattr(opened, key)}
-        require(not differences, "Producer path changed before held descriptor: " +
+        require(cross_identity(before) == cross_identity(opened),
+                "Producer path changed before held descriptor: " +
                 json.dumps(differences, sort_keys=True))
         digest, total, raw = hashlib.sha256(), 0, bytearray()
         while block := os.read(fd, 1024**2):
@@ -38,7 +47,8 @@ def held(path, cap, keep=False):
             digest.update(block)
             if keep:
                 raw.extend(block)
-        require(total == before.st_size and ident(before) == ident(os.fstat(fd)) == ident(path.lstat()),
+        require(total == before.st_size and ident(opened) == ident(os.fstat(fd)) and
+                ident(before) == ident(path.lstat()),
                 "Producer full9 descriptor/path byte identity changed")
         return {"name": path.name, "bytes": total, "sha256": digest.hexdigest()}, bytes(raw)
     finally:

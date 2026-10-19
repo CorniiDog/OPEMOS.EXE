@@ -9,6 +9,12 @@
   New native regular `.exe` transaction runs before expensive Windows build;
   failure reports exact bounded field values, with no stat-method override.
   Earlier Linux-only consumer cases did not exercise native producer metadata.
+  Actual fail-fast Windows39340136302/job118359834769 exit1 reproduced only
+  `st_mode` path33279 versus descriptor33206 (execute bits), other eight equal.
+  Cross-view comparison now accounts ONLY for Windows synthetic execute bits;
+  each path and descriptor independently retain unchanged full9 checks through
+  complete hashing. Native readonly-source/directory/full producer-descriptor
+  normal cases added; all changed-head native checks remain required.
 
 - [ ] Complete changed-head VM source qualification after measured c390 harness
   omissions: filename filtering excluded required `ci/required-vms.json`, and
