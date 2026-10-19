@@ -3,11 +3,6 @@ name: 03 macOS Executable
 on:
   pull_request:
   workflow_dispatch:
-    inputs:
-      fullstack:
-        description: "Changed explicit x86 TCG graphical cold-Build milestone; requires reviewed Darwin runtime source lock and admitted operands"
-        type: boolean
-        default: false
 
 permissions:
   contents: read

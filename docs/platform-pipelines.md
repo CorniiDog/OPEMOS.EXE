@@ -16,6 +16,8 @@ graphical producer before acquisition or compilation. Those source files are
 currently being developed in the macOS implementation pull request. Until they
 land, this entry fails with the exact missing file. It does not switch to a
 different branch or report another commit's artifact as the current result.
+Both pull-request and manual runs require the same full graphical transaction.
+There is no manual option to substitute a packaging-only result.
 
 Executable packaging, real graphical image creation, virtual-USB writing with
 full readback, virtual SteamOS installation and NVIDIA recovery are distinct
