@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      producer-metadata-diagnostic:
+        description: Finite native metadata capture only, no package build
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,7 +27,28 @@ env:
   RUSTFLAGS: -C target-feature=+crt-static
 
 jobs:
+  producer-metadata-diagnostic:
+    if: github.event_name == 'workflow_dispatch' && inputs.producer-metadata-diagnostic
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.OPEMOS_EXE_COMMIT }}
+          persist-credentials: false
+      - name: Capture real Win32 and Python producer metadata
+        run: python scripts/diagnose_windows_producer_metadata.py
+      - name: Retain finite native metadata even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-producer-metadata-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/windows-metadata-diagnostic
+          retention-days: 1
+          if-no-files-found: error
+
   seed-runtime-source:
+    if: ${{ !inputs.producer-metadata-diagnostic }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

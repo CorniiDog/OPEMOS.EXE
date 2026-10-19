@@ -2,6 +2,18 @@
 
 ## Automatic OMEN Robot integration — 2026-10-19
 
+- [ ] Native Windows readonly timestamp causal recovery: preserve exact326
+  failure and all10 passed jobs. Mainb731 naming integration appended by normal
+  ancestry merge955b0012 without rewriting history; Main03/04 and readiness
+  guards retained. Isolated finite diagnostic branch uses manual existing
+  Windows workflow, default package route unchanged. Capture Win32 native
+  creation/change/write/attributes/volume/FileID plus Python path/FD views at
+  real create/chmod/open/read/close, no sleeps/method overrides/normalization.
+  Normal fast diagnostic excludes bulk seed/package; remote-only native CI
+  requires normal source push to canonical origin, no PR200 push/approval or
+  new OS/VM/trust/credential/provider/physical effect. Correction only after
+  measured cause; fresh exact current-Main Core gates remain required.
+
 - [ ] Preserve actual09d Windows package/startup/upload success and subsequent
   producer-binding failure: run39338115494/job118352964667 exit1 at held
   path-vs-descriptor full9 equality. Artifact12227379805 SHA6148d3a4557e277e91e05f0f911dde8522fa41c511209b7638056d266c79570a

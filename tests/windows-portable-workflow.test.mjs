@@ -17,6 +17,9 @@ test("Windows portable workflow accepts CRLF checkout line endings", () => {
 });
 
 for (const [name, mutate, expected] of [
+  ["unbounded diagnostic dispatch", text => text.replace("if: github.event_name == 'workflow_dispatch' && inputs.producer-metadata-diagnostic", "if: always()"), /manual-only finite diagnostic/],
+  ["diagnostic starts expensive seed", text => text.replace("if: ${{ !inputs.producer-metadata-diagnostic }}", "if: always()"), /no expensive source seed/],
+  ["diagnostic bypasses native producer", text => text.replace("run: python scripts/diagnose_windows_producer_metadata.py", "run: echo skipped"), /actual native metadata producer/],
   ["merge-ref source identity", text => text.replace("github.event.pull_request.head.sha || github.sha", "github.sha"), /exact EXE source identity/],
   ["short artifact job budget", text => text.replace("timeout-minutes: 120", "timeout-minutes: 60"), /bounded Windows artifact job budget/],
   ["mutable Core checkout", text => text.replace("ref: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00", "ref: main"), /Core checkout pin/],
