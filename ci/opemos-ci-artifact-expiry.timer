@@ -1,0 +1,12 @@
+[Unit]
+Description=Check four-hour OPEMOS CI copy expiry without waking workers
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=1s
+Unit=opemos-ci-artifact-expiry.service
+
+[Install]
+WantedBy=timers.target
+

@@ -1,0 +1,76 @@
+name: 04 SteamOS
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [01 Windows EXE, 02 Ubuntu AppImage, 03 macOS Executable]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: opemos-omen-robot
+  cancel-in-progress: false
+
+jobs:
+  trusted-runner-route:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      ready: ${{ steps.guard.outputs.ready }}
+      source: ${{ steps.guard.outputs.source }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: guard
+        name: Verify trusted event, current protected Main and fresh dedicated runner heartbeat
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPEMOS_OMEN_ROBOT_RUNNER_STATE: ${{ vars.OPEMOS_OMEN_ROBOT_RUNNER_STATE }}
+        run: python3 scripts/omen_robot_gate.py
+      - name: Always retain explicit all20 preflight outcomes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: robot-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: robot-preflight/
+          if-no-files-found: error
+          retention-days: 1
+
+  actual-robot-transactions:
+    needs: trusted-runner-route
+    if: needs.trusted-runner-route.outputs.ready == 'true'
+    runs-on: [self-hosted, Linux, X64, opemos-omen-robot]
+    timeout-minutes: 240
+    env:
+      OPEMOS_SOURCE_SHA: ${{ needs.trusted-runner-route.outputs.source }}
+      OPEMOS_ROBOT_REPORT_DIR: ${{ github.workspace }}/robot-results
+    steps:
+      # Root-installed ACTIONS_RUNNER_HOOK_JOB_STARTED independently verifies
+      # this workflow/ref/event/live Main BEFORE checkout; no PR/producer code.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.trusted-runner-route.outputs.source }}
+          persist-credentials: false
+      - name: Execute fresh admitted Robot queue cases and actual pointer drivers
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${OPEMOS_ROBOT_PYTHON:?Fixed job guard must expose the official pinned RF7.5 runtime}"
+          : "${OPEMOS_ROBOT_PRIVATE_RESULTS:?Fixed job guard must reserve private current-run metadata}"
+          export OPEMOS_CONSUMER_STARTED_EPOCH="$(date +%s)"
+          "$OPEMOS_ROBOT_PYTHON" -c "import importlib.metadata; assert importlib.metadata.version('robotframework') == '7.5'"
+          "$OPEMOS_ROBOT_PYTHON" -m robot --outputdir robot-results --output output.xml --report report.html --log log.html --xunit xunit.xml tests/robot/inventory.robot
+      - name: Always return Robot reports, actual screenshots, argv, logs and guest NVIDIA evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: robot-actual-${{ github.run_id }}-${{ github.run_attempt }}
+          path: robot-results/
+          if-no-files-found: error
+          retention-days: 1

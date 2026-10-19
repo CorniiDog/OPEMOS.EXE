@@ -1,1 +1,4 @@
 builder/welcome/** text eol=lf
+
+# Preserve byte-bound historical receipts and canonical source on every OS.
+/tests/fixtures/omen-ci-nested/** -text

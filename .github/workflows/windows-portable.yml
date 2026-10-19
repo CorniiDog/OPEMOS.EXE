@@ -1,6 +1,8 @@
 name: 01 Windows EXE
 
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -255,11 +257,34 @@ jobs:
           Set-Content -LiteralPath (Join-Path $output "SHA256SUMS.txt") -Value "$sha256  $name" -Encoding ascii
 
       - name: Upload short-lived workflow artifact
+        id: executable
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: OPEMOS.EXE-windows-x86_64-unsigned-${{ env.OPEMOS_EXE_COMMIT }}
+          name: OPEMOS.EXE-windows-x86_64-unsigned-${{ env.OPEMOS_EXE_COMMIT }}-${{ github.run_attempt }}
           path: dist/windows
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 1
           compression-level: 0
+
+      - name: Bind exact executable and package to this producer artifact
+        if: success() && steps.executable.outputs.artifact-id != ''
+        shell: bash
+        env:
+          PRODUCER_ARTIFACT_ID: ${{ steps.executable.outputs.artifact-id }}
+          PRODUCER_ARTIFACT_SHA256: ${{ steps.executable.outputs.artifact-digest }}
+        run: >-
+          python scripts/record_executable_artifact.py
+          --platform windows
+          --source "${{ env.OPEMOS_EXE_COMMIT }}"
+          --artifact-id "$PRODUCER_ARTIFACT_ID"
+          --artifact-sha "$PRODUCER_ARTIFACT_SHA256"
+          --artifact-name "OPEMOS.EXE-windows-x86_64-unsigned-${{ env.OPEMOS_EXE_COMMIT }}-${{ github.run_attempt }}"
+          --output build/executable-producer
+      - name: Retain small producer identity for separate SteamOS acceptance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: executable-producer-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/executable-producer/executable-producer.json
+          if-no-files-found: error
+          retention-days: 1

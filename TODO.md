@@ -1,5 +1,21 @@
 # OPEMOS.EXE — Product Checklist
 
+## Automatic OMEN Robot integration — 2026-10-19
+
+- [ ] Reconcile the complete 46-file Maxwell candidate on Main `b6bb53d9`,
+  including automatic Main Windows/Ubuntu producer triggers. Existing Main has
+  no macOS producer; do not import the held PR199 lifecycle implementation or
+  label an absent producer successful. The current confined broker ABI and
+  fixed operational planner must be reconciled before source approval.
+- [ ] Run the 19 new adapter cases and required canonical qualification in a
+  fresh ordinary queued OMEN Ubuntu KVM-B COW (1 CPU, 3 GiB including overhead,
+  no NIC, literal 60 GB limit); retain actual exits, logs and closure. Historical
+  CI11 126 results remain historical, not new-head results.
+- [ ] Required exact source/package checks and Core counterpart approval precede
+  owning protected merge. Runner installation/activation and real automatic
+  Robot pointer, image, virtual USB, SteamOS and NVIDIA results remain separate.
+  No physical USB/GPU/trust/publication authority is added.
+
 ## Current-main Linux UDisks writer source qualification
 
 - [ ] Reconciled reviewed119fb3b4 onto exact Main00885837 in isolated EXE topic;
