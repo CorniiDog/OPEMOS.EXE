@@ -29,7 +29,7 @@ def fixture():
     return {"runs": [run()], "jobs": [{"name": gate.JOB, "run_id": 10, "head_sha": SHA,
             "status": "completed", "conclusion": "success", "steps": [
                 {"name": name, "status": "completed", "conclusion": "success"} for name in gate.PROOF_STEPS]}],
-            "artifacts": [{"name": "steamos-acceptance-10-2", "expired": False,
+            "artifacts": [{"name": "robot-actual-10-2", "expired": False,
                            "size_in_bytes": 100, "digest": "sha256:" + "b" * 64}]}
 
 
@@ -111,10 +111,16 @@ class FullStackAcceptance(unittest.TestCase):
                 value = fixture()
                 if mode == "missing": value["artifacts"] = []
                 if mode == "expired": value["artifacts"][0]["expired"] = True
-                if mode == "old-attempt": value["artifacts"][0]["name"] = "steamos-acceptance-10-1"
+                if mode == "old-attempt": value["artifacts"][0]["name"] = "robot-actual-10-1"
                 if mode == "no-digest": value["artifacts"][0].pop("digest")
                 with self.assertRaises(gate.Refusal):
                     gate.evaluate(reader(value), SHA)
+
+    def test_legacy_artifact_cannot_substitute_for_current_robot_receipt(self):
+        value = fixture()
+        value["artifacts"][0]["name"] = "steamos-acceptance-10-2"
+        with self.assertRaises(gate.Refusal):
+            gate.evaluate(reader(value), SHA)
 
     def test_new_run_or_rerun_during_inspection_refused(self):
         for changed in [run(11), {**run(), "run_attempt": 3}]:
