@@ -154,12 +154,13 @@ test("retained output folder and later USB imaging are independent controls", ()
   assert.match(script, /usbWriteProgress = progress;[\s\S]*usbMessage\.textContent = "";[\s\S]*usbPickerMessage\.textContent = status/);
   assert.match(script, /usb-write-close-refused[\s\S]*application must remain open until the active USB write settles/);
   assert.match(script, /onCloseRequested[\s\S]*if \(!usbWriting\) return;[\s\S]*preventDefault\(\)[\s\S]*progress remains visible here/);
-  assert.match(script, /No eligible removable drive is visible\. Windows may still have a previously written drive safely ejected; reconnect it, then choose Refresh Drives\./);
+  assert.match(script, /No eligible removable drive is visible\. If a previously written drive was removed, reconnect it, then choose Refresh Drives\./);
   assert.match(script, /formatUsbProgressBytes\(progress\.bytesCompleted\)[\s\S]*formatUsbProgressBytes\(progress\.bytesTotal\)/);
   assert.match(script, /usbWriting = true;\s*usbWriteProgress = null;[\s\S]*finally \{[\s\S]*usbWriting = false;\s*usbWriteProgress = null;/);
   assert.match(script, /const writeContext = Object\.freeze\(\{[\s\S]*sessionToken: usbPreflightSession\.sessionToken,[\s\S]*deviceIdentifier: usbPreflightSession\.deviceIdentifier,[\s\S]*deviceNode: usbPreflightSession\.deviceNode,[\s\S]*imageSha256: usbPreflightSession\.imageSha256/);
   assert.match(script, /invoke\("write_image_to_usb", \{[\s\S]*sessionToken: writeContext\.sessionToken,[\s\S]*imagePath: writeContext\.imagePath[\s\S]*admitUsbWriteCompletion\(currentBuildSnapshot\(\), result, writeContext\)\.accepted/);
-  assert.match(script, /usbMessage\.className = `result-message \$\{result\.ejected \? "success" : "error"\}`/);
+  assert.match(script, /usbMessage\.className = `result-message \$\{result\.ejected \? "success" : "caution"\}`/);
+  assert.match(css, /\.result-message\.caution\s*\{[^}]*color:\s*#f4d08b;/);
   assert.match(css, /\.usb-dialog-actions > button\s*\{[^}]*height:\s*42px;[^}]*min-height:\s*42px;[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;/);
   assert.match(css, /\.usb-active-warning\s*\{[^}]*border:[^}]*color:\s*#f4d08b;/);
   assert.match(css, /#usb-card > \.result-message\s*\{[^}]*max-height:\s*5em;[^}]*overflow:\s*auto;/);
