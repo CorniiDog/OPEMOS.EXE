@@ -500,11 +500,23 @@ mod tests {
         let (deadline, seconds) = appliance_readiness_deadline(started, None).unwrap();
         // Actual current handshake -> russh -> socket boundary, no overridden
         // transport or method under test. The peer deliberately sends no banner.
-        let timeout = handshake(&session);
+        let timeout = readiness_handshake(&session);
         let peer_closed = server.join().expect("join bounded loopback peer");
         println!("actual Windows handshake={timeout:?}; socket closure={peer_closed:?}");
         assert_eq!(
-            timeout.as_ref().expect_err("cold SSH transport must expire"),
+            match timeout
+                .as_ref()
+                .expect_err("cold SSH transport must expire")
+            {
+                ReadinessFailure::Native(failure) => {
+                    assert_eq!(
+                        failure.stage,
+                        crate::windows_ssh::CommandStage::AttemptDeadline
+                    );
+                    failure.message.as_str()
+                }
+                other => panic!("native timeout kind lost: {other:?}"),
+            },
             "In-process SSH command timed out."
         );
         peer_closed.expect("timed-out transport must close its socket");
@@ -513,11 +525,11 @@ mod tests {
         assert_eq!(seconds, 300);
         assert_eq!(deadline.duration_since(started), Duration::from_secs(300));
         assert_eq!(
-            appliance_readiness_outcome(Instant::now(), deadline, &timeout),
+            readiness_attempt_outcome(Instant::now(), deadline, &timeout),
             ApplianceReadinessOutcome::Pending
         );
         assert_eq!(
-            appliance_readiness_outcome(Instant::now(), deadline, &Ok(READY_MARKER.into())),
+            readiness_attempt_outcome(Instant::now(), deadline, &Ok(READY_MARKER.into())),
             ApplianceReadinessOutcome::Ready
         );
         for result in [
@@ -530,16 +542,350 @@ mod tests {
             Err("In-process SSH command timed out. suffix".into()),
         ] {
             assert_eq!(
-                appliance_readiness_outcome(Instant::now(), deadline, &result),
+                readiness_attempt_outcome(Instant::now(), deadline, &result),
                 ApplianceReadinessOutcome::Failed
             );
         }
         for result in [timeout, Ok(READY_MARKER.into())] {
             assert_eq!(
-                appliance_readiness_outcome(deadline, deadline, &result),
+                readiness_attempt_outcome(deadline, deadline, &result),
                 ApplianceReadinessOutcome::TimedOut
             );
         }
+    }
+
+    #[cfg(windows)]
+    struct NativeReadinessLoopbackFixture(PathBuf);
+
+    #[cfg(windows)]
+    impl NativeReadinessLoopbackFixture {
+        fn new() -> Self {
+            let root = Self(std::env::temp_dir().join(format!(
+                "opemos-native-readiness-{}-{}", std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            )));
+            fs::create_dir(&root.0).expect("create owned loopback identity directory");
+            run_checked(
+                child_command(find_binary("ssh-keygen").expect("existing OpenSSH keygen"))
+                    .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+                    .arg(root.0.join("builder_key")),
+                "generate disposable loopback identity",
+            )
+            .expect("create test-only key using existing fixture route");
+            root
+        }
+
+        fn session(&self, port: u16) -> ScpTestConnection {
+            ScpTestConnection {
+                ssh_key: self.0.join("builder_key"),
+                runtime_dir: self.0.clone(),
+                ssh_port: port,
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for NativeReadinessLoopbackFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(windows)]
+    fn native_readiness_loopback_peer(
+        mode: &'static str,
+    ) -> (u16, thread::JoinHandle<Result<(), String>>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind owned loopback port");
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let peer = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error)
+                        if error.kind() == io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        thread::sleep(Duration::from_millis(10))
+                    }
+                    Err(error) => return Err(format!("bounded loopback accept: {error}")),
+                }
+            };
+            stream.set_nonblocking(false).map_err(|e| e.to_string())?;
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .map_err(|e| e.to_string())?;
+            stream
+                .set_write_timeout(Some(Duration::from_secs(3)))
+                .map_err(|e| e.to_string())?;
+            // Consume the real russh identification before sending RST/FIN or
+            // malformed protocol bytes. No transport/method is overridden.
+            let mut banner = Vec::new();
+            while !banner.ends_with(b"\n") && banner.len() < 256 {
+                let mut byte = [0];
+                if stream.read(&mut byte).map_err(|e| e.to_string())? != 1 {
+                    return Err("client identification missing".into());
+                }
+                banner.push(byte[0]);
+            }
+            if !banner.starts_with(b"SSH-") {
+                return Err("actual russh client identification absent".into());
+            }
+            if mode == "reset" {
+                use std::os::windows::io::AsRawSocket;
+                #[repr(C)]
+                struct Linger {
+                    on: u16,
+                    seconds: u16,
+                }
+                #[link(name = "Ws2_32")]
+                extern "system" {
+                    fn setsockopt(
+                        socket: usize,
+                        level: i32,
+                        option: i32,
+                        value: *const u8,
+                        length: i32,
+                    ) -> i32;
+                }
+                let linger = Linger { on: 1, seconds: 0 };
+                // SAFETY: live owned Winsock socket and exact SO_LINGER input;
+                // abortive close affects only this disposable loopback stream.
+                let status = unsafe {
+                    setsockopt(
+                        stream.as_raw_socket() as usize,
+                        0xffff,
+                        0x0080,
+                        (&linger as *const Linger).cast(),
+                        std::mem::size_of::<Linger>() as i32,
+                    )
+                };
+                if status != 0 {
+                    return Err("owned loopback SO_LINGER refused".into());
+                }
+                drop(stream); // Actual TCP RST, not an error-string fixture.
+                return Ok(());
+            }
+            if mode == "closed" {
+                stream
+                    .shutdown(std::net::Shutdown::Both)
+                    .map_err(|e| e.to_string())?;
+                return Ok(());
+            }
+            if mode != "protocol" {
+                return Err("unknown test peer mode".into());
+            }
+            // The locked russh reader refuses an oversized unterminated SSH
+            // identification at its own bounded protocol boundary.
+            stream.write_all(&[b'X'; 256]).map_err(|e| e.to_string())?;
+            loop {
+                let mut byte = [0; 512];
+                match stream.read(&mut byte) {
+                    Ok(0) => return Ok(()),
+                    Ok(_) if Instant::now() < deadline => {}
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionAborted
+                        ) =>
+                    {
+                        return Ok(())
+                    }
+                    other => return Err(format!("client socket closure not observed: {other:?}")),
+                }
+            }
+        });
+        (port, peer)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_readiness_reset_and_refused_preserve_original_kind_and_deadline() {
+        use crate::windows_ssh::CommandStage;
+        let fixture = NativeReadinessLoopbackFixture::new();
+        let started = Instant::now();
+        let (deadline, seconds) = appliance_readiness_deadline(started, None).unwrap();
+        let (port, peer) = native_readiness_loopback_peer("reset");
+        let reset = readiness_handshake(&fixture.session(port));
+        let peer_result = peer.join().expect("join exact bounded reset peer");
+        println!("actual native reset={reset:?}; peer={peer_result:?}");
+        peer_result.expect("actual owned abortive socket close");
+        let ReadinessFailure::Native(error) =
+            reset.as_ref().expect_err("RST cannot become empty success")
+        else {
+            panic!("native reset metadata lost")
+        };
+        assert_eq!(error.stage, CommandStage::Connect);
+        assert_eq!(error.io_kind, Some(io::ErrorKind::ConnectionReset));
+        assert_eq!(error.raw_os_error, Some(10054));
+        assert!(error
+            .message
+            .starts_with("Could not connect to the Windows appliance SSH port: "));
+        assert_eq!(
+            readiness_attempt_outcome(Instant::now(), deadline, &reset),
+            ApplianceReadinessOutcome::Pending
+        );
+
+        let reserved = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = reserved.local_addr().unwrap().port();
+        drop(reserved); // A real closed loopback port, not a mocked connect call.
+        let refused = readiness_handshake(&fixture.session(port));
+        println!("actual native refusal={refused:?}");
+        let ReadinessFailure::Native(error) =
+            refused.as_ref().expect_err("closed port must refuse")
+        else {
+            panic!("native refusal metadata lost")
+        };
+        assert_eq!(error.stage, CommandStage::Connect);
+        assert_eq!(error.io_kind, Some(io::ErrorKind::ConnectionRefused));
+        assert_eq!(error.raw_os_error, Some(10061));
+        assert_eq!(
+            readiness_attempt_outcome(Instant::now(), deadline, &refused),
+            ApplianceReadinessOutcome::Pending
+        );
+        assert_eq!(seconds, 300);
+        assert_eq!(deadline.duration_since(started), Duration::from_secs(300));
+        for attempt in [reset, refused, Ok(READY_MARKER.into())] {
+            assert_eq!(
+                readiness_attempt_outcome(deadline, deadline, &attempt),
+                ApplianceReadinessOutcome::TimedOut
+            );
+        }
+        assert_eq!(
+            readiness_attempt_outcome(
+                deadline - Duration::from_nanos(1),
+                deadline,
+                &Ok(READY_MARKER.into())
+            ),
+            ApplianceReadinessOutcome::Ready
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_readiness_clean_close_and_invalid_protocol_fail_closed() {
+        let fixture = NativeReadinessLoopbackFixture::new();
+        let deadline = Instant::now() + Duration::from_secs(300);
+        for mode in ["closed", "protocol"] {
+            let (port, peer) = native_readiness_loopback_peer(mode);
+            let attempt = readiness_handshake(&fixture.session(port));
+            let peer_result = peer.join().expect("join exact closed/protocol peer");
+            println!("actual native {mode}={attempt:?}; closure={peer_result:?}");
+            peer_result.expect("bounded peer and actual client socket closure");
+            let ReadinessFailure::Native(error) = attempt
+                .as_ref()
+                .expect_err("invalid transport is not readiness")
+            else {
+                panic!("original native error missing")
+            };
+            assert_eq!(error.stage, crate::windows_ssh::CommandStage::Connect);
+            assert!(
+                !error.cold_boot_retryable(),
+                "only typed reset/refused and bounded-attempt timeout retry"
+            );
+            assert_eq!(
+                readiness_attempt_outcome(Instant::now(), deadline, &attempt),
+                ApplianceReadinessOutcome::Failed
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_readiness_strict_faults_never_gain_string_fallback() {
+        use crate::windows_ssh::{CommandFailure, CommandOutput, CommandStage};
+        let fixture = NativeReadinessLoopbackFixture::new();
+        let deadline = Instant::now() + Duration::from_secs(300);
+        let missing_key = ScpTestConnection {
+            ssh_key: fixture.0.join("missing-key"),
+            ..fixture.session(1)
+        };
+        let original_key_error = readiness_handshake(&missing_key);
+        assert_eq!(
+            readiness_attempt_outcome(Instant::now(), deadline, &original_key_error),
+            ApplianceReadinessOutcome::Failed
+        );
+        for stage in [
+            CommandStage::Authentication,
+            CommandStage::Channel,
+            CommandStage::Execute,
+        ] {
+            let original = russh::Error::IO(io::Error::from_raw_os_error(10054));
+            let failure = CommandFailure::transport(stage, "original native failure", original);
+            assert_eq!(failure.io_kind, Some(io::ErrorKind::ConnectionReset));
+            let attempt = finish_native_readiness_attempt(Err(failure));
+            assert_eq!(
+                readiness_attempt_outcome(Instant::now(), deadline, &attempt),
+                ApplianceReadinessOutcome::Failed
+            );
+        }
+        for error in [
+            russh::Error::KeyChanged { line: 7 },
+            russh::Error::WrongServerSig,
+            russh::Error::PacketAuth,
+            russh::Error::Version,
+        ] {
+            let failure = CommandFailure::transport(
+                CommandStage::Connect,
+                "status 255: Connection reset",
+                error,
+            );
+            let original = failure.message.clone();
+            let attempt = finish_native_readiness_attempt(Err(failure));
+            assert!(attempt
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains(&original));
+            assert_eq!(
+                readiness_attempt_outcome(Instant::now(), deadline, &attempt),
+                ApplianceReadinessOutcome::Failed
+            );
+        }
+        for (stdout, stderr, status) in [
+            ("WRONG", "", 0),
+            ("", "", 0),
+            (READY_MARKER, "unexpected diagnostics", 0),
+            ("", "Permission denied (publickey).", 255),
+            ("", "fatal failure", 7),
+            ("", "Connection reset by peer", 255),
+        ] {
+            let attempt = finish_native_readiness_attempt(Ok(CommandOutput {
+                stdout: stdout.as_bytes().to_vec(),
+                stderr: stderr.as_bytes().to_vec(),
+                status,
+            }));
+            assert_eq!(
+                readiness_attempt_outcome(Instant::now(), deadline, &attempt),
+                ApplianceReadinessOutcome::Failed
+            );
+            assert_eq!(
+                readiness_attempt_outcome(deadline, deadline, &attempt),
+                ApplianceReadinessOutcome::TimedOut
+            );
+        }
+        let absent_marker = finish_native_readiness_attempt(Ok(CommandOutput {
+            stdout: Vec::new(),
+            stderr: b"cat: /etc/steamos-builder-ready: No such file or directory".to_vec(),
+            status: 1,
+        }));
+        assert_eq!(
+            readiness_attempt_outcome(Instant::now(), deadline, &absent_marker),
+            ApplianceReadinessOutcome::Pending
+        );
+        assert_eq!(
+            readiness_attempt_outcome(deadline, deadline, &absent_marker),
+            ApplianceReadinessOutcome::TimedOut
+        );
+        let overflow = finish_native_readiness_attempt(Err(CommandFailure::message(
+            CommandStage::Command,
+            "In-process SSH command stdout exceeded its bound.",
+        )));
+        assert_eq!(
+            readiness_attempt_outcome(Instant::now(), deadline, &overflow),
+            ApplianceReadinessOutcome::Failed
+        );
     }
 
     #[cfg(windows)]

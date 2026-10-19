@@ -764,6 +764,75 @@ pub(crate) fn appliance_readiness_outcome(
     }
 }
 
+/// Only the boot-readiness path consumes native transport categories. Ordinary
+/// command failures remain terminal, and non-Windows OpenSSH policy is unchanged.
+#[derive(Debug)]
+pub(crate) enum ReadinessFailure {
+    Message(String),
+    #[cfg(windows)]
+    Native(crate::windows_ssh::CommandFailure),
+    #[cfg(windows)]
+    NativeCommand {
+        message: String,
+        marker_missing: bool,
+    },
+}
+
+impl From<String> for ReadinessFailure {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+impl std::fmt::Display for ReadinessFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Message(message) => formatter.write_str(message),
+            #[cfg(windows)]
+            Self::NativeCommand { message, .. } => formatter.write_str(message),
+            #[cfg(windows)]
+            Self::Native(failure) => write!(
+                formatter,
+                "{} [native SSH stage={:?}; io_kind={:?}; os_error={:?}]",
+                failure.message, failure.stage, failure.io_kind, failure.raw_os_error
+            ),
+        }
+    }
+}
+
+pub(crate) fn readiness_attempt_outcome(
+    now: Instant,
+    deadline: Instant,
+    attempt: &Result<String, ReadinessFailure>,
+) -> ApplianceReadinessOutcome {
+    // One non-resetting deadline precedes every retry and even a late marker.
+    if now >= deadline {
+        return ApplianceReadinessOutcome::TimedOut;
+    }
+    match attempt {
+        #[cfg(windows)]
+        Err(ReadinessFailure::Native(failure)) => {
+            if failure.cold_boot_retryable() {
+                ApplianceReadinessOutcome::Pending
+            } else {
+                ApplianceReadinessOutcome::Failed
+            }
+        }
+        #[cfg(windows)]
+        Err(ReadinessFailure::NativeCommand { marker_missing, .. }) => {
+            if *marker_missing {
+                ApplianceReadinessOutcome::Pending
+            } else {
+                ApplianceReadinessOutcome::Failed
+            }
+        }
+        Ok(output) => appliance_readiness_outcome(now, deadline, &Ok(output.clone())),
+        Err(ReadinessFailure::Message(message)) => {
+            appliance_readiness_outcome(now, deadline, &Err(message.clone()))
+        }
+    }
+}
+
 pub(crate) fn transient_readiness_error(error: &str) -> bool {
     // This classifier is used only while an appliance is booting. The Windows
     // in-process transport has its own bounded-attempt error; it must not end
@@ -3165,29 +3234,60 @@ pub(crate) fn qmp_attach_nvidia_target(session: &NvidiaBuildSession) -> Result<(
 }
 
 pub(crate) fn handshake(session: &impl GuestConnection) -> Result<String, String> {
+    readiness_handshake(session).map_err(|failure| match failure {
+        ReadinessFailure::Message(message) => message,
+        #[cfg(windows)]
+        ReadinessFailure::Native(failure) => failure.message,
+        #[cfg(windows)]
+        ReadinessFailure::NativeCommand { message, .. } => message,
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn finish_native_readiness_attempt(
+    result: Result<crate::windows_ssh::CommandOutput, crate::windows_ssh::CommandFailure>,
+) -> Result<String, ReadinessFailure> {
+    let output = result.map_err(ReadinessFailure::Native)?;
+    if output.status != 0 {
+        let diagnostics = String::from_utf8_lossy(&output.stderr);
+        // A real native remote-command status255 is not an OpenSSH transport
+        // exit255. Only the existing absent readiness-file condition may retry.
+        let marker_missing = output.status == 1
+            && diagnostics.contains("/etc/steamos-builder-ready")
+            && diagnostics.contains("No such file or directory");
+        return Err(ReadinessFailure::NativeCommand {
+            message: format!(
+                "Guest readiness command exited with status {}: {}",
+                output.status,
+                diagnostics.trim()
+            ),
+            marker_missing,
+        });
+    }
+    if !output.stderr.is_empty() {
+        return Err(ReadinessFailure::NativeCommand {
+            message: format!(
+                "Guest readiness command returned diagnostics: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+            marker_missing: false,
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+pub(crate) fn readiness_handshake(
+    session: &impl GuestConnection,
+) -> Result<String, ReadinessFailure> {
     #[cfg(windows)]
     {
-        let output = crate::windows_ssh::run_command(
+        finish_native_readiness_attempt(crate::windows_ssh::run_command_detailed(
             session.ssh_port(),
             session.ssh_key(),
             "cat /etc/steamos-builder-ready",
             READINESS_ATTEMPT_TIMEOUT,
             READINESS_ATTEMPT_OUTPUT_LIMIT as usize,
-        )?;
-        if output.status != 0 {
-            return Err(format!(
-                "Guest readiness command exited with status {}: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        if !output.stderr.is_empty() {
-            return Err(format!(
-                "Guest readiness command returned diagnostics: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        ))
     }
     #[cfg(not(windows))]
     {
@@ -3195,6 +3295,7 @@ pub(crate) fn handshake(session: &impl GuestConnection) -> Result<String, String
             start_guest_command(session, "cat /etc/steamos-builder-ready")?,
             READINESS_ATTEMPT_TIMEOUT,
         )
+        .map_err(ReadinessFailure::Message)
     }
 }
 
@@ -4036,7 +4137,7 @@ pub(crate) fn get_appliance_status_blocking(
         )
     };
 
-    let handshake_result = handshake(&snapshot);
+    let handshake_result = readiness_handshake(&snapshot);
     let mut manager = manager_state
         .lock()
         .map_err(|_| "Appliance state lock is unavailable.")?;
@@ -4052,7 +4153,7 @@ pub(crate) fn get_appliance_status_blocking(
     if session.ssh_port != session_port || session.state != "booting" {
         return Ok(session_status(session));
     }
-    match appliance_readiness_outcome(Instant::now(), readiness_deadline, &handshake_result) {
+    match readiness_attempt_outcome(Instant::now(), readiness_deadline, &handshake_result) {
         ApplianceReadinessOutcome::Ready => {
             session.state = "ready".into();
             session.message = "Builder appliance is ready.".into();
@@ -4061,6 +4162,7 @@ pub(crate) fn get_appliance_status_blocking(
             session.state = "failed".into();
             session.message = handshake_result
                 .err()
+                .map(|failure| failure.to_string())
                 .unwrap_or_else(|| "Builder handshake returned an unexpected marker.".into());
         }
         ApplianceReadinessOutcome::TimedOut => {

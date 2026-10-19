@@ -18,6 +18,81 @@ pub(crate) struct CommandOutput {
     pub(crate) status: i32,
 }
 
+/// Native failure metadata survives until the cold-boot readiness decision.
+/// Display remains the original diagnostic for ordinary command callers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CommandStage {
+    Identity,
+    Connect,
+    Authentication,
+    Channel,
+    Execute,
+    Command,
+    Runtime,
+    AttemptDeadline,
+}
+
+#[derive(Debug)]
+pub(crate) struct CommandFailure {
+    pub(crate) stage: CommandStage,
+    pub(crate) io_kind: Option<std::io::ErrorKind>,
+    pub(crate) raw_os_error: Option<i32>,
+    pub(crate) message: String,
+}
+
+impl CommandFailure {
+    pub(crate) fn message(stage: CommandStage, message: impl Into<String>) -> Self {
+        Self {
+            stage,
+            io_kind: None,
+            raw_os_error: None,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn transport(stage: CommandStage, prefix: &str, error: russh::Error) -> Self {
+        let (io_kind, raw_os_error) = match &error {
+            russh::Error::IO(error) => (Some(error.kind()), error.raw_os_error()),
+            _ => (None, None),
+        };
+        Self {
+            stage,
+            io_kind,
+            raw_os_error,
+            message: format!("{prefix}: {error}"),
+        }
+    }
+
+    pub(crate) fn cold_boot_retryable(&self) -> bool {
+        self.stage == CommandStage::AttemptDeadline
+            || (self.stage == CommandStage::Connect
+                && matches!(
+                    self.io_kind,
+                    Some(
+                        std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionRefused
+                    )
+                ))
+    }
+}
+
+impl std::fmt::Display for CommandFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl From<&str> for CommandFailure {
+    fn from(message: &str) -> Self {
+        Self::message(CommandStage::Command, message)
+    }
+}
+
+impl From<String> for CommandFailure {
+    fn from(message: String) -> Self {
+        Self::message(CommandStage::Command, message)
+    }
+}
+
 struct Client;
 
 impl client::Handler for Client {
@@ -37,32 +112,57 @@ async fn run_command_async(
     command: &str,
     timeout: Duration,
     output_limit: usize,
-) -> Result<CommandOutput, String> {
-    let key = load_secret_key(private_key, None)
-        .map_err(|error| format!("Could not read the appliance OpenSSH identity: {error}"))?;
+) -> Result<CommandOutput, CommandFailure> {
+    let key = load_secret_key(private_key, None).map_err(|error| {
+        CommandFailure::message(
+            CommandStage::Identity,
+            format!("Could not read the appliance OpenSSH identity: {error}"),
+        )
+    })?;
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(timeout),
         ..Default::default()
     });
     let mut session = client::connect(config, ("127.0.0.1", port), Client)
         .await
-        .map_err(|error| format!("Could not connect to the Windows appliance SSH port: {error}"))?;
+        .map_err(|error| {
+            CommandFailure::transport(
+                CommandStage::Connect,
+                "Could not connect to the Windows appliance SSH port",
+                error,
+            )
+        })?;
     let authentication = session
         .authenticate_publickey("builder", PrivateKeyWithHashAlg::new(Arc::new(key), None))
         .await
-        .map_err(|error| format!("Could not authenticate to the appliance: {error}"))?;
+        .map_err(|error| {
+            CommandFailure::transport(
+                CommandStage::Authentication,
+                "Could not authenticate to the appliance",
+                error,
+            )
+        })?;
     if !authentication.success() {
-        return Err("The appliance rejected the ephemeral SSH identity.".into());
+        return Err(CommandFailure::message(
+            CommandStage::Authentication,
+            "The appliance rejected the ephemeral SSH identity.",
+        ));
     }
 
-    let mut channel = session
-        .channel_open_session()
-        .await
-        .map_err(|error| format!("Could not open the appliance SSH command channel: {error}"))?;
-    channel
-        .exec(true, command)
-        .await
-        .map_err(|error| format!("Could not start the appliance SSH command: {error}"))?;
+    let mut channel = session.channel_open_session().await.map_err(|error| {
+        CommandFailure::transport(
+            CommandStage::Channel,
+            "Could not open the appliance SSH command channel",
+            error,
+        )
+    })?;
+    channel.exec(true, command).await.map_err(|error| {
+        CommandFailure::transport(
+            CommandStage::Execute,
+            "Could not start the appliance SSH command",
+            error,
+        )
+    })?;
 
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -220,17 +320,38 @@ pub(crate) fn run_command(
     timeout: Duration,
     output_limit: usize,
 ) -> Result<CommandOutput, String> {
+    run_command_detailed(port, private_key, command, timeout, output_limit)
+        .map_err(|failure| failure.message)
+}
+
+pub(crate) fn run_command_detailed(
+    port: u16,
+    private_key: &Path,
+    command: &str,
+    timeout: Duration,
+    output_limit: usize,
+) -> Result<CommandOutput, CommandFailure> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|error| format!("Could not start the appliance SSH runtime: {error}"))?;
+        .map_err(|error| {
+            CommandFailure::message(
+                CommandStage::Runtime,
+                format!("Could not start the appliance SSH runtime: {error}"),
+            )
+        })?;
     runtime.block_on(async {
         tokio::time::timeout(
             timeout,
             run_command_async(port, private_key, command, timeout, output_limit),
         )
         .await
-        .map_err(|_| "In-process SSH command timed out.".to_string())?
+        .map_err(|_| {
+            CommandFailure::message(
+                CommandStage::AttemptDeadline,
+                "In-process SSH command timed out.",
+            )
+        })?
     })
 }
 
