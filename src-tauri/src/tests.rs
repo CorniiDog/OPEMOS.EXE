@@ -3,6 +3,65 @@
 mod tests {
     use super::*;
 
+    #[test]
+    fn windows_readonly_firmware_template_yields_writable_session_copies() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-uefi-vars-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let template = root.join("readonly-template.fd");
+        let bytes = vec![0x5a; 4096];
+        fs::write(&template, &bytes).unwrap();
+        let original_permissions = fs::metadata(&template).unwrap().permissions();
+        let mut readonly = original_permissions.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&template, readonly).unwrap();
+
+        // Reproduce the Windows CopyFile attribute propagation and write denial
+        // before testing the corrected producer; no permission/OS adapter mock.
+        #[cfg(windows)]
+        {
+            let old_copy = root.join("old-copy.fd");
+            fs::copy(&template, &old_copy).unwrap();
+            assert!(fs::metadata(&old_copy).unwrap().permissions().readonly());
+            let denied = OpenOptions::new()
+                .write(true)
+                .open(&old_copy)
+                .expect_err("old read-only pflash copy must reproduce write denial");
+            assert_eq!(denied.kind(), io::ErrorKind::PermissionDenied);
+            eprintln!("Original pflash copy write failed as expected: {denied}");
+            fs::set_permissions(&old_copy, original_permissions.clone()).unwrap();
+        }
+
+        for name in ["image-session-vars.fd", "x86-worker-vars.fd"] {
+            let destination = root.join(name);
+            copy_writable_uefi_vars(&template, &destination).unwrap();
+            assert_eq!(fs::read(&destination).unwrap(), bytes);
+            let mut writer = OpenOptions::new().write(true).open(&destination).unwrap();
+            writer.write_all(b"QEMU").unwrap();
+            writer.sync_all().unwrap();
+            drop(writer);
+            assert_eq!(&fs::read(&destination).unwrap()[..4], b"QEMU");
+            assert_eq!(fs::read(&template).unwrap(), bytes);
+            assert!(fs::metadata(&template).unwrap().permissions().readonly());
+        }
+        assert!(
+            copy_writable_uefi_vars(&root.join("missing.fd"), &root.join("missing-output.fd"))
+                .is_err()
+        );
+        assert!(!root.join("missing-output.fd").exists());
+        assert!(copy_writable_uefi_vars(&template, &root).is_err());
+        assert!(fs::metadata(&template).unwrap().permissions().readonly());
+        assert_eq!(fs::read(&template).unwrap(), bytes);
+        fs::set_permissions(&template, original_permissions).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn relocated_appimage_uses_exact_adjacent_companion_not_checkout() {
@@ -441,11 +500,23 @@ mod tests {
         let (deadline, seconds) = appliance_readiness_deadline(started, None).unwrap();
         // Actual current handshake -> russh -> socket boundary, no overridden
         // transport or method under test. The peer deliberately sends no banner.
-        let timeout = handshake(&session);
+        let timeout = readiness_handshake(&session);
         let peer_closed = server.join().expect("join bounded loopback peer");
         println!("actual Windows handshake={timeout:?}; socket closure={peer_closed:?}");
         assert_eq!(
-            timeout.as_ref().expect_err("cold SSH transport must expire"),
+            match timeout
+                .as_ref()
+                .expect_err("cold SSH transport must expire")
+            {
+                ReadinessFailure::Native(failure) => {
+                    assert_eq!(
+                        failure.stage,
+                        crate::windows_ssh::CommandStage::AttemptDeadline
+                    );
+                    failure.message.as_str()
+                }
+                other => panic!("native timeout kind lost: {other:?}"),
+            },
             "In-process SSH command timed out."
         );
         peer_closed.expect("timed-out transport must close its socket");
@@ -454,33 +525,367 @@ mod tests {
         assert_eq!(seconds, 300);
         assert_eq!(deadline.duration_since(started), Duration::from_secs(300));
         assert_eq!(
-            appliance_readiness_outcome(Instant::now(), deadline, &timeout),
+            readiness_attempt_outcome(Instant::now(), deadline, &timeout),
             ApplianceReadinessOutcome::Pending
         );
         assert_eq!(
-            appliance_readiness_outcome(Instant::now(), deadline, &Ok(READY_MARKER.into())),
+            readiness_attempt_outcome(Instant::now(), deadline, &Ok(READY_MARKER.into())),
             ApplianceReadinessOutcome::Ready
         );
         for result in [
             Ok("WRONG".into()),
             Ok(String::new()),
-            Err("The appliance rejected the ephemeral SSH identity.".into()),
-            Err("In-process SSH command stdout exceeded its bound.".into()),
-            Err("Guest readiness command exited with status 7: failure".into()),
-            Err("prefix In-process SSH command timed out.".into()),
-            Err("In-process SSH command timed out. suffix".into()),
+            Err(ReadinessFailure::Message("The appliance rejected the ephemeral SSH identity.".into())),
+            Err(ReadinessFailure::Message("In-process SSH command stdout exceeded its bound.".into())),
+            Err(ReadinessFailure::Message("Guest readiness command exited with status 7: failure".into())),
+            Err(ReadinessFailure::Message("prefix In-process SSH command timed out.".into())),
+            Err(ReadinessFailure::Message("In-process SSH command timed out. suffix".into())),
         ] {
             assert_eq!(
-                appliance_readiness_outcome(Instant::now(), deadline, &result),
+                readiness_attempt_outcome(Instant::now(), deadline, &result),
                 ApplianceReadinessOutcome::Failed
             );
         }
         for result in [timeout, Ok(READY_MARKER.into())] {
             assert_eq!(
-                appliance_readiness_outcome(deadline, deadline, &result),
+                readiness_attempt_outcome(deadline, deadline, &result),
                 ApplianceReadinessOutcome::TimedOut
             );
         }
+    }
+
+    #[cfg(windows)]
+    struct NativeReadinessLoopbackFixture(PathBuf);
+
+    #[cfg(windows)]
+    impl NativeReadinessLoopbackFixture {
+        fn new() -> Self {
+            let root = Self(std::env::temp_dir().join(format!(
+                "opemos-native-readiness-{}-{}", std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            )));
+            fs::create_dir(&root.0).expect("create owned loopback identity directory");
+            run_checked(
+                child_command(find_binary("ssh-keygen").expect("existing OpenSSH keygen"))
+                    .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+                    .arg(root.0.join("builder_key")),
+                "generate disposable loopback identity",
+            )
+            .expect("create test-only key using existing fixture route");
+            root
+        }
+
+        fn session(&self, port: u16) -> ScpTestConnection {
+            ScpTestConnection {
+                ssh_key: self.0.join("builder_key"),
+                runtime_dir: self.0.clone(),
+                ssh_port: port,
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for NativeReadinessLoopbackFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(windows)]
+    fn native_readiness_loopback_peer(
+        mode: &'static str,
+    ) -> (u16, thread::JoinHandle<Result<(), String>>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind owned loopback port");
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let peer = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error)
+                        if error.kind() == io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        thread::sleep(Duration::from_millis(10))
+                    }
+                    Err(error) => return Err(format!("bounded loopback accept: {error}")),
+                }
+            };
+            stream.set_nonblocking(false).map_err(|e| e.to_string())?;
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .map_err(|e| e.to_string())?;
+            stream
+                .set_write_timeout(Some(Duration::from_secs(3)))
+                .map_err(|e| e.to_string())?;
+            // Consume the real russh identification before sending RST/FIN or
+            // malformed protocol bytes. No transport/method is overridden.
+            let mut banner = Vec::new();
+            while !banner.ends_with(b"\n") && banner.len() < 256 {
+                let mut byte = [0];
+                if stream.read(&mut byte).map_err(|e| e.to_string())? != 1 {
+                    return Err("client identification missing".into());
+                }
+                banner.push(byte[0]);
+            }
+            if !banner.starts_with(b"SSH-") {
+                return Err("actual russh client identification absent".into());
+            }
+            if mode == "reset" {
+                use std::os::windows::io::AsRawSocket;
+                #[repr(C)]
+                struct Linger {
+                    on: u16,
+                    seconds: u16,
+                }
+                #[link(name = "Ws2_32")]
+                extern "system" {
+                    fn setsockopt(
+                        socket: usize,
+                        level: i32,
+                        option: i32,
+                        value: *const u8,
+                        length: i32,
+                    ) -> i32;
+                }
+                let linger = Linger { on: 1, seconds: 0 };
+                // SAFETY: live owned Winsock socket and exact SO_LINGER input;
+                // abortive close affects only this disposable loopback stream.
+                let status = unsafe {
+                    setsockopt(
+                        stream.as_raw_socket() as usize,
+                        0xffff,
+                        0x0080,
+                        (&linger as *const Linger).cast(),
+                        std::mem::size_of::<Linger>() as i32,
+                    )
+                };
+                if status != 0 {
+                    return Err("owned loopback SO_LINGER refused".into());
+                }
+                drop(stream); // Actual TCP RST, not an error-string fixture.
+                return Ok(());
+            }
+            if mode == "closed" {
+                stream
+                    .shutdown(std::net::Shutdown::Both)
+                    .map_err(|e| e.to_string())?;
+                return Ok(());
+            }
+            if mode != "protocol" {
+                return Err("unknown test peer mode".into());
+            }
+            // The locked russh reader refuses an oversized unterminated SSH
+            // identification at its own bounded protocol boundary.
+            stream.write_all(&[b'X'; 256]).map_err(|e| e.to_string())?;
+            loop {
+                let mut byte = [0; 512];
+                match stream.read(&mut byte) {
+                    Ok(0) => return Ok(()),
+                    Ok(_) if Instant::now() < deadline => {}
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionAborted
+                        ) =>
+                    {
+                        return Ok(())
+                    }
+                    other => return Err(format!("client socket closure not observed: {other:?}")),
+                }
+            }
+        });
+        (port, peer)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_readiness_reset_and_refused_preserve_original_kind_and_deadline() {
+        use crate::windows_ssh::CommandStage;
+        let fixture = NativeReadinessLoopbackFixture::new();
+        let started = Instant::now();
+        let (deadline, seconds) = appliance_readiness_deadline(started, None).unwrap();
+        let (port, peer) = native_readiness_loopback_peer("reset");
+        let reset = readiness_handshake(&fixture.session(port));
+        let peer_result = peer.join().expect("join exact bounded reset peer");
+        println!("actual native reset={reset:?}; peer={peer_result:?}");
+        peer_result.expect("actual owned abortive socket close");
+        let ReadinessFailure::Native(error) =
+            reset.as_ref().expect_err("RST cannot become empty success")
+        else {
+            panic!("native reset metadata lost")
+        };
+        assert_eq!(error.stage, CommandStage::Connect);
+        assert_eq!(error.io_kind, Some(io::ErrorKind::ConnectionReset));
+        assert_eq!(error.raw_os_error, Some(10054));
+        assert!(error
+            .message
+            .starts_with("Could not connect to the Windows appliance SSH port: "));
+        assert_eq!(
+            readiness_attempt_outcome(Instant::now(), deadline, &reset),
+            ApplianceReadinessOutcome::Pending
+        );
+
+        let reserved = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = reserved.local_addr().unwrap().port();
+        drop(reserved); // A real closed loopback port, not a mocked connect call.
+        let refused = readiness_handshake(&fixture.session(port));
+        println!("actual native refusal={refused:?}");
+        let ReadinessFailure::Native(error) =
+            refused.as_ref().expect_err("closed port must refuse")
+        else {
+            panic!("native refusal metadata lost")
+        };
+        assert_eq!(error.stage, CommandStage::Connect);
+        assert_eq!(error.io_kind, Some(io::ErrorKind::ConnectionRefused));
+        assert_eq!(error.raw_os_error, Some(10061));
+        assert_eq!(
+            readiness_attempt_outcome(Instant::now(), deadline, &refused),
+            ApplianceReadinessOutcome::Pending
+        );
+        assert_eq!(seconds, 300);
+        assert_eq!(deadline.duration_since(started), Duration::from_secs(300));
+        for attempt in [reset, refused, Ok(READY_MARKER.into())] {
+            assert_eq!(
+                readiness_attempt_outcome(deadline, deadline, &attempt),
+                ApplianceReadinessOutcome::TimedOut
+            );
+        }
+        assert_eq!(
+            readiness_attempt_outcome(
+                deadline - Duration::from_nanos(1),
+                deadline,
+                &Ok(READY_MARKER.into())
+            ),
+            ApplianceReadinessOutcome::Ready
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_readiness_clean_close_and_invalid_protocol_fail_closed() {
+        let fixture = NativeReadinessLoopbackFixture::new();
+        let deadline = Instant::now() + Duration::from_secs(300);
+        for mode in ["closed", "protocol"] {
+            let (port, peer) = native_readiness_loopback_peer(mode);
+            let attempt = readiness_handshake(&fixture.session(port));
+            let peer_result = peer.join().expect("join exact closed/protocol peer");
+            println!("actual native {mode}={attempt:?}; closure={peer_result:?}");
+            peer_result.expect("bounded peer and actual client socket closure");
+            let ReadinessFailure::Native(error) = attempt
+                .as_ref()
+                .expect_err("invalid transport is not readiness")
+            else {
+                panic!("original native error missing")
+            };
+            assert_eq!(error.stage, crate::windows_ssh::CommandStage::Connect);
+            assert!(
+                !error.cold_boot_retryable(),
+                "only typed reset/refused and bounded-attempt timeout retry"
+            );
+            assert_eq!(
+                readiness_attempt_outcome(Instant::now(), deadline, &attempt),
+                ApplianceReadinessOutcome::Failed
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_readiness_strict_faults_never_gain_string_fallback() {
+        use crate::windows_ssh::{CommandFailure, CommandOutput, CommandStage};
+        let fixture = NativeReadinessLoopbackFixture::new();
+        let deadline = Instant::now() + Duration::from_secs(300);
+        let missing_key = ScpTestConnection {
+            ssh_key: fixture.0.join("missing-key"),
+            ..fixture.session(1)
+        };
+        let original_key_error = readiness_handshake(&missing_key);
+        assert_eq!(
+            readiness_attempt_outcome(Instant::now(), deadline, &original_key_error),
+            ApplianceReadinessOutcome::Failed
+        );
+        for stage in [
+            CommandStage::Authentication,
+            CommandStage::Channel,
+            CommandStage::Execute,
+        ] {
+            let original = russh::Error::IO(io::Error::from_raw_os_error(10054));
+            let failure = CommandFailure::transport(stage, "original native failure", original);
+            assert_eq!(failure.io_kind, Some(io::ErrorKind::ConnectionReset));
+            let attempt = finish_native_readiness_attempt(Err(failure));
+            assert_eq!(
+                readiness_attempt_outcome(Instant::now(), deadline, &attempt),
+                ApplianceReadinessOutcome::Failed
+            );
+        }
+        for error in [
+            russh::Error::KeyChanged { line: 7 },
+            russh::Error::WrongServerSig,
+            russh::Error::PacketAuth,
+            russh::Error::Version,
+        ] {
+            let failure = CommandFailure::transport(
+                CommandStage::Connect,
+                "status 255: Connection reset",
+                error,
+            );
+            let original = failure.message.clone();
+            let attempt = finish_native_readiness_attempt(Err(failure));
+            assert!(attempt
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains(&original));
+            assert_eq!(
+                readiness_attempt_outcome(Instant::now(), deadline, &attempt),
+                ApplianceReadinessOutcome::Failed
+            );
+        }
+        for (stdout, stderr, status) in [
+            ("WRONG", "", 0),
+            ("", "", 0),
+            (READY_MARKER, "unexpected diagnostics", 0),
+            ("", "Permission denied (publickey).", 255),
+            ("", "fatal failure", 7),
+            ("", "Connection reset by peer", 255),
+        ] {
+            let attempt = finish_native_readiness_attempt(Ok(CommandOutput {
+                stdout: stdout.as_bytes().to_vec(),
+                stderr: stderr.as_bytes().to_vec(),
+                status,
+            }));
+            assert_eq!(
+                readiness_attempt_outcome(Instant::now(), deadline, &attempt),
+                ApplianceReadinessOutcome::Failed
+            );
+            assert_eq!(
+                readiness_attempt_outcome(deadline, deadline, &attempt),
+                ApplianceReadinessOutcome::TimedOut
+            );
+        }
+        let absent_marker = finish_native_readiness_attempt(Ok(CommandOutput {
+            stdout: Vec::new(),
+            stderr: b"cat: /etc/steamos-builder-ready: No such file or directory".to_vec(),
+            status: 1,
+        }));
+        assert_eq!(
+            readiness_attempt_outcome(Instant::now(), deadline, &absent_marker),
+            ApplianceReadinessOutcome::Pending
+        );
+        assert_eq!(
+            readiness_attempt_outcome(deadline, deadline, &absent_marker),
+            ApplianceReadinessOutcome::TimedOut
+        );
+        let overflow = finish_native_readiness_attempt(Err(CommandFailure::message(
+            CommandStage::Command,
+            "In-process SSH command stdout exceeded its bound.",
+        )));
+        assert_eq!(
+            readiness_attempt_outcome(Instant::now(), deadline, &overflow),
+            ApplianceReadinessOutcome::Failed
+        );
     }
 
     #[cfg(windows)]
@@ -3612,6 +4017,102 @@ esac
         assert_eq!(constrained.guest_vcpus, 1);
         assert!(plan_guest_resources(4 * GIB, 8, false).is_err());
         assert!(plan_guest_resources(16 * GIB, 0, false).is_err());
+    }
+
+    #[test]
+    fn windows_ram_admission_corrects_only_verified_minimum_reservation() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        const MIB: u64 = 1024 * 1024;
+        for usable in [6_441_336_832, 6 * GIB - 2 * MIB, 6 * GIB - 1] {
+            let admitted = windows_memory_admission_bytes(Some(usable), Some(6 * GIB / 1024))
+                .expect("verified minimum-boundary reservation");
+            assert_eq!(admitted, 6 * GIB);
+            let inspection = plan_guest_resources(admitted, 2, false).expect("inspection plan");
+            assert_eq!(inspection.guest_memory_mib, 2048);
+            assert_eq!(inspection.guest_vcpus, 1);
+            let build = plan_guest_resources(admitted, 2, true).expect("build plan");
+            assert_eq!(build.guest_memory_mib, 4096);
+            assert_eq!(build.guest_vcpus, 1);
+        }
+        for (installed, usable) in [
+            (6 * GIB, 6 * GIB - 2 * MIB - 1),
+            (6 * GIB - 1024, 6 * GIB - 1024),
+            (5 * GIB, 5 * GIB),
+            (16 * GIB, 6 * GIB - MIB),
+        ] {
+            let admitted = windows_memory_admission_bytes(Some(usable), Some(installed / 1024))
+                .expect("valid reports outside the narrow correction");
+            assert_eq!(admitted, usable);
+            for build in [false, true] {
+                assert!(plan_guest_resources(admitted, 2, build).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn windows_ram_api_failure_and_invalid_reports_do_not_inflate_admission() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        // These are the exact Option reports used by the native API producer:
+        // None means the corresponding API returned failure, not zero RAM.
+        for installed in [None, Some(6 * GIB / 1024)] {
+            for usable in [None, Some(0)] {
+                assert_eq!(
+                    windows_memory_admission_bytes(usable, installed).unwrap_err(),
+                    "Windows host RAM could not be determined."
+                );
+            }
+        }
+        for usable in [6_441_336_832, 6 * GIB, 16 * GIB] {
+            let admitted = windows_memory_admission_bytes(Some(usable), None)
+                .expect("installed API failure retains usable RAM");
+            assert_eq!(admitted, usable);
+            for build in [false, true] {
+                assert_eq!(
+                    plan_guest_resources(admitted, 2, build).is_ok(),
+                    usable >= 6 * GIB
+                );
+            }
+        }
+        for (installed_kib, usable) in [(0, 1), (1, 2048), (u64::MAX, 1)] {
+            assert_eq!(
+                windows_memory_admission_bytes(Some(usable), Some(installed_kib)).unwrap_err(),
+                "Windows installed/usable RAM reports are invalid."
+            );
+        }
+    }
+
+    #[test]
+    fn windows_ram_admission_preserves_usable_sizing_and_cpu_limits() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        for usable in [6 * GIB, 8 * GIB, 16 * GIB, 32 * GIB] {
+            let admitted = windows_memory_admission_bytes(Some(usable), Some(32 * GIB / 1024))
+                .expect("ordinary usable budget");
+            assert_eq!(admitted, usable);
+            for cpus in [0, 1, 2, 10, 12] {
+                for build in [false, true] {
+                    let actual = plan_guest_resources(admitted, cpus, build);
+                    let baseline = plan_guest_resources(usable, cpus, build);
+                    if cpus == 0 {
+                        assert_eq!(actual.err(), baseline.err());
+                    } else {
+                        let actual = actual.unwrap();
+                        let baseline = baseline.unwrap();
+                        assert_eq!(actual.schema_version, baseline.schema_version);
+                        assert_eq!(actual.workload, baseline.workload);
+                        assert_eq!(actual.host_memory_bytes, baseline.host_memory_bytes);
+                        assert_eq!(actual.host_logical_cpus, baseline.host_logical_cpus);
+                        assert_eq!(actual.guest_memory_mib, baseline.guest_memory_mib);
+                        assert_eq!(actual.guest_vcpus, baseline.guest_vcpus);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_ram_native_api_producer_reports_nonzero_memory() {
+        assert!(windows_physical_memory_bytes().expect("actual Windows memory APIs") > 0);
     }
 
     #[test]
