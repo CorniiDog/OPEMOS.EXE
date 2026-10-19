@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import tarfile
 import tempfile
@@ -13,11 +14,18 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from acquire_runtime_macos import extract, load_lock, relocate, relocated_relative, close_curated_links
+from acquire_runtime_macos import extract, load_lock, relocate, relocated_relative, close_curated_links, is_macho_code
 from prepare_macos_fullstack import ArtifactRanges
 
 
 class DarwinProducer(unittest.TestCase):
+    def test_java_magic_is_not_a_macho_architecture_table(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "javaversion.class"
+            path.write_bytes(bytes.fromhex("cafebabe0000003d") + b"class-data" * 300)
+            self.assertFalse(is_macho_code(path))
+            path.write_bytes(bytes.fromhex("cafebabe00000001") + b"\0" * 20)
+            self.assertFalse(is_macho_code(path))
     def test_actual_http_range_consumer_and_ignored_range_fault(self):
         payload = b"bounded exact immutable artifact bytes"
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -144,6 +152,15 @@ class DarwinProducer(unittest.TestCase):
             source.write_text("int answer(void) { return 42; }\n")
             subprocess.run(["xcrun", "clang", "-dynamiclib", str(source), "-o", str(library),
                             "-Wl,-install_name,/opt/homebrew/opt/fixture/lib/libfixture.dylib"], check=True)
+            self.assertTrue(is_macho_code(library))
+            # One real ARM64 slice, accepted by lipo/codesign/dyld. No x86 lane.
+            data = library.read_bytes()
+            cpu, subtype = struct.unpack_from("<II", data, 4)
+            fat_library = keg / "lib/libfatfixture.dylib"
+            fat_header = struct.pack(">IIIIIII", 0xcafebabe, 1, cpu, subtype, 4096, len(data), 12)
+            fat_library.write_bytes(fat_header + b"\0" * (4096 - len(fat_header)) + data)
+            fat_library.chmod(0o755)
+            self.assertTrue(is_macho_code(fat_library))
             main = root / "main.c"
             main.write_text("extern int answer(void); int main(void) { return answer() == 42 ? 0 : 1; }\n")
             executable = keg / "consumer"
@@ -152,11 +169,12 @@ class DarwinProducer(unittest.TestCase):
             before = subprocess.check_output(["/usr/bin/otool", "-L", str(executable)], text=True)
             self.assertIn("/opt/homebrew/opt/fixture/lib/libfixture.dylib", before)
             rows = relocate(root, {"fixture": keg})
-            self.assertEqual(len(rows), 2)
+            self.assertEqual(len(rows), 3)
             self.assertNotEqual(rows[0]["before"], rows[0]["after"])
             subprocess.run([str(executable)], check=True)
             # A separate actual process loads the transformed library.
             subprocess.run([sys.executable, "-c", "import ctypes,sys; assert ctypes.CDLL(sys.argv[1]).answer()==42", str(library)], check=True)
+            subprocess.run([sys.executable, "-c", "import ctypes,sys; assert ctypes.CDLL(sys.argv[1]).answer()==42", str(fat_library)], check=True)
 
 
 if __name__ == "__main__":

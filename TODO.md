@@ -71,6 +71,16 @@
   and exact Core review remain required before any protected merge. No workflow
   policy/protection changes; first four failures/logs and passed jobs preserved.
 
+  Actual2b12 manual M1 run39274081959: all six boundary tests PASS, all43
+  bottle/curated alias/license phases advanced and actual native relocation/
+  signing ran, then gettext javaversion.class CAFEBABE data was misclassified
+  as fat Mach-O (lipo exit1; producer2139/group absent). Retain full656791B log
+  in exe-pr191-fifth-mac-attempt. Four-byte magic is not a format discriminator:
+  validate bounded architecture table/slice/header/role before native tools.
+  Add Java-data rejection plus an actual single-ARM64 FAT dylib that is consumed
+  by lipo/codesign/dyld; no invented x86 Mac lane or filename-suffix bypass.
+  Input/version/readiness pins unchanged; current source is not GUI acceptance.
+
 ## Windows read-only package firmware handoff
 
 - [ ] Same complete Windows launch graph, subsequent actual OMEN r3/r4:

@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 import platform
 import shutil
 import stat
+import struct
 import subprocess
 import tarfile
 import tempfile
@@ -32,7 +33,6 @@ COMMANDS = {
     "ssh": ("openssh", "bin/ssh"), "scp": ("openssh", "bin/scp"),
     "ssh-keygen": ("openssh", "bin/ssh-keygen"),
 }
-MAGIC = {b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"}
 
 
 def run(args, seconds=120):
@@ -239,13 +239,63 @@ def dependencies(path):
             for line in run(["/usr/bin/otool", "-L", path]).splitlines()[1:]]
 
 
+def is_macho_code(path):
+    """Validate loadable thin/fat structure; Java also uses CAFEBABE.
+
+    FAT architecture tables follow Apple's mach-o/fat.h, not a filename guess.
+    Only actual loadable code is signed; object/SDK/data files aren't programs.
+    """
+    size = path.stat().st_size
+    thin = {b"\xcf\xfa\xed\xfe": ("<", 32), b"\xfe\xed\xfa\xcf": (">", 32),
+            b"\xce\xfa\xed\xfe": ("<", 28), b"\xfe\xed\xfa\xce": (">", 28)}
+    def valid_header(data, available, cpu=None):
+        layout = thin.get(data[:4])
+        if layout is None or len(data) < layout[1]:
+            return False
+        kind = struct.unpack_from(layout[0] + "I", data, 4)[0]
+        filetype, commands, command_bytes = struct.unpack_from(layout[0] + "III", data, 12)
+        return (filetype in (2, 6, 8) and 0 < commands <= 4096 and
+                commands * 8 <= command_bytes <= available - layout[1] and
+                (cpu is None or kind == cpu))
+    with path.open("rb") as stream:
+        header = stream.read(32)
+        if header[:4] in thin:
+            return valid_header(header, size)
+        fat = {b"\xca\xfe\xba\xbe": (">", False), b"\xbe\xba\xfe\xca": ("<", False),
+               b"\xca\xfe\xba\xbf": (">", True), b"\xbf\xba\xfe\xca": ("<", True)}.get(header[:4])
+        if fat is None or len(header) < 8:
+            return False
+        endian, wide = fat
+        count = struct.unpack_from(endian + "I", header, 4)[0]
+        entry_bytes = 32 if wide else 20
+        if not 0 < count <= 16 or 8 + count * entry_bytes > size:
+            return False
+        stream.seek(8)
+        table = stream.read(count * entry_bytes)
+        ranges = []
+        for index in range(count):
+            entry = table[index * entry_bytes:(index + 1) * entry_bytes]
+            if wide:
+                cpu, _sub, offset, length, align, _reserved = struct.unpack(endian + "IIQQII", entry)
+            else:
+                cpu, _sub, offset, length, align = struct.unpack(endian + "IIIII", entry)
+            if (cpu not in (7, 12, 0x1000007, 0x100000c) or align > 31 or
+                    offset < 8 + count * entry_bytes or not length or offset + length > size or
+                    offset % (1 << align) or any(offset < end and offset + length > start for start, end in ranges)):
+                return False
+            stream.seek(offset)
+            if not valid_header(stream.read(32), length, cpu):
+                return False
+            ranges.append((offset, offset + length))
+        return True
+
+
 def relocate(root, kegs):
     files = [p for p in root.rglob("*") if p.is_file()]
     native = []
     for path in files:
-        with path.open("rb") as stream:
-            if stream.read(4) in MAGIC:
-                native.append(path)
+        if is_macho_code(path):
+            native.append(path)
     initial_hashes = {p: digest(p) for p in native}
     records = []
     for path in native:
