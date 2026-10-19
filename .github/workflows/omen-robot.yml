@@ -27,6 +27,44 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Verify the complete Robot producer is present
+        run: |
+          python3 - <<'PYREADY'
+          import json
+          import os
+          from pathlib import Path
+          required = ['scripts/omen_robot_gate.py', 'scripts/robot_client.py',
+                      'scripts/OPEMOSRobot.py', 'scripts/OPEMOSGuest.py',
+                      'scripts/OPEMOSPointer.py', 'scripts/run_omen_robot_guest.py',
+                      'scripts/omen_robot.py', 'scripts/omen_ci.py',
+                      'scripts/omen_ci_executables.py', 'scripts/omen_ci_inventory.py',
+                      'scripts/omen_ci_reader.py', 'scripts/omen_ci_result.py',
+                      'scripts/omen_ci_stage.py', 'tests/robot/inventory.robot',
+                      'tests/robot/role.robot', 'tests/robot/guest.robot',
+                      'ci/gui-pointer-contract.json', 'ci/robot-installed-hook-contract.json']
+          missing = [name for name in required if not Path(name).is_file()]
+          out = Path('robot-preflight')
+          out.mkdir(exist_ok=True)
+          readiness = {'source_commit': os.environ['GITHUB_SHA'],
+                       'producer_ready': not missing, 'missing_files': missing,
+                       'full_stack_passed': False}
+          (out / 'producer-readiness.json').write_text(json.dumps(readiness, indent=2) + '\n')
+          if missing:
+              rows = json.loads(Path('ci/required-vms.json').read_text())['required_vms']
+              reason = 'Complete Robot producer is not integrated on this source'
+              value = {'status': 'failed', 'source_commit': os.environ['GITHUB_SHA'],
+                       'vms': {row['id']: {'name': row['name'], 'status': 'unavailable',
+                                           'reason': reason} for row in rows},
+                       'executable_acceptance': {name: {'status': 'unavailable', 'reason': reason}
+                                                for name in ('windows', 'ubuntu', 'macos')}}
+              (out / 'all20.json').write_text(json.dumps(value, indent=2) + '\n')
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as report:
+                  report.write('| Required VM | Result |\n|---|---|\n')
+                  for row in rows:
+                      report.write('| ' + row['name'] + ' | unavailable: producer not integrated |\n')
+                  report.write('\nNo VM, pointer, USB, SteamOS or NVIDIA pass has been established.\n')
+              raise SystemExit(reason + ': ' + ', '.join(missing))
+          PYREADY
       - id: guard
         name: Verify trusted event, current protected Main and fresh dedicated runner heartbeat
         env:
