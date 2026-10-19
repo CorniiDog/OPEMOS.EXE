@@ -1,5 +1,16 @@
 # OPEMOS.EXE — Product Checklist
 
+## Current-Main Windows causal batch
+
+- [ ] Reconcile only PR190 generated-VARS/WHPX, PR196 typed native readiness,
+  and reviewed RAM449145ed onto Mainb6bb53d9; preserve merged Linux197 and
+  existing source workflows. Historical notes below remain evidence, not current
+  merge authority. Native Windows four RAM cases plus readiness/permissions and
+  all required current-head source/package checks must pass; exact new Core
+  approval is required before owning protected merge. Normal topic push to
+  canonical origin is necessary for remote-only CI/review, not publication.
+  Mac lifecycle/native/GUI failures do not hold this independent source scope.
+
 ## Current-main Linux UDisks writer source qualification
 
 - [ ] Reconciled reviewed119fb3b4 onto exact Main00885837 in isolated EXE topic;
