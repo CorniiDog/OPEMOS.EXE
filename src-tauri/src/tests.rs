@@ -262,6 +262,62 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn cold_boot_refused_transport_then_marker_is_not_a_wrong_marker_failure() {
+        fn attempt(script: &str) -> Result<String, String> {
+            let mut command = Command::new("/bin/sh");
+            command
+                .args(["-c", script])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            isolate_process_group(&mut command);
+            let child = command.spawn().expect("start actual readiness subprocess");
+            let pid = child.id();
+            let result = finish_guest_readiness_attempt(child, Duration::from_secs(1));
+            assert!(!process_is_alive(pid), "readiness child must be reaped");
+            result
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let refused = attempt("printf 'ssh: connect to host 127.0.0.1 port 2222: Connection refused\\n' >&2; exit 255");
+        let error = refused.as_ref().expect_err("refused SSH is never Ok(empty)");
+        assert!(error.contains("exit status: 255"));
+        assert!(error.contains("Connection refused"));
+        assert_eq!(
+            appliance_readiness_outcome(Instant::now(), deadline, &refused),
+            ApplianceReadinessOutcome::Pending
+        );
+        let ready = attempt("printf 'SteamOS NVIDIA Image Builder appliance\\nREADY\\n'");
+        assert_eq!(ready.as_deref(), Ok(READY_MARKER));
+        assert_eq!(
+            appliance_readiness_outcome(Instant::now(), deadline, &ready),
+            ApplianceReadinessOutcome::Ready
+        );
+        let wrong = attempt("printf 'wrong marker\\n'");
+        assert_eq!(wrong.as_deref(), Ok("wrong marker"));
+        assert_eq!(
+            appliance_readiness_outcome(Instant::now(), deadline, &wrong),
+            ApplianceReadinessOutcome::Failed
+        );
+        for script in [
+            "exit 0",
+            "printf 'Permission denied (publickey).\\n' >&2; exit 255",
+            "printf 'fatal guest failure\\n' >&2; exit 1",
+        ] {
+            let failed = attempt(script);
+            assert!(failed.is_err());
+            assert_eq!(
+                appliance_readiness_outcome(Instant::now(), deadline, &failed),
+                ApplianceReadinessOutcome::Failed
+            );
+        }
+        assert_eq!(
+            appliance_readiness_outcome(deadline, deadline, &refused),
+            ApplianceReadinessOutcome::TimedOut
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn guest_readiness_attempt_is_bounded_reaped_and_output_limited() {
         let mut ready_then_stalled = Command::new("/bin/sh");
         ready_then_stalled
