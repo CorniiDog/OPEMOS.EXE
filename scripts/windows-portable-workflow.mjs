@@ -90,8 +90,11 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, `"source_commit=$env:OPEMOS_EXE_COMMIT"`, "exact-head provenance");
   requireText(text, `"crt_static=true"`, "static-runtime provenance");
   requireText(text, "unsigned-${{ env.OPEMOS_EXE_COMMIT }}", "exact-head artifact identity");
-  if ((text.match(/retention-days:\s*1\b/g) || []).length !== 2 || /retention-days:\s*(?!1\b)\d+/i.test(text)) {
-    throw new Error("Windows workflow must preserve one-day artifact retention for both uploads.");
+  requireText(text, "--platform windows", "the exact Windows producer descriptor");
+  requireText(text, "PRODUCER_ARTIFACT_SHA256: ${{ steps.executable.outputs.artifact-digest }}", "uploaded artifact digest binding");
+  requireText(text, "path: build/executable-producer/executable-producer.json", "the separate producer descriptor upload");
+  if ((text.match(/retention-days:\s*1\b/g) || []).length !== 3 || /retention-days:\s*(?!1\b)\d+/i.test(text)) {
+    throw new Error("Windows workflow must preserve one-day artifact retention for seed, executable and producer descriptor uploads.");
   }
   requireText(text, "if-no-files-found: error", "missing-artifact failure");
   requireText(text, "include-hidden-files: true", "declared hidden runtime files in the artifact");
