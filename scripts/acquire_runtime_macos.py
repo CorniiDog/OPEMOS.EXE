@@ -148,6 +148,9 @@ def relocated_relative(value):
 
 def extract(archive, root, component=None):
     """No archive owner/mode/device restoration; no writes through links."""
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("Extraction root must be a real directory")
+    root = root.resolve()
     links = []
     seen = set()
     omitted = set()
@@ -207,6 +210,12 @@ def close_curated_links(root, omitted):
     An unknown missing target or cycle still fails closed. Original archives,
     native command identities and external paths are never altered.
     """
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("Curated root must be a real directory")
+    root = root.resolve()
+    # macOS /var and /tmp are OS aliases. Compare canonical identities on both
+    # sides, not a resolved target against unresolved TemporaryDirectory paths.
+    omitted = {path.resolve() for path in omitted}
     removed = []
     for path in root.rglob("*"):
         if not path.is_symlink():

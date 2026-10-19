@@ -61,6 +61,16 @@
   original, production deadline or trust endpoint change. Actual closure remains
   required on the changed M1 head; prior attempts and independent CI are retained.
 
+  Actualdb353 M1 run39273354602: new real curated-alias regression failed before
+  acquisition because macOS /var resolves to /private/var while omitted paths
+  were lexical. Fix the production root/omission canonical identities; leave
+  the fixture unchanged. Native loader positives retained, parent group absent.
+  Intermediate commit uses [skip ci] plus existing explicit M1 dispatch so an
+  unrelated active Windows package is not auto-cancelled/replayed. This is NOT
+  a passed check or merge waiver: all named tier checks on the frozen final head
+  and exact Core review remain required before any protected merge. No workflow
+  policy/protection changes; first four failures/logs and passed jobs preserved.
+
 ## Windows read-only package firmware handoff
 
 - [ ] Same complete Windows launch graph, subsequent actual OMEN r3/r4:
