@@ -18,7 +18,7 @@ fn cold_readiness_record(runtime: &Path, value: serde_json::Value) {
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(), "observation": value})
         .to_string();
         let size = file.metadata()?.len();
-        if size + row.len() as u64 + 1 <= 256 * 1024 - 1024 {
+        if size + (row.len() as u64) < 256 * 1024 - 1024 {
             writeln!(file, "{row}")?;
         } else if size < 256 * 1024 - 128 {
             writeln!(

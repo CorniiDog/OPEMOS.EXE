@@ -2,6 +2,13 @@
 
 ## Matched cold8GB readiness causal measurement — 2026-10-20
 
+- [ ] First f709 required sourceCI Rust jobs118893737709/118893765483 fail101
+  before tests: Clippy int_plus_one at appliance.rs21. Full actual log retained
+  exe-pr202-f709b9bf-first-required-clippy-failure.log. Formatting/source review
+  did not execute the compiler; no controller compile was substituted. Equivalent
+  strict integer comparison corrects only lint expression, no cap/timeout waiver.
+  Independent original jobs are not canceled; new exact checks must run normally.
+
 - [ ] Preserve5dc actual423 native passes/current sealed ARM64 package and
   actual1600 Finder/chooser/Build120s failure (handback828f20a6). Root plan
   root-pr202-5dc-cold-readiness-causal-review-20261020-r1/recovery-plan.json
