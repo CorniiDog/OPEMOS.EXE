@@ -2,6 +2,28 @@
 
 ## Native inherited-writer completion and genuine Mac image transaction — 2026-10-20
 
+- [ ] Actual d00 M1 run39368024459/job118449224890 retained: Swift helper,
+  real completed-output filesystem cases, Clippy/cache PASS; full Rust418pass,
+  1fail/28ignored exit101. Existing readiness/50ms/shared-lifecycle cases PASS.
+  Sole new late-member case requested proc_bsdinfo for original retained zombie
+  and got ESRCH, despite WNOWAIT preserving exact original child custody.
+  Skip only that original in extra member-UID queries; other unknown/foreign
+  members remain strict. Reap the directly held late test child on actual exit
+  before another unnecessary signal, preserving same deadline/assertions and
+  real stop/EOF/status/absence calls. No method override. No bulk producer/app/
+  GUI ran. Actual Robot1testFAILED with XML/HTML/xUnit retained, not acceptance.
+
+- [ ] Preserve first d00bfdbb native Linux failure39368019901 (and PR mirror):
+ 417pass/8fail/31ignored, exit101. Real late writer reached final descendant
+ check after its stop/reap, but procfs inode ownership was mistaken for actual
+ process UID; same original zombie consequently became "foreign". Full ZIP
+ bacd2331 retained. Kernel procfs ownership is not process credentials; use
+ bounded actual status Uid fields, require all four exact current UID values,
+ and retain inode UID versus actual UID evidence. Unknown/malformed/foreign
+ values remain refused; no ownership guard waiver or test assertion change.
+ Earlier source review exercised fresh live birth metadata, not the new
+ exited-member scan. Native whole normal/fault graph must verify correction.
+
 - [ ] Preserve actual observation7aaae7b1/run39366649628: native compile0,
   original ONE-SECOND marker control failed101 before50ms; SIGKILL request
   succeeded but UID501 sleep12842/group12840 retained stderr. Root reapedSIG9,

@@ -149,7 +149,9 @@ fn unix_birth(pid: u32) -> io::Result<String> {
 
 #[cfg(target_os = "linux")]
 fn linux_group_members(group: i32) -> io::Result<Vec<i32>> {
-    use std::{io::Read, os::unix::fs::MetadataExt};
+    use std::io::Read;
+    #[cfg(test)]
+    use std::os::unix::fs::MetadataExt;
     if group <= 0 {
         return Err(io::Error::other("invalid guest group enumeration"));
     }
@@ -187,9 +189,31 @@ fn linux_group_members(group: i32) -> io::Result<Vec<i32>> {
             .parse::<i32>()
             .map_err(io::Error::other)?;
         if observed == group {
-            if file.metadata()?.uid() != unsafe { libc::geteuid() } {
+            // procfs inode ownership is not process identity: it may become
+            // root-owned for an exited/nondumpable same-UID process. Read the
+            // kernel's actual credentials, never waive an unknown/foreign UID.
+            let mut status = String::new();
+            let source = match std::fs::File::open(entry.path().join("status")) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                result => result?,
+            };
+            source.take(65537).read_to_string(&mut status)?;
+            if status.len() > 65536 {
+                return Err(io::Error::other("guest status excessive"));
+            }
+            let uids = status
+                .lines()
+                .find_map(|line| line.strip_prefix("Uid:"))
+                .ok_or_else(|| io::Error::other("guest process credentials unavailable"))?
+                .split_whitespace()
+                .map(str::parse::<u32>)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(io::Error::other)?;
+            if uids.len() != 4 || uids.iter().any(|uid| *uid != unsafe { libc::geteuid() }) {
                 return Err(io::Error::other("guest group contains foreign UID"));
             }
+            #[cfg(test)]
+            eprintln!("owned Linux group member pid={pid} group={group} procInodeUID={} actualUIDs={uids:?}", file.metadata()?.uid());
             members.push(pid);
         }
     }
@@ -389,6 +413,13 @@ impl GuestChild {
                     return Ok(());
                 }
                 for member in members {
+                    if member == group {
+                        // observed_exit above retains the ORIGINAL direct
+                        // child with WNOWAIT even when XNU no longer exposes
+                        // its proc_bsdinfo. Do not replace that custody proof
+                        // with an unavailable zombie metadata query.
+                        continue;
+                    }
                     // Unknown/foreign UID stays a refusal, never absent.
                     unix_birth(member as u32)?;
                 }
@@ -887,16 +918,18 @@ mod tests {
         let mut errors = late.stderr.take().unwrap();
         let until = Instant::now() + Duration::from_secs(1);
         let outcome = loop {
-            if let Err(error) = original.stop_tree() {
-                break Err(error.to_string());
-            }
             match late.try_wait() {
                 Ok(Some(status)) => break Ok(status),
                 Err(error) => break Err(error.to_string()),
                 _ if Instant::now() >= until => {
                     break Err("late writer survived repeated stop".into())
                 }
-                _ => std::thread::sleep(Duration::from_millis(1)),
+                _ => {
+                    if let Err(error) = original.stop_tree() {
+                        break Err(error.to_string());
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
             }
         };
         // Cleanup only the exact direct test child on a failed assertion path.
