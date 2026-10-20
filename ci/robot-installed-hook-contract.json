@@ -123,6 +123,19 @@
     "macos": "No current native sender supplied. Fail Mac affected operation precisely. Owning EXE must provide current genuine Apple Silicon native pointer+observer API and real package producer. OMEN only hosts its x86 SteamOS output target; never fake macOS on OMEN.",
     "scope": "Robot orchestration/control uses admitted normal OMEN operational route; application execution, project tests, kernel builds and guest commands remain inside exact admitted guests. QMP/native pointers are operational controls of those real guest sessions, not native project installation."
   },
+  "post_terminal_collect_response": {
+    "identity": "exact repository/source_commit/run_id/attempt/nonce subset; guest result retains full original prepare request",
+    "effect": "READ_ONLY_CURRENT_OPERATION",
+    "job_ids": "all original plus additional artifact operation jobs, in declared order; no second collector job",
+    "queue_job_id": "selected original robot_job.job_id",
+    "queue_state": "passed",
+    "queue_lifecycle_closed": true,
+    "receipt_path": "exact operand.receipt; published only after canonical same-job CLOSED",
+    "receipt_sha256": "exact held current receipt bytes",
+    "robot_result_path": "exact robot_job.result_path",
+    "robot_result_sha256": "exact held actual guest result bytes",
+    "nested_linux": "guest_boot_id equals actual proof.boot_id and differs from observed collector host_boot_id; proof includes execution_location inner_QEMU_guest, inventory_vm_id, process_reaped true and channel_eof true. Root/Core proposal omitted returned boot fields; this explicit consumer ABI must be reconciled with genuine producer, not synthesized. Existing full-row stage validators remain mandatory."
+  },
   "failure_collect_response": {
     "identity": "exact subset",
     "effect": "READ_ONLY_CURRENT_OPERATION",

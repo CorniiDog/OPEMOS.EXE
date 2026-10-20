@@ -107,6 +107,40 @@ def hook(profile,request,out):
 
 
 
+def consume_collection(stage, collected, request, job_ids, robot, operand, limit):
+    """Consume same-operation post-terminal publications, never dispatch work."""
+    require(collected.get('identity')=={k:request[k]for k in
+            ('repository','source_commit','run_id','attempt','nonce')},
+            'Post-terminal collector identity differs')
+    require(collected.get('effect')=='READ_ONLY_CURRENT_OPERATION' and
+            collected.get('job_ids')==job_ids and len(set(job_ids))==len(job_ids) and
+            collected.get('queue_job_id')==robot['job_id'] and
+            collected.get('queue_state')=='passed' and
+            collected.get('queue_lifecycle_closed') is True and
+            collected.get('receipt_path')==operand['receipt'] and
+            collected.get('robot_result_path')==robot['result_path'] and
+            SHA.fullmatch(collected.get('receipt_sha256','')) and
+            SHA.fullmatch(collected.get('robot_result_sha256','')),
+            'Exact current read-only post-terminal producer missing')
+    receipt, receipt_sha=stage['load_result'](operand['receipt'],limit)
+    proof, proof_sha=stage['load_result'](robot['result_path'],limit)
+    require(receipt_sha==collected['receipt_sha256'] and
+            proof_sha==collected['robot_result_sha256'],
+            'Post-terminal published bytes changed after collection')
+    require(proof.get('identity')==request,'Guest must retain the full original prepare request')
+    if operand['subject_role']=='nested_linux':
+        guest=proof.get('boot_id');host=collected.get('host_boot_id')
+        require(proof.get('execution_location')=='inner_QEMU_guest' and
+                isinstance(guest,str) and re.fullmatch(r'[0-9a-f-]{36}',guest) and
+                isinstance(host,str) and re.fullmatch(r'[0-9a-f-]{36}',host) and
+                guest!=host and collected.get('guest_boot_id')==guest,
+                'Observed inner guest boot must differ from collector host')
+        require(proof.get('inventory_vm_id')==operand['inventory_vm_id'] and
+                proof.get('process_reaped') is True and proof.get('channel_eof') is True,
+                'Actual inner guest identity/channel/reap proof missing')
+    return receipt, receipt_sha, proof
+
+
 class Engine:
     """One Robot test owns one current transaction. Failures do not stop peers."""
     def __init__(self,output):
@@ -231,10 +265,11 @@ class Engine:
                 require(time.monotonic()<deadline,'Finite normal queue deadline; active closure UNKNOWN, no retry/cleanup')
                 time.sleep(5)
             require(all(rows[j]['state']=='passed'for j in protected),'Actual ordinary job failed; original failure retained')
-            receipt,receipt_sha=self.stage['load_result'](operand['receipt'],cfg['result_contract']['max_bytes'])
+            collected=hook(self.profile,dict(request,action='collect'),folder/'post-terminal')
+            receipt,receipt_sha,proof=consume_collection(
+                self.stage,collected,request,protected,robot,operand,cfg['result_contract']['max_bytes'])
             self.stage['validate_receipt'](receipt,case,plan,operand)
             require(receipt['run_id']==request['run_id'] and receipt['attempt']==request['attempt'],'Old manual receipt is not a new Robot run')
-            proof,_=self.stage['load_result'](robot['result_path'],cfg['result_contract']['max_bytes'])
             require(proof['identity']==request and type(proof['numeric_exit'])is int and proof['numeric_exit']==0 and type(proof['tests_failed'])is int and proof['tests_failed']==0 and type(proof['tests_passed'])is int and proof['tests_passed']>0,'Actual same-run Robot result missing or failed')
             if gui_required:require(type(proof['actual_pointer_calls'])is int and proof['actual_pointer_calls']>0,'No actual pointer calls in this execution')
             budget=cfg['max_run_bytes'];files=receipt.get('files',{})
@@ -282,7 +317,10 @@ class Engine:
         try:
             collected=hook(self.profile,dict(request,action='collect'),folder/'failure-collection')
             require(collected.get('effect')=='READ_ONLY_CURRENT_OPERATION','Failure collection may not retry/control a guest')
-            require(collected['job_ids']==prepared['operand']['job_ids'],'Failure evidence belongs to another queue operation')
+            jobs=list(prepared['operand']['job_ids'])
+            for extra in prepared.get('additional_operations',[]):jobs.extend(extra['job_ids'])
+            require(len(jobs)==len(set(jobs)) and collected['job_ids']==jobs,
+                    'Failure evidence belongs to another complete queue operation')
             for pin in collected.get('public_evidence',[]):
                 require(pin.get('public')is True and pin['kind']in {'screenshot','log','boot-log','argv','pointer-action','pointer-sender-lifecycle','nvidia-loaded','nvidia-render','gpu-restoration','queue-closure','robot-output','robot-log','robot-report','robot-xunit'},'Private/unreviewed failure evidence refused')
                 require(Path(pin['path']).is_relative_to(Path(prepared['operand']['evidence_root'])),'Failure export escapes exact reviewed evidence root')
