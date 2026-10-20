@@ -399,7 +399,7 @@ impl GuestChild {
     pub(crate) fn descendants_absent(&mut self) -> io::Result<bool> {
         #[cfg(test)]
         self.native_trace.record("descendants_absent.enter", 0, 0);
-        let result = (|| {
+        let result: io::Result<bool> = (|| {
             #[cfg(unix)]
             {
                 if !self.observed_exit()? {
@@ -453,7 +453,7 @@ impl GuestChild {
     pub(crate) fn observed_exit(&mut self) -> io::Result<bool> {
         #[cfg(test)]
         self.native_trace.record("observed_exit.enter", 0, 0);
-        let result = (|| {
+        let result: io::Result<bool> = (|| {
             if self.reaped.is_some() {
                 return Ok(true);
             }
@@ -503,7 +503,7 @@ impl GuestChild {
     pub(crate) fn stop_tree(&mut self) -> io::Result<()> {
         #[cfg(test)]
         self.native_trace.record("stop_tree.enter", 0, 0);
-        let result = (|| {
+        let result: io::Result<()> = (|| {
             #[cfg(unix)]
             {
                 if self.reaped.is_some() {
@@ -626,7 +626,7 @@ impl GuestChild {
     pub(crate) fn reap_owned(&mut self) -> io::Result<Option<ExitStatus>> {
         #[cfg(test)]
         self.native_trace.record("reap_owned.enter", 0, 0);
-        let result = (|| {
+        let result: io::Result<Option<ExitStatus>> = (|| {
             if let Some(status) = self.reaped {
                 return Ok(Some(status));
             }
@@ -655,7 +655,7 @@ impl GuestChild {
     pub(crate) fn tree_absent(&self) -> io::Result<bool> {
         #[cfg(test)]
         self.native_trace.record("tree_absent.enter", 0, 0);
-        let result = (|| {
+        let result: io::Result<bool> = (|| {
             #[cfg(unix)]
             {
                 let group = i32::try_from(self.child.id()).map_err(io::Error::other)?;
