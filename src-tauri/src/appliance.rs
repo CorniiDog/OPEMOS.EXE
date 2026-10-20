@@ -3013,6 +3013,7 @@ pub(crate) struct GuestDeadlinePipe<T> {
     pipe: T,
     deadline: Instant,
     stop: Arc<AtomicBool>,
+    post_deadline_data: bool,
 }
 
 impl<T: GuestPipe> GuestDeadlinePipe<T> {
@@ -3023,6 +3024,7 @@ impl<T: GuestPipe> GuestDeadlinePipe<T> {
             pipe,
             deadline,
             stop: Arc::new(AtomicBool::new(false)),
+            post_deadline_data: false,
         })
     }
 }
@@ -3033,12 +3035,20 @@ impl<T: GuestPipe> Read for GuestDeadlinePipe<T> {
             return Ok(0);
         }
         loop {
-            if Instant::now() >= self.deadline {
+            let expired = Instant::now() >= self.deadline;
+            // A nonblocking EOF proves writer closure even if this reader was
+            // scheduled after the deadline. At most one already-available
+            // crossing chunk is retained after expiry; further data is UNKNOWN
+            // and must never turn a timed-out operation into success.
+            if expired && self.post_deadline_data {
                 return Err(io::ErrorKind::TimedOut.into());
             }
-            // Drain already available bytes before observing cancellation, so
-            // useful diagnostics are retained even on the failure path.
             match self.pipe.available_read(buffer) {
+                Ok(0) => return Ok(0),
+                Ok(count) if expired => {
+                    self.post_deadline_data = true;
+                    return Ok(count);
+                }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     if self.stop.load(Ordering::Acquire) {
@@ -3046,7 +3056,7 @@ impl<T: GuestPipe> Read for GuestDeadlinePipe<T> {
                             "Guest pipe cleanup stopped before EOF; writer closure unproven.",
                         ));
                     }
-                    if Instant::now() >= self.deadline {
+                    if expired {
                         return Err(io::ErrorKind::TimedOut.into());
                     }
                     thread::sleep(
@@ -3057,6 +3067,47 @@ impl<T: GuestPipe> Read for GuestDeadlinePipe<T> {
                 result => return result,
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod deadline_pipe_tests {
+    use super::*;
+
+    #[test]
+    fn real_closed_pipe_proves_eof_after_deadline() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        assert!(child.wait().unwrap().success());
+        let mut pipe = GuestDeadlinePipe::new(stdout, Instant::now()).unwrap();
+        assert_eq!(pipe.read(&mut [0; 16]).unwrap(), 0);
+    }
+
+    #[test]
+    fn real_late_data_is_retained_but_never_proves_eof() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "printf retained-diagnostic"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        assert!(child.wait().unwrap().success());
+        let mut pipe = GuestDeadlinePipe::new(stdout, Instant::now()).unwrap();
+        let mut bytes = [0; 64];
+        let count = pipe.read(&mut bytes).unwrap();
+        assert_eq!(&bytes[..count], b"retained-diagnostic");
+        assert_eq!(
+            pipe.read(&mut bytes).unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
     }
 }
 

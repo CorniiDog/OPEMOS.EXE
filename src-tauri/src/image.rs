@@ -3433,7 +3433,7 @@ fn linux_usb_name(name: &str) -> bool {
     })
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 fn linux_usb_tree_unmounted(row: &serde_json::Value, root: bool) -> bool {
     let node_type = row.get("type").and_then(serde_json::Value::as_str);
     if node_type != Some(if root { "disk" } else { "part" }) {
@@ -3457,7 +3457,7 @@ fn linux_usb_tree_unmounted(row: &serde_json::Value, root: bool) -> bool {
         .unwrap_or(true)
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 fn linux_usb_lsblk_candidate(row: &serde_json::Value, image_bytes: u64) -> bool {
     let Some(name) = row.get("name").and_then(serde_json::Value::as_str) else {
         return false;
@@ -3483,7 +3483,7 @@ fn linux_usb_lsblk_candidate(row: &serde_json::Value, image_bytes: u64) -> bool 
         && linux_usb_tree_unmounted(row, true)
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 fn linux_usb_rows(bytes: &[u8], image_bytes: u64) -> Result<Vec<serde_json::Value>, String> {
     if bytes.len() > 4 * 1024 * 1024 {
         return Err("Linux returned more than 4 MiB of block metadata.".into());

@@ -9,6 +9,8 @@ pub(crate) struct GuestChild {
     reaped: Option<ExitStatus>,
     #[cfg(unix)]
     birth: String,
+    #[cfg(unix)]
+    stop_requested: bool,
     #[cfg(windows)]
     job: windows_job::Job,
 }
@@ -80,6 +82,7 @@ pub(crate) fn spawn_guest_process(command: &mut Command) -> Result<GuestChild, S
             child,
             reaped: None,
             birth,
+            stop_requested: false,
         })
     }
 }
@@ -306,6 +309,13 @@ impl GuestChild {
             // A prior external wait/ECHILD must refuse signaling. Successful
             // WNOWAIT proves this is still our unreaped original direct child.
             let exited = self.observed_exit()?;
+            // A successful signal request is already bound to this unreaped
+            // original group. A repeat must still prove direct-child custody,
+            // but need not signal a dying member again. Finalization separately
+            // requires exit, reader EOF, reap and group absence.
+            if self.stop_requested {
+                return Ok(());
+            }
             #[cfg(not(target_os = "macos"))]
             let _ = exited;
             #[cfg(test)]
@@ -330,11 +340,14 @@ impl GuestChild {
                     // WNOWAIT retains the original direct child; native group
                     // has no live or foreign member. The original is already
                     // exited, so direct child.kill() would reintroduce EPERM.
+                    self.stop_requested = true;
                     return Ok(());
                 }
                 if error.raw_os_error() != Some(libc::ESRCH) {
                     return Err(error);
                 }
+            } else {
+                self.stop_requested = true;
             }
             Ok(())
         }
@@ -742,5 +755,24 @@ mod tests {
         assert_eq!(child.reap_owned().unwrap(), Some(status));
         child.stop_tree().unwrap(); // Cached original closure must not signal a reused PID.
         assert!(child.tree_absent().unwrap());
+    }
+
+    #[test]
+    fn repeated_stop_still_refuses_external_reap() {
+        use std::process::Stdio;
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "exec sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = spawn_guest_process(&mut command).unwrap();
+        child.stop_tree().unwrap();
+        // Exercise the real Child handle outside GuestChild's reaping custody.
+        child.wait().unwrap();
+        assert_eq!(
+            child.stop_tree().unwrap_err().raw_os_error(),
+            Some(libc::ECHILD)
+        );
     }
 }

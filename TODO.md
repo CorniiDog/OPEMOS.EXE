@@ -2,6 +2,22 @@
 
 ## Current-Main Mac producer and measured Darwin closure — 2026-10-20
 
+- [ ] Preserve actual0b8 M1 run39352342633/job118399183030: Clippy three
+  Linux-parser deadcode errors and Rust412pass/3fail, before package/GUI.
+  Apply reviewed recovery8c79d3d4: cache only successful exact-owned group stop
+  requests, recheck WNOWAIT custody on every repeat, retain strict actual final
+  reap/EOF/group absence; probe nonblocking EOF before deadline refusal, retain
+  at most one late diagnostic chunk without promoting it to closure; compile
+  Linux-only parser helpers only on Linux. New real-pipe EOF/late-data and real
+  external-reap-after-stop cases join unchanged native failure assertions and
+  deadlines. No controller project tests; normal current-head hosted native
+  Clippy/full Rust must precede existing complete package/GUI/fault/finalizers.
+  Necessary normal fast-forward push to canonical
+  https://github.com/CorniiDog/OPEMOS.EXE.git branch
+  work/exe-macos-main-native-closure is for exact remote-only CI/Core review.
+  Prior failures, PR204/Main/frozen branches and boundary/trust pins unchanged;
+  source changes are not runtime/package/GUI acceptance.
+
 - [ ] Root-reviewed coherent native correction400e1be3/04afaf70 accounts for
   the original WNOWAIT-retained zombie in complete native group enumeration.
   Only empty or that exact exited original is accepted, no redundant kill of
