@@ -1,5 +1,20 @@
 # OPEMOS.EXE — Product Checklist
 
+- [ ] Root-released fbb recurrent50ms native causal observation only, isolated
+  work/exe-mac-native-50ms-observation. Existing production method/assertion and
+  timeout unchanged; bounded cfg(test) in-memory monotonic observations retain
+  root/PGID/UID/birth, native own-group FD types, real pipeEOF/error, worker
+  completion/send, root reap, cleanup deadline and final joins/group snapshot.
+  Observer may perturb scheduling, explicitly recorded; not a fix or OS timing
+  guarantee. Existing finite hosted M1 diagnostic runs seven exact original
+  normal/stalled/outputlimit/structured/inherited/foreign/ECHILD/repeat cases,
+  preserving numeric failures; stop affected batch on unproved owned closure.
+  No app/provider/bulk/GUI acquisition. Necessary normal canonical GitHub topic
+  push for remote-only workflow_dispatch stream-lifecycle-diagnostic evidence;
+  no PR/Main merge, source approval, deadline/reserve patch, assertion override,
+  controller project test or new helper. Root normal1600/noUI/fullcompletedimage
+  requirement remains for subsequent owning PR202 correction, not this observer.
+
 ## Current-Main Mac producer and measured Darwin closure — 2026-10-20
 
 - [ ] Preserve actual73f normal M1 run39357004406/job118413978910: native

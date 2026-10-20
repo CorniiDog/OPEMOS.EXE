@@ -4,6 +4,104 @@ use std::{
     process::{Child, Command, ExitStatus},
 };
 
+// Diagnostic-only bounded observations; no replacement transport/deadline.
+// Critical-path events stay in memory until the unchanged test ends.
+#[cfg(test)]
+pub(crate) mod trace {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Instant;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    static START: OnceLock<Instant> = OnceLock::new();
+    static ROWS: Mutex<Vec<serde_json::Value>> = Mutex::new(Vec::new());
+    pub(crate) fn enabled() -> bool {
+        *ENABLED.get_or_init(|| std::env::var("OPEMOS_STREAM_TRACE").as_deref() == Ok("1"))
+    }
+    pub(crate) fn event(root: u32, kind: &str, details: serde_json::Value) {
+        if !enabled() {
+            return;
+        }
+        let nanos = START.get_or_init(Instant::now).elapsed().as_nanos();
+        let mut rows = ROWS.lock().unwrap_or_else(|e| e.into_inner());
+        if rows.len() < 1024 {
+            rows.push(
+                serde_json::json!({"nanos": nanos, "root": root, "event": kind,
+                "pid": std::process::id(), "thread": format!("{:?}", std::thread::current().id()),
+                "details": details}),
+            );
+        }
+    }
+    pub(crate) struct Guard;
+    impl Guard {
+        pub(crate) fn new() -> Self {
+            event(
+                0,
+                "case_start",
+                serde_json::json!({"observationMayPerturbScheduling": true}),
+            );
+            Self
+        }
+    }
+    impl Default for Guard {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            if enabled() {
+                event(
+                    0,
+                    "case_end",
+                    serde_json::json!({"unwinding": std::thread::panicking()}),
+                );
+                let rows = ROWS.lock().unwrap_or_else(|e| e.into_inner());
+                eprintln!("STREAM_TRACE {}", serde_json::to_string(&*rows).unwrap());
+            }
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn trace_owned_native_group(root: u32) {
+    if !trace::enabled() {
+        return;
+    }
+    let members = darwin_group_members(root as i32);
+    let mut rows = Vec::new();
+    if let Ok(ids) = &members {
+        for pid in ids.iter().take(8) {
+            let birth = unix_birth(*pid as u32);
+            let mut fds: [libc::proc_fdinfo; 64] = unsafe { std::mem::zeroed() };
+            // Never inspect foreign/unknown UID descriptors. No paths or data.
+            let bytes = if birth.is_ok() {
+                unsafe {
+                    libc::proc_pidinfo(
+                        *pid,
+                        libc::PROC_PIDLISTFDS,
+                        0,
+                        fds.as_mut_ptr().cast(),
+                        std::mem::size_of_val(&fds) as i32,
+                    )
+                }
+            } else {
+                -1
+            };
+            let count =
+                (bytes.max(0) as usize / std::mem::size_of::<libc::proc_fdinfo>()).min(fds.len());
+            rows.push(serde_json::json!({"pid": pid, "birth": format!("{birth:?}"),
+                "fdBytes": bytes, "fdListComplete": bytes > 0 && (bytes as usize) < std::mem::size_of_val(&fds)
+                    && (bytes as usize).is_multiple_of(std::mem::size_of::<libc::proc_fdinfo>()),
+                "fds": fds[..count].iter().map(|f| (f.proc_fd, f.proc_fdtype)).collect::<Vec<_>>()}));
+        }
+    }
+    trace::event(
+        root,
+        "owned_native_group_before_signal",
+        serde_json::json!({
+        "members": format!("{members:?}"), "rows": rows}),
+    );
+}
+
 pub(crate) struct GuestChild {
     child: Child,
     reaped: Option<ExitStatus>,
@@ -78,7 +176,14 @@ pub(crate) fn spawn_guest_process(command: &mut Command) -> Result<GuestChild, S
             child.id(),
             child.id()
         );
+        #[cfg(test)]
+        trace::event(
+            child.id(),
+            "spawn_owned",
+            serde_json::json!({"birth": &birth}),
+        );
         Ok(GuestChild {
+            // The original direct child remains owned by this same handle.
             child,
             reaped: None,
             birth,
@@ -309,6 +414,12 @@ impl GuestChild {
             // A prior external wait/ECHILD must refuse signaling. Successful
             // WNOWAIT proves this is still our unreaped original direct child.
             let exited = self.observed_exit()?;
+            #[cfg(test)]
+            trace::event(
+                self.child.id(),
+                "stop_enter",
+                serde_json::json!({"observedExit": exited, "priorRequest": self.stop_requested}),
+            );
             // A successful signal request is already bound to this unreaped
             // original group. A repeat must still prove direct-child custody,
             // but need not signal a dying member again. Finalization separately
@@ -330,8 +441,16 @@ impl GuestChild {
             if group <= 0 {
                 return Err(io::Error::other("invalid owned group"));
             }
+            #[cfg(all(test, target_os = "macos"))]
+            trace_owned_native_group(self.child.id());
             if unsafe { libc::kill(-group, libc::SIGKILL) } != 0 {
                 let error = io::Error::last_os_error();
+                #[cfg(test)]
+                trace::event(
+                    self.child.id(),
+                    "signal_error",
+                    serde_json::json!({"error": error.to_string()}),
+                );
                 #[cfg(target_os = "macos")]
                 if error.raw_os_error() == Some(libc::EPERM)
                     && exited
@@ -348,6 +467,12 @@ impl GuestChild {
                 }
             } else {
                 self.stop_requested = true;
+                #[cfg(test)]
+                trace::event(
+                    self.child.id(),
+                    "signal_sent",
+                    serde_json::json!({"signal": "SIGKILL"}),
+                );
             }
             Ok(())
         }
@@ -361,6 +486,14 @@ impl GuestChild {
         }
         let status = self.child.try_wait()?;
         self.reaped = status;
+        #[cfg(test)]
+        if status.is_some() {
+            trace::event(
+                self.child.id(),
+                "root_reaped",
+                serde_json::json!({"status": format!("{status:?}")}),
+            );
+        }
         Ok(status)
     }
 
@@ -720,6 +853,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn darwin_unknown_or_foreign_group_never_becomes_owned_exit() {
+        let _trace = trace::Guard::new();
         let current = unsafe { libc::getpgrp() };
         let members = darwin_group_members(current).unwrap();
         assert!(!members.is_empty());
@@ -733,6 +867,7 @@ mod tests {
     }
     #[test]
     fn owned_guest_cancel_and_repeated_finalize_retain_original_custody() {
+        let _trace = trace::Guard::new();
         use std::{
             process::Stdio,
             time::{Duration, Instant},
@@ -759,6 +894,7 @@ mod tests {
 
     #[test]
     fn repeated_stop_still_refuses_external_reap() {
+        let _trace = trace::Guard::new();
         use std::process::Stdio;
         let mut command = Command::new("/bin/sh");
         command

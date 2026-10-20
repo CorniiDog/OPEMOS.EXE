@@ -2896,6 +2896,12 @@ fn stop_guest_command_before(
     readers_done: impl Fn() -> bool,
 ) -> Result<std::process::ExitStatus, String> {
     drop(child.stdin.take());
+    #[cfg(test)]
+    crate::guest_process::trace::event(
+        child.id(),
+        "cleanup_enter",
+        serde_json::json!({"remaining_ns": deadline.saturating_duration_since(Instant::now()).as_nanos()}),
+    );
     child
         .stop_tree()
         .map_err(|e| format!("Could not stop owned guest tree: {e}"))?;
@@ -2920,11 +2926,15 @@ fn stop_guest_command_before(
             }
         }
         if Instant::now() >= deadline {
-            return Err(format!(
-                "Guest process/stream closure exceeded command deadline; root={:?}; readers={}",
-                child.reap_owned(),
-                readers_done()
-            ));
+            let root = child.reap_owned();
+            let readers = readers_done();
+            #[cfg(test)]
+            crate::guest_process::trace::event(
+                child.id(),
+                "cleanup_deadline",
+                serde_json::json!({"root": format!("{root:?}"), "readers": readers}),
+            );
+            return Err(format!("Guest process/stream closure exceeded command deadline; root={root:?}; readers={readers}"));
         }
         thread::sleep(Duration::from_millis(1));
     }
@@ -3014,6 +3024,10 @@ pub(crate) struct GuestDeadlinePipe<T> {
     deadline: Instant,
     stop: Arc<AtomicBool>,
     post_deadline_data: bool,
+    #[cfg(test)]
+    trace_root: u32,
+    #[cfg(test)]
+    trace_stream: &'static str,
 }
 
 impl<T: GuestPipe> GuestDeadlinePipe<T> {
@@ -3025,6 +3039,10 @@ impl<T: GuestPipe> GuestDeadlinePipe<T> {
             deadline,
             stop: Arc::new(AtomicBool::new(false)),
             post_deadline_data: false,
+            #[cfg(test)]
+            trace_root: 0,
+            #[cfg(test)]
+            trace_stream: "unbound",
         })
     }
 }
@@ -3044,7 +3062,15 @@ impl<T: GuestPipe> Read for GuestDeadlinePipe<T> {
                 return Err(io::ErrorKind::TimedOut.into());
             }
             match self.pipe.available_read(buffer) {
-                Ok(0) => return Ok(0),
+                Ok(0) => {
+                    #[cfg(test)]
+                    crate::guest_process::trace::event(
+                        self.trace_root,
+                        "pipe_eof",
+                        serde_json::json!({"stream": self.trace_stream, "expired": expired}),
+                    );
+                    return Ok(0);
+                }
                 Ok(count) if expired => {
                     self.post_deadline_data = true;
                     return Ok(count);
@@ -3057,6 +3083,12 @@ impl<T: GuestPipe> Read for GuestDeadlinePipe<T> {
                         ));
                     }
                     if expired {
+                        #[cfg(test)]
+                        crate::guest_process::trace::event(
+                            self.trace_root,
+                            "pipe_deadline_wouldblock",
+                            serde_json::json!({"stream": self.trace_stream}),
+                        );
                         return Err(io::ErrorKind::TimedOut.into());
                     }
                     thread::sleep(
@@ -3136,7 +3168,7 @@ fn prepare_guest_pipes(
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let result = (|| {
-        Ok((
+        let pipes = (
             GuestDeadlinePipe::new(
                 stdout.ok_or("Could not capture guest readiness output.")?,
                 deadline,
@@ -3145,7 +3177,25 @@ fn prepare_guest_pipes(
                 stderr.ok_or("Could not capture guest readiness diagnostics.")?,
                 deadline,
             )?,
-        ))
+        );
+        #[cfg(test)]
+        let pipes = {
+            let (mut stdout, mut stderr) = pipes;
+            stdout.trace_root = child.id();
+            stdout.trace_stream = "stdout";
+            stderr.trace_root = child.id();
+            stderr.trace_stream = "stderr";
+            #[cfg(unix)]
+            crate::guest_process::trace::event(
+                child.id(),
+                "pipes_bound",
+                serde_json::json!({
+                "stdoutFD": std::os::fd::AsRawFd::as_raw_fd(&stdout.pipe),
+                "stderrFD": std::os::fd::AsRawFd::as_raw_fd(&stderr.pipe)}),
+            );
+            (stdout, stderr)
+        };
+        Ok(pipes)
     })();
     match result {
         Ok(pipes) => Ok(pipes),
@@ -3161,9 +3211,23 @@ fn spawn_guest_diagnostics(
     limit: u64,
 ) -> GuestDiagnosticDrain {
     let stop = stream.stop.clone();
+    #[cfg(test)]
+    let trace_root = stream.trace_root;
     let reader = thread::spawn(move || {
+        #[cfg(test)]
+        crate::guest_process::trace::event(
+            trace_root,
+            "diagnostic_reader_start",
+            serde_json::json!({"stream": stream.trace_stream}),
+        );
         let mut captured = Vec::new();
         if let Err(error) = (&mut stream).take(limit + 1).read_to_end(&mut captured) {
+            #[cfg(test)]
+            crate::guest_process::trace::event(
+                trace_root,
+                "diagnostic_reader_error",
+                serde_json::json!({"error": error.to_string()}),
+            );
             return Err(format!(
                 "Could not read guest diagnostics: {error}; captured: {}",
                 String::from_utf8_lossy(&captured)
@@ -3172,6 +3236,12 @@ fn spawn_guest_diagnostics(
         if captured.len() > limit as usize {
             return Err("Guest readiness output exceeded its bound.".into());
         }
+        #[cfg(test)]
+        crate::guest_process::trace::event(
+            trace_root,
+            "diagnostic_reader_finish",
+            serde_json::json!({"bytes": captured.len()}),
+        );
         Ok(captured)
     });
     GuestDiagnosticDrain { reader, stop }
@@ -3256,10 +3326,27 @@ pub(crate) fn finish_guest_readiness_attempt(
     timeout: Duration,
 ) -> Result<String, String> {
     let (operation_deadline, deadline) = guest_command_deadlines(timeout)?;
+    #[cfg(test)]
+    let trace_root = child.id();
+    #[cfg(test)]
+    crate::guest_process::trace::event(
+        trace_root,
+        "readiness_deadlines",
+        serde_json::json!({
+        "timeout_ns": timeout.as_nanos(),
+        "operation_remaining_ns": operation_deadline.saturating_duration_since(Instant::now()).as_nanos(),
+        "total_remaining_ns": deadline.saturating_duration_since(Instant::now()).as_nanos()}),
+    );
     let (stdout, stderr) = prepare_guest_pipes(&mut child, deadline)?;
     let stderr_reader = spawn_guest_diagnostics(stderr, READINESS_ATTEMPT_OUTPUT_LIMIT);
     let (sender, receiver) = mpsc::sync_channel(1);
     let stdout_reader = thread::spawn(move || {
+        #[cfg(test)]
+        crate::guest_process::trace::event(
+            trace_root,
+            "stdout_reader_start",
+            serde_json::json!({}),
+        );
         let result: Result<(String, bool), String> = (|| {
             let mut stdout = BufReader::new(stdout);
             let mut lines = Vec::with_capacity(2);
@@ -3288,7 +3375,19 @@ pub(crate) fn finish_guest_readiness_attempt(
             }
             Ok((lines.join("\n"), eof))
         })();
+        #[cfg(test)]
+        crate::guest_process::trace::event(
+            trace_root,
+            "stdout_reader_result",
+            serde_json::json!({"result": format!("{result:?}")}),
+        );
         let _ = sender.send(result);
+        #[cfg(test)]
+        crate::guest_process::trace::event(
+            trace_root,
+            "stdout_reader_send_done",
+            serde_json::json!({}),
+        );
     });
     let mut primary = receive_guest_frame(
         &mut child,
@@ -3316,6 +3415,15 @@ pub(crate) fn finish_guest_readiness_attempt(
     let cleanup = stop_guest_command_before(&mut child, deadline, || {
         stdout_reader.is_finished() && stderr_reader.reader.is_finished()
     });
+    #[cfg(test)]
+    crate::guest_process::trace::event(
+        trace_root,
+        "readiness_before_join",
+        serde_json::json!({
+        "cleanup": format!("{cleanup:?}"), "stdout_finished": stdout_reader.is_finished(),
+        "stderr_finished": stderr_reader.reader.is_finished(),
+        "past_deadline_ns": Instant::now().saturating_duration_since(deadline).as_nanos()}),
+    );
     let joined = stdout_reader
         .join()
         .map_err(|_| "Guest readiness output reader panicked.".to_string());
@@ -3323,6 +3431,15 @@ pub(crate) fn finish_guest_readiness_attempt(
         .join()
         .map_err(|_| "Guest readiness diagnostics reader panicked.".to_string())
         .and_then(|r| r);
+    #[cfg(test)]
+    crate::guest_process::trace::event(
+        trace_root,
+        "readiness_after_join",
+        serde_json::json!({
+        "stdout_result": format!("{joined:?}"), "stderr_result": format!("{stderr:?}"),
+        "tree_absent": format!("{:?}", child.tree_absent()),
+        "past_deadline_ns": Instant::now().saturating_duration_since(deadline).as_nanos()}),
+    );
     let result = primary.and_then(|(output, _)| {
         if let Ok(status) = &cleanup {
             if observed_exit && !status.success() {

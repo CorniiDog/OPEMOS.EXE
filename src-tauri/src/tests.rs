@@ -189,6 +189,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn structured_guest_command_is_framed_bounded_and_reaped() {
+        let _trace = crate::guest_process::trace::Guard::new();
         const MARKER: &str = "OPEMOS_COMMAND_COMPLETE_TEST";
 
         let multiline = "printf 'FIRST\nSECOND\n'";
@@ -321,6 +322,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn guest_shutdown_observation_retains_transport_and_closure_separately() {
+        let _trace = crate::guest_process::trace::Guard::new();
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "printf exact-poweroff-error >&2; exit 7"])
             .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -402,6 +404,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn guest_readiness_attempt_is_bounded_reaped_and_output_limited() {
+        let _trace = crate::guest_process::trace::Guard::new();
         let mut ready_then_stalled = Command::new("/bin/sh");
         ready_then_stalled
             .args([
@@ -445,6 +448,10 @@ mod tests {
         isolate_process_group(&mut stalled);
         let stalled = spawn_guest_process(&mut stalled).expect("start stalled readiness fixture");
         let stalled_pid = stalled.id();
+        #[cfg(target_os = "macos")]
+        eprintln!("STREAM_DIAGNOSTIC root={} reader={} stdoutFD={} stderrFD={}", stalled_pid,
+            std::process::id(), std::os::fd::AsRawFd::as_raw_fd(stalled.stdout.as_ref().unwrap()),
+            std::os::fd::AsRawFd::as_raw_fd(stalled.stderr.as_ref().unwrap()));
         let started = Instant::now();
         let error = finish_guest_readiness_attempt(stalled, Duration::from_millis(50))
             .expect_err("stalled readiness must expire");
@@ -470,6 +477,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn guest_stream_lifecycle_joins_inherited_writers_and_retains_primary_failures() {
+        let _trace = crate::guest_process::trace::Guard::new();
         struct Fixture { directory: PathBuf, root: u32, writer: i32 }
         impl Drop for Fixture {
             fn drop(&mut self) {
