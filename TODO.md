@@ -1,5 +1,28 @@
 # OPEMOS.EXE — Product Checklist
 
+## Measured native fast-exit/member custody recovery — 2026-10-20
+
+- [ ] Preserve actual076b run39473397238/job118803033372: ClippyPASS,
+  Rust418pass4fail28ignored, original50ms realEOF/joins/SIG9reap/groupabsence
+  39.434541ms before50.072750ms. Cold22414/output22519/structured22802
+  EPERM and inherited22522 member22524 metadataESRCH remain original evidence.
+  Root full82703B50a095d2/49blob review released one coherent recovery:
+  fresh WNOWAIT after denied signal before narrow sole-exited-original check;
+  one complete current member enumeration after ESRCH, excluding that member
+  and validating every other current nonoriginal UID before actual stop.
+  Still-present unknown/foreign members, ECHILD and incomplete enumeration
+  remain strict. No early reap, cached-stop closure, deadline/assertion/output
+  relaxation, detach or method override. Add real short-lived readiness and
+  structured producers with actual original/group disappearance checks.
+  Existing 50ms37.5/12.5 and all old regressions unchanged. Normal native gate
+  must pass before current packaged1600/Finder/pointer/Build/completed image,
+  manifest/fullhash and separate faults/normalclose. No source-only acceptance.
+  Exact4e retained artifact12284437785 available before sourceCI; runtime-only
+  reuse keeps current app source and MainPR205 conditional90/1day retention.
+  Remote publication of this own topic is necessary for existing normal
+  native/sourceCI and exact final49graph Core review; no merge before all12
+  required checks and new exact counterpart approval. Held6abed unchanged.
+
 ## Native inherited-writer completion and genuine Mac image transaction — 2026-10-20
 
 - [ ] Actual d00 M1 run39368024459/job118449224890 retained: Swift helper,

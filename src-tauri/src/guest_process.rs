@@ -568,7 +568,7 @@ impl GuestChild {
                 }
                 // A prior external wait/ECHILD must refuse signaling. Successful
                 // WNOWAIT proves this is still our unreaped original direct child.
-                let exited = self.observed_exit()?;
+                self.observed_exit()?;
                 // XNU may reject another signal to a dying original. Skip it only
                 // after a complete native enumeration proves there is no other
                 // member; a cached successful request cannot hide inherited writers.
@@ -611,11 +611,55 @@ impl GuestChild {
                             continue;
                         }
                         // Unknown/foreign UID stays a refusal, never absent.
-                        unix_birth(member as u32)?;
+                        if let Err(error) = unix_birth(member as u32) {
+                            if error.raw_os_error() != Some(libc::ESRCH) {
+                                return Err(error);
+                            }
+                            // Enumeration and per-member metadata are separate
+                            // kernel observations. ESRCH alone proves nothing:
+                            // retain original WNOWAIT custody and require a NEW
+                            // complete enumeration to exclude this exact member.
+                            // At most one refresh here; any unknown member in
+                            // that current set remains a refusal, not a retry.
+                            self.observed_exit()?;
+                            #[cfg(test)]
+                            self.native_trace
+                                .record("member.refresh.enter", 0, i64::from(member));
+                            let current = darwin_group_members(group)?;
+                            #[cfg(test)]
+                            {
+                                self.native_trace.record(
+                                    "member.refresh.count",
+                                    0,
+                                    current.len() as i64,
+                                );
+                                for pid in &current {
+                                    self.native_trace.record(
+                                        "member.refresh.member",
+                                        0,
+                                        i64::from(*pid),
+                                    );
+                                }
+                            }
+                            if current.contains(&member) {
+                                return Err(error);
+                            }
+                            for pid in current {
+                                if pid != group {
+                                    unix_birth(pid as u32)?;
+                                }
+                            }
+                            self.observed_exit()?;
+                            #[cfg(test)]
+                            self.native_trace
+                                .record("member.refresh.return", 0, i64::from(member));
+                            // All current members were validated. Still issue
+                            // the actual stop request below; only the caller's
+                            // real EOF/join/reap/absence checks prove closure.
+                            break;
+                        }
                     }
                 }
-                #[cfg(not(target_os = "macos"))]
-                let _ = exited;
                 #[cfg(test)]
                 eprintln!(
                     "owned guest signal root={} {} unreaped=true",
@@ -644,15 +688,26 @@ impl GuestChild {
                 );
                 if let Some(error) = signal_error {
                     #[cfg(target_os = "macos")]
-                    if error.raw_os_error() == Some(libc::EPERM)
-                        && exited
-                        && darwin_only_exited_original(group, group, &self.birth, exited)?
-                    {
-                        // WNOWAIT retains the original direct child; native group
-                        // has no live or foreign member. The original is already
-                        // exited, so direct child.kill() would reintroduce EPERM.
-                        self.stop_requested = true;
-                        return Ok(());
+                    if error.raw_os_error() == Some(libc::EPERM) {
+                        // The original can exit between the pre-signal WNOWAIT
+                        // and killpg. Reobserve without reaping; never use the
+                        // cached pre-signal false as a post-signal identity.
+                        let now_exited = self.observed_exit()?;
+                        #[cfg(test)]
+                        self.native_trace.record(
+                            "signal.denied.fresh_exit",
+                            0,
+                            i64::from(now_exited),
+                        );
+                        if now_exited
+                            && darwin_only_exited_original(group, group, &self.birth, now_exited)?
+                        {
+                            // WNOWAIT retains the original direct child; native group
+                            // has no live or foreign member. The original is already
+                            // exited, so direct child.kill() would reintroduce EPERM.
+                            self.stop_requested = true;
+                            return Ok(());
+                        }
                     }
                     if error.raw_os_error() != Some(libc::ESRCH) {
                         return Err(error);

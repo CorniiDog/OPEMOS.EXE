@@ -2905,6 +2905,49 @@ fn guest_completion_before(deadline: Instant) -> Result<(), String> {
 mod guest_deadline_order_tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn darwin_fast_exit_frames_complete_actual_shared_custody() {
+        // Real short-lived producers exercise the same readiness/structured
+        // callers as the four observed failures, never a replacement stop,
+        // status, metadata, or clock adapter. Each keeps the existing 1s budget.
+        for iteration in 0..8 {
+            for structured in [false, true] {
+                let mut command = child_command("/bin/sh");
+                command
+                    .args([
+                        "-c",
+                        if structured {
+                            "printf 'payload\\nOWNED_DONE:0\\n'; exit 0"
+                        } else {
+                            "printf 'SteamOS NVIDIA Image Builder appliance\\nREADY\\n'; exit 0"
+                        },
+                    ])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+                let child = spawn_guest_process(&mut command).unwrap();
+                let pid = child.id() as i32;
+                let result = if structured {
+                    finish_structured_guest_command(child, Duration::from_secs(1), "OWNED_DONE")
+                } else {
+                    finish_guest_readiness_attempt(child, Duration::from_secs(1))
+                };
+                eprintln!("actual fast-exit iteration={iteration} structured={structured} root={pid} result={result:?}");
+                assert_eq!(
+                    result.unwrap(),
+                    if structured { "payload" } else { READY_MARKER }
+                );
+                // A returned frame is insufficient: original numeric status
+                // must be reaped and its entire actual group must be absent.
+                assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+                assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+                assert_eq!(unsafe { libc::kill(-pid, 0) }, -1);
+                assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+            }
+        }
+    }
+
     fn exited_owned_child() -> GuestChild {
         #[cfg(unix)]
         let mut command = child_command("/bin/sh");
