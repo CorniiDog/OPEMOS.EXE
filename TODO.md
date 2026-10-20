@@ -120,6 +120,26 @@
   controller project tests, old approval transfer, merge/publication/trust,
   original/physical-media/GPU authority. Mac producer descriptor follows only
   successful complete native transaction and actual package artifact upload.
+## Actual guest post-terminal collector consumer — 2026-10-20
+
+- [ ] Reconcile reviewed Hubble35c00774/Core9157Be356 contradiction on fresh
+  Main a7621ef: same request prepare, actual normal selected guest job, canonical
+  terminal, readonly collect, pinned receipt/proof, unchanged stage validation
+  and all four public reports. No second queue job/host-guest substitution.
+  Source proposal lacked explicit guest/host boot fields in returned collect
+  response; consumer contract now demands genuine observed distinct boot IDs,
+  full prepare identity in guest proof and five-field collector identity.
+  Core producer is active independently; exact ABI must join its authenticated
+  immutable handback before operational acceptance, no busy-owner contact.
+- [ ] Complete extra artifact job set also binds failure exports; keep all
+  original/runtime/source/admission/row/report/expiry/closure guards unchanged.
+  Real hosted-VM subprocess -> create-only/fsync -> current held-FD consumer
+  cases plus schema/identity/path/permission/hash faults run in ordinary CI.
+  Such fixtures are not guest/queue/Robot acceptance. All other unavailable
+  rows remain red. Normal owning source push/PR to canonical GitHub necessary
+  for remote-only checks/exact Core review. No controller/OMENhost tests,
+  installed Root edit, Mac cancellation, new trust/helper/GPU/media/publication.
+
 ## Actual Robot peer PID namespace correction — 2026-10-20
 
 - [ ] Preserve actual04 run39348469633 all24 pre-click failures: the same
