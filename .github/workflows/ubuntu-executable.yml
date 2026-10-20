@@ -1,6 +1,8 @@
 name: 02 Ubuntu AppImage
 
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -58,9 +60,10 @@ jobs:
           python3 scripts/acquire_appliance_windows.py --output build/appliance/linux
           python3 scripts/stage_linux_packages.py --source-commit "${{ github.event.pull_request.head.sha || github.sha }}" --appliance-image build/appliance/linux/fedora-builder.qcow2
       - name: Retain Ubuntu executable packages
+        id: executable
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: OPEMOS-Ubuntu-AppImage-${{ github.event.pull_request.head.sha || github.sha }}
+          name: OPEMOS-Ubuntu-AppImage-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
           path: linux-package-artifact
           if-no-files-found: error
           compression-level: 0
@@ -68,3 +71,25 @@ jobs:
         if: always()
         run: |
           echo 'Ubuntu executable packaging is separate from the OMEN graphical Build, virtual USB, SteamOS installation and NVIDIA recovery acceptance gates.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Bind exact executable and package to this producer artifact
+        if: success() && steps.executable.outputs.artifact-id != ''
+        shell: bash
+        env:
+          PRODUCER_ARTIFACT_ID: ${{ steps.executable.outputs.artifact-id }}
+          PRODUCER_ARTIFACT_SHA256: ${{ steps.executable.outputs.artifact-digest }}
+        run: >-
+          python3 scripts/record_executable_artifact.py
+          --platform ubuntu
+          --source "${{ github.event.pull_request.head.sha || github.sha }}"
+          --artifact-id "$PRODUCER_ARTIFACT_ID"
+          --artifact-sha "$PRODUCER_ARTIFACT_SHA256"
+          --artifact-name "OPEMOS-Ubuntu-AppImage-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}"
+          --output build/executable-producer
+      - name: Retain small producer identity for separate SteamOS acceptance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: executable-producer-ubuntu-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/executable-producer/executable-producer.json
+          if-no-files-found: error
+          retention-days: 1

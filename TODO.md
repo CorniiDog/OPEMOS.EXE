@@ -1,5 +1,93 @@
 # OPEMOS.EXE — Product Checklist
 
+## Automatic OMEN Robot integration — 2026-10-19
+
+- [ ] Native Windows readonly timestamp causal recovery: preserve exact326
+  failure and all10 passed jobs. Mainb731 naming integration appended by normal
+  ancestry merge955b0012 without rewriting history; Main03/04 and readiness
+  guards retained. Isolated finite diagnostic branch uses manual existing
+  Windows workflow, default package route unchanged. Capture Win32 native
+  creation/change/write/attributes/volume/FileID plus Python path/FD views at
+  real create/chmod/open/read/close, no sleeps/method overrides/normalization.
+  Normal fast diagnostic excludes bulk seed/package; remote-only native CI
+  requires normal source push to canonical origin, no PR200 push/approval or
+  new OS/VM/trust/credential/provider/physical effect. Correction only after
+  measured cause; fresh exact current-Main Core gates remain required.
+  Actual finite Windows39343734396/6f68cb59 exited0 with seed/build SKIPPED;
+  native Python3.12.10 record c8065aa3: same Win32 volume/FileID, pathctime
+  equals CreationTime, FDctime equals ChangeTime after readonly chmod, stable
+  before/after native observer/read/close. No delay/cache speculation needed.
+  Source correction compares creation with creation across views, keeps EACH
+  original full9 stable, and additionally holds native read-only/nonreparse
+  share-read-only handle while checking native FileID/creation/change/write/
+  attributes before/after hash. Real readonly full producer transaction plus
+  hardlink/reparse/size/directory/live-writer/write/replace/closure cases required.
+  Diagnostic-only capture is not production acceptance; new checks NOT RUN yet.
+  Actual952 Windows39344034028 native10 cases:8PASS including readonly/full
+  record and real symlink/hardlink;2new sharing faults FAIL, before bulk build.
+  Cause: FILE_READ_ATTRIBUTES-only handle is exempt from data sharing rules
+  (CreateFileW documented attribute exception); writer actually opened. Use
+  GENERIC_READ (already needed by held data FD) with same share-read-only mask;
+  unchanged refusal tests must verify the correction, no assertion weakening.
+  Diagnostic receipt bookkeeping correction: earlier `children_started=false`
+  omitted its synchronous git identity query (check_output returned/reaped0).
+  Current script explicitly records that child and bounds it15s. Earlier native
+  file/FD observations remain valid, but the zero-child flag is not relied on.
+
+- [ ] Preserve actual09d Windows package/startup/upload success and subsequent
+  producer-binding failure: run39338115494/job118352964667 exit1 at held
+  path-vs-descriptor full9 equality. Artifact12227379805 SHA6148d3a4557e277e91e05f0f911dde8522fa41c511209b7638056d266c79570a
+  retained. Exact differing fields/mechanism UNKNOWN, no custody relaxation.
+  New native regular `.exe` transaction runs before expensive Windows build;
+  failure reports exact bounded field values, with no stat-method override.
+  Earlier Linux-only consumer cases did not exercise native producer metadata.
+  Actual fail-fast Windows39340136302/job118359834769 exit1 reproduced only
+  `st_mode` path33279 versus descriptor33206 (execute bits), other eight equal.
+  Cross-view comparison now accounts ONLY for Windows synthetic execute bits;
+  each path and descriptor independently retain unchanged full9 checks through
+  complete hashing. Native readonly-source/directory/full producer-descriptor
+  normal cases added; all changed-head native checks remain required.
+
+- [ ] Complete changed-head VM source qualification after measured c390 harness
+  omissions: filename filtering excluded required `ci/required-vms.json`, and
+  test stdout/stderr existed only in RAM before one serial write/poweroff.
+  Read-only stopped-COW recovery proved canonical three-case exit0 receipt
+  `4f927af5`, not the missing nineteen-test result. New complete source manifest
+  and durable fsynced per-batch logs/results must be consumed after shutdown;
+  preserve c390 failure/COW and unchanged inputs, no deadline relaxation.
+- [ ] Original 09d source CI passed all147 public Python cases and389 frontend
+  cases; hygiene rejected two nonconforming log filenames. Retained public
+  nested boot fixtures now use `.sanitized.log` names and matching provenance;
+  exact bytes/hashes remain unchanged and the hygiene authority is not relaxed.
+  Actual1b Linux integration118359348882 exposed computed fixture suffix still
+  `.log`: prior literal full-name search missed `label + suffix`. Update that
+  consumer to the exact sanitized filename; failure149cases/1error retained.
+  Already queued immutable6d qualification remains unchanged, no job rewrite.
+
+- [x] Reconciled protected Main `1e37a502` via topic commit `770c798e`,
+  preserving published history and all five reviewed Windows files. PR198 exact
+  approval/all eleven checks and squash parent/tree verified; source-only merge.
+- [ ] Frozen Root client `261c52ce` replaces confined local host execution with
+  fixed v2 Unix host RPC. Separately named connection-only chooser test uses
+  retained `01ae` AppImage; it cannot promote any current VM/platform outcome.
+  Current-head actual guest/client/producer faults and exact CI/Core gates remain
+  required. Earlier c390 source VM powered off with no returned test result;
+  its seed/COW/complete log and failure remain preserved, not a test pass.
+
+- [ ] Reconcile the complete 46-file Maxwell candidate on Main `b6bb53d9`,
+  including automatic Main Windows/Ubuntu producer triggers. Existing Main has
+  no macOS producer; do not import the held PR199 lifecycle implementation or
+  label an absent producer successful. The current confined broker ABI and
+  fixed operational planner must be reconciled before source approval.
+- [ ] Run the 19 new adapter cases and required canonical qualification in a
+  fresh ordinary queued OMEN Ubuntu KVM-B COW (1 CPU, 3 GiB including overhead,
+  no NIC, literal 60 GB limit); retain actual exits, logs and closure. Historical
+  CI11 126 results remain historical, not new-head results.
+- [ ] Required exact source/package checks and Core counterpart approval precede
+  owning protected merge. Runner installation/activation and real automatic
+  Robot pointer, image, virtual USB, SteamOS and NVIDIA results remain separate.
+  No physical USB/GPU/trust/publication authority is added.
+
 ## Current-Main Windows causal batch
 
 - [ ] Reconcile only PR190 generated-VARS/WHPX, PR196 typed native readiness,

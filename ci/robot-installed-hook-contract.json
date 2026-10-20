@@ -1,0 +1,168 @@
+{
+  "schema": 1,
+  "state": "SOURCE_ONLY_UNRUN_NOT_INSTALLED",
+  "workflow": ".github/workflows/omen-robot.yml@refs/heads/main",
+  "runner_labels": [
+    "self-hosted",
+    "Linux",
+    "X64",
+    "opemos-omen-robot"
+  ],
+  "root_owned_installation": {
+    "job_guard": "ACTIONS_RUNNER_HOOK_JOB_STARTED external fixed current protected-Main guard",
+    "profile": "/home/connor/.config/opemos-ci/robot.json",
+    "hook": "/home/connor/.local/libexec/opemos-robot-job-plan",
+    "rf_version": "7.5",
+    "rf_wheel_sha256": "5a194db36524604fafa1da89adebc837db9a95adf15ffd746e09ce98251e6c68",
+    "environment": [
+      "OPEMOS_ROBOT_PYTHON",
+      "OPEMOS_ROBOT_PRIVATE_RESULTS"
+    ],
+    "heartbeat_variable": "OPEMOS_OMEN_ROBOT_RUNNER_STATE"
+  },
+  "profile_fields": {
+    "schema": 1,
+    "enabled": true,
+    "hook": {
+      "path": "/home/connor/.local/libexec/opemos-robot-job-plan",
+      "sha256": "EXACT_INSTALLED_HASH"
+    },
+    "stage": {
+      "sha256": "f5d9f34d4f7bf72b3d40ee324462cc7eb237f0e37a5090c6da1cda1b48d8b394"
+    },
+    "robotframework": {
+      "version": "7.5",
+      "wheel_sha256": "5a194db36524604fafa1da89adebc837db9a95adf15ffd746e09ce98251e6c68"
+    },
+    "result_contract": "existing omen_ci_result.policy mandatory finite composition; no example null/cap relaxation"
+  },
+  "request_fields": [
+    "version",
+    "action",
+    "kind",
+    "subject",
+    "repository",
+    "source_commit",
+    "run_id",
+    "attempt",
+    "nonce",
+    "consumer_started_epoch"
+  ],
+  "actions": {
+    "prepare": "Pure fixed-plan materialization/current protected producer enumeration. No VM launch by hook. kind inventory subject exact20ID; kind artifacts subject platform; kind artifact subject {platform,artifact_id}.",
+    "collect": "Read-only same current operation public evidence snapshot after failure. No retry, guest control, cleanup or new admission."
+  },
+  "response_identity": [
+    "repository",
+    "source_commit",
+    "run_id",
+    "attempt",
+    "nonce"
+  ],
+  "unavailable_response": {
+    "identity": "exact request identity subset",
+    "available": false,
+    "reason": "precise missing operand; no fake descriptor or hardware claim"
+  },
+  "artifacts_response": {
+    "identity": "exact request subset",
+    "available": true,
+    "expected_executables": "ALL exact current-source platform descriptors from official protected workflow/run/attempt/artifact APIs and archive/member hashes. Missing platform independent; no PR/fork/oldsource artifact."
+  },
+  "operation_response": {
+    "identity": "exact request subset",
+    "available": true,
+    "config": "existing exact pinned installed CI stage config",
+    "operand": "complete existing typed stage operand including original/input/package/admission/manifest/jobIDs/evidence_root/runtime/role and GPU lease when required",
+    "plan": "current source and unique nonce plus complete typed roles/outer host->inner Fedora->owned virtualUSB->actual x86 target lineage",
+    "staging_path": "exact fresh ROOT/run-<consumerRun>-<attempt>-<nonce>",
+    "robot_job": {
+      "job_id": "fresh ordinary queued job included in operand.job_ids",
+      "library_sha256": "exact current OPEMOSPointer.py",
+      "suite_sha256": "exact guest.robot for imaging_host/steamos_target or role.robot for fedora_appliance/nested_linux",
+      "source_commit": "consumer source",
+      "run_id": "consumer run",
+      "attempt": "consumer attempt",
+      "nonce": "fresh per-operation nonce",
+      "result_path": "fresh absent-before-submit generated result.json from run_omen_robot_guest.py",
+      "source_pins": "mapping of current relative Python/library/suite dependency -> exact installed {path,sha256}, all ordinary queue files. Required queue command actually includes the pinned run_omen_robot_guest.py entry; no hash in a comment/no-op substitute.",
+      "queue_command": "exact reviewed ordinary argv array identical to selected normal job command"
+    },
+    "expected": "artifact operations: exact enumerated producer descriptor",
+    "executable_entry": "artifact operations: exact existing build/heal normal queue entry",
+    "additional_operations": "artifact only: complete finite additional normal build/heal operands, each exact manifest/runtime/role/original/GPU admission. All submitted via existing worker. Correct depends_on/requires_success bind genuine build->install->heal. Do not preinvent a generated image SHA; existing normal producer must supply and verify actual generated output at its consumption boundary, otherwise fail affected artifact.",
+    "executable_transaction_path": "fresh generated complete transaction result, read only AFTER actual protected build/heal jobs close; exact receipt/hash fields come from actual producers, never guessed before execution"
+  },
+  "normal_queue_job": {
+    "source_custody": "Pin all required source files, suites, driver copy, observed native producer and input descriptors through normal queue file/source guards. Large asset tar is NOT queue metadata; normal runner whole-SHA validates separate readonly asset.",
+    "invocation": "Official RF runtime runs scripts/run_omen_robot_guest.py identity.json identitySHA suite exactFreshOutputDir, using original normal queue ownership/admission/resource lifecycle. Consume successful submit before joining existing worker; never spawn replacement worker.",
+    "identity": "identity.json is the exact operation request. Bind source/run/attempt/nonce/job/package/app/window/session/runtime at every evidence producer and consumer.",
+    "pointer": "For each required chooser/Build/write/confirm action, run fresh guest.robot with current OPEMOS_POINTER_OPERATION path+SHA. Existing audited installed driver APIs (Windows connect/pointer; Ubuntu transact) perform actual QMP abs/down/up. Drivers retain their full destination/PID/socket/argv/frame/reserved-output guards; no lane constants rewritten by this adapter.",
+    "observation": "Exact native observer producer must already exist in the same normal transaction. operation.observed_result_path must be absent before click, then observer writes exact new action+nonce native result; Robot reads current bytes, stage validates complete native/console frame/observer custody. No guessed observer ABI, DOM/AXPress, label+PNG or historical manual receipt.",
+    "pointer_operation_fields": [
+      "pointer_context",
+      "driver {path,sha256}",
+      "admission {path,sha256}",
+      "operation_payload_sha256",
+      "platform windows|ubuntu",
+      "sender_operation for Ubuntu",
+      "observed_result_path",
+      "observer_source_sha256"
+    ],
+    "pointer_admission": "schema-independent exact kind OPEMOS_ROBOT_POINTER_ADMISSION, admitted=true, identity==pointer_context.identity, driver_sha256, operation_sha256; payload digest excludes admission and operation_payload_sha256 only.",
+    "guest_env": [
+      "OPEMOS_SOURCE_SHA",
+      "GITHUB_RUN_ID",
+      "GITHUB_RUN_ATTEMPT",
+      "GITHUB_REPOSITORY",
+      "OPEMOS_TRANSACTION_NONCE",
+      "OPEMOS_POINTER_OPERATION",
+      "OPEMOS_POINTER_OPERATION_SHA256",
+      "OPEMOS_EXPECTED_BOOT_ID/OPEMOS_EXPECTED_KERNEL/OPEMOS_SUBJECT_ROLE for non-GUI"
+    ],
+    "macos": "No current native sender supplied. Fail Mac affected operation precisely. Owning EXE must provide current genuine Apple Silicon native pointer+observer API and real package producer. OMEN only hosts its x86 SteamOS output target; never fake macOS on OMEN.",
+    "scope": "Robot orchestration/control uses admitted normal OMEN operational route; application execution, project tests, kernel builds and guest commands remain inside exact admitted guests. QMP/native pointers are operational controls of those real guest sessions, not native project installation."
+  },
+  "failure_collect_response": {
+    "identity": "exact subset",
+    "effect": "READ_ONLY_CURRENT_OPERATION",
+    "job_ids": "exact current operand jobs",
+    "closure": "verified current exact closure or UNKNOWN",
+    "public_evidence": "only current held-FD full9/size/SHA pinned explicitly public argv/log/screenshot/Robot/GPU/closure evidence under operand.evidence_root; never configs, credentials, private fixtures, raw disks or originals"
+  },
+  "mandatory_safeguards": [
+    "normal queue join-existing only",
+    "max60,000,000,000 complete bytes per VM",
+    "32GiB shared RAM/swap0/CPU0-9 plus overhead",
+    "exact admitted original/runtime lineage",
+    "source canonical qualification must be genuine current-head, not relabeled old CI11 receipt",
+    "shared GPU lease and loaded/render old-new kernel same-target evidence plus four-function restoration/closure",
+    "strict exact4h dedicated CI copies only; active/unknown kept",
+    "mandatory actual GUI/USB/full readback/SteamOS install boot/recovery per exact artifact",
+    "missing/failed independent cases remain red",
+    "Fresh complete additional build/heal jobs are all owned, approved and joined before per-artifact pass; exact actual generated transaction is read after closure"
+  ],
+  "actual_deployment_dependencies": [
+    "Root-reviewed fixed job guard/runner registration/service/RF installation and heartbeat",
+    "Root-reviewed fixed planner/profile with real normal per-role operands and current-source canonical qualification",
+    "current exact private driver copies/native observer APIs and package/Input manifests",
+    "current Apple Silicon Mac producer/native sender",
+    "independently admitted existing shared GPU lease and render/recovery operands"
+  ],
+  "qualification": "New Robot glue UNRUN. Existing CI11 modules copied byte-identically; historical126 actual passes are preserved, do not transfer to Robot glue/new head. Batch source+Robot fault tests and current normal pipeline in admitted OMEN lanes after primary review.",
+  "confined_client": {
+    "protocol": 2,
+    "socket": "/run/opemos-ci/control/control.sock",
+    "exchange": "/home/connor/.local/share/opemos-ci/github-runner/robot-private/reports",
+    "actions": [
+      "execute-vm",
+      "execute-platform",
+      "persist",
+      "connection-proof"
+    ],
+    "connection_subject": "ubuntu_native_chooser_connection",
+    "connection_scope": "CONNECTION_ONLY_OLD_ARTIFACT_NO_FULLSTACK_ACCEPTANCE",
+    "ownership": "Complete pinned Engine runs on trusted host broker, never inside confined runner. Root deploys matching final broker/source bundle. Caller cannot send argv/source/host paths.",
+    "proof_does_not_update_vm_platform_acceptance": true
+  }
+}

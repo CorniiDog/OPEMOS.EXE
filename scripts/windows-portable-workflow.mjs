@@ -21,7 +21,10 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "timeout-minutes: 120", "the bounded Windows artifact job budget");
   requireText(text, "permissions:\n  contents: read\n  actions: read", "read-only permissions");
   requireText(text, "OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}", "the exact EXE source identity");
-  if ((text.match(new RegExp(CHECKOUT, "g")) || []).length !== 3) throw new Error("Windows workflow must use the exact checkout action three times.");
+  if ((text.match(new RegExp(CHECKOUT, "g")) || []).length !== 4) throw new Error("Windows workflow must use the exact checkout action four times including finite native diagnostic.");
+  requireText(text, "if: github.event_name == 'workflow_dispatch' && inputs.producer-metadata-diagnostic", "manual-only finite diagnostic routing");
+  requireText(text, "if: ${{ !inputs.producer-metadata-diagnostic }}", "no expensive source seed during finite diagnostic");
+  requireText(text, "run: python scripts/diagnose_windows_producer_metadata.py", "the actual native metadata producer");
   requireText(text, SETUP_NODE, "the immutable setup-node action");
   requireText(text, RUST, "the immutable Rust action");
   requireText(text, UPLOAD, "the immutable artifact action");
@@ -90,8 +93,11 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, `"source_commit=$env:OPEMOS_EXE_COMMIT"`, "exact-head provenance");
   requireText(text, `"crt_static=true"`, "static-runtime provenance");
   requireText(text, "unsigned-${{ env.OPEMOS_EXE_COMMIT }}", "exact-head artifact identity");
-  if ((text.match(/retention-days:\s*1\b/g) || []).length !== 2 || /retention-days:\s*(?!1\b)\d+/i.test(text)) {
-    throw new Error("Windows workflow must preserve one-day artifact retention for both uploads.");
+  requireText(text, "--platform windows", "the exact Windows producer descriptor");
+  requireText(text, "PRODUCER_ARTIFACT_SHA256: ${{ steps.executable.outputs.artifact-digest }}", "uploaded artifact digest binding");
+  requireText(text, "path: build/executable-producer/executable-producer.json", "the separate producer descriptor upload");
+  if ((text.match(/retention-days:\s*1\b/g) || []).length !== 4 || /retention-days:\s*(?!1\b)\d+/i.test(text)) {
+    throw new Error("Windows workflow must preserve one-day artifact retention for diagnostic, seed, executable and producer descriptor uploads.");
   }
   requireText(text, "if-no-files-found: error", "missing-artifact failure");
   requireText(text, "include-hidden-files: true", "declared hidden runtime files in the artifact");

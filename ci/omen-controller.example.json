@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "enabled": false,
+  "host": "opemos-ubuntu-host",
+  "ssh_config": {
+    "path": "/EXISTING/REVIEWED/ssh-config",
+    "sha256": null
+  },
+  "ssh_dependencies": [],
+  "route": null,
+  "controller_program_sha256": null,
+  "heavy_sh": {
+    "path": "/home/connor/Documents/ChatGPT/Handoff troubleshooting/opemos-scheduler/heavy.sh",
+    "sha256": null
+  },
+  "remote_program": {
+    "path": "/home/connor/.local/libexec/opemos-ci-stage.py",
+    "sha256": null
+  },
+  "remote_config": "/home/connor/.config/opemos-ci/omen.json",
+  "remote_config_sha256": null,
+  "plan_sha256": null,
+  "result_contract": {
+    "max_bytes": null,
+    "stderr_max_bytes": 4194304,
+    "free_reserve_bytes": 67108864
+  }
+}

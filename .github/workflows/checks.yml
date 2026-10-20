@@ -88,6 +88,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Exercise Robot source adapter and real Unix client fault contracts
+        run: python3 -m unittest discover -s tests -p 'test_omen*.py' -v
+
       - name: Check out immutable OPEMOS Core integration sources
         uses: actions/checkout@v4
         with:

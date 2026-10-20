@@ -17,6 +17,9 @@ test("Windows portable workflow accepts CRLF checkout line endings", () => {
 });
 
 for (const [name, mutate, expected] of [
+  ["unbounded diagnostic dispatch", text => text.replace("if: github.event_name == 'workflow_dispatch' && inputs.producer-metadata-diagnostic", "if: always()"), /manual-only finite diagnostic/],
+  ["diagnostic starts expensive seed", text => text.replace("if: ${{ !inputs.producer-metadata-diagnostic }}", "if: always()"), /no expensive source seed/],
+  ["diagnostic bypasses native producer", text => text.replace("run: python scripts/diagnose_windows_producer_metadata.py", "run: echo skipped"), /actual native metadata producer/],
   ["merge-ref source identity", text => text.replace("github.event.pull_request.head.sha || github.sha", "github.sha"), /exact EXE source identity/],
   ["short artifact job budget", text => text.replace("timeout-minutes: 120", "timeout-minutes: 60"), /bounded Windows artifact job budget/],
   ["mutable Core checkout", text => text.replace("ref: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00", "ref: main"), /Core checkout pin/],
@@ -24,6 +27,9 @@ for (const [name, mutate, expected] of [
   ["tagged action", text => text.replace("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", "actions/setup-node@v4"), /setup-node action/],
   ["missing unsigned gate", text => text.replace("SignatureStatus]::NotSigned", "SignatureStatus]::Valid"), /unsigned-only gate/],
   ["long artifact retention", text => text.replace("retention-days: 1", "retention-days: 90"), /one-day artifact retention/],
+  ["missing producer descriptor retention", text => text.replace(/retention-days: 1\s*$/, ""), /one-day artifact retention/],
+  ["missing producer artifact digest", text => text.replace("PRODUCER_ARTIFACT_SHA256: ${{ steps.executable.outputs.artifact-digest }}", "PRODUCER_ARTIFACT_SHA256: unbound"), /uploaded artifact digest binding/],
+  ["missing separate producer upload", text => text.replace("path: build/executable-producer/executable-producer.json", "path: unrelated.json"), /separate producer descriptor upload/],
   ["missing hidden runtime files", text => text.replace("include-hidden-files: true", "include-hidden-files: false"), /declared hidden runtime files/],
   ["mutable runtime seed action", text => text.replace("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093", "actions/download-artifact@v4"), /download-artifact action/],
   ["missing exact Git for Windows seed", text => text.replace("python3 scripts/acquire_runtime_windows.py --component git-for-windows --cache build/runtime-cache/windows", "echo skipped"), /locked Git for Windows seed acquisition/],
