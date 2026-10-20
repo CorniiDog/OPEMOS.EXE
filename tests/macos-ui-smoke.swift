@@ -2,6 +2,8 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import Security
+import Darwin
 
 struct Refusal: Error { let message: String }
 let chooserDiagnostic = CommandLine.arguments.count == 5 && CommandLine.arguments[4] == "--chooser-diagnostic"
@@ -12,6 +14,153 @@ let bundleID = "dev.cornidog.steamos-nvidia-image-builder"
 var owned: NSRunningApplication?
 var events: [[String: Any]] = []
 var out: URL?
+let panelServiceID = "com.apple.appkit.xpc.openAndSavePanelService"
+var chooserRequestedAt: Date?
+var delegatedPanel: AXUIElement?
+var delegatedWindow: AXUIElement?
+var delegatedPID: pid_t?
+var delegatedBirth: Date?
+
+// Native OS observations, not an ancestry-only or label-based PID exemption.
+func nativeActor(_ pid: pid_t) throws -> (app: NSRunningApplication?, uid: uid_t?, valid: Bool) {
+    try require(Date() < deadline && pid > 0, "invalid native actor/deadline")
+    let before = NSRunningApplication(processIdentifier: pid)
+    let probe = Process()
+    let pipe = Pipe()
+    probe.executableURL = URL(fileURLWithPath: "/bin/ps")
+    probe.arguments = ["-p", String(pid), "-o", "uid="]
+    probe.standardOutput = pipe
+    probe.standardError = FileHandle.nullDevice
+    try probe.run()
+    let end = min(deadline, Date().addingTimeInterval(2))
+    while probe.isRunning && Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+    if probe.isRunning { probe.terminate(); probe.waitUntilExit(); throw Refusal(message: "native UID probe timed out") }
+    probe.waitUntilExit()
+    let uidText = String(data: pipe.fileHandleForReading.readData(ofLength: 64), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let uid = probe.terminationStatus == 0 ? UInt32(uidText) : nil
+    var code: SecCode?
+    let guestStatus = SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid as String: NSNumber(value: pid)] as CFDictionary,
+                                                    SecCSFlags(rawValue: 0), &code)
+    var requirement: SecRequirement?
+    let requirementStatus = SecRequirementCreateWithString(("anchor apple and identifier \"" + panelServiceID + "\"") as CFString,
+                                                           SecCSFlags(rawValue: 0), &requirement)
+    var signing: CFDictionary?
+    var signingStatus: OSStatus = errSecParam
+    var validity: OSStatus = errSecParam
+    var staticStatus: OSStatus = errSecParam
+    var codePath: CFURL?
+    if let code = code {
+        if requirementStatus == errSecSuccess, let requirement = requirement {
+            validity = SecCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSStrictValidate), requirement)
+        }
+        // Swift's metadata/path APIs take SecStaticCode; dynamic validation
+        // above still binds the running PID. CodeCopyPath is the bundle path.
+        var staticCode: SecStaticCode?
+        staticStatus = SecCodeCopyStaticCode(code, SecCSFlags(rawValue: 0), &staticCode)
+        if let staticCode = staticCode {
+            signingStatus = SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &signing)
+            _ = SecCodeCopyPath(staticCode, SecCSFlags(rawValue: 0), &codePath)
+        }
+    }
+    let info = signing as? [String: Any] ?? [:]
+    let after = NSRunningApplication(processIdentifier: pid)
+    let stable = before?.launchDate != nil && before?.launchDate == after?.launchDate &&
+        before?.executableURL == after?.executableURL && before?.bundleURL == after?.bundleURL && after?.isTerminated == false
+    record("native-chooser-actor", ["pid": pid, "uid": uid.map { $0 as Any } ?? "unknown",
+        "uidProbePID": probe.processIdentifier, "uidProbeExit": probe.terminationStatus,
+        "birth": after?.launchDate?.timeIntervalSince1970 ?? -1,
+        "bundle": after?.bundleURL?.path ?? "unknown", "identifier": after?.bundleIdentifier ?? "unknown",
+        "executable": after?.executableURL?.path ?? "unknown", "codePath": codePath.map { ($0 as URL).path } ?? "unknown",
+        "signingIdentifier": info[kSecCodeInfoIdentifier as String] as? String ?? "unknown",
+        "guestStatus": guestStatus, "staticStatus": staticStatus, "signingStatus": signingStatus, "requirementStatus": requirementStatus,
+        "appleServiceValidity": validity, "stableBeforeAfter": stable])
+    let executable = after?.executableURL?.resolvingSymlinksInPath()
+    let bundle = after?.bundleURL?.resolvingSymlinksInPath()
+    let systemLocation = bundle?.path.hasPrefix("/System/Library/Frameworks/AppKit.framework/Versions/") == true &&
+        bundle?.lastPathComponent == panelServiceID + ".xpc" && bundle?.deletingLastPathComponent().lastPathComponent == "XPCServices"
+    let metadata = bundle.flatMap { Bundle(url: $0) }
+    let signedExecutable = (info[kSecCodeInfoMainExecutable as String] as? URL)?.resolvingSymlinksInPath()
+    let executableName = metadata?.object(forInfoDictionaryKey: "CFBundleExecutable") as? String
+    let exactExecutable = executableName.map { !$0.isEmpty && !$0.contains("/") && $0 != "." && $0 != ".." &&
+        executable == bundle?.appendingPathComponent("Contents/MacOS").appendingPathComponent($0) } ?? false
+    record("native-chooser-system-location", ["pid": pid, "systemLocation": systemLocation,
+        "bundleExecutable": executableName ?? "unknown", "exactExecutable": exactExecutable,
+        "signedExecutable": signedExecutable?.path ?? "unknown",
+        "bundleIdentifier": metadata?.bundleIdentifier ?? "unknown"])
+    return (after, uid, stable && uid == getuid() && guestStatus == errSecSuccess && signingStatus == errSecSuccess &&
+        validity == errSecSuccess && systemLocation && exactExecutable && after?.bundleIdentifier == panelServiceID &&
+        staticStatus == errSecSuccess && signedExecutable == executable &&
+        (info[kSecCodeInfoIdentifier as String] as? String) == panelServiceID && codePath.map { ($0 as URL).resolvingSymlinksInPath() } == bundle)
+}
+
+func requireCurrentApp() throws -> NSRunningApplication {
+    guard let original = owned, let current = NSRunningApplication(processIdentifier: original.processIdentifier),
+          !current.isTerminated, current.launchDate != nil, current.launchDate == original.launchDate,
+          current.executableURL == original.executableURL, current.bundleURL == original.bundleURL else {
+        throw Refusal(message: "owned app PID/birth/executable changed")
+    }
+    return current
+}
+
+func panelAncestors(_ element: AXUIElement) -> (AXUIElement?, AXUIElement?) {
+    var node: AXUIElement? = element
+    var panel: AXUIElement?
+    var window: AXUIElement?
+    for _ in 0..<32 {
+        guard let current = node else { break }
+        if text(current, kAXRoleAttribute) == "AXSheet" { panel = current }
+        if text(current, kAXRoleAttribute) == "AXWindow" { window = current }
+        guard let parent = value(current, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+        node = (parent as! AXUIElement)
+    }
+    return (panel, window)
+}
+
+func requireControlCustody(_ element: AXUIElement) throws {
+    guard owned != nil else { return } // Finder launch is separately exact-URL bound.
+    let app = try requireCurrentApp()
+    var pid: pid_t = 0
+    try require(AXUIElementGetPid(element, &pid) == .success, "unknown native control PID")
+    if pid == app.processIdentifier { return }
+    guard let panel = delegatedPanel, let window = delegatedWindow,
+          let actorPID = delegatedPID, pid == actorPID, let birth = delegatedBirth,
+          chooserRequestedAt != nil else { throw Refusal(message: "unbound different-PID native control") }
+    let (currentPanel, currentWindow) = panelAncestors(element)
+    try require(currentPanel.map { CFEqual($0, panel) } == true && currentWindow.map { CFEqual($0, window) } == true,
+                "native actor control is outside the exact delegated panel")
+    let windows = value(AXUIElementCreateApplication(app.processIdentifier), kAXWindowsAttribute) as? [AXUIElement] ?? []
+    try require(windows.contains { CFEqual($0, window) }, "delegated panel window no longer belongs to current app")
+    let actor = try nativeActor(pid)
+    try require(actor.valid && actor.app?.launchDate == birth, "native delegated actor changed, foreign or unverified")
+}
+
+func bindChooser(_ element: AXUIElement, window: AXUIElement) throws {
+    let app = try requireCurrentApp()
+    var pid: pid_t = 0
+    var windowPID: pid_t = 0
+    AXUIElementGetPid(element, &pid)
+    AXUIElementGetPid(window, &windowPID)
+    try require(windowPID == app.processIdentifier, "foreign native chooser window")
+    if pid == app.processIdentifier { return }
+    let actor = try nativeActor(pid) // Persist actual missing/denied facts before refusal.
+    let (panel, parentWindow) = panelAncestors(element)
+    guard chooserRequestedAt != nil, let panel = panel, let parentWindow = parentWindow,
+          CFEqual(parentWindow, window), let birth = actor.app?.launchDate,
+          let appBirth = app.launchDate else { throw Refusal(message: "native chooser delegation facts unavailable") }
+    var panelPID: pid_t = 0
+    AXUIElementGetPid(panel, &panelPID)
+    record("native-chooser-binding-observed", ["appPID": app.processIdentifier, "windowPID": windowPID,
+        "actorPID": pid, "panelPID": panelPID, "actorBirth": birth.timeIntervalSince1970,
+        "appBirth": appBirth.timeIntervalSince1970, "requestedAt": chooserRequestedAt!.timeIntervalSince1970,
+        "actorIdentityQualified": actor.valid])
+    try require(actor.valid && birth >= appBirth && panelPID == app.processIdentifier,
+                "native chooser actor OS identity or new app/panel delegation unverified")
+    if let old = delegatedPID { try require(old == pid && delegatedBirth == birth, "native chooser actor unexpectedly replaced") }
+    delegatedPID = pid; delegatedBirth = birth; delegatedPanel = panel; delegatedWindow = window
+    try requireControlCustody(element)
+    record("native-chooser-delegation-bound", ["appPID": app.processIdentifier, "actorPID": pid,
+        "actorBirth": birth.timeIntervalSince1970, "requestedAt": chooserRequestedAt!.timeIntervalSince1970])
+}
 
 func record(_ kind: String, _ fields: [String: Any] = [:]) {
     var row = fields
@@ -91,6 +240,12 @@ if CommandLine.arguments == [CommandLine.arguments[0], "--birth-regression"] {
         print("Actual same-UID file-reference conversion/missing/nonfile cases passed")
     } catch { fatalError("Actual native file-reference boundary failed: \(error)") }
     print("Owned birth boundaries passed; model only, actual app custody/closure still required")
+    do {
+        let actual = try nativeActor(ProcessInfo.processInfo.processIdentifier)
+        precondition(actual.uid == getuid() && !actual.valid) // Our unsigned Swift helper is not the Apple service.
+        do { _ = try nativeActor(0); fatalError("invalid PID accepted") } catch {}
+        print("Actual UID/process/SecCode non-service and invalidPID negatives passed; no delegated UI authority inferred")
+    } catch { fatalError("native actor regression failed: \(error)") }
     exit(0)
 }
 func guiWaitTick() throws {
@@ -116,7 +271,7 @@ func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
 func text(_ element: AXUIElement, _ attribute: String) -> String {
     return value(element, attribute) as? String ?? ""
 }
-func find(_ root: AXUIElement, unique: Bool = false, _ predicate: (AXUIElement) -> Bool) throws -> AXUIElement? {
+func find(_ root: AXUIElement, unique: Bool = false, validateCustody: Bool = true, _ predicate: (AXUIElement) -> Bool) throws -> AXUIElement? {
     var queue = [root]
     var count = 0
     var matches: [AXUIElement] = []
@@ -125,6 +280,7 @@ func find(_ root: AXUIElement, unique: Bool = false, _ predicate: (AXUIElement) 
         let element = queue.removeFirst()
         count += 1
         if predicate(element) {
+            if validateCustody { try requireControlCustody(element) }
             if !unique { return element }
             matches.append(element)
             record("target-candidate", describeTarget(element))
@@ -173,6 +329,7 @@ func usableDisplayBounds() throws -> CGRect {
     return rect
 }
 func bounds(_ element: AXUIElement) throws -> CGRect {
+    try requireControlCustody(element)
     let rect = try observedRect(element)
     record("measured-control-geometry", ["rect": NSStringFromRect(rect),
         "display": NSStringFromRect(CGDisplayBounds(CGMainDisplayID()))])
@@ -182,6 +339,7 @@ func bounds(_ element: AXUIElement) throws -> CGRect {
 }
 
 func requireExactHit(_ element: AXUIElement, _ point: CGPoint, _ label: String) throws {
+    try requireControlCustody(element)
     var expectedPID: pid_t = 0
     AXUIElementGetPid(element, &expectedPID)
     var hit: AXUIElement?
@@ -207,6 +365,7 @@ func requireExactHit(_ element: AXUIElement, _ point: CGPoint, _ label: String) 
 }
 
 func actualControlViewport(_ element: AXUIElement) throws -> (viewport: CGRect, scroll: AXUIElement?) {
+    try requireControlCustody(element)
     var pid: pid_t = 0
     try require(AXUIElementGetPid(element, &pid) == .success, "unknown control owner")
     var ancestor: AXUIElement? = element
@@ -217,7 +376,9 @@ func actualControlViewport(_ element: AXUIElement) throws -> (viewport: CGRect, 
         let role = text(node, kAXRoleAttribute)
         if ["AXScrollArea", "AXWindow", "AXSheet"].contains(role) {
             var ancestorPID: pid_t = 0
-            try require(AXUIElementGetPid(node, &ancestorPID) == .success && ancestorPID == pid,
+            try requireControlCustody(node)
+            try require(AXUIElementGetPid(node, &ancestorPID) == .success &&
+                        (ancestorPID == pid || (pid == delegatedPID && ancestorPID == owned?.processIdentifier)),
                         "foreign or unknown clipping ancestor")
             viewport = viewport.intersection(try observedRect(node))
             if scroll == nil && role == "AXScrollArea" { scroll = node }
@@ -231,7 +392,8 @@ func actualControlViewport(_ element: AXUIElement) throws -> (viewport: CGRect, 
 func revealOwnedControl(_ element: AXUIElement, _ label: String) throws {
     var pid: pid_t = 0
     AXUIElementGetPid(element, &pid)
-    guard let app = owned, pid == app.processIdentifier else { return }
+    guard owned != nil else { return }
+    try requireControlCustody(element)
     for attempt in 0...8 {
         let (viewport, scroll) = try actualControlViewport(element)
         let rect = try observedRect(element)
@@ -292,6 +454,7 @@ func screenshot(_ name: String, failureEvidence: Bool = false) throws {
     record("screenshot", ["name": url.lastPathComponent, "width": image.pixelsWide, "height": image.pixelsHigh])
 }
 func click(_ element: AXUIElement, _ label: String, double: Bool = false) throws {
+    try requireControlCustody(element)
     try require((value(element, kAXEnabledAttribute) as? Bool) == true, "disabled or unknown enabled state: " + label)
     try revealOwnedControl(element, label)
     let rect = try settledGeometry(element)
@@ -312,6 +475,9 @@ func click(_ element: AXUIElement, _ label: String, double: Bool = false) throws
     try requireExactHit(element, point, label)
     for n in 1...(double ? 2 : 1) {
         for type in [CGEventType.leftMouseDown, CGEventType.leftMouseUp] {
+            try requireControlCustody(element)
+            try requireExactHit(element, point, label)
+            try require(Date() < deadline, "actual pointer action deadline")
             let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)!
             event.setIntegerValueField(.mouseEventClickState, value: Int64(n))
             event.post(tap: .cghidEventTap)
@@ -386,6 +552,7 @@ do {
             record("app", ["pid": app.processIdentifier, "bundle": appURL.path,
                            "executable": app.executableURL?.path ?? "", "architecture": app.executableArchitecture,
                            "launchDate": app.launchDate?.timeIntervalSince1970 ?? 0])
+            record("gui-pre-build-checkpoint", ["pid": app.processIdentifier, "BuildInvoked": false])
         } else { try guiWaitTick() }
     }
     let root = AXUIElementCreateApplication(owned!.processIdentifier)
@@ -424,16 +591,11 @@ do {
         let windows = value(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
         var candidates: [AXUIElement] = []
         for window in windows {
-            if let cancel = try find(window, unique: true, { element in
+            if let cancel = try find(window, unique: true, validateCustody: false, { element in
                 text(element, kAXRoleAttribute) == "AXButton" &&
                     [text(element, kAXTitleAttribute), text(element, kAXDescriptionAttribute)].contains("Cancel")
             }) {
-                var windowPID: pid_t = 0
-                var cancelPID: pid_t = 0
-                AXUIElementGetPid(window, &windowPID)
-                AXUIElementGetPid(cancel, &cancelPID)
-                try require(windowPID == owned!.processIdentifier && cancelPID == owned!.processIdentifier,
-                            "file chooser is not owned by the launched app")
+                try bindChooser(cancel, window: window)
                 candidates.append(cancel)
             }
         }
@@ -444,6 +606,7 @@ do {
     var choose: AXUIElement?
     while choose == nil { choose = try button("Choose Image…"); if choose == nil { try guiWaitTick() } }
     try screenshot("main-before-image-chooser")
+    chooserRequestedAt = Date()
     try click(choose!, "choose-image")
     var cancel: AXUIElement?
     while cancel == nil { cancel = try chooserCancel(); if cancel == nil { try guiWaitTick() } }
@@ -504,6 +667,7 @@ do {
                (value(candidate, kAXEnabledAttribute) as? Bool) == true { build = candidate }
             else { try guiWaitTick() }
         }
+        record("build-request-intent", ["pid": owned!.processIdentifier])
         try click(build!, "build-pinned-image")
         var observedHashing = false
         var observedReady = false

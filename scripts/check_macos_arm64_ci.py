@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import time
+from macos_transaction_evidence import native_session_snapshot, reconcile_gui
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "build/macos-arm64-evidence"
@@ -107,6 +108,14 @@ def main():
 
     def save():
         (OUT / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+
+    def fail(error, stage):
+        detail = {"stage": stage, "error": str(error)}
+        if "error" not in receipt:
+            receipt["error"] = str(error)
+            receipt["firstFailure"] = detail
+        else:
+            receipt.setdefault("secondaryErrors", []).append(detail)
 
     def run(name, args, seconds):
         nonlocal children_closed
@@ -254,33 +263,61 @@ def main():
             receipt["helperSHA256"] = digest(helper)
             if app_processes(binary):
                 raise RuntimeError("pre-existing exact executable; refuse GUI interaction")
+            sessions = Path.home() / "Library/Caches/dev.cornidog.steamos-nvidia-image-builder/sessions/native"
+            if fullstack:
+                receipt["nativeSessionBeforeGUI"] = native_session_snapshot(sessions, Path.home())
+                if not receipt["nativeSessionBeforeGUI"]["qemuAbsent"] or receipt["nativeSessionBeforeGUI"]["entries"]:
+                    raise RuntimeError("Pre-existing native session/QEMU state; refuse graphical overlap")
             try:
                 arguments = [str(helper), str(app), str(OUT)] + ([str(recovery)] if fullstack else [])
-                receipt["productAcceptance"]["imageBuild"] = "attempted: ordinary current packaged GUI transaction"
+                receipt["productAcceptance"]["nativeAppBuildAndGuiChooser"] = "attempted"
+                receipt["productAcceptance"]["imageBuild"] = "not_started: awaiting actual Build event"
                 gui_passed = run("gui", arguments, 510 if fullstack else 150)
                 if not gui_passed:
-                    receipt["productAcceptance"]["imageBuild"] = "failed: see same-run actual GUI events and screenshot; no completed image"
+                    event_error = None
+                    try:
+                        observed = json.loads((OUT / "gui-events.json").read_text())
+                    except Exception as error:
+                        observed, event_error = [], str(error)
+                    first = next((e for e in observed if e.get("kind") == "failure"), None)
+                    fail(first.get("error") if first else "Actual GUI failed without a failure event", "gui")
+                    if event_error:
+                        fail(event_error, "gui-event-capture")
+                    receipt["productAcceptance"]["nativeAppBuildAndGuiChooser"] = "failed"
+                    clicked = any(e.get("kind") == "pointer-click" and e.get("label") == "build-pinned-image" for e in observed)
+                    intent = any(e.get("kind") == "build-request-intent" for e in observed)
+                    receipt["productAcceptance"]["imageBuild"] = ("failed: actual Build clicked; no completed image" if clicked else
+                        "unverified: Build intent without click evidence" if intent else "not_started: actual GUI failed before Build intent")
                     receipt["productAcceptance"]["coldBuildGuestHealthNextStage"] = "not proven: graphical transaction failed"
             finally:
                 # Only our newly launched app's private current-UID session root.
                 # Retain actual regular-file serial and bounded observer records;
                 # missing numeric reap remains explicit, never inferred from pgrep.
-                sessions = Path.home() / "Library/Caches/dev.cornidog.steamos-nvidia-image-builder/sessions/native"
                 collected = []
-                if fullstack and sessions.is_dir() and not sessions.is_symlink():
-                    for path in sorted(sessions.rglob("*")):
-                        if path.is_symlink() or not path.is_file() or path.stat().st_uid != os.getuid():
-                            continue
-                        if path.name not in {"readiness.jsonl", "qemu.log", "resources.json"} and not path.name.endswith((".readiness.jsonl", ".resources.json", ".log")):
-                            continue
-                        with path.open("rb") as stream:
-                            stream.seek(max(0, path.stat().st_size - 256 * 1024))
-                            data = stream.read(256 * 1024)
-                        target = OUT / ("cold-" + path.parent.name + "-" + path.name)
-                        target.write_bytes(data)
-                        collected.append({"source": str(path), "retained": target.name,
-                                          "sourceBytes": path.stat().st_size, "tailBytes": len(data)})
-                receipt["coldReadinessEvidence"] = collected
+                try:
+                    if fullstack and sessions.is_dir() and not sessions.is_symlink():
+                        for path in sorted(sessions.rglob("*")):
+                            if path.is_symlink() or not path.is_file() or path.stat().st_uid != os.getuid():
+                                continue
+                            if path.name not in {"readiness.jsonl", "qemu.log", "resources.json"} and not path.name.endswith((".readiness.jsonl", ".resources.json", ".log")):
+                                continue
+                            with path.open("rb") as stream:
+                                stream.seek(max(0, path.stat().st_size - 256 * 1024))
+                                data = stream.read(256 * 1024)
+                            target = OUT / ("cold-" + path.parent.name + "-" + path.name)
+                            target.write_bytes(data)
+                            collected.append({"source": str(path), "retained": target.name,
+                                              "sourceBytes": path.stat().st_size, "tailBytes": len(data)})
+                    receipt["coldReadinessEvidence"] = collected
+                    if fullstack:
+                        receipt["nativeSessionAfterGUI"] = native_session_snapshot(sessions, Path.home())
+                        receipt["guiSessionReconciliation"] = reconcile_gui(OUT / "gui-events.json",
+                            receipt["nativeSessionBeforeGUI"], receipt["nativeSessionAfterGUI"], binary)
+                        primary = receipt["guiSessionReconciliation"]["firstGUIFailure"]
+                        if primary and "error" not in receipt:
+                            fail(primary.get("error", "Actual GUI failure"), "gui")
+                except Exception as error:
+                    fail(error, "gui-session-evidence")
                 receipt["guiAppNumericExit"] = "unknown: Finder launched app is not a waitable child"
                 survivors = app_processes(binary)
                 receipt["appProcessSurvivors"] = survivors
@@ -305,6 +342,8 @@ def main():
                     raise RuntimeError("GUI left app processes; cleanup evidence retained, not normal closure")
         if fullstack:
             closures = []
+            launches = []
+            transports = []
             for item in receipt.get("coldReadinessEvidence", []):
                 if item["retained"].endswith("readiness.jsonl"):
                     if item["sourceBytes"] >= 256 * 1024:
@@ -314,16 +353,25 @@ def main():
                     if any(r.get("phase") == "observer-overflow" for r in records):
                         raise RuntimeError("Cold observer overflow: missing phases remain unknown; no second guest")
                     closures.extend(r for r in records if r.get("phase") == "qemu-reaped")
+                    launches.extend(r for r in records if r.get("phase") == "launch")
+                    transports.extend(r for r in records if r.get("phase") == "transport-completion")
             receipt["graphicalQemuNumericClosure"] = closures
-            if not closures or any(not r.get("processGroupAbsent") or
+            no_session = (receipt["guiSessionReconciliation"]["sessionState"] == "not-launched-observed"
+                          and not launches and not closures and not transports)
+            if no_session:
+                receipt["stages"]["actual-guest-normal-wrong-marker-closure"] = {"state": "not_run",
+                    "reason": "actual preBuild failure with real before/after empty session inventory and absent QEMU; NOT VM closure pass"}
+            elif not launches or {r.get("pid") for r in launches} != {r.get("pid") for r in closures} or any(not r.get("processGroupAbsent") or
                     not r.get("status", "").startswith("Some(") or
                     r.get("transportClosure") != "Ok(())" for r in closures):
                 raise RuntimeError("Graphical QEMU numeric reap/group/transport closure unproven; refuse separate fault guest")
-            qemu = subprocess.run(["/usr/bin/pgrep", "-f", "qemu-system-"], capture_output=True, text=True, timeout=10)
-            if qemu.returncode != 1:
-                receipt["qemuBeforeFault"] = qemu.stdout
-                raise RuntimeError("Graphical transaction left QEMU; refuse overlapping fault guest")
-            run("actual-guest-normal-wrong-marker-closure", ["python3", "scripts/run_macos_guest_fault.py"], 1500)
+            else:
+                if not transports or any(not r.get("stdoutJoined") or not r.get("stderrJoined") or
+                        not r.get("closure", "").startswith("Ok(") for r in transports):
+                    raise RuntimeError("Actual graphical SSH stream/reap closure incomplete; no fault guest")
+                if not receipt["nativeSessionAfterGUI"]["qemuAbsent"]:
+                    raise RuntimeError("Graphical transaction left QEMU; refuse overlapping fault guest")
+                run("actual-guest-normal-wrong-marker-closure", ["python3", "scripts/run_macos_guest_fault.py"], 1500)
         if receipt["stages"].get("gui", {}).get("state") == "passed":
             events = json.loads((OUT / "gui-events.json").read_text())
             kinds = [event.get("kind") for event in events]
@@ -348,13 +396,8 @@ def main():
             receipt["productAcceptance"]["nativeAppBuildAndGuiChooser"] = "passed"
         if digest(binary) != receipt["artifact"]["sha256"]:
             raise RuntimeError("executable changed during GUI transaction")
-        archive = OUT / "SteamOS-NVIDIA-Builder-arm64.app.zip"
-        if run("archive", ["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(archive)], 120):
-            receipt["archive"] = {"bytes": archive.stat().st_size, "sha256": digest(archive)}
-            if digest(binary) != receipt["artifact"]["sha256"]:
-                raise RuntimeError("executable changed during archive")
     except Exception as error:
-        receipt["error"] = str(error)
+        fail(error, "transaction")
     finally:
         # A GUI refusal must not skip the immutable-input post-state checks.
         # Keep the primary failure and independently retain secondary failures.
@@ -387,6 +430,17 @@ def main():
                     if not run("packaged-seal-finalizer", ["codesign", "--verify", "--deep", "--strict", str(app)], 60):
                         raise RuntimeError("Packaged native resource seal changed during the transaction")
                 receipt["packagedInputsUnchangedAfterAttempt"] = True
+                # Independent retention after failed GUI, never an acceptance
+                # promotion. Exact sealed input/resource checks precede ZIP.
+                if children_closed and (not fullstack or receipt.get("originalInputsUnchangedAfterAttempt")):
+                    archive = OUT / "SteamOS-NVIDIA-Builder-arm64.app.zip"
+                    if not run("archive", ["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(archive)], 120):
+                        raise RuntimeError("Sealed current app archive failed")
+                    if digest(binary) != receipt["artifact"]["sha256"]:
+                        raise RuntimeError("executable changed during archive")
+                    receipt["archive"] = {"bytes": archive.stat().st_size, "sha256": digest(archive),
+                        "retainedAfterGUIFailure": receipt["stages"].get("gui", {}).get("state") != "passed",
+                        "imageAcceptance": False}
             except Exception as error:
                 receipt.setdefault("finalizationErrors", []).append({"stage": "packaged-inputs", "error": str(error)})
         receipt["evidenceFiles"] = {p.name: {"bytes": p.stat().st_size, "sha256": digest(p)}

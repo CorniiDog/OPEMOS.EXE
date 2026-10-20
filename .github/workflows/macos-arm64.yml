@@ -84,7 +84,7 @@ jobs:
           python3 - <<'PYMAC'
           import json
           from pathlib import Path
-          required = ['scripts/check_macos_arm64_ci.py', 'tests/macos-ui-smoke.swift']
+          required = ['scripts/check_macos_arm64_ci.py', 'scripts/macos_transaction_evidence.py', 'tests/macos-ui-smoke.swift']
           missing = [name for name in required if not Path(name).is_file()]
           result = {'platform': 'macos', 'source': '${{ env.OPEMOS_EXE_COMMIT }}',
                     'producer_ready': not missing, 'missing_files': missing,

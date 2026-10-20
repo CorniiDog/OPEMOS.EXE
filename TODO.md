@@ -1,5 +1,26 @@
 # OPEMOS.EXE — Product Checklist
 
+## Joined native chooser custody and preBuild result lifecycle — 2026-10-20
+
+- [ ] Root ddcb4a28 complete recovery of actual09b2 failure admitted: Cancel
+  actor44273 under app43684 AXSheet refused beforeBuild; actoridentityUNKNOWN.
+  Own native helper now observes real UID/PS numeric closure, stable PID/birth/
+  executable/bundle, dynamic SecCode Apple anchor plus exact AppKit service ID/
+  protected system location, fresh app/panel association and repeated custody
+  at find/viewport/geometry/hit/action. Unknown/foreign still refuses with actual
+  native facts, never ancestry-only or broad differentPID acceptance.
+  Own producer joins real pre/post session inventory/QEMU absence, GUI Build
+  intent/click phase, first error + separate secondary errors, real launched
+  guest closure and independent strictsealed app ZIP finalization. PreBuild
+  no-session is observed NOT STARTED, never a VM closure or image pass.
+  Actual UID/filesystem/mode/symlink/changed-inventory regressions and one normal
+  existing AppleSilicon native/package1600/Finder/chooser/Build transaction only.
+  Preserve09b2 actual424/50ms38.967ms, all11nonMac and5dc120s failure/UNKNOWN
+  cause; no timeout/assertion/resource/UI/Dock/AXPress changes. All12 exactchecks
+  and exactCore primary approval beforemerge. Main205/held6abed unchanged.
+  Normal FF push of own work/exe-macos-main-native-closure to canonical origin
+  is necessary for permitted existing sourceCI/native lane and fullgraph review.
+
 ## Matched cold8GB readiness causal measurement — 2026-10-20
 
 - [ ] First f709 required sourceCI Rust jobs118893737709/118893765483 fail101
