@@ -242,9 +242,9 @@ def main():
             events = json.loads((OUT / "gui-events.json").read_text())
             kinds = [event.get("kind") for event in events]
             clicks = [event.get("label") for event in events if event.get("kind") == "pointer-click"]
-            required_events = ({"native-image-chooser-observed", "native-image-selected-observed",
+            required_events = ({"native-usable-window-observed", "native-image-chooser-observed", "native-image-selected-observed",
                                 "cold-build-next-stage-observed", "normal-app-close"} if fullstack else
-                               {"native-image-chooser-observed", "native-image-chooser-closed-observed", "normal-app-close"})
+                               {"native-usable-window-observed", "native-image-chooser-observed", "native-image-chooser-closed-observed", "normal-app-close"})
             required_clicks = ({"choose-image", "choose-pinned-image", "build-pinned-image", "cancel-after-next-stage"}
                                if fullstack else {"choose-image", "cancel-image-chooser"})
             if not required_events.issubset(kinds) or not required_clicks.issubset(clicks):

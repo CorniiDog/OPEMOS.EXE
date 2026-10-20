@@ -383,6 +383,25 @@ test("compact main window height agrees between web content and Tauri", () => {
   assert.match(css, /body\s*\{[\s\S]*min-height:\s*800px;/);
 });
 
+test("Mac usable work area bounds the native window and scrolling canvas", async () => {
+  const windows = await readFile(new URL("../src-tauri/src/windows.rs", import.meta.url), "utf8");
+  const app = await readFile(new URL("../src-tauri/src/app.rs", import.meta.url), "utf8");
+  const native = await readFile(new URL("./macos-ui-smoke.swift", import.meta.url), "utf8");
+  assert.match(app, /#\[cfg\(target_os = "macos"\)\][\s\S]*windows::fit_main_to_usable_display\(&main\)\?;[\s\S]*main.show\(\)/);
+  assert.match(windows, /monitor.work_area\(\)/);
+  assert.match(windows, /main.set_min_size[\s\S]*main.set_size[\s\S]*main.set_position/);
+  assert.match(css, /\.platform-macos body \{ min-height: 0; \}/);
+  assert.match(css, /\.platform-macos \.app-shell \{ min-height: 0; scroll-padding-block: 12px; \}/);
+  assert.match(native, /screen.visibleFrame/);
+  assert.match(native, /usableFrame.contains\(mainFrame\)/);
+  assert.match(native, /actual-pointer-hit[\s\S]*hitPID[\s\S]*hitBirth/);
+  assert.match(native, /hitPID == expectedPID/);
+  assert.match(native, /CFEqual\(current, element\)/);
+  assert.match(native, /for attempt in 0\.\.\.8/);
+  assert.match(native, /CGEvent\(scrollWheelEvent2Source/);
+  assert.doesNotMatch(native, /AXUIElementPerformAction|AXUIElementSetAttributeValue/);
+});
+
 test("Windows live-test controls update immediately and form accessible workflow groups", () => {
   assert.match(html, /role="group" aria-labelledby="output-options-title"[\s\S]*id="output-options-title"[\s\S]*id="output-folder-label"/);
   assert.match(html, /role="group" aria-labelledby="nvidia-options-title"[\s\S]*id="nvidia-options-title"[\s\S]*id="nvidia-source"/);

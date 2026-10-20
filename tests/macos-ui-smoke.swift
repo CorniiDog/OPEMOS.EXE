@@ -44,6 +44,10 @@ if CommandLine.arguments == [CommandLine.arguments[0], "--birth-regression"] {
         precondition(!ownedBirth(start.addingTimeInterval(-1), since: start, observed: start.addingTimeInterval(window)))
         precondition(!ownedBirth(start.addingTimeInterval(window + 1), since: start, observed: start.addingTimeInterval(window)))
     }
+    // Geometry cases only, not a substitute for the actual packaged app below.
+    let smallUsable = CGRect(x: 0, y: 25, width: 1024, height: 680)
+    precondition(!smallUsable.contains(CGRect(x: 171, y: 714, width: 682, height: 42)))
+    precondition(smallUsable.contains(CGRect(x: 171, y: 600, width: 682, height: 42)))
     do {
         let directory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("opemos-file-reference-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -120,7 +124,7 @@ func describeTarget(_ element: AXUIElement) -> [String: Any] {
     }
     return ["ancestry": ancestry]
 }
-func bounds(_ element: AXUIElement) throws -> CGRect {
+func observedRect(_ element: AXUIElement) throws -> CGRect {
     var p = CGPoint.zero
     var s = CGSize.zero
     guard let pv = value(element, kAXPositionAttribute), let sv = value(element, kAXSizeAttribute),
@@ -129,12 +133,94 @@ func bounds(_ element: AXUIElement) throws -> CGRect {
     }
     try require(AXValueGetValue(pv as! AXValue, .cgPoint, &p) &&
                 AXValueGetValue(sv as! AXValue, .cgSize, &s), "invalid AX geometry")
-    let rect = CGRect(origin: p, size: s)
+    return CGRect(origin: p, size: s)
+}
+func usableDisplayBounds() throws -> CGRect {
+    guard let screen = NSScreen.screens.first(where: {
+        ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == CGMainDisplayID()
+    }) else { throw Refusal(message: "actual main NSScreen unavailable") }
+    let visible = screen.visibleFrame
+    // NSScreen is bottom-left; AX/CGEvent use the primary screen's top-left.
+    let rect = CGRect(x: visible.minX, y: screen.frame.maxY - visible.maxY,
+                      width: visible.width, height: visible.height)
+    try require(!rect.isEmpty && CGDisplayBounds(CGMainDisplayID()).contains(rect), "invalid actual usable display bounds")
+    return rect
+}
+func bounds(_ element: AXUIElement) throws -> CGRect {
+    let rect = try observedRect(element)
     record("measured-control-geometry", ["rect": NSStringFromRect(rect),
         "display": NSStringFromRect(CGDisplayBounds(CGMainDisplayID()))])
     try require(rect.width > 0 && rect.height > 0 && CGDisplayBounds(CGMainDisplayID()).contains(rect),
                 "control outside active main display")
     return rect
+}
+
+func requireExactHit(_ element: AXUIElement, _ point: CGPoint, _ label: String) throws {
+    var expectedPID: pid_t = 0
+    AXUIElementGetPid(element, &expectedPID)
+    var hit: AXUIElement?
+    let status = AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(point.x), Float(point.y), &hit)
+    var hitPID: pid_t = 0
+    if let hit = hit { AXUIElementGetPid(hit, &hitPID) }
+    let actor = NSRunningApplication(processIdentifier: hitPID)
+    record("actual-pointer-hit", ["label": label, "x": point.x, "y": point.y,
+        "expectedPID": expectedPID, "hitPID": hitPID, "status": status.rawValue,
+        "hitBundle": actor?.bundleIdentifier ?? "unknown", "hitExecutable": actor?.executableURL?.path ?? "unknown",
+        "hitBirth": actor?.launchDate?.timeIntervalSince1970 ?? -1,
+        "hitRole": hit.map { text($0, kAXRoleAttribute) } ?? "unknown",
+        "usableBounds": NSStringFromRect(try usableDisplayBounds())])
+    try require(status == .success && hit != nil, "control not hittable")
+    try require(hitPID == expectedPID, "another process occludes " + label)
+    for _ in 0..<32 {
+        guard let current = hit else { break }
+        if CFEqual(current, element) { return }
+        guard let parent = value(current, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+        hit = (parent as! AXUIElement)
+    }
+    throw Refusal(message: "same-process overlay or unrelated hit target: " + label)
+}
+
+func revealOwnedControl(_ element: AXUIElement, _ label: String) throws {
+    var pid: pid_t = 0
+    AXUIElementGetPid(element, &pid)
+    guard let app = owned, pid == app.processIdentifier else { return }
+    var ancestor: AXUIElement? = element
+    var scroll: AXUIElement?
+    var viewport = try usableDisplayBounds()
+    for _ in 0..<32 {
+        guard let node = ancestor else { break }
+        let role = text(node, kAXRoleAttribute)
+        if ["AXScrollArea", "AXWindow"].contains(role) {
+            viewport = viewport.intersection(try observedRect(node))
+            if scroll == nil && role == "AXScrollArea" { scroll = node }
+        }
+        guard let parent = value(node, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+        ancestor = (parent as! AXUIElement)
+    }
+    viewport = viewport.insetBy(dx: 8, dy: 8)
+    try require(!viewport.isEmpty && !viewport.isNull, "no actual visible control viewport")
+    for attempt in 0...8 {
+        let rect = try observedRect(element)
+        record("actual-scroll-layout", ["label": label, "attempt": attempt,
+            "target": NSStringFromRect(rect), "viewport": NSStringFromRect(viewport),
+            "display": NSStringFromRect(CGDisplayBounds(CGMainDisplayID()))])
+        if viewport.contains(rect) { return }
+        guard attempt < 8, let scroll = scroll else { throw Refusal(message: "control unreachable in actual scroll viewport: " + label) }
+        try require(rect.minX >= viewport.minX && rect.maxX <= viewport.maxX, "horizontal control clipping: " + label)
+        let point = CGPoint(x: viewport.midX, y: viewport.midY)
+        try requireExactHit(scroll, point, "scroll-" + label)
+        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)!.post(tap: .cghidEventTap)
+        try guiWaitTick()
+        let observed = CGEvent(source: nil)!.location
+        try require(abs(observed.x-point.x) < 3 && abs(observed.y-point.y) < 3, "scroll pointer motion not observed")
+        try requireExactHit(scroll, point, "scroll-" + label)
+        let delta: Int32 = rect.maxY > viewport.maxY ? -120 : 120
+        guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                                  wheel1: delta, wheel2: 0, wheel3: 0) else { throw Refusal(message: "native scroll event unavailable") }
+        event.post(tap: .cghidEventTap)
+        record("pointer-scroll", ["label": label, "x": point.x, "y": point.y, "delta": delta, "pid": pid])
+        try guiWaitTick()
+    }
 }
 func settledGeometry(_ element: AXUIElement) throws -> CGRect {
     var previous: CGRect?
@@ -169,26 +255,12 @@ func screenshot(_ name: String, failureEvidence: Bool = false) throws {
 }
 func click(_ element: AXUIElement, _ label: String, double: Bool = false) throws {
     try require((value(element, kAXEnabledAttribute) as? Bool) == true, "disabled or unknown enabled state: " + label)
+    try revealOwnedControl(element, label)
     let rect = try settledGeometry(element)
     let point = CGPoint(x: rect.midX, y: rect.midY)
     var pid: pid_t = 0
     AXUIElementGetPid(element, &pid)
-    func requireExactHit() throws {
-        var hit: AXUIElement?
-        try require(AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(point.x),
-                    Float(point.y), &hit) == .success && hit != nil, "control not hittable")
-        var hitPID: pid_t = 0
-        AXUIElementGetPid(hit!, &hitPID)
-        try require(hitPID == pid, "another process occludes " + label)
-        for _ in 0..<32 {
-            guard let current = hit else { break }
-            if CFEqual(current, element) { return }
-            guard let parent = value(current, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
-            hit = (parent as! AXUIElement)
-        }
-        throw Refusal(message: "same-process overlay or unrelated hit target: " + label)
-    }
-    try requireExactHit()
+    try requireExactHit(element, point, label)
     let before = CGEvent(source: nil)!.location
     CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point,
             mouseButton: .left)!.post(tap: .cghidEventTap)
@@ -198,7 +270,7 @@ func click(_ element: AXUIElement, _ label: String, double: Bool = false) throws
     try screenshot(label + "-hover")
     try require((value(element, kAXEnabledAttribute) as? Bool) == true, "enabled state changed after hover")
     try require(try bounds(element) == rect, "control moved after hover")
-    try requireExactHit()
+    try requireExactHit(element, point, label)
     for n in 1...(double ? 2 : 1) {
         for type in [CGEventType.leftMouseDown, CGEventType.leftMouseUp] {
             let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)!
@@ -287,6 +359,15 @@ do {
     try require(windows.contains { text($0, kAXTitleAttribute) == "SteamOS NVIDIA Builder" }, "main window missing")
     try require(!windows.contains { text($0, kAXTitleAttribute).contains("Opening SteamOS") }, "splash still open")
     record("main-window", ["titles": windows.map { text($0, kAXTitleAttribute) }])
+    guard let mainWindow = windows.first(where: { text($0, kAXTitleAttribute) == "SteamOS NVIDIA Builder" }) else {
+        throw Refusal(message: "actual main window unavailable for usable-layout observation")
+    }
+    let mainFrame = try observedRect(mainWindow)
+    let usableFrame = try usableDisplayBounds()
+    record("native-usable-window-observed", ["display": NSStringFromRect(CGDisplayBounds(CGMainDisplayID())),
+        "usableBounds": NSStringFromRect(usableFrame), "windowBounds": NSStringFromRect(mainFrame),
+        "pid": owned!.processIdentifier])
+    try require(usableFrame.contains(mainFrame), "actual main window exceeds native usable work area")
     try screenshot("main-before-settings")
     try click(open!, "open-settings")
     var close: AXUIElement?
@@ -297,9 +378,8 @@ do {
     while try button("Close settings") != nil { try guiWaitTick() }
     try screenshot("settings-closed")
     record("settings-closed-observed")
-    // The hosted runner has no admitted appliance or recovery image. Exercise
-    // the native chooser with real pointer events, then cancel without inventing
-    // a successful Build transaction or changing the selected-image state.
+    // Both modes use the real chooser. Full-stack mode below consumes only the
+    // exact admitted image and requires the actual Build/guest transition.
     func chooserCancel() throws -> AXUIElement? {
         let windows = value(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
         var candidates: [AXUIElement] = []

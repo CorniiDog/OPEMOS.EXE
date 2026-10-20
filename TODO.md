@@ -2,6 +2,26 @@
 
 ## Current-Main Mac producer and measured Darwin closure — 2026-10-20
 
+- [ ] Preserve actual73f normal M1 run39357004406/job118413978910: native
+  Clippy/fullRust418pass and current app build PASS; genuine separate guest
+  normal/wrong-marker/health/working-copy/closure PASS. Real Finder chooser
+  selected exact recovery; Build NOT clicked because exact hit centre512,735
+  of rect171,714,682,42 on1024x768 was occluded. Dock attribution from pixels
+  only, actual hit PID UNKNOWN. Main/CSS800 minimum exceeded usable viewport;
+  previous native prerequisite failures and Settings/source models missed it.
+  Root-reviewed coherent correction fits only Mac main to actual monitor work
+  area/scale before showing, lets web canvas/real scroll area shrink, reveals
+  owned controls with bounded CGEvent pointer scrolling and unchanged exact
+  PID/ancestor/settled/hover hits. Persist actual actor/birth/usable/window/scroll
+  geometry before refusal; actual packaged window containment/scroll/Build must
+  pass in hosted1024x768, model geometry tests are not OS proof. No Dock hiding,
+  AXPress/AXwrites/JS/backend invocation or deadline/assertion relaxation.
+  Necessary normal fast-forward push to canonical EXE Mac owner branch for
+  exact changed-head native checks/Core whole-graph review and ONE current
+  package Finder Build/hash/coldready/health/nextstage/fault/normalclose run.
+  Reuse exact accepted provider/companion bytes; unchanged43bottle work and
+  prior passed results preserved. No Main/PR204/190/governance/trust mutation.
+
 - [ ] First changed489aceb1 push39356796631 retained: frontend395cases,
   393pass/1fail/1skip, exit1. New Unix-only pipe fixtures used direct Command
   construction in appliance.rs, violating the existing whole-file hidden-child
