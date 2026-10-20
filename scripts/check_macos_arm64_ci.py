@@ -256,8 +256,32 @@ def main():
                 raise RuntimeError("pre-existing exact executable; refuse GUI interaction")
             try:
                 arguments = [str(helper), str(app), str(OUT)] + ([str(recovery)] if fullstack else [])
-                run("gui", arguments, 510 if fullstack else 150)
+                receipt["productAcceptance"]["imageBuild"] = "attempted: ordinary current packaged GUI transaction"
+                gui_passed = run("gui", arguments, 510 if fullstack else 150)
+                if not gui_passed:
+                    receipt["productAcceptance"]["imageBuild"] = "failed: see same-run actual GUI events and screenshot; no completed image"
+                    receipt["productAcceptance"]["coldBuildGuestHealthNextStage"] = "not proven: graphical transaction failed"
             finally:
+                # Only our newly launched app's private current-UID session root.
+                # Retain actual regular-file serial and bounded observer records;
+                # missing numeric reap remains explicit, never inferred from pgrep.
+                sessions = Path.home() / "Library/Caches/dev.cornidog.steamos-nvidia-image-builder/sessions/native"
+                collected = []
+                if fullstack and sessions.is_dir() and not sessions.is_symlink():
+                    for path in sorted(sessions.rglob("*")):
+                        if path.is_symlink() or not path.is_file() or path.stat().st_uid != os.getuid():
+                            continue
+                        if path.name not in {"readiness.jsonl", "qemu.log", "resources.json"} and not path.name.endswith((".readiness.jsonl", ".resources.json", ".log")):
+                            continue
+                        with path.open("rb") as stream:
+                            stream.seek(max(0, path.stat().st_size - 256 * 1024))
+                            data = stream.read(256 * 1024)
+                        target = OUT / ("cold-" + path.parent.name + "-" + path.name)
+                        target.write_bytes(data)
+                        collected.append({"source": str(path), "retained": target.name,
+                                          "sourceBytes": path.stat().st_size, "tailBytes": len(data)})
+                receipt["coldReadinessEvidence"] = collected
+                receipt["guiAppNumericExit"] = "unknown: Finder launched app is not a waitable child"
                 survivors = app_processes(binary)
                 receipt["appProcessSurvivors"] = survivors
                 if survivors:
@@ -280,6 +304,21 @@ def main():
                     receipt["appProcessSurvivorsAfterOwnedCleanup"] = app_processes(binary)
                     raise RuntimeError("GUI left app processes; cleanup evidence retained, not normal closure")
         if fullstack:
+            closures = []
+            for item in receipt.get("coldReadinessEvidence", []):
+                if item["retained"].endswith("readiness.jsonl"):
+                    if item["sourceBytes"] >= 256 * 1024:
+                        raise RuntimeError("Cold observer budget reached: evidence incomplete; no second guest")
+                    records = [json.loads(line)["observation"] for line in
+                               (OUT / item["retained"]).read_text().splitlines()]
+                    if any(r.get("phase") == "observer-overflow" for r in records):
+                        raise RuntimeError("Cold observer overflow: missing phases remain unknown; no second guest")
+                    closures.extend(r for r in records if r.get("phase") == "qemu-reaped")
+            receipt["graphicalQemuNumericClosure"] = closures
+            if not closures or any(not r.get("processGroupAbsent") or
+                    not r.get("status", "").startswith("Some(") or
+                    r.get("transportClosure") != "Ok(())" for r in closures):
+                raise RuntimeError("Graphical QEMU numeric reap/group/transport closure unproven; refuse separate fault guest")
             qemu = subprocess.run(["/usr/bin/pgrep", "-f", "qemu-system-"], capture_output=True, text=True, timeout=10)
             if qemu.returncode != 1:
                 receipt["qemuBeforeFault"] = qemu.stdout

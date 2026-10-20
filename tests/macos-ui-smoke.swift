@@ -529,7 +529,8 @@ do {
             observedComplete = visible.contains("NVIDIA image ready for USB Imaging") && visible.contains("Build manifest:") && visible.contains("Export validation:")
             if observedComplete { completionText = visible }
             if Date() >= nextCapture {
-                record("visible-build-state", ["text": String(visible.prefix(65536)),
+                record("visible-build-state", ["text": String(visible.prefix(32768)),
+                    "tail": String(visible.suffix(32768)), "originalCharacters": visible.count,
                     "hashing": observedHashing, "ready": observedReady, "health": observedHealth, "nextStage": observedNext])
                 try screenshot("build-" + String(events.count))
                 nextCapture = Date().addingTimeInterval(10)

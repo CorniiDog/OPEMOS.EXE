@@ -1,5 +1,22 @@
 # OPEMOS.EXE — Product Checklist
 
+## Matched cold8GB readiness causal measurement — 2026-10-20
+
+- [ ] Preserve5dc actual423 native passes/current sealed ARM64 package and
+  actual1600 Finder/chooser/Build120s failure (handback828f20a6). Root plan
+  root-pr202-5dc-cold-readiness-causal-review-20261020-r1/recovery-plan.json
+  releases ONE changed normal transaction: bounded production Mac launch,
+  monotonic/wall timing, SSH connect/banner/auth/command/marker, deadline serial
+  tail and numeric QEMU reap/group evidence; truthful attempted/failed product
+  receipts and first/last visible context. Finder does not inherit CI environment,
+  so production Mac diagnostics are bounded directly, not an ineffective env-only
+  observer. No120s/50ms37.5/12.5/resource/assertion/EOF/custody guard change.
+  Exact5dc c2748a0e archive supplies ONLY unchanged pinned runtime/companion,
+  never its app or failed product acceptance. Current app rebuilt normally.
+  Remote exact head is necessary for existing sourceCI/native AppleSilicon lane
+  and complete exact counterpart review; no controller project tests/merge claim.
+  Held6abed and Main205 TTL remain untouched. Stop after actual changed result.
+
 ## Measured native fast-exit/member custody recovery — 2026-10-20
 
 - [ ] First changed72d5 native run39484685713/job118841923441 preserved:

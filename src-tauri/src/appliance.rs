@@ -1,6 +1,69 @@
 use super::*;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 
+// Observation only: never changes a deadline, command result or custody guard.
+fn cold_readiness_record(runtime: &Path, value: serde_json::Value) {
+    // Finder launches do not inherit the source-CI shell's environment.
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let record = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(runtime.join("readiness.jsonl"))?;
+        // Reserve space for an explicit overflow record, never silently present
+        // a dropped native phase as complete evidence.
+        let row = serde_json::json!({"wallUnixMillis":
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(), "observation": value})
+        .to_string();
+        let size = file.metadata()?.len();
+        if size + row.len() as u64 + 1 <= 256 * 1024 - 1024 {
+            writeln!(file, "{row}")?;
+        } else if size < 256 * 1024 - 128 {
+            writeln!(
+                file,
+                "{{\"observation\":{{\"phase\":\"observer-overflow\"}}}}"
+            )?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = record {
+        eprintln!("Cold readiness observation unavailable: {error}");
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod cold_readiness_observer_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_file_records_clock_and_explicit_overflow_within_budget() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-cold-observer-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        cold_readiness_record(&root, serde_json::json!({"phase":"test-observation"}));
+        let path = root.join("readiness.jsonl");
+        let first = fs::read_to_string(&path).unwrap();
+        let record: serde_json::Value = serde_json::from_str(first.trim()).unwrap();
+        assert!(record["wallUnixMillis"].as_u64().unwrap() > 0);
+        assert_eq!(record["observation"]["phase"], "test-observation");
+        cold_readiness_record(&root, serde_json::json!({"excess": "x".repeat(256 * 1024)}));
+        let retained = fs::read_to_string(&path).unwrap();
+        assert!(retained.len() <= 256 * 1024);
+        assert!(retained.starts_with(&first));
+        assert!(retained.contains("observer-overflow"));
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+}
+
 // The bundled template can be read-only (notably after Windows ISO transfer).
 // Only the session-owned pflash copy is writable; never alter the template.
 pub(crate) fn copy_writable_uefi_vars(template: &Path, destination: &Path) -> Result<(), String> {
@@ -1083,6 +1146,14 @@ pub(crate) fn archive_and_remove_runtime(runtime_dir: &Path) -> Result<Option<Pa
         if resources_source.is_file() {
             fs::copy(&resources_source, &resources_path)
                 .map_err(|e| format!("Could not archive the appliance resource plan: {e}"))?;
+        }
+        let readiness = runtime_dir.join("readiness.jsonl");
+        if readiness.is_file() {
+            fs::copy(
+                readiness,
+                archive_dir.join(format!("{session_name}.readiness.jsonl")),
+            )
+            .map_err(|e| format!("Could not archive cold readiness evidence: {e}"))?;
         }
         Some(if archive_path.is_file() {
             archive_path
@@ -2265,6 +2336,14 @@ pub(crate) fn prepare_session_with_output(
     let started_at = Instant::now();
     let (readiness_deadline, readiness_timeout_secs) =
         appliance_readiness_deadline(started_at, None)?;
+    cold_readiness_record(
+        &runtime_dir,
+        serde_json::json!({"phase":"launch",
+        "pid":child.id(), "argv":format!("{command:?}"),
+        "resources":resources, "inputBytes":fs::metadata(&attached_image).ok().map(|m|m.len()),
+        "readinessTimeoutSeconds":readiness_timeout_secs,
+        "monotonicElapsedNanos":started_at.elapsed().as_nanos()}),
+    );
     Ok(ApplianceSession {
         child,
         watchdog,
@@ -2593,6 +2672,14 @@ pub(crate) fn ssh_command_with_client_log(
     session: &impl GuestConnection,
     client_log: Option<&Path>,
 ) -> Result<Command, String> {
+    ssh_command_options(session, client_log, false)
+}
+
+fn ssh_command_options(
+    session: &impl GuestConnection,
+    client_log: Option<&Path>,
+    readiness_trace: bool,
+) -> Result<Command, String> {
     let ssh = find_binary("ssh").ok_or("ssh is required for the guest handshake.")?;
     let mut command = child_command(ssh);
     command
@@ -2616,6 +2703,9 @@ pub(crate) fn ssh_command_with_client_log(
         ]);
     if let Some(client_log) = client_log {
         command.arg("-vvv").arg("-E").arg(client_log);
+    }
+    if readiness_trace {
+        command.arg("-v");
     }
     command.arg("builder@127.0.0.1");
     Ok(command)
@@ -3581,10 +3671,20 @@ pub(crate) fn finish_guest_command_bounded_observed(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn finish_guest_readiness_attempt(
-    mut child: GuestChild,
+    child: GuestChild,
     timeout: Duration,
 ) -> Result<String, String> {
+    finish_guest_readiness_attempt_observed(child, timeout, None)
+}
+
+fn finish_guest_readiness_attempt_observed(
+    mut child: GuestChild,
+    timeout: Duration,
+    observation: Option<&Path>,
+) -> Result<String, String> {
+    let observed_start = Instant::now();
     let (operation_deadline, deadline) = guest_command_deadlines(timeout)?;
     #[cfg(test)]
     let native_trace = child.native_trace.clone();
@@ -3698,6 +3798,26 @@ pub(crate) fn finish_guest_readiness_attempt(
         .map_err(|_| "Guest readiness diagnostics reader panicked.".to_string())
         .and_then(|r| r);
     let cleanup = guest_cleanup_result(cleanup, guest_completion_before(deadline));
+    if let Some(runtime) = observation {
+        cold_readiness_record(
+            runtime,
+            serde_json::json!({"phase":"transport-completion",
+            "elapsedNanos":observed_start.elapsed().as_nanos(),
+            "observedExit":observed_exit, "closure":format!("{cleanup:?}"),
+            "stdoutJoined":joined.is_ok(), "stderrJoined":stderr.is_ok(),
+            "stdoutEOFObserved":primary.as_ref().ok().map(|(_, eof)| *eof),
+            "marker":format!("{primary:?}"),
+            "sshPhases":stderr.as_ref().ok().map(|bytes| {
+                // No key bytes, user environment or arbitrary remote diagnostics.
+                String::from_utf8_lossy(bytes).lines().filter(|line|
+                    ["Connecting to", "Connection established", "Remote protocol version",
+                     "Authenticating to", "Authenticated to", "Sending command:",
+                     "Connection refused", "Connection timed out", "Permission denied",
+                     "Exit status", "kex_exchange_identification"].iter().any(|s| line.contains(s)))
+                    .collect::<Vec<_>>().join("\n").chars().take(8192).collect::<String>()
+            })}),
+        );
+    }
     let result = primary.and_then(|(output, _)| {
         if let Ok(status) = &cleanup {
             if observed_exit && !status.success() {
@@ -4111,9 +4231,23 @@ pub(crate) fn readiness_handshake(
     }
     #[cfg(not(windows))]
     {
-        finish_guest_readiness_attempt(
-            start_guest_command(session, "cat /etc/steamos-builder-ready")?,
+        let observe = cfg!(target_os = "macos");
+        let mut command =
+            ssh_command_options(session, None, observe).map_err(ReadinessFailure::Message)?;
+        command
+            .arg("cat /etc/steamos-builder-ready")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        configure_guest_command_stdin(&mut command);
+        isolate_process_group(&mut command);
+        let mut child = spawn_guest_process(&mut command).map_err(|e| {
+            ReadinessFailure::Message(format!("Could not start readiness command: {e}"))
+        })?;
+        close_guest_command_stdin(&mut child);
+        finish_guest_readiness_attempt_observed(
+            child,
             READINESS_ATTEMPT_TIMEOUT,
+            observe.then(|| session.runtime_dir()),
         )
         .map_err(ReadinessFailure::Message)
     }
@@ -4959,6 +5093,7 @@ pub(crate) fn get_appliance_status_blocking(
         )
     };
 
+    let attempt_start = Instant::now();
     let handshake_result = readiness_handshake(&snapshot);
     let mut manager = manager_state
         .lock()
@@ -4975,6 +5110,14 @@ pub(crate) fn get_appliance_status_blocking(
     if session.ssh_port != session_port || session.state != "booting" {
         return Ok(session_status(session));
     }
+    cold_readiness_record(
+        &session.runtime_dir,
+        serde_json::json!({"phase":"attempt",
+        "pid":session.child.id(), "elapsedNanos":session.started_at.elapsed().as_nanos(),
+        "attemptNanos":attempt_start.elapsed().as_nanos(),
+        "remainingNanos":readiness_deadline.saturating_duration_since(Instant::now()).as_nanos(),
+        "result":format!("{handshake_result:?}")}),
+    );
     match readiness_attempt_outcome(Instant::now(), readiness_deadline, &handshake_result) {
         ApplianceReadinessOutcome::Ready => {
             session.state = "ready".into();
@@ -4991,6 +5134,20 @@ pub(crate) fn get_appliance_status_blocking(
             session.state = "timedOut".into();
             session.message = format!(
                 "Builder appliance did not become ready within {readiness_timeout_secs} seconds."
+            );
+            cold_readiness_record(
+                &session.runtime_dir,
+                serde_json::json!({"phase":"deadline",
+                "elapsedNanos":session.started_at.elapsed().as_nanos(),
+                "lastResult":format!("{handshake_result:?}"),
+                "serialTail":( || -> io::Result<String> {
+                    let mut file = File::open(session.runtime_dir.join("qemu.log"))?;
+                    let size = file.metadata()?.len();
+                    file.seek(SeekFrom::Start(size.saturating_sub(32 * 1024)))?;
+                    let mut bytes = Vec::new();
+                    file.take(32 * 1024).read_to_end(&mut bytes)?;
+                    Ok(String::from_utf8_lossy(&bytes).into_owned())
+                })().map_err(|e| e.to_string())}),
             );
         }
         ApplianceReadinessOutcome::Pending => {
@@ -5670,6 +5827,24 @@ pub(crate) fn stop_session_process(session: &mut ApplianceSession) -> Result<(),
         }
     }
     session.watchdog.finish();
+    let status = session
+        .child
+        .try_wait()
+        .map_err(|e| format!("Could not record final appliance status: {e}"))?;
+    #[cfg(unix)]
+    let process_group_absent = (unsafe { libc::kill(-(session.child.id() as i32), 0) } == -1)
+        && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+    #[cfg(not(unix))]
+    let process_group_absent = false;
+    cold_readiness_record(
+        &session.runtime_dir,
+        serde_json::json!({"phase":"qemu-reaped",
+        "pid":session.child.id(), "status":format!("{status:?}"),
+        "elapsedNanos":session.started_at.elapsed().as_nanos(),
+        "transportClosure":format!("{shutdown_closure:?}"),
+        "processGroupAbsent":process_group_absent,
+        "serialSink":"regular-file; no pipe EOF claim"}),
+    );
     shutdown_closure
 }
 

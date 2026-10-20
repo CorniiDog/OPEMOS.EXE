@@ -16,13 +16,13 @@ from acquire_appliance_windows import acquire, load_lock, stage
 from acquire_runtime_macos import construct, load_lock as load_runtime_lock, probe_runtime, verify_firmware_pair
 from stage_runtime_bundle import digest, validate_runtime
 
-RETAINED_ARCHIVE_BYTES = 1102518362
-RETAINED_ARCHIVE_SHA256 = "49ebf3918b88515340bdc6c40b99ddea81d600d2ba039aa1ebf85113cc4c38c2"
+RETAINED_ARCHIVE_BYTES = 1102515341
+RETAINED_ARCHIVE_SHA256 = "c2748a0ee1dfd149945f48fa48e8809f0eb3fcdd4c02e1ae788795006421e2f9"
 RETAINED_MANIFEST_SHA256 = "eab631c9b4e277d9050c1d28fe448ac3c002be30fba025f56bc3beb274d7e9d5"
 
 
 def reuse_retained(root, output, evidence, archive):
-    """Only the fully hashed 4e package's unchanged runtime, not its app binary."""
+    """Only the fully hashed 5dc package's unchanged runtime, not its app binary."""
     from stage_macos_app import verify_companion
     if (archive.is_symlink() or not archive.is_file()
             or archive.stat().st_size != RETAINED_ARCHIVE_BYTES
@@ -54,7 +54,7 @@ def reuse_retained(root, output, evidence, archive):
         raise ValueError("Retained original archive changed")
     (evidence / "darwin-runtime-producer.json").write_text(json.dumps({
         "mode": "reuse-exact-previously-measured-derivative", "complete": True,
-        "originalProducerHead": "4e788260fe109a5be8541c8e967bbeb31c740ff6",
+        "originalProducerHead": "5dc31f3c2afd2894818b4e94792a30afdfd322dc",
         "archiveSHA256": RETAINED_ARCHIVE_SHA256, "runtimeManifestSHA256": manifest_hash,
         "sourceLockSHA256": digest(root / "runtime/macos-arm64.sources.json"),
         "bottleAcquisitionOrRelocationExecuted": False, "currentNativeProbesPassed": True,
