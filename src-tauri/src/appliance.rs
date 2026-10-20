@@ -3076,7 +3076,7 @@ mod deadline_pipe_tests {
 
     #[test]
     fn real_closed_pipe_proves_eof_after_deadline() {
-        let mut child = Command::new("/bin/sh")
+        let mut child = child_command("/bin/sh")
             .args(["-c", "exit 0"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -3091,7 +3091,7 @@ mod deadline_pipe_tests {
 
     #[test]
     fn real_late_data_is_retained_but_never_proves_eof() {
-        let mut child = Command::new("/bin/sh")
+        let mut child = child_command("/bin/sh")
             .args(["-c", "printf retained-diagnostic"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

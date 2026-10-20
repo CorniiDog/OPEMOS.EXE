@@ -62,6 +62,18 @@ def _read_public(path, expected):
         os.close(fd)
 
 
+def _require_host_broker_peer(peer):
+    """Validate kernel credentials; PID zero means peer outside our PID namespace."""
+    credentials = peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                  struct.calcsize("3i"))
+    require(type(credentials) is bytes and len(credentials) == struct.calcsize("3i"),
+            "complete fixed host broker credentials")
+    pid, uid, gid = struct.unpack("3i", credentials)
+    require(pid >= 0 and uid == os.getuid() and gid == os.getgid(),
+            "fixed host broker peer UID/GID")
+    return pid, uid, gid
+
+
 class Engine:
     def __init__(self, output):
         env = os.environ
@@ -104,10 +116,7 @@ class Engine:
         with socket.socket(socket.AF_UNIX) as peer:
             peer.settimeout(21600)
             peer.connect(SOCKET)
-            pid, uid, gid = struct.unpack("3i", peer.getsockopt(socket.SOL_SOCKET,
-                                                                  socket.SO_PEERCRED, 12))
-            require(pid > 0 and uid == os.getuid() and gid == os.getgid(),
-                    "fixed host broker peer UID/GID")
+            _require_host_broker_peer(peer)
             peer.sendall(json.dumps(request, separators=(",", ":")).encode() + b"\n")
             raw = bytearray()
             while len(raw) <= MAX_REPLY and not raw.endswith(b"\n"):

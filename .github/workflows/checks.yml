@@ -88,6 +88,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Exercise actual Linux cross-PID-namespace broker credentials
+        run: |
+          sudo apt-get update && sudo apt-get install --yes bubblewrap
+          /usr/bin/python3 -B tests/robot/test_peerpid_namespace.py --source "$GITHUB_WORKSPACE/scripts/robot_client.py" --sha256 b41f452e5b28d3fdff05eaa4e5d486a52780182ab01f641d9e35b133fbe14694
+
       - name: Exercise Robot source adapter and real Unix client fault contracts
         run: python3 -m unittest discover -s tests -p 'test_omen*.py' -v
 

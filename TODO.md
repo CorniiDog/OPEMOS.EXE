@@ -2,6 +2,16 @@
 
 ## Current-Main Mac producer and measured Darwin closure — 2026-10-20
 
+- [ ] First changed489aceb1 push39356796631 retained: frontend395cases,
+  393pass/1fail/1skip, exit1. New Unix-only pipe fixtures used direct Command
+  construction in appliance.rs, violating the existing whole-file hidden-child
+  invariant. Use the existing child_command producer; do not alter the guard.
+  PR jobs were not scheduled because Main's completed PR203 TODO addition
+  conflicted with Mac history. Reconcile actual Maina762 by normal ancestry
+  merge, retaining both full TODO histories and exact PR203 source/CI/native
+  regression. No history rewrite or Main/PR204 mutation. Fresh complete native
+  pipeline required on the resulting identity; earlier results not transferred.
+
 - [ ] Preserve actual0b8 M1 run39352342633/job118399183030: Clippy three
   Linux-parser deadcode errors and Rust412pass/3fail, before package/GUI.
   Apply reviewed recovery8c79d3d4: cache only successful exact-owned group stop
@@ -57,6 +67,21 @@
   controller project tests, old approval transfer, merge/publication/trust,
   original/physical-media/GPU authority. Mac producer descriptor follows only
   successful complete native transaction and actual package artifact upload.
+## Actual Robot peer PID namespace correction — 2026-10-20
+
+- [ ] Preserve actual04 run39348469633 all24 pre-click failures: the same
+  listener peer hostPID787372 becomes PID0 in Runner21's child PID namespace,
+  exact current UID/GID1000 unchanged. Integrate reviewed Hubble final6619c18e
+  on fresh Main e7c294e3: complete fixed-size SO_PEERCRED, nonnegative kernel
+  PID and exact UID/GID. No endpoint/path/nonce/source authorization relaxation.
+- [ ] Actual native Linux same-namespace positive, real bwrap child namespace
+  PID0 positive, six strict negatives and owned group/FD/EOF/reap checks run in
+  existing Linux CI lane, never controller. Exact candidate source SHA b41f452e
+  is consumed through held descriptor/full9/hash. All ordinary required checks
+  and exact Core approval precede owner protected merge. Normal source push to
+  canonical CorniiDog/OPEMOS.EXE is necessary for remote-only native CI/review;
+  no installed client, listener, VM retry or source publication beyond this PR.
+  Root owns operational rollover/next04; PR202 Mac and other frozen holds stay.
 
 ## Automatic OMEN Robot integration — 2026-10-19
 
