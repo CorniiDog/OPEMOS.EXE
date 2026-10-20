@@ -40,4 +40,4 @@ jobs:
           name: full-stack-acceptance-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: full-stack-acceptance.json
           if-no-files-found: error
-          retention-days: 3
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}

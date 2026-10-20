@@ -125,7 +125,7 @@ jobs:
         with:
           name: macos-arm64-${{ env.OPEMOS_EXE_COMMIT }}-${{ github.run_attempt }}
           path: build/macos-arm64-evidence
-          retention-days: 3
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
           if-no-files-found: error
           compression-level: 0
       - name: Preserve actual same-run Robot reports separately
