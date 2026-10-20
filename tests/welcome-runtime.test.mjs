@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,20 +14,33 @@ test("mock welcome controller serves and completes the real UI contract safely",
     "--ui-root", "builder/welcome", "--runtime", runtime,
   ], { stdio: ["ignore", "ignore", "pipe"] });
   let stderr = "";
-  child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
-  context.after(() => {
-    if (child.exitCode === null) child.kill("SIGTERM");
+  let spawnError;
+  child.on("error", (error) => { spawnError = error; });
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  child.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString("utf8")).slice(-16384); });
+  context.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    let timer;
+    await Promise.race([closed, new Promise((resolve) => { timer = setTimeout(() => { child.kill("SIGKILL"); resolve(); }, 2500); })]);
+    clearTimeout(timer);
+    await closed;
     rmSync(runtime, { recursive: true, force: true });
   });
 
   let port;
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const started = performance.now();
+  const deadline = started + 2000;
+  while (performance.now() < deadline && !spawnError && child.exitCode === null && child.signalCode === null) {
     try {
       port = readFileSync(join(runtime, "port"), "utf8").trim();
-      if (/^\d+$/.test(port)) break;
+      // The port file and stderr pipe are independent process boundaries.
+      // Both are emitted by the real producer, but Node may observe the file
+      // before dispatching the pipe's data event. Join both within the same
+      // original two-second bound; do not assert on an undrained pipe.
+      if (/^\d+$/.test(port) && /OPEMOS_STARTUP numeric-loopback-bound [0-9.]+/.test(stderr)) break;
     }
     catch {
-      if (child.exitCode !== null) break;
+      if (child.exitCode !== null || child.signalCode !== null) break;
     }
     await pause(20);
   }
@@ -35,7 +48,15 @@ test("mock welcome controller serves and completes the real UI contract safely",
     context.skip("sandbox does not permit an ephemeral loopback listener");
     return;
   }
-  assert.match(port, /^\d+$/);
+  const python = spawnSync("python3", ["-c", "import sys; print(sys.executable); print(sys.version)"], { encoding: "utf8", timeout: 2000 });
+  assert.match(port ?? "", /^\d+$/, JSON.stringify({
+    elapsedMs: performance.now() - started, spawnError: spawnError?.message,
+    exitCode: child.exitCode, signal: child.signalCode, stderr,
+    python: python.stdout, pythonDiagnosticError: python.stderr,
+  }));
+  assert.match(stderr, /OPEMOS_STARTUP before-numeric-loopback-bind/);
+  assert.match(stderr, /OPEMOS_STARTUP numeric-loopback-bound [0-9.]+/);
+  context.diagnostic(JSON.stringify({ readinessMs: performance.now() - started, startup: stderr, python: python.stdout }));
   const origin = `http://127.0.0.1:${port}`;
   const html = await (await fetch(`${origin}/`)).text();
   const readyMarker = statSync(join(runtime, "ui-ready"));

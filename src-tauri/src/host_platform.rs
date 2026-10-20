@@ -8,6 +8,28 @@ use std::{
 
 pub(crate) type QemuSpec = (&'static str, &'static str, &'static str);
 
+// Explicit compile-time software lane for hosted Apple Silicon validation.
+// Ordinary Mac packages retain their native architecture and HVF selection.
+pub(crate) fn plan_inspection_guest_arch(
+    os: &str,
+    host: &'static str,
+    software_lane: Option<&str>,
+) -> Result<&'static str, String> {
+    match software_lane {
+        None => Ok(host),
+        Some("1") if os == "macos" && host == "aarch64" => Ok("x86_64"),
+        Some(_) => Err("OPEMOS_MACOS_X86_TCG must be compiled as exactly 1 on Apple Silicon macOS; no implicit fallback is permitted.".into()),
+    }
+}
+
+pub(crate) fn inspection_guest_arch() -> Result<&'static str, String> {
+    plan_inspection_guest_arch(
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        option_env!("OPEMOS_MACOS_X86_TCG"),
+    )
+}
+
 pub(crate) fn plan_host_qemu(
     os: &str,
     host: &str,
@@ -162,6 +184,17 @@ pub(crate) fn linux_firmware_pair(root: &Path) -> Result<(PathBuf, PathBuf), Str
 }
 
 pub(crate) fn host_firmware(guest: &str) -> Result<(PathBuf, PathBuf), String> {
+    if std::env::consts::OS == "macos" && crate::runtime_bundle::bundled_runtime_required() {
+        let (code, vars) = match guest {
+            "aarch64" => ("edk2-aarch64-code.fd", "edk2-arm-vars.fd"),
+            "x86_64" => ("edk2-x86_64-code.fd", "edk2-i386-vars.fd"),
+            _ => return Err("Unsupported packaged guest firmware architecture.".into()),
+        };
+        return Ok((
+            crate::runtime_bundle::bundled_runtime_file(&format!("share/qemu/{code}"))?,
+            crate::runtime_bundle::bundled_runtime_file(&format!("share/qemu/{vars}"))?,
+        ));
+    }
     if std::env::consts::OS == "linux" {
         if guest != "x86_64" {
             return Err("Experimental Linux firmware supports x86_64 guests only.".into());
@@ -698,5 +731,33 @@ mod tests {
         );
         smoke_test_qemu(&find_binary("qemu-system-x86_64").unwrap()).unwrap();
         assert_eq!(sha256_file(&base).unwrap(), before);
+    }
+}
+
+#[cfg(test)]
+mod macos_software_lane_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_macos_software_lane_uses_existing_x86_tcg_plan() {
+        assert_eq!(
+            plan_inspection_guest_arch("macos", "aarch64", None).unwrap(),
+            "aarch64"
+        );
+        let guest = plan_inspection_guest_arch("macos", "aarch64", Some("1")).unwrap();
+        assert_eq!(guest, "x86_64");
+        assert_eq!(
+            plan_host_qemu("macos", "aarch64", guest, false, "", false).unwrap(),
+            ("tcg", "q35,accel=tcg", "max")
+        );
+        for (os, host, value) in [
+            ("macos", "aarch64", "0"),
+            ("macos", "aarch64", "auto"),
+            ("macos", "x86_64", "1"),
+            ("windows", "x86_64", "1"),
+            ("linux", "x86_64", "1"),
+        ] {
+            assert!(plan_inspection_guest_arch(os, host, Some(value)).is_err());
+        }
     }
 }

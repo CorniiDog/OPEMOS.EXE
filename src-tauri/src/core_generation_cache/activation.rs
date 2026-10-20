@@ -1421,19 +1421,45 @@ mod tests {
             || false,
             |phase| {
                 if phase == "after-pin-before-inventory" {
+                    fs::set_permissions(&live, fs::Permissions::from_mode(0o700)).unwrap();
+                    fs::set_permissions(
+                        &authenticated_replacement,
+                        fs::Permissions::from_mode(0o700),
+                    )
+                    .unwrap();
                     fs::rename(&live, &pinned_original).unwrap();
                     fs::rename(&authenticated_replacement, &live).unwrap();
+                    fs::set_permissions(&live, fs::Permissions::from_mode(0o500)).unwrap();
+                    fs::set_permissions(&pinned_original, fs::Permissions::from_mode(0o500))
+                        .unwrap();
                     swapped.store(true, Ordering::SeqCst);
                 } else if phase == "after-first-inventory" {
+                    fs::set_permissions(&live, fs::Permissions::from_mode(0o700)).unwrap();
+                    fs::set_permissions(&pinned_original, fs::Permissions::from_mode(0o700))
+                        .unwrap();
                     fs::rename(&live, &authenticated_replacement).unwrap();
                     fs::rename(&pinned_original, &live).unwrap();
+                    fs::set_permissions(&live, fs::Permissions::from_mode(0o500)).unwrap();
+                    fs::set_permissions(
+                        &authenticated_replacement,
+                        fs::Permissions::from_mode(0o500),
+                    )
+                    .unwrap();
                     swapped.store(false, Ordering::SeqCst);
                 }
             },
         );
         if swapped.load(Ordering::SeqCst) {
+            fs::set_permissions(&live, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::set_permissions(&pinned_original, fs::Permissions::from_mode(0o700)).unwrap();
             fs::rename(&live, &authenticated_replacement).unwrap();
             fs::rename(&pinned_original, &live).unwrap();
+            fs::set_permissions(&live, fs::Permissions::from_mode(0o500)).unwrap();
+            fs::set_permissions(
+                &authenticated_replacement,
+                fs::Permissions::from_mode(0o500),
+            )
+            .unwrap();
         }
         assert!(result.is_err());
         assert_eq!(cache.load_state().unwrap().pending, None);

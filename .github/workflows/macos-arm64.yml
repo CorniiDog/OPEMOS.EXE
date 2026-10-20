@@ -3,7 +3,19 @@ name: 03 macOS Executable
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
+    inputs:
+      stream-lifecycle-diagnostic:
+        description: 'One focused owned process/pipe observation; no runtime or GUI replay'
+        type: boolean
+        default: false
+      retained-startup-diagnostic:
+        description: 'Finite old-package diagnostic only; never satisfies native-app'
+        type: boolean
+        default: false
+    # This check always proves the admitted fullstack graph. No advertised
+    # chooser-only control may silently select a different execution mode.
 
 permissions:
   contents: read
@@ -13,7 +25,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  retained-startup-diagnostic:
+    if: github.event_name == 'workflow_dispatch' && (inputs.retained-startup-diagnostic || inputs.stream-lifecycle-diagnostic)
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: 1
+      RUST_TEST_THREADS: 1
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Acquire exact retained failed package
+        if: '!inputs.stream-lifecycle-diagnostic'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download 39294846215 --repo CorniiDog/OPEMOS.EXE --name macos-arm64-7b8bf0eea38d7ab548bf4746707d8ab38ade05bb-1 --dir "$RUNNER_TEMP/retained-7b8"
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-apple-darwin
+      - name: Bounded same-package startup evidence
+        if: '!inputs.stream-lifecycle-diagnostic'
+        run: python3 scripts/diagnose_macos_retained_startup.py "$RUNNER_TEMP/retained-7b8/SteamOS-NVIDIA-Builder-arm64.app.zip"
+      - name: One finite original readiness process and pipe diagnostic
+        if: inputs.stream-lifecycle-diagnostic
+        run: python3 scripts/diagnose_macos_stream_lifecycle.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: retained-7b8-causal-diagnostic-${{ github.run_id }}
+          path: build/retained-startup-diagnostic
+          retention-days: 3
   native-app:
+    if: github.event_name != 'workflow_dispatch' || (!inputs.retained-startup-diagnostic && !inputs.stream-lifecycle-diagnostic)
     runs-on: macos-15
     timeout-minutes: 90
     permissions:
@@ -71,6 +119,7 @@ jobs:
           OPEMOS_RETAINED_MAC_APP_ARCHIVE: ${{ runner.temp }}/retained-7b8/SteamOS-NVIDIA-Builder-arm64.app.zip
         run: python3 scripts/check_macos_arm64_ci.py
       - name: Preserve exact app, failures and GUI evidence
+        id: executable
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -79,3 +128,23 @@ jobs:
           retention-days: 3
           if-no-files-found: error
           compression-level: 0
+      - name: Bind the actual current-source Mac package to this producer
+        if: success() && steps.executable.outputs.artifact-id != ''
+        env:
+          PRODUCER_ARTIFACT_ID: ${{ steps.executable.outputs.artifact-id }}
+          PRODUCER_ARTIFACT_SHA256: ${{ steps.executable.outputs.artifact-digest }}
+        run: >-
+          python3 scripts/record_executable_artifact.py
+          --platform macos --source "${{ env.OPEMOS_EXE_COMMIT }}"
+          --artifact-id "$PRODUCER_ARTIFACT_ID"
+          --artifact-sha "$PRODUCER_ARTIFACT_SHA256"
+          --artifact-name "macos-arm64-${{ env.OPEMOS_EXE_COMMIT }}-${{ github.run_attempt }}"
+          --output build/executable-producer
+      - name: Retain small Mac producer identity for separate SteamOS acceptance
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: executable-producer-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/executable-producer/executable-producer.json
+          if-no-files-found: error
+          retention-days: 1

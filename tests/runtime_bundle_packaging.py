@@ -97,9 +97,13 @@ class RuntimeBundlePackagingTests(unittest.TestCase):
         self.assertIn("dist/linux", linux)
         self.assertIn("dist/macos", macos)
         self.assertIn("dist/windows", windows)
-        for text, platform in ((linux, "linux"), (macos, "macos"), (windows, "windows")):
+        for text, platform in ((linux, "linux"), (windows, "windows")):
             self.assertIn(f"--platform {platform}", text)
             self.assertIn("OPEMOS_RUNTIME_MANIFEST_SHA256", text)
+        self.assertIn("scripts/stage_macos_app.py", macos)
+        self.assertIn("--appliance-root", macos)
+        self.assertIn("OPEMOS_MACOS_X86_TCG=1", macos)
+        self.assertIn("OPEMOS_RUNTIME_MANIFEST_SHA256", macos)
 
     def test_linux_entry_acquires_pinned_runtime_by_default(self):
         repository = Path(__file__).resolve().parent.parent
