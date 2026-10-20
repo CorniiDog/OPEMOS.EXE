@@ -20,6 +20,11 @@ var delegatedPanel: AXUIElement?
 var delegatedWindow: AXUIElement?
 var delegatedPID: pid_t?
 var delegatedBirth: Date?
+var evidenceWriteFailed = false
+var fallbackBytes = 0
+var pairSequence = 0
+var pendingPairs: Set<Int> = []
+var helperBirth: String?
 
 // Native OS observations, not an ancestry-only or label-based PID exemption.
 func nativeActor(_ pid: pid_t) throws -> (app: NSRunningApplication?, uid: uid_t?, valid: Bool) {
@@ -168,8 +173,24 @@ func record(_ kind: String, _ fields: [String: Any] = [:]) {
     row["time"] = Date().timeIntervalSince1970
     events.append(row)
     // Persist before any subsequent click/failure so outer cleanup retains PID custody.
-    if let out = out, let data = try? JSONSerialization.data(withJSONObject: events, options: [.prettyPrinted, .sortedKeys]) {
-        try? data.write(to: out.appendingPathComponent("gui-events.json"), options: .atomic)
+    if let out = out {
+        do {
+            let data = try JSONSerialization.data(withJSONObject: events, options: [.prettyPrinted, .sortedKeys])
+            try require(data.count <= 2 * 1024 * 1024, "GUI evidence bound exceeded")
+            let path = out.appendingPathComponent("gui-events.json")
+            try data.write(to: path, options: .atomic)
+            let handle = try FileHandle(forWritingTo: path)
+            defer { try? handle.close() }
+            try handle.synchronize()
+        } catch {
+            if (!evidenceWriteFailed || fields["error"] != nil) && fallbackBytes < 4096 {
+                let message = "GUI_EVIDENCE_WRITE_FAILED kind=" + kind + " original=" +
+                    String(describing: fields["error"] ?? "none") + " persistence=" + String(describing: error)
+                let data = Data((String(message.prefix(min(1024, 4096 - fallbackBytes))) + "\n").utf8)
+                FileHandle.standardError.write(data); fallbackBytes += data.count
+            }
+            evidenceWriteFailed = true
+        }
     }
 }
 func require(_ ok: Bool, _ message: String) throws {
@@ -246,6 +267,15 @@ if CommandLine.arguments == [CommandLine.arguments[0], "--birth-regression"] {
         do { _ = try nativeActor(0); fatalError("invalid PID accepted") } catch {}
         print("Actual UID/process/SecCode non-service and invalidPID negatives passed; no delegated UI authority inferred")
     } catch { fatalError("native actor regression failed: \(error)") }
+    guard let source = CGEventSource(stateID: .combinedSessionState),
+          let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: .zero, mouseButton: .left),
+          let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: .zero, mouseButton: .left) else {
+        fatalError("Actual native pair construction unavailable")
+    }
+    up.setIntegerValueField(.mouseEventNumber, value: down.getIntegerValueField(.mouseEventNumber))
+    precondition(down.type == .leftMouseDown && up.type == .leftMouseUp &&
+                 down.getIntegerValueField(.mouseEventNumber) == up.getIntegerValueField(.mouseEventNumber))
+    print("Actual native pair construction/number and state observed (no events posted, no input closure proof): \(inputState())")
     exit(0)
 }
 func guiWaitTick() throws {
@@ -338,7 +368,67 @@ func bounds(_ element: AXUIElement) throws -> CGRect {
     return rect
 }
 
-func requireExactHit(_ element: AXUIElement, _ point: CGPoint, _ label: String) throws {
+struct FileItemCustody {
+    let leaf: AXUIElement
+    let container: AXUIElement?
+    let image: URL
+    let window: AXUIElement
+}
+func axParent(_ element: AXUIElement) -> AXUIElement? {
+    guard let p = value(element, kAXParentAttribute), CFGetTypeID(p) == AXUIElementGetTypeID() else { return nil }
+    return (p as! AXUIElement)
+}
+func exactFileLeaves(_ element: AXUIElement) throws -> [AXUIElement] {
+    var queue = [element]
+    var matches: [AXUIElement] = []
+    var visited = 0
+    while !queue.isEmpty {
+        let node = queue.removeFirst(); visited += 1
+        try require(visited <= 64, "file item native inventory bound")
+        if value(node, kAXURLAttribute) != nil { matches.append(node); continue }
+        guard let children = value(node, kAXChildrenAttribute) as? [AXUIElement] else {
+            throw Refusal(message: "file item child inventory unavailable")
+        }
+        try require(queue.count + children.count <= 64, "file item native child bound")
+        queue.append(contentsOf: children)
+    }
+    return matches
+}
+func qualifyFileItem(_ leaf: AXUIElement, _ image: URL) throws -> FileItemCustody {
+    try requireControlCustody(leaf)
+    guard let window = panelAncestors(leaf).1 else { throw Refusal(message: "file item window unavailable") }
+    var container: AXUIElement?
+    if let parent = axParent(leaf), text(parent, kAXRoleAttribute) == "AXGroup",
+       let list = axParent(parent), text(list, kAXRoleAttribute) == "AXList" {
+        let urls = (try? exactFileLeaves(parent)) ?? []
+        if urls.count == 1 && CFEqual(urls[0], leaf) &&
+            nativeFilePath(value(leaf, kAXURLAttribute) as? URL) == image &&
+            (try observedRect(parent)).contains(try observedRect(leaf)) {
+            try requireControlCustody(parent)
+            container = parent
+        }
+    }
+    record("file-item-custody", ["uniqueURL": image.path, "containerQualified": container != nil,
+        "leaf": describeTarget(leaf), "container": container.map { describeTarget($0) } ?? [:],
+        "leafEqualsContainer": container.map { CFEqual(leaf, $0) } ?? false])
+    return FileItemCustody(leaf: leaf, container: container, image: image, window: window)
+}
+func validateFileItem(_ item: FileItemCustody, _ point: CGPoint) throws {
+    try requireControlCustody(item.leaf)
+    try require(nativeFilePath(value(item.leaf, kAXURLAttribute) as? URL) == item.image,
+                "held file URL changed")
+    guard let window = panelAncestors(item.leaf).1 else { throw Refusal(message: "held file window missing") }
+    try require(CFEqual(window, item.window), "held file window changed")
+    if let container = item.container {
+        let urls = try exactFileLeaves(container)
+        try require(axParent(item.leaf).map { CFEqual($0, container) } == true &&
+                    urls.count == 1 && CFEqual(urls[0], item.leaf), "held item identity/unique URL changed")
+        try require((try observedRect(container)).contains(point) &&
+                    (try actualControlViewport(container).viewport).contains(try observedRect(container)),
+                    "held file item clipping changed")
+    }
+}
+func requireExactHit(_ element: AXUIElement, _ point: CGPoint, _ label: String, fileItem: FileItemCustody? = nil) throws {
     try requireControlCustody(element)
     var expectedPID: pid_t = 0
     AXUIElementGetPid(element, &expectedPID)
@@ -347,6 +437,23 @@ func requireExactHit(_ element: AXUIElement, _ point: CGPoint, _ label: String) 
     var hitPID: pid_t = 0
     if let hit = hit { AXUIElementGetPid(hit, &hitPID) }
     let actor = NSRunningApplication(processIdentifier: hitPID)
+    if let item = fileItem { try validateFileItem(item, point) }
+    var observed = hit
+    var equalities: [[String: Any]] = []
+    for _ in 0..<12 {
+        guard let node = observed else { break }
+        var pid: pid_t = 0
+        let pidStatus = AXUIElementGetPid(node, &pid)
+        equalities.append(["role": text(node, kAXRoleAttribute), "pid": pid, "pidStatus": pidStatus.rawValue,
+            "leafEqual": CFEqual(node, element),
+            "containerEqual": fileItem?.container.map { CFEqual(node, $0) } ?? false,
+            "windowEqual": fileItem.map { CFEqual(node, $0.window) } ?? false])
+        observed = axParent(node)
+    }
+    record("native-hit-equality", ["label": label, "status": status.rawValue,
+        "leafEqual": hit.map { CFEqual($0, element) } ?? false,
+        "heldContainerEqual": hit.flatMap { h in fileItem?.container.map { CFEqual(h, $0) } } ?? false,
+        "hit": hit.map { describeTarget($0) } ?? [:], "equalityAncestry": equalities])
     record("actual-pointer-hit", ["label": label, "x": point.x, "y": point.y,
         "expectedPID": expectedPID, "hitPID": hitPID, "status": status.rawValue,
         "hitBundle": actor?.bundleIdentifier ?? "unknown", "hitExecutable": actor?.executableURL?.path ?? "unknown",
@@ -355,6 +462,10 @@ func requireExactHit(_ element: AXUIElement, _ point: CGPoint, _ label: String) 
         "usableBounds": NSStringFromRect(try usableDisplayBounds())])
     try require(status == .success && hit != nil, "control not hittable")
     try require(hitPID == expectedPID, "another process occludes " + label)
+    if let item = fileItem, let container = item.container, let hit = hit, CFEqual(hit, container) {
+        try validateFileItem(item, point)
+        return
+    }
     for _ in 0..<32 {
         guard let current = hit else { break }
         if CFEqual(current, element) { return }
@@ -453,7 +564,159 @@ func screenshot(_ name: String, failureEvidence: Bool = false) throws {
     try require(image.pixelsWide == 1600 && image.pixelsHigh == 900, "screenshot is not unscaled 1600x900")
     record("screenshot", ["name": url.lastPathComponent, "width": image.pixelsWide, "height": image.pixelsHigh])
 }
-func click(_ element: AXUIElement, _ label: String, double: Bool = false) throws {
+func inputState() -> [String: Any] {
+    let combined = CGEventSource.buttonState(.combinedSessionState, button: .left)
+    let hardware = CGEventSource.buttonState(.hidSystemState, button: .left)
+    return ["combinedDown": combined, "hardwareDown": hardware, "neutral": !combined && !hardware,
+            "api": "CGEventSource.buttonState", "deliveryAcknowledged": false]
+}
+func observeHelperBirth() throws -> String {
+    if let birth = helperBirth { return birth }
+    let child = Process(); let pipe = Pipe()
+    child.executableURL = URL(fileURLWithPath: "/bin/ps")
+    child.arguments = ["-p", String(getpid()), "-o", "lstart="]
+    child.standardOutput = pipe; child.standardError = FileHandle.nullDevice
+    try child.run()
+    let end = min(deadline, Date().addingTimeInterval(2))
+    while child.isRunning && Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+    if child.isRunning { child.terminate(); child.waitUntilExit(); throw Refusal(message: "helper birth probe deadline") }
+    child.waitUntilExit()
+    let birth = String(data: pipe.fileHandleForReading.readData(ofLength: 128), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    record("helper-native-birth", ["pid": getpid(), "uid": getuid(), "birth": birth,
+        "probePID": child.processIdentifier, "probeExit": child.terminationStatus])
+    try require(child.terminationStatus == 0 && !birth.isEmpty, "helper native birth unknown")
+    helperBirth = birth
+    return birth
+}
+// One retained source/pair, no global release into an unknown recipient. A post
+// call returning is NOT a delivery acknowledgement. Leaf diagnostics cannot
+// prevent an independently qualified release of our outstanding owned Down.
+func pointerPair(_ element: AXUIElement, _ point: CGPoint, _ label: String,
+                 _ index: Int, _ fileItem: FileItemCustody?) throws -> Int {
+    try require(pendingPairs.isEmpty && Date() < deadline, "pending input or original pointer deadline")
+    try require(inputState()["neutral"] as? Bool == true, "preexisting button state is not neutral")
+    try requireControlCustody(element)
+    guard let window = panelAncestors(element).1 else { throw Refusal(message: "pair window unknown") }
+    var recipient: pid_t = 0
+    try require(AXUIElementGetPid(element, &recipient) == .success, "pair recipient unavailable")
+    guard let actor = NSRunningApplication(processIdentifier: recipient), let birth = actor.launchDate,
+          let executable = actor.executableURL, let bundle = actor.bundleURL,
+          let source = CGEventSource(stateID: .combinedSessionState),
+          let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+          let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else {
+        throw Refusal(message: "native pair/actor construction unavailable")
+    }
+    let nativeBirth = try observeHelperBirth()
+    pairSequence += 1; let id = pairSequence
+    // Apple documents that matching Down/Up share mouseEventNumber. Retain
+    // the number actually constructed for Down; no historical-cause inference.
+    let number = down.getIntegerValueField(.mouseEventNumber)
+    for event in [down, up] {
+        event.setIntegerValueField(.mouseEventNumber, value: number)
+        event.setIntegerValueField(.mouseEventClickState, value: Int64(index))
+    }
+    func pairRecord(_ kind: String, _ extra: [String: Any] = [:]) {
+        var fields: [String: Any] = ["pairID": id, "label": label, "clickIndex": index,
+            "helperPID": getpid(), "helperBirth": nativeBirth, "recipientPID": recipient,
+            "recipientBirth": birth.timeIntervalSince1970, "executable": executable.path,
+            "bundle": bundle.path, "x": point.x, "y": point.y, "eventNumber": number,
+            "sourceState": source.sourceStateID.rawValue, "deadline": deadline.timeIntervalSince1970,
+            "uptimeNs": DispatchTime.now().uptimeNanoseconds,
+            "deliveryAcknowledged": false]
+        fields.merge(extra) { _, new in new }; record(kind, fields)
+    }
+    func releaseCustody() throws {
+        try require(Date() < deadline && pendingPairs.contains(id) && CGPreflightPostEventAccess(), "owned release deadline/input permission")
+        guard let current = NSRunningApplication(processIdentifier: recipient) else { throw Refusal(message: "release actor absent") }
+        try require(!current.isTerminated && current.launchDate == birth && current.executableURL == executable &&
+                    current.bundleURL == bundle, "release PID/birth/executable changed")
+        try requireControlCustody(window)
+        let rootPID = owned?.processIdentifier ?? recipient
+        let windows = value(AXUIElementCreateApplication(rootPID), kAXWindowsAttribute) as? [AXUIElement] ?? []
+        try require(windows.contains { CFEqual($0, window) }, "original release window no longer owned")
+        let cursor = CGEvent(source: nil)!.location
+        try require(abs(cursor.x-point.x) < 3 && abs(cursor.y-point.y) < 3 &&
+                    (try observedRect(window)).contains(point), "release point/cursor custody changed")
+        var hit: AXUIElement?
+        let status = AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(point.x), Float(point.y), &hit)
+        var hitPID: pid_t = 0
+        if let hit = hit { AXUIElementGetPid(hit, &hitPID) }
+        var within = false
+        for _ in 0..<32 {
+            guard let node = hit else { break }
+            if CFEqual(node, window) { within = true; break }
+            hit = axParent(node)
+        }
+        pairRecord("pointer-release-custody", ["hitStatus": status.rawValue, "hitPID": hitPID,
+                    "exactHeldWindowAncestor": within])
+        try require(status == .success && hitPID == recipient && within, "release window/point hit unproven")
+    }
+    var upAttempted = false
+    func release() throws {
+        try releaseCustody()
+        try require(!upAttempted, "duplicate owned Up")
+        upAttempted = true
+        // Never throw on persistence before release. The original exact Up
+        // still runs; stderr/final failure records persistence independently.
+        pairRecord("pointer-up-attempt", ["eventNumber": up.getIntegerValueField(.mouseEventNumber),
+            "clickIndex": up.getIntegerValueField(.mouseEventClickState), "nativeEventType": up.type.rawValue])
+        up.post(tap: .cghidEventTap)
+        pairRecord("pointer-up-return", ["state": inputState()])
+        while inputState()["neutral"] as? Bool != true && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.001))
+        }
+        let state = inputState()
+        pairRecord("pointer-pair-neutral", ["state": state])
+        try require(state["neutral"] as? Bool == true, "owned Up posted but native neutral unproven")
+        pendingPairs.remove(id)
+    }
+    pairRecord("pointer-pair-start", ["state": inputState(), "target": describeTarget(element),
+                                      "window": describeTarget(window)])
+    try require(!evidenceWriteFailed, "pair custody persistence failed before Down")
+    do {
+        try requireExactHit(element, point, label, fileItem: fileItem)
+        let current = NSRunningApplication(processIdentifier: recipient)
+        let cursor = CGEvent(source: nil)!.location
+        try require(current?.launchDate == birth && current?.executableURL == executable &&
+                    current?.bundleURL == bundle && current?.isTerminated == false &&
+                    inputState()["neutral"] as? Bool == true && Date() < deadline &&
+                    abs(cursor.x-point.x) < 3 && abs(cursor.y-point.y) < 3,
+                    "original actor/point/input custody changed before Down")
+    }
+    catch {
+        pairRecord("pointer-pair-not-posted", ["error": String(describing: error)])
+        throw error
+    }
+    pendingPairs.insert(id)
+    pairRecord("pointer-down-attempt", ["eventNumber": down.getIntegerValueField(.mouseEventNumber),
+        "clickIndex": down.getIntegerValueField(.mouseEventClickState), "nativeEventType": down.type.rawValue])
+    if evidenceWriteFailed {
+        pendingPairs.remove(id)
+        pairRecord("pointer-pair-not-posted", ["error": "Down not posted: durable attempt failed"])
+        throw Refusal(message: "Down not posted: durable attempt failed")
+    }
+    do {
+        down.post(tap: .cghidEventTap)
+        pairRecord("pointer-down-return", ["state": inputState()])
+        try require(!evidenceWriteFailed, "Down-return persistence failed")
+        try requireControlCustody(element)
+        try requireExactHit(element, point, label, fileItem: fileItem)
+        try release()
+        pairRecord("pointer-pair-end", ["succeeded": true])
+        try require(!evidenceWriteFailed, "pair final persistence failed")
+    } catch {
+        let original = error
+        pairRecord("pointer-pair-first-failure", ["error": String(describing: original)])
+        if !upAttempted {
+            do { try release() }
+            catch { pairRecord("pointer-pair-secondary-failure", ["error": String(describing: error), "pending": pendingPairs.contains(id)]) }
+        }
+        pairRecord("pointer-pair-end", ["succeeded": false, "pending": pendingPairs.contains(id)])
+        throw original
+    }
+    return id
+}
+func click(_ element: AXUIElement, _ label: String, double: Bool = false, fileItem: FileItemCustody? = nil) throws {
     try requireControlCustody(element)
     try require((value(element, kAXEnabledAttribute) as? Bool) == true, "disabled or unknown enabled state: " + label)
     try revealOwnedControl(element, label)
@@ -461,7 +724,7 @@ func click(_ element: AXUIElement, _ label: String, double: Bool = false) throws
     let point = CGPoint(x: rect.midX, y: rect.midY)
     var pid: pid_t = 0
     AXUIElementGetPid(element, &pid)
-    try requireExactHit(element, point, label)
+    try requireExactHit(element, point, label, fileItem: fileItem)
     let before = CGEvent(source: nil)!.location
     CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point,
             mouseButton: .left)!.post(tap: .cghidEventTap)
@@ -472,19 +735,14 @@ func click(_ element: AXUIElement, _ label: String, double: Bool = false) throws
     try require((value(element, kAXEnabledAttribute) as? Bool) == true, "enabled state changed after hover")
     try require(try bounds(element) == rect, "control moved after hover")
     try require(try actualControlViewport(element).viewport.contains(rect), "actual clipping changed after hover")
-    try requireExactHit(element, point, label)
+    try requireExactHit(element, point, label, fileItem: fileItem)
+    var pairs: [Int] = []
     for n in 1...(double ? 2 : 1) {
-        for type in [CGEventType.leftMouseDown, CGEventType.leftMouseUp] {
-            try requireControlCustody(element)
-            try requireExactHit(element, point, label)
-            try require(Date() < deadline, "actual pointer action deadline")
-            let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)!
-            event.setIntegerValueField(.mouseEventClickState, value: Int64(n))
-            event.post(tap: .cghidEventTap)
-        }
+        pairs.append(try pointerPair(element, point, label, n, fileItem))
     }
     record("pointer-click", ["label": label, "pid": pid, "x": point.x, "y": point.y,
-                             "beforeX": before.x, "beforeY": before.y, "observedX": after.x, "observedY": after.y])
+                             "beforeX": before.x, "beforeY": before.y, "observedX": after.x, "observedY": after.y,
+                             "pairIDs": pairs])
 }
 
 var failed = false
@@ -657,7 +915,8 @@ do {
             if fileCell == nil { try guiWaitTick() }
         }
         guard let fileCell = fileCell else { throw Refusal(message: "exact admitted file URL not visibly selectable in native chooser") }
-        try click(fileCell, "choose-pinned-image", double: true)
+        let fileItem = try qualifyFileItem(fileCell, image)
+        try click(fileCell, "choose-pinned-image", double: true, fileItem: fileItem)
         while try chooserCancel() != nil { try guiWaitTick() }
         record("native-image-selected-observed", ["path": image.path])
         try screenshot("pinned-image-selected")
@@ -773,7 +1032,9 @@ if let app = owned, !app.isTerminated {
     while !app.isTerminated && Date() < forceEnd { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
     record("cleanup-closure", ["terminated": app.isTerminated])
 }
-if let out = out, let data = try? JSONSerialization.data(withJSONObject: events, options: [.prettyPrinted, .sortedKeys]) {
-    try? data.write(to: out.appendingPathComponent("gui-events.json"))
-}
+let finalInput = inputState()
+record("pointer-input-final", ["state": finalInput, "pendingPairIDs": pendingPairs.sorted(),
+                               "evidenceWriteFailed": evidenceWriteFailed, "helperPID": getpid(),
+                               "helperBirth": helperBirth ?? "not-observed", "uptimeNs": DispatchTime.now().uptimeNanoseconds])
+if !pendingPairs.isEmpty || finalInput["neutral"] as? Bool != true || evidenceWriteFailed { failed = true }
 exit(failed ? 1 : 0)

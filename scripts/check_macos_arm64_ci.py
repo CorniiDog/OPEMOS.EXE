@@ -16,7 +16,7 @@ import signal
 import subprocess
 import sys
 import time
-from macos_transaction_evidence import native_session_snapshot, reconcile_gui
+from macos_transaction_evidence import native_session_snapshot, reconcile_gui, reconcile_pointer_input
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "build/macos-arm64-evidence"
@@ -290,6 +290,12 @@ def main():
                         "unverified: Build intent without click evidence" if intent else "not_started: actual GUI failed before Build intent")
                     receipt["productAcceptance"]["coldBuildGuestHealthNextStage"] = "not proven: graphical transaction failed"
             finally:
+                try:
+                    receipt["pointerInputClosure"] = reconcile_pointer_input(OUT / "gui-events.json")
+                except Exception as error:
+                    receipt["pointerInputClosure"] = {"observedNeutral": False, "state": "unknown-or-failed",
+                        "error": str(error), "productAcceptance": False}
+                    fail(error, "native-pointer-input-closure")
                 # Only our newly launched app's private current-UID session root.
                 # Retain actual regular-file serial and bounded observer records;
                 # missing numeric reap remains explicit, never inferred from pgrep.
@@ -340,6 +346,8 @@ def main():
                         time.sleep(0.1)
                     receipt["appProcessSurvivorsAfterOwnedCleanup"] = app_processes(binary)
                     raise RuntimeError("GUI left app processes; cleanup evidence retained, not normal closure")
+        if not receipt.get("pointerInputClosure", {}).get("observedNeutral"):
+            raise RuntimeError("Native pointer pair/input closure unproven; no further GUI or fault guest")
         if fullstack:
             closures = []
             launches = []

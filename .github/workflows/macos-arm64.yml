@@ -113,11 +113,11 @@ jobs:
       - name: Read exact previously measured runtime and companion
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run download 39487535766 --repo CorniiDog/OPEMOS.EXE --name macos-arm64-5dc31f3c2afd2894818b4e94792a30afdfd322dc-1 --dir "$RUNNER_TEMP/retained-5dc"
+        run: gh run download 39510553079 --repo CorniiDog/OPEMOS.EXE --name macos-arm64-70b8281eb7eb7d813c42fb6cdcbd41a75daa413f-1 --dir "$RUNNER_TEMP/retained-70b"
       - name: Native build and actual graphical transaction
         env:
           OPEMOS_NATIVE_GUEST_TRACE: "1"
-          OPEMOS_RETAINED_MAC_APP_ARCHIVE: ${{ runner.temp }}/retained-5dc/SteamOS-NVIDIA-Builder-arm64.app.zip
+          OPEMOS_RETAINED_MAC_APP_ARCHIVE: ${{ runner.temp }}/retained-70b/SteamOS-NVIDIA-Builder-arm64.app.zip
         run: python3 scripts/run_macos_packaged_robot.py
       - name: Preserve exact app, failures and GUI evidence
         id: executable

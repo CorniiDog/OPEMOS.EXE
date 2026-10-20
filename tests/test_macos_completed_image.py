@@ -10,10 +10,69 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from check_macos_arm64_ci import verify_completed_image
-from macos_transaction_evidence import native_session_snapshot, reconcile_gui
+from macos_transaction_evidence import native_session_snapshot, reconcile_gui, reconcile_pointer_input
 
 
 class CompletedImageFiles(unittest.TestCase):
+    def test_partial_pair_schema_and_real_file_persistence(self):
+        # Actual temp-file producer/consumer transaction; native OS state is
+        # explicit fixture data here, never proof of real mouse delivery.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "native-ledger.json"
+            now = time.time()
+            base = {"pairID": 1, "label": "fixture-file", "clickIndex": 1,
+                    "helperPID": os.getpid(), "helperBirth": "fixture-not-native-proof",
+                    "recipientPID": os.getpid(), "recipientBirth": now,
+                    "executable": sys.executable, "bundle": directory,
+                    "x": 10, "y": 20, "eventNumber": 0, "sourceState": 0,
+                    "deadline": now + 1, "deliveryAcknowledged": False}
+            state = {"neutral": True, "combinedDown": False, "hardwareDown": False,
+                     "deliveryAcknowledged": False, "api": "CGEventSource.buttonState"}
+            kinds = ["pointer-pair-start", "pointer-down-attempt", "pointer-down-return",
+                     "pointer-pair-first-failure", "pointer-release-custody", "pointer-up-attempt",
+                     "pointer-up-return", "pointer-pair-neutral", "pointer-pair-end"]
+            rows = [dict(base, kind=k, time=now, uptimeNs=i, state=state.copy()) for i, k in enumerate(kinds)]
+            rows[1]["nativeEventType"] = 1
+            rows[5]["nativeEventType"] = 2
+            rows[4].update(hitStatus=0, hitPID=os.getpid(), exactHeldWindowAncestor=True)
+            rows[-1]["succeeded"] = False
+            rows.append({"kind": "pointer-input-final", "pendingPairIDs": [],
+                         "evidenceWriteFailed": False, "state": state.copy(),
+                         "helperPID": os.getpid(), "helperBirth": base["helperBirth"]})
+            rows.insert(0, {"kind": "helper-native-birth", "pid": os.getpid(), "uid": os.getuid(),
+                            "birth": base["helperBirth"], "probePID": os.getpid(), "probeExit": 0})
+            # Keep subsequent mutation indices relative to the native pair rows.
+            helper = rows.pop(0)
+            def consume(value):
+                path.write_text(json.dumps([helper, *value]))
+                return reconcile_pointer_input(path)
+            result = consume(rows)
+            self.assertTrue(result["observedNeutral"])
+            self.assertFalse(result["deliveryAcknowledged"])
+            self.assertFalse(result["productAcceptance"])
+            self.assertFalse(result["pairs"][0]["clickSucceeded"])
+            for missing in ("pointer-up-attempt", "pointer-up-return", "pointer-pair-neutral", "pointer-input-final"):
+                with self.subTest(missing=missing), self.assertRaises(ValueError):
+                    consume([r for r in rows if r["kind"] != missing])
+            for key, val in (("eventNumber", 99), ("recipientPID", 999), ("helperBirth", "changed"),
+                             ("x", 500), ("uptimeNs", -1), ("deliveryAcknowledged", True)):
+                changed = json.loads(json.dumps(rows))
+                changed[5][key] = val
+                with self.subTest(changed=key), self.assertRaises(ValueError):
+                    consume(changed)
+            for key, val in (("pendingPairIDs", [1]), ("evidenceWriteFailed", True)):
+                changed = json.loads(json.dumps(rows)); changed[-1][key] = val
+                with self.subTest(final=key), self.assertRaises(ValueError):
+                    consume(changed)
+            changed = json.loads(json.dumps(rows)); changed[4]["exactHeldWindowAncestor"] = False
+            with self.assertRaises(ValueError): consume(changed)
+            changed = json.loads(json.dumps(rows)); changed[-1]["state"]["combinedDown"] = True
+            with self.assertRaises(ValueError): consume(changed)
+            # A complete-label claim cannot turn a neutral but failed pair into
+            # a successful click. Only genuine native normal execution can.
+            changed = rows + [{"kind": "pointer-click", "label": "fixture-file", "pairIDs": [1]}]
+            with self.assertRaises(ValueError): consume(changed)
+
     def test_actual_prebuild_session_inventory_and_ambiguous_faults(self):
         with tempfile.TemporaryDirectory() as directory:
             anchor = Path(directory).resolve()

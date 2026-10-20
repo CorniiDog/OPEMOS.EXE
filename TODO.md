@@ -1,5 +1,34 @@
 # OPEMOS.EXE — Product Checklist
 
+## Owned native pointer pair and exact file-item recovery — 2026-10-20
+
+- [ ] Root8bf88490 and full independent42d57728 actual70b review release one
+  joined source transaction. Preserve actual70b424 native/strictsealed package,
+  all11 independent checks and failed1600 chooser: TextField3hits then AXGroup
+  after Down-post return before Up guard, no completed choice/Build. Delivery,
+  held-button state and exact group equality were UNKNOWN. Old fixtures never
+  exercised native AX mutation between Down/Up; outer source lacked partial
+  input ledger consumption. No original guard failure is reinterpreted as pass.
+  Retain exact unique URL leaf and only independently qualified smallest direct
+  itemGroup by held CFidentity/unique URL/window/geometry/viewport. Record actual
+  hit equality ancestry; arbitrary parent/PID/label never qualifies. Every generic
+  click constructs matching native pair first, binds helper/recipient birth and
+  window/point, observes baseline neutrality, durably records pending Down and
+  actual post-call returns (not delivery). Independent owned Up survives leaf/
+  persistence failure only under original actor/window/point/deadline custody;
+  unknown refuses, never global Up. Actual state/neutral and partial ledgers are
+  consumed by ordinary Python+Robot, no missing-record closure pass. First error
+  retained, secondary separate, same480/510/120/50ms/caps/strict unknown guards.
+  Existing sourceCI/native lane executes changed native cases then normal current
+  package1600Finder/chooser/Build to genuine image if prerequisites permit. Exact
+  previously sealed70b archive d4cf90b8 supplies unchanged runtime/companion only;
+  Main205TTL unchanged, no43bottle replay/old app. New head needs all12 source/
+  package checks plus exact Core primary review before merge; prior approvals and
+  passes do not transfer. Normal owning FF push needed for current remote-only
+  sourceCI/native transaction/review. No controller project tests, new helper,
+  OMEN/hardware/trust/publication or held6abed effects. Return actual native and
+  GUI/input/app/guest closure/failure evidence; do not automatically retry.
+
 ## Joined native chooser custody and preBuild result lifecycle — 2026-10-20
 
 - [ ] First ce8 normal Mac39508450242/job118923202841 preserved: actualSwift
