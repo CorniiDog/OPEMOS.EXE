@@ -2,6 +2,17 @@
 
 ## Current-Main Mac producer and measured Darwin closure — 2026-10-20
 
+- [ ] Root-reviewed coherent native correction400e1be3/04afaf70 accounts for
+  the original WNOWAIT-retained zombie in complete native group enumeration.
+  Only empty or that exact exited original is accepted, no redundant kill of
+  already exited direct child; every foreign/unknown/live writer stays strict,
+  and post-reap requires genuinely empty group. Retain member IDs/available
+  UID/birth/state plus EOF/reap diagnostics; correct measured modulo Clippy lint
+  without suppression. Original c77 group member IDs remain UNKNOWN, all failed
+  results retained. Same native-first complete hosted package/GUI/fault graph
+  runs before unchanged expensive inputs; no controller tests or old-pass
+  transfer. Independent PR203 peer source remains frozen and unaffected.
+
 - [ ] Initial b7e4b718 normal M1 run39348048823/job118385337590 failed1
   before native work: Main readiness guard created the checker's create-only
   evidence directory. Raw log474cde10 retained; no compiler/GUI/guest result.

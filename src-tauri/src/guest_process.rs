@@ -170,7 +170,7 @@ fn unix_birth(pid: u32) -> io::Result<String> {
 }
 
 #[cfg(target_os = "macos")]
-fn darwin_group_empty(group: i32) -> io::Result<bool> {
+fn darwin_group_members(group: i32) -> io::Result<Vec<i32>> {
     if group <= 0 {
         return Err(io::Error::other("invalid guest group enumeration"));
     }
@@ -191,11 +191,73 @@ fn darwin_group_empty(group: i32) -> io::Result<bool> {
         return Err(error);
     }
     if bytes as usize >= std::mem::size_of_val(&members)
-        || bytes as usize % std::mem::size_of::<i32>() != 0
+        || !(bytes as usize).is_multiple_of(std::mem::size_of::<i32>())
     {
         return Err(io::Error::other("guest group enumeration incomplete"));
     }
-    Ok(bytes == 0)
+    let count = bytes as usize / std::mem::size_of::<i32>();
+    let mut observed = members[..count].to_vec();
+    if observed.iter().any(|pid| *pid <= 0) {
+        return Err(io::Error::other("guest group enumeration invalid member"));
+    }
+    observed.sort_unstable();
+    if observed.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(io::Error::other("guest group enumeration duplicate member"));
+    }
+    Ok(observed)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn darwin_member_note(pid: i32) -> String {
+    let mut info = unsafe { std::mem::zeroed::<libc::proc_bsdinfo>() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
+    let actual = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&mut info as *mut libc::proc_bsdinfo).cast(),
+            size,
+        )
+    };
+    if actual != size || info.pbi_pid != pid as u32 {
+        return format!("pid={pid} uid=UNKNOWN birth=UNKNOWN state=UNKNOWN");
+    }
+    format!(
+        "pid={pid} uid={} birth={}.{:06} state={}",
+        info.pbi_uid, info.pbi_start_tvsec, info.pbi_start_tvusec, info.pbi_status
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn darwin_only_exited_original(
+    group: i32,
+    root: i32,
+    original_birth: &str,
+    exited_wnowait: bool,
+) -> io::Result<bool> {
+    if group <= 0 || group != root || !exited_wnowait || original_birth.is_empty() {
+        return Err(io::Error::other(
+            "original exited guest group identity unavailable",
+        ));
+    }
+    let members = darwin_group_members(group)?;
+    #[cfg(test)]
+    {
+        let details = members
+            .iter()
+            .map(|pid| darwin_member_note(*pid))
+            .collect::<Vec<_>>();
+        eprintln!(
+            "owned guest native group root={root} birth={original_birth} uid={} state=WNOWAIT_EXITED memberIDs={members:?} members={details:?}",
+            unsafe { libc::geteuid() }
+        );
+    }
+    // waitid(WNOWAIT) retains the original direct child's occupied PID and
+    // birth identity until reap. XNU includes that exited zombie in zombproc.
+    // No other group member may be called absent, even if its own state is
+    // unknown or it is not permitted to receive the group signal.
+    Ok(members.is_empty() || members == [root])
 }
 
 impl GuestChild {
@@ -261,12 +323,14 @@ impl GuestChild {
             if unsafe { libc::kill(-group, libc::SIGKILL) } != 0 {
                 let error = io::Error::last_os_error();
                 #[cfg(target_os = "macos")]
-                if error.raw_os_error() == Some(libc::EPERM) && exited && darwin_group_empty(group)?
+                if error.raw_os_error() == Some(libc::EPERM)
+                    && exited
+                    && darwin_only_exited_original(group, group, &self.birth, exited)?
                 {
                     // WNOWAIT retains the original direct child; native group
-                    // absence is independently required before accepting the
-                    // measured exited-empty-group EPERM. No blanket exception.
-                    return self.child.kill();
+                    // has no live or foreign member. The original is already
+                    // exited, so direct child.kill() would reintroduce EPERM.
+                    return Ok(());
                 }
                 if error.raw_os_error() != Some(libc::ESRCH) {
                     return Err(error);
@@ -297,7 +361,7 @@ impl GuestChild {
             let error = io::Error::last_os_error();
             #[cfg(target_os = "macos")]
             if error.raw_os_error() == Some(libc::EPERM) {
-                return darwin_group_empty(group);
+                return Ok(darwin_group_members(group)?.is_empty());
             }
             if error.raw_os_error() == Some(libc::ESRCH) {
                 Ok(true)
@@ -583,14 +647,16 @@ mod tests {
     use super::*;
     #[cfg(target_os = "macos")]
     #[test]
-    fn darwin_exited_empty_group_requires_native_absence_and_preserves_status() {
+    fn darwin_exited_root_only_group_preserves_status_and_streams() {
         use std::{
             io::Read,
             process::Stdio,
             time::{Duration, Instant},
         };
-        assert!(!darwin_group_empty(unsafe { libc::getpgrp() }).unwrap());
-        assert!(darwin_group_empty(0).is_err());
+        assert!(!darwin_group_members(unsafe { libc::getpgrp() })
+            .unwrap()
+            .is_empty());
+        assert!(darwin_group_members(0).is_err());
         let mut command = Command::new("/bin/sh");
         command
             .args(["-c", "printf original-output; exit 7"])
@@ -603,7 +669,16 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert!(darwin_group_empty(child.id() as i32).unwrap());
+        let members = darwin_group_members(child.id() as i32).unwrap();
+        eprintln!("retained original native members={members:?}");
+        assert!(members.is_empty() || members == [child.id() as i32]);
+        assert!(darwin_only_exited_original(
+            child.id() as i32,
+            child.id() as i32,
+            &child.birth,
+            true
+        )
+        .unwrap());
         child.stop_tree().unwrap();
         let mut output = String::new();
         child
@@ -621,8 +696,27 @@ mod tests {
             .unwrap();
         assert_eq!(output, "original-output");
         assert!(errors.is_empty());
-        assert_eq!(child.reap_owned().unwrap().unwrap().code(), Some(7));
+        let status = child.reap_owned().unwrap().unwrap();
+        eprintln!(
+            "owned guest native closure root={} stdoutEOF=true stderrEOF=true reapedStatus={status}",
+            child.id()
+        );
+        assert_eq!(status.code(), Some(7));
         assert!(child.tree_absent().unwrap());
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn darwin_unknown_or_foreign_group_never_becomes_owned_exit() {
+        let current = unsafe { libc::getpgrp() };
+        let members = darwin_group_members(current).unwrap();
+        assert!(!members.is_empty());
+        assert!(
+            darwin_only_exited_original(current, current + 1, "uid=501 birth=known", true).is_err()
+        );
+        assert!(
+            darwin_only_exited_original(current, current, "uid=501 birth=known", false).is_err()
+        );
+        assert!(darwin_only_exited_original(current, current, "", true).is_err());
     }
     #[test]
     fn owned_guest_cancel_and_repeated_finalize_retain_original_custody() {
