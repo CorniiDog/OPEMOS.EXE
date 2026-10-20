@@ -2,6 +2,17 @@
 
 ## Joined native chooser custody and preBuild result lifecycle — 2026-10-20
 
+- [ ] First ce8 normal Mac39508450242/job118923202841 preserved: actualSwift
+  compile/UID-Security negatives/real session-file phase cases/Clippy/fullnative
+  passed; Darwin boundary prerequisite failed two stale workflow-fixture cases
+  (old two files versus new third session-evidence module). No bulk/currentapp/
+  GUI attempted. Source review missed this coupled literal fixture; ordinary
+  Linux source checks do not execute the actual Darwin-only boundary program.
+  Correct fixture to all three exact dependencies and add actual missing-only-
+  module refusal, keeping actual inline workflow subprocess/create-only tests
+  and every guard. Full first failure/raw native receipts retained; no waiver,
+  runtime assertion or production method override, no oldpass transfer.
+
 - [ ] Root ddcb4a28 complete recovery of actual09b2 failure admitted: Cancel
   actor44273 under app43684 AXSheet refused beforeBuild; actoridentityUNKNOWN.
   Own native helper now observes real UID/PS numeric closure, stable PID/birth/
