@@ -69,6 +69,11 @@ if CommandLine.arguments == [CommandLine.arguments[0], "--birth-regression"] {
     let smallUsable = CGRect(x: 0, y: 25, width: 1024, height: 680)
     precondition(!smallUsable.contains(CGRect(x: 171, y: 714, width: 682, height: 42)))
     precondition(smallUsable.contains(CGRect(x: 171, y: 600, width: 682, height: 42)))
+    let actualChooserViewport = CGRect(x: 544, y: 265, width: 245, height: 324)
+    let measuredFileRow = CGRect(x: 580, y: 272, width: 169, height: 18)
+    precondition(actualChooserViewport.contains(measuredFileRow))
+    precondition(!actualChooserViewport.insetBy(dx: 8, dy: 8).contains(measuredFileRow))
+    precondition(!actualChooserViewport.contains(CGRect(x: 580, y: 260, width: 169, height: 18)))
     do {
         let directory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("opemos-file-reference-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -201,26 +206,34 @@ func requireExactHit(_ element: AXUIElement, _ point: CGPoint, _ label: String) 
     throw Refusal(message: "same-process overlay or unrelated hit target: " + label)
 }
 
-func revealOwnedControl(_ element: AXUIElement, _ label: String) throws {
+func actualControlViewport(_ element: AXUIElement) throws -> (viewport: CGRect, scroll: AXUIElement?) {
     var pid: pid_t = 0
-    AXUIElementGetPid(element, &pid)
-    guard let app = owned, pid == app.processIdentifier else { return }
+    try require(AXUIElementGetPid(element, &pid) == .success, "unknown control owner")
     var ancestor: AXUIElement? = element
     var scroll: AXUIElement?
     var viewport = try usableDisplayBounds()
     for _ in 0..<32 {
         guard let node = ancestor else { break }
         let role = text(node, kAXRoleAttribute)
-        if ["AXScrollArea", "AXWindow"].contains(role) {
+        if ["AXScrollArea", "AXWindow", "AXSheet"].contains(role) {
+            var ancestorPID: pid_t = 0
+            try require(AXUIElementGetPid(node, &ancestorPID) == .success && ancestorPID == pid,
+                        "foreign or unknown clipping ancestor")
             viewport = viewport.intersection(try observedRect(node))
             if scroll == nil && role == "AXScrollArea" { scroll = node }
         }
         guard let parent = value(node, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
         ancestor = (parent as! AXUIElement)
     }
-    viewport = viewport.insetBy(dx: 8, dy: 8)
     try require(!viewport.isEmpty && !viewport.isNull, "no actual visible control viewport")
+    return (viewport, scroll)
+}
+func revealOwnedControl(_ element: AXUIElement, _ label: String) throws {
+    var pid: pid_t = 0
+    AXUIElementGetPid(element, &pid)
+    guard let app = owned, pid == app.processIdentifier else { return }
     for attempt in 0...8 {
+        let (viewport, scroll) = try actualControlViewport(element)
         let rect = try observedRect(element)
         record("actual-scroll-layout", ["label": label, "attempt": attempt,
             "target": NSStringFromRect(rect), "viewport": NSStringFromRect(viewport),
@@ -228,7 +241,10 @@ func revealOwnedControl(_ element: AXUIElement, _ label: String) throws {
         if viewport.contains(rect) { return }
         guard attempt < 8, let scroll = scroll else { throw Refusal(message: "control unreachable in actual scroll viewport: " + label) }
         try require(rect.minX >= viewport.minX && rect.maxX <= viewport.maxX, "horizontal control clipping: " + label)
-        let point = CGPoint(x: viewport.midX, y: viewport.midY)
+        // Scroll margins select a safe gesture point, never redefine the real
+        // clipping rectangle (the measured file row was falsely clipped 1px).
+        let gestureBounds = viewport.insetBy(dx: min(8, viewport.width / 4), dy: min(8, viewport.height / 4))
+        let point = CGPoint(x: gestureBounds.midX, y: gestureBounds.midY)
         try requireExactHit(scroll, point, "scroll-" + label)
         CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)!.post(tap: .cghidEventTap)
         try guiWaitTick()
@@ -248,6 +264,7 @@ func settledGeometry(_ element: AXUIElement) throws -> CGRect {
     while Date() < deadline {
         do {
             let current = try bounds(element)
+            try require(try actualControlViewport(element).viewport.contains(current), "control clipped by actual viewport")
             if previous == current { return current }
             previous = current
         } catch {
@@ -291,6 +308,7 @@ func click(_ element: AXUIElement, _ label: String, double: Bool = false) throws
     try screenshot(label + "-hover")
     try require((value(element, kAXEnabledAttribute) as? Bool) == true, "enabled state changed after hover")
     try require(try bounds(element) == rect, "control moved after hover")
+    try require(try actualControlViewport(element).viewport.contains(rect), "actual clipping changed after hover")
     try requireExactHit(element, point, label)
     for n in 1...(double ? 2 : 1) {
         for type in [CGEventType.leftMouseDown, CGEventType.leftMouseUp] {

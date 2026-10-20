@@ -2,10 +2,47 @@
 use std::{
     io,
     process::{Child, Command, ExitStatus},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    thread,
+    time::{Duration, Instant},
 };
+
+// Notification is not proof of thread termination or EOF. It only wakes the
+// owning caller so its real JoinHandle/native custody checks need not wait for
+// another coalesced timer tick after a reader has completed its body.
+#[derive(Clone, Debug)]
+pub(crate) struct GuestReaderWake {
+    owner: thread::Thread,
+    completed: Arc<AtomicUsize>,
+}
+
+pub(crate) struct GuestReaderCompletion(GuestReaderWake);
+
+impl GuestReaderWake {
+    fn new() -> Self {
+        Self {
+            owner: thread::current(),
+            completed: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+    pub(crate) fn guard(&self) -> GuestReaderCompletion {
+        GuestReaderCompletion(self.clone())
+    }
+}
+
+impl Drop for GuestReaderCompletion {
+    fn drop(&mut self) {
+        self.0.completed.fetch_add(1, Ordering::Release);
+        self.0.owner.unpark();
+    }
+}
 
 pub(crate) struct GuestChild {
     child: Child,
+    pub(crate) reader_wake: GuestReaderWake,
     #[cfg(test)]
     pub(crate) native_trace: native_trace::NativeTrace,
     reaped: Option<ExitStatus>,
@@ -81,6 +118,7 @@ pub(crate) fn spawn_guest_process(command: &mut Command) -> Result<GuestChild, S
             child.id()
         );
         Ok(GuestChild {
+            reader_wake: GuestReaderWake::new(),
             #[cfg(test)]
             native_trace: native_trace::NativeTrace::new(child.id()),
             child,
@@ -118,6 +156,7 @@ fn spawn_guest_in_job(command: &mut Command, job: windows_job::Job) -> Result<Gu
         }
     }
     Ok(GuestChild {
+        reader_wake: GuestReaderWake::new(),
         #[cfg(test)]
         native_trace: native_trace::NativeTrace::new(child.id()),
         child,
@@ -344,6 +383,24 @@ fn darwin_only_exited_original(
 }
 
 impl GuestChild {
+    pub(crate) fn bind_reader_owner(&mut self) {
+        self.reader_wake = GuestReaderWake::new();
+    }
+    pub(crate) fn wait_reader_progress(&self, deadline: Instant, closing: bool) {
+        if closing
+            && (self.reader_wake.completed.load(Ordering::Acquire) != 0
+                || self.reader_wake.owner.id() != thread::current().id())
+        {
+            // A notified body can still be in Rust thread-exit bookkeeping.
+            // Yield only during the original bounded cleanup, never treat the
+            // notification as is_finished/join or extend the deadline.
+            thread::yield_now();
+        } else {
+            thread::park_timeout(
+                Duration::from_millis(1).min(deadline.saturating_duration_since(Instant::now())),
+            );
+        }
+    }
     #[cfg(test)]
     pub(crate) fn native_final_observation(&mut self) {
         // Observe only after the unchanged real joins. Never stop, reap, retry,

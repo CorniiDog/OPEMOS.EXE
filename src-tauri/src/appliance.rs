@@ -2727,7 +2727,9 @@ pub(crate) fn finish_structured_guest_command(
     let stderr_reader = spawn_guest_diagnostics(stderr, READINESS_ATTEMPT_OUTPUT_LIMIT);
     let marker_prefix = format!("{marker}:");
     let (sender, receiver) = mpsc::sync_channel::<Result<(String, i32), String>>(1);
+    let completion = child.reader_wake.guard();
     let stdout_reader = thread::spawn(move || {
+        let _completion = completion;
         let result = (|| {
             let mut stdout = BufReader::new(stdout.take(READINESS_ATTEMPT_OUTPUT_LIMIT + 1));
             let mut output = String::new();
@@ -2789,7 +2791,10 @@ pub(crate) fn finish_structured_guest_command(
         ))
     });
     let primary = guest_cleanup_result(primary, diagnostics.map(|_| ()));
-    guest_cleanup_result(guest_cleanup_result(primary, joined), cleanup)
+    guest_cleanup_result(
+        guest_cleanup_result(guest_cleanup_result(primary, joined), cleanup),
+        guest_completion_before(deadline),
+    )
 }
 
 pub(crate) fn run_guest_command_with_timeout(
@@ -2864,6 +2869,9 @@ fn receive_guest_frame<T>(
     timeout_message: &str,
 ) -> Result<T, String> {
     loop {
+        if Instant::now() >= deadline {
+            return Err(timeout_message.into());
+        }
         match receiver.try_recv() {
             Ok(result) => return result,
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -2881,7 +2889,78 @@ fn receive_guest_frame<T>(
         if Instant::now() >= deadline {
             return Err(timeout_message.into());
         }
-        thread::sleep(Duration::from_millis(1));
+        child.wait_reader_progress(deadline, false);
+    }
+}
+
+fn guest_completion_before(deadline: Instant) -> Result<(), String> {
+    if Instant::now() >= deadline {
+        Err("Guest process/stream closure exceeded command deadline.".into())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod guest_deadline_order_tests {
+    use super::*;
+
+    fn exited_owned_child() -> GuestChild {
+        #[cfg(unix)]
+        let mut command = child_command("/bin/sh");
+        #[cfg(unix)]
+        command.args(["-c", "exit 0"]);
+        #[cfg(windows)]
+        let mut command = child_command("cmd.exe");
+        #[cfg(windows)]
+        command.args(["/D", "/C", "exit 0"]);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = spawn_guest_process(&mut command).unwrap();
+        let end = Instant::now() + Duration::from_secs(2);
+        while !child.observed_exit().unwrap() {
+            assert!(Instant::now() < end);
+            thread::yield_now();
+        }
+        child
+    }
+
+    #[test]
+    fn windows_and_unix_expired_cleanup_cannot_promote_an_exited_real_child() {
+        let mut child = exited_owned_child();
+        let late = stop_guest_command_before(&mut child, Instant::now(), || true);
+        assert!(late.unwrap_err().contains("exceeded command deadline"));
+        // This is a separate explicit cleanup, not a pass for the late attempt.
+        let status =
+            stop_guest_command_before(&mut child, Instant::now() + Duration::from_secs(2), || true)
+                .unwrap();
+        assert!(status.success());
+        assert!(child.tree_absent().unwrap());
+    }
+
+    #[test]
+    fn windows_and_unix_queued_frame_after_deadline_is_not_on_time() {
+        let mut child = exited_owned_child();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let producer =
+            thread::spawn(move || sender.send(Ok("actual queued frame".to_string())).unwrap());
+        producer.join().unwrap();
+        assert_eq!(
+            receive_guest_frame(&mut child, &receiver, Instant::now(), "exact timeout")
+                .unwrap_err(),
+            "exact timeout"
+        );
+        stop_guest_command_before(&mut child, Instant::now() + Duration::from_secs(2), || true)
+            .unwrap();
+        assert!(child.tree_absent().unwrap());
+    }
+
+    #[test]
+    fn windows_and_unix_join_completion_clock_rejects_expired_budget() {
+        assert!(guest_completion_before(Instant::now()).is_err());
+        assert!(guest_completion_before(Instant::now() + Duration::from_secs(2)).is_ok());
     }
 }
 
@@ -2892,6 +2971,7 @@ fn stop_guest_command_before(
 ) -> Result<std::process::ExitStatus, String> {
     drop(child.stdin.take());
     loop {
+        guest_completion_before(deadline)?;
         // A group may acquire a last inherited writer while the first signal
         // is delivered. Keep original WNOWAIT/job custody and complete the
         // stop, rather than treating the first successful request as closure.
@@ -2906,6 +2986,9 @@ fn stop_guest_command_before(
                 .descendants_absent()
                 .map_err(|e| format!("Could not inspect owned descendants: {e}"))?
         {
+            // Native inspection itself consumes the original cleanup budget.
+            // Never reap/accept an on-time observation after that budget ends.
+            guest_completion_before(deadline)?;
             let status = child
                 .reap_owned()
                 .map_err(|e| format!("Could not reap owned guest: {e}"))?
@@ -2914,6 +2997,7 @@ fn stop_guest_command_before(
                 .tree_absent()
                 .map_err(|e| format!("Could not inspect owned tree closure: {e}"))?
             {
+                guest_completion_before(deadline)?;
                 #[cfg(test)]
                 eprintln!(
                     "owned guest closed root={} status={status} readers=true treeAbsent=true",
@@ -2929,7 +3013,7 @@ fn stop_guest_command_before(
                 readers_done()
             ));
         }
-        thread::sleep(Duration::from_millis(1));
+        child.wait_reader_progress(deadline, true);
     }
 }
 
@@ -2950,6 +3034,7 @@ pub(crate) fn guest_cleanup_result<T>(
 pub(crate) trait GuestPipe: Read + Send + 'static {
     fn prepare(&self) -> io::Result<()>;
     fn available_read(&mut self, bytes: &mut [u8]) -> io::Result<usize>;
+    fn wait_readable(&self, timeout: Duration) -> io::Result<()>;
 }
 
 #[cfg(unix)]
@@ -2965,11 +3050,36 @@ impl<T: Read + Send + std::os::fd::AsRawFd + 'static> GuestPipe for T {
     fn available_read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         self.read(bytes)
     }
+    fn wait_readable(&self, timeout: Duration) -> io::Result<()> {
+        // Real descriptor readiness wakes immediately for data/EOF; a timer
+        // wakeup (including a late one) is never EOF or completion evidence.
+        let mut fd = libc::pollfd {
+            fd: self.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let millis = timeout.as_millis().min(i32::MAX as u128) as i32;
+        let result = unsafe { libc::poll(&mut fd, 1, millis) };
+        if result < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+        if fd.revents & libc::POLLNVAL != 0 {
+            return Err(io::Error::from_raw_os_error(libc::EBADF));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(windows)]
 impl<T: Read + Send + std::os::windows::io::AsRawHandle + 'static> GuestPipe for T {
     fn prepare(&self) -> io::Result<()> {
+        Ok(())
+    }
+    fn wait_readable(&self, timeout: Duration) -> io::Result<()> {
+        thread::sleep(timeout);
         Ok(())
     }
     fn available_read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
@@ -3017,6 +3127,7 @@ pub(crate) struct GuestDeadlinePipe<T> {
     deadline: Instant,
     stop: Arc<AtomicBool>,
     post_deadline_data: bool,
+    completion: Option<crate::guest_process::GuestReaderWake>,
     #[cfg(test)]
     native_trace: crate::guest_process::native_trace::NativeTrace,
     #[cfg(test)]
@@ -3024,6 +3135,10 @@ pub(crate) struct GuestDeadlinePipe<T> {
 }
 
 impl<T: GuestPipe> GuestDeadlinePipe<T> {
+    fn with_completion(mut self, wake: crate::guest_process::GuestReaderWake) -> Self {
+        self.completion = Some(wake);
+        self
+    }
     #[cfg(test)]
     fn with_native_trace(
         mut self,
@@ -3043,6 +3158,7 @@ impl<T: GuestPipe> GuestDeadlinePipe<T> {
             deadline,
             stop: Arc::new(AtomicBool::new(false)),
             post_deadline_data: false,
+            completion: None,
             #[cfg(test)]
             native_trace: Default::default(),
             #[cfg(test)]
@@ -3091,10 +3207,20 @@ impl<T: GuestPipe> Read for GuestDeadlinePipe<T> {
                         if expired {
                             return Err(io::ErrorKind::TimedOut.into());
                         }
-                        thread::sleep(
+                        #[cfg(test)]
+                        self.native_trace
+                            .record("pipe.wait.enter", self.native_stream, 0);
+                        let waited = self.pipe.wait_readable(
                             Duration::from_millis(1)
                                 .min(self.deadline.saturating_duration_since(Instant::now())),
                         );
+                        #[cfg(test)]
+                        self.native_trace.record(
+                            "pipe.wait.return",
+                            self.native_stream,
+                            i64::from(waited.is_ok()),
+                        );
+                        waited?;
                     }
                     result => return result,
                 }
@@ -3210,6 +3336,7 @@ fn prepare_guest_pipes(
     ),
     String,
 > {
+    child.bind_reader_owner();
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let result = (|| {
@@ -3217,11 +3344,13 @@ fn prepare_guest_pipes(
             GuestDeadlinePipe::new(
                 stdout.ok_or("Could not capture guest readiness output.")?,
                 deadline,
-            )?,
+            )?
+            .with_completion(child.reader_wake.clone()),
             GuestDeadlinePipe::new(
                 stderr.ok_or("Could not capture guest readiness diagnostics.")?,
                 deadline,
-            )?,
+            )?
+            .with_completion(child.reader_wake.clone()),
         );
         #[cfg(test)]
         let pipes = (
@@ -3244,6 +3373,7 @@ fn spawn_guest_diagnostics(
     limit: u64,
 ) -> GuestDiagnosticDrain {
     let stop = stream.stop.clone();
+    let completion = stream.completion.as_ref().map(|wake| wake.guard());
     #[cfg(test)]
     let native_trace = stream.native_trace.clone();
     #[cfg(test)]
@@ -3251,6 +3381,7 @@ fn spawn_guest_diagnostics(
     #[cfg(test)]
     let thread_trace = native_trace.clone();
     let reader = thread::spawn(move || {
+        let _completion = completion;
         #[cfg(test)]
         thread_trace.record("reader.started", native_stream, 0);
         let result = (|| {
@@ -3316,7 +3447,7 @@ pub(crate) fn finish_guest_command_bounded_observed(
                 ))
             }
             Ok(false) if Instant::now() >= operation_deadline => break Err(timeout_message.into()),
-            Ok(false) => thread::sleep(Duration::from_millis(1)),
+            Ok(false) => child.wait_reader_progress(operation_deadline, false),
         }
     };
     let cleanup = stop_guest_command_before(&mut child, deadline, || {
@@ -3330,6 +3461,7 @@ pub(crate) fn finish_guest_command_bounded_observed(
         .join()
         .map_err(|_| "Guest readiness diagnostics reader panicked.".to_string())
         .and_then(|r| r);
+    let cleanup = guest_cleanup_result(cleanup, guest_completion_before(deadline));
     let status = cleanup.as_ref().ok().copied();
     let result = primary
         .and_then(|_| stdout.as_ref().map_err(Clone::clone))
@@ -3380,7 +3512,9 @@ pub(crate) fn finish_guest_readiness_attempt(
     let (sender, receiver) = mpsc::sync_channel(1);
     #[cfg(test)]
     let stdout_trace = native_trace.clone();
+    let completion = child.reader_wake.guard();
     let stdout_reader = thread::spawn(move || {
+        let _completion = completion;
         #[cfg(test)]
         stdout_trace.record("reader.started", 1, 0);
         let result: Result<(String, bool), String> = (|| {
@@ -3433,7 +3567,7 @@ pub(crate) fn finish_guest_readiness_attempt(
                     primary = Err("Guest readiness transport attempt timed out.".into());
                     break false;
                 }
-                thread::sleep(Duration::from_millis(1));
+                child.wait_reader_progress(operation_deadline, false);
             }
             Ok(false) => break false,
             Err(e) => {
@@ -3472,6 +3606,7 @@ pub(crate) fn finish_guest_readiness_attempt(
         .join()
         .map_err(|_| "Guest readiness diagnostics reader panicked.".to_string())
         .and_then(|r| r);
+    let cleanup = guest_cleanup_result(cleanup, guest_completion_before(deadline));
     let result = primary.and_then(|(output, _)| {
         if let Ok(status) = &cleanup {
             if observed_exit && !status.success() {
@@ -3508,7 +3643,9 @@ pub(crate) fn read_guest_command_ready_line(
 ) -> Result<(BufReader<GuestDeadlinePipe<ChildStdout>>, String), String> {
     let (operation_deadline, deadline) = guest_command_deadlines(timeout)?;
     let (sender, receiver) = mpsc::sync_channel(1);
+    let completion = child.reader_wake.guard();
     let reader = thread::spawn(move || {
+        let _completion = completion;
         let result = (|| {
             let mut stdout = BufReader::new(GuestDeadlinePipe::new(stdout, operation_deadline)?);
             let mut line = String::new();
@@ -3545,12 +3682,16 @@ pub(crate) fn read_guest_command_ready_line(
     let joined = reader
         .join()
         .map_err(|_| "Guest readiness line reader panicked.".to_string());
-    guest_cleanup_result(guest_cleanup_result(primary, joined), cleanup)
+    guest_cleanup_result(
+        guest_cleanup_result(guest_cleanup_result(primary, joined), cleanup),
+        guest_completion_before(deadline),
+    )
 }
 
 pub(crate) fn start_guest_stderr_drain(
     child: &mut GuestChild,
 ) -> Result<GuestDiagnosticDrain, String> {
+    child.bind_reader_owner();
     let deadline = Instant::now()
         .checked_add(STRUCTURED_GUEST_COMMAND_TIMEOUT)
         .ok_or("Guest command deadline overflowed.")?;
@@ -3560,6 +3701,7 @@ pub(crate) fn start_guest_stderr_drain(
             stderr.ok_or("Could not capture the structured guest command diagnostics.")?,
             deadline,
         )
+        .map(|pipe| pipe.with_completion(child.reader_wake.clone()))
     })();
     match result {
         Ok(stream) => Ok(spawn_guest_diagnostics(stream, 32 * 1024 * 1024)),
@@ -3581,7 +3723,9 @@ pub(crate) fn finish_guest_command_with_stdout(
     let operation_deadline = deadline - reserve.min(Duration::from_millis(50));
     let stop = stdout.get_ref().stop.clone();
     let (sender, receiver) = mpsc::sync_channel(1);
+    let completion = child.reader_wake.guard();
     let reader = thread::spawn(move || {
+        let _completion = completion;
         let result = (&mut stdout)
             .take(READINESS_ATTEMPT_OUTPUT_LIMIT + 1)
             .read_to_string(&mut captured_stdout)
@@ -3619,7 +3763,7 @@ pub(crate) fn finish_guest_command_with_stdout(
                     primary = Err("Guest command timed out.".into());
                     break;
                 }
-                Ok(false) => thread::sleep(Duration::from_millis(1)),
+                Ok(false) => child.wait_reader_progress(operation_deadline, false),
             }
         }
     }
@@ -3634,6 +3778,7 @@ pub(crate) fn finish_guest_command_with_stdout(
         .join()
         .map_err(|_| "Structured guest diagnostic drain panicked.".to_string())
         .and_then(|r| r);
+    let cleanup = guest_cleanup_result(cleanup, guest_completion_before(deadline));
     let result = primary.and_then(|captured_stdout| {
         if cleanup.as_ref().is_ok_and(|status| !status.success()) {
             let diagnostics = stderr
