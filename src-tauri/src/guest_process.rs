@@ -6,6 +6,8 @@ use std::{
 
 pub(crate) struct GuestChild {
     child: Child,
+    #[cfg(test)]
+    pub(crate) native_trace: native_trace::NativeTrace,
     reaped: Option<ExitStatus>,
     #[cfg(unix)]
     birth: String,
@@ -79,6 +81,8 @@ pub(crate) fn spawn_guest_process(command: &mut Command) -> Result<GuestChild, S
             child.id()
         );
         Ok(GuestChild {
+            #[cfg(test)]
+            native_trace: native_trace::NativeTrace::new(child.id()),
             child,
             reaped: None,
             birth,
@@ -114,6 +118,8 @@ fn spawn_guest_in_job(command: &mut Command, job: windows_job::Job) -> Result<Gu
         }
     }
     Ok(GuestChild {
+        #[cfg(test)]
+        native_trace: native_trace::NativeTrace::new(child.id()),
         child,
         reaped: None,
         job,
@@ -338,160 +344,348 @@ fn darwin_only_exited_original(
 }
 
 impl GuestChild {
+    #[cfg(test)]
+    pub(crate) fn native_final_observation(&mut self) {
+        // Observe only after the unchanged real joins. Never stop, reap, retry,
+        // or turn a late native observation into successful deadline closure.
+        if !self.native_trace.enabled() {
+            return;
+        }
+        self.native_trace
+            .record("final.reaped_cached", 0, i64::from(self.reaped.is_some()));
+        self.native_trace.record(
+            "final.stdout_handle_owned",
+            1,
+            i64::from(self.stdout.is_some()),
+        );
+        self.native_trace.record(
+            "final.stderr_handle_owned",
+            2,
+            i64::from(self.stderr.is_some()),
+        );
+        #[cfg(target_os = "macos")]
+        {
+            let exited = self.observed_exit();
+            self.native_trace.record(
+                "final.exit_observation",
+                0,
+                match exited {
+                    Ok(exited) => i64::from(exited),
+                    Err(error) => -i64::from(error.raw_os_error().unwrap_or(1)),
+                },
+            );
+            self.native_trace
+                .record("final.group.enter", 0, i64::from(self.id()));
+            let members = darwin_group_members(self.id() as i32);
+            self.native_trace.record(
+                "final.group.return",
+                0,
+                match &members {
+                    Ok(members) => members.len() as i64,
+                    Err(error) => -i64::from(error.raw_os_error().unwrap_or(1)),
+                },
+            );
+            if let Ok(members) = members {
+                for member in members {
+                    self.native_trace
+                        .record("final.group.member", 0, i64::from(member));
+                }
+            }
+        }
+    }
+
     /// Keep the original direct child unreaped while proving its isolated group
     /// has no descendants. A successful kill request is not this proof.
     pub(crate) fn descendants_absent(&mut self) -> io::Result<bool> {
-        #[cfg(unix)]
-        {
-            if !self.observed_exit()? {
-                return Ok(false);
+        #[cfg(test)]
+        self.native_trace.record("descendants_absent.enter", 0, 0);
+        let result = (|| {
+            #[cfg(unix)]
+            {
+                if !self.observed_exit()? {
+                    return Ok(false);
+                }
+                let group = i32::try_from(self.child.id()).map_err(io::Error::other)?;
+                #[cfg(target_os = "macos")]
+                let members = {
+                    #[cfg(test)]
+                    self.native_trace
+                        .record("group.enumeration.enter", 0, i64::from(group));
+                    let result = darwin_group_members(group);
+                    #[cfg(test)]
+                    {
+                        self.native_trace.record(
+                            "group.enumeration.return",
+                            0,
+                            match &result {
+                                Ok(members) => members.len() as i64,
+                                Err(error) => -i64::from(error.raw_os_error().unwrap_or(1)),
+                            },
+                        );
+                        if let Ok(members) = &result {
+                            for member in members {
+                                self.native_trace
+                                    .record("group.member", 0, i64::from(*member));
+                            }
+                        }
+                    }
+                    result?
+                };
+                #[cfg(target_os = "linux")]
+                let members = linux_group_members(group)?;
+                Ok(members.is_empty() || members == [group])
             }
-            let group = i32::try_from(self.child.id()).map_err(io::Error::other)?;
-            #[cfg(target_os = "macos")]
-            let members = darwin_group_members(group)?;
-            #[cfg(target_os = "linux")]
-            let members = linux_group_members(group)?;
-            Ok(members.is_empty() || members == [group])
-        }
-        #[cfg(windows)]
-        self.job.absent()
+            #[cfg(windows)]
+            self.job.absent()
+        })();
+        #[cfg(test)]
+        self.native_trace.record(
+            "descendants_absent.return",
+            0,
+            match &result {
+                Ok(value) => i64::from(*value),
+                Err(error) => -i64::from(error.raw_os_error().unwrap_or(1)),
+            },
+        );
+        result
     }
 
     pub(crate) fn observed_exit(&mut self) -> io::Result<bool> {
-        if self.reaped.is_some() {
-            return Ok(true);
-        }
-        #[cfg(unix)]
-        {
-            // WNOWAIT retains our direct child's PID even after it exits. That
-            // occupied PID binds the original process_group(0) identity; do not
-            // require a late getpgid(zombie), and never reap before tree stop.
-            let mut info = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
-            if unsafe {
-                libc::waitid(
-                    libc::P_PID,
-                    self.child.id(),
-                    &mut info,
-                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-                )
-            } != 0
-            {
-                return Err(io::Error::last_os_error());
+        #[cfg(test)]
+        self.native_trace.record("observed_exit.enter", 0, 0);
+        let result = (|| {
+            if self.reaped.is_some() {
+                return Ok(true);
             }
-            #[cfg(target_os = "macos")]
-            let pid = info.si_pid;
-            #[cfg(not(target_os = "macos"))]
-            let pid = unsafe { info.si_pid() };
-            Ok(pid != 0)
-        }
-        #[cfg(windows)]
-        {
-            self.child.try_wait().map(|status| {
-                self.reaped = status;
-                status.is_some()
-            })
-        }
+            #[cfg(unix)]
+            {
+                // WNOWAIT retains our direct child's PID even after it exits. That
+                // occupied PID binds the original process_group(0) identity; do not
+                // require a late getpgid(zombie), and never reap before tree stop.
+                let mut info = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
+                if unsafe {
+                    libc::waitid(
+                        libc::P_PID,
+                        self.child.id(),
+                        &mut info,
+                        libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                    )
+                } != 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                #[cfg(target_os = "macos")]
+                let pid = info.si_pid;
+                #[cfg(not(target_os = "macos"))]
+                let pid = unsafe { info.si_pid() };
+                Ok(pid != 0)
+            }
+            #[cfg(windows)]
+            {
+                self.child.try_wait().map(|status| {
+                    self.reaped = status;
+                    status.is_some()
+                })
+            }
+        })();
+        #[cfg(test)]
+        self.native_trace.record(
+            "observed_exit.return",
+            0,
+            match &result {
+                Ok(value) => i64::from(*value),
+                Err(error) => -i64::from(error.raw_os_error().unwrap_or(1)),
+            },
+        );
+        result
     }
 
     pub(crate) fn stop_tree(&mut self) -> io::Result<()> {
-        #[cfg(unix)]
-        {
-            if self.reaped.is_some() {
-                return Ok(());
-            }
-            // A prior external wait/ECHILD must refuse signaling. Successful
-            // WNOWAIT proves this is still our unreaped original direct child.
-            let exited = self.observed_exit()?;
-            // XNU may reject another signal to a dying original. Skip it only
-            // after a complete native enumeration proves there is no other
-            // member; a cached successful request cannot hide inherited writers.
-            #[cfg(target_os = "macos")]
-            if self.stop_requested {
-                let group = i32::try_from(self.child.id()).map_err(io::Error::other)?;
-                let members = darwin_group_members(group)?;
-                if members.is_empty() || members == [group] {
+        #[cfg(test)]
+        self.native_trace.record("stop_tree.enter", 0, 0);
+        let result = (|| {
+            #[cfg(unix)]
+            {
+                if self.reaped.is_some() {
                     return Ok(());
                 }
-                for member in members {
-                    if member == group {
-                        // observed_exit above retains the ORIGINAL direct
-                        // child with WNOWAIT even when XNU no longer exposes
-                        // its proc_bsdinfo. Do not replace that custody proof
-                        // with an unavailable zombie metadata query.
-                        continue;
-                    }
-                    // Unknown/foreign UID stays a refusal, never absent.
-                    unix_birth(member as u32)?;
-                }
-            }
-            #[cfg(not(target_os = "macos"))]
-            let _ = exited;
-            #[cfg(test)]
-            eprintln!(
-                "owned guest signal root={} {} unreaped=true",
-                self.child.id(),
-                self.birth
-            );
-            #[cfg(not(test))]
-            let _ = &self.birth;
-            let group = i32::try_from(self.child.id()).map_err(io::Error::other)?;
-            if group <= 0 {
-                return Err(io::Error::other("invalid owned group"));
-            }
-            if unsafe { libc::kill(-group, libc::SIGKILL) } != 0 {
-                let error = io::Error::last_os_error();
+                // A prior external wait/ECHILD must refuse signaling. Successful
+                // WNOWAIT proves this is still our unreaped original direct child.
+                let exited = self.observed_exit()?;
+                // XNU may reject another signal to a dying original. Skip it only
+                // after a complete native enumeration proves there is no other
+                // member; a cached successful request cannot hide inherited writers.
                 #[cfg(target_os = "macos")]
-                if error.raw_os_error() == Some(libc::EPERM)
-                    && exited
-                    && darwin_only_exited_original(group, group, &self.birth, exited)?
-                {
-                    // WNOWAIT retains the original direct child; native group
-                    // has no live or foreign member. The original is already
-                    // exited, so direct child.kill() would reintroduce EPERM.
+                if self.stop_requested {
+                    let group = i32::try_from(self.child.id()).map_err(io::Error::other)?;
+                    let members = {
+                        #[cfg(test)]
+                        self.native_trace
+                            .record("group.enumeration.enter", 0, i64::from(group));
+                        let result = darwin_group_members(group);
+                        #[cfg(test)]
+                        {
+                            self.native_trace.record(
+                                "group.enumeration.return",
+                                0,
+                                match &result {
+                                    Ok(members) => members.len() as i64,
+                                    Err(error) => -i64::from(error.raw_os_error().unwrap_or(1)),
+                                },
+                            );
+                            if let Ok(members) = &result {
+                                for member in members {
+                                    self.native_trace
+                                        .record("group.member", 0, i64::from(*member));
+                                }
+                            }
+                        }
+                        result?
+                    };
+                    if members.is_empty() || members == [group] {
+                        return Ok(());
+                    }
+                    for member in members {
+                        if member == group {
+                            // observed_exit above retains the ORIGINAL direct
+                            // child with WNOWAIT even when XNU no longer exposes
+                            // its proc_bsdinfo. Do not replace that custody proof
+                            // with an unavailable zombie metadata query.
+                            continue;
+                        }
+                        // Unknown/foreign UID stays a refusal, never absent.
+                        unix_birth(member as u32)?;
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = exited;
+                #[cfg(test)]
+                eprintln!(
+                    "owned guest signal root={} {} unreaped=true",
+                    self.child.id(),
+                    self.birth
+                );
+                #[cfg(not(test))]
+                let _ = &self.birth;
+                let group = i32::try_from(self.child.id()).map_err(io::Error::other)?;
+                if group <= 0 {
+                    return Err(io::Error::other("invalid owned group"));
+                }
+                #[cfg(test)]
+                self.native_trace
+                    .record("signal.enter", 0, i64::from(group));
+                let signal_result = unsafe { libc::kill(-group, libc::SIGKILL) };
+                let signal_error = (signal_result != 0).then(io::Error::last_os_error);
+                #[cfg(test)]
+                self.native_trace.record(
+                    "signal.return",
+                    0,
+                    signal_error
+                        .as_ref()
+                        .map(|error| -i64::from(error.raw_os_error().unwrap_or(1)))
+                        .unwrap_or(0),
+                );
+                if let Some(error) = signal_error {
+                    #[cfg(target_os = "macos")]
+                    if error.raw_os_error() == Some(libc::EPERM)
+                        && exited
+                        && darwin_only_exited_original(group, group, &self.birth, exited)?
+                    {
+                        // WNOWAIT retains the original direct child; native group
+                        // has no live or foreign member. The original is already
+                        // exited, so direct child.kill() would reintroduce EPERM.
+                        self.stop_requested = true;
+                        return Ok(());
+                    }
+                    if error.raw_os_error() != Some(libc::ESRCH) {
+                        return Err(error);
+                    }
+                } else {
                     self.stop_requested = true;
-                    return Ok(());
                 }
-                if error.raw_os_error() != Some(libc::ESRCH) {
-                    return Err(error);
-                }
-            } else {
-                self.stop_requested = true;
+                Ok(())
             }
-            Ok(())
-        }
-        #[cfg(windows)]
-        self.job.stop()
+            #[cfg(windows)]
+            self.job.stop()
+        })();
+        #[cfg(test)]
+        self.native_trace.record(
+            "stop_tree.return",
+            0,
+            match &result {
+                Ok(value) => {
+                    let _ = value;
+                    0
+                }
+                Err(error) => -i64::from(error.raw_os_error().unwrap_or(1)),
+            },
+        );
+        result
     }
 
     pub(crate) fn reap_owned(&mut self) -> io::Result<Option<ExitStatus>> {
-        if let Some(status) = self.reaped {
-            return Ok(Some(status));
+        #[cfg(test)]
+        self.native_trace.record("reap_owned.enter", 0, 0);
+        let result = (|| {
+            if let Some(status) = self.reaped {
+                return Ok(Some(status));
+            }
+            let status = self.child.try_wait()?;
+            self.reaped = status;
+            Ok(status)
+        })();
+        #[cfg(test)]
+        self.native_trace.record(
+            "reap_owned.return",
+            0,
+            match &result {
+                Ok(value) => i64::from(value.is_some()),
+                Err(error) => -i64::from(error.raw_os_error().unwrap_or(1)),
+            },
+        );
+        #[cfg(all(test, unix))]
+        if let Ok(Some(status)) = &result {
+            use std::os::unix::process::ExitStatusExt;
+            self.native_trace
+                .record("reap.status.raw", 0, i64::from(status.into_raw()));
         }
-        let status = self.child.try_wait()?;
-        self.reaped = status;
-        Ok(status)
+        result
     }
 
     pub(crate) fn tree_absent(&self) -> io::Result<bool> {
-        #[cfg(unix)]
-        {
-            let group = i32::try_from(self.child.id()).map_err(io::Error::other)?;
-            if unsafe { libc::kill(-group, 0) } == 0 {
-                return Ok(false);
+        #[cfg(test)]
+        self.native_trace.record("tree_absent.enter", 0, 0);
+        let result = (|| {
+            #[cfg(unix)]
+            {
+                let group = i32::try_from(self.child.id()).map_err(io::Error::other)?;
+                if unsafe { libc::kill(-group, 0) } == 0 {
+                    return Ok(false);
+                }
+                let error = io::Error::last_os_error();
+                #[cfg(target_os = "macos")]
+                if error.raw_os_error() == Some(libc::EPERM) {
+                    return Ok(darwin_group_members(group)?.is_empty());
+                }
+                if error.raw_os_error() == Some(libc::ESRCH) {
+                    Ok(true)
+                } else {
+                    Err(error)
+                }
             }
-            let error = io::Error::last_os_error();
-            #[cfg(target_os = "macos")]
-            if error.raw_os_error() == Some(libc::EPERM) {
-                return Ok(darwin_group_members(group)?.is_empty());
-            }
-            if error.raw_os_error() == Some(libc::ESRCH) {
-                Ok(true)
-            } else {
-                Err(error)
-            }
-        }
-        #[cfg(windows)]
-        self.job.absent()
+            #[cfg(windows)]
+            self.job.absent()
+        })();
+        #[cfg(test)]
+        self.native_trace.record(
+            "tree_absent.return",
+            0,
+            match &result {
+                Ok(value) => i64::from(*value),
+                Err(error) => -i64::from(error.raw_os_error().unwrap_or(1)),
+            },
+        );
+        result
     }
 }
 
@@ -944,5 +1138,96 @@ mod tests {
         assert!(original.descendants_absent().unwrap());
         assert_eq!(original.reap_owned().unwrap().unwrap().code(), Some(7));
         assert!(original.tree_absent().unwrap());
+    }
+}
+
+// Native observation only: bounded, no I/O or shared event mutex on the timed
+// path. Each OnceLock slot has exactly one producer. Original deadlines,
+// assertions and process-control calls remain authoritative.
+#[cfg(test)]
+pub(crate) mod native_trace {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, OnceLock,
+    };
+    use std::time::Instant;
+
+    const CAPACITY: usize = 2048;
+    #[derive(Debug)]
+    struct Event {
+        ns: u64,
+        phase: &'static str,
+        stream: u8,
+        value: i64,
+    }
+    #[derive(Debug)]
+    struct Inner {
+        root: u32,
+        start: Instant,
+        next: AtomicUsize,
+        slots: Box<[OnceLock<Event>]>,
+    }
+    #[derive(Clone, Debug, Default)]
+    pub(crate) struct NativeTrace(Option<Arc<Inner>>);
+    impl NativeTrace {
+        pub(crate) fn enabled(&self) -> bool {
+            self.0.is_some()
+        }
+        pub(crate) fn new(root: u32) -> Self {
+            if !cfg!(target_os = "macos")
+                || std::env::var_os("OPEMOS_NATIVE_GUEST_TRACE").as_deref()
+                    != Some(std::ffi::OsStr::new("1"))
+            {
+                return Self::default();
+            }
+            Self(Some(Arc::new(Inner {
+                root,
+                start: Instant::now(),
+                next: AtomicUsize::new(0),
+                slots: (0..CAPACITY).map(|_| OnceLock::new()).collect(),
+            })))
+        }
+        pub(crate) fn record(&self, phase: &'static str, stream: u8, value: i64) {
+            let Some(inner) = &self.0 else { return };
+            let ns = inner.start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+            let index = inner.next.fetch_add(1, Ordering::Relaxed);
+            if let Some(slot) = inner.slots.get(index) {
+                let _ = slot.set(Event {
+                    ns,
+                    phase,
+                    stream,
+                    value,
+                });
+            }
+        }
+        pub(crate) fn deadline(&self, phase: &'static str, deadline: Instant) {
+            if let Some(inner) = &self.0 {
+                self.record(
+                    phase,
+                    0,
+                    deadline
+                        .saturating_duration_since(inner.start)
+                        .as_nanos()
+                        .min(i64::MAX as u128) as i64,
+                );
+            }
+        }
+    }
+    impl Drop for Inner {
+        fn drop(&mut self) {
+            // Last owner is dropped only after the existing actual joins and
+            // caller result. No diagnostic formatting on the timed path.
+            let events = self.slots.iter().filter_map(OnceLock::get).map(|e|
+                serde_json::json!({"ns":e.ns,"phase":e.phase,"stream":e.stream,"value":e.value})
+            ).collect::<Vec<_>>();
+            let count = self.next.load(Ordering::Relaxed);
+            eprintln!(
+                "NATIVE_GUEST_TRACE {}",
+                serde_json::json!({
+                    "schema":1,"root":self.root,"capacity":CAPACITY,
+                    "overflow":count.saturating_sub(CAPACITY),"events":events
+                })
+            );
+        }
     }
 }

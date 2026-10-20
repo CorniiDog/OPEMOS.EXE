@@ -3017,9 +3017,24 @@ pub(crate) struct GuestDeadlinePipe<T> {
     deadline: Instant,
     stop: Arc<AtomicBool>,
     post_deadline_data: bool,
+    #[cfg(test)]
+    native_trace: crate::guest_process::native_trace::NativeTrace,
+    #[cfg(test)]
+    native_stream: u8,
 }
 
 impl<T: GuestPipe> GuestDeadlinePipe<T> {
+    #[cfg(test)]
+    fn with_native_trace(
+        mut self,
+        trace: crate::guest_process::native_trace::NativeTrace,
+        stream: u8,
+    ) -> Self {
+        self.native_trace = trace;
+        self.native_stream = stream;
+        self
+    }
+
     fn new(pipe: T, deadline: Instant) -> Result<Self, String> {
         pipe.prepare()
             .map_err(|e| format!("Could not bound guest pipe reads: {e}"))?;
@@ -3028,48 +3043,93 @@ impl<T: GuestPipe> GuestDeadlinePipe<T> {
             deadline,
             stop: Arc::new(AtomicBool::new(false)),
             post_deadline_data: false,
+            #[cfg(test)]
+            native_trace: Default::default(),
+            #[cfg(test)]
+            native_stream: 0,
         })
     }
 }
 
 impl<T: GuestPipe> Read for GuestDeadlinePipe<T> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        if buffer.is_empty() {
-            return Ok(0);
-        }
-        loop {
-            let expired = Instant::now() >= self.deadline;
-            // A nonblocking EOF proves writer closure even if this reader was
-            // scheduled after the deadline. At most one already-available
-            // crossing chunk is retained after expiry; further data is UNKNOWN
-            // and must never turn a timed-out operation into success.
-            if expired && self.post_deadline_data {
-                return Err(io::ErrorKind::TimedOut.into());
+        #[cfg(test)]
+        self.native_trace
+            .record("pipe.read.enter", self.native_stream, 0);
+        let result = (|| {
+            if buffer.is_empty() {
+                return Ok(0);
             }
-            match self.pipe.available_read(buffer) {
-                Ok(0) => return Ok(0),
-                Ok(count) if expired => {
-                    self.post_deadline_data = true;
-                    return Ok(count);
+            loop {
+                let expired = Instant::now() >= self.deadline;
+                // A nonblocking EOF proves writer closure even if this reader was
+                // scheduled after the deadline. At most one already-available
+                // crossing chunk is retained after expiry; further data is UNKNOWN
+                // and must never turn a timed-out operation into success.
+                if expired && self.post_deadline_data {
+                    return Err(io::ErrorKind::TimedOut.into());
                 }
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    if self.stop.load(Ordering::Acquire) {
-                        return Err(io::Error::other(
-                            "Guest pipe cleanup stopped before EOF; writer closure unproven.",
-                        ));
+                match self.pipe.available_read(buffer) {
+                    Ok(0) => return Ok(0),
+                    Ok(count) if expired => {
+                        self.post_deadline_data = true;
+                        return Ok(count);
                     }
-                    if expired {
-                        return Err(io::ErrorKind::TimedOut.into());
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        #[cfg(test)]
+                        self.native_trace.record(
+                            "pipe.would_block",
+                            self.native_stream,
+                            i64::from(expired),
+                        );
+                        if self.stop.load(Ordering::Acquire) {
+                            return Err(io::Error::other(
+                                "Guest pipe cleanup stopped before EOF; writer closure unproven.",
+                            ));
+                        }
+                        if expired {
+                            return Err(io::ErrorKind::TimedOut.into());
+                        }
+                        thread::sleep(
+                            Duration::from_millis(1)
+                                .min(self.deadline.saturating_duration_since(Instant::now())),
+                        );
                     }
-                    thread::sleep(
-                        Duration::from_millis(1)
-                            .min(self.deadline.saturating_duration_since(Instant::now())),
-                    );
+                    result => return result,
                 }
-                result => return result,
+            }
+        })();
+        #[cfg(test)]
+        match &result {
+            Ok(count) => self.native_trace.record(
+                if *count == 0 {
+                    "pipe.eof"
+                } else {
+                    "pipe.bytes"
+                },
+                self.native_stream,
+                *count as i64,
+            ),
+            Err(error) => {
+                self.native_trace.record(
+                    "pipe.error.errno",
+                    self.native_stream,
+                    i64::from(error.raw_os_error().unwrap_or(0)),
+                );
+                self.native_trace.record(
+                    "pipe.error.kind",
+                    self.native_stream,
+                    match error.kind() {
+                        io::ErrorKind::TimedOut => 1,
+                        io::ErrorKind::WouldBlock => 2,
+                        io::ErrorKind::Interrupted => 3,
+                        _ => 4,
+                    },
+                );
             }
         }
+        result
     }
 }
 
@@ -3117,12 +3177,26 @@ mod deadline_pipe_tests {
 pub(crate) struct GuestDiagnosticDrain {
     reader: thread::JoinHandle<Result<Vec<u8>, String>>,
     stop: Arc<AtomicBool>,
+    #[cfg(test)]
+    native_trace: crate::guest_process::native_trace::NativeTrace,
+    #[cfg(test)]
+    native_stream: u8,
 }
 
 impl GuestDiagnosticDrain {
     pub(crate) fn join(self) -> thread::Result<Result<Vec<u8>, String>> {
+        #[cfg(test)]
+        self.native_trace
+            .record("reader.join.enter", self.native_stream, 0);
         self.stop.store(true, Ordering::Release);
-        self.reader.join()
+        let result = self.reader.join();
+        #[cfg(test)]
+        self.native_trace.record(
+            "reader.join.return",
+            self.native_stream,
+            i64::from(result.is_ok()),
+        );
+        result
     }
 }
 
@@ -3139,7 +3213,7 @@ fn prepare_guest_pipes(
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let result = (|| {
-        Ok((
+        let pipes = (
             GuestDeadlinePipe::new(
                 stdout.ok_or("Could not capture guest readiness output.")?,
                 deadline,
@@ -3148,7 +3222,13 @@ fn prepare_guest_pipes(
                 stderr.ok_or("Could not capture guest readiness diagnostics.")?,
                 deadline,
             )?,
-        ))
+        );
+        #[cfg(test)]
+        let pipes = (
+            pipes.0.with_native_trace(child.native_trace.clone(), 1),
+            pipes.1.with_native_trace(child.native_trace.clone(), 2),
+        );
+        Ok(pipes)
     })();
     match result {
         Ok(pipes) => Ok(pipes),
@@ -3164,20 +3244,44 @@ fn spawn_guest_diagnostics(
     limit: u64,
 ) -> GuestDiagnosticDrain {
     let stop = stream.stop.clone();
+    #[cfg(test)]
+    let native_trace = stream.native_trace.clone();
+    #[cfg(test)]
+    let native_stream = stream.native_stream;
+    #[cfg(test)]
+    let thread_trace = native_trace.clone();
     let reader = thread::spawn(move || {
-        let mut captured = Vec::new();
-        if let Err(error) = (&mut stream).take(limit + 1).read_to_end(&mut captured) {
-            return Err(format!(
-                "Could not read guest diagnostics: {error}; captured: {}",
-                String::from_utf8_lossy(&captured)
-            ));
-        }
-        if captured.len() > limit as usize {
-            return Err("Guest readiness output exceeded its bound.".into());
-        }
-        Ok(captured)
+        #[cfg(test)]
+        thread_trace.record("reader.started", native_stream, 0);
+        let result = (|| {
+            let mut captured = Vec::new();
+            if let Err(error) = (&mut stream).take(limit + 1).read_to_end(&mut captured) {
+                return Err(format!(
+                    "Could not read guest diagnostics: {error}; captured: {}",
+                    String::from_utf8_lossy(&captured)
+                ));
+            }
+            if captured.len() > limit as usize {
+                return Err("Guest readiness output exceeded its bound.".into());
+            }
+            Ok(captured)
+        })();
+        #[cfg(test)]
+        thread_trace.record(
+            "reader.body.return",
+            native_stream,
+            i64::from(result.is_ok()),
+        );
+        result
     });
-    GuestDiagnosticDrain { reader, stop }
+    GuestDiagnosticDrain {
+        reader,
+        stop,
+        #[cfg(test)]
+        native_trace,
+        #[cfg(test)]
+        native_stream,
+    }
 }
 
 #[cfg(test)]
@@ -3259,10 +3363,26 @@ pub(crate) fn finish_guest_readiness_attempt(
     timeout: Duration,
 ) -> Result<String, String> {
     let (operation_deadline, deadline) = guest_command_deadlines(timeout)?;
+    #[cfg(test)]
+    let native_trace = child.native_trace.clone();
+    #[cfg(test)]
+    {
+        native_trace.deadline("operation.deadline", operation_deadline);
+        native_trace.deadline("closure.deadline", deadline);
+        native_trace.record(
+            "readiness.enter",
+            0,
+            timeout.as_nanos().min(i64::MAX as u128) as i64,
+        );
+    }
     let (stdout, stderr) = prepare_guest_pipes(&mut child, deadline)?;
     let stderr_reader = spawn_guest_diagnostics(stderr, READINESS_ATTEMPT_OUTPUT_LIMIT);
     let (sender, receiver) = mpsc::sync_channel(1);
+    #[cfg(test)]
+    let stdout_trace = native_trace.clone();
     let stdout_reader = thread::spawn(move || {
+        #[cfg(test)]
+        stdout_trace.record("reader.started", 1, 0);
         let result: Result<(String, bool), String> = (|| {
             let mut stdout = BufReader::new(stdout);
             let mut lines = Vec::with_capacity(2);
@@ -3291,7 +3411,11 @@ pub(crate) fn finish_guest_readiness_attempt(
             }
             Ok((lines.join("\n"), eof))
         })();
+        #[cfg(test)]
+        stdout_trace.record("reader.frame.result", 1, i64::from(result.is_ok()));
         let _ = sender.send(result);
+        #[cfg(test)]
+        stdout_trace.record("reader.body.return", 1, 0);
     });
     let mut primary = receive_guest_frame(
         &mut child,
@@ -3299,6 +3423,8 @@ pub(crate) fn finish_guest_readiness_attempt(
         operation_deadline,
         "Guest readiness transport attempt timed out.",
     );
+    #[cfg(test)]
+    native_trace.record("receive.return", 0, i64::from(primary.is_ok()));
     let observed_exit = loop {
         match guest_child_exited(&mut child) {
             Ok(true) => break true,
@@ -3317,11 +3443,31 @@ pub(crate) fn finish_guest_readiness_attempt(
         }
     };
     let cleanup = stop_guest_command_before(&mut child, deadline, || {
-        stdout_reader.is_finished() && stderr_reader.reader.is_finished()
+        let stdout_finished = stdout_reader.is_finished();
+        // Preserve production short-circuit; tracing additionally observes
+        // stderr independently when stdout is unfinished, without using that
+        // extra observation to alter the closure decision.
+        let stderr_finished = stdout_finished.then(|| stderr_reader.reader.is_finished());
+        #[cfg(test)]
+        if native_trace.enabled() {
+            native_trace.record("reader.is_finished", 1, i64::from(stdout_finished));
+            native_trace.record(
+                "reader.is_finished",
+                2,
+                i64::from(stderr_finished.unwrap_or_else(|| stderr_reader.reader.is_finished())),
+            );
+        }
+        stdout_finished && stderr_finished.unwrap_or(false)
     });
+    #[cfg(test)]
+    native_trace.record("cleanup.return", 0, i64::from(cleanup.is_ok()));
+    #[cfg(test)]
+    native_trace.record("reader.join.enter", 1, 0);
     let joined = stdout_reader
         .join()
         .map_err(|_| "Guest readiness output reader panicked.".to_string());
+    #[cfg(test)]
+    native_trace.record("reader.join.return", 1, i64::from(joined.is_ok()));
     let stderr = stderr_reader
         .join()
         .map_err(|_| "Guest readiness diagnostics reader panicked.".to_string())
@@ -3345,7 +3491,14 @@ pub(crate) fn finish_guest_readiness_attempt(
     });
     let result = guest_cleanup_result(result, joined);
     let result = guest_cleanup_result(result, stderr.map(|_| ()));
-    guest_cleanup_result(result, cleanup.map(|_| ()))
+    let result = guest_cleanup_result(result, cleanup.map(|_| ()));
+    #[cfg(test)]
+    {
+        native_trace.record("readiness.result", 0, i64::from(result.is_ok()));
+        child.native_final_observation();
+        native_trace.record("readiness.return", 0, i64::from(result.is_ok()));
+    }
+    result
 }
 
 pub(crate) fn read_guest_command_ready_line(

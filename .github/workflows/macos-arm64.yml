@@ -59,7 +59,7 @@ jobs:
         with:
           name: retained-7b8-causal-diagnostic-${{ github.run_id }}
           path: build/retained-startup-diagnostic
-          retention-days: 3
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
   native-app:
     if: github.event_name != 'workflow_dispatch' || (!inputs.retained-startup-diagnostic && !inputs.stream-lifecycle-diagnostic)
     runs-on: macos-15
@@ -116,6 +116,7 @@ jobs:
         run: gh run download 39294846215 --repo CorniiDog/OPEMOS.EXE --name macos-arm64-7b8bf0eea38d7ab548bf4746707d8ab38ade05bb-1 --dir "$RUNNER_TEMP/retained-7b8"
       - name: Native build and actual graphical transaction
         env:
+          OPEMOS_NATIVE_GUEST_TRACE: "1"
           OPEMOS_RETAINED_MAC_APP_ARCHIVE: ${{ runner.temp }}/retained-7b8/SteamOS-NVIDIA-Builder-arm64.app.zip
         run: python3 scripts/run_macos_packaged_robot.py
       - name: Preserve exact app, failures and GUI evidence
@@ -135,7 +136,7 @@ jobs:
           name: macos-robot-${{ env.OPEMOS_EXE_COMMIT }}-${{ github.run_attempt }}
           path: build/macos-robot-evidence
           if-no-files-found: warn
-          retention-days: 1
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
       - name: Bind the actual current-source Mac package to this producer
         if: success() && steps.executable.outputs.artifact-id != ''
         env:
@@ -155,4 +156,4 @@ jobs:
           name: executable-producer-macos-${{ github.run_id }}-${{ github.run_attempt }}
           path: build/executable-producer/executable-producer.json
           if-no-files-found: error
-          retention-days: 1
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
