@@ -1,5 +1,21 @@
 # OPEMOS.EXE — Product Checklist
 
+## Actual Robot peer PID namespace correction — 2026-10-20
+
+- [ ] Preserve actual04 run39348469633 all24 pre-click failures: the same
+  listener peer hostPID787372 becomes PID0 in Runner21's child PID namespace,
+  exact current UID/GID1000 unchanged. Integrate reviewed Hubble final6619c18e
+  on fresh Main e7c294e3: complete fixed-size SO_PEERCRED, nonnegative kernel
+  PID and exact UID/GID. No endpoint/path/nonce/source authorization relaxation.
+- [ ] Actual native Linux same-namespace positive, real bwrap child namespace
+  PID0 positive, six strict negatives and owned group/FD/EOF/reap checks run in
+  existing Linux CI lane, never controller. Exact candidate source SHA b41f452e
+  is consumed through held descriptor/full9/hash. All ordinary required checks
+  and exact Core approval precede owner protected merge. Normal source push to
+  canonical CorniiDog/OPEMOS.EXE is necessary for remote-only native CI/review;
+  no installed client, listener, VM retry or source publication beyond this PR.
+  Root owns operational rollover/next04; PR202 Mac and other frozen holds stay.
+
 ## Automatic OMEN Robot integration — 2026-10-19
 
 - [ ] Native Windows readonly timestamp causal recovery: preserve exact326
