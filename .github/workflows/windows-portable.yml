@@ -44,7 +44,7 @@ jobs:
         with:
           name: windows-producer-metadata-${{ github.run_id }}-${{ github.run_attempt }}
           path: build/windows-metadata-diagnostic
-          retention-days: 1
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
           if-no-files-found: error
 
   seed-runtime-source:
@@ -82,7 +82,7 @@ jobs:
             build/runtime-cache/windows/schily-cdrtools-3.02a09.7z
             build/runtime-cache/windows/cdrtools-3.02a09.tar.gz
           if-no-files-found: error
-          retention-days: 1
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
           compression-level: 0
 
   build:
@@ -293,7 +293,7 @@ jobs:
           path: dist/windows
           if-no-files-found: error
           include-hidden-files: true
-          retention-days: 1
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
           compression-level: 0
 
       - name: Bind exact executable and package to this producer artifact
@@ -316,4 +316,4 @@ jobs:
           name: executable-producer-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: build/executable-producer/executable-producer.json
           if-no-files-found: error
-          retention-days: 1
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}

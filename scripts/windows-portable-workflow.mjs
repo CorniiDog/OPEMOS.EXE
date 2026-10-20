@@ -96,8 +96,10 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "--platform windows", "the exact Windows producer descriptor");
   requireText(text, "PRODUCER_ARTIFACT_SHA256: ${{ steps.executable.outputs.artifact-digest }}", "uploaded artifact digest binding");
   requireText(text, "path: build/executable-producer/executable-producer.json", "the separate producer descriptor upload");
-  if ((text.match(/retention-days:\s*1\b/g) || []).length !== 4 || /retention-days:\s*(?!1\b)\d+/i.test(text)) {
-    throw new Error("Windows workflow must preserve one-day artifact retention for diagnostic, seed, executable and producer descriptor uploads.");
+  const retention = "${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}";
+  const retentionValues = [...text.matchAll(/^\s*retention-days:\s*(.*?)\s*$/gm)].map(match => match[1]);
+  if (retentionValues.length !== 4 || retentionValues.some(value => value !== retention)) {
+    throw new Error("Windows workflow must preserve canonical-main 90-day and other-ref one-day artifact retention for all four uploads.");
   }
   requireText(text, "if-no-files-found: error", "missing-artifact failure");
   requireText(text, "include-hidden-files: true", "declared hidden runtime files in the artifact");
