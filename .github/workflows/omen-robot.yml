@@ -78,7 +78,7 @@ jobs:
           name: robot-preflight-${{ github.run_id }}-${{ github.run_attempt }}
           path: robot-preflight/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
 
   actual-robot-transactions:
     needs: trusted-runner-route
@@ -114,4 +114,4 @@ jobs:
           name: robot-actual-${{ github.run_id }}-${{ github.run_attempt }}
           path: robot-results/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
