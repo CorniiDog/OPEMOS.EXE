@@ -2,6 +2,22 @@
 
 ## Measured native fast-exit/member custody recovery — 2026-10-20
 
+- [ ] First changed72d5 native run39484685713/job118841923441 preserved:
+  ClippyPASS, Rust419pass4fail28ignored; original50ms actual completion
+  38.904875ms before50.153750ms. Fresh post-EPERM WNOWAIT is STILL false
+  for fast18281/output21987/structured22271; inherited21999 refreshed group
+  STILL contains metadata-unavailable22000. One fresh snapshot is therefore
+  insufficient, not evidence of absence or permission to relax guards.
+  Keep denied requests as pending diagnostics under the ORIGINAL caller
+  deadline only with real unreaped-child WNOWAIT custody; both ordinary
+  receive/cleanup callers continue observation, never accept request as closure.
+  Unknown members prevent reap until fresh complete enumeration excludes them;
+  foreign/other errors/ECHILD remain immediate refusal. Actual EOF/reader joins,
+  numeric reap and final group absence remain mandatory. Preserve first pending
+  failure on deadline and raw diagnostic even when closure later reconciles.
+  No unchanged retry: this changed shared caller ordering is measured by the
+  complete normal native batch/real16fast-producer cases before any package.
+
 - [ ] Preserve actual076b run39473397238/job118803033372: ClippyPASS,
   Rust418pass4fail28ignored, original50ms realEOF/joins/SIG9reap/groupabsence
   39.434541ms before50.072750ms. Cold22414/output22519/structured22802

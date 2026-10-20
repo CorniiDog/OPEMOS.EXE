@@ -2862,6 +2862,29 @@ fn guest_child_exited(child: &mut GuestChild) -> io::Result<bool> {
     child.observed_exit()
 }
 
+fn guest_stop_needs_owned_observation(child: &mut GuestChild, error: &io::Error) -> bool {
+    #[cfg(target_os = "macos")]
+    if matches!(error.raw_os_error(), Some(libc::EPERM | libc::ESRCH)) {
+        // A denied request or disappeared metadata is NEVER closure. Keep
+        // WNOWAIT custody and let the caller observe actual completion within
+        // its ORIGINAL deadline. ECHILD/foreign/unknown enumeration errors are
+        // not admitted here. A present unknown member still prevents reap.
+        let custody = child.observed_exit();
+        #[cfg(test)]
+        child.native_trace.record(
+            "stop.pending.custody",
+            0,
+            match &custody {
+                Ok(exited) => i64::from(*exited),
+                Err(error) => -i64::from(error.raw_os_error().unwrap_or(1)),
+            },
+        );
+        return custody.is_ok();
+    }
+    let _ = (child, error);
+    false
+}
+
 fn receive_guest_frame<T>(
     child: &mut GuestChild,
     receiver: &mpsc::Receiver<Result<T, String>>,
@@ -2882,9 +2905,16 @@ fn receive_guest_frame<T>(
         // Do not wait for inherited-pipe EOF before observing the root. Keep
         // its status unreaped while stopping this producer's remaining tree.
         if guest_child_exited(child).map_err(|e| format!("Could not inspect guest command: {e}"))? {
-            child
-                .stop_tree()
-                .map_err(|e| format!("Could not stop exited guest writers: {e}"))?;
+            if let Err(error) = child.stop_tree() {
+                if !guest_stop_needs_owned_observation(child, &error) {
+                    return Err(format!("Could not stop exited guest writers: {error}"));
+                }
+                #[cfg(test)]
+                eprintln!(
+                    "owned guest receive stop pending root={} error={error}; closure NOT proven",
+                    child.id()
+                );
+            }
         }
         if Instant::now() >= deadline {
             return Err(timeout_message.into());
@@ -3013,14 +3043,28 @@ fn stop_guest_command_before(
     readers_done: impl Fn() -> bool,
 ) -> Result<std::process::ExitStatus, String> {
     drop(child.stdin.take());
+    let mut first_pending_stop = None;
     loop {
-        guest_completion_before(deadline)?;
+        if let Err(expired) = guest_completion_before(deadline) {
+            return Err(match first_pending_stop {
+                Some(first) => format!("Could not stop owned guest tree: {first}; {expired}"),
+                None => expired,
+            });
+        }
         // A group may acquire a last inherited writer while the first signal
         // is delivered. Keep original WNOWAIT/job custody and complete the
         // stop, rather than treating the first successful request as closure.
-        child
-            .stop_tree()
-            .map_err(|e| format!("Could not stop owned guest tree: {e}"))?;
+        if let Err(error) = child.stop_tree() {
+            if !guest_stop_needs_owned_observation(child, &error) {
+                return Err(format!("Could not stop owned guest tree: {error}"));
+            }
+            #[cfg(test)]
+            eprintln!(
+                "owned guest cleanup stop pending root={} error={error}; closure NOT proven",
+                child.id()
+            );
+            first_pending_stop.get_or_insert_with(|| error.to_string());
+        }
         let exited = guest_child_exited(child)
             .map_err(|e| format!("Could not inspect owned guest cleanup: {e}"))?;
         if exited
@@ -3042,6 +3086,10 @@ fn stop_guest_command_before(
             {
                 guest_completion_before(deadline)?;
                 #[cfg(test)]
+                if let Some(first) = &first_pending_stop {
+                    eprintln!("owned guest pending stop reconciled ONLY after actual exit/readers/reap/tree absence root={} first={first}", child.id());
+                }
+                #[cfg(test)]
                 eprintln!(
                     "owned guest closed root={} status={status} readers=true treeAbsent=true",
                     child.id()
@@ -3051,7 +3099,7 @@ fn stop_guest_command_before(
         }
         if Instant::now() >= deadline {
             return Err(format!(
-                "Guest process/stream closure exceeded command deadline; root={:?}; readers={}",
+                "Guest process/stream closure exceeded command deadline; root={:?}; readers={}; firstStopFailure={first_pending_stop:?}",
                 child.observed_exit(),
                 readers_done()
             ));
