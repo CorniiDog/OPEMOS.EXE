@@ -19,6 +19,38 @@ from prepare_macos_fullstack import consume_input_receipt, RECOVERY_URL, RECOVER
 
 
 class DarwinProducer(unittest.TestCase):
+    def test_actual_workflow_readiness_leaves_normal_evidence_create_only(self):
+        import textwrap
+        workflow = (ROOT / '.github/workflows/macos-arm64.yml').read_text()
+        code = textwrap.dedent(workflow.split("python3 - <<'PYMAC'\n", 1)[1]
+                               .split('\n          PYMAC', 1)[0])
+        code = code.replace('${{ env.OPEMOS_EXE_COMMIT }}', '1' * 40)
+        for present in (False, True):
+            with self.subTest(present=present), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                if present:
+                    for name in ('scripts/check_macos_arm64_ci.py', 'tests/macos-ui-smoke.swift'):
+                        path = root / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text('source operand\n')
+                result = subprocess.run([sys.executable, '-c', code], cwd=root,
+                                        capture_output=True, text=True, timeout=10)
+                out = root / 'build/macos-arm64-evidence'
+                if present:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertFalse(out.exists())
+                    # The actual next consumer's create-only filesystem
+                    # operation must remain possible, without deleting evidence.
+                    out.mkdir(parents=True, exist_ok=False)
+                    with self.assertRaises(FileExistsError):
+                        out.mkdir(parents=True, exist_ok=False)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    evidence = json.loads((out / 'producer-readiness.json').read_bytes())
+                    self.assertFalse(evidence['producer_ready'])
+                    self.assertFalse(evidence['full_stack_passed'])
+                    self.assertEqual(len(evidence['missing_files']), 2)
+
     def test_retained_derivative_refuses_size_hash_directory_and_symlink(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

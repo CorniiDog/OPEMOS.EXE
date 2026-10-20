@@ -2,6 +2,15 @@
 
 ## Current-Main Mac producer and measured Darwin closure — 2026-10-20
 
+- [ ] Initial b7e4b718 normal M1 run39348048823/job118385337590 failed1
+  before native work: Main readiness guard created the checker's create-only
+  evidence directory. Raw log474cde10 retained; no compiler/GUI/guest result.
+  Earlier separate PR199 checks never composed Main201 readiness with this
+  producer, and static merge inspection missed their shared destination.
+  Keep successful preflight side-effect free; missing-producer failure still
+  writes its exact readiness evidence. Actual workflow subprocess normal/fault
+  plus OS create-only regression added; no mkdir guard relaxation or deletion.
+
 - [ ] Reconcile the complete PR199 Mac graph onto Main e7c294e3 on isolated
   `work/exe-macos-main-native-closure`, preserving PR200 Engine/producers,
   PR201 names/consumer and all Windows/Ubuntu source fixes. Native diagnostic

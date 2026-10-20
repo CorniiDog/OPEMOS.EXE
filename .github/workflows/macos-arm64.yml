@@ -89,10 +89,10 @@ jobs:
           result = {'platform': 'macos', 'source': '${{ env.OPEMOS_EXE_COMMIT }}',
                     'producer_ready': not missing, 'missing_files': missing,
                     'full_stack_passed': False}
-          out = Path('build/macos-arm64-evidence')
-          out.mkdir(parents=True, exist_ok=True)
-          (out / 'producer-readiness.json').write_text(json.dumps(result, indent=2) + '\n')
           if missing:
+              out = Path('build/macos-arm64-evidence')
+              out.mkdir(parents=True, exist_ok=True)
+              (out / 'producer-readiness.json').write_text(json.dumps(result, indent=2) + '\n')
               raise SystemExit('macOS producer is not yet integrated on this source: ' + ', '.join(missing))
           PYMAC
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
