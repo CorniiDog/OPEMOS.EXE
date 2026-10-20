@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import platform
 import plistlib
+import re
 import shutil
 import signal
 import subprocess
@@ -40,6 +41,50 @@ def app_processes(binary):
     rows = output(["/bin/ps", "-axo", "pid=,comm="]).splitlines()
     return [int(fields[0]) for row in rows if len(fields := row.strip().split(None, 1)) == 2
             and fields[1] == str(binary)]
+
+
+def verify_completed_image(events, recovery, expected_source_sha256=RECOVERY_SHA256):
+    """Read the real exported operand; UI text and readiness are not acceptance."""
+    completed = [e for e in events if e.get("kind") == "completed-image-ui-observed"]
+    if len(completed) != 1:
+        raise RuntimeError("One actual completed-image observation required")
+    text = completed[0]["text"]
+    def single(pattern):
+        values = set(re.findall(pattern, text))
+        if len(values) != 1:
+            raise RuntimeError("Missing or ambiguous completed-image operand: " + pattern)
+        return values.pop()
+    image = Path(single(r"Exported image: ([^\n]+); [0-9]+ bytes; raw layout="))
+    manifest = Path(single(r"Build manifest: ([^\n]+)\.\s*(?:\n|$)"))
+    def regular(path, maximum=None):
+        if not path.is_absolute() or path.resolve() != path or path.is_symlink():
+            raise RuntimeError("Noncanonical exported operand")
+        info = path.stat()
+        if not path.is_file() or info.st_uid != os.getuid() or info.st_size <= 0 or (maximum and info.st_size > maximum):
+            raise RuntimeError("Invalid exported file type/UID/size")
+        return tuple(getattr(info, name) for name in ("st_dev", "st_ino", "st_mode", "st_uid", "st_gid", "st_size", "st_mtime_ns", "st_ctime_ns"))
+    image_before = regular(image)
+    manifest_before = regular(manifest, 1048576)
+    if image == recovery.resolve() or manifest.parent != image.parent or manifest == image:
+        raise RuntimeError("Exported image/manifest custody mismatch")
+    raw = manifest.read_bytes()
+    value = json.loads(raw)
+    validation = value.get("validation", {})
+    if (value.get("schemaVersion") != 1 or value.get("resultClass") != "nvidia-mutation-valid" or
+            value.get("input", {}).get("sourceSha256") != expected_source_sha256 or
+            value.get("output", {}).get("filename") != image.name or
+            value["output"].get("format") != "raw" or value["output"].get("bytes") != image_before[5] or
+            any(validation.get(key) is not True for key in ("passed", "sourceUnchanged", "candidateAttachedReadOnly", "layoutRecognized", "markerVerified", "nvidiaPayloadVerified"))):
+        raise RuntimeError("Completed output manifest does not prove genuine NVIDIA image")
+    actual = digest(image)
+    if actual != value["output"].get("sha256") or actual == expected_source_sha256:
+        raise RuntimeError("Full exported image hash differs from manifest or source")
+    if regular(image) != image_before or regular(manifest, 1048576) != manifest_before or digest(recovery) != expected_source_sha256:
+        raise RuntimeError("Completed image/manifest/source changed during independent full hash")
+    return {"path": str(image), "bytes": image_before[5], "sha256": actual,
+            "manifest": str(manifest), "manifestSHA256": hashlib.sha256(raw).hexdigest(),
+            "sourceSHA256": expected_source_sha256, "fullFileRead": True,
+            "imageIdentity": image_before, "manifestIdentity": manifest_before}
 
 
 def main():
@@ -129,6 +174,8 @@ def main():
                                               "-o", str(helper)], 120)
         if helper_built:
             helper_built = run("ownership-birth-boundaries", [str(helper), "--birth-regression"], 30)
+        if not run("completed-output-verifier-cases", ["python3", "tests/test_macos_completed_image.py"], 60):
+            raise RuntimeError("Completed-image actual filesystem verification cases failed")
         receipt["stages"]["gui"] = {"state": "not_run", "reason": "awaiting native app" if helper_built else "helper compilation failed"}
         save()
         for name, args in [
@@ -243,15 +290,16 @@ def main():
             kinds = [event.get("kind") for event in events]
             clicks = [event.get("label") for event in events if event.get("kind") == "pointer-click"]
             required_events = ({"native-usable-window-observed", "native-image-chooser-observed", "native-image-selected-observed",
-                                "cold-build-next-stage-observed", "normal-app-close"} if fullstack else
+                                "cold-build-next-stage-observed", "completed-image-ui-observed", "separate-build-cancel-observed", "actual-display-1600x900", "normal-app-close"} if fullstack else
                                {"native-usable-window-observed", "native-image-chooser-observed", "native-image-chooser-closed-observed", "normal-app-close"})
-            required_clicks = ({"choose-image", "choose-pinned-image", "build-pinned-image", "cancel-after-next-stage"}
+            required_clicks = ({"choose-image", "choose-pinned-image", "build-pinned-image", "close-build-progress", "build-for-separate-cancel", "cancel-separate-build", "close-separate-cancel"}
                                if fullstack else {"choose-image", "cancel-image-chooser"})
             if not required_events.issubset(kinds) or not required_clicks.issubset(clicks):
                 raise RuntimeError("GUI exited without the requested exact pointer/observed-stage/normal-close evidence")
             if fullstack:
                 receipt["productAcceptance"]["coldBuildGuestHealthNextStage"] = "passed"
-                receipt["productAcceptance"]["imageBuild"] = "not_complete: cancelled after actual selected-image inspection milestone"
+                receipt["completedImage"] = verify_completed_image(events, recovery)
+                receipt["productAcceptance"]["imageBuild"] = "passed: completed image and manifest independently full-hashed"
                 if digest(recovery) != RECOVERY_SHA256:
                     raise RuntimeError("Original recovery bytes changed")
                 qemu = subprocess.run(["/usr/bin/pgrep", "-f", "qemu-system-"], capture_output=True, text=True, timeout=10)

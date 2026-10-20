@@ -147,6 +147,56 @@ fn unix_birth(pid: u32) -> io::Result<String> {
     Ok(format!("uid={uid} birthTicks={ticks}"))
 }
 
+#[cfg(target_os = "linux")]
+fn linux_group_members(group: i32) -> io::Result<Vec<i32>> {
+    use std::{io::Read, os::unix::fs::MetadataExt};
+    if group <= 0 {
+        return Err(io::Error::other("invalid guest group enumeration"));
+    }
+    let mut members = Vec::new();
+    for (count, entry) in std::fs::read_dir("/proc")?.enumerate() {
+        if count >= 65536 {
+            return Err(io::Error::other("guest process enumeration excessive"));
+        }
+        let entry = entry?;
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        let mut file = match std::fs::File::open(entry.path().join("stat")) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            result => result?,
+        };
+        let mut raw = String::new();
+        file.by_ref().take(8193).read_to_string(&mut raw)?;
+        let fields = raw
+            .rsplit_once(')')
+            .ok_or_else(|| io::Error::other("guest stat malformed"))?
+            .1
+            .split_whitespace()
+            .collect::<Vec<_>>();
+        if raw.len() > 8192 {
+            return Err(io::Error::other("guest stat excessive"));
+        }
+        let observed = fields
+            .get(2)
+            .ok_or_else(|| io::Error::other("guest group absent"))?
+            .parse::<i32>()
+            .map_err(io::Error::other)?;
+        if observed == group {
+            if file.metadata()?.uid() != unsafe { libc::geteuid() } {
+                return Err(io::Error::other("guest group contains foreign UID"));
+            }
+            members.push(pid);
+        }
+    }
+    members.sort_unstable();
+    Ok(members)
+}
+
 #[cfg(target_os = "macos")]
 fn unix_birth(pid: u32) -> io::Result<String> {
     let mut info = unsafe { std::mem::zeroed::<libc::proc_bsdinfo>() };
@@ -264,6 +314,25 @@ fn darwin_only_exited_original(
 }
 
 impl GuestChild {
+    /// Keep the original direct child unreaped while proving its isolated group
+    /// has no descendants. A successful kill request is not this proof.
+    pub(crate) fn descendants_absent(&mut self) -> io::Result<bool> {
+        #[cfg(unix)]
+        {
+            if !self.observed_exit()? {
+                return Ok(false);
+            }
+            let group = i32::try_from(self.child.id()).map_err(io::Error::other)?;
+            #[cfg(target_os = "macos")]
+            let members = darwin_group_members(group)?;
+            #[cfg(target_os = "linux")]
+            let members = linux_group_members(group)?;
+            Ok(members.is_empty() || members == [group])
+        }
+        #[cfg(windows)]
+        self.job.absent()
+    }
+
     pub(crate) fn observed_exit(&mut self) -> io::Result<bool> {
         if self.reaped.is_some() {
             return Ok(true);
@@ -309,12 +378,20 @@ impl GuestChild {
             // A prior external wait/ECHILD must refuse signaling. Successful
             // WNOWAIT proves this is still our unreaped original direct child.
             let exited = self.observed_exit()?;
-            // A successful signal request is already bound to this unreaped
-            // original group. A repeat must still prove direct-child custody,
-            // but need not signal a dying member again. Finalization separately
-            // requires exit, reader EOF, reap and group absence.
+            // XNU may reject another signal to a dying original. Skip it only
+            // after a complete native enumeration proves there is no other
+            // member; a cached successful request cannot hide inherited writers.
+            #[cfg(target_os = "macos")]
             if self.stop_requested {
-                return Ok(());
+                let group = i32::try_from(self.child.id()).map_err(io::Error::other)?;
+                let members = darwin_group_members(group)?;
+                if members.is_empty() || members == [group] {
+                    return Ok(());
+                }
+                for member in members {
+                    // Unknown/foreign UID stays a refusal, never absent.
+                    unix_birth(member as u32)?;
+                }
             }
             #[cfg(not(target_os = "macos"))]
             let _ = exited;
@@ -774,5 +851,65 @@ mod tests {
             child.stop_tree().unwrap_err().raw_os_error(),
             Some(libc::ECHILD)
         );
+    }
+
+    #[test]
+    fn repeated_stop_closes_real_late_group_writer_before_original_reap() {
+        use std::{
+            io::Read,
+            os::unix::process::CommandExt,
+            process::Stdio,
+            time::{Duration, Instant},
+        };
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "exit 7"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut original = spawn_guest_process(&mut command).unwrap();
+        let until = Instant::now() + Duration::from_secs(1);
+        while !original.observed_exit().unwrap() {
+            assert!(Instant::now() < until);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        original.stop_tree().unwrap();
+        // Real OS member joining the still-custodied group AFTER successful
+        // first stop. No replacement stop/read method or cached-success mock.
+        let mut late = Command::new("/bin/sh")
+            .args(["-c", "exec sleep 30"])
+            .process_group(original.id() as i32)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut errors = late.stderr.take().unwrap();
+        let until = Instant::now() + Duration::from_secs(1);
+        let outcome = loop {
+            if let Err(error) = original.stop_tree() {
+                break Err(error.to_string());
+            }
+            match late.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Err(error) => break Err(error.to_string()),
+                _ if Instant::now() >= until => {
+                    break Err("late writer survived repeated stop".into())
+                }
+                _ => std::thread::sleep(Duration::from_millis(1)),
+            }
+        };
+        // Cleanup only the exact direct test child on a failed assertion path.
+        if outcome.is_err() {
+            let _ = late.kill();
+            let _ = late.wait();
+        }
+        assert!(!outcome.unwrap().success());
+        let mut diagnostics = Vec::new();
+        errors.read_to_end(&mut diagnostics).unwrap();
+        assert!(diagnostics.is_empty()); // Real stderr EOF after writer reaping.
+        assert!(original.descendants_absent().unwrap());
+        assert_eq!(original.reap_owned().unwrap().unwrap().code(), Some(7));
+        assert!(original.tree_absent().unwrap());
     }
 }

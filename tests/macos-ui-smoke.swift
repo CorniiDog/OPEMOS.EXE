@@ -26,6 +26,27 @@ func record(_ kind: String, _ fields: [String: Any] = [:]) {
 func require(_ ok: Bool, _ message: String) throws {
     if !ok { throw Refusal(message: message) }
 }
+func prepareActualDisplay() throws {
+    let display = CGMainDisplayID()
+    let modes = CGDisplayCopyAllDisplayModes(display, nil) as? [CGDisplayMode] ?? []
+    record("supported-display-modes", ["display": display, "modes": modes.map {
+        ["width": $0.width, "height": $0.height, "pixelWidth": $0.pixelWidth, "pixelHeight": $0.pixelHeight]
+    }])
+    guard let mode = modes.first(where: {
+        $0.width == 1600 && $0.height == 900 && $0.pixelWidth == 1600 && $0.pixelHeight == 900
+    }) else { throw Refusal(message: "No actual supported unscaled 1600x900 display mode") }
+    let result = CGDisplaySetDisplayMode(display, mode, nil)
+    record("display-mode-set", ["result": result.rawValue, "display": display])
+    try require(result == .success, "native 1600x900 mode change refused")
+    // Observe the real display after the native mode call, never viewer scaling.
+    let bounds = CGDisplayBounds(display)
+    record("actual-display-1600x900", ["width": CGDisplayPixelsWide(display),
+        "height": CGDisplayPixelsHigh(display), "bounds": NSStringFromRect(bounds),
+        "screens": NSScreen.screens.map { ["frame": NSStringFromRect($0.frame),
+                                            "usableFrame": NSStringFromRect($0.visibleFrame)] }])
+    try require(CGDisplayPixelsWide(display) == 1600 && CGDisplayPixelsHigh(display) == 900 &&
+                bounds.width == 1600 && bounds.height == 900, "actual display mode does not match 1600x900")
+}
 func ownedBirth(_ birth: Date?, since start: Date, observed: Date) -> Bool {
     guard let birth = birth else { return false }
     return birth >= start && birth <= observed
@@ -249,9 +270,9 @@ func screenshot(_ name: String, failureEvidence: Bool = false) throws {
     if p.isRunning { p.terminate(); p.waitUntilExit(); throw Refusal(message: "screenshot timeout") }
     try require(p.terminationStatus == 0, "screen capture refused")
     let url = out!.appendingPathComponent(name + ".png")
-    guard let image = NSImage(contentsOf: url) else { throw Refusal(message: "invalid screenshot pixels") }
-    try require(image.size.width > 100 && image.size.height > 100, "empty screenshot")
-    record("screenshot", ["name": url.lastPathComponent, "width": image.size.width, "height": image.size.height])
+    guard let image = NSBitmapImageRep(data: try Data(contentsOf: url)) else { throw Refusal(message: "invalid screenshot pixels") }
+    try require(image.pixelsWide == 1600 && image.pixelsHigh == 900, "screenshot is not unscaled 1600x900")
+    record("screenshot", ["name": url.lastPathComponent, "width": image.pixelsWide, "height": image.pixelsHigh])
 }
 func click(_ element: AXUIElement, _ label: String, double: Bool = false) throws {
     try require((value(element, kAXEnabledAttribute) as? Bool) == true, "disabled or unknown enabled state: " + label)
@@ -304,6 +325,7 @@ do {
                            "pid": ProcessInfo.processInfo.processIdentifier,
                            "display": CGMainDisplayID(), "displayBounds": NSStringFromRect(CGDisplayBounds(CGMainDisplayID()))])
     try require(ax && post && screen, "GUI permissions unavailable; no TCC bypass")
+    try prepareActualDisplay()
     try screenshot("desktop-before")
     // Reveal only. Finder must launch the actual app via a real icon double-click.
     try require(NSWorkspace.shared.selectFile(appURL.path, inFileViewerRootedAtPath: appURL.deletingLastPathComponent().path), "Finder reveal failed")
@@ -469,8 +491,10 @@ do {
         var observedReady = false
         var observedHealth = false
         var observedNext = false
+        var observedComplete = false
+        var completionText = ""
         var nextCapture = Date.distantPast
-        while !observedNext {
+        while !observedComplete {
             var strings: [String] = []
             _ = try find(root) { element in
                 for attribute in [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute] {
@@ -483,7 +507,9 @@ do {
             observedHashing = observedHashing || visible.contains("Hashing") || visible.contains("hashing")
             observedReady = observedReady || visible.contains("STEAMOS_BUILDER_READY received.")
             observedHealth = observedHealth || visible.contains("Health: protocol 1;")
-            observedNext = visible.contains("Selected image:")
+            observedNext = observedNext || visible.contains("Selected image:")
+            observedComplete = visible.contains("NVIDIA image ready for USB Imaging") && visible.contains("Build manifest:") && visible.contains("Export validation:")
+            if observedComplete { completionText = visible }
             if Date() >= nextCapture {
                 record("visible-build-state", ["text": String(visible.prefix(65536)),
                     "hashing": observedHashing, "ready": observedReady, "health": observedHealth, "nextStage": observedNext])
@@ -493,17 +519,35 @@ do {
             if visible.contains("Build failed") || visible.contains("timed out") || visible.contains("timedOut") {
                 throw Refusal(message: "actual Build failure; retained visible text and screenshot")
             }
-            if !observedNext { try guiWaitTick() }
+            if !observedComplete { try guiWaitTick() }
         }
         try require(observedHashing && observedReady && observedHealth,
                     "next stage lacks observed hashing, cold readiness or guest health")
         record("cold-build-next-stage-observed", ["outputAcceptance": false])
-        guard let cancelBuild = try button("Cancel Build") else { throw Refusal(message: "normal cancel control missing") }
-        try click(cancelBuild, "cancel-after-next-stage")
+        try require(observedNext, "completed build lacks observed selected-image stage")
+        record("completed-image-ui-observed", ["text": completionText, "independentFullHashPending": true])
         var closeProgress: AXUIElement?
         while closeProgress == nil { closeProgress = try button("Close"); if closeProgress == nil { try guiWaitTick() } }
-        try screenshot("cancelled-build")
+        try screenshot("completed-build")
         try click(closeProgress!, "close-build-progress")
+        // A distinct second transaction exercises cancellation. It cannot stand
+        // in for the completed first image, whose manifest/full hash is checked
+        // independently by the outer same-job consumer.
+        var repeatBuild: AXUIElement?
+        while repeatBuild == nil {
+            if let candidate = try button("Build NVIDIA Image"),
+               (value(candidate, kAXEnabledAttribute) as? Bool) == true { repeatBuild = candidate }
+            else { try guiWaitTick() }
+        }
+        try click(repeatBuild!, "build-for-separate-cancel")
+        var cancelBuild: AXUIElement?
+        while cancelBuild == nil { cancelBuild = try button("Cancel Build"); if cancelBuild == nil { try guiWaitTick() } }
+        try click(cancelBuild!, "cancel-separate-build")
+        var closeCancelled: AXUIElement?
+        while closeCancelled == nil { closeCancelled = try button("Close"); if closeCancelled == nil { try guiWaitTick() } }
+        record("separate-build-cancel-observed", ["completedImageAcceptance": false])
+        try screenshot("separate-cancelled-build")
+        try click(closeCancelled!, "close-separate-cancel")
     } else {
         try click(cancel!, "cancel-image-chooser")
         while try chooserCancel() != nil { try guiWaitTick() }

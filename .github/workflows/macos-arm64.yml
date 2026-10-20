@@ -117,7 +117,7 @@ jobs:
       - name: Native build and actual graphical transaction
         env:
           OPEMOS_RETAINED_MAC_APP_ARCHIVE: ${{ runner.temp }}/retained-7b8/SteamOS-NVIDIA-Builder-arm64.app.zip
-        run: python3 scripts/check_macos_arm64_ci.py
+        run: python3 scripts/run_macos_packaged_robot.py
       - name: Preserve exact app, failures and GUI evidence
         id: executable
         if: always()
@@ -128,6 +128,14 @@ jobs:
           retention-days: 3
           if-no-files-found: error
           compression-level: 0
+      - name: Preserve actual same-run Robot reports separately
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-robot-${{ env.OPEMOS_EXE_COMMIT }}-${{ github.run_attempt }}
+          path: build/macos-robot-evidence
+          if-no-files-found: warn
+          retention-days: 1
       - name: Bind the actual current-source Mac package to this producer
         if: success() && steps.executable.outputs.artifact-id != ''
         env:

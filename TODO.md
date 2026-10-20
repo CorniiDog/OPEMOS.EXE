@@ -1,5 +1,38 @@
 # OPEMOS.EXE — Product Checklist
 
+## Native inherited-writer completion and genuine Mac image transaction — 2026-10-20
+
+- [ ] Preserve actual observation7aaae7b1/run39366649628: native compile0,
+  original ONE-SECOND marker control failed101 before50ms; SIGKILL request
+  succeeded but UID501 sleep12842/group12840 retained stderr. Root reapedSIG9,
+  stderr timed out/noEOF, actual tree_absent=false. Runner orphan termination
+  is not independently verified normal closure. Original43998 and exact fork
+  interleaving remain UNKNOWN. Root reviewed complete291e4f66 handback.
+  Correct shared receive/stop completion to repeat owned-group stop under the
+  SAME absolute deadline and retain WNOWAIT custody until descendants and
+  readers finish; cached request is not closure. Native Darwin enumeration
+  skips redundant original-only signal, never unknown/foreign/live writers;
+  Linux bounded actual proc group reader and Windows actual job remain strict.
+  Add real OS late group writer after successful first stop, real stderr EOF,
+  original numeric status/reap/group absence and existing external-reap faults.
+  No method override, reserve/deadline/assertion relaxation or reader detach.
+- [ ] New user NO application UI redesign supersedes the previous viewport
+  entry: remove its app/window/CSS sizing changes, retain strict actual pointer
+  hit/ancestry/settlement evidence. Set supported actual1600x900 native display,
+  require real unscaled screenshot pixels and visible bounds before clicks.
+  Normal Finder chooser/Build must reach genuine completed image/manifest and
+  independent entire-file hash, not cancel-after-next-stage. Separate second
+  build cancel and existing wrong-marker guest/finalizers/normal-close remain.
+  Actual same-job Robot7.5 pinned official wheel emits XML/HTML/xUnit around the
+  real native pipeline, separately from unchanged executable archive layout.
+  Producer reuses accepted runtime/companion without43bottle replay. New actual
+  native M1 cases precede expensive inputs; all exact Linux/Windows/M1 checks
+  and changed full-graph Core review required, no prior pass/approval transfer.
+  Necessary normal topic push to https://github.com/CorniiDog/OPEMOS.EXE.git
+  work/exe-macos-main-native-closure is solely for remote native CI/review.
+  Main/PR204/frozen branches/governance/trust remain preserved; no OMEN/Games,
+  physical USB/GPU or publication acceptance implied.
+
 ## Current-Main Mac producer and measured Darwin closure — 2026-10-20
 
 - [ ] Preserve actual73f normal M1 run39357004406/job118413978910: native

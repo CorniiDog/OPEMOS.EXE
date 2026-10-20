@@ -50,8 +50,6 @@ fn main_window_ready(app: tauri::AppHandle) -> Result<(), String> {
     let main = app
         .get_webview_window("main")
         .ok_or("The main application window is unavailable.")?;
-    #[cfg(target_os = "macos")]
-    windows::fit_main_to_usable_display(&main)?;
     main.show()
         .map_err(|error| format!("Could not show the main application window: {error}"))?;
     main.set_focus()

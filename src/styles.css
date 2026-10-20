@@ -34,9 +34,6 @@ body {
   background: radial-gradient(circle at 10% -8%, rgba(102, 192, 244, .16), transparent 31rem), var(--glass-canvas);
 }
 .platform-macos body { contain: paint; clip-path: inset(0 round 10px); -webkit-backdrop-filter: blur(24px) saturate(135%); backdrop-filter: blur(24px) saturate(135%); }
-/* The native Mac window fits NSScreen's usable work area. Never keep an
-   800px web canvas underneath a shorter window/Dock: scroll the real content. */
-.platform-macos body { min-height: 0; }
 body::before,
 body::after { content: ""; position: fixed; pointer-events: none; }
 body::before {
@@ -97,7 +94,6 @@ body.companion-active .window-drag-region { pointer-events: none; }
   gap: 10px;
 }
 .platform-macos .app-shell { padding: 50px 0 8px; gap: 8px; }
-.platform-macos .app-shell { min-height: 0; scroll-padding-block: 12px; }
 
 .app-shell > * { flex: none; }
 .app-shell > header { padding: 0 2px; }

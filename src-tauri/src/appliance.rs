@@ -2863,7 +2863,6 @@ fn receive_guest_frame<T>(
     deadline: Instant,
     timeout_message: &str,
 ) -> Result<T, String> {
-    let mut stopped = false;
     loop {
         match receiver.try_recv() {
             Ok(result) => return result,
@@ -2874,14 +2873,10 @@ fn receive_guest_frame<T>(
         }
         // Do not wait for inherited-pipe EOF before observing the root. Keep
         // its status unreaped while stopping this producer's remaining tree.
-        if !stopped
-            && guest_child_exited(child)
-                .map_err(|e| format!("Could not inspect guest command: {e}"))?
-        {
+        if guest_child_exited(child).map_err(|e| format!("Could not inspect guest command: {e}"))? {
             child
                 .stop_tree()
                 .map_err(|e| format!("Could not stop exited guest writers: {e}"))?;
-            stopped = true;
         }
         if Instant::now() >= deadline {
             return Err(timeout_message.into());
@@ -2896,13 +2891,21 @@ fn stop_guest_command_before(
     readers_done: impl Fn() -> bool,
 ) -> Result<std::process::ExitStatus, String> {
     drop(child.stdin.take());
-    child
-        .stop_tree()
-        .map_err(|e| format!("Could not stop owned guest tree: {e}"))?;
     loop {
+        // A group may acquire a last inherited writer while the first signal
+        // is delivered. Keep original WNOWAIT/job custody and complete the
+        // stop, rather than treating the first successful request as closure.
+        child
+            .stop_tree()
+            .map_err(|e| format!("Could not stop owned guest tree: {e}"))?;
         let exited = guest_child_exited(child)
             .map_err(|e| format!("Could not inspect owned guest cleanup: {e}"))?;
-        if exited && readers_done() {
+        if exited
+            && readers_done()
+            && child
+                .descendants_absent()
+                .map_err(|e| format!("Could not inspect owned descendants: {e}"))?
+        {
             let status = child
                 .reap_owned()
                 .map_err(|e| format!("Could not reap owned guest: {e}"))?
@@ -2922,7 +2925,7 @@ fn stop_guest_command_before(
         if Instant::now() >= deadline {
             return Err(format!(
                 "Guest process/stream closure exceeded command deadline; root={:?}; readers={}",
-                child.reap_owned(),
+                child.observed_exit(),
                 readers_done()
             ));
         }
