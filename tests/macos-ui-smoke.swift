@@ -402,10 +402,13 @@ func qualifyFileItem(_ leaf: AXUIElement, _ image: URL) throws -> FileItemCustod
        let list = axParent(parent), text(list, kAXRoleAttribute) == "AXList" {
         let urls = (try? exactFileLeaves(parent)) ?? []
         if urls.count == 1 && CFEqual(urls[0], leaf) &&
-            nativeFilePath(value(leaf, kAXURLAttribute) as? URL) == image &&
-            (try observedRect(parent)).contains(try observedRect(leaf)) {
-            try requireControlCustody(parent)
-            container = parent
+            nativeFilePath(value(leaf, kAXURLAttribute) as? URL) == image {
+            let parentRect = try observedRect(parent)
+            let leafRect = try observedRect(leaf)
+            if parentRect.contains(leafRect) {
+                try requireControlCustody(parent)
+                container = parent
+            }
         }
     }
     record("file-item-custody", ["uniqueURL": image.path, "containerQualified": container != nil,

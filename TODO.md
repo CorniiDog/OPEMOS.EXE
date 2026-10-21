@@ -2,6 +2,17 @@
 
 ## Owned native pointer pair and exact file-item recovery — 2026-10-20
 
+- [ ] First d79 normal native run39518108443/job118955038920 preserved:
+  Swift exit1 at405 throwing geometry inside short-circuit if lacks outer try.
+  Hoist exact native parent/leaf geometry reads before unchanged containment
+  predicate; no guard/assertion/timeout waiver. Static source review missed
+  Swift rethrows operator requirement; real native compiler found it. Actual
+  Clippy/Rust/three pointer-schema file cases passed, no bulk/app/GUI attempted.
+  Independent push LinuxRust118955027278 failed unchanged fast-child birth UID
+  check before explicit external reap; raw full log retained, same-head PRRust
+  passed. Actual proc-inodeUID value at first failed birth was not exported and
+  remains UNKNOWN. Do not relax UID guard or replay unchanged native acceptance.
+
 - [ ] Root8bf88490 and full independent42d57728 actual70b review release one
   joined source transaction. Preserve actual70b424 native/strictsealed package,
   all11 independent checks and failed1600 chooser: TextField3hits then AXGroup
