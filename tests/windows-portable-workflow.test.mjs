@@ -8,6 +8,20 @@ import { validateWindowsPortableWorkflow } from "../scripts/windows-portable-wor
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workflow = await readFile(path.join(repo, ".github", "workflows", "windows-portable.yml"), "utf8");
 
+function injectUntrustedWriteToken(text) {
+  const changed = text.replace(/  omen-required-untrusted:\r?\n/, "  omen-required-untrusted:\n    permissions:\n      actions: write\n");
+  assert.notEqual(changed, text, "untrusted write-token fault must actually be injected");
+  return changed;
+}
+
+test("OMEN write-token fault is injected for actual checkout, LF and CRLF bytes", () => {
+  const lf = workflow.replace(/\r\n/g, "\n");
+  console.info(`Actual workflow CRLF=${(workflow.match(/\r\n/g) || []).length}; LF=${(workflow.match(/\n/g) || []).length}`);
+  for (const text of [workflow, lf, lf.replaceAll("\n", "\r\n")]) {
+    assert.throws(() => validateWindowsPortableWorkflow(injectUntrustedWriteToken(text)), /isolate its sole write token/);
+  }
+});
+
 test("Windows portable workflow preserves immutable inputs and unsigned artifact gates", () => {
   assert.equal(validateWindowsPortableWorkflow(workflow), true);
 });
@@ -17,7 +31,7 @@ test("Windows portable workflow accepts CRLF checkout line endings", () => {
 });
 
 for (const [name, mutate, expected] of [
-  ["untrusted write token", text => text.replace("  omen-required-untrusted:\n", "  omen-required-untrusted:\n    permissions:\n      actions: write\n"), /isolate its sole write token/],
+  ["untrusted write token", injectUntrustedWriteToken, /isolate its sole write token/],
   ["untrusted dispatch", text => text.replace(" diagnostics --directory required-omen-results ", " dispatch-and-wait --platform windows "), /unavailable outcome reports/],
   ["mutable Main gate checkout", text => text.replace("ref: ${{ github.sha }}", "ref: refs/heads/main"), /immutable Main gate checkout/],
   ["unbounded diagnostic dispatch", text => text.replace("if: github.event_name == 'workflow_dispatch' && inputs.producer-metadata-diagnostic", "if: always()"), /manual-only finite diagnostic/],
