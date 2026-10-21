@@ -23,6 +23,37 @@ MAX_PUBLIC = 16 * 1024 * 1024
 MAX_PUBLIC_TOTAL = 256 * 1024 * 1024
 
 
+PUBLIC_FAILURES = {'ACTIONS_TOKEN_REQUIRED': 'Existing ephemeral attested Actions token required', 'LEGACY_SCOPE_REFUSED': 'Legacy connection proof is not authorized by this control-only lease', 'TOKEN_BINDING_REQUIRED': 'A post-hook job-token binding is required before a produced-platform operation', 'HOST_OPERATION_FAILED': 'Host operation failed; retained private stage evidence remains authoritative'}
+
+def public_failure_value(f):
+    require(type(f) is dict and set(f) == {"kind", "code", "reason", "error_type", "private_recorded", "secondary"} and
+            f["kind"] == "OPEMOS_BROKER_FAILURE_V1" and f["code"] in PUBLIC_FAILURES and
+            f["reason"] == PUBLIC_FAILURES[f["code"]] and
+            type(f["error_type"]) is str and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", f["error_type"]) and
+            type(f["private_recorded"]) is bool and
+            f["secondary"] in ([], ["PRIVATE_FAILURE_PERSISTENCE_FAILED"]),
+            "strict nonsecret failed broker cause")
+    return f
+
+
+def broker_failure(reply):
+    if "failure" not in reply: return None
+    require(set(reply) == {"identity", "action", "subject", "status", "all20_passed",
+                          "all_platforms_passed", "vms", "platforms", "public_evidence",
+                          "acceptance", "failure"} and
+            reply["status"] == "failed" and reply["all20_passed"] is False and
+            reply["all_platforms_passed"] is False and reply["vms"] == reply["platforms"] == {} and
+            reply["public_evidence"] == [] and
+            reply["acceptance"] == "SOURCE_AND_ACTUAL_CASE_ONLY; NO_INFERRED_FULLSTACK_PASS",
+            "exact failed broker envelope")
+    return public_failure_value(reply["failure"])
+
+
+def outcome_reason(reply, fallback):
+    failure = broker_failure(reply)
+    return fallback if failure is None else "Root broker " + failure["code"] + ": " + failure["reason"]
+
+
 def strict_json(raw):
     def pairs(items):
         result = {}
@@ -131,6 +162,22 @@ class Engine:
                 "current broker reply identity")
         require(reply.get("action") == action and reply.get("subject") == subject,
                 "broker action/subject identity")
+        failure = broker_failure(reply)
+        if failure is not None:
+            try:
+                # Authenticated nonsecret failure only; create once per operation.
+                path = self.reports / ("broker-failure-" + request["nonce"] + ".json")
+                raw = json.dumps(reply, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+                require(len(raw) <= 4096, "small failed broker record")
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+                fd = os.open(self.reports, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                try: os.fsync(fd)
+                finally: os.close(fd)
+            except Exception:
+                raise ValueError(outcome_reason(reply, "host operation failed") +
+                                 "; public failure receipt persistence failed") from None
         self._copy_public(reply.get("public_evidence", []))
         # A retained-package connection proof cannot promote the independently
         # required current-source VM/platform cases, even via a malformed reply.
@@ -175,7 +222,7 @@ class Engine:
     def vm(self, vm_id):
         require(vm_id in self.results, "unknown required VM")
         reply = self._request("execute-vm", vm_id)
-        require(reply["status"] == "passed", "actual VM case failed; retained host evidence")
+        require(reply["status"] == "passed", outcome_reason(reply, "actual VM case failed; retained host evidence"))
         return {"exports": [{"path": str(self.reports / item["name"]),
                               "kind": item["kind"], "sha256": item["sha256"]}
                              for item in reply["public_evidence"]]}
@@ -183,7 +230,7 @@ class Engine:
     def platform(self, platform):
         require(platform in self.artifacts, "unknown platform")
         reply = self._request("execute-platform", platform)
-        require(reply["status"] == "passed", "actual platform artifacts failed")
+        require(reply["status"] == "passed", outcome_reason(reply, "actual platform artifacts failed"))
         return {"exports": [{"path": str(self.reports / item["name"]),
                               "kind": item["kind"], "sha256": item["sha256"]}
                              for item in reply["public_evidence"]]}
@@ -198,17 +245,23 @@ class Engine:
         path = self.reports / 'broker-required.json'
         raw = json.dumps(reply, sort_keys=True, separators=(',', ':')).encode() + b'\n'
         require(len(raw) <= MAX_REPLY, 'finite exact broker required outcome')
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, 'wb') as stream:
-            stream.write(raw); stream.flush(); os.fsync(stream.fileno())
-        require(reply['status'] == 'passed', 'exact current artifact GUI/SteamOS transaction failed or unavailable')
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, 'wb') as stream:
+                stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+        except Exception:
+            if broker_failure(reply) is not None:
+                raise ValueError(outcome_reason(reply, "host operation failed") +
+                                 "; required failure receipt persistence failed") from None
+            raise
+        require(reply['status'] == 'passed', outcome_reason(reply, 'exact current artifact GUI/SteamOS transaction failed or unavailable'))
         require(type(reply.get('required_acceptance')) is dict, 'current complete Root acceptance missing')
         return {'exports': [{'path': str(self.reports / item['name']), 'kind': item['kind'], 'sha256': item['sha256']} for item in reply['public_evidence']]}
 
     def connection(self):
         """Separately scoped real pointer/native-chooser proof, never fullstack."""
         reply = self._request("connection-proof", "ubuntu_native_chooser_connection")
-        require(reply["status"] == "passed", "actual scoped connection proof failed")
+        require(reply["status"] == "passed", outcome_reason(reply, "actual scoped connection proof failed"))
         require(reply.get("scope") == "CONNECTION_ONLY_OLD_ARTIFACT_NO_FULLSTACK_ACCEPTANCE",
                 "connection proof scope missing")
         return {"exports": [{"path": str(self.reports / item["name"]),
@@ -219,8 +272,15 @@ class Engine:
         reply = self._request("persist", "all")
         path = self.reports / ("summary-" + self.identity["run_id"] + "-" +
                                self.identity["attempt"] + "-" + str(time.monotonic_ns()) + ".json")
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, "w") as stream:
-            json.dump(reply, stream, sort_keys=True, indent=2)
-            stream.write("\n")
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w") as stream:
+                json.dump(reply, stream, sort_keys=True, indent=2)
+                stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
+        except Exception:
+            if broker_failure(reply) is not None:
+                raise ValueError(outcome_reason(reply, "host persistence failed") +
+                                 "; summary failure receipt persistence failed") from None
+            raise
+        require(reply["status"] == "recorded", outcome_reason(reply, "host outcome persistence failed"))
         return reply

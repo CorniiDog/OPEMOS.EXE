@@ -10,6 +10,8 @@ import json
 import os
 from pathlib import Path
 import socket
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -106,6 +108,84 @@ class NativeClientContract(unittest.TestCase):
     def test_broker_failed_stays_failed(self):
         self.serve(lambda r:r.update(status='failed'))
         with self.assertRaisesRegex(ValueError,'connection proof failed'): self.engine().connection()
+
+    def typed_failure(self, reply):
+        reply.pop('scope')
+        reply.update(status='failed', all20_passed=False, all_platforms_passed=False,
+                     acceptance='SOURCE_AND_ACTUAL_CASE_ONLY; NO_INFERRED_FULLSTACK_PASS',
+                     failure={'kind':'OPEMOS_BROKER_FAILURE_V1', 'code':'ACTIONS_TOKEN_REQUIRED',
+                              'reason':M.PUBLIC_FAILURES['ACTIONS_TOKEN_REQUIRED'],
+                              'error_type':'ValueError', 'private_recorded':True, 'secondary':[]})
+
+    def test_authenticated_failure_is_durable_before_required_assertion(self):
+        self.serve(self.typed_failure)
+        with patch.dict(os.environ, {'OPEMOS_REQUIRED_PRODUCER':json.dumps({
+                'platform':'ubuntu','producer_run_id':'10','producer_attempt':'2',
+                'artifact_id':'30','descriptor_sha256':'b'*64})}):
+            client=self.engine()
+            with self.assertRaisesRegex(ValueError,'ACTIONS_TOKEN_REQUIRED'):
+                client.produced_platform()
+        nonce=self.requests[0]['nonce']
+        first=client.reports/('broker-failure-'+nonce+'.json')
+        required=client.reports/'broker-required.json'
+        self.assertEqual(json.loads(first.read_bytes()),json.loads(required.read_bytes()))
+        self.assertEqual(first.stat().st_mode & 0o777,0o600)
+        self.assertFalse(json.loads(first.read_bytes())['all20_passed'])
+
+    def test_failure_persistence_collision_preserves_first_cause_and_old_data(self):
+        self.serve(self.typed_failure);client=self.engine()
+        # Actual OS directory collision, not a replacement persistence method.
+        (client.reports/'broker-required.json').mkdir()
+        with patch.dict(os.environ, {'OPEMOS_REQUIRED_PRODUCER':json.dumps({
+                'platform':'ubuntu','producer_run_id':'10','producer_attempt':'2',
+                'artifact_id':'30','descriptor_sha256':'b'*64})}):
+            with self.assertRaisesRegex(ValueError,'ACTIONS_TOKEN_REQUIRED.*required failure receipt persistence failed'):
+                client.produced_platform()
+        self.assertTrue((client.reports/'broker-required.json').is_dir())
+        self.assertEqual(len(list(client.reports.glob('broker-failure-*.json'))),1)
+
+    def test_unknown_or_reflecting_failure_never_published(self):
+        def mutate(reply):
+            self.typed_failure(reply);reply['failure']['reason']='untrusted private exception text'
+        self.serve(mutate);client=self.engine()
+        with self.assertRaisesRegex(ValueError,'strict nonsecret'):
+            client.connection()
+        self.assertEqual(list(client.reports.glob('broker-failure-*')),[])
+
+    def test_wrong_identity_failure_never_published(self):
+        def mutate(reply):
+            self.typed_failure(reply);reply['identity']['nonce']='b'*32
+        self.serve(mutate);client=self.engine()
+        with self.assertRaisesRegex(ValueError,'reply identity'):client.connection()
+        self.assertEqual(list(client.reports.glob('broker-failure-*')),[])
+
+    def test_actual_client_to_normal_finalizer_process_preserves_failed_identity(self):
+        target={'platform':'ubuntu','producer_run_id':'10','producer_attempt':'2',
+                'artifact_id':'30','descriptor_sha256':'b'*64}
+        self.serve(self.typed_failure)
+        with patch.dict(os.environ, {'OPEMOS_REQUIRED_PRODUCER':json.dumps(target),
+                'OPEMOS_ROBOT_REPORT_DIR':str(self.root/'robot-results')}):
+            client=self.engine()
+            with self.assertRaisesRegex(ValueError,'ACTIONS_TOKEN_REQUIRED'):
+                client.produced_platform()
+        preflight=self.root/'robot-preflight';preflight.mkdir()
+        context={'repository':M.REPO,'source_commit':'a'*40,'target':target,'nonce':'c'*32}
+        producer={'source_commit':'a'*40,'platform':'ubuntu'}
+        (preflight/'required-context.json').write_text(json.dumps({'context':context,'producer':producer}))
+        env=dict(os.environ,GITHUB_SHA='a'*40)
+        command=[sys.executable,'-B',str(ROOT/'scripts/required_omen.py'),'finalize-scope']
+        child=subprocess.run(command,cwd=self.root,env=env,capture_output=True,timeout=15)
+        self.assertEqual(child.returncode,1,child.stderr.decode())
+        self.assertIn(b'ACTIONS_TOKEN_REQUIRED',child.stderr)
+        result=json.loads((self.root/'required-result/required-result.json').read_bytes())
+        self.assertEqual(result['context'],context)
+        self.assertEqual(result['producer'],producer)
+        self.assertEqual(result['consumer'],{'run_id':'101','attempt':'2'})
+        self.assertTrue(result['diagnostic_only']);self.assertFalse(result['actualGUIAccepted'])
+        self.assertEqual(result['broker_failure']['code'],'ACTIONS_TOKEN_REQUIRED')
+        for name in ('output.xml','report.html','log.html','xunit.xml'):
+            self.assertTrue((self.root/'robot-results'/name).is_file())
+        self.assertEqual(list(self.root.rglob('*.png')),[])
 
     def test_duplicate_reply_fields_are_refused(self):
         self.serve(raw=b'{"status":"passed","status":"failed"}\n')

@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).parents[1]/'scripts'))
 import required_omen as gate
 
@@ -46,6 +47,63 @@ class Metadata:
  def verify(self):return gate.producer_ready(SOURCE,self.value['platform'],'10','2',self.read,self.download)
 
 class RequiredProducerTests(unittest.TestCase):
+ def parent_failed_result(self, temp, stale=False, collision=False):
+  m=Metadata();state={}
+  failure={'kind':'OPEMOS_BROKER_FAILURE_V1','code':'ACTIONS_TOKEN_REQUIRED','reason':gate.PUBLIC_FAILURES['ACTIONS_TOKEN_REQUIRED'],'error_type':'ValueError','private_recorded':True,'secondary':[]}
+  class Response:
+   status=204
+   def __enter__(self):return self
+   def __exit__(self,*args):pass
+   def read(self,n):return b''
+  class Opener:
+   def open(self,req,timeout):
+    inputs=json.loads(req.data)['inputs'];nonce=inputs['correlation_nonce']
+    state['title']='04 SteamOS required ubuntu 10/2 '+nonce
+    context={'repository':gate.REPO,'source_commit':SOURCE,'target':gate.target(m.value),'nonce':nonce}
+    if stale:context['nonce']='0'*32
+    value={'kind':'OMEN_REQUIRED_PRODUCER_RESULT_V1','status':'failed','diagnostic_only':True,'actualGUIAccepted':False,'context':context,'producer':m.value,'consumer':{'run_id':'50','attempt':'1'},'broker_failure':failure}
+    state['raw']=encoded_zip('required-result.json',value)
+    return Response()
+  def read(path):
+   if path.startswith('actions/workflows/omen-robot.yml/runs?'):
+    return {'total_count':1,'workflow_runs':[{'id':50,'run_attempt':1,'display_title':state['title'],'head_sha':SOURCE,'head_branch':'main','event':'workflow_dispatch','repository':{'full_name':gate.REPO},'status':'completed'}]}
+   if path.startswith('actions/runs/50/attempts/1/jobs?'):
+    return {'total_count':2,'jobs':[{'name':n,'status':'completed','conclusion':'failure'}for n in ('required-platform-robot','required-platform-result')]}
+   if path.startswith('actions/runs/50/artifacts?'):
+    return {'total_count':1,'artifacts':[{'id':60,'name':'omen-required-result-50-1','expired':False,'digest':'sha256:'+hashlib.sha256(state['raw']).hexdigest()}]}
+   return m.read(path)
+  def download(path):return state['raw'] if path=='actions/artifacts/60/zip'else m.download(path)
+  env={'GITHUB_REPOSITORY':gate.REPO,'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/heads/main','GITHUB_REF_PROTECTED':'true','GITHUB_SHA':SOURCE,'GITHUB_TOKEN':'synthetic-not-a-token','GITHUB_RUN_ID':'10','GITHUB_RUN_ATTEMPT':'2'}
+  prior=os.getcwd();os.chdir(temp)
+  try:
+   if collision:
+    Path('required-omen-results/required-result-failed.json').mkdir(parents=True)
+    Path('required-omen-results/failed-result-readback-secondary.json').mkdir()
+   # Only external API/HTTP adapters supply synthetic provider metadata. The
+   # dispatch, producer verifier, failed ZIP/schema/identity consumer and actual
+   # create-only filesystem persistence functions are never replaced.
+   with patch.dict(os.environ,env),patch.object(gate,'api_reader',return_value=read),patch.object(gate,'metadata_download',side_effect=download),patch.object(gate.request,'build_opener',return_value=Opener()):
+    self.assertEqual(gate.main_dispatch('ubuntu'),1)
+   result=json.loads(Path('required-omen-results/required-failure.json').read_bytes())
+   self.assertFalse(result['oldResultAdopted'])
+   self.assertEqual('ACTIONS_TOKEN_REQUIRED'in result['reason'],not stale)
+   if collision:self.assertTrue(Path('required-omen-results/required-result-failed.json').is_dir())
+  finally:os.chdir(prior)
+ def test_parent_normal_failed_artifact_retains_authenticated_cause(self):
+  with tempfile.TemporaryDirectory()as temp:self.parent_failed_result(temp)
+ def test_parent_stale_failed_artifact_never_adopted(self):
+  with tempfile.TemporaryDirectory()as temp:self.parent_failed_result(temp,stale=True)
+ def test_parent_two_real_persistence_collisions_do_not_mask_first_cause(self):
+  with tempfile.TemporaryDirectory()as temp:self.parent_failed_result(temp,collision=True)
+ def test_token_bind_precedes_both_real_operations_without_token_argv(self):
+  workflow=(Path(__file__).parents[1]/'.github/workflows/omen-robot.yml').read_text()
+  self.assertEqual(workflow.count('job_guard.py --bind-job-token'),2)
+  for name,next_name in [('actual-robot-transactions','required-platform-robot'),('required-platform-robot','required-platform-result')]:
+   section=workflow.split('\n  '+name+':\n')[1].split('\n  '+next_name+':\n')[0]
+   self.assertLess(section.index('persist-credentials: false'),section.index('job_guard.py --bind-job-token'))
+   self.assertLess(section.index('job_guard.py --bind-job-token'),section.index(' -m robot '))
+   self.assertIn('GITHUB_TOKEN: ${{ github.token }}',section)
+   self.assertNotIn('--bind-job-token $',section)
  def test_dispatch_write_token_is_only_in_main_job_and_pr_diagnostics_are_read_only(self):
   root=Path(__file__).parents[1]
   for name in('ubuntu-executable.yml','windows-portable.yml'):

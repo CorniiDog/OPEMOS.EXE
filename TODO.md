@@ -1,5 +1,28 @@
 # OPEMOS.EXE — Product Checklist
 
+## Existing job-token binding and complete failed-result custody — 2026-10-21
+
+- [ ] Root actual producer39633447006 built a package but automatic39635856746
+  failed before native execution: the job guard lacked the existing ephemeral
+  token. Integrate reviewed proposal7f301815 on actual Main839470c2: post-checkout
+  fixed guard bind on both OMEN jobs; exact authenticated nonsecret broker failure
+  through create-only client receipts, Robot, hosted finalizer and parent artifact
+  readback. Keep first cause when receipt persistence also fails. Preserve PR203
+  real same/cross-PID-namespace credentials (pid>=0, exact UID/GID); the proposal's
+  new pid==0 restriction conflicts with that actual existing positive contract
+  and is not needed to deliver the existing token. Root bind namespace/cgroup/
+  birth/one-use/epoch guards remain independently required, never waived here.
+  New socket/process/filesystem and synthetic API cases run only in ordinary
+  permitted source CI; no controller project tests or native/VM acceptance claim.
+  Remote primary push is necessary for current source CI and new exact Core
+  counterpart review. Root alone qualifies source15/Engine15/admission/rollover;
+  original failures, held30b/eaf/6abed, TTL and governance remain unchanged.
+  First df4bdf58 source CI stopped at the unchanged checks.yml client02d6 SHA
+  before credential tests (push39649507539/job119393814929, PR39649553196).
+  Preserve full original log; repin only this ordinary source-test operand to
+  reviewed clientae68448b, without changing kernel tests/guards. AST/diff checks
+  did not check that workflow-to-source pin; exact normal source CI detected it.
+
 ## Joined native pointer identity correction — 2026-10-21
 
 - [ ] Correct the demonstrated Main5a0759 pointer/observer `identity.nonce`

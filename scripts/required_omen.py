@@ -14,6 +14,7 @@ import stat
 from datetime import datetime
 import re
 import secrets
+import sys
 import time
 from urllib import request,error,parse
 import xml.etree.ElementTree as ET
@@ -234,8 +235,25 @@ def main_dispatch(platform):
    time.sleep(10)
   require(selected is not None and selected['status']=='completed','OMEN result unavailable/timed out; no retry or old receipt')
   rid=str(selected['id']);attempt=str(selected['run_attempt']);jobs=items(read,f'actions/runs/{rid}/attempts/{attempt}/jobs','jobs')
+  bad_jobs=[]
   for name in('required-platform-robot','required-platform-result'):
-   rows=[j for j in jobs if j['name']==name];require(len(rows)==1 and rows[0]['status']=='completed'and rows[0]['conclusion']=='success','required actual job missing/failed/skipped: '+name)
+   rows=[j for j in jobs if j['name']==name]
+   if not(len(rows)==1 and rows[0]['status']=='completed'and rows[0]['conclusion']=='success'):bad_jobs.append(name)
+  if bad_jobs:
+   broker_reason=None
+   try:
+    artifacts=items(read,f'actions/runs/{rid}/artifacts','artifacts');rows=[a for a in artifacts if a['name']==f'omen-required-result-{rid}-{attempt}'and a['expired']is False];require(len(rows)==1,'exact failed-result artifact missing')
+    failed=archive_json(metadata_download(f"actions/artifacts/{rows[0]['id']}/zip"),rows[0],'required-result.json')
+    require(failed['kind']=='OMEN_REQUIRED_PRODUCER_RESULT_V1'and failed['status']=='failed'and failed['diagnostic_only']is True and failed['actualGUIAccepted']is False and failed['context']==context and failed['producer']==expected and failed['consumer']=={'run_id':rid,'attempt':attempt},'failed diagnostic exact current identities')
+    value=failed['broker_failure'];require(type(value)is dict,'typed failed broker cause missing')
+    public_failure_value(value)
+    broker_reason='Root broker '+value['code']+': '+value['reason']
+    save(directory/'required-result-failed.json',failed)
+   except Exception as secondary:
+    print('Secondary failed-result readback/persistence failed: '+type(secondary).__name__,file=sys.stderr)
+    try:save(directory/'failed-result-readback-secondary.json',{'status':'failed','firstCause':broker_reason or 'required actual job missing/failed/skipped: '+bad_jobs[0],'secondaryType':type(secondary).__name__,'oldResultAdopted':False})
+    except Exception as persistence:print('Secondary readback receipt persistence failed: '+type(persistence).__name__,file=sys.stderr)
+   raise Refusal(broker_reason or 'required actual job missing/failed/skipped: '+bad_jobs[0])
   artifacts=items(read,f'actions/runs/{rid}/artifacts','artifacts');rows=[a for a in artifacts if a['name']==f'omen-required-result-{rid}-{attempt}'and a['expired']is False];require(len(rows)==1,'exact current result artifact missing')
   raw=metadata_download(f"actions/artifacts/{rows[0]['id']}/zip");result=archive_json(raw,rows[0],'required-result.json')
   require(result['kind']=='OMEN_REQUIRED_PRODUCER_RESULT_V1'and result['context']==context and result['producer']==expected and result['consumer']=={'run_id':rid,'attempt':attempt}and result['status']=='passed'and result['diagnostic_only']is False,'strict current required result identity/status')
@@ -246,7 +264,12 @@ def main_dispatch(platform):
   save(directory/'required-result.json',result);return 0
  except Exception as exc:
   reason='Required current OMEN GUI/SteamOS acceptance failed: '+type(exc).__name__+(': '+str(exc)[:1000]if isinstance(exc,Refusal)else'')
-  emit_diagnostics(directory,reason,context);save(directory/'required-failure.json',{'status':'failed','reason':reason,'context':context,'oldResultAdopted':False,'consumer':None if selected is None else {'run_id':selected['id'],'attempt':selected['run_attempt'],'url':'https://github.com/'+REPO+'/actions/runs/'+str(selected['id'])}});return 1
+  print(reason,file=sys.stderr)
+  try:emit_diagnostics(directory,reason,context)
+  except Exception as secondary:print('Secondary diagnostic persistence failed: '+type(secondary).__name__,file=sys.stderr)
+  try:save(directory/'required-failure.json',{'status':'failed','reason':reason,'context':context,'oldResultAdopted':False,'consumer':None if selected is None else {'run_id':selected['id'],'attempt':selected['run_attempt'],'url':'https://github.com/'+REPO+'/actions/runs/'+str(selected['id'])}})
+  except Exception as secondary:print('Secondary failure-receipt persistence failed: '+type(secondary).__name__,file=sys.stderr)
+  return 1
 
 def scope_guard():
  event=strict(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes());inputs=event.get('inputs',{});platform=inputs.get('required_platform','')
@@ -278,10 +301,40 @@ def public_reports(reply):
   if row['kind']=='robot-output':
    tree=ET.fromstring(raw);require(tree.tag=='robot'and tree.attrib.get('generator','').startswith('Robot'),'actual guest Robot XML required');cases=tree.findall('.//test');require(cases and all(c.find('status').attrib.get('status')=='PASS'for c in cases),'actual guest Robot result failed/missing')
  return rows
+PUBLIC_FAILURES = {'ACTIONS_TOKEN_REQUIRED': 'Existing ephemeral attested Actions token required', 'LEGACY_SCOPE_REFUSED': 'Legacy connection proof is not authorized by this control-only lease', 'TOKEN_BINDING_REQUIRED': 'A post-hook job-token binding is required before a produced-platform operation', 'HOST_OPERATION_FAILED': 'Host operation failed; retained private stage evidence remains authoritative'}
+
+def public_failure_value(f):
+    require(type(f) is dict and set(f) == {"kind", "code", "reason", "error_type", "private_recorded", "secondary"} and
+            f["kind"] == "OPEMOS_BROKER_FAILURE_V1" and f["code"] in PUBLIC_FAILURES and
+            f["reason"] == PUBLIC_FAILURES[f["code"]] and
+            type(f["error_type"]) is str and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", f["error_type"]) and
+            type(f["private_recorded"]) is bool and
+            f["secondary"] in ([], ["PRIVATE_FAILURE_PERSISTENCE_FAILED"]),
+            "strict nonsecret failed broker cause")
+    return f
+
+
+def broker_failure(reply):
+    if "failure" not in reply: return None
+    require(set(reply) == {"identity", "action", "subject", "status", "all20_passed",
+                          "all_platforms_passed", "vms", "platforms", "public_evidence",
+                          "acceptance", "failure"} and
+            reply["status"] == "failed" and reply["all20_passed"] is False and
+            reply["all_platforms_passed"] is False and reply["vms"] == reply["platforms"] == {} and
+            reply["public_evidence"] == [] and
+            reply["acceptance"] == "SOURCE_AND_ACTUAL_CASE_ONLY; NO_INFERRED_FULLSTACK_PASS",
+            "exact failed broker envelope")
+    return public_failure_value(reply["failure"])
+
+
 def finalize_scope():
  context=strict(Path('robot-preflight/required-context.json').read_bytes());reply=strict(Path('robot-results/broker-required.json').read_bytes());identity=reply['identity'];expected=context['producer']
  require(identity['repository']==REPO and identity['source_commit']==expected['source_commit']and identity['run_id']==os.environ['GITHUB_RUN_ID']and identity['attempt']==os.environ['GITHUB_RUN_ATTEMPT']and re.fullmatch('[0-9a-f]{32}',identity['nonce']),'actual current broker identity')
- require(reply['action']=='execute-produced-platform'and reply['subject']==context['context']['target']and reply['status']=='passed','actual exact broker target status')
+ require(reply['action']=='execute-produced-platform'and reply['subject']==context['context']['target'],'actual exact broker target')
+ failure=broker_failure(reply)
+ if failure is not None:
+  refusal=Refusal('Root broker '+failure['code']+': '+failure['reason']);refusal.broker_failure=failure;refusal.failed_context=context;raise refusal
+ require(reply['status']=='passed','actual exact broker target status')
  verified=verify_acceptance(reply['required_acceptance'],expected,identity)
  public=public_reports(reply);kinds={x['kind']for x in public};require({'robot-output','robot-report','robot-log','robot-xunit','screenshot','argv','pointer-action','nvidia-loaded','nvidia-render','gpu-restoration'}<=kinds,'all actual public reports/frames/native/SteamOS/NVIDIA evidence required')
  outer=[]
@@ -304,7 +357,10 @@ if __name__=='__main__':
   else:emit_diagnostics(args.directory,args.reason)
  except Exception as exc:
   reason='Required actual OMEN stage failed: '+type(exc).__name__+(': '+str(exc)[:1000]if isinstance(exc,Refusal)else'')
-  emit_diagnostics(args.directory,reason)
+  print(reason,file=sys.stderr)
+  try:emit_diagnostics(args.directory,reason)
+  except Exception as secondary:print('Secondary diagnostic persistence failed: '+type(secondary).__name__,file=sys.stderr)
   if args.mode=='finalize-scope':
-   save('required-result/required-result.json',{'kind':'OMEN_REQUIRED_PRODUCER_RESULT_V1','status':'failed','diagnostic_only':True,'reason':reason,'actualGUIAccepted':False,'source_commit':os.environ.get('GITHUB_SHA'),'consumer':{'run_id':os.environ.get('GITHUB_RUN_ID'),'attempt':os.environ.get('GITHUB_RUN_ATTEMPT')}})
+   try:save('required-result/required-result.json',{'kind':'OMEN_REQUIRED_PRODUCER_RESULT_V1','status':'failed','diagnostic_only':True,'reason':reason,'actualGUIAccepted':False,'source_commit':os.environ.get('GITHUB_SHA'),'consumer':{'run_id':os.environ.get('GITHUB_RUN_ID'),'attempt':os.environ.get('GITHUB_RUN_ATTEMPT')},'broker_failure':getattr(exc,'broker_failure',None),'context':getattr(exc,'failed_context',{}).get('context'),'producer':getattr(exc,'failed_context',{}).get('producer')})
+   except Exception as secondary:print('Secondary required-result persistence failed: '+type(secondary).__name__,file=sys.stderr)
   raise SystemExit(1)
