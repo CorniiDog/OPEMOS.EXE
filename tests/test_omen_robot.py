@@ -116,7 +116,7 @@ class PointerKeywordCustody(unittest.TestCase):
         self.env=patch.dict(os.environ,{'GITHUB_REPOSITORY':M.REPO,'GITHUB_RUN_ID':'101','GITHUB_RUN_ATTEMPT':'2','OPEMOS_SOURCE_SHA':'a'*40,'OPEMOS_TRANSACTION_NONCE':'b'*32})
         self.env.start();self.P=load('OPEMOSPointer');self.pointer=self.P.OPEMOSPointer();self.fd=None;self.saved=[]
         self.driver=self.root/'driver.py';self.driver.write_text('# synthetic unit driver, no QMP/native effects\n');self.driver.chmod(0o600)
-        context={'identity':{'source_commit':'a'*40,'run_id':'101','attempt':'2','nonce':'b'*32,'runtime_instance_id':'synthetic-only'},'action_id':'fresh-unit-action','point':{'x':1,'y':1},'clock':{'id':'unit-clock'},'sender_stdout_ref':'stdout','sender_stderr_ref':'stderr'}
+        context={'identity':{'source_commit':'a'*40,'run_id':'101','attempt':'2','operation_nonce':'b'*32,'runtime_instance_id':'synthetic-only'},'action_id':'fresh-unit-action','point':{'x':1,'y':1},'clock':{'id':'unit-clock'},'sender_stdout_ref':'stdout','sender_stderr_ref':'stderr'}
         self.operation={'pointer_context':context,'driver':{'path':str(self.driver),'sha256':hashlib.sha256(self.driver.read_bytes()).hexdigest()},'platform':'windows','observed_result_path':str(self.root/'new-observer.json'),'observer_source_sha256':'c'*64}
     def tearDown(self):self.env.stop();self.temp.cleanup()
     def operand(self):
@@ -153,5 +153,42 @@ class PointerKeywordCustody(unittest.TestCase):
         with patch.object(self.P,'modules',return_value={'_READER':SimpleNamespace(verified_namespace=lambda *a:ns)}):
             with self.assertRaisesRegex(ValueError,'Old observed result refused'):self.pointer.click(*self.operand())
         self.assertEqual(self.pointer.actual_pointer_calls,0)
+
+    def test_legacy_pointer_nonce_is_refused_before_loading_sender(self):
+        context=self.operation['pointer_context']['identity']
+        context['nonce']=context.pop('operation_nonce')
+        with patch.object(self.P,'modules',side_effect=AssertionError('must not load sender')):
+            with self.assertRaises(KeyError):self.pointer.click(*self.operand())
+        self.assertEqual(self.pointer.actual_pointer_calls,0)
+
+    def test_stale_operation_nonce_refused_before_loading_sender(self):
+        self.operation['pointer_context']['identity']['operation_nonce']='d'*32
+        with patch.object(self.P,'modules',side_effect=AssertionError('must not load sender')):
+            with self.assertRaisesRegex(ValueError,'Pointer nonce stale'):self.pointer.click(*self.operand())
+        self.assertEqual(self.pointer.actual_pointer_calls,0)
+
+    def test_keyword_then_independent_observer_file_uses_operation_nonce(self):
+        """Real held-file consumers, synthetic sender only; not native GUI proof."""
+        from types import SimpleNamespace
+        ns=self.namespace()
+        path,digest=self.operand()
+        with patch.object(self.P,'modules',return_value={'_READER':SimpleNamespace(verified_namespace=lambda *a:ns)}):
+            self.pointer.click(path,digest)
+        observed={'identity':self.operation['pointer_context']['identity'],
+                  'observed':True,'expected_result':True,'native_observer':True,
+                  'action_id':'fresh-unit-action','runtime_instance_id':'synthetic-only',
+                  'frame_sha256':'e'*64,'window_id':'synthetic-window',
+                  'observer_source_sha256':'c'*64}
+        target=self.root/'new-observer.json'
+        target.write_text(json.dumps(observed));target.chmod(0o600)
+        result=self.pointer.observe(path,digest)
+        self.assertEqual(result['observed_result_sha256'],hashlib.sha256(target.read_bytes()).hexdigest())
+        self.assertEqual(result['actual_pointer_calls'],1) # synthetic sender count, not acceptance
+        observed['identity']={**observed['identity'],'operation_nonce':'d'*32}
+        target.write_text(json.dumps(observed))
+        with self.assertRaisesRegex(ValueError,'Observed result is stale'):self.pointer.observe(path,digest)
+        observed['identity']['nonce']=observed['identity'].pop('operation_nonce')
+        target.write_text(json.dumps(observed))
+        with self.assertRaises(KeyError):self.pointer.observe(path,digest)
 
 if __name__=='__main__':unittest.main()
