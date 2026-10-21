@@ -25,7 +25,7 @@ class OPEMOSPointer:
         operation=strict(raw_file(operation_path,1048576,operation_sha,os.getuid()))
         context=operation['pointer_context'];expected=identity()
         require(all(context['identity'][k]==expected[k]for k in ('source_commit','run_id','attempt')),'Pointer context belongs to another source/run/attempt')
-        require(context['identity']['nonce']==os.environ['OPEMOS_TRANSACTION_NONCE'],'Pointer nonce stale')
+        require(context['identity']['operation_nonce']==os.environ['OPEMOS_TRANSACTION_NONCE'],'Pointer nonce stale')
         platform=operation['platform']
         require(platform in ('windows','ubuntu'),'Current admitted native Mac sender absent; no invented Mac click')
         driver=operation['driver'];source=raw_file(driver['path'],1048576,driver['sha256'],os.getuid())
@@ -104,7 +104,7 @@ class OPEMOSPointer:
             require(time.monotonic()<deadline,'Fresh native observer result unavailable')
             time.sleep(.1)
         raw=raw_file(target,1048576,owner=os.getuid());result=strict(raw)
-        require(all(result['identity'][k]==expected[k]for k in ('source_commit','run_id','attempt'))and result['identity']['nonce']==os.environ['OPEMOS_TRANSACTION_NONCE'],'Observed result is stale')
+        require(all(result['identity'][k]==expected[k]for k in ('source_commit','run_id','attempt'))and result['identity']['operation_nonce']==os.environ['OPEMOS_TRANSACTION_NONCE'],'Observed result is stale')
         require(result['observed']is True and result['expected_result']is True and result['native_observer']is True,'Expected real UI result was not observed')
         require(result['action_id']==self.last_context['action_id'] and result['runtime_instance_id']==self.last_context['identity']['runtime_instance_id'],'Observer belongs to another action/runtime')
         require(result['frame_sha256'] and result['window_id']and result['observer_source_sha256']==operation['observer_source_sha256'],'Observer frame/window/source identity missing')

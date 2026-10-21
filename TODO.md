@@ -1,5 +1,22 @@
 # OPEMOS.EXE — Product Checklist
 
+## Joined native pointer identity correction — 2026-10-21
+
+- [ ] Correct the demonstrated Main5a0759 pointer/observer `identity.nonce`
+  versus strict stage `identity.operation_nonce` contradiction. Both keyword
+  consumers now use `operation_nonce`; outer Engine/broker `nonce` is unchanged.
+  Add legacy/stale keyword and observer-file regressions and unchanged full-stage
+  dual-key rejection. Synthetic sender fixtures are not native GUI acceptance.
+  Source CI and exact Core primary review are required before an owning squash.
+  This imaging/process-sensitive scope cannot use the routine harness exception.
+  Remote owning push is necessary for the user-requested source CI/review.
+  Preserve original finding eeb786e9, proposed patch fab65aef and all prior failures.
+  Root's immutable Windows R6 fresh-Build API f9d3aaf0 / normal entry2e851894
+  consumes the actual Main modules and remains disabled until a new authentic
+  source/package/CI10 sender/independent observer/current-admission graph is
+  qualified. Never relabel patched bytes as5a0759 or replay Ubuntu retained-image
+  writer R29 as fresh Build. No installed, queue, VM or hardware effect here.
+
 ## Required Windows/Ubuntu OMEN and SteamOS outcomes — 2026-10-20
 
 - [ ] Integrate sealed Ubuntu proposal1504602d/repo patch10cec8b6 against actual

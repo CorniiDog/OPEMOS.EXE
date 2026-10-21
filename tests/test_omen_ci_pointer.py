@@ -69,6 +69,15 @@ class ActualActionContract(unittest.TestCase):
         self.mutate('Build',lambda x:x['identity']['executable'].update(executable_sha256='0'*64))
         with self.assertRaises(ValueError):self.validate()
 
+    def test_pointer_identity_has_only_operation_nonce_not_broker_nonce(self):
+        row=self.read('Build')
+        self.assertEqual(row['identity']['operation_nonce'],self.plan['nonce'])
+        self.assertNotIn('nonce',row['identity'])
+        self.assertEqual(row['source_context']['identity'],row['identity'])
+        self.validate()
+        self.mutate('Build',lambda x:x['identity'].update(nonce=self.plan['nonce']))
+        with self.assertRaises(ValueError):self.validate()
+
     def test_wrong_app_birth_window_control_and_coordinates_are_rejected(self):
         mutations=(lambda x:x['app']['process'].update(start=999),lambda x:x['app'].update(window_id='foreign'),
             lambda x:x['target'].update(control_id='another-control'),lambda x:x['target'].update(enabled=False),lambda x:x['point'].update(x=63))
