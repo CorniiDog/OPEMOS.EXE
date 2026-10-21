@@ -17,6 +17,11 @@
   Remote primary push is necessary for current source CI and new exact Core
   counterpart review. Root alone qualifies source15/Engine15/admission/rollover;
   original failures, held30b/eaf/6abed, TTL and governance remain unchanged.
+  First df4bdf58 source CI stopped at the unchanged checks.yml client02d6 SHA
+  before credential tests (push39649507539/job119393814929, PR39649553196).
+  Preserve full original log; repin only this ordinary source-test operand to
+  reviewed clientae68448b, without changing kernel tests/guards. AST/diff checks
+  did not check that workflow-to-source pin; exact normal source CI detected it.
 
 ## Joined native pointer identity correction — 2026-10-21
 
