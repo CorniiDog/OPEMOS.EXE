@@ -20,7 +20,7 @@ test("Linux welcome UI exposes the same print-only non-GUI contract", () => {
   assert.equal(result.stderr, "");
 });
 
-test("Linux preview fails closed without a graphical session", () => {
+test("Linux preview fails closed without a graphical session", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, () => {
   const result = run({ OPEMOS_GRAPHICAL_TEST_PRINT_ONLY: "0", DISPLAY: "", WAYLAND_DISPLAY: "" });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /X11 or Wayland graphical session is required/);
@@ -39,7 +39,7 @@ test("Linux preview uses deterministic browsers and isolated loopback state", ()
   assert.doesNotMatch(launcher, /sudo|pkexec|qemu-system|lsblk|diskutil|\/dev\/sd|\/dev\/nvme/);
 });
 
-test("normal server exit terminates the browser and removes isolated runtime", () => {
+test("normal server exit terminates the browser and removes isolated runtime", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, () => {
   const scratch = mkdtempSync(join(tmpdir(), "opemos-welcome-linux-test-"));
   const bin = join(scratch, "bin");
   const record = join(scratch, "browser-args");
@@ -57,7 +57,7 @@ test("normal server exit terminates the browser and removes isolated runtime", (
   rmSync(scratch, { recursive: true, force: true });
 });
 
-test("closing the isolated browser normally stops the controller and cleans state", () => {
+test("closing the isolated browser normally stops the controller and cleans state", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, () => {
   const scratch = mkdtempSync(join(tmpdir(), "opemos-welcome-linux-close-"));
   const bin = join(scratch, "bin");
   spawnSync("mkdir", ["-p", bin]);
@@ -72,7 +72,7 @@ test("closing the isolated browser normally stops the controller and cleans stat
 
 const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-test("termination signals reap controller and browser and remove runtime", async () => {
+test("termination signals reap controller and browser and remove runtime", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, async () => {
   const scratch = mkdtempSync(join(tmpdir(), "opemos-welcome-linux-signal-"));
   const bin = join(scratch, "bin");
   const record = join(scratch, "browser-started");

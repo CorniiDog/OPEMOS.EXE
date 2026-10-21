@@ -5162,7 +5162,9 @@ mod tests {
 
     fn replace_generation_directory(path: &Path, value: &str) {
         let backup = path.with_extension(format!("replaced-{}", random_candidate_token().unwrap()));
-        fs::rename(path, backup).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::rename(path, &backup).unwrap();
+        fs::set_permissions(&backup, fs::Permissions::from_mode(0o500)).unwrap();
         fs::create_dir(path).unwrap();
         populate(path, value);
         seal_closed_tree(path).unwrap();
@@ -5182,7 +5184,9 @@ mod tests {
 
     fn replace_generation_with_symlink_for_test(path: &Path) {
         let backup = path.with_extension(format!("linked-{}", random_candidate_token().unwrap()));
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
         fs::rename(path, &backup).unwrap();
+        fs::set_permissions(&backup, fs::Permissions::from_mode(0o500)).unwrap();
         std::os::unix::fs::symlink(&backup, path).unwrap();
     }
 
@@ -6344,7 +6348,10 @@ mod tests {
                                 "replacement-{}",
                                 random_candidate_token().unwrap()
                             ));
-                            fs::rename(path, backup).unwrap();
+                            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+                            fs::rename(path, &backup).unwrap();
+                            fs::set_permissions(&backup, fs::Permissions::from_mode(0o500))
+                                .unwrap();
                             std::os::unix::fs::symlink(&external_root, path).unwrap();
                         }
                     },

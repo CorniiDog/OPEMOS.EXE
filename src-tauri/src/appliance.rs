@@ -1,6 +1,69 @@
 use super::*;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 
+// Observation only: never changes a deadline, command result or custody guard.
+fn cold_readiness_record(runtime: &Path, value: serde_json::Value) {
+    // Finder launches do not inherit the source-CI shell's environment.
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let record = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(runtime.join("readiness.jsonl"))?;
+        // Reserve space for an explicit overflow record, never silently present
+        // a dropped native phase as complete evidence.
+        let row = serde_json::json!({"wallUnixMillis":
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(), "observation": value})
+        .to_string();
+        let size = file.metadata()?.len();
+        if size + (row.len() as u64) < 256 * 1024 - 1024 {
+            writeln!(file, "{row}")?;
+        } else if size < 256 * 1024 - 128 {
+            writeln!(
+                file,
+                "{{\"observation\":{{\"phase\":\"observer-overflow\"}}}}"
+            )?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = record {
+        eprintln!("Cold readiness observation unavailable: {error}");
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod cold_readiness_observer_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_file_records_clock_and_explicit_overflow_within_budget() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-cold-observer-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        cold_readiness_record(&root, serde_json::json!({"phase":"test-observation"}));
+        let path = root.join("readiness.jsonl");
+        let first = fs::read_to_string(&path).unwrap();
+        let record: serde_json::Value = serde_json::from_str(first.trim()).unwrap();
+        assert!(record["wallUnixMillis"].as_u64().unwrap() > 0);
+        assert_eq!(record["observation"]["phase"], "test-observation");
+        cold_readiness_record(&root, serde_json::json!({"excess": "x".repeat(256 * 1024)}));
+        let retained = fs::read_to_string(&path).unwrap();
+        assert!(retained.len() <= 256 * 1024);
+        assert!(retained.starts_with(&first));
+        assert!(retained.contains("observer-overflow"));
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+}
+
 // The bundled template can be read-only (notably after Windows ISO transfer).
 // Only the session-owned pflash copy is writable; never alter the template.
 pub(crate) fn copy_writable_uefi_vars(template: &Path, destination: &Path) -> Result<(), String> {
@@ -412,7 +475,15 @@ pub(crate) fn kill_owned_process_group(child: &Child) {
     #[cfg(unix)]
     if let Ok(pid) = i32::try_from(child.id()) {
         if pid > 0 {
-            unsafe { libc::kill(-pid, libc::SIGKILL) };
+            #[cfg(test)]
+            let actual_group = unsafe { libc::getpgid(pid) };
+            let result = unsafe { libc::kill(-pid, libc::SIGKILL) };
+            #[cfg(test)]
+            {
+                let error = (result != 0).then(std::io::Error::last_os_error);
+                eprintln!("owned group kill pid={pid} actualGroup={actual_group} result={result} error={error:?}");
+            }
+            let _ = result;
         }
     }
     #[cfg(windows)]
@@ -594,6 +665,13 @@ pub(crate) fn appliance_dir() -> PathBuf {
     if bundled_runtime_required() {
         if let Ok(executable) = std::env::current_exe() {
             if let Some(bundle) = executable.parent() {
+                if let Ok(root) = crate::runtime_bundle::packaged_resource_path(
+                    &executable,
+                    std::env::consts::OS,
+                    "appliance",
+                ) {
+                    return root;
+                }
                 return bundle.join("appliance");
             }
         }
@@ -620,7 +698,16 @@ pub(crate) fn appimage_companion_root(image: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 pub(crate) fn appliance_path() -> PathBuf {
-    appliance_dir().join("fedora-builder.qcow2")
+    let name = if cfg!(target_os = "macos")
+        && !bundled_runtime_required()
+        && std::env::consts::ARCH == "aarch64"
+        && inspection_guest_arch() == Ok("x86_64")
+    {
+        "fedora-builder-x86_64.qcow2"
+    } else {
+        "fedora-builder.qcow2"
+    };
+    appliance_dir().join(name)
 }
 
 pub(crate) fn nvidia_build_appliance_path() -> PathBuf {
@@ -660,6 +747,9 @@ static VERIFIED_PACKAGED_APPLIANCE: std::sync::OnceLock<Result<(), String>> =
 fn verify_packaged_appliance() -> Result<(), String> {
     if !bundled_runtime_required() && linux_appimage_root().is_none() {
         return Ok(());
+    }
+    if cfg!(target_os = "macos") && inspection_guest_arch()? != "x86_64" {
+        return Err("This packaged companion is the pinned x86_64 Fedora appliance; compile the explicit Apple Silicon software-test lane or provide a separately reviewed native package.".into());
     }
     VERIFIED_PACKAGED_APPLIANCE
         .get_or_init(|| {
@@ -959,24 +1049,38 @@ pub(crate) fn verify_nvidia_guest_device_timeout(
     validate_nvidia_guest_device_timeout_report(&run_guest_command(session, &command)?)
 }
 
-pub(crate) fn runtime_root() -> PathBuf {
-    if let Some(root) = linux_appimage_root() {
-        return root.join("sessions/native");
+fn macos_packaged_cache_root() -> Result<Option<PathBuf>, String> {
+    #[cfg(target_os = "macos")]
+    if bundled_runtime_required() {
+        return portable_state::macos_owned_cache_root().map(Some);
     }
-    if let Some(cache) = portable_cache_root() {
-        return cache.join("appliance-runtime");
-    }
-    appliance_dir().join("runtime")
+    Ok(None)
 }
 
-pub(crate) fn nvidia_build_runtime_root() -> PathBuf {
+pub(crate) fn runtime_root() -> Result<PathBuf, String> {
+    if let Some(cache) = macos_packaged_cache_root()? {
+        return Ok(cache.join("sessions/native"));
+    }
     if let Some(root) = linux_appimage_root() {
-        return root.join("sessions/x86_64");
+        return Ok(root.join("sessions/native"));
     }
     if let Some(cache) = portable_cache_root() {
-        return cache.join("appliance-runtime-x86_64");
+        return Ok(cache.join("appliance-runtime"));
     }
-    appliance_dir().join("runtime-x86_64-managed")
+    Ok(appliance_dir().join("runtime"))
+}
+
+pub(crate) fn nvidia_build_runtime_root() -> Result<PathBuf, String> {
+    if let Some(cache) = macos_packaged_cache_root()? {
+        return Ok(cache.join("sessions/x86_64"));
+    }
+    if let Some(root) = linux_appimage_root() {
+        return Ok(root.join("sessions/x86_64"));
+    }
+    if let Some(cache) = portable_cache_root() {
+        return Ok(cache.join("appliance-runtime-x86_64"));
+    }
+    Ok(appliance_dir().join("runtime-x86_64-managed"))
 }
 
 pub(crate) fn nvidia_build_qemu_spec(
@@ -1026,7 +1130,7 @@ pub(crate) fn archive_and_remove_runtime(runtime_dir: &Path) -> Result<Option<Pa
     let log_source = runtime_dir.join("qemu.log");
     let resources_source = runtime_dir.join("resources.json");
     let archive = if log_source.is_file() || resources_source.is_file() {
-        let archive_dir = runtime_root().join("logs");
+        let archive_dir = runtime_root()?.join("logs");
         fs::create_dir_all(&archive_dir)
             .map_err(|e| format!("Could not create the appliance log archive: {e}"))?;
         let session_name = runtime_dir
@@ -1042,6 +1146,14 @@ pub(crate) fn archive_and_remove_runtime(runtime_dir: &Path) -> Result<Option<Pa
         if resources_source.is_file() {
             fs::copy(&resources_source, &resources_path)
                 .map_err(|e| format!("Could not archive the appliance resource plan: {e}"))?;
+        }
+        let readiness = runtime_dir.join("readiness.jsonl");
+        if readiness.is_file() {
+            fs::copy(
+                readiness,
+                archive_dir.join(format!("{session_name}.readiness.jsonl")),
+            )
+            .map_err(|e| format!("Could not archive cold readiness evidence: {e}"))?;
         }
         Some(if archive_path.is_file() {
             archive_path
@@ -1082,7 +1194,7 @@ pub(crate) fn archive_and_remove_nvidia_build_runtime(
         .iter()
         .any(|(_, source)| source.is_file())
     {
-        let archive_dir = nvidia_build_runtime_root().join("logs");
+        let archive_dir = nvidia_build_runtime_root()?.join("logs");
         fs::create_dir_all(&archive_dir)
             .map_err(|e| format!("Could not create the x86 build log archive: {e}"))?;
         let session_name = runtime_dir
@@ -1119,7 +1231,7 @@ pub(crate) fn archive_and_remove_nvidia_build_runtime(
 }
 
 pub(crate) fn cleanup_abandoned_runtimes() -> Result<(), String> {
-    let root = runtime_root();
+    let root = runtime_root()?;
     if !root.is_dir() {
         return Ok(());
     }
@@ -1150,7 +1262,7 @@ pub(crate) fn cleanup_abandoned_runtimes() -> Result<(), String> {
 }
 
 pub(crate) fn cleanup_abandoned_nvidia_build_runtimes() -> Result<(), String> {
-    let root = nvidia_build_runtime_root();
+    let root = nvidia_build_runtime_root()?;
     if !root.is_dir() {
         return Ok(());
     }
@@ -1194,7 +1306,7 @@ pub(crate) fn supported_image(path: &Path) -> bool {
 }
 
 pub(crate) fn qemu_binary_name() -> Result<&'static str, String> {
-    match std::env::consts::ARCH {
+    match inspection_guest_arch()? {
         "aarch64" => Ok("qemu-system-aarch64"),
         "x86_64" => Ok("qemu-system-x86_64"),
         arch => Err(format!("Unsupported host architecture: {arch}")),
@@ -1886,7 +1998,7 @@ pub(crate) fn prepare_session_with_output(
     cancel: Option<&AtomicBool>,
     plan_export: bool,
 ) -> Result<ApplianceSession, String> {
-    current_host_qemu(std::env::consts::ARCH, std::env::consts::ARCH)?;
+    current_host_qemu(std::env::consts::ARCH, inspection_guest_arch()?)?;
     if cfg!(target_os = "linux") {
         linux_host_prerequisites()?;
     }
@@ -1914,7 +2026,7 @@ pub(crate) fn prepare_session_with_output(
         .duration_since(UNIX_EPOCH)
         .map_err(|e| format!("System clock error: {e}"))?
         .as_millis();
-    let runtime_dir = runtime_root().join(format!("session-{timestamp}-{}", std::process::id()));
+    let runtime_dir = runtime_root()?.join(format!("session-{timestamp}-{}", std::process::id()));
     let cloud_init_dir = runtime_dir.join("cloud-init");
     fs::create_dir_all(&cloud_init_dir)
         .map_err(|e| format!("Could not create runtime directory: {e}"))?;
@@ -2094,8 +2206,8 @@ pub(crate) fn prepare_session_with_output(
     }
 
     let (acceleration, machine, cpu_model) =
-        current_host_qemu(std::env::consts::ARCH, std::env::consts::ARCH)?;
-    let (uefi_code, vars_template) = host_firmware(std::env::consts::ARCH)?;
+        current_host_qemu(std::env::consts::ARCH, inspection_guest_arch()?)?;
+    let (uefi_code, vars_template) = host_firmware(inspection_guest_arch()?)?;
     let vars_image = runtime_dir.join("uefi-vars.fd");
     copy_writable_uefi_vars(&vars_template, &vars_image)?;
     let ssh_port = allocate_ssh_port()?;
@@ -2224,6 +2336,14 @@ pub(crate) fn prepare_session_with_output(
     let started_at = Instant::now();
     let (readiness_deadline, readiness_timeout_secs) =
         appliance_readiness_deadline(started_at, None)?;
+    cold_readiness_record(
+        &runtime_dir,
+        serde_json::json!({"phase":"launch",
+        "pid":child.id(), "argv":format!("{command:?}"),
+        "resources":resources, "inputBytes":fs::metadata(&attached_image).ok().map(|m|m.len()),
+        "readinessTimeoutSeconds":readiness_timeout_secs,
+        "monotonicElapsedNanos":started_at.elapsed().as_nanos()}),
+    );
     Ok(ApplianceSession {
         child,
         watchdog,
@@ -2311,7 +2431,7 @@ pub(crate) fn prepare_nvidia_build_session(
         .map_err(|e| format!("System clock error: {e}"))?
         .as_millis();
     let runtime_dir =
-        nvidia_build_runtime_root().join(format!("session-{timestamp}-{}", std::process::id()));
+        nvidia_build_runtime_root()?.join(format!("session-{timestamp}-{}", std::process::id()));
     let cloud_init_dir = runtime_dir.join("cloud-init");
     fs::create_dir_all(&cloud_init_dir)
         .map_err(|e| format!("Could not create the x86 build runtime: {e}"))?;
@@ -2552,6 +2672,14 @@ pub(crate) fn ssh_command_with_client_log(
     session: &impl GuestConnection,
     client_log: Option<&Path>,
 ) -> Result<Command, String> {
+    ssh_command_options(session, client_log, false)
+}
+
+fn ssh_command_options(
+    session: &impl GuestConnection,
+    client_log: Option<&Path>,
+    readiness_trace: bool,
+) -> Result<Command, String> {
     let ssh = find_binary("ssh").ok_or("ssh is required for the guest handshake.")?;
     let mut command = child_command(ssh);
     command
@@ -2576,6 +2704,9 @@ pub(crate) fn ssh_command_with_client_log(
     if let Some(client_log) = client_log {
         command.arg("-vvv").arg("-E").arg(client_log);
     }
+    if readiness_trace {
+        command.arg("-v");
+    }
     command.arg("builder@127.0.0.1");
     Ok(command)
 }
@@ -2591,7 +2722,7 @@ fn configure_guest_command_stdin(command: &mut Command) {
     command.stdin(Stdio::null());
 }
 
-fn close_guest_command_stdin(child: &mut Child) {
+fn close_guest_command_stdin(child: &mut GuestChild) {
     #[cfg(windows)]
     drop(child.stdin.take());
     #[cfg(not(windows))]
@@ -2603,15 +2734,14 @@ pub(crate) fn start_guest_command_with_client_log(
     session: &impl GuestConnection,
     command: &str,
     client_log: &Path,
-) -> Result<Child, String> {
+) -> Result<GuestChild, String> {
     let mut ssh = ssh_command_with_client_log(session, Some(client_log))?;
     ssh.arg(command)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     configure_guest_command_stdin(&mut ssh);
     isolate_process_group(&mut ssh);
-    let mut child = ssh
-        .spawn()
+    let mut child = spawn_guest_process(&mut ssh)
         .map_err(|e| format!("Could not start the diagnostic guest command: {e}"))?;
     close_guest_command_stdin(&mut child);
     Ok(child)
@@ -2620,51 +2750,31 @@ pub(crate) fn start_guest_command_with_client_log(
 pub(crate) fn start_guest_command(
     session: &impl GuestConnection,
     command: &str,
-) -> Result<Child, String> {
+) -> Result<GuestChild, String> {
     let mut ssh = ssh_command(session)?;
     ssh.arg(command)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     configure_guest_command_stdin(&mut ssh);
     isolate_process_group(&mut ssh);
-    let mut child = ssh
-        .spawn()
+    let mut child = spawn_guest_process(&mut ssh)
         .map_err(|e| format!("Could not start the structured guest command: {e}"))?;
     close_guest_command_stdin(&mut child);
     Ok(child)
 }
 
-pub(crate) fn stop_guest_command_group(child: &mut Child) {
-    #[cfg(test)]
-    let started = Instant::now();
-    kill_owned_process_group(child);
-    let killed = child.kill();
-    let waited = child.wait();
-    #[cfg(test)]
-    eprintln!(
-        "owned cleanup pid={} kill={killed:?} wait={waited:?} elapsed={:?}",
-        child.id(),
-        started.elapsed()
-    );
-    let _ = (killed, waited);
+pub(crate) fn stop_guest_command_group(child: &mut GuestChild) -> Result<(), String> {
+    let deadline = Instant::now() + SHUTDOWN_COMMAND_TIMEOUT;
+    stop_guest_command_before(child, deadline, || true).map(|_| ())
 }
 
 #[cfg(test)]
-pub(crate) fn finish_guest_command(child: Child) -> Result<String, String> {
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("Could not wait for the structured guest command: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if stderr.is_empty() { stdout } else { stderr };
-        return Err(if detail.is_empty() {
-            format!("Guest command exited with {}.", output.status)
-        } else {
-            format!("Guest command exited with {}: {detail}", output.status)
-        });
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+pub(crate) fn finish_guest_command(child: GuestChild) -> Result<String, String> {
+    finish_guest_command_bounded(
+        child,
+        STRUCTURED_GUEST_COMMAND_TIMEOUT,
+        "Guest command timed out.",
+    )
 }
 
 const STRUCTURED_GUEST_COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -2690,7 +2800,7 @@ pub(crate) fn start_structured_guest_command(
     session: &impl GuestConnection,
     command: &str,
     marker: &str,
-) -> Result<Child, String> {
+) -> Result<GuestChild, String> {
     start_guest_command(
         session,
         &structured_guest_command_transport(command, marker),
@@ -2698,79 +2808,83 @@ pub(crate) fn start_structured_guest_command(
 }
 
 pub(crate) fn finish_structured_guest_command(
-    mut child: Child,
+    mut child: GuestChild,
     timeout: Duration,
     marker: &str,
 ) -> Result<String, String> {
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("Could not capture structured guest command output.")?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or("Could not capture structured guest command diagnostics.")?;
-    let stderr_reader = read_bounded_guest_stream(stderr);
+    let (operation_deadline, deadline) = guest_command_deadlines(timeout)?;
+    let (stdout, stderr) = prepare_guest_pipes(&mut child, deadline)?;
+    let stderr_reader = spawn_guest_diagnostics(stderr, READINESS_ATTEMPT_OUTPUT_LIMIT);
     let marker_prefix = format!("{marker}:");
     let (sender, receiver) = mpsc::sync_channel::<Result<(String, i32), String>>(1);
+    let completion = child.reader_wake.guard();
     let stdout_reader = thread::spawn(move || {
+        let _completion = completion;
         let result = (|| {
             let mut stdout = BufReader::new(stdout.take(READINESS_ATTEMPT_OUTPUT_LIMIT + 1));
             let mut output = String::new();
             loop {
                 let mut line = String::new();
-                let bytes = stdout
-                    .read_line(&mut line)
-                    .map_err(|error| format!("Could not read structured guest output: {error}"))?;
+                let bytes = stdout.read_line(&mut line).map_err(|e| {
+                    format!("Could not read structured guest output: {e}; captured: {output}")
+                })?;
                 if bytes == 0 {
                     return Err("Guest command ended without its terminal marker.".into());
                 }
                 if output.len() + bytes > READINESS_ATTEMPT_OUTPUT_LIMIT as usize {
                     return Err("Guest command output exceeded its bound.".into());
                 }
-                let normalized = line.trim_end_matches(['\r', '\n']);
-                if let Some(status) = normalized.strip_prefix(&marker_prefix) {
-                    let status = status
-                        .parse::<i32>()
-                        .map_err(|_| "Guest command returned an invalid terminal status.")?;
-                    return Ok((output.trim().to_string(), status));
+                if let Some(status) = line
+                    .trim_end_matches(['\r', '\n'])
+                    .strip_prefix(&marker_prefix)
+                {
+                    return Ok((
+                        output.trim().to_string(),
+                        status
+                            .parse::<i32>()
+                            .map_err(|_| "Guest command returned an invalid terminal status.")?,
+                    ));
                 }
                 output.push_str(&line);
             }
         })();
         let _ = sender.send(result);
     });
-    let result = match receiver.recv_timeout(timeout) {
-        Ok(result) => result,
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            stop_guest_command_group(&mut child);
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
-            return Err("Guest command timed out.".into());
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            let _ = stdout_reader.join();
-            Err("Structured guest output reader stopped unexpectedly.".into())
-        }
-    };
-    stop_guest_command_group(&mut child);
-    let stderr = stderr_reader
+    let primary = receive_guest_frame(
+        &mut child,
+        &receiver,
+        operation_deadline,
+        "Guest command timed out.",
+    );
+    let cleanup = stop_guest_command_before(&mut child, deadline, || {
+        stdout_reader.is_finished() && stderr_reader.reader.is_finished()
+    })
+    .map(|_| ());
+    let joined = stdout_reader
         .join()
-        .map_err(|_| "Structured guest diagnostics reader panicked.")??;
-    if stderr.len() > READINESS_ATTEMPT_OUTPUT_LIMIT as usize {
-        return Err("Guest command output exceeded its bound.".into());
-    }
-    let (stdout, status) = result?;
-    if status != 0 {
-        let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+        .map_err(|_| "Structured guest output reader panicked.".to_string());
+    let diagnostics = stderr_reader
+        .join()
+        .map_err(|_| "Structured guest diagnostics reader panicked.".to_string())
+        .and_then(|r| r);
+    let primary = primary.and_then(|(stdout, status)| {
+        if status == 0 {
+            return Ok(stdout);
+        }
+        let stderr = diagnostics
+            .as_ref()
+            .map(|b| String::from_utf8_lossy(b).trim().to_string())
+            .unwrap_or_default();
         let detail = if stderr.is_empty() { stdout } else { stderr };
-        return Err(if detail.is_empty() {
-            format!("Guest command exited with status {status}.")
-        } else {
-            format!("Guest command exited with status {status}: {detail}")
-        });
-    }
-    Ok(stdout)
+        Err(format!(
+            "Guest command exited with status {status}: {detail}"
+        ))
+    });
+    let primary = guest_cleanup_result(primary, diagnostics.map(|_| ()));
+    guest_cleanup_result(
+        guest_cleanup_result(guest_cleanup_result(primary, joined), cleanup),
+        guest_completion_before(deadline),
+    )
 }
 
 pub(crate) fn run_guest_command_with_timeout(
@@ -2824,108 +2938,776 @@ const READINESS_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
 const READINESS_ATTEMPT_OUTPUT_LIMIT: u64 = 64 * 1024;
 const SHUTDOWN_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
-fn read_bounded_guest_stream(
-    stream: impl Read + Send + 'static,
-) -> thread::JoinHandle<Result<Vec<u8>, String>> {
-    thread::spawn(move || {
-        let mut captured = Vec::new();
-        stream
-            .take(READINESS_ATTEMPT_OUTPUT_LIMIT + 1)
-            .read_to_end(&mut captured)
-            .map_err(|error| format!("Could not read guest readiness diagnostics: {error}"))?;
-        Ok(captured)
-    })
+fn guest_command_deadlines(timeout: Duration) -> Result<(Instant, Instant), String> {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or("Guest command deadline overflowed.")?;
+    // Cleanup and reader completion consume the original budget, not another
+    // timeout added after transport expires.
+    let reserve = (timeout / 4).min(Duration::from_millis(50));
+    Ok((deadline - reserve, deadline))
 }
 
+fn guest_child_exited(child: &mut GuestChild) -> io::Result<bool> {
+    child.observed_exit()
+}
+
+fn guest_stop_needs_owned_observation(child: &mut GuestChild, error: &io::Error) -> bool {
+    #[cfg(target_os = "macos")]
+    if matches!(error.raw_os_error(), Some(libc::EPERM | libc::ESRCH)) {
+        // A denied request or disappeared metadata is NEVER closure. Keep
+        // WNOWAIT custody and let the caller observe actual completion within
+        // its ORIGINAL deadline. ECHILD/foreign/unknown enumeration errors are
+        // not admitted here. A present unknown member still prevents reap.
+        let custody = child.observed_exit();
+        #[cfg(test)]
+        child.native_trace.record(
+            "stop.pending.custody",
+            0,
+            match &custody {
+                Ok(exited) => i64::from(*exited),
+                Err(error) => -i64::from(error.raw_os_error().unwrap_or(1)),
+            },
+        );
+        return custody.is_ok();
+    }
+    let _ = (child, error);
+    false
+}
+
+fn receive_guest_frame<T>(
+    child: &mut GuestChild,
+    receiver: &mpsc::Receiver<Result<T, String>>,
+    deadline: Instant,
+    timeout_message: &str,
+) -> Result<T, String> {
+    loop {
+        if Instant::now() >= deadline {
+            return Err(timeout_message.into());
+        }
+        match receiver.try_recv() {
+            Ok(result) => return result,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return Err("Guest output reader stopped unexpectedly.".into())
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+        // Do not wait for inherited-pipe EOF before observing the root. Keep
+        // its status unreaped while stopping this producer's remaining tree.
+        if guest_child_exited(child).map_err(|e| format!("Could not inspect guest command: {e}"))? {
+            if let Err(error) = child.stop_tree() {
+                if !guest_stop_needs_owned_observation(child, &error) {
+                    return Err(format!("Could not stop exited guest writers: {error}"));
+                }
+                #[cfg(test)]
+                eprintln!(
+                    "owned guest receive stop pending root={} error={error}; closure NOT proven",
+                    child.id()
+                );
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(timeout_message.into());
+        }
+        child.wait_reader_progress(deadline, false);
+    }
+}
+
+fn guest_completion_before(deadline: Instant) -> Result<(), String> {
+    if Instant::now() >= deadline {
+        Err("Guest process/stream closure exceeded command deadline.".into())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod guest_deadline_order_tests {
+    use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn darwin_fast_exit_frames_complete_actual_shared_custody() {
+        // Real short-lived producers exercise the same readiness/structured
+        // callers as the four observed failures, never a replacement stop,
+        // status, metadata, or clock adapter. Each keeps the existing 1s budget.
+        for iteration in 0..8 {
+            for structured in [false, true] {
+                let mut command = child_command("/bin/sh");
+                command
+                    .args([
+                        "-c",
+                        if structured {
+                            "printf 'payload\\nOWNED_DONE:0\\n'; exit 0"
+                        } else {
+                            "printf 'SteamOS NVIDIA Image Builder appliance\\nREADY\\n'; exit 0"
+                        },
+                    ])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+                let child = spawn_guest_process(&mut command).unwrap();
+                let pid = child.id() as i32;
+                let result = if structured {
+                    finish_structured_guest_command(child, Duration::from_secs(1), "OWNED_DONE")
+                } else {
+                    finish_guest_readiness_attempt(child, Duration::from_secs(1))
+                };
+                eprintln!("actual fast-exit iteration={iteration} structured={structured} root={pid} result={result:?}");
+                assert_eq!(
+                    result.unwrap(),
+                    if structured { "payload" } else { READY_MARKER }
+                );
+                // A returned frame is insufficient: original numeric status
+                // must be reaped and its entire actual group must be absent.
+                assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+                assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+                assert_eq!(unsafe { libc::kill(-pid, 0) }, -1);
+                assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+            }
+        }
+    }
+
+    fn exited_owned_child() -> GuestChild {
+        #[cfg(unix)]
+        let mut command = child_command("/bin/sh");
+        #[cfg(unix)]
+        command.args(["-c", "exit 0"]);
+        #[cfg(windows)]
+        let mut command = child_command("cmd.exe");
+        #[cfg(windows)]
+        command.args(["/D", "/C", "exit 0"]);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = spawn_guest_process(&mut command).unwrap();
+        let end = Instant::now() + Duration::from_secs(2);
+        while !child.observed_exit().unwrap() {
+            assert!(Instant::now() < end);
+            thread::yield_now();
+        }
+        child
+    }
+
+    #[test]
+    fn windows_and_unix_expired_cleanup_cannot_promote_an_exited_real_child() {
+        let mut child = exited_owned_child();
+        let late = stop_guest_command_before(&mut child, Instant::now(), || true);
+        assert!(late.unwrap_err().contains("exceeded command deadline"));
+        // This is a separate explicit cleanup, not a pass for the late attempt.
+        let status =
+            stop_guest_command_before(&mut child, Instant::now() + Duration::from_secs(2), || true)
+                .unwrap();
+        assert!(status.success());
+        assert!(child.tree_absent().unwrap());
+    }
+
+    #[test]
+    fn windows_and_unix_queued_frame_after_deadline_is_not_on_time() {
+        let mut child = exited_owned_child();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let producer =
+            thread::spawn(move || sender.send(Ok("actual queued frame".to_string())).unwrap());
+        producer.join().unwrap();
+        assert_eq!(
+            receive_guest_frame(&mut child, &receiver, Instant::now(), "exact timeout")
+                .unwrap_err(),
+            "exact timeout"
+        );
+        stop_guest_command_before(&mut child, Instant::now() + Duration::from_secs(2), || true)
+            .unwrap();
+        assert!(child.tree_absent().unwrap());
+    }
+
+    #[test]
+    fn windows_and_unix_join_completion_clock_rejects_expired_budget() {
+        assert!(guest_completion_before(Instant::now()).is_err());
+        assert!(guest_completion_before(Instant::now() + Duration::from_secs(2)).is_ok());
+    }
+}
+
+fn stop_guest_command_before(
+    child: &mut GuestChild,
+    deadline: Instant,
+    readers_done: impl Fn() -> bool,
+) -> Result<std::process::ExitStatus, String> {
+    drop(child.stdin.take());
+    let mut first_pending_stop = None;
+    loop {
+        if let Err(expired) = guest_completion_before(deadline) {
+            return Err(match first_pending_stop {
+                Some(first) => format!("Could not stop owned guest tree: {first}; {expired}"),
+                None => expired,
+            });
+        }
+        // A group may acquire a last inherited writer while the first signal
+        // is delivered. Keep original WNOWAIT/job custody and complete the
+        // stop, rather than treating the first successful request as closure.
+        if let Err(error) = child.stop_tree() {
+            if !guest_stop_needs_owned_observation(child, &error) {
+                return Err(format!("Could not stop owned guest tree: {error}"));
+            }
+            #[cfg(test)]
+            eprintln!(
+                "owned guest cleanup stop pending root={} error={error}; closure NOT proven",
+                child.id()
+            );
+            first_pending_stop.get_or_insert_with(|| error.to_string());
+        }
+        let exited = guest_child_exited(child)
+            .map_err(|e| format!("Could not inspect owned guest cleanup: {e}"))?;
+        if exited
+            && readers_done()
+            && child
+                .descendants_absent()
+                .map_err(|e| format!("Could not inspect owned descendants: {e}"))?
+        {
+            // Native inspection itself consumes the original cleanup budget.
+            // Never reap/accept an on-time observation after that budget ends.
+            guest_completion_before(deadline)?;
+            let status = child
+                .reap_owned()
+                .map_err(|e| format!("Could not reap owned guest: {e}"))?
+                .ok_or("Owned guest exit was not reapable.")?;
+            if child
+                .tree_absent()
+                .map_err(|e| format!("Could not inspect owned tree closure: {e}"))?
+            {
+                guest_completion_before(deadline)?;
+                #[cfg(test)]
+                if let Some(first) = &first_pending_stop {
+                    eprintln!("owned guest pending stop reconciled ONLY after actual exit/readers/reap/tree absence root={} first={first}", child.id());
+                }
+                #[cfg(test)]
+                eprintln!(
+                    "owned guest closed root={} status={status} readers=true treeAbsent=true",
+                    child.id()
+                );
+                return Ok(status);
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "Guest process/stream closure exceeded command deadline; root={:?}; readers={}; firstStopFailure={first_pending_stop:?}",
+                child.observed_exit(),
+                readers_done()
+            ));
+        }
+        child.wait_reader_progress(deadline, true);
+    }
+}
+
+pub(crate) fn guest_cleanup_result<T>(
+    primary: Result<T, String>,
+    cleanup: Result<(), String>,
+) -> Result<T, String> {
+    match (primary, cleanup) {
+        (Err(primary), Err(secondary)) => Err(format!("{primary}; cleanup: {secondary}")),
+        (Err(primary), _) => Err(primary),
+        (Ok(_), Err(secondary)) => Err(secondary),
+        (Ok(value), Ok(())) => Ok(value),
+    }
+}
+
+// These are child anonymous pipes with exactly one reader per handle. Never
+// put a blocking read behind a timed channel and then join it without a bound.
+pub(crate) trait GuestPipe: Read + Send + 'static {
+    fn prepare(&self) -> io::Result<()>;
+    fn available_read(&mut self, bytes: &mut [u8]) -> io::Result<usize>;
+    fn wait_readable(&self, timeout: Duration) -> io::Result<()>;
+}
+
+#[cfg(unix)]
+impl<T: Read + Send + std::os::fd::AsRawFd + 'static> GuestPipe for T {
+    fn prepare(&self) -> io::Result<()> {
+        let fd = self.as_raw_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+    fn available_read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.read(bytes)
+    }
+    fn wait_readable(&self, timeout: Duration) -> io::Result<()> {
+        // Real descriptor readiness wakes immediately for data/EOF; a timer
+        // wakeup (including a late one) is never EOF or completion evidence.
+        let mut fd = libc::pollfd {
+            fd: self.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let millis = timeout.as_millis().min(i32::MAX as u128) as i32;
+        let result = unsafe { libc::poll(&mut fd, 1, millis) };
+        if result < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+        if fd.revents & libc::POLLNVAL != 0 {
+            return Err(io::Error::from_raw_os_error(libc::EBADF));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl<T: Read + Send + std::os::windows::io::AsRawHandle + 'static> GuestPipe for T {
+    fn prepare(&self) -> io::Result<()> {
+        Ok(())
+    }
+    fn wait_readable(&self, timeout: Duration) -> io::Result<()> {
+        thread::sleep(timeout);
+        Ok(())
+    }
+    fn available_read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn PeekNamedPipe(
+                handle: *mut std::ffi::c_void,
+                buffer: *mut std::ffi::c_void,
+                size: u32,
+                read: *mut u32,
+                available: *mut u32,
+                remaining: *mut u32,
+            ) -> i32;
+        }
+        let mut available = 0;
+        if unsafe {
+            PeekNamedPipe(
+                self.as_raw_handle(),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                &mut available,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            let error = io::Error::last_os_error();
+            return if matches!(error.raw_os_error(), Some(109 | 233)) {
+                Ok(0)
+            } else {
+                Err(error)
+            };
+        }
+        if available == 0 {
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        let count = bytes.len().min(available as usize);
+        self.read(&mut bytes[..count])
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct GuestDeadlinePipe<T> {
+    pipe: T,
+    deadline: Instant,
+    stop: Arc<AtomicBool>,
+    post_deadline_data: bool,
+    completion: Option<crate::guest_process::GuestReaderWake>,
+    #[cfg(test)]
+    native_trace: crate::guest_process::native_trace::NativeTrace,
+    #[cfg(test)]
+    native_stream: u8,
+}
+
+impl<T: GuestPipe> GuestDeadlinePipe<T> {
+    fn with_completion(mut self, wake: crate::guest_process::GuestReaderWake) -> Self {
+        self.completion = Some(wake);
+        self
+    }
+    #[cfg(test)]
+    fn with_native_trace(
+        mut self,
+        trace: crate::guest_process::native_trace::NativeTrace,
+        stream: u8,
+    ) -> Self {
+        self.native_trace = trace;
+        self.native_stream = stream;
+        self
+    }
+
+    fn new(pipe: T, deadline: Instant) -> Result<Self, String> {
+        pipe.prepare()
+            .map_err(|e| format!("Could not bound guest pipe reads: {e}"))?;
+        Ok(Self {
+            pipe,
+            deadline,
+            stop: Arc::new(AtomicBool::new(false)),
+            post_deadline_data: false,
+            completion: None,
+            #[cfg(test)]
+            native_trace: Default::default(),
+            #[cfg(test)]
+            native_stream: 0,
+        })
+    }
+}
+
+impl<T: GuestPipe> Read for GuestDeadlinePipe<T> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        #[cfg(test)]
+        self.native_trace
+            .record("pipe.read.enter", self.native_stream, 0);
+        let result = (|| {
+            if buffer.is_empty() {
+                return Ok(0);
+            }
+            loop {
+                let expired = Instant::now() >= self.deadline;
+                // A nonblocking EOF proves writer closure even if this reader was
+                // scheduled after the deadline. At most one already-available
+                // crossing chunk is retained after expiry; further data is UNKNOWN
+                // and must never turn a timed-out operation into success.
+                if expired && self.post_deadline_data {
+                    return Err(io::ErrorKind::TimedOut.into());
+                }
+                match self.pipe.available_read(buffer) {
+                    Ok(0) => return Ok(0),
+                    Ok(count) if expired => {
+                        self.post_deadline_data = true;
+                        return Ok(count);
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        #[cfg(test)]
+                        self.native_trace.record(
+                            "pipe.would_block",
+                            self.native_stream,
+                            i64::from(expired),
+                        );
+                        if self.stop.load(Ordering::Acquire) {
+                            return Err(io::Error::other(
+                                "Guest pipe cleanup stopped before EOF; writer closure unproven.",
+                            ));
+                        }
+                        if expired {
+                            return Err(io::ErrorKind::TimedOut.into());
+                        }
+                        #[cfg(test)]
+                        self.native_trace
+                            .record("pipe.wait.enter", self.native_stream, 0);
+                        let waited = self.pipe.wait_readable(
+                            Duration::from_millis(1)
+                                .min(self.deadline.saturating_duration_since(Instant::now())),
+                        );
+                        #[cfg(test)]
+                        self.native_trace.record(
+                            "pipe.wait.return",
+                            self.native_stream,
+                            i64::from(waited.is_ok()),
+                        );
+                        waited?;
+                    }
+                    result => return result,
+                }
+            }
+        })();
+        #[cfg(test)]
+        match &result {
+            Ok(count) => self.native_trace.record(
+                if *count == 0 {
+                    "pipe.eof"
+                } else {
+                    "pipe.bytes"
+                },
+                self.native_stream,
+                *count as i64,
+            ),
+            Err(error) => {
+                self.native_trace.record(
+                    "pipe.error.errno",
+                    self.native_stream,
+                    i64::from(error.raw_os_error().unwrap_or(0)),
+                );
+                self.native_trace.record(
+                    "pipe.error.kind",
+                    self.native_stream,
+                    match error.kind() {
+                        io::ErrorKind::TimedOut => 1,
+                        io::ErrorKind::WouldBlock => 2,
+                        io::ErrorKind::Interrupted => 3,
+                        _ => 4,
+                    },
+                );
+            }
+        }
+        result
+    }
+}
+
+#[cfg(all(test, unix))]
+mod deadline_pipe_tests {
+    use super::*;
+
+    #[test]
+    fn real_closed_pipe_proves_eof_after_deadline() {
+        let mut child = child_command("/bin/sh")
+            .args(["-c", "exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        assert!(child.wait().unwrap().success());
+        let mut pipe = GuestDeadlinePipe::new(stdout, Instant::now()).unwrap();
+        assert_eq!(pipe.read(&mut [0; 16]).unwrap(), 0);
+    }
+
+    #[test]
+    fn real_late_data_is_retained_but_never_proves_eof() {
+        let mut child = child_command("/bin/sh")
+            .args(["-c", "printf retained-diagnostic"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        assert!(child.wait().unwrap().success());
+        let mut pipe = GuestDeadlinePipe::new(stdout, Instant::now()).unwrap();
+        let mut bytes = [0; 64];
+        let count = pipe.read(&mut bytes).unwrap();
+        assert_eq!(&bytes[..count], b"retained-diagnostic");
+        assert_eq!(
+            pipe.read(&mut bytes).unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+    }
+}
+
+pub(crate) struct GuestDiagnosticDrain {
+    reader: thread::JoinHandle<Result<Vec<u8>, String>>,
+    stop: Arc<AtomicBool>,
+    #[cfg(test)]
+    native_trace: crate::guest_process::native_trace::NativeTrace,
+    #[cfg(test)]
+    native_stream: u8,
+}
+
+impl GuestDiagnosticDrain {
+    pub(crate) fn join(self) -> thread::Result<Result<Vec<u8>, String>> {
+        #[cfg(test)]
+        self.native_trace
+            .record("reader.join.enter", self.native_stream, 0);
+        self.stop.store(true, Ordering::Release);
+        let result = self.reader.join();
+        #[cfg(test)]
+        self.native_trace.record(
+            "reader.join.return",
+            self.native_stream,
+            i64::from(result.is_ok()),
+        );
+        result
+    }
+}
+
+fn prepare_guest_pipes(
+    child: &mut GuestChild,
+    deadline: Instant,
+) -> Result<
+    (
+        GuestDeadlinePipe<ChildStdout>,
+        GuestDeadlinePipe<std::process::ChildStderr>,
+    ),
+    String,
+> {
+    child.bind_reader_owner();
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let result = (|| {
+        let pipes = (
+            GuestDeadlinePipe::new(
+                stdout.ok_or("Could not capture guest readiness output.")?,
+                deadline,
+            )?
+            .with_completion(child.reader_wake.clone()),
+            GuestDeadlinePipe::new(
+                stderr.ok_or("Could not capture guest readiness diagnostics.")?,
+                deadline,
+            )?
+            .with_completion(child.reader_wake.clone()),
+        );
+        #[cfg(test)]
+        let pipes = (
+            pipes.0.with_native_trace(child.native_trace.clone(), 1),
+            pipes.1.with_native_trace(child.native_trace.clone(), 2),
+        );
+        Ok(pipes)
+    })();
+    match result {
+        Ok(pipes) => Ok(pipes),
+        Err(error) => guest_cleanup_result(
+            Err(error),
+            stop_guest_command_before(child, deadline, || true).map(|_| ()),
+        ),
+    }
+}
+
+fn spawn_guest_diagnostics(
+    mut stream: GuestDeadlinePipe<impl GuestPipe>,
+    limit: u64,
+) -> GuestDiagnosticDrain {
+    let stop = stream.stop.clone();
+    let completion = stream.completion.as_ref().map(|wake| wake.guard());
+    #[cfg(test)]
+    let native_trace = stream.native_trace.clone();
+    #[cfg(test)]
+    let native_stream = stream.native_stream;
+    #[cfg(test)]
+    let thread_trace = native_trace.clone();
+    let reader = thread::spawn(move || {
+        let _completion = completion;
+        #[cfg(test)]
+        thread_trace.record("reader.started", native_stream, 0);
+        let result = (|| {
+            let mut captured = Vec::new();
+            if let Err(error) = (&mut stream).take(limit + 1).read_to_end(&mut captured) {
+                return Err(format!(
+                    "Could not read guest diagnostics: {error}; captured: {}",
+                    String::from_utf8_lossy(&captured)
+                ));
+            }
+            if captured.len() > limit as usize {
+                return Err("Guest readiness output exceeded its bound.".into());
+            }
+            Ok(captured)
+        })();
+        #[cfg(test)]
+        thread_trace.record(
+            "reader.body.return",
+            native_stream,
+            i64::from(result.is_ok()),
+        );
+        result
+    });
+    GuestDiagnosticDrain {
+        reader,
+        stop,
+        #[cfg(test)]
+        native_trace,
+        #[cfg(test)]
+        native_stream,
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn finish_guest_command_bounded(
-    mut child: Child,
+    child: GuestChild,
     timeout: Duration,
     timeout_message: &str,
 ) -> Result<String, String> {
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("Could not capture guest readiness output.")?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or("Could not capture guest readiness diagnostics.")?;
-    let stdout_reader = read_bounded_guest_stream(stdout);
-    let stderr_reader = read_bounded_guest_stream(stderr);
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .ok_or("Guest readiness attempt deadline overflowed.")?;
-    let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("Could not inspect guest readiness command: {error}"))?
-        {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            #[cfg(test)]
-            let cleanup_started = Instant::now();
-            stop_guest_command_group(&mut child);
-            let _ = stdout_reader.join();
-            #[cfg(test)]
-            eprintln!(
-                "bounded command pid={} stdout joined at {:?}",
-                child.id(),
-                cleanup_started.elapsed()
-            );
-            let _ = stderr_reader.join();
-            #[cfg(test)]
-            eprintln!(
-                "bounded command pid={} stderr joined at {:?}",
-                child.id(),
-                cleanup_started.elapsed()
-            );
-            return Err(timeout_message.into());
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
-    let stdout = stdout_reader
-        .join()
-        .map_err(|_| "Guest readiness output reader panicked.")??;
-    let stderr = stderr_reader
-        .join()
-        .map_err(|_| "Guest readiness diagnostics reader panicked.")??;
-    if stdout.len() > READINESS_ATTEMPT_OUTPUT_LIMIT as usize
-        || stderr.len() > READINESS_ATTEMPT_OUTPUT_LIMIT as usize
-    {
-        return Err("Guest readiness output exceeded its bound.".into());
-    }
-    if !status.success() {
-        let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&stdout).trim().to_string();
-        let detail = if stderr.is_empty() { stdout } else { stderr };
-        return Err(if detail.is_empty() {
-            format!("Guest readiness command exited with {status}.")
-        } else {
-            format!("Guest readiness command exited with {status}: {detail}")
-        });
-    }
-    Ok(String::from_utf8_lossy(&stdout).trim().to_string())
+    finish_guest_command_bounded_observed(child, timeout, timeout_message)?.result
 }
 
+pub(crate) struct GuestCommandCompletion {
+    pub(crate) result: Result<String, String>,
+    pub(crate) closure: Result<(), String>,
+}
+
+pub(crate) fn finish_guest_command_bounded_observed(
+    mut child: GuestChild,
+    timeout: Duration,
+    timeout_message: &str,
+) -> Result<GuestCommandCompletion, String> {
+    let (operation_deadline, deadline) = guest_command_deadlines(timeout)?;
+    let (stdout, stderr) = prepare_guest_pipes(&mut child, deadline)?;
+    let stdout_reader = spawn_guest_diagnostics(stdout, READINESS_ATTEMPT_OUTPUT_LIMIT);
+    let stderr_reader = spawn_guest_diagnostics(stderr, READINESS_ATTEMPT_OUTPUT_LIMIT);
+    let primary = loop {
+        match guest_child_exited(&mut child) {
+            Ok(true) => break Ok(()),
+            Err(error) => {
+                break Err(format!(
+                    "Could not inspect guest readiness command: {error}"
+                ))
+            }
+            Ok(false) if Instant::now() >= operation_deadline => break Err(timeout_message.into()),
+            Ok(false) => child.wait_reader_progress(operation_deadline, false),
+        }
+    };
+    let cleanup = stop_guest_command_before(&mut child, deadline, || {
+        stdout_reader.reader.is_finished() && stderr_reader.reader.is_finished()
+    });
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| "Guest readiness output reader panicked.".to_string())
+        .and_then(|r| r);
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "Guest readiness diagnostics reader panicked.".to_string())
+        .and_then(|r| r);
+    let cleanup = guest_cleanup_result(cleanup, guest_completion_before(deadline));
+    let status = cleanup.as_ref().ok().copied();
+    let result = primary
+        .and_then(|_| stdout.as_ref().map_err(Clone::clone))
+        .and_then(|stdout| {
+            let stderr = stderr.as_ref().map_err(Clone::clone)?;
+            if status.is_some_and(|s| !s.success()) {
+                let detail = if stderr.is_empty() { stdout } else { stderr };
+                return Err(format!(
+                    "Guest readiness command exited with {}: {}",
+                    status.unwrap(),
+                    String::from_utf8_lossy(detail).trim()
+                ));
+            }
+            Ok(String::from_utf8_lossy(stdout).trim().to_string())
+        });
+    let closure = guest_cleanup_result(
+        cleanup.map(|_| ()),
+        stdout.as_ref().map(|_| ()).map_err(Clone::clone),
+    );
+    let closure = guest_cleanup_result(closure, stderr.as_ref().map(|_| ()).map_err(Clone::clone));
+    let result = guest_cleanup_result(result, stdout.map(|_| ()));
+    let result = guest_cleanup_result(result, stderr.map(|_| ()));
+    Ok(GuestCommandCompletion {
+        result: guest_cleanup_result(result, closure.clone()),
+        closure,
+    })
+}
+
+#[cfg(test)]
 pub(crate) fn finish_guest_readiness_attempt(
-    mut child: Child,
+    child: GuestChild,
     timeout: Duration,
 ) -> Result<String, String> {
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .ok_or("Guest readiness attempt deadline overflowed.")?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("Could not capture guest readiness output.")?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or("Could not capture guest readiness diagnostics.")?;
-    let stderr_reader = read_bounded_guest_stream(stderr);
+    finish_guest_readiness_attempt_observed(child, timeout, None)
+}
+
+fn finish_guest_readiness_attempt_observed(
+    mut child: GuestChild,
+    timeout: Duration,
+    observation: Option<&Path>,
+) -> Result<String, String> {
+    let observed_start = Instant::now();
+    let (operation_deadline, deadline) = guest_command_deadlines(timeout)?;
+    #[cfg(test)]
+    let native_trace = child.native_trace.clone();
+    #[cfg(test)]
+    {
+        native_trace.deadline("operation.deadline", operation_deadline);
+        native_trace.deadline("closure.deadline", deadline);
+        native_trace.record(
+            "readiness.enter",
+            0,
+            timeout.as_nanos().min(i64::MAX as u128) as i64,
+        );
+    }
+    let (stdout, stderr) = prepare_guest_pipes(&mut child, deadline)?;
+    let stderr_reader = spawn_guest_diagnostics(stderr, READINESS_ATTEMPT_OUTPUT_LIMIT);
     let (sender, receiver) = mpsc::sync_channel(1);
+    #[cfg(test)]
+    let stdout_trace = native_trace.clone();
+    let completion = child.reader_wake.guard();
     let stdout_reader = thread::spawn(move || {
+        let _completion = completion;
+        #[cfg(test)]
+        stdout_trace.record("reader.started", 1, 0);
         let result: Result<(String, bool), String> = (|| {
             let mut stdout = BufReader::new(stdout);
             let mut lines = Vec::with_capacity(2);
@@ -2936,7 +3718,12 @@ pub(crate) fn finish_guest_readiness_attempt(
                 let bytes = (&mut stdout)
                     .take(READINESS_ATTEMPT_OUTPUT_LIMIT + 1 - captured_bytes as u64)
                     .read_line(&mut line)
-                    .map_err(|error| format!("Could not read guest readiness output: {error}"))?;
+                    .map_err(|e| {
+                        format!(
+                            "Could not read guest readiness output: {e}; captured: {}",
+                            lines.join("\n")
+                        )
+                    })?;
                 if bytes == 0 {
                     eof = true;
                     break;
@@ -2949,160 +3736,282 @@ pub(crate) fn finish_guest_readiness_attempt(
             }
             Ok((lines.join("\n"), eof))
         })();
+        #[cfg(test)]
+        stdout_trace.record("reader.frame.result", 1, i64::from(result.is_ok()));
         let _ = sender.send(result);
+        #[cfg(test)]
+        stdout_trace.record("reader.body.return", 1, 0);
     });
-    let result = match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-        Ok(result) => result,
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            stop_guest_command_group(&mut child);
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
-            return Err("Guest readiness transport attempt timed out.".into());
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            Err("Guest readiness output reader stopped unexpectedly.".into())
+    let mut primary = receive_guest_frame(
+        &mut child,
+        &receiver,
+        operation_deadline,
+        "Guest readiness transport attempt timed out.",
+    );
+    #[cfg(test)]
+    native_trace.record("receive.return", 0, i64::from(primary.is_ok()));
+    let observed_exit = loop {
+        match guest_child_exited(&mut child) {
+            Ok(true) => break true,
+            Ok(false) if matches!(&primary, Ok((_, true))) => {
+                if Instant::now() >= operation_deadline {
+                    primary = Err("Guest readiness transport attempt timed out.".into());
+                    break false;
+                }
+                child.wait_reader_progress(operation_deadline, false);
+            }
+            Ok(false) => break false,
+            Err(e) => {
+                primary = Err(format!("Could not inspect guest readiness command: {e}"));
+                break false;
+            }
         }
     };
-    // EOF can precede the child being reapable. Observe its actual status within
-    // the SAME attempt deadline before cleanup could replace it with SIGKILL.
-    // The existing two-complete-lines-before-EOF contract remains bounded: a
-    // still-open successful marker stream may be deliberately stopped below.
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) if matches!(&result, Ok((_, true))) => {
-                if Instant::now() >= deadline {
-                    stop_guest_command_group(&mut child);
-                    let _ = stdout_reader.join();
-                    let _ = stderr_reader.join();
-                    return Err("Guest readiness transport attempt timed out.".into());
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
-            Ok(None) => break None,
-            Err(error) => {
-                stop_guest_command_group(&mut child);
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
+    let cleanup = stop_guest_command_before(&mut child, deadline, || {
+        let stdout_finished = stdout_reader.is_finished();
+        // Preserve production short-circuit; tracing additionally observes
+        // stderr independently when stdout is unfinished, without using that
+        // extra observation to alter the closure decision.
+        let stderr_finished = stdout_finished.then(|| stderr_reader.reader.is_finished());
+        #[cfg(test)]
+        if native_trace.enabled() {
+            native_trace.record("reader.is_finished", 1, i64::from(stdout_finished));
+            native_trace.record(
+                "reader.is_finished",
+                2,
+                i64::from(stderr_finished.unwrap_or_else(|| stderr_reader.reader.is_finished())),
+            );
+        }
+        stdout_finished && stderr_finished.unwrap_or(false)
+    });
+    #[cfg(test)]
+    native_trace.record("cleanup.return", 0, i64::from(cleanup.is_ok()));
+    #[cfg(test)]
+    native_trace.record("reader.join.enter", 1, 0);
+    let joined = stdout_reader
+        .join()
+        .map_err(|_| "Guest readiness output reader panicked.".to_string());
+    #[cfg(test)]
+    native_trace.record("reader.join.return", 1, i64::from(joined.is_ok()));
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "Guest readiness diagnostics reader panicked.".to_string())
+        .and_then(|r| r);
+    let cleanup = guest_cleanup_result(cleanup, guest_completion_before(deadline));
+    if let Some(runtime) = observation {
+        cold_readiness_record(
+            runtime,
+            serde_json::json!({"phase":"transport-completion",
+            "elapsedNanos":observed_start.elapsed().as_nanos(),
+            "observedExit":observed_exit, "closure":format!("{cleanup:?}"),
+            "stdoutJoined":joined.is_ok(), "stderrJoined":stderr.is_ok(),
+            "stdoutEOFObserved":primary.as_ref().ok().map(|(_, eof)| *eof),
+            "marker":format!("{primary:?}"),
+            "sshPhases":stderr.as_ref().ok().map(|bytes| {
+                // No key bytes, user environment or arbitrary remote diagnostics.
+                String::from_utf8_lossy(bytes).lines().filter(|line|
+                    ["Connecting to", "Connection established", "Remote protocol version",
+                     "Authenticating to", "Authenticated to", "Sending command:",
+                     "Connection refused", "Connection timed out", "Permission denied",
+                     "Exit status", "kex_exchange_identification"].iter().any(|s| line.contains(s)))
+                    .collect::<Vec<_>>().join("\n").chars().take(8192).collect::<String>()
+            })}),
+        );
+    }
+    let result = primary.and_then(|(output, _)| {
+        if let Ok(status) = &cleanup {
+            if observed_exit && !status.success() {
+                let diagnostics = stderr
+                    .as_ref()
+                    .map(|b| String::from_utf8_lossy(b).trim().to_string())
+                    .unwrap_or_default();
                 return Err(format!(
-                    "Could not inspect guest readiness command: {error}"
+                    "Guest readiness command exited with {status}: {diagnostics}"
                 ));
             }
         }
-    };
-    stop_guest_command_group(&mut child);
-    let _ = stdout_reader.join();
-    let stderr = stderr_reader
-        .join()
-        .map_err(|_| "Guest readiness diagnostics reader panicked.")??;
-    if stderr.len() > READINESS_ATTEMPT_OUTPUT_LIMIT as usize {
-        return Err("Guest readiness output exceeded its bound.".into());
+        if output.is_empty() {
+            return Err("Guest readiness command returned no marker.".into());
+        }
+        Ok(output)
+    });
+    let result = guest_cleanup_result(result, joined);
+    let result = guest_cleanup_result(result, stderr.map(|_| ()));
+    let result = guest_cleanup_result(result, cleanup.map(|_| ()));
+    #[cfg(test)]
+    {
+        native_trace.record("readiness.result", 0, i64::from(result.is_ok()));
+        child.native_final_observation();
+        native_trace.record("readiness.return", 0, i64::from(result.is_ok()));
     }
-    let (output, _) = result?;
-    if let Some(status) = status.filter(|status| !status.success()) {
-        return Err(format!(
-            "Guest readiness command exited with {status}: {}",
-            String::from_utf8_lossy(&stderr).trim()
-        ));
-    }
-    if output.is_empty() {
-        return Err("Guest readiness command returned no marker.".into());
-    }
-    Ok(output)
+    result
 }
 
 pub(crate) fn read_guest_command_ready_line(
-    child: &mut Child,
+    child: &mut GuestChild,
     stdout: ChildStdout,
     timeout: Duration,
-) -> Result<(BufReader<ChildStdout>, String), String> {
+) -> Result<(BufReader<GuestDeadlinePipe<ChildStdout>>, String), String> {
+    let (operation_deadline, deadline) = guest_command_deadlines(timeout)?;
     let (sender, receiver) = mpsc::sync_channel(1);
+    let completion = child.reader_wake.guard();
     let reader = thread::spawn(move || {
-        let mut stdout = BufReader::new(stdout);
-        let mut line = String::new();
-        let result = (&mut stdout).take(65).read_line(&mut line);
-        let _ = sender.send((stdout, line, result));
-    });
-    match receiver.recv_timeout(timeout) {
-        Ok((stdout, line, result)) => {
-            if reader.join().is_err() {
-                stop_guest_command_group(child);
-                return Err("Guest command readiness reader panicked.".into());
-            }
-            if let Err(error) = result {
-                stop_guest_command_group(child);
-                return Err(format!(
-                    "Could not read the guest command readiness marker: {error}"
-                ));
-            }
+        let _completion = completion;
+        let result = (|| {
+            let mut stdout = BufReader::new(GuestDeadlinePipe::new(stdout, operation_deadline)?);
+            let mut line = String::new();
+            (&mut stdout).take(65).read_line(&mut line).map_err(|e| {
+                if e.kind() == io::ErrorKind::TimedOut {
+                    "Guest command readiness marker timed out.".to_string()
+                } else {
+                    format!(
+                        "Could not read the guest command readiness marker: {e}; captured: {line}"
+                    )
+                }
+            })?;
             if line.len() > 64 || !line.ends_with('\n') {
-                stop_guest_command_group(child);
                 return Err("Guest command readiness marker is missing or excessive.".into());
             }
+            stdout.get_mut().deadline = Instant::now()
+                .checked_add(STRUCTURED_GUEST_COMMAND_TIMEOUT)
+                .ok_or("Guest command deadline overflowed.")?;
             Ok((stdout, line))
-        }
-        Err(error) => {
-            stop_guest_command_group(child);
-            let _ = reader.join();
-            Err(match error {
-                mpsc::RecvTimeoutError::Timeout => {
-                    "Guest command readiness marker timed out.".into()
-                }
-                mpsc::RecvTimeoutError::Disconnected => {
-                    "Guest command readiness reader stopped unexpectedly.".into()
-                }
-            })
-        }
-    }
+        })();
+        let _ = sender.send(result);
+    });
+    let primary = receive_guest_frame(
+        child,
+        &receiver,
+        operation_deadline,
+        "Guest command readiness marker timed out.",
+    );
+    let cleanup = if primary.is_err() {
+        stop_guest_command_before(child, deadline, || reader.is_finished()).map(|_| ())
+    } else {
+        Ok(())
+    };
+    let joined = reader
+        .join()
+        .map_err(|_| "Guest readiness line reader panicked.".to_string());
+    guest_cleanup_result(
+        guest_cleanup_result(guest_cleanup_result(primary, joined), cleanup),
+        guest_completion_before(deadline),
+    )
 }
 
 pub(crate) fn start_guest_stderr_drain(
-    child: &mut Child,
-) -> Result<thread::JoinHandle<Result<Vec<u8>, String>>, String> {
-    let mut stderr = match child.stderr.take() {
-        Some(stderr) => stderr,
-        None => {
-            stop_guest_command_group(child);
-            return Err("Could not capture the structured guest command diagnostics.".into());
-        }
-    };
-    Ok(thread::spawn(move || {
-        let mut captured = Vec::new();
-        stderr
-            .read_to_end(&mut captured)
-            .map_err(|e| format!("Could not read the structured guest command diagnostics: {e}"))?;
-        Ok(captured)
-    }))
+    child: &mut GuestChild,
+) -> Result<GuestDiagnosticDrain, String> {
+    child.bind_reader_owner();
+    let deadline = Instant::now()
+        .checked_add(STRUCTURED_GUEST_COMMAND_TIMEOUT)
+        .ok_or("Guest command deadline overflowed.")?;
+    let stderr = child.stderr.take();
+    let result = (|| {
+        GuestDeadlinePipe::new(
+            stderr.ok_or("Could not capture the structured guest command diagnostics.")?,
+            deadline,
+        )
+        .map(|pipe| pipe.with_completion(child.reader_wake.clone()))
+    })();
+    match result {
+        Ok(stream) => Ok(spawn_guest_diagnostics(stream, 32 * 1024 * 1024)),
+        Err(error) => guest_cleanup_result(
+            Err(error),
+            stop_guest_command_before(child, deadline, || true).map(|_| ()),
+        ),
+    }
 }
 
 pub(crate) fn finish_guest_command_with_stdout(
-    mut child: Child,
-    mut stdout: BufReader<ChildStdout>,
+    mut child: GuestChild,
+    mut stdout: BufReader<GuestDeadlinePipe<ChildStdout>>,
     mut captured_stdout: String,
-    stderr_drain: thread::JoinHandle<Result<Vec<u8>, String>>,
+    stderr_drain: GuestDiagnosticDrain,
 ) -> Result<String, String> {
-    let stdout_result = stdout
-        .read_to_string(&mut captured_stdout)
-        .map_err(|e| format!("Could not read the structured guest command: {e}"));
-    let status_result = child
-        .wait()
-        .map_err(|e| format!("Could not wait for the structured guest command: {e}"));
+    let deadline = stdout.get_ref().deadline;
+    let reserve = deadline.saturating_duration_since(Instant::now()) / 4;
+    let operation_deadline = deadline - reserve.min(Duration::from_millis(50));
+    let stop = stdout.get_ref().stop.clone();
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let completion = child.reader_wake.guard();
+    let reader = thread::spawn(move || {
+        let _completion = completion;
+        let result = (&mut stdout)
+            .take(READINESS_ATTEMPT_OUTPUT_LIMIT + 1)
+            .read_to_string(&mut captured_stdout)
+            .map_err(|e| {
+                format!(
+                    "Could not read the structured guest command: {e}; captured: {captured_stdout}"
+                )
+            })
+            .and_then(|_| {
+                if captured_stdout.len() > READINESS_ATTEMPT_OUTPUT_LIMIT as usize {
+                    Err("Guest command output exceeded its bound.".into())
+                } else {
+                    Ok(captured_stdout)
+                }
+            });
+        let _ = sender.send(result);
+    });
+    let mut primary = receive_guest_frame(
+        &mut child,
+        &receiver,
+        operation_deadline,
+        "Guest command timed out.",
+    );
+    if primary.is_ok() {
+        loop {
+            match guest_child_exited(&mut child) {
+                Ok(true) => break,
+                Err(error) => {
+                    primary = Err(format!(
+                        "Could not inspect structured guest command: {error}"
+                    ));
+                    break;
+                }
+                Ok(false) if Instant::now() >= operation_deadline => {
+                    primary = Err("Guest command timed out.".into());
+                    break;
+                }
+                Ok(false) => child.wait_reader_progress(operation_deadline, false),
+            }
+        }
+    }
+    let cleanup = stop_guest_command_before(&mut child, deadline, || {
+        reader.is_finished() && stderr_drain.reader.is_finished()
+    });
+    stop.store(true, Ordering::Release);
+    let joined = reader
+        .join()
+        .map_err(|_| "Guest output reader panicked.".to_string());
     let stderr = stderr_drain
         .join()
-        .map_err(|_| "Structured guest diagnostic drain panicked.".to_string())??;
-    stdout_result?;
-    let status = status_result?;
-    if !status.success() {
-        let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
-        let stdout = captured_stdout.trim().to_string();
-        let detail = if stderr.is_empty() { stdout } else { stderr };
-        return Err(if detail.is_empty() {
-            format!("Guest command exited with {status}.")
-        } else {
-            format!("Guest command exited with {status}: {detail}")
-        });
-    }
-    Ok(captured_stdout.trim().to_string())
+        .map_err(|_| "Structured guest diagnostic drain panicked.".to_string())
+        .and_then(|r| r);
+    let cleanup = guest_cleanup_result(cleanup, guest_completion_before(deadline));
+    let result = primary.and_then(|captured_stdout| {
+        if cleanup.as_ref().is_ok_and(|status| !status.success()) {
+            let diagnostics = stderr
+                .as_ref()
+                .map(|b| String::from_utf8_lossy(b).trim().to_string())
+                .unwrap_or_default();
+            let detail = if diagnostics.is_empty() {
+                captured_stdout.clone()
+            } else {
+                diagnostics
+            };
+            return Err(format!(
+                "Guest command exited with {}: {detail}",
+                cleanup.as_ref().unwrap()
+            ));
+        }
+        Ok(captured_stdout.trim().to_string())
+    });
+    guest_cleanup_result(
+        guest_cleanup_result(guest_cleanup_result(result, joined), stderr.map(|_| ())),
+        cleanup.map(|_| ()),
+    )
 }
 
 pub(crate) fn read_qmp_response(
@@ -3322,9 +4231,23 @@ pub(crate) fn readiness_handshake(
     }
     #[cfg(not(windows))]
     {
-        finish_guest_readiness_attempt(
-            start_guest_command(session, "cat /etc/steamos-builder-ready")?,
+        let observe = cfg!(target_os = "macos");
+        let mut command =
+            ssh_command_options(session, None, observe).map_err(ReadinessFailure::Message)?;
+        command
+            .arg("cat /etc/steamos-builder-ready")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        configure_guest_command_stdin(&mut command);
+        isolate_process_group(&mut command);
+        let mut child = spawn_guest_process(&mut command).map_err(|e| {
+            ReadinessFailure::Message(format!("Could not start readiness command: {e}"))
+        })?;
+        close_guest_command_stdin(&mut child);
+        finish_guest_readiness_attempt_observed(
+            child,
             READINESS_ATTEMPT_TIMEOUT,
+            observe.then(|| session.runtime_dir()),
         )
         .map_err(ReadinessFailure::Message)
     }
@@ -3876,7 +4799,7 @@ pub(crate) fn check_builder_environment_blocking() -> BuilderEnvironment {
     let host_os = std::env::consts::OS.to_string();
     let host_arch = std::env::consts::ARCH.to_string();
     let experimental = host_os == "linux";
-    let host_plan = current_host_qemu(&host_arch, &host_arch);
+    let host_plan = inspection_guest_arch().and_then(|guest| current_host_qemu(&host_arch, guest));
     let acceleration = host_plan.as_ref().ok().map(|spec| spec.0.to_owned());
     let host_plan = host_plan.and_then(|spec| {
         if experimental {
@@ -3988,6 +4911,8 @@ pub(crate) fn check_builder_environment_blocking() -> BuilderEnvironment {
         appliance_path,
         message: if let Err(error) = appliance_validation {
             error
+        } else if ready && cfg!(target_os = "macos") && acceleration.as_deref() == Some("tcg") {
+            "Apple Silicon software-test lane: pinned x86_64 Fedora under TCG; no hardware-acceleration claim.".into()
         } else if ready {
             "Host prerequisites are ready.".into()
         } else {
@@ -4168,6 +5093,7 @@ pub(crate) fn get_appliance_status_blocking(
         )
     };
 
+    let attempt_start = Instant::now();
     let handshake_result = readiness_handshake(&snapshot);
     let mut manager = manager_state
         .lock()
@@ -4184,6 +5110,14 @@ pub(crate) fn get_appliance_status_blocking(
     if session.ssh_port != session_port || session.state != "booting" {
         return Ok(session_status(session));
     }
+    cold_readiness_record(
+        &session.runtime_dir,
+        serde_json::json!({"phase":"attempt",
+        "pid":session.child.id(), "elapsedNanos":session.started_at.elapsed().as_nanos(),
+        "attemptNanos":attempt_start.elapsed().as_nanos(),
+        "remainingNanos":readiness_deadline.saturating_duration_since(Instant::now()).as_nanos(),
+        "result":format!("{handshake_result:?}")}),
+    );
     match readiness_attempt_outcome(Instant::now(), readiness_deadline, &handshake_result) {
         ApplianceReadinessOutcome::Ready => {
             session.state = "ready".into();
@@ -4200,6 +5134,20 @@ pub(crate) fn get_appliance_status_blocking(
             session.state = "timedOut".into();
             session.message = format!(
                 "Builder appliance did not become ready within {readiness_timeout_secs} seconds."
+            );
+            cold_readiness_record(
+                &session.runtime_dir,
+                serde_json::json!({"phase":"deadline",
+                "elapsedNanos":session.started_at.elapsed().as_nanos(),
+                "lastResult":format!("{handshake_result:?}"),
+                "serialTail":( || -> io::Result<String> {
+                    let mut file = File::open(session.runtime_dir.join("qemu.log"))?;
+                    let size = file.metadata()?.len();
+                    file.seek(SeekFrom::Start(size.saturating_sub(32 * 1024)))?;
+                    let mut bytes = Vec::new();
+                    file.take(32 * 1024).read_to_end(&mut bytes)?;
+                    Ok(String::from_utf8_lossy(&bytes).into_owned())
+                })().map_err(|e| e.to_string())}),
             );
         }
         ApplianceReadinessOutcome::Pending => {
@@ -4343,13 +5291,13 @@ pub(crate) async fn mutate_test_marker(app: tauri::AppHandle) -> Result<MarkerMu
     .map_err(|error| format!("Synthetic mutation worker failed: {error}"))?
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(any(target_os = "windows", all(test, target_os = "linux")))]
 pub(crate) fn preflight_selected_marker_blocking(app: tauri::AppHandle) -> Result<(), String> {
     let session = ready_session_snapshot(&app, "selected-image marker preflight")?;
     preflight_user_marker(&session)
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(any(target_os = "windows", all(test, target_os = "linux")))]
 pub(crate) fn mutate_selected_marker_after_preflight_blocking(
     app: tauri::AppHandle,
 ) -> Result<UserMarkerMutation, String> {
@@ -4828,6 +5776,7 @@ pub(crate) async fn prepare_nvidia_installer_bundle(
 }
 
 pub(crate) fn stop_session_process(session: &mut ApplianceSession) -> Result<(), String> {
+    let mut shutdown_closure = Ok(());
     if session
         .child
         .try_wait()
@@ -4835,12 +5784,20 @@ pub(crate) fn stop_session_process(session: &mut ApplianceSession) -> Result<(),
         .is_none()
     {
         let _ = qmp_quit(session.qmp_port);
-        if let Ok(child) = start_guest_command(session, "sudo systemctl poweroff") {
-            let _ = finish_guest_command_bounded(
+        match start_guest_command(session, "sudo systemctl poweroff").and_then(|child| {
+            finish_guest_command_bounded_observed(
                 child,
                 SHUTDOWN_COMMAND_TIMEOUT,
                 "Guest shutdown command timed out.",
-            );
+            )
+        }) {
+            Ok(completion) => {
+                if let Err(error) = completion.result {
+                    eprintln!("Guest poweroff transport: {error}");
+                }
+                shutdown_closure = completion.closure;
+            }
+            Err(error) => shutdown_closure = Err(error),
         }
         for _ in 0..20 {
             if session
@@ -4870,7 +5827,25 @@ pub(crate) fn stop_session_process(session: &mut ApplianceSession) -> Result<(),
         }
     }
     session.watchdog.finish();
-    Ok(())
+    let status = session
+        .child
+        .try_wait()
+        .map_err(|e| format!("Could not record final appliance status: {e}"))?;
+    #[cfg(unix)]
+    let process_group_absent = (unsafe { libc::kill(-(session.child.id() as i32), 0) } == -1)
+        && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+    #[cfg(not(unix))]
+    let process_group_absent = false;
+    cold_readiness_record(
+        &session.runtime_dir,
+        serde_json::json!({"phase":"qemu-reaped",
+        "pid":session.child.id(), "status":format!("{status:?}"),
+        "elapsedNanos":session.started_at.elapsed().as_nanos(),
+        "transportClosure":format!("{shutdown_closure:?}"),
+        "processGroupAbsent":process_group_absent,
+        "serialSink":"regular-file; no pipe EOF claim"}),
+    );
+    shutdown_closure
 }
 
 pub(crate) fn stop_session(session: &mut ApplianceSession) -> Result<Option<PathBuf>, String> {
@@ -4881,27 +5856,27 @@ pub(crate) fn stop_session(session: &mut ApplianceSession) -> Result<Option<Path
 pub(crate) fn stop_nvidia_build_session(
     session: &mut NvidiaBuildSession,
 ) -> Result<Option<PathBuf>, String> {
+    let mut shutdown_closure = Ok(());
     if session
         .child
         .try_wait()
         .map_err(|e| format!("Could not inspect the x86 build appliance: {e}"))?
         .is_none()
     {
-        if let Ok(mut command) = ssh_command(session) {
-            command
-                .arg("sudo systemctl poweroff")
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-            configure_guest_command_stdin(&mut command);
-            isolate_process_group(&mut command);
-            if let Ok(mut child) = command.spawn() {
-                close_guest_command_stdin(&mut child);
-                let _ = finish_guest_command_bounded(
-                    child,
-                    SHUTDOWN_COMMAND_TIMEOUT,
-                    "Guest shutdown command timed out.",
-                );
+        match start_guest_command(session, "sudo systemctl poweroff").and_then(|child| {
+            finish_guest_command_bounded_observed(
+                child,
+                SHUTDOWN_COMMAND_TIMEOUT,
+                "Guest shutdown command timed out.",
+            )
+        }) {
+            Ok(completion) => {
+                if let Err(error) = completion.result {
+                    eprintln!("Guest poweroff transport: {error}");
+                }
+                shutdown_closure = completion.closure;
             }
+            Err(error) => shutdown_closure = Err(error),
         }
         for _ in 0..40 {
             if session
@@ -4931,6 +5906,7 @@ pub(crate) fn stop_nvidia_build_session(
         }
     }
     session.watchdog.finish();
+    shutdown_closure?;
     archive_and_remove_nvidia_build_runtime(&session.runtime_dir)
 }
 

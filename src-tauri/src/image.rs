@@ -594,7 +594,7 @@ pub(crate) fn mutate_synthetic_marker(
 ) -> Result<MarkerMutation, String> {
     const MARKER_PATH: &str = "/etc/steamos-nvidia-image-builder-test";
     const MARKER_CONTENT: &str = "SteamOS NVIDIA Image Builder synthetic marker\nprotocol=1\n";
-    const MUTATE_COMMAND: &str = r#"set -eu
+    const MUTATE_COMMAND: &str = r#"set -eux
 SOURCE=/dev/disk/by-id/virtio-steamos-synthetic
 WORK=/dev/disk/by-id/virtio-steamos-working
 WORK_PART=/dev/disk/by-id/virtio-steamos-working-part1
@@ -913,28 +913,63 @@ test "$MOUNTED" = 0"#;
     let output = {
         let mut mutation = start_guest_command(session, MUTATE_COMMAND)?;
         let stderr_drain = start_guest_stderr_drain(&mut mutation)?;
-        let stdout = mutation
-            .stdout
-            .take()
-            .ok_or("Could not capture the mutation guest command output.")?;
+        let stdout = match mutation.stdout.take() {
+            Some(stdout) => stdout,
+            None => {
+                let cleanup = stop_guest_command_group(&mut mutation);
+                let diagnostics = stderr_drain
+                    .join()
+                    .map_err(|_| "Mutation diagnostics reader panicked.".to_string())
+                    .and_then(|result| result)
+                    .map(|_| ());
+                return guest_cleanup_result(
+                    guest_cleanup_result(
+                        Err("Could not capture the mutation guest command output.".into()),
+                        cleanup,
+                    ),
+                    diagnostics,
+                );
+            }
+        };
         let readiness =
             read_guest_command_ready_line(&mut mutation, stdout, Duration::from_secs(30));
         let (stdout, channel_ready) = match readiness {
             Ok(readiness) => readiness,
             Err(error) => {
-                let _ = stderr_drain.join();
-                return Err(format!("Could not establish the mutation channel: {error}"));
+                let diagnostics = stderr_drain
+                    .join()
+                    .map_err(|_| "Mutation diagnostics reader panicked.".to_string())
+                    .and_then(|result| result)
+                    .map(|_| ());
+                return guest_cleanup_result(
+                    Err(format!("Could not establish the mutation channel: {error}")),
+                    diagnostics,
+                );
             }
         };
         if channel_ready.trim() != "OPEMOS_MUTATION_CHANNEL_READY" {
-            stop_guest_command_group(&mut mutation);
-            let _ = stderr_drain.join();
-            return Err("Mutation guest command omitted the channel readiness marker.".into());
+            let cleanup = stop_guest_command_group(&mut mutation);
+            let diagnostics = stderr_drain
+                .join()
+                .map_err(|_| "Mutation diagnostics reader panicked.".to_string())
+                .and_then(|result| result)
+                .map(|_| ());
+            return guest_cleanup_result(
+                guest_cleanup_result(
+                    Err("Mutation guest command omitted the channel readiness marker.".into()),
+                    cleanup,
+                ),
+                diagnostics,
+            );
         }
         if let Err(error) = qmp_remove_user_input(session) {
-            stop_guest_command_group(&mut mutation);
-            let _ = stderr_drain.join();
-            return Err(error);
+            let cleanup = stop_guest_command_group(&mut mutation);
+            let diagnostics = stderr_drain
+                .join()
+                .map_err(|_| "Mutation diagnostics reader panicked.".to_string())
+                .and_then(|result| result)
+                .map(|_| ());
+            return guest_cleanup_result(guest_cleanup_result(Err(error), cleanup), diagnostics);
         }
         finish_guest_command_with_stdout(mutation, stdout, String::new(), stderr_drain)?
     };
@@ -3398,7 +3433,7 @@ fn linux_usb_name(name: &str) -> bool {
     })
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 fn linux_usb_tree_unmounted(row: &serde_json::Value, root: bool) -> bool {
     let node_type = row.get("type").and_then(serde_json::Value::as_str);
     if node_type != Some(if root { "disk" } else { "part" }) {
@@ -3422,7 +3457,7 @@ fn linux_usb_tree_unmounted(row: &serde_json::Value, root: bool) -> bool {
         .unwrap_or(true)
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 fn linux_usb_lsblk_candidate(row: &serde_json::Value, image_bytes: u64) -> bool {
     let Some(name) = row.get("name").and_then(serde_json::Value::as_str) else {
         return false;
@@ -3448,7 +3483,7 @@ fn linux_usb_lsblk_candidate(row: &serde_json::Value, image_bytes: u64) -> bool 
         && linux_usb_tree_unmounted(row, true)
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 fn linux_usb_rows(bytes: &[u8], image_bytes: u64) -> Result<Vec<serde_json::Value>, String> {
     if bytes.len() > 4 * 1024 * 1024 {
         return Err("Linux returned more than 4 MiB of block metadata.".into());

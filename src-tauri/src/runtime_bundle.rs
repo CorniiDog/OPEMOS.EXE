@@ -39,28 +39,109 @@ pub(crate) fn bundled_runtime_required() -> bool {
 fn verified_runtime() -> Result<&'static HashMap<String, PathBuf>, String> {
     VERIFIED_RUNTIME
         .get_or_init(|| {
-            let root = match std::env::var_os("OPEMOS_RUNTIME_ROOT") {
-                Some(value) => {
-                    let requested = PathBuf::from(value);
-                    if !requested.is_absolute() {
-                        return Err("OPEMOS_RUNTIME_ROOT must be an absolute path.".into());
-                    }
-                    requested
-                }
-                None => {
-                    let executable = std::env::current_exe().map_err(|error| {
-                        format!("Could not locate the packaged executable: {error}")
-                    })?;
-                    executable
-                        .parent()
-                        .ok_or("The packaged executable has no parent directory.")?
-                        .join("runtime")
-                }
-            };
+            let root = runtime_root_path()?;
             verify_runtime_bundle(&root, EXPECTED_MANIFEST_SHA256.unwrap_or_default())
         })
         .as_ref()
         .map_err(Clone::clone)
+}
+
+fn runtime_root_path() -> Result<PathBuf, String> {
+    Ok(match std::env::var_os("OPEMOS_RUNTIME_ROOT") {
+        Some(value) => {
+            let requested = PathBuf::from(value);
+            if !requested.is_absolute() {
+                return Err("OPEMOS_RUNTIME_ROOT must be an absolute path.".into());
+            }
+            requested
+        }
+        None => {
+            let executable = std::env::current_exe()
+                .map_err(|error| format!("Could not locate the packaged executable: {error}"))?;
+            packaged_resource_path(&executable, std::env::consts::OS, "runtime")?
+        }
+    })
+}
+
+pub(crate) fn packaged_resource_path(
+    executable: &Path,
+    platform: &str,
+    resource: &str,
+) -> Result<PathBuf, String> {
+    if !matches!(resource, "runtime" | "appliance") {
+        return Err("Unknown packaged resource role.".into());
+    }
+    let parent = executable
+        .parent()
+        .ok_or("The packaged executable has no parent directory.")?;
+    if platform == "macos"
+        && parent.file_name().and_then(|name| name.to_str()) == Some("MacOS")
+        && parent
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            == Some("Contents")
+    {
+        Ok(parent.parent().unwrap().join("Resources").join(resource))
+    } else {
+        Ok(parent.join(resource))
+    }
+}
+
+pub(crate) fn bundled_runtime_file(relative: &str) -> Result<PathBuf, String> {
+    verified_runtime()?;
+    verify_declared_runtime_file(
+        &runtime_root_path()?,
+        EXPECTED_MANIFEST_SHA256.unwrap_or_default(),
+        relative,
+    )
+}
+
+fn verify_declared_runtime_file(
+    root: &Path,
+    expected: &str,
+    relative: &str,
+) -> Result<PathBuf, String> {
+    if !valid_relative_path(relative) || !valid_sha256(expected) {
+        return Err("Invalid packaged runtime file request.".into());
+    }
+    let bytes = fs::read(root.join(MANIFEST_NAME))
+        .map_err(|error| format!("Could not read packaged runtime manifest: {error}"))?;
+    if bytes.len() > 1024 * 1024 || format!("{:x}", Sha256::digest(&bytes)) != expected {
+        return Err("Packaged runtime manifest changed during firmware resolution.".into());
+    }
+    let manifest: RuntimeManifest = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Invalid packaged runtime manifest: {error}"))?;
+    let matches = manifest
+        .files
+        .iter()
+        .filter(|file| file.path == relative)
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Err(format!(
+            "Firmware is not declared exactly once in the packaged runtime: {relative}."
+        ));
+    }
+    let file = matches[0];
+    let path = root.join(relative);
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|error| format!("Could not inspect packaged firmware: {error}"))?;
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() != file.size
+        || !valid_sha256(&file.sha256)
+        || file.size == 0
+        || format!(
+            "{:x}",
+            Sha256::digest(
+                fs::read(&path)
+                    .map_err(|error| format!("Could not read packaged firmware: {error}"))?
+            )
+        ) != file.sha256
+    {
+        return Err("Packaged firmware identity changed.".into());
+    }
+    Ok(path)
 }
 
 pub(crate) fn bundled_runtime_binary(name: &str) -> Option<PathBuf> {
@@ -206,6 +287,22 @@ fn verify_runtime_bundle(
 mod tests {
     use super::*;
 
+    #[test]
+    fn mac_app_resource_producer_and_consumer_share_resources_not_code_directory() {
+        let executable = Path::new("/tmp/Builder.app/Contents/MacOS/builder");
+        for resource in ["runtime", "appliance"] {
+            assert_eq!(
+                packaged_resource_path(executable, "macos", resource).unwrap(),
+                Path::new("/tmp/Builder.app/Contents/Resources").join(resource)
+            );
+            assert_eq!(
+                packaged_resource_path(executable, "linux", resource).unwrap(),
+                executable.parent().unwrap().join(resource)
+            );
+        }
+        assert!(packaged_resource_path(executable, "macos", "../outside").is_err());
+    }
+
     fn fixture() -> (PathBuf, String) {
         let root = std::env::temp_dir().join(format!(
             "opemos-runtime-bundle-{}-{}",
@@ -249,6 +346,21 @@ mod tests {
         fs::write(root.join(MANIFEST_NAME), &bytes).unwrap();
         let hash = format!("{:x}", Sha256::digest(&bytes));
         (root, hash)
+    }
+
+    #[test]
+    fn firmware_resolution_requires_declared_unchanged_bytes() {
+        let (root, hash) = fixture();
+        let manifest: RuntimeManifest =
+            serde_json::from_slice(&fs::read(root.join(MANIFEST_NAME)).unwrap()).unwrap();
+        let relative = &manifest.files[0].path;
+        assert!(verify_declared_runtime_file(&root, &hash, relative).is_ok());
+        fs::write(root.join("undeclared.fd"), b"untrusted").unwrap();
+        assert!(verify_declared_runtime_file(&root, &hash, "undeclared.fd").is_err());
+        assert!(verify_declared_runtime_file(&root, &hash, "../firmware.fd").is_err());
+        fs::write(root.join(relative), b"changed").unwrap();
+        assert!(verify_declared_runtime_file(&root, &hash, relative).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -327,9 +439,11 @@ mod tests {
                 "bash",
                 "gh",
                 "git",
+                "hdiutil",
                 "python3",
                 "qemu-img",
                 "qemu-system-aarch64",
+                "qemu-system-x86_64",
                 "scp",
                 "ssh",
                 "ssh-keygen",

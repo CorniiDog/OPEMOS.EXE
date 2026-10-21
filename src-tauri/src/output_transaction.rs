@@ -4071,6 +4071,8 @@ mod tests {
         let mut children = Vec::new();
         for (index, source) in ["source-a.img", "source-b.img"].iter().enumerate() {
             let result = fixture.0.join(format!("race-result-{index}"));
+            let stdout = fixture.0.join(format!("race-stdout-{index}"));
+            let stderr = fixture.0.join(format!("race-stderr-{index}"));
             let child = crate::child_command(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
@@ -4083,26 +4085,71 @@ mod tests {
                 .env("RESERVATION_TEST_START", &start)
                 .env("RESERVATION_TEST_RESULT", &result)
                 .stdin(Stdio::piped())
-                .stdout(Stdio::null())
+                .stdout(fs::File::create(&stdout).unwrap())
+                .stderr(fs::File::create(&stderr).unwrap())
                 .spawn()
                 .unwrap();
-            children.push((child, result));
+            children.push((child, result, stdout, stderr));
         }
         fs::write(&start, b"start\n").unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
-        while children.iter().any(|(_, result)| !result.is_file()) && Instant::now() < deadline {
+        while children.iter().any(|(_, result, _, _)| !result.is_file())
+            && Instant::now() < deadline
+        {
             thread::sleep(Duration::from_millis(10));
         }
+        for (child, result, _, _) in &mut children {
+            eprintln!(
+                "reservation-race pid={} status={:?} resultExists={} path={:?}",
+                child.id(),
+                child.try_wait(),
+                result.is_file(),
+                result
+            );
+            drop(child.stdin.take());
+        }
+        // Preserve every numeric exit and diagnostic before reading result
+        // files. A crashed worker must not be masked by a parent ENOENT panic.
+        let closure_deadline = Instant::now() + Duration::from_secs(5);
+        let mut statuses = Vec::new();
+        for (child, _, stdout, stderr) in &mut children {
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break Some(status);
+                }
+                if Instant::now() >= closure_deadline {
+                    child.kill().unwrap();
+                    break None;
+                }
+                thread::sleep(Duration::from_millis(1));
+            };
+            let status = status.or_else(|| {
+                let deadline = Instant::now() + Duration::from_secs(1);
+                loop {
+                    if let Some(status) = child.try_wait().unwrap() {
+                        break Some(status);
+                    }
+                    if Instant::now() >= deadline {
+                        break None;
+                    }
+                    thread::sleep(Duration::from_millis(1));
+                }
+            });
+            eprintln!(
+                "reservation worker pid={} reaped={status:?} stdout={:?} stderr={:?}",
+                child.id(),
+                fs::read_to_string(stdout),
+                fs::read_to_string(stderr)
+            );
+            statuses.push(status);
+        }
+        assert!(statuses.iter().all(|s| s.is_some_and(|s| s.success())));
         let mut outcomes = children
             .iter()
-            .map(|(_, result)| fs::read_to_string(result).unwrap())
+            .map(|(_, result, _, _)| fs::read_to_string(result).unwrap())
             .collect::<Vec<_>>();
         outcomes.sort();
         assert_eq!(outcomes, ["RESERVATION_ALREADY_HELD\n", "reserved\n"]);
-        for (child, _) in &mut children {
-            drop(child.stdin.take());
-            assert!(child.wait().unwrap().success());
-        }
         assert_eq!(
             fs::read(fixture.source("source-a.img")).unwrap(),
             b"source-a"

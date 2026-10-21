@@ -7,5 +7,6 @@ fn main() {
     println!("cargo:rerun-if-changed=icons/icon.icns");
     println!("cargo:rerun-if-changed=tauri.conf.json");
     println!("cargo:rerun-if-env-changed=OPEMOS_RUNTIME_MANIFEST_SHA256");
+    println!("cargo:rerun-if-env-changed=OPEMOS_EXE_SOURCE_COMMIT");
     tauri_build::build()
 }

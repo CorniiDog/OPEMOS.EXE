@@ -1,7 +1,5 @@
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
-#[cfg(target_os = "macos")]
-use std::process::Command;
 use std::{collections::BTreeMap, fs, path::Path};
 #[cfg(unix)]
 use std::{
@@ -336,6 +334,50 @@ fn no_space_error(
 mod tests {
     use super::*;
 
+    // Native capacity is a stable upper bound, unlike a free-byte snapshot
+    // which APFS/NTFS may increase between two independent measurements.
+    #[allow(clippy::unnecessary_cast)]
+    fn measured_volume_capacity(path: &Path) -> u64 {
+        #[cfg(unix)]
+        {
+            let path =
+                CString::new(fs::canonicalize(path).unwrap().as_os_str().as_bytes()).unwrap();
+            let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+            assert_eq!(
+                unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) },
+                0
+            );
+            let stats = unsafe { stats.assume_init() };
+            (stats.f_blocks as u64).checked_mul(stats.f_frsize).unwrap()
+        }
+        #[cfg(windows)]
+        {
+            let mut wide = fs::canonicalize(path)
+                .unwrap()
+                .as_os_str()
+                .encode_wide()
+                .collect::<Vec<_>>();
+            wide.push(0);
+            let (mut available, mut total, mut free) = (0_u64, 0_u64, 0_u64);
+            #[link(name = "kernel32")]
+            unsafe extern "system" {
+                fn GetDiskFreeSpaceExW(
+                    directory: *const u16,
+                    available: *mut u64,
+                    total: *mut u64,
+                    free: *mut u64,
+                ) -> i32;
+            }
+            assert_ne!(
+                unsafe {
+                    GetDiskFreeSpaceExW(wide.as_ptr(), &mut available, &mut total, &mut free)
+                },
+                0
+            );
+            total
+        }
+    }
+
     #[test]
     fn windows_selected_output_admission_preserves_readonly_input_and_capacity_guard() {
         let root = std::env::temp_dir().join(format!(
@@ -366,9 +408,12 @@ mod tests {
             .expect("small build on the selected writable output is admitted");
         fs::write(selected.join("write-probe"), b"output").unwrap();
         let available = host_volume_space(&selected).unwrap().available_bytes;
+        let capacity = measured_volume_capacity(&selected);
+        assert!(capacity > 0);
+        eprintln!("selected-output native capacity={capacity} firstAvailable={available}");
         let error = admit_host_storage(&[StorageRequest {
             path: &selected,
-            bytes: available.checked_add(1).unwrap(),
+            bytes: capacity.checked_add(1).unwrap(),
             inodes: 2,
             purpose: "selected output insufficient-space regression",
         }])

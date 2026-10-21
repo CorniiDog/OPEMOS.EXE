@@ -383,6 +383,22 @@ test("compact main window height agrees between web content and Tauri", () => {
   assert.match(css, /body\s*\{[\s\S]*min-height:\s*800px;/);
 });
 
+test("Mac acceptance changes the real display, never application layout or pointer guards", async () => {
+  const windows = await readFile(new URL("../src-tauri/src/windows.rs", import.meta.url), "utf8");
+  const app = await readFile(new URL("../src-tauri/src/app.rs", import.meta.url), "utf8");
+  const native = await readFile(new URL("./macos-ui-smoke.swift", import.meta.url), "utf8");
+  assert.doesNotMatch(app + windows, /fit_main_to_usable_display|usable_main_layout/);
+  assert.doesNotMatch(css, /\.platform-macos body \{ min-height: 0; \}/);
+  assert.match(native, /CGDisplayCopyAllDisplayModes/);
+  assert.match(native, /CGDisplaySetDisplayMode\(display, mode, nil\)/);
+  assert.match(native, /image.pixelsWide == 1600 && image.pixelsHigh == 900/);
+  assert.match(native, /try prepareActualDisplay\(\)[\s\S]*try screenshot\("desktop-before"\)/);
+  assert.match(native, /hitPID == expectedPID/);
+  assert.match(native, /CFEqual\(current, element\)/);
+  assert.match(native, /while !observedComplete/);
+  assert.doesNotMatch(native, /AXUIElementPerformAction|AXUIElementSetAttributeValue|cancel-after-next-stage/);
+});
+
 test("Windows live-test controls update immediately and form accessible workflow groups", () => {
   assert.match(html, /role="group" aria-labelledby="output-options-title"[\s\S]*id="output-options-title"[\s\S]*id="output-folder-label"/);
   assert.match(html, /role="group" aria-labelledby="nvidia-options-title"[\s\S]*id="nvidia-options-title"[\s\S]*id="nvidia-source"/);

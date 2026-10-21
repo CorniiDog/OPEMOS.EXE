@@ -145,7 +145,7 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         assert_eq!(
-            finish_guest_command(success.spawn().expect("start success fixture"))
+            finish_guest_command(spawn_guest_process(&mut success).expect("start success fixture"))
                 .expect("capture successful output"),
             "READY"
         );
@@ -156,7 +156,7 @@ mod tests {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let error = finish_guest_command(failure.spawn().expect("start failure fixture"))
+        let error = finish_guest_command(spawn_guest_process(&mut failure).expect("start failure fixture"))
             .expect_err("preserve failing stderr");
         assert!(error.contains("exit status: 7"));
         assert!(error.ends_with("exact-error"));
@@ -169,7 +169,7 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         isolate_process_group(&mut channel);
-        let mut channel = channel.spawn().expect("start channel fixture");
+        let mut channel = spawn_guest_process(&mut channel).expect("start channel fixture");
         let stderr_drain = start_guest_stderr_drain(&mut channel).expect("drain channel stderr");
         let channel_stdout = channel.stdout.take().expect("capture channel stdout");
         let (stdout, ready) = read_guest_command_ready_line(
@@ -194,12 +194,11 @@ mod tests {
         let multiline = "printf 'FIRST\nSECOND\n'";
         let transport = structured_guest_command_transport(multiline, MARKER);
         assert!(!transport.contains('\n'));
-        let encoded_child = Command::new("/bin/sh")
+        let encoded_child = spawn_guest_process(Command::new("/bin/sh")
             .args(["-c", &transport])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
+            .stderr(Stdio::piped()))
             .expect("start encoded multiline fixture");
         assert_eq!(
             finish_structured_guest_command(encoded_child, Duration::from_secs(1), MARKER)
@@ -217,7 +216,7 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         isolate_process_group(&mut success);
-        let success = success.spawn().expect("start framed success fixture");
+        let success = spawn_guest_process(&mut success).expect("start framed success fixture");
         let success_pid = success.id();
         assert_eq!(
             finish_structured_guest_command(success, Duration::from_secs(1), MARKER)
@@ -236,7 +235,7 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         isolate_process_group(&mut failure);
-        let failure = failure.spawn().expect("start framed failure fixture");
+        let failure = spawn_guest_process(&mut failure).expect("start framed failure fixture");
         let failure_pid = failure.id();
         let error = finish_structured_guest_command(failure, Duration::from_secs(1), MARKER)
             .expect_err("preserve framed nonzero status");
@@ -252,7 +251,7 @@ mod tests {
         isolate_process_group(&mut missing);
         assert_eq!(
             finish_structured_guest_command(
-                missing.spawn().expect("start missing-marker fixture"),
+                spawn_guest_process(&mut missing).expect("start missing-marker fixture"),
                 Duration::from_secs(1),
                 MARKER,
             )
@@ -269,7 +268,7 @@ mod tests {
         isolate_process_group(&mut excessive);
         assert_eq!(
             finish_structured_guest_command(
-                excessive.spawn().expect("start excessive output fixture"),
+                spawn_guest_process(&mut excessive).expect("start excessive output fixture"),
                 Duration::from_secs(1),
                 MARKER,
             )
@@ -284,7 +283,7 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         isolate_process_group(&mut stalled);
-        let stalled = stalled.spawn().expect("start structured timeout fixture");
+        let stalled = spawn_guest_process(&mut stalled).expect("start structured timeout fixture");
         let stalled_pid = stalled.id();
         assert_eq!(
             finish_structured_guest_command(stalled, Duration::from_millis(50), MARKER)
@@ -309,7 +308,7 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         isolate_process_group(&mut success);
-        let success = success.spawn().expect("start framed Windows fixture");
+        let success = spawn_guest_process(&mut success).expect("start framed Windows fixture");
         let success_pid = success.id();
         assert_eq!(
             finish_structured_guest_command(success, Duration::from_secs(1), MARKER)
@@ -317,6 +316,31 @@ mod tests {
             "VALUE=ready"
         );
         assert!(!process_is_alive(success_pid));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn guest_shutdown_observation_retains_transport_and_closure_separately() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "printf exact-poweroff-error >&2; exit 7"])
+            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let child = spawn_guest_process(&mut command).unwrap();
+        let completion = finish_guest_command_bounded_observed(child,
+            Duration::from_secs(1), "shutdown timeout").unwrap();
+        eprintln!("actual poweroff observation result={:?} closure={:?}", completion.result, completion.closure);
+        assert!(completion.result.unwrap_err().contains("exact-poweroff-error"));
+        assert!(completion.closure.is_ok());
+
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exit 0"]).stdin(Stdio::null())
+            .stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = spawn_guest_process(&mut command).unwrap();
+        child.wait().unwrap(); // Real external reap/ECHILD, not a status adapter.
+        let completion = finish_guest_command_bounded_observed(child,
+            Duration::from_millis(100), "shutdown timeout").unwrap();
+        eprintln!("actual lost-custody observation result={:?} closure={:?}", completion.result, completion.closure);
+        assert!(completion.result.unwrap_err().contains("inspect"));
+        assert!(completion.closure.is_err());
     }
 
     #[cfg(unix)]
@@ -330,7 +354,7 @@ mod tests {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
             isolate_process_group(&mut command);
-            let child = command.spawn().expect("start actual readiness subprocess");
+            let child = spawn_guest_process(&mut command).expect("start actual readiness subprocess");
             let pid = child.id();
             let result = finish_guest_readiness_attempt(child, Duration::from_secs(1));
             assert!(!process_is_alive(pid), "readiness child must be reaped");
@@ -388,15 +412,26 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         isolate_process_group(&mut ready_then_stalled);
-        let ready_then_stalled = ready_then_stalled
-            .spawn()
+        let ready_then_stalled = spawn_guest_process(&mut ready_then_stalled)
             .expect("start ready-before-EOF fixture");
         let ready_pid = ready_then_stalled.id();
+        #[cfg(target_os = "macos")]
+        eprintln!(
+            "STREAM_DIAGNOSTIC root={} reader={} stdoutFD={} stderrFD={}",
+            ready_pid,
+            std::process::id(),
+            std::os::fd::AsRawFd::as_raw_fd(ready_then_stalled.stdout.as_ref().unwrap()),
+            std::os::fd::AsRawFd::as_raw_fd(ready_then_stalled.stderr.as_ref().unwrap())
+        );
         let started = Instant::now();
         assert_eq!(
             finish_guest_readiness_attempt(ready_then_stalled, Duration::from_secs(1))
                 .expect("accept exact marker before EOF"),
             READY_MARKER
+        );
+        eprintln!(
+            "ready-before-EOF complete elapsed={:?} pid={ready_pid}",
+            started.elapsed()
         );
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(!process_is_alive(ready_pid));
@@ -408,7 +443,7 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         isolate_process_group(&mut stalled);
-        let stalled = stalled.spawn().expect("start stalled readiness fixture");
+        let stalled = spawn_guest_process(&mut stalled).expect("start stalled readiness fixture");
         let stalled_pid = stalled.id();
         let started = Instant::now();
         let error = finish_guest_readiness_attempt(stalled, Duration::from_millis(50))
@@ -425,11 +460,101 @@ mod tests {
             .stderr(Stdio::piped());
         isolate_process_group(&mut excessive);
         let error = finish_guest_readiness_attempt(
-            excessive.spawn().expect("start excessive readiness fixture"),
+            spawn_guest_process(&mut excessive).expect("start excessive readiness fixture"),
             Duration::from_secs(1),
         )
         .expect_err("excessive readiness output must fail");
         assert_eq!(error, "Guest readiness output exceeded its bound.");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn guest_stream_lifecycle_joins_inherited_writers_and_retains_primary_failures() {
+        struct Fixture { directory: PathBuf, root: u32, writer: i32 }
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                if unsafe { libc::getpgid(self.writer) } == self.root as i32 {
+                    eprintln!("fixture cleanup writer={} group={}", self.writer, self.root);
+                    unsafe { libc::kill(self.writer, libc::SIGKILL); }
+                }
+                // This process is the original direct parent; never a guessed
+                // external PID wait. Nonblocking even on a failed assertion.
+                unsafe { libc::waitpid(self.root as i32, std::ptr::null_mut(), libc::WNOHANG); }
+                let _ = fs::remove_file(self.directory.join("writer"));
+                let _ = fs::remove_dir(&self.directory);
+            }
+        }
+        fn fixture(script: &str) -> (GuestChild, Fixture) {
+            let directory = std::env::temp_dir().join(format!("opemos-stream-{}-{}",
+                std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+            fs::create_dir(&directory).unwrap();
+            let mut command = Command::new("/bin/sh");
+            command.current_dir(&directory).args(["-c", &format!(
+                "sleep 30 & writer=$!; printf '%s' \"$writer\" > writer; {script}")])
+                .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+            isolate_process_group(&mut command);
+            let child = spawn_guest_process(&mut command).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(1);
+            let writer = loop {
+                if let Ok(value) = fs::read_to_string(directory.join("writer")) {
+                    if let Ok(pid) = value.parse::<i32>() { break pid; }
+                }
+                assert!(Instant::now() < deadline, "actual writer identity was not published");
+                thread::sleep(Duration::from_millis(1));
+            };
+            assert_eq!(unsafe { libc::getpgid(writer) }, child.id() as i32);
+            eprintln!("actual inherited writer={writer} root={} group={} uid={}",
+                child.id(), unsafe { libc::getpgid(writer) }, unsafe { libc::geteuid() });
+            let guard = Fixture { directory, root: child.id(), writer };
+            (child, guard)
+        }
+        fn closed(guard: &Fixture, started: Instant) {
+            assert!(started.elapsed() < Duration::from_secs(2));
+            assert!(!process_is_alive(guard.root));
+            assert_eq!(unsafe { libc::kill(-i32::try_from(guard.root).unwrap(), 0) }, -1);
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+        }
+        let (child, guard) = fixture("printf 'SteamOS NVIDIA Image Builder appliance\\nREADY\\n'; wait");
+        let started = Instant::now();
+        assert_eq!(finish_guest_readiness_attempt(child, Duration::from_secs(1)).unwrap(), READY_MARKER);
+        closed(&guard, started);
+
+        let (child, guard) = fixture("printf 'payload\\nOWNED_DONE:0\\n'; wait");
+        let started = Instant::now();
+        assert_eq!(finish_structured_guest_command(child, Duration::from_secs(1), "OWNED_DONE").unwrap(), "payload");
+        closed(&guard, started);
+
+        let (child, guard) = fixture("exit 0");
+        let started = Instant::now();
+        assert_eq!(finish_guest_command_bounded(child, Duration::from_secs(1), "shutdown timed out").unwrap(), "");
+        closed(&guard, started);
+
+        let (child, guard) = fixture("printf 'primary transport failure\\n' >&2; exit 255");
+        let started = Instant::now();
+        let error = finish_guest_readiness_attempt(child, Duration::from_secs(1)).unwrap_err();
+        assert!(error.contains("exit status: 255"), "{error}");
+        assert!(error.contains("primary transport failure"), "{error}");
+        closed(&guard, started);
+
+        let (mut child, guard) = fixture("printf 'partial'; wait");
+        let drain = start_guest_stderr_drain(&mut child).unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let started = Instant::now();
+        let error = read_guest_command_ready_line(&mut child, stdout, Duration::from_millis(100)).unwrap_err();
+        assert!(error.contains("timed out"), "{error}");
+        assert!(drain.join().unwrap().is_ok());
+        closed(&guard, started);
+
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exit 0"]).stdout(Stdio::piped()).stderr(Stdio::piped());
+        isolate_process_group(&mut command);
+        let mut child = spawn_guest_process(&mut command).unwrap();
+        let pid = child.id();
+        child.wait().unwrap(); // Actual already-reaped/ECHILD fault, not a fake try_wait adapter.
+        let error = finish_guest_command_bounded(child, Duration::from_millis(100), "timeout").unwrap_err();
+        assert!(error.contains("inspect"), "{error}");
+        assert!(error.contains("cleanup"), "{error}");
+        assert!(!process_is_alive(pid));
     }
 
     #[cfg(windows)]
@@ -916,8 +1041,7 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         isolate_process_group(&mut ready_then_stalled);
-        let ready_then_stalled = ready_then_stalled
-            .spawn()
+        let ready_then_stalled = spawn_guest_process(&mut ready_then_stalled)
             .expect("start ready-before-EOF fixture");
         let ready_pid = ready_then_stalled.id();
         let started = Instant::now();
@@ -936,7 +1060,7 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         isolate_process_group(&mut stalled);
-        let stalled = stalled.spawn().expect("start stalled readiness fixture");
+        let stalled = spawn_guest_process(&mut stalled).expect("start stalled readiness fixture");
         let stalled_pid = stalled.id();
         let started = Instant::now();
         let error = finish_guest_readiness_attempt(stalled, Duration::from_millis(100))
@@ -956,7 +1080,7 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         isolate_process_group(&mut stalled);
-        let stalled = stalled.spawn().expect("start stalled shutdown fixture");
+        let stalled = spawn_guest_process(&mut stalled).expect("start stalled shutdown fixture");
         let stalled_pid = stalled.id();
         let started = Instant::now();
         let error = finish_guest_command_bounded(
@@ -980,7 +1104,7 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         isolate_process_group(&mut noisy);
-        let mut noisy = noisy.spawn().expect("start noisy channel fixture");
+        let mut noisy = spawn_guest_process(&mut noisy).expect("start noisy channel fixture");
         let stderr_drain = start_guest_stderr_drain(&mut noisy).expect("drain noisy stderr");
         let noisy_stdout = noisy.stdout.take().expect("capture noisy stdout");
         let (stdout, ready) = read_guest_command_ready_line(
@@ -1003,7 +1127,7 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         isolate_process_group(&mut stalled);
-        let mut stalled = stalled.spawn().expect("start stalled channel fixture");
+        let mut stalled = spawn_guest_process(&mut stalled).expect("start stalled channel fixture");
         let stderr_drain = start_guest_stderr_drain(&mut stalled).expect("drain stalled stderr");
         let stalled_stdout = stalled.stdout.take().expect("capture stalled stdout");
         let started = Instant::now();
@@ -1025,7 +1149,7 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         isolate_process_group(&mut excessive);
-        let mut excessive = excessive.spawn().expect("start excessive marker fixture");
+        let mut excessive = spawn_guest_process(&mut excessive).expect("start excessive marker fixture");
         let stderr_drain = start_guest_stderr_drain(&mut excessive).expect("drain excessive stderr");
         let excessive_stdout = excessive.stdout.take().expect("capture excessive stdout");
         let error = read_guest_command_ready_line(
@@ -5118,7 +5242,11 @@ done"#
         assert!(welcome.contains("qmlscene"));
         assert!(welcome.contains("WELCOME_SERVER"));
         assert!(!welcome.contains("eval "));
-        assert!(server.contains("ThreadingHTTPServer((\"127.0.0.1\", 0)"));
+        assert!(
+            server.contains("socketserver.ThreadingTCPServer((\"127.0.0.1\", 0), Handler)")
+        );
+        assert!(server.contains("server.server_name, server.server_port = server.server_address"));
+        assert!(!server.contains("socket.getfqdn("));
         assert!(server.contains("X-OPEMOS-Token"));
         assert!(!server.contains("shell=True"));
         assert!(html.contains("close-app"));
@@ -6719,7 +6847,7 @@ done"#
         .expect("preview selected output directory");
         assert_eq!(
             PathBuf::from(preview.output_path),
-            custom.join("preview-source-nvidia.img")
+            custom.canonicalize().unwrap().join("preview-source-nvidia.img")
         );
         assert!(preview_image_output(
             source.to_string_lossy().into_owned(),
@@ -7474,6 +7602,23 @@ done"#
             assert!(Instant::now() < deadline, "guest handshake timed out");
             thread::sleep(Duration::from_secs(1));
         }
+        // Actual same-guest successful SSH command, then the production readiness
+        // consumer. A successful process with wrong output must fail closed.
+        let wrong = run_guest_command_with_timeout(
+            &session,
+            "printf 'OPEMOS_EXPECTED_WRONG_MARKER\\n'",
+            Duration::from_secs(5),
+        );
+        assert_eq!(wrong.as_deref(), Ok("OPEMOS_EXPECTED_WRONG_MARKER"));
+        assert_eq!(
+            appliance_readiness_outcome(
+                Instant::now(),
+                Instant::now() + Duration::from_secs(5),
+                &wrong
+            ),
+            ApplianceReadinessOutcome::Failed
+        );
+        println!("ACTUAL_GUEST_WRONG_MARKER exit=0 consumer=Failed");
         let health = collect_guest_health(&session).expect("guest health should pass");
         assert_eq!(health.protocol_version, "1");
         assert!(!health.required_tools.is_empty());

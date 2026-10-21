@@ -12,7 +12,7 @@ const run = (...args) => execFileSync("bash", [scriptUrl.pathname, ...args], {
   env: { PATH: process.env.PATH },
 });
 
-test("Linux appliance builder resolves pinned native and explicit architectures without downloads", () => {
+test("Linux appliance builder resolves pinned native and explicit architectures without downloads", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, () => {
   const native = JSON.parse(run("--resolve-only"));
   assert.equal(native.schemaVersion, 1);
   assert.equal(native.status, "ready");
@@ -95,7 +95,7 @@ const prepareFakeEnvironment = async (imageBytes) => {
   };
 };
 
-test("corrupt cached appliance is replaced only after authenticated verification", async () => {
+test("corrupt cached appliance is replaced only after authenticated verification", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, async () => {
   const fixture = await prepareFakeEnvironment(Buffer.from("authenticated Fedora image\n"));
   const cache = join(fixture.applianceDir, "work", "Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2");
   const output = join(fixture.root, "result.qcow2");
@@ -114,7 +114,7 @@ test("corrupt cached appliance is replaced only after authenticated verification
   assert.equal(metadata.fedora.checksumSignatureVerified, true);
 });
 
-test("failed authenticated replacement preserves the prior corrupt cache", async () => {
+test("failed authenticated replacement preserves the prior corrupt cache", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, async () => {
   const fixture = await prepareFakeEnvironment(Buffer.from("downloaded but unauthenticated\n"));
   await writeFile(
     fixture.checksum,
@@ -138,7 +138,7 @@ test("failed authenticated replacement preserves the prior corrupt cache", async
 });
 
 
-test("termination during authenticated replacement download preserves cache and removes partial bytes", async () => {
+test("termination during authenticated replacement download preserves cache and removes partial bytes", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, async () => {
   const fixture = await prepareFakeEnvironment(Buffer.from("replacement image\n"));
   const work = join(fixture.applianceDir, "work");
   const cache = join(work, "Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2");
@@ -227,7 +227,7 @@ esac
   await assert.rejects(readFile(`${cache}.download.partial`));
 });
 
-test("ambiguous or malformed signed image checksums stop before cache replacement", async () => {
+test("ambiguous or malformed signed image checksums stop before cache replacement", { skip: process.platform !== "linux" ? "Linux runtime harness; covered by Linux CI" : false }, async () => {
   for (const [name, checksumBody, expectedError] of [
     [
       "duplicate",

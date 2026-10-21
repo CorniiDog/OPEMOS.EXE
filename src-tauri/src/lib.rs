@@ -44,6 +44,7 @@ mod app;
 mod appliance;
 mod compatibility_preview;
 mod contracts;
+mod guest_process;
 // The persistent cache lifecycle is contract-agnostic and remains inactive
 // until Core publishes the authenticated generation-discovery descriptor. Its
 // durable host adapter is Unix-only until a reviewed Windows ACL/replace layer
@@ -106,6 +107,7 @@ mod windows_ssh;
 pub use app::run;
 use appliance::*;
 use contracts::*;
+use guest_process::{spawn_guest_process, GuestChild};
 use host_platform::*;
 use host_storage::*;
 use image::*;
