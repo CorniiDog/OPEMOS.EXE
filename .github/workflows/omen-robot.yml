@@ -131,6 +131,12 @@ jobs:
         with:
           ref: ${{ needs.trusted-runner-route.outputs.source }}
           persist-credentials: false
+      - name: Bind existing ephemeral job token to the accepted fixed host guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          /usr/bin/timeout --signal=TERM --kill-after=5s 45s /usr/bin/python3 -I -B /var/lib/opemos-robot-control-r1/guard/job_guard.py --bind-job-token
       - name: Execute fresh admitted Robot queue cases and actual pointer drivers
         shell: bash
         run: |
@@ -174,6 +180,12 @@ jobs:
         with:
           ref: ${{ needs.trusted-runner-route.outputs.source }}
           persist-credentials: false
+      - name: Bind existing ephemeral job token to the accepted fixed host guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          /usr/bin/timeout --signal=TERM --kill-after=5s 45s /usr/bin/python3 -I -B /var/lib/opemos-robot-control-r1/guard/job_guard.py --bind-job-token
       - name: Execute exact producer through actual Root Robot Build and SteamOS
         run: |
           set -euo pipefail
