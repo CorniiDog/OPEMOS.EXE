@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "state": "SOURCE_ONLY_UNRUN_NOT_INSTALLED",
+  "state": "SOURCE_PROPOSAL_UNRUN_NOT_INSTALLED",
   "workflow": ".github/workflows/omen-robot.yml@refs/heads/main",
   "runner_labels": [
     "self-hosted",
@@ -120,7 +120,7 @@
       "OPEMOS_POINTER_OPERATION_SHA256",
       "OPEMOS_EXPECTED_BOOT_ID/OPEMOS_EXPECTED_KERNEL/OPEMOS_SUBJECT_ROLE for non-GUI"
     ],
-    "macos": "No current native sender supplied. Fail Mac affected operation precisely. Owning EXE must provide current genuine Apple Silicon native pointer+observer API and real package producer. OMEN only hosts its x86 SteamOS output target; never fake macOS on OMEN.",
+    "macos": "Latest requested macOS route is OMEN-only ARM emulation (WORKFLOW top). This proposal does not implement or admit it, change a busy Mac source, use hosted macOS as substitute, or promote historical Apple Silicon receipts. Missing exact current Mac producer/native sender/normal route remains unavailable/failed and cannot block independent Ubuntu/Windows metadata/source work.",
     "scope": "Robot orchestration/control uses admitted normal OMEN operational route; application execution, project tests, kernel builds and guest commands remain inside exact admitted guests. QMP/native pointers are operational controls of those real guest sessions, not native project installation."
   },
   "post_terminal_collect_response": {
@@ -159,7 +159,7 @@
     "Root-reviewed fixed job guard/runner registration/service/RF installation and heartbeat",
     "Root-reviewed fixed planner/profile with real normal per-role operands and current-source canonical qualification",
     "current exact private driver copies/native observer APIs and package/Input manifests",
-    "current Apple Silicon Mac producer/native sender",
+    "current requested OMEN-only macOS producer/native sender (independent; no hosted substitute)",
     "independently admitted existing shared GPU lease and render/recovery operands"
   ],
   "qualification": "New Robot glue UNRUN. Existing CI11 modules copied byte-identically; historical126 actual passes are preserved, do not transfer to Robot glue/new head. Batch source+Robot fault tests and current normal pipeline in admitted OMEN lanes after primary review.",
@@ -171,11 +171,35 @@
       "execute-vm",
       "execute-platform",
       "persist",
-      "connection-proof"
+      "connection-proof",
+      "execute-produced-platform"
     ],
     "connection_subject": "ubuntu_native_chooser_connection",
     "connection_scope": "CONNECTION_ONLY_OLD_ARTIFACT_NO_FULLSTACK_ACCEPTANCE",
     "ownership": "Complete pinned Engine runs on trusted host broker, never inside confined runner. Root deploys matching final broker/source bundle. Caller cannot send argv/source/host paths.",
-    "proof_does_not_update_vm_platform_acceptance": true
+    "proof_does_not_update_vm_platform_acceptance": true,
+    "required_producer_subject": {
+      "fields": [
+        "platform",
+        "producer_run_id",
+        "producer_attempt",
+        "artifact_id",
+        "descriptor_sha256"
+      ],
+      "authority": "selection only; Root re-fetches exact protected-Main API/run-attempt/passed native package job/uploaded metadata+artifact archive digest before any transaction and after closure; no caller argv/path/admission"
+    }
+  },
+  "required_producer_join": {
+    "workflow_unchanged_trust_boundary": ".github/workflows/omen-robot.yml@refs/heads/main; workflow_dispatch current protected Main; unchanged Root ACTIONS_RUNNER_HOOK_JOB_STARTED validates before checkout",
+    "deadlock_correction": "Native package JOB completes and artifacts upload; separate hosted producer required job dispatches04 directly once and waits exact nonce/run/attempt.04 does not wait parent workflow completion. Parent workflow_run-completed remains independent full all20 inventory and cannot cover scoped required job.",
+    "trusted_root_broker_branch": "After existing peer/current-job/source/action authentication: required_omen.broker_execute_produced(actualEngine,request,existingAuthenticatedAPIReader,existingBoundedMetadataDownload). Publish returned exports through existing read-only public exchange/closed response; add required_acceptance only from returned actual verified transaction. Missing branch/profile stage case => failed unavailable, no alternate route.",
+    "before_effect": "Engine.transaction(kind artifact, subject exact platform/artifact, expected_producer exact API descriptor) requires prepared.expected equality BEFORE staging/submission/VM. No descriptor or runtime fallback.",
+    "normal_execution": "Existing strict transaction validates actual source/package/archive/executable, actual Robot five chooser/Build/USB actions, complete generated image+manifest/fullhash, full virtualUSB readback, installedx86SteamOStarget, same-targetkernel/NVIDIA/render/recovery, queue/GPU restoration and all closed receipts.",
+    "failure": "Use existing engine.failure_exports read-only for same operation on exception, keep first cause/closureUNKNOWN, Root publishes bounded explicitly-public native records. No retry/cleanup or synthesized pass.",
+    "requires_Root_source_install": "Root-owned broker routing branch/profile/source graph must be independently updated/reviewed to the exact owning-EXE merged source before dispatch; this source proposal neither modifies installed Root code nor claims the action exists today.",
+    "per_platform_independence": "Only exact selected descriptor transaction required for that producer; other VM/platform rows remain represented unavailable in summaries, not fabricated. Full-stack gate still requires unskipped actual-robot-transactions all20/allplatform job.",
+    "source_only_not_runtime_authority": true,
+    "reply_constructor": "After actual existing _publish returns its exact bounded descriptors, call required_omen.required_broker_reply(request, result, actual_current_summary, actual_published_descriptors); no direct client proof or private Root paths. Do not replace existing auth/nonce/prior-job guard.",
+    "fixed_planner_boundary": "Existing pure prepare must return exact expected producer from authenticated passed native package JOB/in-progress workflow, or fail unavailable. No completed-workflow-only planner fallback and no guessed approvals or plan. Matching actual planner/Root routing is a remaining independent integration requirement."
   }
 }

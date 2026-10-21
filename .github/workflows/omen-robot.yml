@@ -1,7 +1,29 @@
 name: 04 SteamOS
+run-name: ${{ inputs.required_platform && format('04 SteamOS required {0} {1}/{2} {3}', inputs.required_platform, inputs.producer_run, inputs.producer_attempt, inputs.correlation_nonce) || '04 SteamOS all required VMs and executables' }}
 
 on:
   workflow_dispatch:
+    inputs:
+      required_platform:
+        description: Exact protected-Main producer gate; empty runs full inventory
+        type: choice
+        options: ['', ubuntu, windows]
+        default: ''
+      producer_run:
+        type: string
+        default: ''
+      producer_attempt:
+        type: string
+        default: ''
+      artifact_id:
+        type: string
+        default: ''
+      source_sha:
+        type: string
+        default: ''
+      correlation_nonce:
+        type: string
+        default: ''
   workflow_run:
     workflows: [01 Windows EXE, 02 Ubuntu AppImage, 03 macOS Executable]
     types: [completed]
@@ -22,6 +44,7 @@ jobs:
     outputs:
       ready: ${{ steps.guard.outputs.ready }}
       source: ${{ steps.guard.outputs.source }}
+      producer: ${{ steps.scope.outputs.producer }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -41,7 +64,8 @@ jobs:
                       'scripts/omen_ci_reader.py', 'scripts/omen_ci_result.py',
                       'scripts/omen_ci_stage.py', 'tests/robot/inventory.robot',
                       'tests/robot/role.robot', 'tests/robot/guest.robot',
-                      'ci/gui-pointer-contract.json', 'ci/robot-installed-hook-contract.json']
+                      'ci/gui-pointer-contract.json', 'ci/robot-installed-hook-contract.json',
+                      'scripts/required_omen.py', 'tests/robot/required-platform.robot']
           missing = [name for name in required if not Path(name).is_file()]
           out = Path('robot-preflight')
           out.mkdir(exist_ok=True)
@@ -71,6 +95,15 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           OPEMOS_OMEN_ROBOT_RUNNER_STATE: ${{ vars.OPEMOS_OMEN_ROBOT_RUNNER_STATE }}
         run: python3 scripts/omen_robot_gate.py
+      - id: scope
+        name: Bind exact artifact from passed native package JOB before OMEN
+        if: steps.guard.outputs.ready == 'true' && inputs.required_platform != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/required_omen.py scope-guard
+      - name: Always provide unavailable reports when trusted route or scope failed
+        if: always() && (steps.guard.outputs.ready != 'true' || steps.scope.outcome == 'failure')
+        run: python3 scripts/required_omen.py diagnostics --directory robot-preflight --reason 'Trusted current route/producer artifact unavailable; no OMEN pass'
       - name: Always retain explicit all20 preflight outcomes
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -82,7 +115,7 @@ jobs:
 
   actual-robot-transactions:
     needs: trusted-runner-route
-    if: needs.trusted-runner-route.outputs.ready == 'true'
+    if: needs.trusted-runner-route.outputs.ready == 'true' && inputs.required_platform == ''
     runs-on: [self-hosted, Linux, X64, opemos-omen-robot]
     timeout-minutes: 240
     env:
@@ -107,11 +140,100 @@ jobs:
           export OPEMOS_CONSUMER_STARTED_EPOCH="$(date +%s)"
           "$OPEMOS_ROBOT_PYTHON" -c "import importlib.metadata; assert importlib.metadata.version('robotframework') == '7.5'"
           "$OPEMOS_ROBOT_PYTHON" -m robot --outputdir robot-results --output output.xml --report report.html --log log.html --xunit xunit.xml tests/robot/inventory.robot
+      - name: Always retain explicit unavailable reports if Robot did not start
+        if: always()
+        run: |
+          if [ ! -f robot-results/output.xml ]; then
+            python3 scripts/required_omen.py diagnostics --reason 'Actual all-VM Robot did not start; SteamOS and every unavailable role fail'
+          fi
       - name: Always return Robot reports, actual screenshots, argv, logs and guest NVIDIA evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: robot-actual-${{ github.run_id }}-${{ github.run_attempt }}
+          path: robot-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  required-platform-robot:
+    needs: trusted-runner-route
+    if: needs.trusted-runner-route.result == 'success' && inputs.required_platform != ''
+    runs-on: [self-hosted, Linux, X64, opemos-omen-robot]
+    timeout-minutes: 240
+    env:
+      OPEMOS_SOURCE_SHA: ${{ needs.trusted-runner-route.outputs.source }}
+      OPEMOS_REQUIRED_PRODUCER: ${{ needs.trusted-runner-route.outputs.producer }}
+      OPEMOS_ROBOT_REPORT_DIR: ${{ github.workspace }}/robot-results
+      OPEMOS_ROBOT_CONTROL_SOCKET: /run/opemos-ci/control/control.sock
+      OPEMOS_ROBOT_REPORT_EXCHANGE: /home/connor/.local/share/opemos-ci/github-runner/robot-private/reports
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      # SAME existing Root job-start guard: exact04/current protected Main,
+      # no PR workflow/caller argv/host credential or queue bypass.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.trusted-runner-route.outputs.source }}
+          persist-credentials: false
+      - name: Execute exact producer through actual Root Robot Build and SteamOS
+        run: |
+          set -euo pipefail
+          : "${OPEMOS_ROBOT_PYTHON:?Root current-Main job guard must expose pinned RF7.5}"
+          : "${OPEMOS_ROBOT_PRIVATE_RESULTS:?Root current-run reservation required}"
+          export OPEMOS_CONSUMER_STARTED_EPOCH="$(date +%s)"
+          "$OPEMOS_ROBOT_PYTHON" -c "import importlib.metadata; assert importlib.metadata.version('robotframework') == '7.5'"
+          "$OPEMOS_ROBOT_PYTHON" -m robot --outputdir robot-results --output output.xml --report report.html --log log.html --xunit xunit.xml tests/robot/required-platform.robot
+      - name: Always retain real reports or explicit unavailable diagnostic bundle
+        if: always()
+        run: |
+          if [ ! -f robot-results/output.xml ]; then
+            python3 scripts/required_omen.py diagnostics --reason 'Root/RF/actual operation unavailable; no actual GUI acceptance'
+          fi
+      - name: Always upload actual Robot XML HTML xUnit frames argv logs and NVIDIA
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: robot-actual-${{ github.run_id }}-${{ github.run_attempt }}
+          path: robot-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  required-platform-result:
+    needs: [trusted-runner-route, required-platform-robot]
+    if: always() && inputs.required_platform != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Retrieve closed exact-run preflight context
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: robot-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: robot-preflight
+      - name: Retrieve exact actual result and public diagnostic artifact
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: robot-actual-${{ github.run_id }}-${{ github.run_attempt }}
+          path: robot-results
+      - name: Strict current producer broker Robot image USB SteamOS final result
+        run: python3 scripts/required_omen.py finalize-scope
+      - name: Always upload exact required outcome, including failed missing roles
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: omen-required-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: required-result/required-result.json
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+      - name: Always upload hosted failure reports even when self-hosted is unavailable
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: required-hosted-reports-${{ github.run_id }}-${{ github.run_attempt }}
           path: robot-results/
           if-no-files-found: error
           retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}

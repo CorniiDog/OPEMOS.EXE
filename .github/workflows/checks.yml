@@ -91,7 +91,7 @@ jobs:
       - name: Exercise actual Linux cross-PID-namespace broker credentials
         run: |
           sudo apt-get update && sudo apt-get install --yes bubblewrap
-          /usr/bin/python3 -B tests/robot/test_peerpid_namespace.py --source "$GITHUB_WORKSPACE/scripts/robot_client.py" --sha256 b41f452e5b28d3fdff05eaa4e5d486a52780182ab01f641d9e35b133fbe14694
+          /usr/bin/python3 -B tests/robot/test_peerpid_namespace.py --source "$GITHUB_WORKSPACE/scripts/robot_client.py" --sha256 02d6ac5bdf1ccd99acd7243705c57e0af59205ee109177b2b879965d2d6f0e56
 
       - name: Exercise Robot source adapter and real Unix client fault contracts
         run: python3 -m unittest discover -s tests -p 'test_omen*.py' -v

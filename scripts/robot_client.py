@@ -188,6 +188,23 @@ class Engine:
                               "kind": item["kind"], "sha256": item["sha256"]}
                              for item in reply["public_evidence"]]}
 
+    def produced_platform(self):
+        """Exact producer target from hosted guard; host broker revalidates it."""
+        target = strict_json(os.environ['OPEMOS_REQUIRED_PRODUCER'])
+        require(set(target) == {'platform','producer_run_id','producer_attempt','artifact_id','descriptor_sha256'}, 'exact finite producer target')
+        reply = self._request('execute-produced-platform', target)
+        # Persist actual complete reply BEFORE a failure assertion. It contains
+        # only public descriptors/typed outcome, never a host plan or disk bytes.
+        path = self.reports / 'broker-required.json'
+        raw = json.dumps(reply, sort_keys=True, separators=(',', ':')).encode() + b'\n'
+        require(len(raw) <= MAX_REPLY, 'finite exact broker required outcome')
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+        require(reply['status'] == 'passed', 'exact current artifact GUI/SteamOS transaction failed or unavailable')
+        require(type(reply.get('required_acceptance')) is dict, 'current complete Root acceptance missing')
+        return {'exports': [{'path': str(self.reports / item['name']), 'kind': item['kind'], 'sha256': item['sha256']} for item in reply['public_evidence']]}
+
     def connection(self):
         """Separately scoped real pointer/native-chooser proof, never fullstack."""
         reply = self._request("connection-proof", "ubuntu_native_chooser_connection")

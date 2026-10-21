@@ -102,6 +102,12 @@ class HostedRunnerGuard(unittest.TestCase):
     def test_absent_runner_fails_with_all20(self):
         self.state['runner_id']=None;self.state['ready']=False;self.assertEqual(self.run_gate(),1)
         self.assertEqual(len(json.loads(Path('robot-preflight/all20.json').read_text())['vms']),20)
+    def test_explicit_offline_state_names_failed_check_without_promoting_rows(self):
+        self.state['ready']=False
+        self.assertEqual(self.run_gate(),1)
+        value=json.loads(Path('robot-preflight/all20.json').read_text())
+        self.assertEqual(value['failed_check'],'runner heartbeat explicitly ready=true')
+        self.assertTrue(all(r['status']=='unavailable' and 'explicitly ready=true' in r['reason'] for r in value['vms'].values()))
 
 class PointerKeywordCustody(unittest.TestCase):
     """Synthetic fault-only keyword wiring; never actual mouse acceptance."""

@@ -93,3 +93,58 @@ jobs:
           path: build/executable-producer/executable-producer.json
           if-no-files-found: error
           retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  omen-required:
+    name: Required OMEN GUI image + SteamOS (ubuntu)
+    needs: appimage-package
+    if: always() && github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && github.ref_protected && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 250
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Check out trusted Main gate only; never PR code on OMEN
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require current actual OMEN GUI Build, image, USB and SteamOS
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/required_omen.py dispatch-and-wait --platform ubuntu
+      - name: Always retain required gate reports and unavailable diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: required-omen-ubuntu-${{ github.run_id }}-${{ github.run_attempt }}
+          path: required-omen-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  omen-required-untrusted:
+    name: Required OMEN unavailable on non-Main source (ubuntu)
+    needs: appimage-package
+    if: always() && !(github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && github.ref_protected && (github.event_name == 'push' || github.event_name == 'workflow_dispatch'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Record unsupported source as failed without dispatch credentials
+        run: |
+          python3 scripts/required_omen.py diagnostics --directory required-omen-results --reason 'Non-Main/PR/fork source is not admitted to OMEN; no dispatch, GUI, image, USB or SteamOS acceptance'
+          exit 1
+      - name: Always retain unavailable required outcome
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: required-omen-ubuntu-${{ github.run_id }}-${{ github.run_attempt }}
+          path: required-omen-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
