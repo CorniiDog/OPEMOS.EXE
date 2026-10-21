@@ -1,5 +1,42 @@
 # OPEMOS.EXE — Product Checklist
 
+## Required Windows/Ubuntu OMEN and SteamOS outcomes — 2026-10-20
+
+- [ ] Integrate sealed Ubuntu proposal1504602d/repo patch10cec8b6 against actual
+  Main0a902 in independent work/exe-required-omen-acceptance. Package JOB success
+  is not actual GUI image acceptance. A separate trusted-Main final job dispatches
+  exact04 once before its parent workflow completes; source/run/attempt/artifact/
+  descriptor hash/fresh nonce and actual Robot/image/fullhash/USB/SteamOS proof
+  are required. Missing/offline/skipped/failed/timed-out stages remain red, with
+  always diagnostic JSON/XML/HTML/xUnit and screenshots/logs only when real.
+  Main-only Actions write token; separate read-only non-Main failure diagnostics.
+  Pin changed real Unix peer client in existing source CI. Real receipt verifier
+  stays active in schema tests; no overridden verifier to make a caller pass.
+  Preserve private original Root first cause and name precise failed preflight.
+  Main03 becomes metadata-only failed OMEN route guard, never hosted macOS native
+  execution. Held Mac30b/eaf and common6abed source are not resumed or modified.
+  Latest actual baseline04run39527535526 failed trusted preflight, uploaded all20
+  unavailable and skipped Robot; GitHub runner21 offline. No product pass.
+  Root sibling control/host-engine patch8f346374 is a DISABLED proposal only:
+  Root alone reviews/adopts exact updated15-source graph/profile/planner. Current
+  installed ABI rejects execute-produced-platform and provides status summaries,
+  not full image proof. No installed tools/VM/queue changes by this source work.
+  Imaging/process/cross-consumer sensitive: exact Core primary approval plus
+  tier checks and normal owner protected squash are mandatory. Intentionally red
+  unsupported-PR operational gates are not passed product tests or source-gate
+  waivers; any premerge gate conflict stays explicit for exact review.
+  Source/CI results belong only to their actual head; no old pass transfer.
+  Owning normal push to https://github.com/CorniiDog/OPEMOS.EXE.git on this branch
+  is required for user-requested PR206 and remote source CI. First4ecd7c11 exact
+  runs39531561929/39531630019: frontend51 cascade failures and Windows build
+  stopped at validator expecting four checkouts/four uploads, while the new
+  isolated gate graph has six. Complete raw first failures retained locally;
+  six other Checks jobs, Ubuntu package and Windows seed passed on that head.
+  All jobs terminal before correction, no cancellation or old-pass transfer.
+  Correct validator exact6 graph AND enforce both new job source/permission/
+  dispatch contracts, retaining every original negative check. Add diagnostics
+  workflow identity even before a dispatch context exists. No VM/image pass.
+
 ## Actual guest post-terminal collector consumer — 2026-10-20
 
 - [ ] Reconcile reviewed Hubble35c00774/Core9157Be356 contradiction on fresh

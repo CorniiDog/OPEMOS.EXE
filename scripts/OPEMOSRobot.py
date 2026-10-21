@@ -15,10 +15,11 @@ class OPEMOSRobot:
             self.engine=Engine(os.environ['OPEMOS_ROBOT_PRIVATE_RESULTS'])
         return self.engine
     def get_keyword_names(self):
-        return ['Execute Exact VM','Execute Every Platform Artifact','Prove Scoped Ubuntu Connection','Retain Independent Outcomes']
+        return ['Execute Exact VM','Execute Every Platform Artifact','Prove Scoped Ubuntu Connection','Retain Independent Outcomes','Execute Exact Produced Platform']
     def run_keyword(self,name,args,kwargs=None):
         if name=='Prove Scoped Ubuntu Connection':
             return self._execute(lambda _: self._engine().connection(), 'connection-only-old-artifact')
+        if name=='Execute Exact Produced Platform':return self._execute(lambda _:self._engine().produced_platform(),'exact-produced-platform')
         if name=='Execute Exact VM':return self._execute(self._engine().vm,args[0])
         if name=='Execute Every Platform Artifact':return self._execute(self._engine().platform,args[0])
         if name=='Retain Independent Outcomes':

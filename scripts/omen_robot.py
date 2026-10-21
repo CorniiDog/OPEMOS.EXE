@@ -163,9 +163,11 @@ class Engine:
         dump(folder/'request.json',request)
         return request,hook(self.profile,request,folder),folder
 
-    def transaction(self,kind,subject):
+    def transaction(self,kind,subject,expected_producer=None):
         request,prepared,folder=self.request(kind,subject)
         require(prepared.get('available')is True,prepared.get('reason','Missing exact admitted operation'))
+        if expected_producer is not None:
+            require(kind=='artifact' and prepared.get('expected')==expected_producer,'Exact requested producer differs BEFORE any stage/submit/VM effect')
         cfg=self.stage['load_pinned'](prepared['config'])
         operand=prepared['operand'];plan=prepared['plan'];case=operand['case']
         self.current=(request,prepared,folder,cfg)

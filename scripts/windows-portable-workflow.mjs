@@ -21,7 +21,7 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "timeout-minutes: 120", "the bounded Windows artifact job budget");
   requireText(text, "permissions:\n  contents: read\n  actions: read", "read-only permissions");
   requireText(text, "OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}", "the exact EXE source identity");
-  if ((text.match(new RegExp(CHECKOUT, "g")) || []).length !== 4) throw new Error("Windows workflow must use the exact checkout action four times including finite native diagnostic.");
+  if ((text.match(new RegExp(CHECKOUT, "g")) || []).length !== 6) throw new Error("Windows workflow must use six exact checkout actions including the two isolated OMEN gate jobs.");
   requireText(text, "if: github.event_name == 'workflow_dispatch' && inputs.producer-metadata-diagnostic", "manual-only finite diagnostic routing");
   requireText(text, "if: ${{ !inputs.producer-metadata-diagnostic }}", "no expensive source seed during finite diagnostic");
   requireText(text, "run: python scripts/diagnose_windows_producer_metadata.py", "the actual native metadata producer");
@@ -98,8 +98,23 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "path: build/executable-producer/executable-producer.json", "the separate producer descriptor upload");
   const retention = "${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}";
   const retentionValues = [...text.matchAll(/^\s*retention-days:\s*(.*?)\s*$/gm)].map(match => match[1]);
-  if (retentionValues.length !== 4 || retentionValues.some(value => value !== retention)) {
-    throw new Error("Windows workflow must preserve canonical-main 90-day and other-ref one-day artifact retention for all four uploads.");
+  if (retentionValues.length !== 6 || retentionValues.some(value => value !== retention)) {
+    throw new Error("Windows workflow must preserve canonical-main 90-day and other-ref one-day artifact retention for all six uploads.");
+  }
+  const trustedCondition = "github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && github.ref_protected && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')";
+  const main = text.split("\n  omen-required:\n")[1]?.split("\n  omen-required-untrusted:\n")[0] || "";
+  const untrusted = text.split("\n  omen-required-untrusted:\n")[1] || "";
+  requireText(main, `if: always() && ${trustedCondition}`, "trusted-Main-only OMEN dispatch allocation");
+  requireText(main, "ref: ${{ github.sha }}", "immutable Main gate checkout");
+  requireText(main, "actions: write", "Main-only dispatch token");
+  requireText(main, "dispatch-and-wait --platform windows", "exact Windows required outcome");
+  requireText(untrusted, `if: always() && !(${trustedCondition})`, "separate non-Main failure allocation");
+  requireText(untrusted, "actions: read", "read-only non-Main diagnostics");
+  requireText(untrusted, "ref: ${{ github.event.pull_request.head.sha || github.sha }}", "exact candidate diagnostic checkout");
+  requireText(untrusted, "diagnostics --directory required-omen-results", "unavailable outcome reports");
+  requireText(untrusted, "exit 1", "red non-Main operational outcome");
+  if ((text.match(/actions: write/g) || []).length !== 1 || /actions: write|dispatch-and-wait|self-hosted/.test(untrusted)) {
+    throw new Error("Windows workflow must isolate its sole write token/dispatch to Main; non-Main diagnostics stay read-only.");
   }
   requireText(text, "if-no-files-found: error", "missing-artifact failure");
   requireText(text, "include-hidden-files: true", "declared hidden runtime files in the artifact");

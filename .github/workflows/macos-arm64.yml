@@ -14,7 +14,9 @@ concurrency:
 
 jobs:
   native-app:
-    runs-on: macos-15
+    # Hosted metadata only. Actual macOS ARM execution requires an admitted
+    # macOS guest on physical OMEN; never substitute a GitHub-hosted Mac.
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
       contents: read
@@ -27,6 +29,40 @@ jobs:
       CARGO_BUILD_JOBS: 1
       RUST_TEST_THREADS: 1
     steps:
+      - name: Fail visibly until the required OMEN macOS route is admitted
+        shell: bash
+        run: |
+          python3 - <<'PYOMEN'
+          import html
+          import json
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reason = 'OMEN macOS ARM guest/SDK/graphical route is not admitted; hosted macOS execution is forbidden. No app, VM, image or USB test was run.'
+          out = Path('build/macos-arm64-evidence')
+          out.mkdir(parents=True, exist_ok=False)
+          receipt = {'status': 'unavailable', 'reason': reason, 'execution_location': 'required: macOS guest on physical OMEN',
+                     'source': os.environ['OPEMOS_EXE_COMMIT'], 'run_id': os.environ['GITHUB_RUN_ID'],
+                     'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'diagnostic_only': True,
+                     'macos_executed': False, 'VMStarted': False, 'productAcceptance': False}
+          (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          (out / 'route-error.log').write_text(reason + '\n')
+          robot = ET.Element('robot', generator='OPEMOS unavailable-route diagnostic; NOT a VM test', schemaversion='5')
+          suite = ET.SubElement(robot, 'suite', id='s1', name='OMEN macOS route unavailable')
+          case = ET.SubElement(suite, 'test', id='s1-t1', name='Required native execution unavailable')
+          ET.SubElement(case, 'status', status='FAIL').text = reason
+          ET.SubElement(suite, 'status', status='FAIL').text = reason
+          ET.ElementTree(robot).write(out / 'output.xml', encoding='utf-8', xml_declaration=True)
+          junit = ET.Element('testsuite', name='OMEN macOS route unavailable', tests='1', failures='1', errors='0', skipped='0')
+          ET.SubElement(ET.SubElement(junit, 'testcase', name='Required native execution unavailable'), 'failure', message=reason).text = reason
+          ET.ElementTree(junit).write(out / 'xunit.xml', encoding='utf-8', xml_declaration=True)
+          for name in ('report.html', 'log.html'):
+              (out / name).write_text('<!doctype html><title>FAILED: OMEN macOS unavailable</title><h1>Unavailable route, not VM execution</h1><pre>' + html.escape(reason) + '</pre>')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as report:
+              report.write('## FAILED: macOS must execute on OMEN\n\n' + reason + '\n\nFailure reports are route diagnostics, not actual Robot/VM acceptance. Screenshots unavailable: no graphical guest ran.\n')
+          print('::error title=OMEN macOS unavailable::' + reason)
+          raise SystemExit(1)
+          PYOMEN
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ env.OPEMOS_EXE_COMMIT }}
