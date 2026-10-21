@@ -26,6 +26,16 @@
   unsupported-PR operational gates are not passed product tests or source-gate
   waivers; any premerge gate conflict stays explicit for exact review.
   Source/CI results belong only to their actual head; no old pass transfer.
+  Owning normal push to https://github.com/CorniiDog/OPEMOS.EXE.git on this branch
+  is required for user-requested PR206 and remote source CI. First4ecd7c11 exact
+  runs39531561929/39531630019: frontend51 cascade failures and Windows build
+  stopped at validator expecting four checkouts/four uploads, while the new
+  isolated gate graph has six. Complete raw first failures retained locally;
+  six other Checks jobs, Ubuntu package and Windows seed passed on that head.
+  All jobs terminal before correction, no cancellation or old-pass transfer.
+  Correct validator exact6 graph AND enforce both new job source/permission/
+  dispatch contracts, retaining every original negative check. Add diagnostics
+  workflow identity even before a dispatch context exists. No VM/image pass.
 
 ## Actual guest post-terminal collector consumer — 2026-10-20
 

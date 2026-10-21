@@ -184,7 +184,9 @@ def emit_diagnostics(directory,reason,context=None):
  inventory=json.loads((Path(__file__).parents[1]/'ci/required-vms.json').read_bytes())['required_vms']
  rows=[{'id':r['id'],'name':r['name'],'status':'unavailable','reason':reason}for r in inventory]
  require(len(rows)==20 and len({r['id']for r in rows})==20,'all20 diagnostic inventory')
- value={'kind':'OMEN_REQUIRED_FAILURE_DIAGNOSTIC_V1','status':'failed','diagnostic_only':True,'actualGUIExecuted':False,'reason':reason,'context':context,'vms':rows,'SteamOS':'unavailable; requires actual installed target/NVIDIA/render/recovery receipts','missingScreenshotIsNotAFrame':True}
+ workflow_identity={k:os.environ.get(v)for k,v in {'repository':'GITHUB_REPOSITORY','run_id':'GITHUB_RUN_ID','attempt':'GITHUB_RUN_ATTEMPT','github_sha':'GITHUB_SHA','ref':'GITHUB_REF'}.items()}
+ workflow_identity['candidate_source_commit']=os.environ.get('OPEMOS_SOURCE_SHA',os.environ.get('OPEMOS_EXE_COMMIT'))
+ value={'kind':'OMEN_REQUIRED_FAILURE_DIAGNOSTIC_V1','status':'failed','diagnostic_only':True,'actualGUIExecuted':False,'reason':reason,'context':context,'workflow_identity':workflow_identity,'vms':rows,'SteamOS':'unavailable; requires actual installed target/NVIDIA/render/recovery receipts','missingScreenshotIsNotAFrame':True}
  # Create-only checkpoint and report names; never overwrite actual RF output.
  for name,data in [('diagnostic.json',value),('screenshot-unavailable.json',{'status':'unavailable','reason':reason,'fabricatedPNG':False})]:
   if not(directory/name).exists():save(directory/name,data)

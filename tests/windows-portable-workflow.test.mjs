@@ -17,6 +17,9 @@ test("Windows portable workflow accepts CRLF checkout line endings", () => {
 });
 
 for (const [name, mutate, expected] of [
+  ["untrusted write token", text => text.replace("  omen-required-untrusted:\n", "  omen-required-untrusted:\n    permissions:\n      actions: write\n"), /isolate its sole write token/],
+  ["untrusted dispatch", text => text.replace(" diagnostics --directory required-omen-results ", " dispatch-and-wait --platform windows "), /unavailable outcome reports/],
+  ["mutable Main gate checkout", text => text.replace("ref: ${{ github.sha }}", "ref: refs/heads/main"), /immutable Main gate checkout/],
   ["unbounded diagnostic dispatch", text => text.replace("if: github.event_name == 'workflow_dispatch' && inputs.producer-metadata-diagnostic", "if: always()"), /manual-only finite diagnostic/],
   ["diagnostic starts expensive seed", text => text.replace("if: ${{ !inputs.producer-metadata-diagnostic }}", "if: always()"), /no expensive source seed/],
   ["diagnostic bypasses native producer", text => text.replace("run: python scripts/diagnose_windows_producer_metadata.py", "run: echo skipped"), /actual native metadata producer/],

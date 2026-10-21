@@ -97,7 +97,7 @@ policy must be reconciled by its owning Root source, with no active lease purge.
 ## Required qualification (all UNRUN for this proposal)
 
 - In an admitted source-test lane: `python3 -m unittest discover -s tests -p
-  test_omen_required.py -v` (28 authored metadata/decision cases). These synthetic
+  test_omen_required.py -v` (29 authored metadata/decision cases). These synthetic
   decisions never constitute actual guest, Robot or SteamOS acceptance.
 - Owning EXE review/integration against exact current Main; source/Root graph
   comparison and Core counterpart requirements remain. Root separately reviews

@@ -151,6 +151,8 @@ class RequiredProducerTests(unittest.TestCase):
   with tempfile.TemporaryDirectory()as temp:
    gate.emit_diagnostics(temp,'Unavailable fixture; no actual operation')
    value=json.loads(Path(temp,'diagnostic.json').read_bytes());self.assertTrue(value['diagnostic_only']);self.assertEqual(len(value['vms']),20);self.assertFalse(value['actualGUIExecuted']);self.assertEqual(list(Path(temp).glob('*.png')),[])
+   self.assertEqual(value['workflow_identity']['run_id'],os.environ.get('GITHUB_RUN_ID'))
+   self.assertEqual(value['workflow_identity']['attempt'],os.environ.get('GITHUB_RUN_ATTEMPT'))
    for name in('output.xml','report.html','log.html','xunit.xml','diagnostic.log'):self.assertTrue(Path(temp,name).is_file())
  def test_fallback_preserves_existing_real_output(self):
   with tempfile.TemporaryDirectory()as temp:
