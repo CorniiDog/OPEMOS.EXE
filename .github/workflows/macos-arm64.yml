@@ -1,0 +1,117 @@
+name: 03 macOS Executable
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-arm64-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-app:
+    # Hosted metadata only. Actual macOS ARM execution requires an admitted
+    # macOS guest on physical OMEN; never substitute a GitHub-hosted Mac.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    env:
+      OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      OPEMOS_CORE_EXPECTED_COMMIT: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00
+      OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
+      OPEMOS_MACOS_FULLSTACK: '1'
+      CARGO_BUILD_JOBS: 1
+      RUST_TEST_THREADS: 1
+    steps:
+      - name: Fail visibly until the required OMEN macOS route is admitted
+        shell: bash
+        run: |
+          python3 - <<'PYOMEN'
+          import html
+          import json
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reason = 'OMEN macOS ARM guest/SDK/graphical route is not admitted; hosted macOS execution is forbidden. No app, VM, image or USB test was run.'
+          out = Path('build/macos-arm64-evidence')
+          out.mkdir(parents=True, exist_ok=False)
+          receipt = {'status': 'unavailable', 'reason': reason, 'execution_location': 'required: macOS guest on physical OMEN',
+                     'source': os.environ['OPEMOS_EXE_COMMIT'], 'run_id': os.environ['GITHUB_RUN_ID'],
+                     'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'diagnostic_only': True,
+                     'macos_executed': False, 'VMStarted': False, 'productAcceptance': False}
+          (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          (out / 'route-error.log').write_text(reason + '\n')
+          robot = ET.Element('robot', generator='OPEMOS unavailable-route diagnostic; NOT a VM test', schemaversion='5')
+          suite = ET.SubElement(robot, 'suite', id='s1', name='OMEN macOS route unavailable')
+          case = ET.SubElement(suite, 'test', id='s1-t1', name='Required native execution unavailable')
+          ET.SubElement(case, 'status', status='FAIL').text = reason
+          ET.SubElement(suite, 'status', status='FAIL').text = reason
+          ET.ElementTree(robot).write(out / 'output.xml', encoding='utf-8', xml_declaration=True)
+          junit = ET.Element('testsuite', name='OMEN macOS route unavailable', tests='1', failures='1', errors='0', skipped='0')
+          ET.SubElement(ET.SubElement(junit, 'testcase', name='Required native execution unavailable'), 'failure', message=reason).text = reason
+          ET.ElementTree(junit).write(out / 'xunit.xml', encoding='utf-8', xml_declaration=True)
+          for name in ('report.html', 'log.html'):
+              (out / name).write_text('<!doctype html><title>FAILED: OMEN macOS unavailable</title><h1>Unavailable route, not VM execution</h1><pre>' + html.escape(reason) + '</pre>')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as report:
+              report.write('## FAILED: macOS must execute on OMEN\n\n' + reason + '\n\nFailure reports are route diagnostics, not actual Robot/VM acceptance. Screenshots unavailable: no graphical guest ran.\n')
+          print('::error title=OMEN macOS unavailable::' + reason)
+          raise SystemExit(1)
+          PYOMEN
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.OPEMOS_EXE_COMMIT }}
+          persist-credentials: false
+      - name: Verify the complete macOS producer is present
+        run: |
+          python3 - <<'PYMAC'
+          import json
+          from pathlib import Path
+          required = ['scripts/check_macos_arm64_ci.py', 'tests/macos-ui-smoke.swift']
+          missing = [name for name in required if not Path(name).is_file()]
+          result = {'platform': 'macos', 'source': '${{ env.OPEMOS_EXE_COMMIT }}',
+                    'producer_ready': not missing, 'missing_files': missing,
+                    'full_stack_passed': False}
+          out = Path('build/macos-arm64-evidence')
+          out.mkdir(parents=True, exist_ok=True)
+          (out / 'producer-readiness.json').write_text(json.dumps(result, indent=2) + '\n')
+          if missing:
+              raise SystemExit('macOS producer is not yet integrated on this source: ' + ', '.join(missing))
+          PYMAC
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: CorniiDog/open-gpu-kernel-modules-steamos-support
+          ref: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00
+          path: opemos-core-contracts
+          fetch-depth: 186
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.23.2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-apple-darwin
+          components: clippy, rustfmt
+      - name: Read exact previously measured runtime and companion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download 39294846215 --repo CorniiDog/OPEMOS.EXE --name macos-arm64-7b8bf0eea38d7ab548bf4746707d8ab38ade05bb-1 --dir "$RUNNER_TEMP/retained-7b8"
+      - name: Native build and actual graphical transaction
+        env:
+          OPEMOS_RETAINED_MAC_APP_ARCHIVE: ${{ runner.temp }}/retained-7b8/SteamOS-NVIDIA-Builder-arm64.app.zip
+        run: python3 scripts/check_macos_arm64_ci.py
+      - name: Preserve exact app, failures and GUI evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-arm64-${{ env.OPEMOS_EXE_COMMIT }}-${{ github.run_attempt }}
+          path: build/macos-arm64-evidence
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+          if-no-files-found: error
+          compression-level: 0

@@ -1,0 +1,58 @@
+{
+  "kind": "EXISTING_CI_POINTER_PRODUCER_CONSUMER_CONTRACT_V1",
+  "enabled": false,
+  "nativeExecutionOrAcceptance": false,
+  "actions": [
+    "chooser-open",
+    "chooser-confirm-exact-input",
+    "Build",
+    "virtualUSB-select-and-review",
+    "virtualUSB-Write-confirmation"
+  ],
+  "operandFieldsRequired": [
+    "gui_sender exact source pin",
+    "gui_observer exact source pin",
+    "gui_converter exact source pin on Windows",
+    "gui_executable genuine current producer descriptor",
+    "gui_session exact admitted instance/boot/display pixel+coordinate geometry/scale",
+    "gui_clock exact same admitted monotonic-ns boot domain",
+    "gui_controls exact current-source native control IDs+roles for all5",
+    "gui_input_path exact readonly selected original",
+    "gui_output_path exact planned output",
+    "evidence_root or reviewed per-executable evidence_roots",
+    "gui_destination_admission exact independently reviewed current mapping source pin for QMP hosts; actual name/PID-start/host boot/socket peer/owned disk/argv digest -> exact runtime/guest boot/app/package/source/run/nonce"
+  ],
+  "receiptFields": [
+    "pointer_actions action->typed pointer-action ref all5",
+    "gui_sender_ref typed retained sender code",
+    "gui_observer_ref typed retained native/console observer code",
+    "gui_converter_ref typed retained Windows PPM->PNG code",
+    "all referenced source/target/lifecycle/acquisition/transition/frame files under current bounded128-file existing evidence protocol",
+    "pointer-destination-admission retained exact independently pinned host/runtime/app mapping",
+    "pointer-sender-stdout and pointer-sender-stderr exact bounded raw files, empty only with size0 and actual empty digest; lifecycle raw/full9/EOF binding"
+  ],
+  "actionBytes": [
+    "schema1 and kindOPEMOS_NATIVE_POINTER_ACTION",
+    "exact source/run/attempt/operation_nonce/VM/runtime/job IDs/original source/genuine executable descriptor",
+    "same admitted session+clock",
+    "actual app process birth/executable SHA/root/current window identity and control point/rect/role/enabled/visible/hit observation",
+    "actual movement/down/up request/reply or honest CGEvent post ledger and actual count",
+    "before frame acquisition and target observation refs",
+    "actual sender process source/birth and separately observed numeric/EOF/reap lifecycle",
+    "matching action-specific after-frame native/console transition ref",
+    "actual_destination actual observed QMP guard result plus independently pinned typed admission reference; no desired-context identity substitution",
+    "output_reservations exact four distinct private create-only preallocated owned output inodes established before any input",
+    "complete retained actual stdout/stderr files plus EOF/confirmed bytes/full9 and exact child numeric; truthful empty streams permitted only under typed raw kinds",
+    "exact attempted QMP phase/request/id/sent tick durably checkpointed before write; missing reply retains UNKNOWN delivery and attempted prefix; incomplete prefix cannot pass"
+  ],
+  "freshness": "Distinct capture/action IDs and actual source-ordered same-clock acquisitions; pixel SHA inequality is NOT required. No host/guest/Apple clock offset guessed.",
+  "Windows": "Retain original QMP PPM and derived PNG separately; validate held bytes and exact RGB conversion linkage. Input-send-event movement and left down/up matching numeric QMP IDs/return; errors fail.",
+  "macOS": "CGEvent.post has no delivery ACK. Require actual post records, actual observed pointer/native same-control hit/app-window and specific UI transition. Current product producer remains absent/held until EXE integrates exact current helper; no historical helper/old screenshot substitute.",
+  "scope": "Sent input is only performed-pointer evidence; never Build/output/Write/flush/readback/install/NVIDIA/recovery success. Existing full acceptance and CI8 zero-control/closed custody gates remain mandatory.",
+  "producerCopies": "Separately sealed private operational copies are prepared from seven exact audited static source copies. They are not activated/deployed/published by this candidate. Native/window measurement and transition observations must be genuinely supplied through existing owners before eligible execution.",
+  "requiredCurrentMacOperand": "Exact frozen current owning EXE helper/source/compiled helper identity, actual current native input+virtualUSB controls, app birth/CGWindow/display/boot clock metadata and action-frame/transition serialization integrated by EXE at safe checkpoint. Historical PR188 compatibility delta is reference-only.",
+  "revision": "CI10_COMPLETE_DESTINATION_RESERVATION_AND_FAILURE_CUSTODY",
+  "Ubuntu": "The operation frame path/hash must be the same context.before acquisition/capture bytes. Outer existing SSH and inner exact sender each have one finite owned PID/pidfd/start lifecycle, bounded raw streams, numeric/reap/EOF or UNKNOWN. Local SSH exit never proves remote VM closure.",
+  "preEffectOutputs": "Validate complete distinct canonical private owned action/lifecycle/raw destinations, exclude all inputs, reserve exact RDWR/no-follow/O_EXCL descriptors and actual quota before spawn/mouse; preserve pending and attempted failure records without another click or exclusive-store retry.",
+  "firstCause": "Original sender numeric/raw diagnostics and primary error are retained separately from storage/closure errors; safe typed exceptions never stringify command/credentials."
+}

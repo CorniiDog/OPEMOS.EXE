@@ -20,7 +20,10 @@ pub(crate) fn plan_host_qemu(
         ("macos", "aarch64", "aarch64") => Ok(("hvf", "virt,accel=hvf", "host")),
         ("macos", "x86_64", "x86_64") => Ok(("hvf", "q35,accel=hvf", "host")),
         ("macos", "aarch64", "x86_64") => Ok(("tcg", "q35,accel=tcg", "max")),
-        ("windows", "x86_64", "x86_64") => Ok(("whpx", "q35,accel=whpx", "max")),
+        // The pinned Windows WHPX/OVMF pair faults in PlatformPei when VMX is
+        // exposed. The same full appliance graph with VMX off reaches Fedora.
+        // Appliances do not need nested VMX; keep WHPX (no software fallback).
+        ("windows", "x86_64", "x86_64") => Ok(("whpx", "q35,accel=whpx", "max,vmx=off")),
         ("linux", "x86_64", "x86_64") => {
             if !enabled {
                 return Err("Experimental Linux testing is disabled. Set OPEMOS_EXPERIMENTAL_LINUX=1 to opt in.".into());
@@ -103,7 +106,10 @@ pub(crate) fn kvm_usable() -> bool {
             return false;
         }
         // KVM_GET_API_VERSION is a read-only capability query; Linux ABI version 12.
-        unsafe { libc::ioctl(file.as_raw_fd(), 0xae00) == 12 }
+        // The kernel rejects a nonzero generic ioctl argument even for this
+        // no-payload request. Omitting the variadic argument left a garbage
+        // register in the shipped AppImage and produced EINVAL.
+        unsafe { libc::ioctl(file.as_raw_fd(), 0xae00, 0 as libc::c_ulong) == 12 }
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -452,10 +458,14 @@ mod tests {
     }
     #[test]
     fn windows_x86_64_plan_requires_whpx_without_software_fallback() {
-        assert_eq!(
-            plan_host_qemu("windows", "x86_64", "x86_64", false, "", false).unwrap(),
-            ("whpx", "q35,accel=whpx", "max")
-        );
+        // Linux opt-in/mode/KVM inputs must not select software acceleration or
+        // re-expose nested VMX on the Windows appliance path.
+        for (enabled, mode, kvm) in [(false, "", false), (true, "tcg", true)] {
+            assert_eq!(
+                plan_host_qemu("windows", "x86_64", "x86_64", enabled, mode, kvm).unwrap(),
+                ("whpx", "q35,accel=whpx", "max,vmx=off")
+            );
+        }
         for (host, guest) in [("aarch64", "x86_64"), ("x86_64", "aarch64")] {
             assert!(plan_host_qemu("windows", host, guest, false, "", false).is_err());
         }
@@ -593,6 +603,18 @@ mod tests {
         } else {
             assert!(result.is_err());
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires actual accessible KVM in an admitted OMEN test VM"]
+    fn live_linux_kvm_query_matches_kernel_api() {
+        // Exercise the production method, not a fake adapter or replaced ioctl.
+        assert!(kvm_usable(), "actual /dev/kvm query must return API12");
+        assert!(
+            current_host_qemu("x86_64", "x86_64").is_ok(),
+            "run with explicit Linux opt-in and KVM selected"
+        );
     }
 
     #[cfg(target_os = "linux")]

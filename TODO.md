@@ -1,5 +1,27 @@
 # OPEMOS.EXE — Product Checklist
 
+## PR170 current-main reconciliation — 2026-10-21
+
+- [ ] Reconcile the preserved desktop/Core candidate `3468995e` against protected
+  Main `3700ff7f`. Retain current Main's PR198 Option-based RAM producer and its
+  complete API-failure/minimum/CPU tests; the older duplicate RAM implementation
+  is superseded, not a reason to roll back PR198. Retain current Main's complete
+  HTML/CSS/layout regression rather than restoring an older desktop redesign.
+  All original unique source/history remains in the published parent commits.
+  The remaining Core healthy-display/portable-initramfs/interstitial consumer
+  changes are imaging/cross-repository sensitive and require fresh exact Core
+  approval after all current required source checks, Windows seed/build and
+  Ubuntu package jobs pass. No old review or native result transfers.
+  Canonical GitHub Core commit `f72aff92` and published asset `614704834` were
+  freshly read: manifest 22,765 bytes, SHA-256
+  `0bd25f2d27873ac30ad0c8e87ddb7c5dcdcd343bcb142455433ed6415974e82d`,
+  124 files. Renderer bytes retain historical PR73 artifact `11328931893`
+  identity; current artifact availability and immutable producer provenance must
+  remain explicit in the whole review, not inferred from this local binary.
+  Primary normal fast-forward source push is necessary for current source CI
+  and exact remote review. No tests/compiles run on the controller, no new trust,
+  boundary/governance edits, native/VM acceptance, release or hardware effects.
+
 - [ ] Close R19 Windows 6-GiB admission regression: exact configured6GiB reports
   usable6441336832, source Ready but Build disabled. Confirm installed RAM through
   the native firmware API; correct only a <=2MiB minimum-boundary reservation,
@@ -10,6 +32,349 @@
   Core source finding on PR171 `8984e121` corrected: reservation bound now
   compares installed-minus-usable, not minimum-minus-usable; 16GiB installed
   with 6GiB-minus-1MiB usable remains unchanged and is refused by planning.
+
+## Existing job-token binding and complete failed-result custody — 2026-10-21
+
+- [ ] Root actual producer39633447006 built a package but automatic39635856746
+  failed before native execution: the job guard lacked the existing ephemeral
+  token. Integrate reviewed proposal7f301815 on actual Main839470c2: post-checkout
+  fixed guard bind on both OMEN jobs; exact authenticated nonsecret broker failure
+  through create-only client receipts, Robot, hosted finalizer and parent artifact
+  readback. Keep first cause when receipt persistence also fails. Preserve PR203
+  real same/cross-PID-namespace credentials (pid>=0, exact UID/GID); the proposal's
+  new pid==0 restriction conflicts with that actual existing positive contract
+  and is not needed to deliver the existing token. Root bind namespace/cgroup/
+  birth/one-use/epoch guards remain independently required, never waived here.
+  New socket/process/filesystem and synthetic API cases run only in ordinary
+  permitted source CI; no controller project tests or native/VM acceptance claim.
+  Remote primary push is necessary for current source CI and new exact Core
+  counterpart review. Root alone qualifies source15/Engine15/admission/rollover;
+  original failures, held30b/eaf/6abed, TTL and governance remain unchanged.
+  First df4bdf58 source CI stopped at the unchanged checks.yml client02d6 SHA
+  before credential tests (push39649507539/job119393814929, PR39649553196).
+  Preserve full original log; repin only this ordinary source-test operand to
+  reviewed clientae68448b, without changing kernel tests/guards. AST/diff checks
+  did not check that workflow-to-source pin; exact normal source CI detected it.
+
+## Joined native pointer identity correction — 2026-10-21
+
+- [ ] Correct the demonstrated Main5a0759 pointer/observer `identity.nonce`
+  versus strict stage `identity.operation_nonce` contradiction. Both keyword
+  consumers now use `operation_nonce`; outer Engine/broker `nonce` is unchanged.
+  Add legacy/stale keyword and observer-file regressions and unchanged full-stage
+  dual-key rejection. Synthetic sender fixtures are not native GUI acceptance.
+  Source CI and exact Core primary review are required before an owning squash.
+  This imaging/process-sensitive scope cannot use the routine harness exception.
+  Remote owning push is necessary for the user-requested source CI/review.
+  Preserve original finding eeb786e9, proposed patch fab65aef and all prior failures.
+  Root's immutable Windows R6 fresh-Build API f9d3aaf0 / normal entry2e851894
+  consumes the actual Main modules and remains disabled until a new authentic
+  source/package/CI10 sender/independent observer/current-admission graph is
+  qualified. Never relabel patched bytes as5a0759 or replay Ubuntu retained-image
+  writer R29 as fresh Build. No installed, queue, VM or hardware effect here.
+
+## Required Windows/Ubuntu OMEN and SteamOS outcomes — 2026-10-20
+
+- [ ] Integrate sealed Ubuntu proposal1504602d/repo patch10cec8b6 against actual
+  Main0a902 in independent work/exe-required-omen-acceptance. Package JOB success
+  is not actual GUI image acceptance. A separate trusted-Main final job dispatches
+  exact04 once before its parent workflow completes; source/run/attempt/artifact/
+  descriptor hash/fresh nonce and actual Robot/image/fullhash/USB/SteamOS proof
+  are required. Missing/offline/skipped/failed/timed-out stages remain red, with
+  always diagnostic JSON/XML/HTML/xUnit and screenshots/logs only when real.
+  Main-only Actions write token; separate read-only non-Main failure diagnostics.
+  Pin changed real Unix peer client in existing source CI. Real receipt verifier
+  stays active in schema tests; no overridden verifier to make a caller pass.
+  Preserve private original Root first cause and name precise failed preflight.
+  Main03 becomes metadata-only failed OMEN route guard, never hosted macOS native
+  execution. Held Mac30b/eaf and common6abed source are not resumed or modified.
+  Latest actual baseline04run39527535526 failed trusted preflight, uploaded all20
+  unavailable and skipped Robot; GitHub runner21 offline. No product pass.
+  Root sibling control/host-engine patch8f346374 is a DISABLED proposal only:
+  Root alone reviews/adopts exact updated15-source graph/profile/planner. Current
+  installed ABI rejects execute-produced-platform and provides status summaries,
+  not full image proof. No installed tools/VM/queue changes by this source work.
+  Imaging/process/cross-consumer sensitive: exact Core primary approval plus
+  tier checks and normal owner protected squash are mandatory. Intentionally red
+  unsupported-PR operational gates are not passed product tests or source-gate
+  waivers; any premerge gate conflict stays explicit for exact review.
+  Source/CI results belong only to their actual head; no old pass transfer.
+  Owning normal push to https://github.com/CorniiDog/OPEMOS.EXE.git on this branch
+  is required for user-requested PR206 and remote source CI. First4ecd7c11 exact
+  runs39531561929/39531630019: frontend51 cascade failures and Windows build
+  stopped at validator expecting four checkouts/four uploads, while the new
+  isolated gate graph has six. Complete raw first failures retained locally;
+  six other Checks jobs, Ubuntu package and Windows seed passed on that head.
+  All jobs terminal before correction, no cancellation or old-pass transfer.
+  Correct validator exact6 graph AND enforce both new job source/permission/
+  dispatch contracts, retaining every original negative check. Add diagnostics
+  workflow identity even before a dispatch context exists. No VM/image pass.
+
+## Actual guest post-terminal collector consumer — 2026-10-20
+
+- [ ] Reconcile reviewed Hubble35c00774/Core9157Be356 contradiction on fresh
+  Main a7621ef: same request prepare, actual normal selected guest job, canonical
+  terminal, readonly collect, pinned receipt/proof, unchanged stage validation
+  and all four public reports. No second queue job/host-guest substitution.
+  Source proposal lacked explicit guest/host boot fields in returned collect
+  response; consumer contract now demands genuine observed distinct boot IDs,
+  full prepare identity in guest proof and five-field collector identity.
+  Core producer is active independently; exact ABI must join its authenticated
+  immutable handback before operational acceptance, no busy-owner contact.
+- [ ] Complete extra artifact job set also binds failure exports; keep all
+  original/runtime/source/admission/row/report/expiry/closure guards unchanged.
+  Real hosted-VM subprocess -> create-only/fsync -> current held-FD consumer
+  cases plus schema/identity/path/permission/hash faults run in ordinary CI.
+  Such fixtures are not guest/queue/Robot acceptance. All other unavailable
+  rows remain red. Normal owning source push/PR to canonical GitHub necessary
+  for remote-only checks/exact Core review. No controller/OMENhost tests,
+  installed Root edit, Mac cancellation, new trust/helper/GPU/media/publication.
+
+## Actual Robot peer PID namespace correction — 2026-10-20
+
+- [ ] Preserve actual04 run39348469633 all24 pre-click failures: the same
+  listener peer hostPID787372 becomes PID0 in Runner21's child PID namespace,
+  exact current UID/GID1000 unchanged. Integrate reviewed Hubble final6619c18e
+  on fresh Main e7c294e3: complete fixed-size SO_PEERCRED, nonnegative kernel
+  PID and exact UID/GID. No endpoint/path/nonce/source authorization relaxation.
+- [ ] Actual native Linux same-namespace positive, real bwrap child namespace
+  PID0 positive, six strict negatives and owned group/FD/EOF/reap checks run in
+  existing Linux CI lane, never controller. Exact candidate source SHA b41f452e
+  is consumed through held descriptor/full9/hash. All ordinary required checks
+  and exact Core approval precede owner protected merge. Normal source push to
+  canonical CorniiDog/OPEMOS.EXE is necessary for remote-only native CI/review;
+  no installed client, listener, VM retry or source publication beyond this PR.
+  Root owns operational rollover/next04; PR202 Mac and other frozen holds stay.
+
+## Automatic OMEN Robot integration — 2026-10-19
+
+- [ ] Native Windows readonly timestamp causal recovery: preserve exact326
+  failure and all10 passed jobs. Mainb731 naming integration appended by normal
+  ancestry merge955b0012 without rewriting history; Main03/04 and readiness
+  guards retained. Isolated finite diagnostic branch uses manual existing
+  Windows workflow, default package route unchanged. Capture Win32 native
+  creation/change/write/attributes/volume/FileID plus Python path/FD views at
+  real create/chmod/open/read/close, no sleeps/method overrides/normalization.
+  Normal fast diagnostic excludes bulk seed/package; remote-only native CI
+  requires normal source push to canonical origin, no PR200 push/approval or
+  new OS/VM/trust/credential/provider/physical effect. Correction only after
+  measured cause; fresh exact current-Main Core gates remain required.
+  Actual finite Windows39343734396/6f68cb59 exited0 with seed/build SKIPPED;
+  native Python3.12.10 record c8065aa3: same Win32 volume/FileID, pathctime
+  equals CreationTime, FDctime equals ChangeTime after readonly chmod, stable
+  before/after native observer/read/close. No delay/cache speculation needed.
+  Source correction compares creation with creation across views, keeps EACH
+  original full9 stable, and additionally holds native read-only/nonreparse
+  share-read-only handle while checking native FileID/creation/change/write/
+  attributes before/after hash. Real readonly full producer transaction plus
+  hardlink/reparse/size/directory/live-writer/write/replace/closure cases required.
+  Diagnostic-only capture is not production acceptance; new checks NOT RUN yet.
+  Actual952 Windows39344034028 native10 cases:8PASS including readonly/full
+  record and real symlink/hardlink;2new sharing faults FAIL, before bulk build.
+  Cause: FILE_READ_ATTRIBUTES-only handle is exempt from data sharing rules
+  (CreateFileW documented attribute exception); writer actually opened. Use
+  GENERIC_READ (already needed by held data FD) with same share-read-only mask;
+  unchanged refusal tests must verify the correction, no assertion weakening.
+  Diagnostic receipt bookkeeping correction: earlier `children_started=false`
+  omitted its synchronous git identity query (check_output returned/reaped0).
+  Current script explicitly records that child and bounds it15s. Earlier native
+  file/FD observations remain valid, but the zero-child flag is not relied on.
+
+- [ ] Preserve actual09d Windows package/startup/upload success and subsequent
+  producer-binding failure: run39338115494/job118352964667 exit1 at held
+  path-vs-descriptor full9 equality. Artifact12227379805 SHA6148d3a4557e277e91e05f0f911dde8522fa41c511209b7638056d266c79570a
+  retained. Exact differing fields/mechanism UNKNOWN, no custody relaxation.
+  New native regular `.exe` transaction runs before expensive Windows build;
+  failure reports exact bounded field values, with no stat-method override.
+  Earlier Linux-only consumer cases did not exercise native producer metadata.
+  Actual fail-fast Windows39340136302/job118359834769 exit1 reproduced only
+  `st_mode` path33279 versus descriptor33206 (execute bits), other eight equal.
+  Cross-view comparison now accounts ONLY for Windows synthetic execute bits;
+  each path and descriptor independently retain unchanged full9 checks through
+  complete hashing. Native readonly-source/directory/full producer-descriptor
+  normal cases added; all changed-head native checks remain required.
+
+- [ ] Complete changed-head VM source qualification after measured c390 harness
+  omissions: filename filtering excluded required `ci/required-vms.json`, and
+  test stdout/stderr existed only in RAM before one serial write/poweroff.
+  Read-only stopped-COW recovery proved canonical three-case exit0 receipt
+  `4f927af5`, not the missing nineteen-test result. New complete source manifest
+  and durable fsynced per-batch logs/results must be consumed after shutdown;
+  preserve c390 failure/COW and unchanged inputs, no deadline relaxation.
+- [ ] Original 09d source CI passed all147 public Python cases and389 frontend
+  cases; hygiene rejected two nonconforming log filenames. Retained public
+  nested boot fixtures now use `.sanitized.log` names and matching provenance;
+  exact bytes/hashes remain unchanged and the hygiene authority is not relaxed.
+  Actual1b Linux integration118359348882 exposed computed fixture suffix still
+  `.log`: prior literal full-name search missed `label + suffix`. Update that
+  consumer to the exact sanitized filename; failure149cases/1error retained.
+  Already queued immutable6d qualification remains unchanged, no job rewrite.
+
+- [x] Reconciled protected Main `1e37a502` via topic commit `770c798e`,
+  preserving published history and all five reviewed Windows files. PR198 exact
+  approval/all eleven checks and squash parent/tree verified; source-only merge.
+- [ ] Frozen Root client `261c52ce` replaces confined local host execution with
+  fixed v2 Unix host RPC. Separately named connection-only chooser test uses
+  retained `01ae` AppImage; it cannot promote any current VM/platform outcome.
+  Current-head actual guest/client/producer faults and exact CI/Core gates remain
+  required. Earlier c390 source VM powered off with no returned test result;
+  its seed/COW/complete log and failure remain preserved, not a test pass.
+
+- [ ] Reconcile the complete 46-file Maxwell candidate on Main `b6bb53d9`,
+  including automatic Main Windows/Ubuntu producer triggers. Existing Main has
+  no macOS producer; do not import the held PR199 lifecycle implementation or
+  label an absent producer successful. The current confined broker ABI and
+  fixed operational planner must be reconciled before source approval.
+- [ ] Run the 19 new adapter cases and required canonical qualification in a
+  fresh ordinary queued OMEN Ubuntu KVM-B COW (1 CPU, 3 GiB including overhead,
+  no NIC, literal 60 GB limit); retain actual exits, logs and closure. Historical
+  CI11 126 results remain historical, not new-head results.
+- [ ] Required exact source/package checks and Core counterpart approval precede
+  owning protected merge. Runner installation/activation and real automatic
+  Robot pointer, image, virtual USB, SteamOS and NVIDIA results remain separate.
+  No physical USB/GPU/trust/publication authority is added.
+
+## Current-Main Windows causal batch
+
+- [ ] Reconcile only PR190 generated-VARS/WHPX, PR196 typed native readiness,
+  and reviewed RAM449145ed onto Mainb6bb53d9; preserve merged Linux197 and
+  existing source workflows. Historical notes below remain evidence, not current
+  merge authority. Native Windows four RAM cases plus readiness/permissions and
+  all required current-head source/package checks must pass; exact new Core
+  approval is required before owning protected merge. Normal topic push to
+  canonical origin is necessary for remote-only CI/review, not publication.
+  Mac lifecycle/native/GUI failures do not hold this independent source scope.
+
+## Current-main Linux UDisks writer source qualification
+
+- [ ] Reconciled reviewed119fb3b4 onto exact Main00885837 in isolated EXE topic;
+  only known extra blank line corrected. Four Linux guards and unchanged common
+  copy/flush/full-readback require native source CI and current AppImage package.
+  Necessary normal topic push to https://github.com/CorniiDog/OPEMOS.EXE.git
+  enables remote-only checks/package and exact Core review. No controller tests,
+  Main merge, graphical VM, USB write, hardware or publication acceptance.
+
+## Windows read-only package firmware handoff
+
+- [ ] Same complete Windows launch graph, subsequent actual OMEN r3/r4:
+  pinned WHPX/max reproduces PlatformPei #GP; WHPX/max,vmx=off passes firmware
+  into Fedora with unchanged firmware/Fedora/original pins. Windows plan now
+  keeps WHPX but disables unneeded nested VMX exposure, shared by image and
+  x86 build-worker producers; Linux/macOS plans and deadlines stay unchanged.
+  Plan regression remains selected by Windows `windows_` and full Rust CI.
+  r4 receipt SHA9488b10aca075c3a52b49b178cb6dc9876ed78f7bb58f4bf6eca10ec9eb76f5e
+  is diagnostic, not package acceptance: Fedora mounts its correct root UUID,
+  then main systemd times out on device units and enters emergency mode.
+  Exact in-guest udev/device-state inspection requested once from existing idle
+  Resolver under r5 before selecting any storage or timing correction. No
+  timeout patch, new runtime/trust input, original mutation or automatic TCG
+  fallback. Prior PR190 ten checks/Core source-only approval apply only to old
+  head31af2835; changed scope/head requires fresh CI and exact Core review.
+  Coherent changed-package graphical normal/fault Build/health/closure and
+  protected source merge remain held. Necessary fast-forward topic push to
+  canonical origin enables remote-only compiler/package checks, not publication.
+
+- [ ] Root plan f978b8e1: actual PR189 Windows D:-input/C:-output GUI advanced
+  past storage admission, then QEMU denied write access to generated uefi-vars.fd.
+  Read-only-media template had Windows R attribute; fs::copy propagated it.
+  Both existing appliance producers now make only the generated vars copy
+  writable and open it for write before spawn; firmware/source templates stay
+  unchanged. Real Windows regression reproduces old copy write denial, exercises
+  both generated copies with write/flush/reread and unchanged template bytes/R,
+  plus missing-template/directory faults. Authored, not run on controller.
+  Exact remote CI/package and Core review, then actual read-only-media packaged
+  graphical Build/health/closure remain required. No timeout or trust changes.
+  Fresh topic push to canonical origin is necessary for remote Windows compiler,
+  package checks and exact counterpart review; no merge/publication in this step.
+
+## Windows minimum RAM admission (current-Main PR171 port)
+
+- [ ] Correct only verified installed RAM >=6 GiB with usable RAM below6 GiB
+  and total installed-minus-usable reservation <=2 MiB (R19:1,114,112 bytes).
+  Missing usable-memory API, zero/overflow/inconsistent reports still refuse;
+  missing installed-memory API retains usable-only admission. Guest RAM/CPU
+  allocation and non-Windows detection stay unchanged. Boundary/API-outcome/
+  allocation regressions and native Windows API case authored, UNRUN. Static
+  checks/local source candidate do not establish Windows CI or graphical Build.
+  Owning EXE exact-head required CI, Core review and admitted six-GiB Windows
+  graphical Build remain required; historical PR171 head is not merge authority.
+
+## Selected output storage admission / Windows cleanup investigation
+
+- [ ] Root plan673819a7: actual disposable Windows GUI selected read-only D: input
+  and writable C: output, but first preflight measured D:. Resolve the selected
+  directory before normalization admission and reuse that exact operand for later
+  build admission; retain capacity/inode/reserve checks. Added real filesystem
+  readonly-source/output-write and measured insufficient-output regression. This
+  fixture is not proof of separate mounted-volume or graphical behavior.
+  Tests authored, not run on controller; required remote CI and packaged OMEN
+  D:-input/C:-output GUI validation remain pending. No original image changes.
+- [ ] Preserve PR188 Windows failure39206691144/job117911259550 (30.55s;
+  shutdown 100ms fixture violated 3s bound). Existing taskkill status was ignored
+  and pipe joins unmeasured, so logs cannot distinguish taskkill/child wait from
+  inherited-pipe delay. Added test-build-only stage/status diagnostics in actual
+  cleanup functions before the next diagnostic compiler run; no deadline change,
+  skip, method override or claim that cleanup is fixed. PR188 M1 passed evidence
+  and its source branch remain unchanged. Remote source CI requires this lead's
+  normal fast-forward topic push to canonical GitHub; no merge/publication.
+
+## Cold-boot SSH readiness transport classification
+
+- [ ] Native Windows run39320767092 failed compile E0277 before tests/package:
+  five existing string literals inferred the new typed readiness error, but
+  From<&str> is absent. Correct only explicit Message test construction; Linux
+  excludes this Windows test and could not detect the error. Original full log
+  retained in exe-pr196-windows-e0277-causal-recovery-20261019.json. Production
+  typed classification and all timeouts unchanged; exact new-head CI required.
+
+- [ ] EXE adopted reviewed31708efe onto frozen c439 in a disjoint topic for
+  native Windows loopback/timeout tests and portable package via existing CI.
+  Necessary normal push to https://github.com/CorniiDog/OPEMOS.EXE.git for remote
+  checks and exact review only; no Main merge, new GUI/VM/USB or runtime acceptance.
+
+- [ ] Isolated Windows native-reset candidate (basec439, 2026-10-19): preserve
+  native russh stage, IO kind, OS code and original message through the normal
+  readiness consumer. Only connect-stage reset/refused and the existing bounded
+  attempt timeout can remain pending under the unchanged absolute300s session
+  deadline; key/auth/protocol/output/semantic/wrong-marker failures stay strict.
+  Real Windows loopback abortive-close RST/refusal, clean closure/invalid banner,
+  strict typed faults and the existing5s silent-banner/deadline case are authored,
+  NOT RUN on the controller. Exact EXE integration, required Windows checks/Core
+  approval/new package and actual GUI Build/image/virtualUSB write/readback remain
+  pending. Peer-reset mechanism is UNKNOWN; no firmware/CPU/network/trust patch.
+
+- [ ] Root causal plan f4a61c07: exact PR183 AppImage finished hashing original
+  SteamOS3.8.14 IMG, then exit255/Connection refused with empty stdout became
+  Ok(empty) and terminal wrong-marker failure. Preserve numeric status before
+  cleanup, bounded stdout/stderr and original absolute attempt/session deadlines.
+  Only recognized cold-boot transport or absent marker-file errors retry;
+  successful wrong marker and authentication/fatal errors fail closed. Added
+  ordinary real-subprocess refused->ready plus wrong/empty/auth/fatal/expiry
+  regression without method overrides; authored, NOT RUN on controller.
+  Exact source CI/counterpart review and same IMG packaged GUI cold-boot/health/
+  fault/closure verification remain required. Original IMG/trust untouched.
+
+- [x] PR183 source merge/private desktop operation: protected squash90e37c64,
+  reviewed tree3d3bdd67, all10 source checks PASS. Exact AppImage108c107a and
+  pinned companion behind existing shortcut mapped760x800 KVM environment ready;
+  normal WM_DELETE closure and group absence, old0cbbbd0a rollback retained.
+  Evidence exe-pr183-merge-desktop-promotion-final-20261019.json. This does not
+  close VM/image/USB/GPU acceptance or the newly reproduced cold-boot failure.
+
+## Linux AppImage KVM and appliance relocation regression
+
+- [ ] Root plan edcbad27: shipped099d AppImage issued KVM_GET_API_VERSION
+  without variadic arg and received EINVAL; appliance lookup used absent CI
+  checkout. Fix both on work/exe-linux-appimage-runtime from fetched099d.
+  Explicit zero ioctl arg; relocated `<AppImage>.runtime/appliance` reuses exact
+  existing compiled Fedora/cloud-init/closed manifest validation. Separate
+  generated sessions keep immutable appliance inventory closed. CI stages the
+  same already pinned Fedora image with packages, not new trust or TCG fallback.
+  Added moved-path/invalid-path, wrong-image pre-output refusal and ignored real
+  production KVM test. Tests/build/AppImage GUI NOT RUN locally; OMEN VM actual
+  packaged normal/opt-out/KVM denied/hash fault/screenshot/closure required.
+  Source/required CI/exact Core review and final shipped byte validation remain
+  open. No image build, VM/GPU/USB acceptance or merge/publication implied.
 
 ## Foundation and change policy
 
@@ -67,6 +432,113 @@ recovery images are user inputs and must never be committed or redistributed by
 this repository.
 
 ## Current validated baseline
+
+- [ ] Admit the migrated Agent-Boot Gen2 Windows workflow on
+  `work/exe-migrated-windows-uefi`, from squash `f5474b475f6a82f915ada8f75f91678834fd8803`.
+  Pending command preparation retains the original 6152MiB/two-CPU settings,
+  requires inherited exact Ubuntu VM-pool limits, stages only contained OVMF
+  files, and refuses TCG fallback. Inspection found generic supplementary-group
+  dropping would remove KVM access; the Windows path retains only its existing
+  authorized device group. Focused19/19 pass viaheavy.sh (2.338s), with changed
+  pool-limit refusal and Gen2 resource/firmware/device-group command assertions;
+  diffcheck passes. Firmware byte identity, closed-set allocation accounting,
+  bounded workflow integration, exact PR checks/review and actual guest
+  acceptance remain pending. No VM launch, publication or source retirement.
+  Firmware is now integrated into the existing locked lifecycle: optional exact
+  staged CODE SHA-256 and mutable VARS file identity are checked before launch
+  and after reaping, both files join closed-set allocation accounting, and the
+  bounded launcher selects the Gen2 command only for that record. Changed CODE
+  and replaced VARS refusal preserve files; focused20/20 pass viaheavy.sh
+  (2.307s). Native firmware staging/provenance and actual workflow remain unrun;
+  no PR or guest acceptance is claimed.
+  Export inspection found the rebuilt manifest omitted the firmware record;
+  reference switching now preserves it. A real QCOW2 backing/export fixture
+  (mocked guest launch) verifies exact firmware dispatch, retained firmware,
+  immutable base and post-export record. Focused21/21 pass viaheavy.sh (2.433s),
+  diffcheck passes; this is not Windows boot/workflow acceptance.
+
+- [ ] Complete the user-requested Windows-first cleanup and capped Ubuntu VM
+  migration lifecycle on `work/exe-vm-growth-cap` (base
+  `ebaa78fdccad27a7bdaba9107042f71667617bc1`). Native Windows cache cleanup
+  2026-10-09: two exact EXE transient archives retained on D with SHA-256,
+  flushed restore catalogs and tested handle-bound removal; C free increased
+  4,186,112,000 bytes. Native refusal fixture passed changed identity, rename,
+  hardlink and reparse cases. Shared authenticated migration handoff records
+  exact receipts/hashes. Runner five focused tests passed via `heavy.sh`,
+  including journal/reference/unlink interruption recovery. Backup verification
+  passed: source/clone 91,742,011,392 bytes, SHA-256
+  `ab0522e09ce55f46bf05400c31ef8407c3ee30eb292ae877fd960c395d9ef9eb`,
+  durable native receipt and controller exit0 (pre-cleanup recovery backup).
+  Read-only ten-file catalog completed; expanded outputs distinct and referenced
+  inputs held. Exact unreferenced archive was removed with verified hash/file-ID,
+  flushed restore catalog and exclusive-handle guards, recoverable in unchanged
+  D backup. Stopped standalone VHDX full compaction passed: measured C free
+  +736,083,968 bytes, apparent VHDX length91,742,011,392 ->86,306,193,408;
+  those are distinct metrics, not an allocation-equivalence claim. Native final
+  dismount verified. Source now differs from the retained pre-cleanup backup.
+  Subsequent exact eight historical PR123 payload cleanup+compact passed with
+  restore catalogs retaining unique bytes in D backup: measured host allocation
+  86,306,193,408 ->58,892,222,464 (27,413,970,944 reclaimed). Independent read-only
+  postcheck passed eight removed paths absent, twenty scripts/results preserved,
+  required642 SHA unchanged, user input and backup retained, final dismount.
+  This first source disk is below60GB; whole-VM accounting/runtime enforcement
+  and integrity/migration acceptance remain pending. No 60-GB hard-cap,
+  real-QEMU migration acceptance, PR or merge completion is claimed.
+  Cleaned-source CHKDSK/hash passed (new SHA
+  `c52ec40abca9f41a99e13c7217a2c71ce3a9742cddbfe1df5a49b2fd1c536e0c`).
+  Same durable native compressed-export-r2 job passed conversion, QCOW2 check
+  and logical comparison at09:27:59Z; opened export34,477,437,440 bytes,
+  export SHA passed `2a6fd3993ad38ca2d1d3b74dc8fd7d3ed51b0ad16297b85ab9981fa42ababa52`
+  at09:31:53Z. Two standalone images exceed60GB; added a tiny
+  existing-QEMU backing/delta fixture for exact changed/zeroed sector and
+  immutable-base preservation; all10 focused VM tests passed viaheavy.sh.
+  These are synthetic fixtures, not Windows/NTFS acceptance. No transfer or runtime
+  admission; base, both writable slots, firmware and all retained runtime files
+  must fit the aggregate cap with kernel-enforced allocation acceptance.
+  Narrow base/delta integration: ten focused checks passed after integration.
+  Native NTFS three-cycle fixture passed changed/zeroed/inherited byte checks,
+  unchanged base hash, ref retirement and allocation/write ENOSPC refusal inside
+  fixed64MiB owned volume, final dismount. Actual first-VM59.9GB NTFS envelope
+  prepared with measured full allocation and base+two12GB slots+firmware/log
+  reservations. Same exact guarded resumable export transfer started09:47:22Z,
+  durable native receiver checkpoint8MiB; no Windows VM launch or acceptance.
+  Newly added external-parent regression awaits shared heavy slot. Authenticated
+  migration handoff holds exact identities/receipts and outstanding review gates.
+  While the SAME transfer holds heavy admission, corrected a concrete crash gap:
+  journal intent+replacement identity now precede the FIRST reference switch,
+  and recovery handles the old-current phase without deleting an unverified
+  replacement. Added fourth crash boundary and missing-old/replaced-candidate
+  refusal fixtures. Backed manifests must declare their exact write ceiling
+  (12GB for the actual storage plan) instead of using larger residual headroom.
+  These changes/tests are pending heavy validation; no passing claim or PR yet.
+  Added a durable failed-guest/postcheck receipt with retained-image identity,
+  bounded error and before/after footprint, without cleanup/export on failure;
+  focused/native assertions prepared. SAME transfer now2,139,095,040 bytes;
+  new tests still await its heavy-slot release, not represented as passed.
+  Prepared existing native NTFS r2 fixture for four real journal/reference/unlink
+  crash boundaries and locked recovery+sector readback. UNRUN during SAME
+  transfer (3,405,774,848 bytes); no fresh source copy or VM launch.
+  Transfer subsequently completed: exact34,477,437,440 bytes and destination
+  SHA-256 match the verified export, controller exit0; destination runtime
+  dismounted. Current-head focused VM regressions pass13/13 viaheavy.sh.
+  Native NTFS r2 passes three cycles, all four durable crash boundaries,
+  locked recovery and sector readback, unchanged base, failed-guest retention,
+  allocation/write ENOSPC28, and final dismount. These are lifecycle fixtures,
+  not migrated Windows workflow acceptance; runtime launch remains unadmitted.
+  This bounded imaging-sensitive implementation requires remote CI and exact
+  Core primary review. Lead-only push destination verified as
+  `https://github.com/CorniiDog/OPEMOS.EXE.git`, branch
+  `work/exe-vm-growth-cap`, from fetched main `ebaa78fd`; only this lifecycle
+  batch and its focused tests/history are included. No private inputs,
+  credentials, boundary pins or sibling changes are included. Exact pushed
+  commit and PR identity will be retained in the authenticated handoff.
+  PR172 Core review identified missing-old dangling-reference recovery and
+  dotdot retirement-name gaps. Recovery now refuses and preserves the journal
+  when either retained/generated still references the missing old image;
+  dotdot names fail before receipt reads or tools. New valid-replacement and
+  path refusal regressions plus the focused suite pass15/15 viaheavy.sh.
+  Changed-head remote CI/review is necessary; prior native r2 evidence remains
+  tied to the earlier head, not a new Windows acceptance claim.
 
 - [x] Build and run the Tauri application on macOS Apple Silicon.
 - [x] Select, normalize, and inspect supported Valve recovery images without
@@ -191,6 +663,38 @@ Current outputs remain `nvidia-mutation-valid`. Do not call them
   updates those exact counts and requires the new executable
   `bootstrap/show_recovery_console.sh` device entrypoint; the targeted canonical
   Core generator/staging/installer regression passes through `heavy.sh`.
+
+- [ ] Native Windows cold-boot readiness repair (user-requested): exact shipped
+  `f46424a1` executable `7bb6150b` stopped Fedora at kernel seconds1.154/1.322
+  because the real five-second russh timeout was not classified as pending by
+  the booting-only caller. Recognize only the exact Windows timeout; retain
+  five-second attempts, absolute120s, strict marker/auth/output failure handling.
+  Add actual handshake/socket timeout-to-classifier normal/fault regression.
+  No local project tests: changed-head Windows CI/package and admitted native
+  graphical chooser/Build/readiness/health/next-stage/closure remain required.
+  Necessary push: canonical EXE role branch for remote Windows-only CI/package
+  and exact counterpart review; no private input, Core, governance or trust edits.
+  Root diagnosis/recovery plan retained under
+  `root-native-windows-ssh-regression-r1`; prior PR184/185 evidence preserved.
+  Initial remote Windows job117896697356/run39201910952 at `fa8e82e3`
+  failed E0308 in the new test assertion (Result error reference type), before
+  any test or package execution; corrected comparison uses expect_err without
+  changing production code. Initial Linux Rust/integration/frontend passes
+  remain historical; corrected-head Windows and all required checks pending.
+  Head464f569b Windows compiled but the new fixture failed in0.32s before a
+  five-second timeout: accepted Winsock socket inherited nonblocking mode and
+  the peer treated WouldBlock as terminal. Preserve full run39202343957 log;
+  explicitly restore blocking reads, cap them by the original10s peer deadline,
+  and retain primary handshake plus structured closure diagnostics. Production
+  correction unchanged; native deployment superseded by newer VM-only target.
+  Actual Windows run39203000895 now proves the real five-second timeout and
+  socket EOF/closure, then fails stale120s test premise: baseline Windows
+  lib.rs508 and existing default-deadline test already specify300s (non-Windows
+  is120s). Correct the new test to preserve existing300s, not increase/change a
+  production deadline. Earlier Root/PR120s descriptions remain historical and
+  explicitly superseded by this measured source/runtime evidence. Whole graph
+  reviewed: exact Windows timeout only; deadline precedes Ready/Pending; caller
+  booting-state gate and wrong/empty/auth/output/semantic failures unchanged.
 
 - [ ] Correct the PR158 native USB lifecycle regression reported on
   `Current-df6c24e5-2026-10-01`. Ordinary SteamOS source selection must keep
@@ -4005,6 +4509,149 @@ Deferred items should return here only when an accepted milestone makes them
 current and their repository ownership is unambiguous.
 # Completion controls — current user request
 
+- [ ] User-requested reversal of misplaced graphics-selector integration (2026-10-10):
+  the small application is NOT part of OPEMOS.EXE. Remove the three selector
+  source/test files and their dedicated CI invocation through a corrective PR;
+  preserve PR176 `8301bdf95c3ec84e589d16102e49db26244b146b`, PR177
+  `f366ba35c959eefcee88381e194ffe3185738fa4`, and all historical entries below.
+  The two selector continuation entries below are superseded for this repository,
+  not unfinished EXE deliverables. Exact source bytes from canonical main
+  `71c7073aa2e3ae7e2af297297d61890842bceb8e` are preserved outside this repository
+  at `/home/connor/Documents/ChatGPT/Handoff troubleshooting/ubuntu-graphics-switcher`
+  with provenance. Apply remains disabled; this is incomplete standalone
+  preparation, not hardware-switch acceptance. Static removal/diff checks PASS;
+  required remote CI and exact Core review remain merge gates. No local project
+  tests, guest launches, GPU operations, publication or boundary changes.
+  Necessary push is only `work/exe-undo-graphics-selector` to canonical
+  `https://github.com/CorniiDog/OPEMOS.EXE.git` for required remote CI/review and
+  the user's requested GitHub correction; exact commit/merge evidence goes in
+  the implementation PR and authenticated handoff, never an evidence-only PR.
+
+- [ ] Requested OMEN desktop GPU selector: fresh `work/exe-omen-gpu-selector`
+  from fetched main `f01d3bc6`; initial read-only sysfs probe reports actual
+  display/driver/group inventory, distinguishes NVIDIA host display from VM
+  passthrough and refuses Apply until live ownership/admission/rollback checks.
+  Sole-NVIDIA and empty/missing metadata regressions pass through heavy.sh
+  (2 tests, 0.002s); no host hardware/network changes or GUI delivery claimed.
+  Integrated Intel detection is OMEN-specific, not vendor-only inference.
+  Desktop UI and exact Core-owned VFIO admission remain pending. PR175 merge
+  history is retained in authenticated exe-pr175-f01d3bc6-merge-handoff.json.
+  Core operational assessment r1 now explicitly refuses transitions pending
+  reachable idle group/USB-storage/recovery/ownership/restore validation; it is
+  not a new API or trust input. Probe distinguishes an integrated Intel
+  candidate from a validated usable display route: even a candidate cannot
+  enable Apply. Discrete Intel, malformed/missing metadata, empty inventory and
+  sole NVIDIA cases pass 3 focused tests through heavy.sh (0.007s), diffcheck
+  PASS. Inspection failures return an actionable refusal instead of an empty
+  successful inventory. No hardware or remote connection attempted.
+  Existing QtQuick conventions now provide a small local desktop presentation
+  with Internal graphics/GPU/Apply, explicit host-rendering vs VM distinction,
+  disruption warning and refusal reason. Apply is disabled, not a placeholder
+  hardware API. `--desktop` requires existing qmlscene and bounded temporary
+  view cleanup; no install/network endpoint. Local Qt runtime absent, so actual
+  render/interaction remains unverified. Four focused tests PASS including
+  missing-runtime refusal with no process creation; final visual gate pending.
+  Desktop failure/timeout fixtures now verify generated-view cleanup and source
+  template preservation; inspection failure displays unknown GPU state rather
+  than falsely reporting absence. CLI startup errors are actionable with no
+  graphics change claim. Five focused tests PASS heavy0.007s; diffcheck PASS.
+  Bounded existing /usr/lib and /opt Qt-tool inventory found no prepared local
+  qmlscene/qmltestrunner/qmllint. No installation or offline-host retry made;
+  real Qt rendering is still a separate unresolved validation gate.
+  Precommit inspection corrected QML object-binding ambiguity: inventory is
+  now a JSON.parse of an escaped JSON string, never a raw object/code binding.
+  Launch-failure fixture round-trips the generated data and verifies failure
+  presentation plus cleanup. Five focused tests PASS heavy0.009s; diffcheck
+  PASS. This local checkpoint is read-only/refusal presentation, not a working
+  hardware switch or visual acceptance; no runtime dependency installed.
+  PR176 Core finding on head7d67e5cd corrected: vendor presence no longer says
+  host rendering. Shipped GPU label is detection-only with active output
+  explicitly unverified, including vfio-pci and unbound NVIDIA fixtures; both
+  retain refused Apply and no passthrough acceptance. Six focused tests PASS
+  heavy0.009s; diffcheck PASS. New head requires new exact review/CI, preserving
+  original checkpoint and finding history. Actual Qt render still unverified.
+  Resolver's isolated existing-trust Qt6 6.4.2 runtime subsequently validated
+  the actual shipped QML control tree for detected GPU and inspection failure:
+  correct label and disabled Apply, both exit0 through heavy.sh. Receipt
+  selector-qt-presentation-result-r1.json records the bounded generated-view
+  method; this is not physical OMEN display or hardware-switch acceptance.
+  That run exposed launcher discovery limited to qmlscene despite Ubuntu's
+  Qt6 qml executable. Discovery now prefers explicit qml6 or Qt6 package paths,
+  retaining qmlscene fallback without selecting ambiguous unversioned qml.
+  Seven focused regressions PASS through heavy.sh (0.016s), including Qt6-only
+  launch and generated-view cleanup; diffcheck PASS. Changed head needs new
+  exact remote CI/Core review before merge; no system install or GPU transition.
+
+- [ ] Authorized eight-lane migration continuation: fresh
+  `work/exe-migrated-windows-ssh` from fetched `0e2d29f7` preserves all lane,
+  firmware/security and disk-parent identities recorded in the authenticated
+  eight-lane manifest. Latest user aggregate limit is 32 GiB RAM, zero VM swap,
+  ten logical CPUs. Existing runner admission now requires exact CPU quota
+  `1000000 100000` and cpuset `0-9`, refusing superseded twelve-CPU settings.
+  Focused 27/27 PASS through heavy.sh (10.130s); diff-check PASS. Isolated SSH
+  integration and actual migrated workflow remain pending; no guest launch,
+  source retirement, publication, or new credentials established here.
+  Subsequent command-preparation checkpoint adds explicit boolean opt-in for
+  the user-approved restricted user NIC: private namespace loopback2222 to
+  exact historical Agent-Boot address172.22.79.248 port22, no bridge/tap or
+  wildcard listener, default remains no NIC. Existing command fixture proves
+  exact restriction/namespace/endpoint and malformed opt-in refusal; focused
+  27/27 PASS heavy10.064s, diff-check PASS. Not wired to lifecycle or launched;
+  preserved guest addressing, relay ownership, credential/pin and actual
+  containment checks remain before execution. No Windows acceptance claim.
+  Subsequent lifecycle checkpoint passes the explicit boolean selection through
+  `run_owned_vm` and the bounded launcher without persisting network selection
+  in the image manifest. Malformed values and non-Windows launches refuse before
+  process creation; real subprocess monitor coverage proves propagation while
+  retaining explicit non-acceptance evidence. Runner focused 23/23 PASS through
+  heavy.sh (9.769s), diff-check PASS. No guest/NIC/listener launched. Exact
+  Agent-Boot addressing, relay ownership, credential availability, implementation
+  PR/checks/counterpart review and actual containment remain pending.
+  New user scope additionally plans eight Ubuntu A/B counterparts (16 total
+  planned, not concurrent), retaining Windows-first workflow verification and
+  the one shared 32 GiB/zero-swap/ten-CPU pool. The single Agent-Boot SSH endpoint
+  now refuses any other immutable base lineage before retirement recovery or
+  process creation; the fixture proves unchanged manifest/image and no launch
+  or recovery on refusal, then exercises the default no-network lifecycle.
+  Focused runner/storage 28/28 PASS heavy10.137s; after moving refusal before
+  recovery, the exact changed regression PASS heavy0.231s; diff-check PASS.
+  No additional lanes, guests, network listeners, or credentials created.
+  Preserved `readdress-boot-after-host-restart-pr123.ps1` and VM_POOL evidence
+  identifies manual IPv4 .248/20, gateway172.22.64.1, DHCP disabled and exact
+  MAC00155D100F02. Restricted NIC command now preserves that gateway/MAC rather
+  than QEMU defaults; exact command/refusal tests 6/6 PASS heavy0.006s and
+  diff-check PASS. This does not prove Windows binds the static configuration
+  to the migrated e1000 adapter. Authenticated read-only Ubuntu tool inventory
+  finds existing /usr/bin/nsenter, /usr/bin/nc and QEMU; socat absent, no install
+  required for the proposed existing-tool route. Relay ownership/authentication
+  and actual guest adapter validation remain pending; no listener/VM launched.
+  Latest user parallel allocation assigns additional Ubuntu lane provisioning
+  to the existing Core lead, leaving native Windows transfer/migration and
+  acceptance with EXE. No duplicate Ubuntu setup by EXE. Stable batch dispatch
+  uses explicit branches rather than nested conditional precedence. Final
+  focused batch invocation refused heavy exit75 (shared job active); no retry
+  or bypass. Earlier 28-test and exact six-command-check evidence retained;
+  final checkpoint validation remains pending. Local commit preserves only
+  runner/tests/TODO, with no credentials/private payloads or governance edits.
+
+- [ ] Migrated Agent-Boot control batch on `work/exe-migrated-windows-control`
+  from fetched main `408b0330dc66b4f0d1814d13fec4cc25d7bd713a`: existing
+  firmware-enabled launcher now uses bounded stdio QMP rather than a network
+  endpoint. Greeting/capabilities/status identity, absolute deadline, EOF/error
+  and output bounds fail closed. Monitor status is create-only recorded with
+  `workflowAccepted: false`; asynchronous output is drained within the runtime
+  bound, and refusal attempts quit before kill/reap. Real pipe/subprocess
+  fixtures prove status recording and protocol-refusal quit/reap without a VM.
+  Focused 25/25 tests PASS through shared heavy.sh (2.491s), diff-check PASS.
+  Remaining: forced-kill/runtime-flood regression coverage, exact PR/CI/Core
+  review, and actual migrated Windows workflow acceptance. No guest launch,
+  new endpoint/trust, publication, or source retirement is established here.
+  Subsequent checkpoint adds real subprocess runtime-output-flood and ignored-
+  quit timeout regressions: both children are SIGKILLed and reaped, while the
+  retained status receipts remain explicitly non-acceptance. Focused 26/26
+  PASS through heavy.sh (9.563s); diff-check PASS. Forced-kill/flood coverage
+  is now complete; exact remote PR/CI/Core review and real workflow gates remain.
+
 - [x] Scope the installation-media completion row to left-group Stay Here,
   Restart, and Shut Down with 5px gaps, removing the primary-button auto push
   only on this row. Actual Chrome rendering of the shipped completion function
@@ -4055,3 +4702,109 @@ current and their repository ownership is unambiguous.
   equal columns/single output surface. Focused validation, immutable-head PR/Core
   review, imaging partial and final exact-artifact full remain required; no
   installed/physical/publication acceptance inferred from this composition.
+
+- [ ] AgentBoot isolated relay batch on `work/exe-agentboot-relay` from fetched
+  main `f366ba35`: reproduced QMP-only launcher has no owned guest transport.
+  Draft existing-runner namespace admission selects only bounded launcher
+  descendants, exact executable/runtime file handles and pool ancestry, verifies
+  PID/start/UID before and after inspection, and pins a non-host namespace FD.
+  Diff-check PASS; no project tests run on controller under VM-only policy.
+  Draft now rechecks all observed PID/start/UID/parent links before and after
+  namespace pinning and refuses nonfinite/unbounded deadlines. Added regression
+  cases for invalid PID/deadline, linked runtime files and a real exited launcher,
+  requiring refusal before namespace open. These tests are NOT executed yet.
+  Added fixed stdio nsenter/nc relay with inherited pinned namespace FD, exact
+  QEMU PID/start/UID/parent and namespace checks, kernel pidfd lifetime, absolute
+  deadline and owned child-group kill/reap. No listener or credentials passed.
+  Added host-namespace and stale-identity refusal-before-spawn tests, unexecuted.
+  Subsequent exact frozen five-test checkpoint PASS inside assigned OMEN Ubuntu
+  guest: 5/5, exit0, 0.169s, host probe8.12s; handback at
+  2026-10-10T02:19:01Z explicitly releases source/lane ownership. Fixture and
+  test PIDs reaped, host units MainPID0/FDholders absent, active qcow check0,
+  exact new test root/boot staging cleaned; failed Core r1/r3 roots preserved.
+  Terminal/cleanup receipt SHA matches authenticated handback. Source SHA
+  534bde41/test db1549c3 remain exact tested bytes. This proves only five
+  refusal/lifetime regressions, not full relay, Windows login or workflow.
+  After explicit source release, admission now retains the complete QEMU-to-
+  launcher PID/start/UID/parent chain and relay rechecks it before connection
+  and throughout lifetime; added changed-ancestor refusal regression. Changed
+  source invalidates the earlier exact test offer: prior five-test PASS remains
+  historical, revised six-test batch is unexecuted. Diff-check PASS.
+  Added owner cancellation event checked before descriptor inspection, before
+  transport spawn and during transport lifetime, using the same owned kill/reap
+  path. Added pre-cancel no-spawn and real silent-child cancellation/reap cases;
+  revised eight-case batch remains unexecuted under OMEN-VM-only policy. This is
+  the launcher cancellation prerequisite, not completed launcher integration.
+  Launcher now has an explicit opt-in relay path only with isolated Windows SSH
+  and admitted local base. QMP remains drained separately; relay completion quits
+  and reaps the guest, while all exits cancel/join transport before namespace FD
+  close and caller disk reconciliation. Early guest/QMP exit refuses relay success.
+  Added three launcher refusal/completion/timeout cleanup fixtures using real
+  disposable Python QMP children, not actual QEMU or guest login. Exact revised
+  eleven-case OMEN test offer r2 prepared; all eleven are currently unexecuted.
+  Default invocation stays unchanged; no operational enablement or source push.
+  Resolver assigned exact eleven-case offer r2 to the existing Ubuntu helper via
+  shared-exe-relay-focused-test-handoff-r2.json; source hashes remain frozen and
+  terminal handback is not yet present. Separate runtime-initialization plan r1
+  records the demonstrated missing active-overlay/manifest gap, create-only
+  initialization, measured envelope/two-image headroom and failure preservation
+  using existing runner contracts. Plan only: no runtime write or guest launch.
+  Subsequent r2 handback at 2026-10-10T03:23:12Z releases lane/source freeze:
+  exact eleven tests PASS/testExit0 in1.206s, but collector EXIT1 captured only
+  four of five fixture PID/start identities. Independent full fixture cleanup
+  acceptance withheld; recorded host/guest children, staging, FD holders and
+  qcow/input preservation checks passed. Test-output SHA a6d243f3 and cleanup
+  SHA73e102bb independently matched. No unchanged retry or full relay claim.
+  Fixed demonstrated capture race in primary-owned tests: synchronous bounded
+  spawn PID/start/UID/parent receipts before cancellation/wait, plus original
+  identity-absent reap receipts at all three selected real-child spawn sites.
+  Runner bytes unchanged; changed test bytes are unexecuted and require a new
+  exact offer with Ubuntu-owned collector integration before any new run.
+  New user full-stack575 old/new requirement has EXE acceptance matrix r1 and
+  supplied Core plan at exact Core6277372: isolated canonical signed-local-input
+  builder route is distinct from unproved old-target d8 install admission.
+  All three targets, full UI/backend/build/install/export/virtualUSB and same-
+  SteamOS update/render/recovery phases remain unverified. Current r3 collector
+  preparation/source freeze preserved; no helper steering or repeated r2 test.
+  Subsequent r3 exact handback0407cf3c at2026-10-10T04:05:20Z accepted:
+  eleven tests PASS0/1.211s, five matched synchronous spawn/reap pairs, complete
+  FD/thread maps, original fixture/interpreter/thread identities absent and
+  supervisor/output FDs closed. Independent durable readback matches; qcow0,
+  host units/PIDs/FDholders absent, exact testroot/staging cleaned, prior r1/r2
+  failures and protected Core/base/seed/GRUB inputs preserved. All40 evidence
+  SHA independently verified. Source/lane explicitly yielded; tested runner
+  5955860f/test7a2d17f8/ceilingffbe0236 unchanged. This closes the fixture capture
+  blocker only, not real relay, Windows authentication, fullstack575 or hardware.
+  Remaining: pinned launcher lifetime/ancestry race barriers, launcher/byte transport integration,
+  meaningful OMEN-VM regressions, runtime active/manifest staging, exact PR/CI/Core
+  review, and separately gated current guest identity before workflow. Focused
+  fixture validation above is complete; real guest acceptance remains absent.
+  Necessary source push is limited to canonical OPEMOS.EXE role branch for remote
+  required CI/exact Core review of this lifecycle-sensitive implementation. No
+  credentials, private inputs, boundary/integrity changes or unrelated commits.
+  Completed public-host/key/partition and sanitized historical-account evidence
+  remains in authenticated handoffs, with no credentials/trust/source retirement.
+
+- [ ] Functional OMEN graphics-switch backend continuation from PR176 squash
+  `8301bdf95c3ec84e589d16102e49db26244b146b`, fresh branch
+  `work/exe-gpu-busy-guard`: Core live checkpoint r2 proves NVIDIA Xorg handles
+  despite disconnected connectors; boot-display metadata is not an idle guard.
+  Existing selector now has bounded exact-character-device holder inspection,
+  PID/start-time identity checks, no command-line/credential inspection, root
+  visibility requirement, and fail-closed incomplete/racing inventory. Empty or
+  non-device targets refuse. An idle observation never admits a transition.
+  Regression fixtures prove active holder, holder closure, insufficient visibility,
+  missing live metadata and deadline refusal; exact remote source CI is wired.
+  Diff-check PASS. No local project tests under the new VM-only testing rule;
+  remote checks and assigned OMEN guest validation remain pending. All three
+  test-team agents are onboarding/unassigned; no busy-owner contact or shared
+  guest launch. Still required: exact Core live scanout/viability/recovery/restore
+  admission, exclusive transition/rollback backend and functional desktop Apply,
+  exact counterpart review and actual same-SteamOS-guest NVIDIA proof. This is a
+  necessary refusal-guard checkpoint, not feature completion or hardware approval.
+  Necessary source push targets only canonical
+  `https://github.com/CorniiDog/OPEMOS.EXE.git` role branch for remote regression
+  CI and exact review; four owned source/test/workflow/TODO files only, no private
+  inputs, credentials, unrelated commits or governance changes. PR176 final
+  squash `8301bdf9` and all ten checks/unchanged-head Core approval remain in
+  authenticated `exe-pr176-8301bdf9-merge-handoff.json`; no evidence-only PR.

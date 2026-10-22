@@ -8,6 +8,20 @@ import { validateWindowsPortableWorkflow } from "../scripts/windows-portable-wor
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workflow = await readFile(path.join(repo, ".github", "workflows", "windows-portable.yml"), "utf8");
 
+function injectUntrustedWriteToken(text) {
+  const changed = text.replace(/  omen-required-untrusted:\r?\n/, "  omen-required-untrusted:\n    permissions:\n      actions: write\n");
+  assert.notEqual(changed, text, "untrusted write-token fault must actually be injected");
+  return changed;
+}
+
+test("OMEN write-token fault is injected for actual checkout, LF and CRLF bytes", () => {
+  const lf = workflow.replace(/\r\n/g, "\n");
+  console.info(`Actual workflow CRLF=${(workflow.match(/\r\n/g) || []).length}; LF=${(workflow.match(/\n/g) || []).length}`);
+  for (const text of [workflow, lf, lf.replaceAll("\n", "\r\n")]) {
+    assert.throws(() => validateWindowsPortableWorkflow(injectUntrustedWriteToken(text)), /isolate its sole write token/);
+  }
+});
+
 test("Windows portable workflow preserves immutable inputs and unsigned artifact gates", () => {
   assert.equal(validateWindowsPortableWorkflow(workflow), true);
 });
@@ -17,13 +31,25 @@ test("Windows portable workflow accepts CRLF checkout line endings", () => {
 });
 
 for (const [name, mutate, expected] of [
+  ["untrusted write token", injectUntrustedWriteToken, /isolate its sole write token/],
+  ["untrusted dispatch", text => text.replace(" diagnostics --directory required-omen-results ", " dispatch-and-wait --platform windows "), /unavailable outcome reports/],
+  ["mutable Main gate checkout", text => text.replace("ref: ${{ github.sha }}", "ref: refs/heads/main"), /immutable Main gate checkout/],
+  ["unbounded diagnostic dispatch", text => text.replace("if: github.event_name == 'workflow_dispatch' && inputs.producer-metadata-diagnostic", "if: always()"), /manual-only finite diagnostic/],
+  ["diagnostic starts expensive seed", text => text.replace("if: ${{ !inputs.producer-metadata-diagnostic }}", "if: always()"), /no expensive source seed/],
+  ["diagnostic bypasses native producer", text => text.replace("run: python scripts/diagnose_windows_producer_metadata.py", "run: echo skipped"), /actual native metadata producer/],
   ["merge-ref source identity", text => text.replace("github.event.pull_request.head.sha || github.sha", "github.sha"), /exact EXE source identity/],
   ["short artifact job budget", text => text.replace("timeout-minutes: 120", "timeout-minutes: 60"), /bounded Windows artifact job budget/],
   ["mutable Core checkout", text => text.replace("ref: f72aff92a5534b676083ccba974f4185f2d4551f", "ref: main"), /Core checkout pin/],
   ["Core CRLF conversion", text => text.replace("git config --global core.autocrlf false", "git config --global core.autocrlf true"), /canonical Core byte preservation/],
   ["tagged action", text => text.replace("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", "actions/setup-node@v4"), /setup-node action/],
   ["missing unsigned gate", text => text.replace("SignatureStatus]::NotSigned", "SignatureStatus]::Valid"), /unsigned-only gate/],
-  ["long artifact retention", text => text.replace("retention-days: 1", "retention-days: 90"), /one-day artifact retention/],
+  ["unconditional long artifact retention", text => text.replace(/retention-days:.*$/m, "retention-days: 90"), /artifact retention/],
+  ["missing producer descriptor retention", text => text.replace(/retention-days:.*\s*$/, ""), /artifact retention/],
+  ["fork main artifact retention", text => text.replace("github.repository == 'CorniiDog/OPEMOS.EXE' && ", ""), /artifact retention/],
+  ["pull-request main artifact retention", text => text.replace("github.ref == 'refs/heads/main'", "github.base_ref == 'main'"), /artifact retention/],
+  ["extended non-main artifact retention", text => text.replace("&& 90 || 1", "&& 90 || 3"), /artifact retention/],
+  ["missing producer artifact digest", text => text.replace("PRODUCER_ARTIFACT_SHA256: ${{ steps.executable.outputs.artifact-digest }}", "PRODUCER_ARTIFACT_SHA256: unbound"), /uploaded artifact digest binding/],
+  ["missing separate producer upload", text => text.replace("path: build/executable-producer/executable-producer.json", "path: unrelated.json"), /separate producer descriptor upload/],
   ["missing hidden runtime files", text => text.replace("include-hidden-files: true", "include-hidden-files: false"), /declared hidden runtime files/],
   ["mutable runtime seed action", text => text.replace("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093", "actions/download-artifact@v4"), /download-artifact action/],
   ["missing exact Git for Windows seed", text => text.replace("python3 scripts/acquire_runtime_windows.py --component git-for-windows --cache build/runtime-cache/windows", "echo skipped"), /locked Git for Windows seed acquisition/],

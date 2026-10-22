@@ -1,6 +1,32 @@
 use super::*;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 
+// The bundled template can be read-only (notably after Windows ISO transfer).
+// Only the session-owned pflash copy is writable; never alter the template.
+pub(crate) fn copy_writable_uefi_vars(template: &Path, destination: &Path) -> Result<(), String> {
+    fs::copy(template, destination)
+        .map_err(|error| format!("Could not copy the session UEFI variable store: {error}"))?;
+    let mut permissions = fs::metadata(destination)
+        .map_err(|error| format!("Could not inspect session UEFI permissions: {error}"))?
+        .permissions();
+    #[cfg(windows)]
+    permissions.set_readonly(false);
+    #[cfg(unix)]
+    permissions.set_mode(permissions.mode() | 0o200);
+    fs::set_permissions(destination, permissions).map_err(|error| {
+        format!("Could not make the session UEFI variable store writable: {error}")
+    })?;
+    // Check the same write access that QEMU's writable pflash needs, without
+    // truncating or changing any firmware bytes before launch.
+    OpenOptions::new()
+        .write(true)
+        .open(destination)
+        .map_err(|error| {
+            format!("Could not open the session UEFI variable store for writing: {error}")
+        })?;
+    Ok(())
+}
+
 pub(crate) struct ApplianceSession {
     pub(crate) child: Child,
     pub(crate) watchdog: QemuWatchdog,
@@ -212,35 +238,38 @@ pub(crate) fn windows_physical_memory_bytes() -> Result<u64, String> {
     let mut status: MemoryStatusEx = unsafe { std::mem::zeroed() };
     status.length = std::mem::size_of::<MemoryStatusEx>() as u32;
     if unsafe { GlobalMemoryStatusEx(&mut status) } == 0 || status.total_phys == 0 {
-        return Err("Windows host RAM could not be determined.".into());
+        return windows_memory_admission_bytes(None, None);
     }
     let mut installed_kib = 0;
-    if unsafe { GetPhysicallyInstalledSystemMemory(&mut installed_kib) } == 0 {
-        // Missing firmware information must never increase the usable budget.
-        return Ok(status.total_phys);
-    }
-    windows_memory_admission_bytes(installed_kib, status.total_phys)
+    let installed = (unsafe { GetPhysicallyInstalledSystemMemory(&mut installed_kib) } != 0)
+        .then_some(installed_kib);
+    windows_memory_admission_bytes(Some(status.total_phys), installed)
 }
 
 #[cfg(any(target_os = "windows", test))]
 pub(crate) fn windows_memory_admission_bytes(
-    installed_kib: u64,
-    usable_bytes: u64,
+    usable_bytes: Option<u64>,
+    installed_kib: Option<u64>,
 ) -> Result<u64, String> {
+    let usable = usable_bytes
+        .filter(|bytes| *bytes != 0)
+        .ok_or_else(|| "Windows host RAM could not be determined.".to_string())?;
+    let Some(installed_kib) = installed_kib else {
+        // An unavailable firmware API must not increase the usable budget.
+        return Ok(usable);
+    };
     let installed = installed_kib
         .checked_mul(1024)
-        .filter(|bytes| *bytes >= usable_bytes && usable_bytes != 0)
+        .filter(|bytes| *bytes >= usable)
         .ok_or_else(|| "Windows installed/usable RAM reports are invalid.".to_string())?;
     const MINIMUM: u64 = 6 * 1024 * 1024 * 1024;
-    // A configured 6-GiB Windows guest reports 1,114,112 bytes less usable RAM
-    // because of firmware reservation. Correct only this minimum-boundary case,
-    // with independently confirmed installed RAM and at most 2 MiB reserved.
-    // Larger reservations and all guest sizing retain the usable-memory budget.
-    if installed >= MINIMUM && usable_bytes < MINIMUM && installed - usable_bytes <= 2 * 1024 * 1024
-    {
+    // R19's configured 6-GiB Windows guest reserves 1,114,112 bytes. Correct
+    // only the minimum boundary with independently verified installed RAM and
+    // at most 2 MiB reserved. All other budgets retain usable-memory sizing.
+    if installed >= MINIMUM && usable < MINIMUM && installed - usable <= 2 * 1024 * 1024 {
         Ok(MINIMUM)
     } else {
-        Ok(usable_bytes)
+        Ok(usable)
     }
 }
 
@@ -388,12 +417,21 @@ pub(crate) fn kill_owned_process_group(child: &Child) {
     }
     #[cfg(windows)]
     {
-        let _ = child_command("taskkill")
+        #[cfg(test)]
+        let started = Instant::now();
+        let result = child_command("taskkill")
             .args(["/PID", &child.id().to_string(), "/T", "/F"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+        #[cfg(test)]
+        eprintln!(
+            "owned cleanup pid={} taskkill={result:?} elapsed={:?}",
+            child.id(),
+            started.elapsed()
+        );
+        let _ = result;
     }
     #[cfg(all(not(unix), not(windows)))]
     let _ = child;
@@ -550,6 +588,9 @@ pub(crate) fn repository_root() -> PathBuf {
 }
 
 pub(crate) fn appliance_dir() -> PathBuf {
+    if let Some(root) = linux_appimage_root() {
+        return root.join("appliance");
+    }
     if bundled_runtime_required() {
         if let Ok(executable) = std::env::current_exe() {
             if let Some(bundle) = executable.parent() {
@@ -559,12 +600,31 @@ pub(crate) fn appliance_dir() -> PathBuf {
     }
     repository_root().join("builder/appliance")
 }
+
+pub(crate) fn linux_appimage_root() -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    if let Some(image) = std::env::var_os("APPIMAGE") {
+        return Some(appimage_companion_root(Path::new(&image)));
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn appimage_companion_root(image: &Path) -> PathBuf {
+    if !image.is_absolute() || image.file_name().is_none() {
+        // Never silently fall back to a developer checkout or working dir.
+        return PathBuf::from("/opemos-invalid-appimage-runtime");
+    }
+    let mut name = image.as_os_str().to_os_string();
+    name.push(".runtime");
+    PathBuf::from(name)
+}
 pub(crate) fn appliance_path() -> PathBuf {
     appliance_dir().join("fedora-builder.qcow2")
 }
 
 pub(crate) fn nvidia_build_appliance_path() -> PathBuf {
-    if bundled_runtime_required() {
+    if bundled_runtime_required() || linux_appimage_root().is_some() {
         return appliance_path();
     }
     appliance_dir().join("fedora-builder-x86_64.qcow2")
@@ -598,7 +658,7 @@ static VERIFIED_PACKAGED_APPLIANCE: std::sync::OnceLock<Result<(), String>> =
     std::sync::OnceLock::new();
 
 fn verify_packaged_appliance() -> Result<(), String> {
-    if !bundled_runtime_required() {
+    if !bundled_runtime_required() && linux_appimage_root().is_none() {
         return Ok(());
     }
     VERIFIED_PACKAGED_APPLIANCE
@@ -730,8 +790,104 @@ pub(crate) fn appliance_readiness_outcome(
     match handshake_result {
         Ok(output) if output == READY_MARKER => ApplianceReadinessOutcome::Ready,
         Ok(_) => ApplianceReadinessOutcome::Failed,
-        Err(_) => ApplianceReadinessOutcome::Pending,
+        Err(error) if transient_readiness_error(error) => ApplianceReadinessOutcome::Pending,
+        Err(_) => ApplianceReadinessOutcome::Failed,
     }
+}
+
+/// Only the boot-readiness path consumes native transport categories. Ordinary
+/// command failures remain terminal, and non-Windows OpenSSH policy is unchanged.
+#[derive(Debug)]
+pub(crate) enum ReadinessFailure {
+    Message(String),
+    #[cfg(windows)]
+    Native(crate::windows_ssh::CommandFailure),
+    #[cfg(windows)]
+    NativeCommand {
+        message: String,
+        marker_missing: bool,
+    },
+}
+
+impl From<String> for ReadinessFailure {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+impl std::fmt::Display for ReadinessFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Message(message) => formatter.write_str(message),
+            #[cfg(windows)]
+            Self::NativeCommand { message, .. } => formatter.write_str(message),
+            #[cfg(windows)]
+            Self::Native(failure) => write!(
+                formatter,
+                "{} [native SSH stage={:?}; io_kind={:?}; os_error={:?}]",
+                failure.message, failure.stage, failure.io_kind, failure.raw_os_error
+            ),
+        }
+    }
+}
+
+pub(crate) fn readiness_attempt_outcome(
+    now: Instant,
+    deadline: Instant,
+    attempt: &Result<String, ReadinessFailure>,
+) -> ApplianceReadinessOutcome {
+    // One non-resetting deadline precedes every retry and even a late marker.
+    if now >= deadline {
+        return ApplianceReadinessOutcome::TimedOut;
+    }
+    match attempt {
+        #[cfg(windows)]
+        Err(ReadinessFailure::Native(failure)) => {
+            if failure.cold_boot_retryable() {
+                ApplianceReadinessOutcome::Pending
+            } else {
+                ApplianceReadinessOutcome::Failed
+            }
+        }
+        #[cfg(windows)]
+        Err(ReadinessFailure::NativeCommand { marker_missing, .. }) => {
+            if *marker_missing {
+                ApplianceReadinessOutcome::Pending
+            } else {
+                ApplianceReadinessOutcome::Failed
+            }
+        }
+        Ok(output) => appliance_readiness_outcome(now, deadline, &Ok(output.clone())),
+        Err(ReadinessFailure::Message(message)) => {
+            appliance_readiness_outcome(now, deadline, &Err(message.clone()))
+        }
+    }
+}
+
+pub(crate) fn transient_readiness_error(error: &str) -> bool {
+    // This classifier is used only while an appliance is booting. The Windows
+    // in-process transport has its own bounded-attempt error; it must not end
+    // cold boot before the existing absolute readiness deadline.
+    #[cfg(windows)]
+    if error == "In-process SSH command timed out." {
+        return true;
+    }
+    if error == "Guest readiness transport attempt timed out." {
+        return true;
+    }
+    let lower = error.to_ascii_lowercase();
+    ((error.contains("exit status: 255") || error.contains("status 255"))
+        && [
+            "connection refused",
+            "connection reset",
+            "connection timed out",
+            "connection closed",
+        ]
+        .iter()
+        .any(|message| lower.contains(message)))
+        || ((error.contains("exit status: 1:") || error.contains("status 1:"))
+            && error.contains("/etc/steamos-builder-ready")
+            && error.contains("No such file or directory"))
 }
 pub(crate) const FEDORA_ROOT_DEVICE_UNIT: &str =
     r"dev-disk-by\x2duuid-15c26993\x2dac30\x2d424a\x2d9c4b\x2dfaec4434d234.device";
@@ -804,6 +960,9 @@ pub(crate) fn verify_nvidia_guest_device_timeout(
 }
 
 pub(crate) fn runtime_root() -> PathBuf {
+    if let Some(root) = linux_appimage_root() {
+        return root.join("sessions/native");
+    }
     if let Some(cache) = portable_cache_root() {
         return cache.join("appliance-runtime");
     }
@@ -811,6 +970,9 @@ pub(crate) fn runtime_root() -> PathBuf {
 }
 
 pub(crate) fn nvidia_build_runtime_root() -> PathBuf {
+    if let Some(root) = linux_appimage_root() {
+        return root.join("sessions/x86_64");
+    }
     if let Some(cache) = portable_cache_root() {
         return cache.join("appliance-runtime-x86_64");
     }
@@ -1852,12 +2014,10 @@ pub(crate) fn prepare_session_with_output(
     let input_format = detect_input_format(&input_image)?;
     let measured_image_bytes =
         measure_normalized_input(&input_image, input_format, progress, cancel)?;
-    let output_parent = input_image
-        .parent()
-        .ok_or("Could not determine the future output folder.")?;
+    let output_directory = resolve_build_output_directory(&input_image, output_directory)?;
     preflight_normalization_and_build(
         &runtime_dir,
-        output_parent,
+        &output_directory,
         measured_image_bytes,
         input_format != InputFormat::Raw,
         plan_export,
@@ -1891,17 +2051,6 @@ pub(crate) fn prepare_session_with_output(
         return Err(format!(
             "Normalized image size changed between measurement ({measured_image_bytes} bytes) and staging ({image_bytes} bytes)."
         ));
-    }
-    let output_directory = match output_directory {
-        Some(directory) => fs::canonicalize(directory)
-            .map_err(|error| format!("Could not resolve the output folder: {error}"))?,
-        None => input_image
-            .parent()
-            .ok_or("Could not determine the future output folder.")?
-            .to_path_buf(),
-    };
-    if !output_directory.is_dir() {
-        return Err("The output folder is not a safe directory.".into());
     }
     if plan_export {
         preflight_host_build_space(&runtime_dir, &output_directory, image_bytes)?;
@@ -1948,8 +2097,7 @@ pub(crate) fn prepare_session_with_output(
         current_host_qemu(std::env::consts::ARCH, std::env::consts::ARCH)?;
     let (uefi_code, vars_template) = host_firmware(std::env::consts::ARCH)?;
     let vars_image = runtime_dir.join("uefi-vars.fd");
-    fs::copy(&vars_template, &vars_image)
-        .map_err(|e| format!("Could not create the writable UEFI variable store: {e}"))?;
+    copy_writable_uefi_vars(&vars_template, &vars_image)?;
     let ssh_port = allocate_ssh_port()?;
     let mut qmp_port = allocate_ssh_port()?;
     while qmp_port == ssh_port {
@@ -2230,8 +2378,7 @@ pub(crate) fn prepare_nvidia_build_session(
 
     let (uefi_code, vars_template) = host_firmware("x86_64")?;
     let vars_image = runtime_dir.join("uefi-vars.fd");
-    fs::copy(&vars_template, &vars_image)
-        .map_err(|e| format!("Could not create the x86 UEFI variable store: {e}"))?;
+    copy_writable_uefi_vars(&vars_template, &vars_image)?;
     let ssh_port = allocate_ssh_port()?;
     let mut qmp_port = allocate_ssh_port()?;
     while qmp_port == ssh_port {
@@ -2488,9 +2635,18 @@ pub(crate) fn start_guest_command(
 }
 
 pub(crate) fn stop_guest_command_group(child: &mut Child) {
+    #[cfg(test)]
+    let started = Instant::now();
     kill_owned_process_group(child);
-    let _ = child.kill();
-    let _ = child.wait();
+    let killed = child.kill();
+    let waited = child.wait();
+    #[cfg(test)]
+    eprintln!(
+        "owned cleanup pid={} kill={killed:?} wait={waited:?} elapsed={:?}",
+        child.id(),
+        started.elapsed()
+    );
+    let _ = (killed, waited);
 }
 
 #[cfg(test)]
@@ -2707,9 +2863,23 @@ pub(crate) fn finish_guest_command_bounded(
             break status;
         }
         if Instant::now() >= deadline {
+            #[cfg(test)]
+            let cleanup_started = Instant::now();
             stop_guest_command_group(&mut child);
             let _ = stdout_reader.join();
+            #[cfg(test)]
+            eprintln!(
+                "bounded command pid={} stdout joined at {:?}",
+                child.id(),
+                cleanup_started.elapsed()
+            );
             let _ = stderr_reader.join();
+            #[cfg(test)]
+            eprintln!(
+                "bounded command pid={} stderr joined at {:?}",
+                child.id(),
+                cleanup_started.elapsed()
+            );
             return Err(timeout_message.into());
         }
         thread::sleep(Duration::from_millis(10));
@@ -2742,6 +2912,9 @@ pub(crate) fn finish_guest_readiness_attempt(
     mut child: Child,
     timeout: Duration,
 ) -> Result<String, String> {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or("Guest readiness attempt deadline overflowed.")?;
     let stdout = child
         .stdout
         .take()
@@ -2753,16 +2926,19 @@ pub(crate) fn finish_guest_readiness_attempt(
     let stderr_reader = read_bounded_guest_stream(stderr);
     let (sender, receiver) = mpsc::sync_channel(1);
     let stdout_reader = thread::spawn(move || {
-        let result = (|| {
+        let result: Result<(String, bool), String> = (|| {
             let mut stdout = BufReader::new(stdout);
             let mut lines = Vec::with_capacity(2);
             let mut captured_bytes = 0;
+            let mut eof = false;
             for _ in 0..2 {
                 let mut line = String::new();
-                let bytes = stdout
+                let bytes = (&mut stdout)
+                    .take(READINESS_ATTEMPT_OUTPUT_LIMIT + 1 - captured_bytes as u64)
                     .read_line(&mut line)
                     .map_err(|error| format!("Could not read guest readiness output: {error}"))?;
                 if bytes == 0 {
+                    eof = true;
                     break;
                 }
                 captured_bytes += bytes;
@@ -2771,11 +2947,11 @@ pub(crate) fn finish_guest_readiness_attempt(
                 }
                 lines.push(line.trim_end_matches(['\r', '\n']).to_string());
             }
-            Ok(lines.join("\n"))
+            Ok((lines.join("\n"), eof))
         })();
         let _ = sender.send(result);
     });
-    let result = match receiver.recv_timeout(timeout) {
+    let result = match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             stop_guest_command_group(&mut child);
@@ -2784,18 +2960,55 @@ pub(crate) fn finish_guest_readiness_attempt(
             return Err("Guest readiness transport attempt timed out.".into());
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
-            let _ = stdout_reader.join();
             Err("Guest readiness output reader stopped unexpectedly.".into())
         }
     };
+    // EOF can precede the child being reapable. Observe its actual status within
+    // the SAME attempt deadline before cleanup could replace it with SIGKILL.
+    // The existing two-complete-lines-before-EOF contract remains bounded: a
+    // still-open successful marker stream may be deliberately stopped below.
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if matches!(&result, Ok((_, true))) => {
+                if Instant::now() >= deadline {
+                    stop_guest_command_group(&mut child);
+                    let _ = stdout_reader.join();
+                    let _ = stderr_reader.join();
+                    return Err("Guest readiness transport attempt timed out.".into());
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) => break None,
+            Err(error) => {
+                stop_guest_command_group(&mut child);
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(format!(
+                    "Could not inspect guest readiness command: {error}"
+                ));
+            }
+        }
+    };
     stop_guest_command_group(&mut child);
+    let _ = stdout_reader.join();
     let stderr = stderr_reader
         .join()
         .map_err(|_| "Guest readiness diagnostics reader panicked.")??;
     if stderr.len() > READINESS_ATTEMPT_OUTPUT_LIMIT as usize {
         return Err("Guest readiness output exceeded its bound.".into());
     }
-    result
+    let (output, _) = result?;
+    if let Some(status) = status.filter(|status| !status.success()) {
+        return Err(format!(
+            "Guest readiness command exited with {status}: {}",
+            String::from_utf8_lossy(&stderr).trim()
+        ));
+    }
+    if output.is_empty() {
+        return Err("Guest readiness command returned no marker.".into());
+    }
+    Ok(output)
 }
 
 pub(crate) fn read_guest_command_ready_line(
@@ -3052,28 +3265,60 @@ pub(crate) fn qmp_attach_nvidia_target(session: &NvidiaBuildSession) -> Result<(
 }
 
 pub(crate) fn handshake(session: &impl GuestConnection) -> Result<String, String> {
+    readiness_handshake(session).map_err(|failure| match failure {
+        ReadinessFailure::Message(message) => message,
+        #[cfg(windows)]
+        ReadinessFailure::Native(failure) => failure.message,
+        #[cfg(windows)]
+        ReadinessFailure::NativeCommand { message, .. } => message,
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn finish_native_readiness_attempt(
+    result: Result<crate::windows_ssh::CommandOutput, crate::windows_ssh::CommandFailure>,
+) -> Result<String, ReadinessFailure> {
+    let output = result.map_err(ReadinessFailure::Native)?;
+    if output.status != 0 {
+        let diagnostics = String::from_utf8_lossy(&output.stderr);
+        // A real native remote-command status255 is not an OpenSSH transport
+        // exit255. Only the existing absent readiness-file condition may retry.
+        let marker_missing = output.status == 1
+            && diagnostics.contains("/etc/steamos-builder-ready")
+            && diagnostics.contains("No such file or directory");
+        return Err(ReadinessFailure::NativeCommand {
+            message: format!(
+                "Guest readiness command exited with status {}: {}",
+                output.status,
+                diagnostics.trim()
+            ),
+            marker_missing,
+        });
+    }
+    if !output.stderr.is_empty() {
+        return Err(ReadinessFailure::NativeCommand {
+            message: format!(
+                "Guest readiness command returned diagnostics: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+            marker_missing: false,
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+pub(crate) fn readiness_handshake(
+    session: &impl GuestConnection,
+) -> Result<String, ReadinessFailure> {
     #[cfg(windows)]
     {
-        let output = crate::windows_ssh::run_command(
+        finish_native_readiness_attempt(crate::windows_ssh::run_command_detailed(
             session.ssh_port(),
             session.ssh_key(),
             "cat /etc/steamos-builder-ready",
             READINESS_ATTEMPT_TIMEOUT,
             READINESS_ATTEMPT_OUTPUT_LIMIT as usize,
-        )?;
-        if output.status != 0 {
-            return Err(format!(
-                "Guest readiness command exited with status {}.",
-                output.status
-            ));
-        }
-        if !output.stderr.is_empty() {
-            return Err(format!(
-                "Guest readiness command returned diagnostics: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        ))
     }
     #[cfg(not(windows))]
     {
@@ -3081,6 +3326,7 @@ pub(crate) fn handshake(session: &impl GuestConnection) -> Result<String, String
             start_guest_command(session, "cat /etc/steamos-builder-ready")?,
             READINESS_ATTEMPT_TIMEOUT,
         )
+        .map_err(ReadinessFailure::Message)
     }
 }
 
@@ -3922,7 +4168,7 @@ pub(crate) fn get_appliance_status_blocking(
         )
     };
 
-    let handshake_result = handshake(&snapshot);
+    let handshake_result = readiness_handshake(&snapshot);
     let mut manager = manager_state
         .lock()
         .map_err(|_| "Appliance state lock is unavailable.")?;
@@ -3938,14 +4184,17 @@ pub(crate) fn get_appliance_status_blocking(
     if session.ssh_port != session_port || session.state != "booting" {
         return Ok(session_status(session));
     }
-    match appliance_readiness_outcome(Instant::now(), readiness_deadline, &handshake_result) {
+    match readiness_attempt_outcome(Instant::now(), readiness_deadline, &handshake_result) {
         ApplianceReadinessOutcome::Ready => {
             session.state = "ready".into();
             session.message = "Builder appliance is ready.".into();
         }
         ApplianceReadinessOutcome::Failed => {
             session.state = "failed".into();
-            session.message = "Builder handshake returned an unexpected marker.".into();
+            session.message = handshake_result
+                .err()
+                .map(|failure| failure.to_string())
+                .unwrap_or_else(|| "Builder handshake returned an unexpected marker.".into());
         }
         ApplianceReadinessOutcome::TimedOut => {
             session.state = "timedOut".into();
@@ -3953,7 +4202,11 @@ pub(crate) fn get_appliance_status_blocking(
                 "Builder appliance did not become ready within {readiness_timeout_secs} seconds."
             );
         }
-        ApplianceReadinessOutcome::Pending => {}
+        ApplianceReadinessOutcome::Pending => {
+            if let Err(error) = handshake_result {
+                session.message = format!("Waiting for builder readiness: {error}");
+            }
+        }
     }
     Ok(session_status(session))
 }

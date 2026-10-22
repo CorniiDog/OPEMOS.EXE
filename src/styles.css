@@ -87,7 +87,8 @@ body.companion-active .window-drag-region { pointer-events: none; }
   height: 100%;
   margin: 0 auto;
   padding: 20px 0 14px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -253,7 +254,6 @@ footer p { color: #aab4c5; }
   top: 50%;
   left: 50%;
   width: min(620px, calc(100vw - 48px));
-  height: fit-content;
   max-height: min(700px, calc(100vh - 48px));
   overflow-y: auto;
   transform: translate(-50%, -50%);
@@ -285,17 +285,16 @@ footer p { color: #aab4c5; }
 .usb-dialog-actions .secondary { flex: 0 0 auto; min-width: 72px; }
 .usb-active-warning { margin: 9px 0 0; padding: 9px 11px; border: 1px solid rgba(255, 188, 74, .38); border-radius: 10px; color: #f4d08b; background: rgba(91, 57, 11, .42); font-size: 12px; line-height: 1.35; }
 .usb-active-warning strong { color: #ffe1a8; }
-#usb-card > .result-message { min-height: 0; max-height: 5em; margin-top: 8px; overflow: auto; overflow-wrap: anywhere; font-size: 12px; }
-#usb-card > .result-message:empty { display: none; }
+#usb-card > .result-message { min-height: 34px; max-height: 5em; margin-top: 8px; overflow: auto; overflow-wrap: anywhere; font-size: 12px; }
 .usb-dialog-target { margin-bottom: 10px; padding: 9px 11px; border: 1px solid var(--glass-border); border-radius: 10px; background: rgba(9, 19, 28, .46); }
 .usb-dialog-target span { display: block; color: #8490a3; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
 .usb-dialog-target strong { display: block; margin-top: 3px; overflow: hidden; color: #dce5ff; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .build-options-grid {
   margin-bottom: 9px;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px 12px;
-  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
 }
 .build-options-grid .source-choice {
   min-width: 0;
@@ -307,13 +306,17 @@ footer p { color: #aab4c5; }
   display: grid;
   gap: 7px;
 }
-.build-options-grid .nvidia-choice { grid-column: 1; }
+.build-options-grid .nvidia-choice {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 .build-options-grid .export-choice {
   grid-column: 1;
   width: 100%;
-  height: 100%;
-  grid-template-columns: minmax(0, 1fr);
-  align-content: start;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
   justify-content: stretch;
   justify-self: stretch;
 }
@@ -321,16 +324,17 @@ footer p { color: #aab4c5; }
 .output-destination { box-sizing: border-box; }
 .control-group-title { margin: 0; color: #dce5ff; font-size: 12px; letter-spacing: .02em; }
 .build-side-column {
-  grid-column: 2;
+  grid-column: 1;
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 9px 12px;
 }
 .build-side-column .source-choice,
-.build-side-column .source-warning { width: 100%; margin: 0; }
+.build-side-column .source-warning,
+.build-side-column .build-summary { width: 100%; margin: 0; }
 .build-side-column .source-warning { grid-column: 1 / -1; }
-.build-options-grid > .build-summary { grid-column: 1 / -1; width: 100%; margin: 0; box-sizing: border-box; }
+.build-side-column .build-summary { grid-column: 1; grid-row: auto; align-content: start; }
 .usb-picker { grid-column: 1 / -1; width: 100%; min-width: 0; padding: 10px; border: 1px solid var(--glass-border); border-radius: 10px; background: rgba(12, 25, 35, .4); box-sizing: border-box; display: grid; gap: 7px; }
 .usb-picker-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .usb-picker-heading > span { min-width: 0; }
@@ -400,8 +404,14 @@ footer p { color: #aab4c5; }
 .build-card.completed-output-selected .build-summary > div:nth-child(2),
 .build-card.completed-output-selected #build-button { display: none; }
 .build-card.completed-output-selected .build-options-grid { margin-bottom: 5px; }
+.build-card.completed-output-selected .build-side-column { min-height: 100%; }
+.build-card.completed-output-selected .build-side-column .build-summary { margin: 0; }
 .readiness-grid.has-selection .selection-card h2,
-.readiness-grid.has-selection .path { user-select: text; cursor: text; }
+.readiness-grid.has-selection .path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .app-shell.completed-output-selected .result-message { margin-top: 4px; }
 .app-shell.completed-output-selected { overflow-y: auto; scrollbar-gutter: stable; }
 .source-choice { margin-bottom: 9px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
@@ -419,7 +429,7 @@ footer p { color: #aab4c5; }
   font: inherit;
   font-size: 13px;
 }
-.build-options-grid .source-choice select { width: 100%; }
+.build-options-grid .source-choice select { width: min(300px, 46%); }
 .source-choice select:disabled { opacity: .55; }
 .source-choice input[type="text"] { flex: 0 1 280px; width: min(280px, 46%); padding: 8px 10px; }
 .source-warning {
@@ -443,9 +453,9 @@ footer p { color: #aab4c5; }
   min-width: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: stretch;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
   border: 0;
   background: transparent;
 }
@@ -453,8 +463,8 @@ footer p { color: #aab4c5; }
 .output-destination strong,
 .output-destination small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .output-destination small { margin-top: 2px; color: #8490a3; font-size: 10px; }
-.output-destination-actions { width: 100%; min-width: 0; display: flex; gap: 5px; }
-.output-destination-actions button { flex: 1 1 0; min-width: 0; min-height: 32px; padding: 6px 9px; font-size: 11px; }
+.output-destination-actions { min-width: 0; display: flex; gap: 5px; }
+.output-destination-actions button { min-width: 116px; min-height: 32px; padding: 6px 9px; font-size: 11px; }
 
 .build-summary {
   margin: 0 0 9px;
@@ -472,6 +482,7 @@ footer p { color: #aab4c5; }
 .build-summary p { grid-column: 1 / -1; margin: 1px 0 0; color: #9aa7ba; font-size: 10px; line-height: 1.3; }
 .result-message { min-height: 18px; margin: 6px 2px 0; max-height: 2.8em; overflow: hidden; color: #aab4c5; font-size: 13px; line-height: 1.4; }
 .result-message.success { color: #7ee2a8; }
+.result-message.caution { color: #f4d08b; }
 .result-message.error { color: #ff9494; }
 footer { min-height: 18px; margin: 0; display: grid; place-items: center; text-align: center; font-size: 11px; }
 footer p { margin: 0; }
@@ -562,13 +573,17 @@ footer p { margin: 0; }
   .build-options-grid .export-choice,
   .build-side-column,
   .build-side-column .source-warning,
-  .build-options-grid > .build-summary { grid-column: 1; grid-row: auto; }
+  .build-side-column .build-summary { grid-column: 1; grid-row: auto; }
   .readiness-grid > .environment-card,
   .readiness-grid.has-selection > .environment-card { grid-column: 1; }
   .environment-card,
   .selection-card,
   .output-destination,
   .usb-picker-heading { flex-wrap: wrap; }
+  .build-options-grid .export-choice,
+  .output-destination { grid-template-columns: minmax(0, 1fr); }
+  .build-options-grid .nvidia-choice { display: grid; }
+  .build-options-grid .source-choice select { width: 100%; }
   .output-destination-actions { width: 100%; flex-wrap: wrap; }
   .output-destination-actions button { flex: 1 1 140px; white-space: normal; }
   .path,
