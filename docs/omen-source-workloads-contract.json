@@ -1,0 +1,72 @@
+{
+  "kind": "OMEN_FINITE_SOURCE_WORKLOAD_SOURCE_CONTRACT_V1",
+  "state": "AUTHORED_UNRUN_NOT_INSTALLED",
+  "runtimeAuthorized": false,
+  "sameAssignment": "54b35cf205a726d788346a0d748e9562d5c500f8f7faf45d924827f9ad2172b9",
+  "cause": "The existing required workflows executed project checks/builds on hosted runners; the GUI-only broker had no finite candidate-source guest ingress. Waiting for a workflow_run handler on an unmerged default branch would deadlock the replacement. Neither hosted success nor local syntax inspection verifies the new route.",
+  "ordinaryTransaction": [
+    "Hosted metadata-only source-route reads current protected Main and the existing 180-second OMEN heartbeat. Offline/unknown routes produce a failed required check with diagnostic XML/HTML, never a guest pass.",
+    "The existing self-hosted runner job-start guard verifies the entire safe workflow blob and original kernel UID/namespace/birth/cgroup/one-use token. The job invokes only fixed Root-installed omen_source_ci.py; it never checks out or imports candidate B on the host.",
+    "The installed client rechecks official repository/run/latest-attempt/PR/head/tree/base metadata, then the existing authenticated Unix broker accepts only execute-source-workload and the finite source selection.",
+    "The fixed installed planner/profile registers one original canonical queue manifest and Root admission. SourceJobs uses the separately qualified current-A queue stage, not the new GUI stage hash or a replacement queue.",
+    "The exact independently reviewed/admitted A controller and five held backend modules create a fresh managed-libvirt AUTODESTROY domain with independent readonly observer, no NIC, no hostdev, readonly authenticated source/dependency media and distinct writable guest storage.",
+    "Before resume, the exact original QEMU birth/UID/cgroup is checked and a conservative kernel RLIMIT_FSIZE is set/read back without relaxing an inherited ceiling. Whole inode-union accounting reserves every permitted writable inode's future growth plus receiver/publication/exchange/metadata copies. Actual before/during/after logical/allocated observations remain required.",
+    "Sealed A guest agents verify real OS/VM/boot/user, staged tools and offline inventories, extract B into a fresh working tree, verify actual offline Git HEAD/tree/Core identities and run the original fixed required commands inside that VM.",
+    "Each real command retains numeric exit, original birth, EOF, raw hashes, FD closure and independent descendant observation. Windows uses suspended creation then owned job assignment before resume. Linux does not infer process UID from proc-inode ownership.",
+    "An independent guest parent waits for the worker, streams original logs/results and a bounded complete package tar through the fixed virtio channel, and reports packaging separately from the original compiler result.",
+    "The Root controller observes normal shutdown or exact AUTODESTROY cleanup, actual QEMU absence, pool/cgroup/source/FD/observer closure. An independent native parent waits/reaps it before public publication, and the canonical worker must close that publisher before collection.",
+    "Only Root-owned sealed public leaves cross the existing broker exchange. The installed A client reconstructs/hash-checks the complete tar as data, safely extracts it, emits actual command JUnit/HTML and the existing official package descriptor. This does not execute package B on the host.",
+    "The unchanged separate Main 04 Robot workflow remains responsible for real GUI Build/completed image/full hash, virtual USB, same installed target phases and Robot XML/HTML/xUnit/screenshots. Source/package proof never promotes those results."
+  ],
+  "finiteWorkloads": {
+    "frontend-and-docs": {"guest": "ubuntu-x86_64", "seconds": 900, "requiredJob": "frontend-and-docs"},
+    "rust": {"guest": "ubuntu-x86_64", "seconds": 1800, "requiredJob": "rust"},
+    "linux-integration": {"guest": "ubuntu-x86_64", "seconds": 1800, "requiredJob": "linux-integration"},
+    "debian-12-package": {"guest": "debian12-x86_64", "seconds": 2400, "requiredJob": "debian-12-package"},
+    "seed-runtime-source": {"guest": "ubuntu-x86_64", "seconds": 1800, "requiredJob": "seed-runtime-source"},
+    "windows-build": {"guest": "windows-x86_64", "seconds": 7200, "requiredJob": "build"},
+    "appimage-package": {"guest": "ubuntu-x86_64", "seconds": 3600, "requiredJob": "appimage-package"},
+    "producer-metadata-diagnostic": {"guest": "windows-x86_64", "seconds": 300, "requiredJob": "producer-metadata-diagnostic", "optionalDiagnosticOnly": true}
+  },
+  "sourceIdentity": {
+    "selection": ["repository", "controller_commit", "candidate_commit", "base_commit", "pull_request", "repository_id", "head_repository_id", "candidate_tree", "parent_run", "parent_attempt", "parent_workflow", "workload"],
+    "RootBoundArchive": ["source_archive_sha256", "source_archive_bytes"],
+    "controller": "Current protected Main is control identity A, candidate B is exact same-repository nonfork PR head/tree. Root separately authenticates the immutable reviewed privileged-controller implementation and complete file pins; newly authored files absent from Main are NOT relabelled as Main blobs. Explicit independent source qualification and normal Root adoption are prerequisites, not granted by a matching hash in this proposal.",
+    "branchPush": "Exact unchanged branch B must belong to exactly one current open same-repository PR based on A; at most five project PRs remains required. Main uses B=A and PR0.",
+    "outerIdentity": "repository/source_commit/run_id/attempt/nonce stays the existing broker identity. The source subject additionally binds original parent workflow/run/attempt and candidate/archive/tree. No nonce substitution or approval transfer."
+  },
+  "RootAdoptionOperands": {
+    "source_workloadsProfile": ["enabled", "schema=FINITE_VM_ONLY_V1", "controller_commit", "no_candidate_host_code=true", "libdir", "libraryPins", "clientSourcePins", "currentStage={path,sha256,source_commit,owner_uid}", "controllerCommandPrefix", "workflowPins"],
+    "jobGuard": "omen_source_guard.validate supplements the EXISTING live job-start/broker guard. Whole workflow pins must cover all three active workflows. OPEMOS_SOURCE_JOB_SCOPE is an additional checked field, never an authority token by itself. Missing guard adoption fails; the Main-only guard is not waived.",
+    "preparedSourceJob": ["identity", "subject", "backend=existing-managed-libvirt", "hardware_scope=virtual-only", "noNIC=true", "manifest", "admission", "job_ids", "entrypoint", "fixed_controller_command", "controller_files", "controller_pins", "grant_path", "result_path", "seedProofPath and seed_package_sha256 for windows-build"],
+    "grant": ["kind=ROOT_ADMITTED_OMEN_SOURCE_JOB_V1", "RootIssued=true", "runtimeAuthorized=true only after actual admission", "identity", "subject", "hostBoot", "issuedUnix", "issuedMonotonic", "startBeforeUnix", "wholeDeadlineUnix", "wholeDeadlineMonotonic", "backendSources", "queueRequest", "queueIntent", "preflightPin", "dacProofPin", "xmlPin", "nativeTools", "protectedHostPins", "guestBootstrapSourcePins", "guestManifestPin", "sourceArchive", "readonlyPins", "writablePins", "extraRegularPins", "dependencies", "reservedBytes", "qemuFileCeilingBytes", "resultRoot", "publicationRoot", "fixedControllerArgv"],
+    "actualPreflight": "Fresh same-boot current/source/caller/queue/resource/media qualification and actual same-UID64055/gid993/groups[993] open/read/write-refusal probe, numeric0/reap/EOF/FD close. Unknown base/SDK/media/owner/UID/cap/clock/cleanup is not a source author permission question and is not converted into a pass.",
+    "guestManifest": "ROOT_ADMITTED_OMEN_SOURCE_GUEST_V1: exact identity/subject, noNIC, credentialFree, OMEN_VM, original remainingSeconds, full A controllerFiles, actual guestBoot/channel, authenticated sourceArchive, stagedTrees inventories, fixed tools. Windows additionally requires seedPackage {path,bytes,sha256} bound by the Root controller's seedProofPin to the actual closed same-source Ubuntu seed output. The guest hashes that complete tar and extracts exactly six regular cache archives before the original lock verifiers run; unrelated prepopulated cache is not seed proof. Debian smoke additionally needs the exact staged Docker image and actual container inspection/removal inside the guest.",
+    "RootOwner": "The existing normal Root factory prepares actual qualified operands and performs adoption/admission at a safe checkpoint. This source task does not edit installed profiles, source83, Root15/Engine15, busy Windows inputs, libvirt or timers. No normal runtime attempt is authorized here."
+  },
+  "existingInputMap": {
+    "windowsRuntime": "runtime/windows-x86_64.sources.json and scripts/acquire_runtime_windows.py: six exact pre-staged archives for Git, gh, Python, QEMU and cdrtools binary/source; the original lock verifier remains. No guest egress or credential copy is added.",
+    "applicationDependencies": "package-lock.json, src-tauri/Cargo.lock, exact original workflow Rust1.98.1/Node22.23.2 declarations, offline .npm/.cargo inventories, Tauri/native library dependencies and Windows compiler/SDK installation. These are recipe identities, not proof any current OMEN base contains them.",
+    "CoreInputs": "Original fixed workflow Core pins are retained per workload, including f72aff92, integration adf372b8 and AppImage01407 inputs. Root must stage authenticated Git objects/index and dependencies; a text fake HEAD is refused. Core111 installed-driver CLI map is separate from the old/new Valve kernel matrix.",
+    "applianceAndLinuxPackages": "Existing acquire_appliance_windows.py lock/cache verification and stage_linux_packages.py paths are retained. No large input download or cache availability was demonstrated in this source task.",
+    "actualAvailability": "UNVERIFIED. No SSH, SDK execution, host project import/build or VM boot was performed. Actual immutable base, staged tool/inventory hashes, storage fit and source-specific Root guard/factory adoption must be verified through the existing normal Root route before the first admitted workload. Do not invent an SDK/cache or call scripts running VMs."
+  },
+  "bounds": {
+    "sourceArchiveBytes": 268435456,
+    "expandedSourceBytes": 536870912,
+    "offlineInventoryBytes": 67108864,
+    "offlineDependencyBytes": 42949672960,
+    "rawCommandBytesPerStream": "33554432 plus first65536 crossing bytes; overflow fails",
+    "publicLeaves": "512, each at most16777216, all source data at most5368709120; original non-source broker caps unchanged",
+    "package": "At most65536 regular single-link non-reparse files, 4294967296 file bytes; whole tar/chunk hashes and complete safe extraction. Missing/empty/link/changed/overflow packaging is a separate failure, not a rewrite of the compiler result.",
+    "storage": "Windows80000000000/early79000000000; all other guests60000000000/early59000000000. Whole dependency inode union plus all receiver/publication/exchange/capture/temp growth, no swap and10CPU/32GiB shared pool. Per-file kernel ceiling is not aggregate admission; actual VM OS/fallocate/size/clock/native fault tests remain UNRUN.",
+    "clocks": "Fresh Root start window at most300seconds, actual preflight/DAC at most30seconds, original workload wall+same-boot monotonic deadline and maximum5second clock divergence. No timeout refresh or hidden retry."
+  },
+  "verificationRequired": [
+    "All new source/unit/native/SDK cases run inside admitted OMEN VMs; local AST/JSON/diff/hash inspection is preparation only.",
+    "Run one NEW ordinary complete fixed installed A -> broker -> planner -> canonical worker -> managed-libvirt -> real guest B check/build -> actual original raws/package -> independent native/canonical closure -> public collector/descriptor transaction.",
+    "Exercise actual nonroot Root-entry refusal, Root400/private versus Root444 public permissions, exact full9/size/hash/changed data, real EOF/overflow/timeouts, kernel file-size and whole-union growth, original UID/birth/cgroup, QEMU and Windows job lifetimes, failed package with retained compiler logs and actual no-guest prerequisite failure.",
+    "The authored package test uses actual archive producer/chunks/whole tar/extraction without replacing the method under test. Metadata tests prove schemas only; no fake adapter proves Root/libvirt/kernel behavior.",
+    "Exact changed whole graph, tier-appropriate required checks and new Core primary source approval precede any owning-primary protected merge. Old fc3/68617 approvals/checks do not transfer. Main, VM/image/USB/NVIDIA acceptance and publication remain separate."
+  ]
+}

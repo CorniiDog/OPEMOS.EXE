@@ -80,7 +80,7 @@ def pop_guest_frame(buffer):
     return value
 
 
-def protected_bytes(ref, mode=0o400, grant=False):
+def protected_bytes(ref, mode=0o400, grant=False, allow_empty=False):
     """Bootstrap Root custody before executing any external backend source."""
     path = Path(ref['path']); held = []; chain = []; primary = None
     need(path.is_absolute() and '..' not in path.parts and 3 <= len(path.parts) <= 16,
@@ -105,7 +105,9 @@ def protected_bytes(ref, mode=0o400, grant=False):
         before = os.fstat(leaf)
         need(stat.S_ISREG(before.st_mode) and before.st_uid == before.st_gid == 0
              and before.st_nlink == 1 and stat.S_IMODE(before.st_mode) == mode
-             and 0 < before.st_size <= 1024**2, 'protected Root leaf mode/type/size')
+             and type(allow_empty)is bool and
+             (0 <= before.st_size if allow_empty else 0 < before.st_size)and
+             before.st_size <= 1024**2, 'protected Root leaf mode/type/size')
         raw = bytearray()
         while block := os.read(leaf, 65536):
             raw.extend(block); need(len(raw) <= 1024**2, 'protected operand overflow')

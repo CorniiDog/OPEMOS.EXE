@@ -95,7 +95,7 @@ def request():
          r['consumer_started_epoch'] > 0,
          'exact protected consumer identity required')
     need(r['action'] in ('prepare','collect') and
-         r['kind'] in ('inventory','artifacts','artifact'),
+         r['kind'] in ('inventory','artifacts','artifact','source-workload'),
          'unsupported fixed action/kind')
     roles(r)
     return r
@@ -196,8 +196,21 @@ def collect(profile, r, prepared):
 def main():
     r = request()
     p = strict(held(PROFILE, 1048576, owner=0))
-    need(p.get('schema') == 1 and p.get('enabled') is True,
+    need(p.get('schema') == 1 and (p.get('source_workloads',{}).get('enabled')is True
+         if r['kind']=='source-workload'else p.get('enabled')is True),
          'installed Root profile disabled')
+    if r['kind']=='source-workload':
+        lib=Path(p['source_workloads']['libdir'])
+        need(lib.is_absolute()and lib.resolve()==lib,'fixed source A module directory')
+        for directory in (lib,*lib.parents):
+            info=directory.lstat();need(stat.S_ISDIR(info.st_mode)and info.st_uid==0 and not info.st_mode&0o022,
+                 'source library Root ancestry, no candidate module search path')
+        for name,pin in p['source_workloads']['libraryPins'].items():
+            need(Path(name).name==name and name.endswith('.py'),'finite Root source module basename')
+            held(lib/name,1024**2,pin,owner=0)
+        need({'omen_source_workloads.py','omen_source_jobs.py','omen_ci_reader.py'}<=
+             set(p['source_workloads']['libraryPins']),'complete fixed source hook imports')
+        sys.path.insert(0,str(lib))
     pin = p.get('fixed_registry', {})
     need(pin.get('path') == str(REGISTRY) and
          isinstance(pin.get('sha256'), str) and SHA.fullmatch(pin['sha256']),
@@ -223,6 +236,10 @@ def main():
         need(type(r['subject']) is str and
              r['subject'] in registry['artifacts'],
              'unknown protected producer platform')
+    elif r['kind']=='source-workload':
+        from omen_source_workloads import selection
+        selection(r['subject'],r['source_commit'])
+        need(type(registry.get('source_workloads'))is dict,'Root source workload registry not adopted')
     else:
         need(type(r['subject']) is dict and
              set(r['subject']) == {'platform','artifact_id'} and
@@ -234,6 +251,19 @@ def main():
     if r.get('controller_source_commit',r['source_commit']) != source:
         result = {'identity':identity,'available':False,
                   'reason':'Root registry source differs from current protected consumer; fresh source and producer reconciliation required'}
+    elif r['kind']=='source-workload':
+        row=registry['source_workloads'].get(r['subject']['workload'],{})
+        result={'identity':identity,'available':False,'reason':row.get('reason','Current admitted source VM/media/SDK unavailable')}
+        prepared=registered(row.get('operation'),r,('config','source_job'))
+        if prepared is not None:
+            need(all(prepared['source_job']['subject'].get(k)==v for k,v in r['subject'].items()),
+                 'Root registry names another source/archive/tree')
+            if r['action']=='collect':
+                from omen_source_jobs import collect as source_collect
+                from omen_source_jobs import current_stage
+                ns=current_stage(p)
+                result=source_collect(ns,prepared,r)
+            else:result=prepared
     elif r['action'] == 'collect':
         if r['kind']=='inventory':pin=cases[r['subject']].get('operation')
         elif r['kind']=='artifact':pin=registry['artifacts'][r['subject']['platform']].get('operations',{}).get(r['subject']['artifact_id'])

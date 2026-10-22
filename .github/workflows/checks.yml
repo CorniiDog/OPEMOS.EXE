@@ -1,212 +1,278 @@
 name: Checks
-
+# OMEN_GUEST_SOURCE_WORKLOAD_V1: hosted jobs perform metadata/data transport ONLY.
 on:
   push:
   pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
+  actions: read
 concurrency:
   group: checks-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
+  cancel-in-progress: false
 jobs:
-  frontend-and-docs:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install JavaScript dependencies
-        run: npm ci
-
-      - name: Run frontend, documentation, and hygiene checks
-        run: npm run test:frontend
-
-      - name: Check committed patch whitespace
-        run: git diff --check
-
-  rust:
+  source-route:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 3
+    outputs:
+      ready: ${{ steps.route.outputs.ready }}
+      runner: ${{ steps.route.outputs.runner }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Check out immutable OPEMOS Core contract fixtures
-        uses: actions/checkout@v4
-        with:
-          repository: CorniiDog/OPEMOS
-          ref: f72aff92a5534b676083ccba974f4185f2d4551f
-          path: opemos-core-contracts
-          fetch-depth: 186
-          persist-credentials: false
-
-      - name: Verify bundled maintainer workflow against exact Core output
-        run: node scripts/check_core_maintainer_workflow.mjs
+      - id: route
         env:
-          OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
-
-      - name: Install Tauri Linux dependencies
-        run: >-
-          sudo apt-get update && sudo apt-get install --yes
-          build-essential curl file libayatana-appindicator3-dev
-          librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev patchelf pkg-config
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - name: Check Rust formatting
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-
-      - name: Reject Rust warnings
-        run: >-
-          cargo clippy --manifest-path src-tauri/Cargo.toml
-          --all-targets --all-features -- -D warnings
-
-      - name: Run Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
-        env:
-          OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
-          OPEMOS_CORE_EXPECTED_COMMIT: f72aff92a5534b676083ccba974f4185f2d4551f
-
-  linux-integration:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Exercise actual Linux cross-PID-namespace broker credentials
+          GITHUB_TOKEN: ${{ github.token }}
+          OPEMOS_OMEN_ROBOT_RUNNER_STATE: ${{ vars.OPEMOS_OMEN_ROBOT_RUNNER_STATE }}
         run: |
-          sudo apt-get update && sudo apt-get install --yes bubblewrap
-          /usr/bin/python3 -B tests/robot/test_peerpid_namespace.py --source "$GITHUB_WORKSPACE/scripts/robot_client.py" --sha256 e7cf014ba6ae73987c661daf18045265345da38594f323d23136847ccebf6b7a
-
-      - name: Exercise Robot source adapter and real Unix client fault contracts
-        run: python3 -m unittest discover -s tests -p 'test_omen*.py' -v
-
-      - name: Check out immutable OPEMOS Core integration sources
-        uses: actions/checkout@v4
-        with:
-          repository: CorniiDog/open-gpu-kernel-modules-steamos-support
-          ref: adf372b857cd348b6a18680b45ffcea790f04d4b
-          path: opemos-core-contracts
-          fetch-depth: 56
-          persist-credentials: false
-
-      - name: Install bounded Linux integration dependencies
-        run: >-
-          sudo apt-get update && sudo apt-get install --yes
-          build-essential genisoimage libayatana-appindicator3-dev librsvg2-dev
-          libssl-dev libwebkit2gtk-4.1-dev ovmf patchelf pkg-config
-          qemu-system-x86 qemu-utils
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Exercise immutable Core resolver contract
-        run: >-
-          cargo test --manifest-path src-tauri/Cargo.toml
-          exact_core_source_intent_matrix_matches_rust_contract -- --ignored
-        env:
-          OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
-          OPEMOS_CORE_EXPECTED_COMMIT: adf372b857cd348b6a18680b45ffcea790f04d4b
-
-      - name: Exercise authenticated Core guest handoff and activation
-        run: >-
-          cargo test --manifest-path src-tauri/Cargo.toml
-          immutable_core_generation_reaches_guest_consumption_and_activation
-          -- --ignored
-        env:
-          OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
-          OPEMOS_CORE_EXPECTED_COMMIT: adf372b857cd348b6a18680b45ffcea790f04d4b
-
-      - name: Exercise disposable headless Linux image tools with TCG
-        run: >-
-          cargo test --manifest-path src-tauri/Cargo.toml
-          live_linux_disposable_host_tools -- --ignored
-        env:
-          OPEMOS_EXPERIMENTAL_LINUX: '1'
-          OPEMOS_LINUX_ACCEL: tcg
-
-  debian-12-package:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    container:
-      image: debian@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867
-    steps:
-      - name: Install Debian build and host-test dependencies
-        run: >-
-          apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --yes
-          build-essential ca-certificates curl file genisoimage git
-          libayatana-appindicator3-dev librsvg2-dev libssl-dev
-          libwebkit2gtk-4.1-dev openssh-client ovmf patchelf
-          pkg-config python3 qemu-system-x86 qemu-utils xdg-utils xz-utils
-          at-spi2-core dbus-x11 gir1.2-atspi-2.0 python3-gi tini xauth xvfb
-
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Verify the real Debian 12 host inventory with explicit TCG
-        run: bash scripts/check_linux_host.sh
-        env:
-          OPEMOS_EXPERIMENTAL_LINUX: '1'
-          OPEMOS_LINUX_ACCEL: tcg
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install JavaScript dependencies
-        run: npm ci
-
-      - name: Build the Debian 12 debug test package
-        run: npm run build:debian12-test
-        env:
-          OPEMOS_EXPERIMENTAL_LINUX: '1'
-          OPEMOS_LINUX_ACCEL: tcg
-
-      - name: Inspect the Debian 12 package without installing or launching it
-        run: >-
-          python3 scripts/check_linux_packaging.py
-          --expected-libc 2.36 --expected-openssl libssl3
-
-      - name: Exercise the portable AppImage resolver without a graphical session
-        run: python3 scripts/check_linux_appimage.py
-
-      - name: Install and purge the package in the disposable Debian container
-        run: >-
-          dbus-run-session -- xvfb-run --auto-servernum
-          tini -s -- python3 scripts/check_debian_package_install.py
-        env:
-          OPEMOS_DEBIAN_GUI_SMOKE: '1'
-          OPEMOS_DISPOSABLE_DEBIAN_CONTAINER: '1'
-
-      - name: Stage current-source Linux packages with checksums and provenance
-        run: |
-          python3 scripts/acquire_appliance_windows.py --output build/appliance/linux
-          python3 scripts/stage_linux_packages.py --source-commit "${GITHUB_SHA}" --appliance-image build/appliance/linux/fedora-builder.qcow2
-
-      - name: Retain the validated Linux packages
+          python3 - <<'PY'
+          import json,os,time,urllib.request,pathlib
+          ready=False;reason='Actual current OMEN route unavailable'
+          try:
+              assert os.environ['GITHUB_REPOSITORY']=='CorniiDog/OPEMOS.EXE'
+              headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json'}
+              url='https://api.github.com/repos/CorniiDog/OPEMOS.EXE/branches/main'
+              class NoRedirect(urllib.request.HTTPRedirectHandler):
+                  def redirect_request(self,*args):return None
+              with urllib.request.build_opener(NoRedirect).open(urllib.request.Request(url,headers=headers),timeout=20)as r:
+                  raw=r.read(1048577);assert len(raw)<=1048576;main=json.loads(raw)
+              state=json.loads(os.environ['OPEMOS_OMEN_ROBOT_RUNNER_STATE'])
+              assert main['protected']is True and state['repository']=='CorniiDog/OPEMOS.EXE'and state['source_commit']==main['commit']['sha']
+              assert state['version']==1 and type(state['checked_at'])is int and state['expires_at']==state['checked_at']+180
+              assert state['checked_at']<=time.time()<state['expires_at']and state['ready']is True
+              assert state['labels']==['self-hosted','Linux','X64','opemos-omen-robot']and state['runner_name']=='opemos-omen-robot'
+              assert type(state['runner_id'])is int and state['runner_id']>0
+              ready=True;reason='Online route only; no guest/source/compiler/GUI result'
+          except Exception as e:reason+=': '+type(e).__name__
+          pathlib.Path('source-route').mkdir()
+          pathlib.Path('source-route/route.json').write_text(json.dumps({'ready':ready,'reason':reason,'actualGuestExecuted':False,'compilerPassed':False}))
+          with open(os.environ['GITHUB_OUTPUT'],'a')as f:
+              f.write('ready='+str(ready).lower()+'\nrunner='+json.dumps(['self-hosted','Linux','X64','opemos-omen-robot']if ready else['ubuntu-24.04'])+'\n')
+          if not ready:print('::error::'+reason)
+          PY
+      - name: Retain exact route-only diagnostic
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: opemos-exe-linux-x86_64-${{ github.sha }}
-          path: linux-package-artifact
+          name: source-route-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-route/
           if-no-files-found: error
-          compression-level: 0
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  frontend-and-docs:
+    if: always()
+    needs: source-route
+    runs-on: ${{ fromJSON(needs.source-route.outputs.runner || '["ubuntu-24.04"]') }}
+    timeout-minutes: 20
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Fail visibly when the actual OMEN route is unavailable
+        if: needs.source-route.outputs.ready != 'true'
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          reason='Actual admitted OMEN source route unavailable; no guest test or compiler ran'
+          (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':reason,'actualGuestExecuted':False,'compilerPassed':False}))
+          suite=E.Element('testsuite',name='Unavailable actual source workload',tests='1',failures='1',skipped='0')
+          E.SubElement(E.SubElement(suite,'testcase',name='Actual OMEN source workload'),'failure').text=reason
+          E.ElementTree(suite).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+          (p/'report.html').write_text('<html><body><h1>FAILED / unavailable</h1><p>'+reason+'</p></body></html>')
+          print('::error::'+reason)
+          raise SystemExit(1)
+          PY
+      # Root job-start guard must verify this entire workflow blob against its
+      # adopted template before any step; no candidate checkout is permitted.
+      - name: Bind existing ephemeral token to the fixed source-only scope
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/timeout --signal=TERM --kill-after=5s 45s /usr/bin/python3 -I -B /var/lib/opemos-robot-control-r1/guard/job_guard.py --bind-job-token
+      - name: Wait for actual admitted OMEN guest frontend-and-docs
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/python3 -E -s -B /var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py run-required --workload frontend-and-docs --directory source-results
+      - name: Make missing actual source proof explicit
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          if not (p/'source-proof.json').exists():
+              if not (p/'source-failure.json').exists():
+                  (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':'Fixed A guard/client or actual guest result unavailable; inspect retained job logs','compilerPassed':False}))
+              if not (p/'xunit.xml').exists():
+                  s=E.Element('testsuite',name='Missing actual OMEN source proof',tests='1',failures='1',skipped='0')
+                  E.SubElement(E.SubElement(s,'testcase',name='Actual source workload'),'failure').text='No accepted actual guest/compiler result'
+                  E.ElementTree(s).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+              (p/'report.html').write_text('<html><body><h1>FAILED / no actual source proof</h1></body></html>')
+          PY
+      - name: Always retain actual source results or precise failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-frontend-and-docs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  rust:
+    if: always()
+    needs: source-route
+    runs-on: ${{ fromJSON(needs.source-route.outputs.runner || '["ubuntu-24.04"]') }}
+    timeout-minutes: 35
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Fail visibly when the actual OMEN route is unavailable
+        if: needs.source-route.outputs.ready != 'true'
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          reason='Actual admitted OMEN source route unavailable; no guest test or compiler ran'
+          (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':reason,'actualGuestExecuted':False,'compilerPassed':False}))
+          suite=E.Element('testsuite',name='Unavailable actual source workload',tests='1',failures='1',skipped='0')
+          E.SubElement(E.SubElement(suite,'testcase',name='Actual OMEN source workload'),'failure').text=reason
+          E.ElementTree(suite).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+          (p/'report.html').write_text('<html><body><h1>FAILED / unavailable</h1><p>'+reason+'</p></body></html>')
+          print('::error::'+reason)
+          raise SystemExit(1)
+          PY
+      # Root job-start guard must verify this entire workflow blob against its
+      # adopted template before any step; no candidate checkout is permitted.
+      - name: Bind existing ephemeral token to the fixed source-only scope
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/timeout --signal=TERM --kill-after=5s 45s /usr/bin/python3 -I -B /var/lib/opemos-robot-control-r1/guard/job_guard.py --bind-job-token
+      - name: Wait for actual admitted OMEN guest rust
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/python3 -E -s -B /var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py run-required --workload rust --directory source-results
+      - name: Make missing actual source proof explicit
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          if not (p/'source-proof.json').exists():
+              if not (p/'source-failure.json').exists():
+                  (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':'Fixed A guard/client or actual guest result unavailable; inspect retained job logs','compilerPassed':False}))
+              if not (p/'xunit.xml').exists():
+                  s=E.Element('testsuite',name='Missing actual OMEN source proof',tests='1',failures='1',skipped='0')
+                  E.SubElement(E.SubElement(s,'testcase',name='Actual source workload'),'failure').text='No accepted actual guest/compiler result'
+                  E.ElementTree(s).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+              (p/'report.html').write_text('<html><body><h1>FAILED / no actual source proof</h1></body></html>')
+          PY
+      - name: Always retain actual source results or precise failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-rust-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  linux-integration:
+    if: always()
+    needs: source-route
+    runs-on: ${{ fromJSON(needs.source-route.outputs.runner || '["ubuntu-24.04"]') }}
+    timeout-minutes: 35
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Fail visibly when the actual OMEN route is unavailable
+        if: needs.source-route.outputs.ready != 'true'
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          reason='Actual admitted OMEN source route unavailable; no guest test or compiler ran'
+          (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':reason,'actualGuestExecuted':False,'compilerPassed':False}))
+          suite=E.Element('testsuite',name='Unavailable actual source workload',tests='1',failures='1',skipped='0')
+          E.SubElement(E.SubElement(suite,'testcase',name='Actual OMEN source workload'),'failure').text=reason
+          E.ElementTree(suite).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+          (p/'report.html').write_text('<html><body><h1>FAILED / unavailable</h1><p>'+reason+'</p></body></html>')
+          print('::error::'+reason)
+          raise SystemExit(1)
+          PY
+      # Root job-start guard must verify this entire workflow blob against its
+      # adopted template before any step; no candidate checkout is permitted.
+      - name: Bind existing ephemeral token to the fixed source-only scope
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/timeout --signal=TERM --kill-after=5s 45s /usr/bin/python3 -I -B /var/lib/opemos-robot-control-r1/guard/job_guard.py --bind-job-token
+      - name: Wait for actual admitted OMEN guest linux-integration
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/python3 -E -s -B /var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py run-required --workload linux-integration --directory source-results
+      - name: Make missing actual source proof explicit
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          if not (p/'source-proof.json').exists():
+              if not (p/'source-failure.json').exists():
+                  (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':'Fixed A guard/client or actual guest result unavailable; inspect retained job logs','compilerPassed':False}))
+              if not (p/'xunit.xml').exists():
+                  s=E.Element('testsuite',name='Missing actual OMEN source proof',tests='1',failures='1',skipped='0')
+                  E.SubElement(E.SubElement(s,'testcase',name='Actual source workload'),'failure').text='No accepted actual guest/compiler result'
+                  E.ElementTree(s).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+              (p/'report.html').write_text('<html><body><h1>FAILED / no actual source proof</h1></body></html>')
+          PY
+      - name: Always retain actual source results or precise failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-linux-integration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  debian-12-package:
+    if: always()
+    needs: source-route
+    runs-on: ${{ fromJSON(needs.source-route.outputs.runner || '["ubuntu-24.04"]') }}
+    timeout-minutes: 45
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Fail visibly when the actual OMEN route is unavailable
+        if: needs.source-route.outputs.ready != 'true'
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          reason='Actual admitted OMEN source route unavailable; no guest test or compiler ran'
+          (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':reason,'actualGuestExecuted':False,'compilerPassed':False}))
+          suite=E.Element('testsuite',name='Unavailable actual source workload',tests='1',failures='1',skipped='0')
+          E.SubElement(E.SubElement(suite,'testcase',name='Actual OMEN source workload'),'failure').text=reason
+          E.ElementTree(suite).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+          (p/'report.html').write_text('<html><body><h1>FAILED / unavailable</h1><p>'+reason+'</p></body></html>')
+          print('::error::'+reason)
+          raise SystemExit(1)
+          PY
+      # Root job-start guard must verify this entire workflow blob against its
+      # adopted template before any step; no candidate checkout is permitted.
+      - name: Bind existing ephemeral token to the fixed source-only scope
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/timeout --signal=TERM --kill-after=5s 45s /usr/bin/python3 -I -B /var/lib/opemos-robot-control-r1/guard/job_guard.py --bind-job-token
+      - name: Wait for actual admitted OMEN guest debian-12-package
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/python3 -E -s -B /var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py run-required --workload debian-12-package --directory source-results
+      - name: Make missing actual source proof explicit
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          if not (p/'source-proof.json').exists():
+              if not (p/'source-failure.json').exists():
+                  (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':'Fixed A guard/client or actual guest result unavailable; inspect retained job logs','compilerPassed':False}))
+              if not (p/'xunit.xml').exists():
+                  s=E.Element('testsuite',name='Missing actual OMEN source proof',tests='1',failures='1',skipped='0')
+                  E.SubElement(E.SubElement(s,'testcase',name='Actual source workload'),'failure').text='No accepted actual guest/compiler result'
+                  E.ElementTree(s).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+              (p/'report.html').write_text('<html><body><h1>FAILED / no actual source proof</h1></body></html>')
+          PY
+      - name: Always retain actual source results or precise failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-debian-12-package-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}

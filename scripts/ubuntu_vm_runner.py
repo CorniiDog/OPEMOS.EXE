@@ -33,15 +33,22 @@ def output_disk_identity(info):
     return {key: getattr(info, key) for key in OUTPUT_IDENTITY_FIELDS}
 
 
-def output_storage_ledger(paths, reserved_bytes=0):
+def output_storage_ledger(paths, reserved_bytes=0, *, platform='other', mutable_paths=()):
     """Observe a complete caller-declared dependency union, not an admission.
 
     Shared media must appear in each consuming VM's list. Raw targets charge
     their complete capacity even on filesystems where allocation is sparse.
     The canonical owner independently supplies the complete dependency list.
     """
+    if platform not in('other','windows'):
+        raise ValueError('explicit Windows-only budget selection; no unrelated cap change')
+    budget=80_000_000_000 if platform=='windows'else VM_BUDGET_BYTES
     if type(reserved_bytes) is not int or reserved_bytes < 0 or not paths:
         raise ValueError('complete dependency list and bounded reservation required')
+    paths=list(dict.fromkeys(map(str,paths)))
+    mutable_paths=set(map(str,mutable_paths))
+    if not mutable_paths<=set(map(str,paths)):
+        raise ValueError('mutable accounting paths must be declared dependencies')
     rows = []; inodes = {}
     for value in paths:
         path = Path(value)
@@ -54,18 +61,29 @@ def output_storage_ledger(paths, reserved_bytes=0):
         row = {'path': str(path), 'identity': output_disk_identity(before),
                'allocatedBytes': allocated, 'chargedBytes': max(before.st_size, allocated)}
         key = (before.st_dev, before.st_ino)
-        if key in inodes and inodes[key]['identity'] != row['identity']:
+        if key in inodes and inodes[key]['identity'] != row['identity'] and str(path)not in mutable_paths:
             raise ValueError('dependency inode changed during accounting')
         inodes[key] = row; rows.append(row)
     for row in rows:
         now = Path(row['path']).lstat()
-        if output_disk_identity(now) != row['identity'] or now.st_blocks * 512 != row['allocatedBytes']:
+        if row['path']in mutable_paths:
+            # A live guest's writable image changes size/times normally. It
+            # may not change inode, owner, mode or links. Charge the larger
+            # actual endpoint; the source controller separately reserves all
+            # possible growth under the actual kernel file ceiling.
+            stable=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink')
+            if any(getattr(now,k)!=row['identity'][k]for k in stable):
+                raise ValueError('mutable dependency identity changed during accounting')
+            row['afterIdentity']=output_disk_identity(now)
+            row['allocatedBytes']=max(row['allocatedBytes'],now.st_blocks*512)
+            row['chargedBytes']=max(row['chargedBytes'],now.st_size,row['allocatedBytes'])
+        elif output_disk_identity(now) != row['identity'] or now.st_blocks * 512 != row['allocatedBytes']:
             raise ValueError('dependency changed during accounting')
     total = sum(row['chargedBytes'] for row in inodes.values()) + reserved_bytes
-    if total > VM_BUDGET_BYTES:
-        raise ValueError('output VM complete dependency union exceeds 60GB')
+    if total > budget:
+        raise ValueError('VM complete dependency union exceeds '+str(budget)+' bytes')
     return {'files': rows, 'uniqueInodes': len(inodes), 'reservedBytes': reserved_bytes,
-            'chargedBytes': total, 'hardBytes': VM_BUDGET_BYTES,
+            'chargedBytes': total, 'hardBytes': budget,
             'admissionClaimed': False}
 
 

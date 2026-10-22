@@ -1,0 +1,374 @@
+name: 01 Windows EXE
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      producer-metadata-diagnostic:
+        description: Finite native metadata capture only, no package build
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: windows-portable-Windows portable artifact-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+  OPEMOS_CORE_COMMIT: f72aff92a5534b676083ccba974f4185f2d4551f
+  RUST_TOOLCHAIN: 1.98.1
+  NODE_VERSION: 22.23.2
+  RUSTFLAGS: -C target-feature=+crt-static
+
+jobs:
+  producer-metadata-diagnostic:
+    if: github.event_name == 'workflow_dispatch' && inputs.producer-metadata-diagnostic
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.OPEMOS_EXE_COMMIT }}
+          persist-credentials: false
+      - name: Capture real Win32 and Python producer metadata
+        run: python scripts/diagnose_windows_producer_metadata.py
+      - name: Retain finite native metadata even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-producer-metadata-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/windows-metadata-diagnostic
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+          if-no-files-found: error
+
+  seed-runtime-source:
+    if: ${{ !inputs.producer-metadata-diagnostic }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact EXE source for runtime seed
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.OPEMOS_EXE_COMMIT }}
+          persist-credentials: false
+
+      - name: Verify immutable seed source identity
+        run: test "$(git rev-parse HEAD)" = "$OPEMOS_EXE_COMMIT"
+
+      - name: Acquire exact locked Windows runtime sources blocked on Windows
+        run: |
+          python3 scripts/acquire_runtime_windows.py --component git-for-windows --cache build/runtime-cache/windows
+          python3 scripts/acquire_runtime_windows.py --component github-cli --cache build/runtime-cache/windows
+          python3 scripts/acquire_runtime_windows.py --component python --cache build/runtime-cache/windows
+          python3 scripts/acquire_runtime_windows.py --component qemu --cache build/runtime-cache/windows
+          python3 scripts/acquire_runtime_windows.py --component cdrtools-binary --cache build/runtime-cache/windows
+          python3 scripts/acquire_runtime_windows.py --component cdrtools-source --cache build/runtime-cache/windows
+
+      - name: Upload short-lived exact Windows runtime source seed
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-runtime-source-${{ env.OPEMOS_EXE_COMMIT }}
+          path: |
+            build/runtime-cache/windows/PortableGit-2.55.0.5-64-bit.7z.exe
+            build/runtime-cache/windows/gh_2.100.0_windows_amd64.zip
+            build/runtime-cache/windows/python-3.13.15-embeddable-amd64.zip
+            build/runtime-cache/windows/qemu-w64-setup-20260811.exe
+            build/runtime-cache/windows/schily-cdrtools-3.02a09.7z
+            build/runtime-cache/windows/cdrtools-3.02a09.tar.gz
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+          compression-level: 0
+
+  build:
+    needs: seed-runtime-source
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out EXE source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.OPEMOS_EXE_COMMIT }}
+          persist-credentials: false
+
+      - name: Verify immutable EXE identity
+        shell: pwsh
+        run: |
+          $actual = git rev-parse HEAD
+          if ($actual -cne $env:OPEMOS_EXE_COMMIT) {
+            throw "EXE checkout mismatch: $actual"
+          }
+
+      - name: Verify native producer descriptor custody before expensive build
+        run: python -m unittest discover -s tests -p test_omen_producer_native.py -v
+
+      - name: Preserve canonical Core bytes
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
+      - name: Check out immutable OPEMOS Core contracts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: CorniiDog/OPEMOS
+          ref: f72aff92a5534b676083ccba974f4185f2d4551f
+          path: opemos-core-contracts
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify immutable OPEMOS Core identity
+        shell: pwsh
+        run: |
+          $actual = git -C opemos-core-contracts rev-parse HEAD
+          if ($actual -cne $env:OPEMOS_CORE_COMMIT) {
+            throw "Core checkout mismatch: $actual"
+          }
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.23.2
+          cache: npm
+
+      - name: Set up exact Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
+
+      - name: Install locked JavaScript dependencies
+        run: npm ci
+
+      - name: Validate this workflow policy
+        run: node scripts/windows-portable-workflow.mjs
+
+      - name: Run Windows workflow policy tests
+        run: node --test tests/windows-portable-workflow.test.mjs
+
+      - name: Verify bundled maintainer workflow against exact Core output
+        run: node scripts/check_core_maintainer_workflow.mjs
+        env:
+          OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
+
+      - name: Verify exact Core zstd runtime consumption
+        run: python -m unittest tests.runtime_bundle_packaging.RuntimeBundlePackagingTests.test_windows_runtime_adds_exact_core_zstd_dependency
+        env:
+          OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
+
+      - name: Compile locked Rust tests and run Windows cases
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib windows_
+        env:
+          OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
+          OPEMOS_CORE_EXPECTED_COMMIT: f72aff92a5534b676083ccba974f4185f2d4551f
+          RUSTFLAGS: -C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}\scripts\windows-test-v6.manifest
+
+      - name: Restore exact same-run Windows runtime source seed
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: windows-runtime-source-${{ env.OPEMOS_EXE_COMMIT }}
+          path: build/runtime-cache/windows
+
+      - name: Build unsigned verified runtime bundle
+        shell: pwsh
+        run: .\bundle_windows.ps1 -CoreRoot opemos-core-contracts
+
+      - name: Smoke-test portable executable startup
+        shell: pwsh
+        run: |
+          $source = "dist/windows/OPEMOS.EXE-windows-x86_64-unsigned.exe"
+          $qemuBefore = @(Get-Process -Name "qemu-system-*" -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" })
+          $webviewBefore = @(Get-Process -Name "msedgewebview2" -ErrorAction SilentlyContinue | ForEach-Object { try { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" } catch {} })
+          $process = Start-Process -FilePath $source -PassThru
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(30)
+            do {
+              Start-Sleep -Milliseconds 250
+              $process.Refresh()
+              if ($process.HasExited) {
+                throw "Portable executable exited during startup with code $($process.ExitCode)."
+              }
+            } while (($process.MainWindowHandle -eq 0 -or $process.MainWindowTitle -cne "SteamOS NVIDIA Builder") -and [DateTime]::UtcNow -lt $deadline)
+            if ($process.MainWindowHandle -eq 0) {
+              throw "Portable executable did not show a native main window within 30 seconds."
+            }
+            if ($process.MainWindowTitle -cne "SteamOS NVIDIA Builder") {
+              throw "Portable executable showed an unexpected window title: $($process.MainWindowTitle)"
+            }
+          }
+          finally {
+            if (-not $process.HasExited) {
+              Stop-Process -Id $process.Id
+              $process.WaitForExit()
+            }
+          }
+          $qemuDeadline = [DateTime]::UtcNow.AddSeconds(5)
+          do {
+            $qemuAfter = @(Get-Process -Name "qemu-system-*" -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" } | Where-Object { $_ -notin $qemuBefore })
+            if ($qemuAfter.Count -eq 0) {
+              break
+            }
+            Start-Sleep -Milliseconds 250
+          } while ([DateTime]::UtcNow -lt $qemuDeadline)
+          if ($qemuAfter.Count -ne 0) {
+            throw "Portable executable left new QEMU processes after bounded shutdown: $($qemuAfter -join ', ')"
+          }
+          $webviewDeadline = [DateTime]::UtcNow.AddSeconds(15)
+          do {
+            $webviewAfter = @(Get-Process -Name "msedgewebview2" -ErrorAction SilentlyContinue | ForEach-Object { try { "$($_.Id):$($_.StartTime.ToUniversalTime().Ticks)" } catch {} } | Where-Object { $_ -notin $webviewBefore })
+            if ($webviewAfter.Count -eq 0) {
+              break
+            }
+            Start-Sleep -Milliseconds 250
+          } while ([DateTime]::UtcNow -lt $webviewDeadline)
+          if ($webviewAfter.Count -ne 0) {
+            throw "Portable executable left new WebView processes after bounded shutdown: $($webviewAfter -join ', ')"
+          }
+          $bundleRoot = (Resolve-Path -LiteralPath "dist/windows").Path
+          $state = Join-Path $bundleRoot "state"
+          if (Test-Path -LiteralPath $state) {
+            $stateItem = Get-Item -LiteralPath $state -Force
+            if (-not $stateItem.PSIsContainer -or ($stateItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+              throw "Portable smoke-test state is not an owned real directory."
+            }
+            $stateCleanupDeadline = [DateTime]::UtcNow.AddSeconds(10)
+            do {
+              try {
+                Remove-Item -LiteralPath $state -Recurse -Force -ErrorAction Stop
+              }
+              catch {
+                if ([DateTime]::UtcNow -ge $stateCleanupDeadline) {
+                  throw
+                }
+                Start-Sleep -Milliseconds 250
+              }
+            } while (Test-Path -LiteralPath $state)
+          }
+          if (Test-Path -LiteralPath $state) {
+            throw "Portable smoke-test state survived cleanup."
+          }
+
+      - name: Verify executable and record provenance
+        shell: pwsh
+        run: |
+          $source = "dist/windows/OPEMOS.EXE-windows-x86_64-unsigned.exe"
+          if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw "Expected executable is absent: $source"
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath $source
+          if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
+            throw "Executable must be unsigned; signature status is $($signature.Status)"
+          }
+          $output = "dist/windows"
+          $name = "OPEMOS.EXE-windows-x86_64-unsigned.exe"
+          $destination = $source
+          $file = Get-Item -LiteralPath $destination
+          $sha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+          $lines = @(
+            "schema_version=1"
+            "repository=$env:GITHUB_REPOSITORY"
+            "source_commit=$env:OPEMOS_EXE_COMMIT"
+            "core_commit=$env:OPEMOS_CORE_COMMIT"
+            "rust_toolchain=$env:RUST_TOOLCHAIN"
+            "node_version=$env:NODE_VERSION"
+            "crt_static=true"
+            "runner_image=$env:ImageOS"
+            "runner_image_version=$env:ImageVersion"
+            "filename=$name"
+            "size=$($file.Length)"
+            "sha256=$sha256"
+            "signed=false"
+            "portable=true"
+          )
+          Set-Content -LiteralPath (Join-Path $output "provenance.txt") -Value $lines -Encoding ascii
+          Set-Content -LiteralPath (Join-Path $output "SHA256SUMS.txt") -Value "$sha256  $name" -Encoding ascii
+
+      - name: Upload short-lived workflow artifact
+        id: executable
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: OPEMOS.EXE-windows-x86_64-unsigned-${{ env.OPEMOS_EXE_COMMIT }}-${{ github.run_attempt }}
+          path: dist/windows
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+          compression-level: 0
+
+      - name: Bind exact executable and package to this producer artifact
+        if: success() && steps.executable.outputs.artifact-id != ''
+        shell: bash
+        env:
+          PRODUCER_ARTIFACT_ID: ${{ steps.executable.outputs.artifact-id }}
+          PRODUCER_ARTIFACT_SHA256: ${{ steps.executable.outputs.artifact-digest }}
+        run: >-
+          python scripts/record_executable_artifact.py
+          --platform windows
+          --source "${{ env.OPEMOS_EXE_COMMIT }}"
+          --artifact-id "$PRODUCER_ARTIFACT_ID"
+          --artifact-sha "$PRODUCER_ARTIFACT_SHA256"
+          --artifact-name "OPEMOS.EXE-windows-x86_64-unsigned-${{ env.OPEMOS_EXE_COMMIT }}-${{ github.run_attempt }}"
+          --output build/executable-producer
+      - name: Retain small producer identity for separate SteamOS acceptance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: executable-producer-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/executable-producer/executable-producer.json
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  omen-required:
+    name: Required OMEN GUI image + SteamOS (windows)
+    needs: build
+    if: always() && github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && github.ref_protected && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 250
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Check out trusted Main gate only; never PR code on OMEN
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require current actual OMEN GUI Build, image, USB and SteamOS
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/required_omen.py dispatch-and-wait --platform windows
+      - name: Always retain required gate reports and unavailable diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: required-omen-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: required-omen-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  omen-required-untrusted:
+    name: Required OMEN unavailable on non-Main source (windows)
+    needs: build
+    if: always() && !(github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && github.ref_protected && (github.event_name == 'push' || github.event_name == 'workflow_dispatch'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Record unsupported source as failed without dispatch credentials
+        run: |
+          python3 scripts/required_omen.py diagnostics --directory required-omen-results --reason 'Non-Main/PR/fork source is not admitted to OMEN; no dispatch, GUI, image, USB or SteamOS acceptance'
+          exit 1
+      - name: Always retain unavailable required outcome
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: required-omen-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: required-omen-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}

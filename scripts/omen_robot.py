@@ -15,7 +15,7 @@ CONFIG = Path.home()/'.config/opemos-ci/robot.json'
 HOOK = '/var/lib/opemos-robot-control-r1/opemos-robot-job-plan'
 FULL9 = ('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
 SHA = re.compile(r'[0-9a-f]{64}\Z')
-MODULE_PINS = {'omen_ci_reader.py': '6b2d97a373001e8835400d5be22cef8c06004dab5c228bc1efbe7078dfe464df', 'omen_ci_executables.py': '1497c39307dae3cb1796249d542b03618a1c911893dbbbad8a29ed7d9ffcf9b0', 'omen_ci_result.py': '5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85', 'omen_ci_stage.py': '46cdb4812fabe2ce26d4698c1acc180e30114a48e9b093474181254d95a89fd3', 'omen_ci_inventory.py': 'e8873930651d4e1022fd3851b9bc35400ff54310e1d904f5d01c0f7dd903119e', 'omen_output_lifecycle.py': '1cc1763bce26f8c4bdc21bfd90e615e4911ce0f573329d2a3f3c4df32f89edaf'}  # All bytes consumed before any operation; a pin is not runtime authority.
+MODULE_PINS = {'omen_ci_reader.py': '6b2d97a373001e8835400d5be22cef8c06004dab5c228bc1efbe7078dfe464df', 'omen_ci_executables.py': '1497c39307dae3cb1796249d542b03618a1c911893dbbbad8a29ed7d9ffcf9b0', 'omen_ci_result.py': '5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85', 'omen_ci_stage.py': 'bb8c3eeec5f9c61295e0037266b7383dc88cb20668df8bedf77a71cb6839d9e3', 'omen_ci_inventory.py': 'e8873930651d4e1022fd3851b9bc35400ff54310e1d904f5d01c0f7dd903119e', 'omen_output_lifecycle.py': 'ec192d3ba47752f966196987d9e3edeed5f79ccc9fba00a2b394f897fe20848b'}  # All bytes consumed before any operation; a pin is not runtime authority.
 
 
 def require(value, message):
@@ -111,12 +111,18 @@ def installed():
     return value
 
 
-def hook(profile,request,out):
+def hook(profile,request,out,source_stage=None):
     """Run fixed, verified installed planner bytes. No PR argv/shell operation."""
     out=Path(out);out.mkdir(mode=0o700,parents=True,exist_ok=True)
     source=raw_file(HOOK,expected=profile['hook']['sha256'],owner=0)
     # Use a sealed descriptor instead of re-opening an executable after checking.
-    stage=modules()
+    if request.get('kind')=='source-workload':
+        require(source_stage is not None,'verified existing-A source queue stage required')
+        ref=profile['source_workloads']['currentStage']
+        require(source_stage['__file__']==ref['path'],'source stage filename differs from Root pin')
+        raw_file(ref['path'],expected=ref['sha256'],owner=ref['owner_uid'])
+        stage=source_stage
+    else:stage=modules()
     command=[sys.executable,'-I','-c',"__file__="+repr(HOOK)+";exec(compile("+repr(source)+","+repr(HOOK)+",'exec'))"]
     receipt=stage['_RESULT']['capture'](command,json.dumps(request).encode(),profile['result_contract'],out/'planner-transport',60)
     require(receipt['numeric_exit']==0 and receipt['complete']is True,'Fixed planner failed; retained exact raw/transport diagnostics')
@@ -184,6 +190,7 @@ class Engine:
             request.update(source_commit=source_roles['candidate_commit'],
                 controller_source_commit=self.context['source_commit'],source_roles=source_roles)
         dump(folder/'request.json',request)
+        if kind=='source-workload':return request,hook(self.profile,request,folder,self.stage),folder
         return request,hook(self.profile,request,folder),folder
 
     def transaction(self,kind,subject,expected_producer=None,source_roles=None):
@@ -381,6 +388,31 @@ class Engine:
             self.results[vm_id].update(status='failed',reason=str(error),error_type=type(error).__name__,failure_exports=self.failure_exports())
             raise
         finally:self.persist()
+
+    def source_workload(self, spec):
+        """Finite same-A source job; does not promote any GUI/inventory state."""
+        if self.profile is None:
+            self.profile=strict(raw_file(CONFIG,1024**2,owner=0))
+            require(self.profile['source_workloads']['enabled']is True and
+                    self.profile['source_workloads']['controller_commit']==self.context['source_commit'],
+                    'separate fixed source-workload profile absent/disabled')
+        import builtins,types
+        cfg=self.profile['source_workloads'];lib=Path(cfg['libdir'])
+        require(lib.is_absolute()and lib.resolve()==lib,'fixed A source library')
+        for directory in(lib,*lib.parents):
+            s=directory.lstat();require(stat.S_ISDIR(s.st_mode)and s.st_uid==0 and not s.st_mode&0o022,
+                                       'Root source library ancestry')
+        names=('omen_source_workloads','omen_ci_reader','omen_source_jobs')
+        blobs={name:raw_file(lib/(name+'.py'),expected=cfg['libraryPins'][name+'.py'],owner=0)for name in names}
+        loaded={};normal=builtins.__import__
+        def importer(name,globals=None,locals=None,fromlist=(),level=0):
+            return loaded[name]if level==0 and name in loaded else normal(name,globals,locals,fromlist,level)
+        for name in names:
+            module=types.ModuleType(name);module.__file__=str(lib/(name+'.py'));loaded[name]=module
+            module.__dict__['__builtins__']={**vars(builtins),'__import__':importer}
+            exec(compile(blobs[name],module.__file__,'exec'),module.__dict__)
+        self.stage=loaded['omen_source_jobs'].current_stage(self.profile)
+        return loaded['omen_source_jobs'].normal_operation(self,spec)
 
     def platform(self,platform):
         require(platform in self.artifacts,'Unknown platform')

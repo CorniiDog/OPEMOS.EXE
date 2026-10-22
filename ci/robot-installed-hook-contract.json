@@ -1,6 +1,19 @@
 {
   "schema": 1,
   "state": "SOURCE_PROPOSAL_UNRUN_NOT_INSTALLED",
+  "source_workload_extension": {
+    "state": "DISABLED_PROPOSAL_REQUIRES_INDEPENDENT_ROOT_ADOPTION",
+    "enabled": false,
+    "contract": "docs/omen-source-workloads-contract.json",
+    "fixed_client": "/var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py",
+    "action": "execute-source-workload",
+    "scope": "Only finite same-repository authenticated candidate B source/check/build inside managed OMEN guests. No checkout/import/project command on the runner host; no GUI/inventory/persist permission from this scope.",
+    "bootstrap": "Existing job-start guard must independently adopt the exact entire safe workflow bytes and reviewed A code graph at a safe checkpoint. Current Main control identity and privileged implementation provenance are separate; new code absent from Main must never be relabelled as Main code. Original UID/namespace/birth/cgroup/one-use token checks remain mandatory.",
+    "current_stage": "Use source_workloads.currentStage {path,sha256,source_commit,owner_uid} and its actual current canonical qualification, not the new GUI MODULE_PINS stage hash. Source profile may be enabled independently of GUI only after separate Root adoption/admission.",
+    "closure": "Actual guest worker/native parent/QEMU/daemon/control/observer/FD/input/resource closure plus independent actual Root native wait and canonical UID0-inclusive publisher/cgroup closure. Root public exports are0444; original private native captures remain0400.",
+    "required_checks": "Original required source/package job names retained. Offline/missing/not-run work is red with diagnostic reports; no hosted fallback test or transfer of old-head checks.",
+    "no_effect": "This proposal changes no installed profile, registry, source83, runner guard, guest or Root control. See full contract for complete finite operands and actual unverified media/SDK prerequisites."
+  },
   "workflow": ".github/workflows/omen-robot.yml@refs/heads/main",
   "runner_labels": [
     "self-hosted",
@@ -29,7 +42,7 @@
     },
     "stage": {
       "path": "EXACT_CURRENT_A_STAGE_PATH_OWNED_BY_HOOK_UID",
-      "sha256": "46cdb4812fabe2ce26d4698c1acc180e30114a48e9b093474181254d95a89fd3"
+      "sha256": "bb8c3eeec5f9c61295e0037266b7383dc88cb20668df8bedf77a71cb6839d9e3"
     },
     "robotframework": {
       "version": "7.5",

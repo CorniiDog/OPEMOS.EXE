@@ -81,7 +81,12 @@ class StoppedImageRange(unittest.TestCase):
             item={"path":str(path),"size":size,"kind":"output-manifest",
                   "sha256":hashlib.sha256(raw).hexdigest(),"identity":stage._READER.identity(path.stat())}
             root={"originalManifest":item,"originalGuestManifestSHA256":item['sha256']}
-            with self.subTest(size=size):self.assertEqual(stage.original_range_manifest(root),raw)
+            allocation={'allocatedBytes':path.stat().st_blocks*512}
+            # Exercise the actual ordinary raw-reader used by the wrapper.
+            # User600 files are never promoted to fake Root publication proof.
+            with self.subTest(size=size):
+                self.assertEqual(stage.read_original_manifest_file(item,allocation,uid=os.getuid()),raw)
+                with self.assertRaises(ValueError):stage.original_range_manifest(root)
             with self.assertRaises(ValueError):
                 stage.original_range_manifest({**root,"originalManifestRawBase64":"e30="})
         raw=b' '*1048577;path.write_bytes(raw)
@@ -102,5 +107,15 @@ class StoppedImageRange(unittest.TestCase):
         with self.assertRaises(ValueError):stage.operand_image_range_context(stale,plan,request,expected)
         plan["executable_acceptance"]["duplicate"]=copy.deepcopy(entry);expected["duplicate"]=expected["windows"]
         with self.assertRaises(ValueError):stage.operand_image_range_context(heal,plan,request,expected)
+
+    def test_actual_boot_and_monotonic_interval_not_a_local_success_flag(self):
+        import time
+        now=time.monotonic();boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+        root={'publicationValidity':{'hostBoot':boot,'notBeforeMonotonic':now-1,'notAfterMonotonic':now+30}}
+        stage.publication_clock(root)
+        for changed in ({'hostBoot':'not-current'},{'notAfterMonotonic':now-1},
+                        {'notBeforeMonotonic':False},{'notAfterMonotonic':now+14401}):
+            with self.subTest(changed=changed),self.assertRaises(ValueError):
+                stage.publication_clock({'publicationValidity':{**root['publicationValidity'],**changed}})
 
 if __name__=="__main__":unittest.main()

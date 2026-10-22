@@ -178,10 +178,10 @@ class Engine:
             except Exception:
                 raise ValueError(outcome_reason(reply, "host operation failed") +
                                  "; public failure receipt persistence failed") from None
-        self._copy_public(reply.get("public_evidence", []))
+        self._copy_public(reply.get("public_evidence", []), source=action=='execute-source-workload')
         # A retained-package connection proof cannot promote the independently
         # required current-source VM/platform cases, even via a malformed reply.
-        if action == "connection-proof":
+        if action in ("connection-proof",'execute-source-workload'):
             return reply
         for key, status in reply.get("vms", {}).items():
             require(key in self.results and status in
@@ -193,8 +193,8 @@ class Engine:
             self.artifacts[key]["status"] = status
         return reply
 
-    def _copy_public(self, rows):
-        require(type(rows) is list and len(rows) <= 64, "public evidence count")
+    def _copy_public(self, rows, source=False):
+        require(type(rows) is list and len(rows) <= (512 if source else 64), "public evidence count")
         total = 0
         for row in rows:
             name = row["name"]
@@ -206,7 +206,7 @@ class Engine:
                     type(row["sha256"]) is str and re.fullmatch(r"[0-9a-f]{64}", row["sha256"]),
                     "bounded exact public descriptor")
             total += row["bytes"]
-            require(total <= MAX_PUBLIC_TOTAL, "public operation total cap")
+            require(total <= (5*1024**3 if source else MAX_PUBLIC_TOTAL), "public operation total cap")
             data = _read_public(self.exchange / name, row["sha256"])
             require(len(data) == row["bytes"], "public report size")
             target = self.reports / name
@@ -288,6 +288,27 @@ class Engine:
         return {"exports": [{"path": str(self.reports / item["name"]),
                               "kind": item["kind"], "sha256": item["sha256"]}
                              for item in reply["public_evidence"]]}
+
+    def source_workload(self, spec):
+        from omen_source_workloads import selection, subject, verify_result
+        selection(spec,self.identity['source_commit'])
+        reply=self._request('execute-source-workload',spec)
+        # Persist the complete actual response before asserting success. A
+        # failed compiler is useful evidence, never GUI or package acceptance.
+        target=self.reports/('source-workload-'+spec['workload']+'.json')
+        raw=json.dumps(reply,sort_keys=True,separators=(',',':'),allow_nan=False).encode()+b'\n'
+        require(len(raw)<=MAX_REPLY,'bounded complete source reply')
+        fd=os.open(target,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+        with os.fdopen(fd,'wb')as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
+        require(reply['status']=='passed',outcome_reason(reply,'Actual OMEN source job failed/unavailable'))
+        bound=subject(reply['source_subject'],self.identity['source_commit'])
+        require(all(bound[k]==v for k,v in spec.items()),'Root substituted candidate/workload')
+        verify_result(reply['source_result'],reply['identity'],bound)
+        require(reply['source_closure']['unknown']==[] and all(reply['source_closure'].get(k)is True for k in
+            ('domainAbsent','originalPIDStartAbsent','cgroupEmpty','ownedFDsClosed','hostUnchanged',
+             'observerClosed','controlClosed','mediaUnchanged','originalBaseUnchanged')),
+            'actual source VM closure incomplete')
+        return reply
 
     def persist(self):
         reply = self._request("persist", "all")

@@ -1,0 +1,152 @@
+name: 02 Ubuntu AppImage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ubuntu-executable-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  appimage-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      OPEMOS_EXPERIMENTAL_LINUX: '1'
+      OPEMOS_LINUX_ACCEL: tcg
+      OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
+    steps:
+      - name: Check out exact executable source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Check out immutable Core contracts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: CorniiDog/OPEMOS
+          ref: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00
+          path: opemos-core-contracts
+          fetch-depth: 186
+          persist-credentials: false
+      - name: Install Ubuntu packaging dependencies
+        run: >-
+          sudo apt-get update && sudo apt-get install --yes
+          build-essential ca-certificates curl file genisoimage git
+          libayatana-appindicator3-dev librsvg2-dev libssl-dev
+          libwebkit2gtk-4.1-dev openssh-client ovmf patchelf
+          pkg-config python3 qemu-system-x86 qemu-utils xdg-utils xz-utils
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.23.2
+          cache: npm
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
+      - name: Install locked JavaScript dependencies
+        run: npm ci
+      - name: Build Ubuntu AppImage and Debian package
+        run: npm run build:linux-test
+      - name: Stage packages with checksums, source provenance and pinned appliance
+        run: |
+          python3 scripts/acquire_appliance_windows.py --output build/appliance/linux
+          python3 scripts/stage_linux_packages.py --source-commit "${{ github.event.pull_request.head.sha || github.sha }}" --appliance-image build/appliance/linux/fedora-builder.qcow2
+      - name: Retain Ubuntu executable packages
+        id: executable
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: OPEMOS-Ubuntu-AppImage-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: linux-package-artifact
+          if-no-files-found: error
+          compression-level: 0
+      - name: Explain the result scope
+        if: always()
+        run: |
+          echo 'Ubuntu executable packaging is separate from the OMEN graphical Build, virtual USB, SteamOS installation and NVIDIA recovery acceptance gates.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Bind exact executable and package to this producer artifact
+        if: success() && steps.executable.outputs.artifact-id != ''
+        shell: bash
+        env:
+          PRODUCER_ARTIFACT_ID: ${{ steps.executable.outputs.artifact-id }}
+          PRODUCER_ARTIFACT_SHA256: ${{ steps.executable.outputs.artifact-digest }}
+        run: >-
+          python3 scripts/record_executable_artifact.py
+          --platform ubuntu
+          --source "${{ github.event.pull_request.head.sha || github.sha }}"
+          --artifact-id "$PRODUCER_ARTIFACT_ID"
+          --artifact-sha "$PRODUCER_ARTIFACT_SHA256"
+          --artifact-name "OPEMOS-Ubuntu-AppImage-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}"
+          --output build/executable-producer
+      - name: Retain small producer identity for separate SteamOS acceptance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: executable-producer-ubuntu-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/executable-producer/executable-producer.json
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  omen-required:
+    name: Required OMEN GUI image + SteamOS (ubuntu)
+    needs: appimage-package
+    if: always() && github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && github.ref_protected && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 250
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Check out trusted Main gate only; never PR code on OMEN
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require current actual OMEN GUI Build, image, USB and SteamOS
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/required_omen.py dispatch-and-wait --platform ubuntu
+      - name: Always retain required gate reports and unavailable diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: required-omen-ubuntu-${{ github.run_id }}-${{ github.run_attempt }}
+          path: required-omen-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  omen-required-untrusted:
+    name: Required OMEN unavailable on non-Main source (ubuntu)
+    needs: appimage-package
+    if: always() && !(github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && github.ref_protected && (github.event_name == 'push' || github.event_name == 'workflow_dispatch'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      OPEMOS_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Record unsupported source as failed without dispatch credentials
+        run: |
+          python3 scripts/required_omen.py diagnostics --directory required-omen-results --reason 'Non-Main/PR/fork source is not admitted to OMEN; no dispatch, GUI, image, USB or SteamOS acceptance'
+          exit 1
+      - name: Always retain unavailable required outcome
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: required-omen-ubuntu-${{ github.run_id }}-${{ github.run_attempt }}
+          path: required-omen-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}

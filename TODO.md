@@ -1,5 +1,35 @@
 # OPEMOS.EXE — Product Checklist
 
+## 2026-10-22 PR210 finite OMEN source/check/build ingress — authored, UNRUN
+
+- Same unfinished54b35 scope: the original required check/package job names now
+  route only metadata on hosted workers and fixed independently adopted A code
+  on the existing OMEN runner. Candidate B is readonly guest data, never host
+  checkout/import/argv. Missing/offline route remains a failed required context.
+  The separate Main04 graphical image/USB/Robot workflow is unchanged.
+- The finite broker/planner/current-A canonical queue join, managed-libvirt
+  controller, sealed guest agents, actual Linux/Windows capture and bounded
+  package/public collector are authored together. Source-specific job-start
+  guard adoption preserves original token/kernel/caller controls. No installed
+  guard, profile, source83, Root15/Engine15 or busy OS input was changed.
+- Whole source inspection corrected a default-branch workflow-run bootstrap
+  deadlock, current-A versus changed GUI stage pin mismatch, live writable-image
+  accounting, original failure preservation and packaging-before-log delivery.
+  New source reserves full future writable growth under an actual paused-QEMU
+  kernel file ceiling and retains measured before/during/after union data; these
+  OS properties still require real OMEN execution, not schema assertions.
+- Core1116f0094d6 and R29ef0db are consumed. The public range reader now binds
+  original raw manifest allocation/clock/identity and independent Root parent's
+  actual finalizer capture/closure readback, without reading private400 as UID1000
+  or changing its mode. The finite Root parent source is not an installed caller.
+- Complete authored contract and existing lock/tool/media map are in
+  docs/omen-source-workloads-contract.json. Current OMEN SDK/cache/base presence
+  is UNVERIFIED; no network/SSH/VM effect or compiler/test attempt occurred here.
+  New actual archive producer-to-consumer and native failure tests are UNRUN.
+  Local syntax/JSON/hash inspection is preparation only. Exact changed graph,
+  independent Core review, all required OMEN checks and separate actual Root
+  admission remain mandatory. fc3/68617 history and original failures stay intact.
+
 ## 2026-10-22 PR210 joined source continuation — authored, validation pending
 
 - Same Core109/H88 scope, not a new TODO or runtime release: controller A and

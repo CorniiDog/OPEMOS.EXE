@@ -17,6 +17,9 @@ function requireText(text, value, label) {
 
 export function validateWindowsPortableWorkflow(text) {
   text = text.replace(/\r\n/g, "\n");
+  if (text.includes("# OMEN_GUEST_SOURCE_WORKLOAD_V1:")) {
+    return validateOmenWindowsProducer(text);
+  }
   requireText(text, "runs-on: windows-latest", "the Windows runner");
   requireText(text, "timeout-minutes: 120", "the bounded Windows artifact job budget");
   requireText(text, "permissions:\n  contents: read\n  actions: read", "read-only permissions");
@@ -120,6 +123,40 @@ export function validateWindowsPortableWorkflow(text) {
   requireText(text, "include-hidden-files: true", "declared hidden runtime files in the artifact");
   if (/uses:\s*[^\s@]+@(v\d+|main|master|stable)\b/i.test(text)) throw new Error("Windows workflow actions must use immutable commits.");
   if (/secrets\.|signtool|gh\s+release|create-release|pages/i.test(text)) throw new Error("Windows workflow must not use secrets, signing, releases, or Pages.");
+  return true;
+}
+
+export function validateOmenWindowsProducer(text) {
+  text = text.replace(/\r\n/g, "\n");
+  requireText(text, "# OMEN_GUEST_SOURCE_WORKLOAD_V1:", "explicit OMEN-only producer schema");
+  requireText(text, "permissions:\n  contents: read\n  actions: read", "read-only producer token");
+  requireText(text, "cancel-in-progress: false", "preserved running guest/compiler ownership");
+  requireText(text, "needs: seed-runtime-source", "same-parent guest seed dependency");
+  for (const workload of ["seed-runtime-source", "windows-build"]) {
+    requireText(text, `/var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py run-required --workload ${workload}`, "fixed A actual guest result consumer");
+  }
+  requireText(text, "job_guard.py --bind-job-token", "existing source-only token binding");
+  requireText(text, "source-route:", "honest offline route diagnostic");
+  requireText(text, "ready != 'true'", "failed unavailable context, not skipped acceptance");
+  requireText(text, "PRODUCER_ARTIFACT_SHA256: ${{ steps.executable.outputs.artifact-digest }}", "uploaded artifact digest binding");
+  requireText(text, "path: dist/windows", "actual reassembled guest bundle upload");
+  requireText(text, "path: build/executable-producer/executable-producer.json", "separate producer identity");
+  requireText(text, "include-hidden-files: true", "complete runtime bundle");
+  requireText(text, UPLOAD, "immutable artifact action");
+  const untrusted = text.split("\n  omen-required-untrusted:\n")[1] || "";
+  const main = text.split("\n  omen-required:\n")[1]?.split("\n  omen-required-untrusted:\n")[0] || "";
+  requireText(main, "github.ref == 'refs/heads/main' && github.ref_protected", "protected Main-only GUI write scope");
+  requireText(main, "ref: ${{ github.sha }}", "immutable Main GUI gate checkout");
+  if (/actions: write|dispatch-and-wait|self-hosted/.test(untrusted) || (text.match(/actions: write/g) || []).length !== 1) {
+    throw new Error("Windows workflow must isolate its sole write token/dispatch to Main.");
+  }
+  if (/run:\s*(?:npm|cargo|node --test|\.\\bundle_windows|python.*unittest)|runs-on: windows-latest|secrets\.|signtool|gh\s+release/.test(text)) {
+    throw new Error("Windows producer must not run hosted project commands or use signing/trust inputs.");
+  }
+  const sourceJobs = text.split("\n  omen-required:\n")[0];
+  if (/actions\/checkout@/.test(sourceJobs)) throw new Error("Source jobs must execute only the fixed installed A client, no candidate checkout.");
+  // The original full native recipe and its strict fault suite remain separate
+  // guest-only source contracts. This function does not turn those into passes.
   return true;
 }
 

@@ -9,7 +9,7 @@
       "sha256 (image prefix SHA, NOT whole backing SHA)",
       "kind=output-image"
     ],
-    "added": "imageArtifactRange",
+    "added": "imageArtifactRange and sibling publicationFinalizer={path,size,sha256,identity}, the public Root parent-observed finalizer receipt",
     "rangeKeys": [
       "backingFile={path,size,sha256,identity full9,allocatedBytes} (whole backing identity)",
       "offset=0",
@@ -36,7 +36,10 @@
     ],
     "rawManifest": "Current guest parsed object is insufficient. Existing bounded raw transfer must read original adjacent manifest through 1048576 bytes under actual guest SHA/full9, then publish those exact bytes in a separate create-only raw file at the admitted evidence location. The small Root receipt authenticates its full9/size/SHA/UID pin, not an expanded inline base64 copy. Public consumer reads and hashes the held raw file before parsing and revalidates it after the backing read. Never assign original SHA to reserialized JSON.",
     "RootPublication": "Real /run tmpfs/root nonwritable full ancestry, root:root0444 regular single-link leaf with exact full9/size/SHA. Local user file or pretend UID/receipt cannot supply authority. Re-read after complete backing read.",
-    "notImplementedByThisPR": "Root/Windows raw-byte producer transfer and protected final projection, fresh runtime/admission/retention, canonical output read-only medium+separate writable installed-target/COW constructor (H88 J2), and actual disks/boots/NVIDIA/Robot remain owning dependencies; no installed source or busy Windows edits."
+    "authoredNotExecuted": "The current PR now includes the output read-only media/separate writable target and ordinary installation/baseline/update/recovery lifecycle source. Actual Root/Windows raw transfer/publication/adoption, current resource/native admission and real disks/boots/NVIDIA/Robot remain unverified. No installed source or busy Windows input was edited.",
+    "allocation": "Use the separately published original-image-manifest.raw, not reserialized JSON or inline base64. Bind publication allocation metadata to actual held-fstat logical/allocated/charged values and exact bytes-to-size public pin projection; preserve original full9.",
+    "publicationClock": "Both original wall and same-boot monotonic publication/retention windows are checked before and after the complete backing EOF; maximum14400seconds, no refresh from a current timestamp.",
+    "finalizerParent": "A consumer UID cannot read Root0400 native/stdout/stderr records and must not pretend a public closed leaf proves its writer's future reap. New finite Root-only omen_range_parent.observe independently reads the actual completed finalizer native/raw records and original requests, original PID birth absence, closure write/fsync/close/readback and creates Root0444 publication-finalizer-observed.json. Original private400 records remain unchanged; public consumer verifies the parent's exact references and all public full9/hash/mode/clock joins. Actual normal Root caller adoption after real wait is required separately, not provided by a fabricated public packet."
   },
   "joins": {
     "artifact_read": "Current operation context mandatory for range. Reads actual whole backing once to EOF with exact whole size/full9/allocated before+after, both image and whole SHA, all tail bytes zero; returns typed range descriptor identity. Reject target copy without separate explicit full-file export admission.",
@@ -49,7 +52,7 @@
   "requiredVerification": [
     "Required source CI: full-file positive/retained copy, prefix-as-whole refusal, no context/no implicit copy/nonzero offset/type/geometry/real untrusted authority negatives, raw manifest reserialization refusal, exact registered operand contexts.",
     "Admitted OMEN VM actual UID1000 reader plus independent real Root publication: positive complete actual small prefix+zero-tail read, same fullfile comparison, wrong prefixSHA/wholeSHA/nonzero tail/full9/mode/UID/link/path/allocated-size/raced replacement/manifest raw/current source/run/attempt/nonce/producer/consumer ids/Root receipt changes/FD close faults. No method-under-test override or fake Root adapter.",
-    "One actual full normal producer->raw manifest transfer->protected Root final+stopped readback->Main artifact/collector->read-only output media+separate writable installed target->same target three boots/NVIDIA/Robot/GHA transaction only after exact counterpart/source gates and Root safe checkpoint. No native success from source checks."
+    "One actual full normal producer->raw manifest transfer->protected Root final+independent native finalizer parent->stopped readback->Main artifact/collector->read-only output media+separate writable installed target->installation then same target baseline/update/recovery boots/NVIDIA/Robot/GHA transaction only after exact counterpart/source gates and Root safe checkpoint. No native success from source checks."
   ],
   "budget": "H88 full-copy fallback exceeds80GB before output disks. No preserving cache-release route proven. Range avoids implicit third full image, but does NOT prove80/79GB Windows fit or60GB output target/COW fit. All outputs, unknowns and original data retained; no cleanup effect."
 }

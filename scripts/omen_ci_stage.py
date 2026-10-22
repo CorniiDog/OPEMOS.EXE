@@ -121,7 +121,7 @@ _RESULT_SHA = "5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85"
 _result_path=Path(__file__).with_name("omen_ci_result.py")
 _result_pin,_result_raw=_READER.read_verified(_result_path,1024**2,expected_sha=_RESULT_SHA,uid=os.getuid())
 _RESULT=_READER.verified_namespace(_result_raw,_result_path,"opemos_ci_result")
-_OUTPUT_INSTALL_SHA="1cc1763bce26f8c4bdc21bfd90e615e4911ce0f573329d2a3f3c4df32f89edaf"
+_OUTPUT_INSTALL_SHA="ec192d3ba47752f966196987d9e3edeed5f79ccc9fba00a2b394f897fe20848b"
 _output_install_path=Path(__file__).with_name('omen_output_lifecycle.py')
 _output_install_pin,_output_install_raw=_READER.read_verified(_output_install_path,1024**2,
     expected_sha=_OUTPUT_INSTALL_SHA,uid=os.getuid())
@@ -1509,7 +1509,7 @@ def operand_image_range_context(operand, plan, request, expected):
         entry["build_operand"]["job_ids"] + entry["heal_operand"]["job_ids"])
 
 
-def protected_image_range_receipt(item):
+def protected_image_range_receipt(item, mode=0o444, cap=1024**2):
     """Only the existing Root-owned /run publication domain may attest a range."""
     path = Path(item["path"])
     require(path.is_absolute() and path.is_relative_to("/run") and ".." not in path.parts
@@ -1528,12 +1528,12 @@ def protected_image_range_receipt(item):
         parent = os.fstat(fds[-1])
         require(parent.st_uid == parent.st_gid == 0 and not parent.st_mode & 0o022,
                 "Range authority parent custody")
-        observed, raw = _READER.read_verified(path, 1024**2, expected_sha=item["sha256"],
+        observed, raw = _READER.read_verified(path, cap, expected_sha=item["sha256"],
                                               expected_size=item["size"], uid=0)
         identity = observed["identity"]
         require(all(type(v) is int for v in item["identity"].values())
                 and identity == item["identity"] and identity["st_gid"] == 0
-                and stat.S_IMODE(identity["st_mode"]) == 0o444
+                and stat.S_IMODE(identity["st_mode"]) == mode
                 and identity == _READER.identity(os.stat(path.name, dir_fd=fds[-1], follow_symlinks=False)),
                 "Exact protected Root range receipt full9/mode")
         return strict_json(raw)
@@ -1582,7 +1582,8 @@ def artifact_image_range(item, cap, context):
             and root.get("originalGuestManifestSHA256") == root.get("originalManifest", {}).get("sha256")
             and SHA.fullmatch(root.get("originalGuestManifestSHA256", "")),
             "Current Root final/readback/retention authority missing")
-    manifest_raw = original_range_manifest(root)
+    closed = range_publication_closure(root, extent['root_final'], item, context)
+    manifest_raw = original_range_manifest(root, extent['root_final'])
     path = Path(backing["path"])
     require(path.is_absolute() and str(path.resolve()) == str(path), "Range backing canonical path")
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -1611,7 +1612,9 @@ def artifact_image_range(item, cap, context):
             else:raise
     # Recheck protected authority after the complete potentially long read.
     require(protected_image_range_receipt(extent["root_final"]) == root, "Range authority drift")
-    require(original_range_manifest(root) == manifest_raw, "Original manifest changed during backing read")
+    require(range_publication_closure(root,extent['root_final'],item,context)==closed,
+            'Independent range publisher/finalizer closure changed')
+    require(original_range_manifest(root,extent['root_final']) == manifest_raw, "Original manifest changed during backing read")
     typed = {"representation": "root-stopped-virtual-usb-prefix-v1",
              "backing_identity": identity, "backing_sha256": backing["sha256"],
              "offset": 0, "size": item["size"], "sha256": item["sha256"],
@@ -1622,7 +1625,88 @@ def artifact_image_range(item, cap, context):
             "originalManifest": root["originalManifest"], "originalManifestRaw": manifest_raw}
 
 
-def original_range_manifest(root):
+def publication_clock(root):
+    value=root.get('publicationValidity',{})
+    require(set(value)=={'hostBoot','notBeforeMonotonic','notAfterMonotonic'}and
+            value['hostBoot']==Path('/proc/sys/kernel/random/boot_id').read_text().strip()and
+            all(type(value[k])in(int,float)for k in('notBeforeMonotonic','notAfterMonotonic'))and
+            0<value['notAfterMonotonic']-value['notBeforeMonotonic']<=14400 and
+            value['notBeforeMonotonic']<=time.monotonic()<value['notAfterMonotonic'],
+            'same actual boot/original four-hour publication interval, no clock extension')
+
+
+def range_publication_closure(root, range_pin, item, context):
+    publication_clock(root)
+    path=Path(range_pin['path']).parent/'publication-closed.json'
+    require(root.get('publicationClosurePath')==str(path)and
+            root.get('requiresIndependentActualPublisherNativeClosure')is True,
+            'mandatory separate publication closure path')
+    pin,raw=_READER.read_verified(path,16384,uid=0)
+    closed=protected_image_range_receipt(dict(path=str(path),size=pin['bytes'],sha256=pin['sha256'],
+                                            identity=pin['identity']),cap=16384)
+    require(closed.get('kind')=='ROOT_VERIFIED_WINDOWS_RANGE_PUBLICATION_NATIVE_CLOSED_V1'and
+            closed.get('identity')==context and closed['rangePin']==range_pin and
+            closed['publicationRequestPin']==root['RootAttestation']['requestPin']and
+            closed['publisherSourcePin']==root['RootAttestation']['sourcePin']and
+            closed['sourceBodySHA256']==closed['publisherSourcePin']['sha256']and
+            closed['publicationValidity']==root['publicationValidity']and
+            closed['originalManifestAllocation']==root['originalManifestAllocation']and
+            closed['completePostWriteAndPostNativeFinalEqual']is True,
+            'same range/request/source/context/allocation native closure')
+    summary=closed['publisher']
+    require(type(summary['numericExit'])is int and summary['numericExit']==0 and
+            all(summary.get(k)is True for k in('reaped','stdoutEOF','stderrEOF','FDSetRestored',
+                                               'childSetRestored','sameBirthAbsent')),
+            'actual independent publisher closed, not a successful local label')
+    # Root0400 records intentionally stay private. The already-authorized Root
+    # parent must observe the finalizer's actual native capture after it exits,
+    # then seal this separate readable observation. No new private-read grant,
+    # pathname normalization or self-reap assertion is made by this consumer.
+    final=item.get('publicationFinalizer')
+    require(type(final)is dict and set(final)=={'path','size','sha256','identity'}and
+            Path(final['path'])==path.parent/'publication-finalizer-observed.json',
+            'Root parent readable finalizer observation required')
+    observed=protected_image_range_receipt(final,cap=65536)
+    require(observed.get('kind')=='ROOT_VERIFIED_WINDOWS_RANGE_FINALIZER_OBSERVED_V1'and
+            observed.get('identity')==context and observed['rangePin']==range_pin and
+            observed['closurePin']==pin and observed['publicationRequestPin']==closed['publicationRequestPin']and
+            observed['publicationValidity']==root['publicationValidity']and
+            observed['RootParentRequestPin']==closed['RootParentRequestPin']and
+            observed['publisherSourcePin']==closed['publisherSourcePin']and
+            observed['actualPublisherNativePin']==closed['actualPublisherNativePin']and
+            observed['actualPublisherStdoutPin']==closed['actualPublisherStdoutPin']and
+            observed['actualPublisherStderrPin']==closed['actualPublisherStderrPin'],
+            'same actual parent/source/publisher/finalizer/retention proof')
+    record=observed['finalizer']
+    require(type(record['numericExit'])is int and record['numericExit']==0 and
+            all(record.get(k)is True for k in('reaped','stdoutEOF','stderrEOF','FDSetRestored',
+                                               'childSetRestored','sameBirthAbsent','completeRawReadback'))and
+            record['firstError']is None and record['errors']==[]and record['tailUNKNOWN']is False and
+            type(record['pid'])is int and record['pid']>0 and
+            len(observed['expectedFinalizerArgv'])==6 and
+            observed['expectedFinalizerArgv'][:3]==['/usr/bin/python3','-B','-I']and
+            observed['expectedFinalizerArgv'][4:]==['close-publication',closed['RootParentRequestPin']['path']],
+            'Root parent actual close-publication native0/full EOF/reap/FD observation')
+    for name in('actualFinalizerNativePin','actualFinalizerStdoutPin','actualFinalizerStderrPin'):
+        private=observed[name]
+        require(set(private)=={'path','bytes','sha256','identity'}and
+                Path(private['path']).is_absolute()and Path(private['path']).is_relative_to('/run')and
+                type(private['bytes'])is int and 0<=private['bytes']<=1024**2 and
+                SHA.fullmatch(private['sha256'])and private['identity']['st_uid']==private['identity']['st_gid']==0 and
+                stat.S_IMODE(private['identity']['st_mode'])==0o400,
+                'retained exact private actual finalizer evidence references, not public copies')
+    require(observed['actualFinalizerStderrPin']['bytes']==0 and
+            all(observed['actualClosurePersistence'].get(k)is True for k in
+                ('fsyncCompleted','FDClosed','directoryFsyncCompleted','directoryFDClosed','readbackCompleted')),
+            'actual independent closure leaf persistence/readback')
+    try:birth=Path('/proc',str(record['pid']),'stat').read_text().rsplit(')',1)[1].split()[19]
+    except FileNotFoundError:birth=None
+    require(birth!=str(record['start']),'actual original finalizer still alive')
+    publication_clock(root)
+    return {'closed':closed,'observed':observed}
+
+
+def original_range_manifest(root, range_pin=None):
     """Separate actual raw file, never base64 inside the bounded Root receipt.
 
     R27 admits a 1MiB original manifest. Its raw bytes cannot fit in a 1MiB
@@ -1637,9 +1721,44 @@ def original_range_manifest(root):
             and SHA.fullmatch(item.get("sha256", ""))
             and type(item.get("uid", os.getuid())) is int,
             "Exact bounded original raw manifest file pin required")
-    observed, raw = _READER.read_verified(item["path"], 1024**2, expected_sha=item["sha256"],
-        expected_size=item["size"], uid=item.get("uid", os.getuid()))
-    require(observed["identity"] == item.get("identity"), "Original raw manifest file full9 differs")
+    require(range_pin is not None,'Root raw representation requires exact authority location')
+    publication_clock(root)
+    require(root.get('originalManifestRepresentation')=={'kind':'ROOT_PINNED_ORIGINAL_RAW_FILE_V1',
+                'maximumBytes':1048576,'pin':item}and item.get('uid')==0 and
+            Path(item['path'])==Path(range_pin['path']).parent/'original-image-manifest.raw',
+            'exact separate original Root raw representation/location')
+    allocation=root.get('originalManifestAllocation',{})
+    core={'path':item['path'],'bytes':item['size'],'sha256':item['sha256'],'identity':item['identity']}
+    require(allocation.get('pin')==core and allocation.get('logicalBytes')==item['size']and
+            type(allocation.get('allocatedBytes'))is int and allocation['allocatedBytes']>=0 and
+            allocation.get('chargedBytes')==max(item['size'],allocation['allocatedBytes']),
+            'explicit size/bytes raw allocation schema join')
+    raw=read_original_manifest_file(item,allocation,uid=0)
+    require(stat.S_IMODE(item['identity']['st_mode'])==0o444 and item['identity']['st_gid']==0,
+            'exact protected original raw file mode/group')
+    protected_image_range_receipt(dict(path=item['path'],size=item['size'],sha256=item['sha256'],identity=item['identity']))
+    publication_clock(root)
+    return raw
+
+
+def read_original_manifest_file(item, allocation, uid):
+    """Ordinary held raw I/O shared by Root wrapper and owned-file regressions.
+
+    This returns bytes only, never publication authority. The Root wrapper
+    retains ancestry/mode/UID/interval/independent-parent requirements.
+    """
+    require(type(item['size'])is int and 0<item['size']<=1024**2 and SHA.fullmatch(item['sha256']),
+            'actual original raw producer one-MiB bound')
+    fd=os.open(item['path'],os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    try:
+        before=os.fstat(fd);require(_READER.identity(before)==item['identity']and
+            before.st_blocks*512==allocation['allocatedBytes'],'actual held raw allocation before read')
+        observed, raw = _READER.read_verified(item["path"], 1024**2, expected_sha=item["sha256"],
+            expected_size=item["size"], uid=uid)
+        require(observed["identity"]==item['identity']==_READER.identity(os.fstat(fd))and
+                os.fstat(fd).st_blocks*512==allocation['allocatedBytes'],
+                'actual held raw file full9/allocation drift')
+    finally:os.close(fd)
     return raw
 
 def artifact_read(item, cap, target=None, context=None):
