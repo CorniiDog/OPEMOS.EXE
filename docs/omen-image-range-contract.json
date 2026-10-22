@@ -32,9 +32,9 @@
       "completedImagePreserved=true under actual active consumer retention",
       "originalGuestManifestSHA256 actual original guest raw-file pin",
       "originalManifest exact host files entry including path,size,sha256,identity,kind=output-manifest and uid if Root-owned",
-      "originalManifestRawBase64 exact original raw guest bytes <=65536 decoded bytes"
+      "originalManifest is a separate actual raw file of 1..1048576 bytes; no originalManifestRawBase64 field in the Root receipt"
     ],
-    "rawManifest": "Current guest parsed object is insufficient. Existing bounded raw transfer must read original adjacent manifest under actual guest SHA/full9, return raw bytes and pin, then publish exact bytes at admitted evidence location. Never assign original SHA to reserialized JSON. Public consumer hashes raw base64 and exact actual host file and compares bytes before parsing.",
+    "rawManifest": "Current guest parsed object is insufficient. Existing bounded raw transfer must read original adjacent manifest through 1048576 bytes under actual guest SHA/full9, then publish those exact bytes in a separate create-only raw file at the admitted evidence location. The small Root receipt authenticates its full9/size/SHA/UID pin, not an expanded inline base64 copy. Public consumer reads and hashes the held raw file before parsing and revalidates it after the backing read. Never assign original SHA to reserialized JSON.",
     "RootPublication": "Real /run tmpfs/root nonwritable full ancestry, root:root0444 regular single-link leaf with exact full9/size/SHA. Local user file or pretend UID/receipt cannot supply authority. Re-read after complete backing read.",
     "notImplementedByThisPR": "Root/Windows raw-byte producer transfer and protected final projection, fresh runtime/admission/retention, canonical output read-only medium+separate writable installed-target/COW constructor (H88 J2), and actual disks/boots/NVIDIA/Robot remain owning dependencies; no installed source or busy Windows edits."
   },

@@ -1,5 +1,35 @@
 # OPEMOS.EXE — Product Checklist
 
+## 2026-10-22 H88 complete output consumer continuation — IN PROGRESS
+
+- Core107 F2 size mismatch corrected in the source: protected Root publication
+  now pins a separate original raw manifest file of 1..1,048,576 bytes. Inline
+  base64 is rejected, avoiding expansion beyond the 1 MiB Root receipt cap.
+  The public reader checks raw SHA/size/UID/full9 and rereads after the full
+  backing scan. Cases at 65,536, 65,537, 1,048,576 and 1,048,577 bytes are
+  authored but UNRUN. Root producer publication and whole native lifecycle
+  integration remain incomplete; no source/native acceptance is claimed.
+- Continue the same isolated `exe-image-range-manifest-20261022` assignment;
+  this is not a completed implementation or a new infrastructure task. Existing
+  stopped-USB range/raw-manifest source remains at local `3e920c2e`.
+- Current uncommitted host-runner additions implement create-only fully
+  allocated raw target preparation, whole logical/allocated dependency-union
+  accounting, distinct read-only virtual USB/writable target XML construction,
+  media detachment for installed boots, and actual Linux leader/UID/cgroup/FD
+  access inspection. The production welcome helper requires **12 GiB**; the
+  earlier 6 GiB example is not a valid installation target.
+- Native lifecycle integration is NOT complete. Historical R69 is explicitly
+  limited to two boots and a single working disk, with coupled original/working
+  ACL, preflight, intent and readback contracts. Its grant, prepared access or
+  pass cannot be transferred to the new installation plus three installed-boot
+  transaction. Complete those coupled native consumers before freezing a whole
+  implementation for Root/Core review. Root will supply the final immutable
+  Windows R27 raw-manifest/protected projection at its safe checkpoint.
+- AST parsing and Git whitespace inspection only; new real-file/child-FD
+  regressions are authored but **UNRUN**. No project import, test, compile,
+  source CI, push/PR, SSH, queue, target allocation or VM effect occurred.
+  Existing Root safe-cut and exact counterpart/required-check gates remain.
+
 ## 2026-10-22 H88 stopped-USB image/raw-manifest consumer source checkpoint
 
 - Isolated from Main b4ae93065ca930b32010f94f24b109d4b7bccbae: preserve the existing full-file reader and add an exact current-operation Root-attested offset-zero stopped-USB prefix reader. Whole backing/prefix SHA, zero tail, EOF, full9 and allocated-byte custody remain distinct; no implicit third image copy.

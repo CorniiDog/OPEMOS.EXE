@@ -73,6 +73,23 @@ class StoppedImageRange(unittest.TestCase):
         file.write_bytes(json.dumps(json.loads(original),sort_keys=True).encode())
         with self.assertRaises(ValueError):stage.pinned(pin)
 
+    def test_separate_raw_file_accepts_entire_producer_size_contract(self):
+        path=self.root/'large-manifest.json'
+        for size in (65536,65537,1048576):
+            raw=b'{' + b' '* (size-2) + b'}'
+            path.write_bytes(raw);path.chmod(0o600)
+            item={"path":str(path),"size":size,"kind":"output-manifest",
+                  "sha256":hashlib.sha256(raw).hexdigest(),"identity":stage._READER.identity(path.stat())}
+            root={"originalManifest":item,"originalGuestManifestSHA256":item['sha256']}
+            with self.subTest(size=size):self.assertEqual(stage.original_range_manifest(root),raw)
+            with self.assertRaises(ValueError):
+                stage.original_range_manifest({**root,"originalManifestRawBase64":"e30="})
+        raw=b' '*1048577;path.write_bytes(raw)
+        item={"path":str(path),"size":len(raw),"kind":"output-manifest",
+              "sha256":hashlib.sha256(raw).hexdigest(),"identity":stage._READER.identity(path.stat())}
+        with self.assertRaises(ValueError):
+            stage.original_range_manifest({"originalManifest":item,"originalGuestManifestSHA256":item['sha256']})
+
     def test_only_exact_registered_operand_can_bind_context(self):
         build={"job_ids":["build"],"inputs":[]};heal={"job_ids":["heal"],"inputs":[]}
         entry={"operation_nonce":"b"*32,"build_operand":build,"heal_operand":heal}

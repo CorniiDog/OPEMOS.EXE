@@ -1535,12 +1535,7 @@ def artifact_image_range(item, cap, context):
             and root.get("originalGuestManifestSHA256") == root.get("originalManifest", {}).get("sha256")
             and SHA.fullmatch(root.get("originalGuestManifestSHA256", "")),
             "Current Root final/readback/retention authority missing")
-    encoded = root.get("originalManifestRawBase64")
-    require(isinstance(encoded, str) and 0 < len(encoded) <= 87384, "Bounded original raw manifest transfer required")
-    manifest_raw = base64.b64decode(encoded, validate=True)
-    require(0 < len(manifest_raw) <= 65536 and len(manifest_raw) == root["originalManifest"]["size"]
-            and hashlib.sha256(manifest_raw).hexdigest() == root["originalGuestManifestSHA256"],
-            "Original manifest raw bytes/guest pin mismatch")
+    manifest_raw = original_range_manifest(root)
     path = Path(backing["path"])
     require(path.is_absolute() and str(path.resolve()) == str(path), "Range backing canonical path")
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -1569,6 +1564,7 @@ def artifact_image_range(item, cap, context):
             else:raise
     # Recheck protected authority after the complete potentially long read.
     require(protected_image_range_receipt(extent["root_final"]) == root, "Range authority drift")
+    require(original_range_manifest(root) == manifest_raw, "Original manifest changed during backing read")
     typed = {"representation": "root-stopped-virtual-usb-prefix-v1",
              "backing_identity": identity, "backing_sha256": backing["sha256"],
              "offset": 0, "size": item["size"], "sha256": item["sha256"],
@@ -1577,6 +1573,27 @@ def artifact_image_range(item, cap, context):
             "identity": typed, "backing": {"size": backing["size"], "sha256": whole.hexdigest(),
                                           "identity": identity},
             "originalManifest": root["originalManifest"], "originalManifestRaw": manifest_raw}
+
+
+def original_range_manifest(root):
+    """Separate actual raw file, never base64 inside the bounded Root receipt.
+
+    R27 admits a 1MiB original manifest. Its raw bytes cannot fit in a 1MiB
+    JSON authority leaf after base64 expansion. Root authenticates the exact
+    separate host file pin; this reader hashes the held bytes before parsing.
+    """
+    require("originalManifestRawBase64" not in root, "Inline manifest representation is not supported")
+    item = root.get("originalManifest", {})
+    require(item.get("kind") == "output-manifest" and type(item.get("size")) is int
+            and 0 < item["size"] <= 1024**2
+            and item.get("sha256") == root.get("originalGuestManifestSHA256")
+            and SHA.fullmatch(item.get("sha256", ""))
+            and type(item.get("uid", os.getuid())) is int,
+            "Exact bounded original raw manifest file pin required")
+    observed, raw = _READER.read_verified(item["path"], 1024**2, expected_sha=item["sha256"],
+        expected_size=item["size"], uid=item.get("uid", os.getuid()))
+    require(observed["identity"] == item.get("identity"), "Original raw manifest file full9 differs")
+    return raw
 
 def artifact_read(item, cap, target=None, context=None):
     """Streaming equivalent of canonical full9 custody for large artifacts.
