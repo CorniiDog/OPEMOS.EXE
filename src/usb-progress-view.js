@@ -17,7 +17,7 @@ export function renderUsbWriteProgressView(displays, progress, formatBytes) {
   const ratio = hasBytes ? progress.bytesCompleted / progress.bytesTotal : null;
   const percent = ratio === null ? "Working…" : `${(ratio * 100).toFixed(1)}%`;
   const detail = hasBytes
-    ? `${progress.message} ${formatBytes(progress.bytesCompleted)} of ${formatBytes(progress.bytesTotal)}.`
+    ? `${formatBytes(progress.bytesCompleted)} of ${formatBytes(progress.bytesTotal)} processed.`
     : "Revalidating the exact image and removable drive.";
   for (const display of displays) {
     display.container.classList.remove("hidden");

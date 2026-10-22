@@ -1,4 +1,4 @@
-export const CORE_MAINTAINER_WORKFLOW_COMMIT = "01407aa6174b80e92cb7f3dcb534ade5cdd7bf00";
+export const CORE_MAINTAINER_WORKFLOW_COMMIT = "f72aff92a5534b676083ccba974f4185f2d4551f";
 const steps = [
   ["resolve", "bootstrap/build_for_target.sh", "build-plan-json", ["target", "source"]],
   ["build", "bootstrap/build_for_target.sh", "build-result-v1", ["target", "source", "authenticatedHeaders"]],
@@ -14,7 +14,7 @@ const deepFreeze = value => {
 export const CORE_MAINTAINER_WORKFLOW = deepFreeze({
   schemaVersion: 1, kind: "opemos-maintainer-release-workflow", status: "available",
   target: { steamosVersion: "3.8.16", kernelVersion: "6.16.12-valve24.5-1-neptune-616-gb2f7cfe85e45", nvidiaVersion: "575.64.05", architecture: "x86_64" },
-  capability: { id: "exact-target-driver-release-v1", available: true, policy: { name: "exact-target-builds-v1.json", sha256: "c9d89d494678185989029d4223562e080904e0e0b1aca43fb740ea1c8f7158ca" } },
+  capability: { id: "exact-target-driver-release-v1", available: true, policy: { name: "exact-target-builds-v1.json", sha256: "e8c1ac32676866c353d7e5a1f349621004e528ceeaafcf205052fd0455e8c2a1" } },
   contracts: { workflow: "maintainer-release-workflow-v1.schema.json", buildResult: { schemaVersion: 1, writer: "lib/write_build_result.py" }, releaseProgressResult: { schemaVersion: 1, schema: "contracts/schemas/release-operation-v1.schema.json", session: "lib/release_operation_session.py" } },
   publication: { mode: "dry-run-only", requiresSeparateAuthorization: true, combinedNvidiaSteamOsAsset: false },
   source: { repository: "CorniiDog/open-gpu-kernel-modules-steamos", ref: "refs/heads/nvidia/575.64.05", commit: "40bd1b5d6d39ae4e4180b7a665df144b08854d14" },

@@ -22,6 +22,8 @@ pub(crate) const INSTALL_MEDIA_WELCOME_GAMING_ART: &[u8] =
     include_bytes!("../../builder/welcome/assets/gaming.svg");
 pub(crate) const INSTALL_MEDIA_HELPER: &[u8] =
     include_bytes!("../../builder/welcome/opemos-install-helper");
+pub(crate) const INSTALL_MEDIA_INTERSTITIAL: &[u8] =
+    include_bytes!("../../builder/recovery/opemos-interstitial");
 pub(crate) const INSTALL_MEDIA_PATCHER: &[u8] =
     include_bytes!("../../builder/welcome/patch_repair_device.py");
 pub(crate) const INSTALL_MEDIA_DESKTOP: &[u8] =
@@ -45,6 +47,7 @@ struct InstallMediaWelcomeDigests {
     install_art: String,
     recovery_art: String,
     gaming_art: String,
+    interstitial: String,
 }
 
 fn sha256_bytes(bytes: &[u8]) -> String {
@@ -67,6 +70,7 @@ pub(crate) fn install_media_welcome_revision() -> String {
         INSTALL_MEDIA_WELCOME_RECOVERY_ART,
         INSTALL_MEDIA_WELCOME_GAMING_ART,
         INSTALL_MEDIA_HELPER,
+        INSTALL_MEDIA_INTERSTITIAL,
         INSTALL_MEDIA_DESKTOP,
         INSTALL_MEDIA_ICON,
     ] {
@@ -102,6 +106,7 @@ fn stage_install_media_welcome_assets(
         ("welcome-install.svg", INSTALL_MEDIA_WELCOME_INSTALL_ART),
         ("welcome-recovery.svg", INSTALL_MEDIA_WELCOME_RECOVERY_ART),
         ("welcome-gaming.svg", INSTALL_MEDIA_WELCOME_GAMING_ART),
+        ("opemos-interstitial", INSTALL_MEDIA_INTERSTITIAL),
     ];
     for (name, bytes) in assets {
         let path = connection.runtime_dir.join(name);
@@ -125,6 +130,7 @@ fn stage_install_media_welcome_assets(
         install_art: sha256_bytes(INSTALL_MEDIA_WELCOME_INSTALL_ART),
         recovery_art: sha256_bytes(INSTALL_MEDIA_WELCOME_RECOVERY_ART),
         gaming_art: sha256_bytes(INSTALL_MEDIA_WELCOME_GAMING_ART),
+        interstitial: sha256_bytes(INSTALL_MEDIA_INTERSTITIAL),
     })
 }
 
@@ -3548,6 +3554,7 @@ test "$(sha256sum /tmp/welcome-app.qml | awk '{{print $1}}')" = "{welcome_qml_sh
 test "$(sha256sum /tmp/welcome-install.svg | awk '{{print $1}}')" = "{welcome_install_art_sha256}"
 test "$(sha256sum /tmp/welcome-recovery.svg | awk '{{print $1}}')" = "{welcome_recovery_art_sha256}"
 test "$(sha256sum /tmp/welcome-gaming.svg | awk '{{print $1}}')" = "{welcome_gaming_art_sha256}"
+test "$(sha256sum /tmp/opemos-interstitial | awk '{{print $1}}')" = "{interstitial_sha256}"
 DECK_ID=$(awk -F: '$1 == "deck" {{print $3 ":" $4}}' "$ROOT/etc/passwd")
 test -n "$DECK_ID"
 test "$(printf '%s\n' "$DECK_ID" | wc -l | tr -d ' ')" = 1
@@ -3581,6 +3588,16 @@ if test -e "$ROOT/usr/lib/opemos-install-media"; then
   test ! -L "$ROOT/usr/lib/opemos-install-media"
 fi
 sudo install -d -m 0755 -o root -g root "$ROOT/usr/lib/opemos-install-media"
+if test -e "$ROOT/usr/lib/opemos-install-media/bin"; then
+  test -d "$ROOT/usr/lib/opemos-install-media/bin"
+  test ! -L "$ROOT/usr/lib/opemos-install-media/bin"
+else
+  sudo install -d -m 0755 -o root -g root "$ROOT/usr/lib/opemos-install-media/bin"
+fi
+test ! -e "$ROOT/usr/lib/opemos-install-media/interstitial.sha256" || {{
+  test -f "$ROOT/usr/lib/opemos-install-media/interstitial.sha256"
+  test ! -L "$ROOT/usr/lib/opemos-install-media/interstitial.sha256"
+}}
 sudo install -d -m 0755 -o root -g root "$ROOT/usr/lib/opemos-install-media/maintainer"
 if test -e "$ROOT/usr/lib/opemos-install-media/support"; then
   test -d "$ROOT/usr/lib/opemos-install-media/support"
@@ -3598,6 +3615,10 @@ for DIRECTORY in "$ROOT/usr/share" "$ROOT/usr/share/opemos-install-media" "$ROOT
   fi
 done
 sudo install -m 0755 -o root -g root /tmp/opemos-install-helper "$ROOT/usr/lib/opemos-install-media/opemos-install-helper"
+sudo install -m 0755 -o root -g root /tmp/opemos-interstitial "$ROOT/usr/lib/opemos-install-media/bin/opemos-interstitial"
+printf '%s\n' '{interstitial_sha256}' | sudo tee "$ROOT/usr/lib/opemos-install-media/interstitial.sha256" >/dev/null
+sudo chown root:root "$ROOT/usr/lib/opemos-install-media/interstitial.sha256"
+sudo chmod 0644 "$ROOT/usr/lib/opemos-install-media/interstitial.sha256"
 sudo install -m 0755 -o root -g root /tmp/welcome_server.py "$ROOT/usr/lib/opemos-install-media/welcome_server.py"
 sudo install -m 0755 -o root -g root /tmp/opemos-rollback-last-update "$ROOT/usr/lib/opemos-install-media/maintainer/opemos-rollback-last-update"
 sudo install -m 0755 -o root -g root /tmp/open-opemos-welcome "$ROOT/usr/lib/opemos-install-media/maintainer/open-opemos-welcome"
@@ -3642,6 +3663,10 @@ test "$(stat -c '%a' "$ROOT/home/deck/Desktop/Open-OPEMOS.desktop")" = 755
 test "$(stat -c '%a' "$ROOT/home/deck/.config/autostart/Open-OPEMOS.desktop")" = 644
 test "$(sha256sum "$ROOT/home/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg" | awk '{{print $1}}')" = "{welcome_icon_sha256}"
 test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/opemos-install-helper")" = root:root:755
+test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/bin/opemos-interstitial" | awk '{{print $1}}')" = "{interstitial_sha256}"
+test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/bin/opemos-interstitial")" = root:root:755
+test "$(cat "$ROOT/usr/lib/opemos-install-media/interstitial.sha256")" = "{interstitial_sha256}"
+test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/interstitial.sha256")" = root:root:644
 test "$(sha256sum "$ROOT/usr/lib/opemos-install-media/welcome_server.py" | awk '{{print $1}}')" = "{welcome_server_sha256}"
 test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/welcome_server.py")" = root:root:755
 test "$(stat -c '%U:%G:%a' "$ROOT/usr/lib/opemos-install-media/repair_device.sh")" = root:root:755
@@ -3727,6 +3752,7 @@ trap - EXIT INT TERM"#,
             welcome_install_art_sha256 = welcome_digests.install_art,
             welcome_recovery_art_sha256 = welcome_digests.recovery_art,
             welcome_gaming_art_sha256 = welcome_digests.gaming_art,
+            interstitial_sha256 = welcome_digests.interstitial,
             install_media_support_commands = install_media_support_commands,
             support_commit = inputs.installer_commit,
             nvidia_version = inputs.nvidia_version,

@@ -5,6 +5,8 @@ set -euo pipefail
 readonly MINIMUM_INSTALL_BYTES=$((12 * 1024 * 1024 * 1024))
 readonly REPAIR_DEVICE=/usr/lib/opemos-install-media/repair_device.sh
 readonly SUPPORT_ROOT=/usr/lib/opemos-install-media/support
+readonly INTERSTITIAL_BINARY=/usr/lib/opemos-install-media/bin/opemos-interstitial
+readonly INTERSTITIAL_SHA256_FILE=/usr/lib/opemos-install-media/interstitial.sha256
 readonly MAINTAINER_ROOT=/usr/lib/opemos-install-media/maintainer
 readonly SUPPORT_REVISION_FILE=/usr/lib/opemos-install-media/support-revision
 readonly NVIDIA_VERSION_FILE=/usr/lib/opemos-install-media/nvidia-version
@@ -366,13 +368,22 @@ restore_maintainer_home() {
 
 install_guardian_slot() {
   local device=$1 slot=$2 support_revision=$3 nvidia_version=$4
-  local root_device home_device var_device workspace root_mount home_mount var_mount etc_root
+  local root_device home_device var_device workspace root_mount home_mount var_mount etc_root interstitial_sha256
   root_device=$(partition_by_label "$device" "rootfs-$slot") ||
     die "installed SteamOS rootfs-$slot partition is missing or duplicated"
   home_device=$(partition_by_label "$device" home) ||
     die "installed SteamOS home partition is missing or duplicated"
   var_device=$(partition_by_label "$device" "var-$slot") ||
     die "installed SteamOS var-$slot partition is missing or duplicated"
+  [[ -f "$INTERSTITIAL_BINARY" && ! -L "$INTERSTITIAL_BINARY" && -x "$INTERSTITIAL_BINARY" ]] ||
+    die "the authenticated recovery interstitial is unavailable"
+  [[ -f "$INTERSTITIAL_SHA256_FILE" && ! -L "$INTERSTITIAL_SHA256_FILE" ]] ||
+    die "the recovery interstitial identity is unavailable"
+  interstitial_sha256=$(<"$INTERSTITIAL_SHA256_FILE")
+  [[ "$interstitial_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+    die "the recovery interstitial identity is malformed"
+  [[ "$(sha256sum "$INTERSTITIAL_BINARY" | awk '{print $1}')" == "$interstitial_sha256" ]] ||
+    die "the recovery interstitial failed authentication"
   workspace=$(mktemp -d "$LOCK_DIRECTORY/opemos-guardian-install-$slot.XXXXXX") ||
     die "could not create the guardian installation workspace"
   chmod 0700 "$workspace"
@@ -425,7 +436,9 @@ install_guardian_slot() {
       --persistent-home-root "$home_mount" \
       --persistent-etc-root "$etc_root" \
       --support-revision "$support_revision" \
-      --nvidia "$nvidia_version"
+      --nvidia "$nvidia_version" \
+      --interstitial-binary "$INTERSTITIAL_BINARY" \
+      --interstitial-sha256 "$interstitial_sha256"
     sync
   ) || {
     rmdir "$root_mount" "$home_mount" "$var_mount" "$workspace" 2>/dev/null || true
