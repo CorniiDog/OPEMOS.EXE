@@ -2,7 +2,6 @@ name: 01 Windows EXE
 # OMEN_GUEST_SOURCE_WORKLOAD_V1: no Windows compiler/test command runs hosted.
 on:
   push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -257,57 +256,41 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
 
-  omen-required:
-    name: Required OMEN GUI image + SteamOS (windows)
+  omen-producer-handoff:
+    name: Producer handoff metadata only (windows; actual OMEN result is separate)
     needs: build
-    if: always() && github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && github.ref_protected && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: always()
     runs-on: ubuntu-24.04
-    timeout-minutes: 250
-    permissions:
-      contents: read
-      actions: write
-    steps:
-      - name: Check out trusted Main gate only; never PR code on OMEN
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Require current actual OMEN GUI Build, image, USB and SteamOS
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: python3 scripts/required_omen.py dispatch-and-wait --platform windows
-      - name: Always retain required gate reports and unavailable diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: required-omen-windows-${{ github.run_id }}-${{ github.run_attempt }}
-          path: required-omen-results/
-          if-no-files-found: error
-          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
-
-  omen-required-untrusted:
-    name: Required OMEN unavailable on non-Main source (windows)
-    needs: build
-    if: always() && !(github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && github.ref_protected && (github.event_name == 'push' || github.event_name == 'workflow_dispatch'))
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 3
     permissions:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-      - name: Record unsupported source as failed without dispatch credentials
+      - name: Record exact producer completion without waiting on its workflow_run
+        env:
+          NATIVE_OUTCOME: ${{ needs.build.result }}
         run: |
-          python3 scripts/required_omen.py diagnostics --directory required-omen-results --reason 'Non-Main/PR/fork source is not admitted to OMEN; no dispatch, GUI, image, USB or SteamOS acceptance'
-          exit 1
-      - name: Always retain unavailable required outcome
+          python3 - <<'PY'
+          import os,json,pathlib
+          p=pathlib.Path('required-omen-results');p.mkdir()
+          value={'kind':'OMEN_PRODUCER_HANDOFF_V1','platform':'windows',
+                 'repository':os.environ['GITHUB_REPOSITORY'],'producer_run':os.environ['GITHUB_RUN_ID'],
+                 'producer_attempt':os.environ['GITHUB_RUN_ATTEMPT'],'workflow_sha':os.environ['GITHUB_SHA'],
+                 'original_event':os.environ['GITHUB_EVENT_NAME'],'original_ref':os.environ['GITHUB_REF'],
+                 'native_outcome':os.environ['NATIVE_OUTCOME'],'status':'pending-reviewed-controller',
+                 'actualGUIAccepted':False,'actualVMResult':None,
+                 'completionProtocol':'Producer completes; separate trusted workflow_run verifies exact artifacts and actual OMEN result. Never wait here.'}
+          if value['native_outcome']!='success':value['status']='failed-producer'
+          (p/'producer-handoff.json').write_text(json.dumps(value,indent=2)+'\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as f:
+              f.write('Native source/package result only. Actual OMEN GUI/image/USB/SteamOS acceptance remains pending the independently correlated 04 workflow.\n')
+          raise SystemExit(0 if value['native_outcome']=='success'else 1)
+          PY
+      - name: Retain exact handoff; not an acceptance receipt
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: required-omen-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: required-omen-results/
           if-no-files-found: error
-          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+          retention-days: ${{ github.ref == 'refs/heads/main' && 90 || 1 }}

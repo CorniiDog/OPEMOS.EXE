@@ -15,7 +15,7 @@ CONFIG = Path.home()/'.config/opemos-ci/robot.json'
 HOOK = '/var/lib/opemos-robot-control-r1/opemos-robot-job-plan'
 FULL9 = ('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
 SHA = re.compile(r'[0-9a-f]{64}\Z')
-MODULE_PINS = {'omen_ci_reader.py': '6b2d97a373001e8835400d5be22cef8c06004dab5c228bc1efbe7078dfe464df', 'omen_ci_executables.py': '1497c39307dae3cb1796249d542b03618a1c911893dbbbad8a29ed7d9ffcf9b0', 'omen_ci_result.py': '5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85', 'omen_ci_stage.py': 'bb8c3eeec5f9c61295e0037266b7383dc88cb20668df8bedf77a71cb6839d9e3', 'omen_ci_inventory.py': 'e8873930651d4e1022fd3851b9bc35400ff54310e1d904f5d01c0f7dd903119e', 'omen_output_lifecycle.py': 'ec192d3ba47752f966196987d9e3edeed5f79ccc9fba00a2b394f897fe20848b'}  # All bytes consumed before any operation; a pin is not runtime authority.
+MODULE_PINS = {'omen_ci_reader.py': '6b2d97a373001e8835400d5be22cef8c06004dab5c228bc1efbe7078dfe464df', 'omen_ci_executables.py': '3138ad9b9260d4591430ee8c560f673f8823150c805a7641307711b1fc70fb07', 'omen_ci_result.py': '5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85', 'omen_ci_stage.py': 'd8e742eb971e758f0f70dc51da584c56e95de9bddb85010b63c5a0e98554a852', 'omen_ci_inventory.py': 'e8873930651d4e1022fd3851b9bc35400ff54310e1d904f5d01c0f7dd903119e', 'omen_output_lifecycle.py': 'ec192d3ba47752f966196987d9e3edeed5f79ccc9fba00a2b394f897fe20848b'}  # All bytes consumed before any operation; a pin is not runtime authority.
 
 
 def require(value, message):
@@ -74,8 +74,8 @@ def identity(env=None):
     result['repository']=REPO
     if 'OPEMOS_CONTROLLER_SHA' in env:
         controller=env['OPEMOS_CONTROLLER_SHA']
-        require(re.fullmatch(r'[0-9a-f]{40}',controller)and controller!=result['source_commit'],
-                'Distinct exact controller A required for candidate guest B')
+        require(re.fullmatch(r'[0-9a-f]{40}',controller),
+                'Exact controller A required for candidate guest B')
         roles=strict(env.get('OPEMOS_SOURCE_ROLES',''))
         modules()['_EXECUTABLES']['source_roles'](roles,controller=controller,candidate=result['source_commit'])
         result.update(controller_source_commit=controller,source_roles=roles)

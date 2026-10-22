@@ -14,7 +14,15 @@
     "required_checks": "Original required source/package job names retained. Offline/missing/not-run work is red with diagnostic reports; no hosted fallback test or transfer of old-head checks.",
     "no_effect": "This proposal changes no installed profile, registry, source83, runner guard, guest or Root control. See full contract for complete finite operands and actual unverified media/SDK prerequisites."
   },
-  "workflow": ".github/workflows/omen-robot.yml@refs/heads/main",
+  "workflow": ".github/workflows/omen-robot.yml@EXACT_MAIN_OR_INDEPENDENTLY_ROOT_QUALIFIED_TEST_REF",
+  "nonmain_controller_extension": {
+    "state": "SOURCE_ONLY_NOT_ADOPTED",
+    "contract": "docs/omen-nonmain-admission-contract.json",
+    "qualification": "ROOT_REVIEWED_TEST_CONTROLLER_V1 exact control_commit,implementation_commit,workflow_ref,workflow_sha256,source_graph_sha256,review_receipt_sha256 under existing original180-second heartbeat",
+    "root_guard": "omen_source_guard.validate_controller compares actual official controller run/job/full workflow bytes AND independently protected Root profile qualification. Hosted controller_selection and a Repo variable alone grant no scope. Existing kernel UID/namespace/birth/cgroup/latest-job/one-use token/runtime admission guards remain.",
+    "source_roles": "Main unchanged; original exact seven-field PR variant; ordinary same-repository branch adds source_kind=branch,source_ref and uses pull_request=0 without inventing PR association. Current checkpoint and actual reviewed implementation/source workflow remain separate identities through final result.",
+    "completion": "All three producers complete after pending metadata handoff; separate completed workflow_run or authenticated qualified-controller manual dispatch owns actual acceptance. No producer dispatch credential or wait cycle. Missing actual OMEN result is not a pass."
+  },
   "runner_labels": [
     "self-hosted",
     "Linux",
@@ -22,7 +30,7 @@
     "opemos-omen-robot"
   ],
   "root_owned_installation": {
-    "job_guard": "ACTIONS_RUNNER_HOOK_JOB_STARTED external fixed current protected-Main guard",
+    "job_guard": "Existing fixed ACTIONS_RUNNER_HOOK_JOB_STARTED guard with current protected control checkpoint and independently protected exact implementation qualification; no candidate privilege or installed change from this proposal",
     "profile": "/home/connor/.config/opemos-ci/robot.json",
     "hook": "/var/lib/opemos-robot-control-r1/opemos-robot-job-plan",
     "rf_version": "7.5",
@@ -42,7 +50,7 @@
     },
     "stage": {
       "path": "EXACT_CURRENT_A_STAGE_PATH_OWNED_BY_HOOK_UID",
-      "sha256": "bb8c3eeec5f9c61295e0037266b7383dc88cb20668df8bedf77a71cb6839d9e3"
+      "sha256": "d8e742eb971e758f0f70dc51da584c56e95de9bddb85010b63c5a0e98554a852"
     },
     "robotframework": {
       "version": "7.5",
@@ -67,7 +75,7 @@
     "collect": "Read-only same current operation public evidence snapshot after failure. No retry, guest control, cleanup or new admission."
   },
   "candidate_extension": {
-    "scope": "Exact same-repository PR artifact only, never inventory or fork. Root registry/source and executable workflow remain reviewed current Main controller A; original official native package descriptor remains candidate B.",
+    "scope": "Exact same-repository PR or authenticated ordinary branch artifact only, never inventory or fork. Current protected Main control checkpoint and separately reviewed/admitted actual controller implementation remain explicit; original official native descriptor stays candidate B with its original event/ref/workflow commit.",
     "additional_request_and_response_fields": ["controller_source_commit", "source_roles"],
     "source_roles_fields": ["repository", "controller_commit", "candidate_commit", "pull_request", "base_commit", "repository_id", "head_repository_id"],
     "guards": "A equals current protected Main and live exact PR base, B equals live unchanged nonfork same-repository PR head. Official run/attempt/native-job/descriptor/artifact identity, archive/member hashes, retention clocks and PR/base/rerun are independently checked before and after. Original outer token/broker nonce and exact Root peer/UID/cgroup/birth/current checks are unchanged.",

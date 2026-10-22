@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       required_platform:
-        description: Exact protected-Main producer gate; empty runs full inventory
+        description: Exact authenticated producer gate; empty runs full inventory
         type: choice
-        options: ['', ubuntu, windows]
+        options: ['', ubuntu, windows, macos]
         default: ''
       producer_run:
         type: string
@@ -22,10 +22,14 @@ on:
         type: string
         default: ''
       candidate_pr:
-        description: Optional exact same-repository PR number; controller remains Main
+        description: Optional real same-repository PR; controller is independently qualified
         type: string
         default: ''
       candidate_sha:
+        type: string
+        default: ''
+      candidate_ref:
+        description: Exact refs/heads branch; mutually exclusive with candidate_pr
         type: string
         default: ''
       candidate_base:
@@ -53,6 +57,7 @@ jobs:
     outputs:
       ready: ${{ steps.guard.outputs.ready }}
       source: ${{ steps.guard.outputs.source }}
+      implementation: ${{ steps.guard.outputs.implementation }}
       producer: ${{ steps.scope.outputs.producer }}
       platform: ${{ steps.scope.outputs.platform || steps.guard.outputs.platform || inputs.required_platform }}
     steps:
@@ -114,6 +119,7 @@ jobs:
         if: steps.guard.outputs.ready == 'true' && (inputs.required_platform != '' || steps.guard.outputs.candidate == 'true')
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          OPEMOS_OMEN_ROBOT_RUNNER_STATE: ${{ vars.OPEMOS_OMEN_ROBOT_RUNNER_STATE }}
         run: python3 scripts/required_omen.py scope-guard
       - name: Always provide unavailable reports when trusted route or scope failed
         if: always() && (steps.guard.outputs.ready != 'true' || steps.scope.outcome == 'failure')
@@ -139,11 +145,12 @@ jobs:
       OPEMOS_ROBOT_REPORT_EXCHANGE: /home/connor/.local/share/opemos-ci/github-runner/robot-private/reports
       GITHUB_TOKEN: ${{ github.token }}
     steps:
-      # Root-installed ACTIONS_RUNNER_HOOK_JOB_STARTED independently verifies
-      # this workflow/ref/event/live Main BEFORE checkout; no PR/producer code.
+      # Existing Root job hook must verify the whole reviewed implementation,
+      # current Main checkpoint and protected qualification BEFORE checkout.
+      # A candidate source/ref or repository variable alone grants no scope.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ needs.trusted-runner-route.outputs.source }}
+          ref: ${{ needs.trusted-runner-route.outputs.implementation }}
           persist-credentials: false
       - name: Bind existing ephemeral job token to the accepted fixed host guard
         shell: bash
@@ -192,7 +199,7 @@ jobs:
       # no PR workflow/caller argv/host credential or queue bypass.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ needs.trusted-runner-route.outputs.source }}
+          ref: ${{ needs.trusted-runner-route.outputs.implementation }}
           persist-credentials: false
       - name: Bind existing ephemeral job token to the accepted fixed host guard
         shell: bash
@@ -248,6 +255,7 @@ jobs:
       - name: Strict current producer broker Robot image USB SteamOS final result
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          OPEMOS_OMEN_ROBOT_RUNNER_STATE: ${{ vars.OPEMOS_OMEN_ROBOT_RUNNER_STATE }}
         run: python3 scripts/required_omen.py finalize-scope
       - name: Always upload exact required outcome, including failed missing roles
         if: always()

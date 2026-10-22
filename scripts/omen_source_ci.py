@@ -21,7 +21,7 @@ from omen_source_workloads import REPO, WORKLOADS, PARENT_WORKLOADS, selection, 
 ROOT_CLIENT='/var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py'
 FULL9=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
 PARENT_NAMES={'.github/workflows/checks.yml':'Checks','.github/workflows/windows-portable.yml':'01 Windows EXE',
-              '.github/workflows/ubuntu-executable.yml':'02 Ubuntu AppImage'}
+              '.github/workflows/ubuntu-executable.yml':'02 Ubuntu AppImage','.github/workflows/macos-arm64.yml':'03 macOS Executable'}
 
 
 def held(path,cap,sha=None,owner=0):
@@ -57,6 +57,7 @@ def save(path,value):
 def api(path):
     need(path in('','branches/main','pulls?state=open&per_page=100')or
          re.fullmatch(r'(?:pulls|commits)/[A-Za-z0-9]+',path)or
+         re.fullmatch(r'git/ref/heads/[A-Za-z0-9_][A-Za-z0-9_./-]{0,239}',path)or
          re.fullmatch(r'actions/runs/[1-9][0-9]*(?:/attempts/[1-9][0-9]*(?:/jobs)?|/artifacts)?(?:\?per_page=100)?',path),
          'finite official source metadata path')
     class NoRedirect(request.HTTPRedirectHandler):
@@ -72,24 +73,33 @@ def scope(parent_run,parent_attempt,workload):
     run=api('actions/runs/'+parent_run);repo=api('');branch=api('branches/main');main=branch['commit']['sha']
     need(branch['protected']is True and run['repository']['full_name']==REPO and
          run['head_repository']['id']==repo['id']and run['head_repository']['full_name']==REPO and
-         str(run['run_attempt'])==parent_attempt and run['path']in PARENT_WORKLOADS and
-         workload in PARENT_WORKLOADS[run['path']]and run['name']==PARENT_NAMES[run['path']]and
-         run['event']in('push','pull_request','workflow_dispatch'),'actual same-repository original source job/latest attempt')
-    source=run['head_sha'];number=0
-    if source!=main:
-        prs=api('pulls?state=open&per_page=100');need(type(prs)is list and len(prs)<=5,'complete live bounded project PR list')
-        matches=[p for p in prs if p['head']['sha']==source and p['head']['repo']is not None and p['head']['repo']['id']==repo['id']]
-        need(len(matches)==1,'one current same-repository PR for push/PR candidate')
-        pr=api('pulls/'+str(matches[0]['number']));number=pr['number']
+         run['head_repository'].get('fork')is False and str(run['run_attempt'])==parent_attempt and
+         run['path']in PARENT_WORKLOADS and workload in PARENT_WORKLOADS[run['path']]and
+         run['name']==PARENT_NAMES[run['path']]and run['event']in('push','pull_request','workflow_dispatch'),
+         'actual same-repository original source job/latest attempt; no fork privilege')
+    source=run['head_sha'];number=0;extra={}
+    if run['event']=='pull_request':
+        prs=run['pull_requests'];need(type(prs)is list and len(prs)==1,'one original PR event association')
+        pr=api('pulls/'+str(prs[0]['number']));number=pr['number']
         need(pr['state']=='open'and pr['head']['sha']==source and pr['head']['repo']['id']==pr['base']['repo']['id']==repo['id']and
              pr['head']['repo']['full_name']==pr['base']['repo']['full_name']==REPO and
-             pr['base']['sha']==main and pr['base']['ref']=='main','live unchanged same-repository PR/current protected base')
-    else:need(run['head_branch']=='main'and run['event']!='pull_request','actual Main source, no merge-ref relabel')
+             pr['base']['sha']==main and pr['base']['ref']=='main','unchanged PR head/current base')
+    elif run['head_branch']!='main':
+        ref='refs/heads/'+run['head_branch'];current=api('git/ref/'+ref[5:])
+        need(current['ref']==ref and current['object']['type']=='commit'and current['object']['sha']==source,
+             'ordinary exact branch moved/deleted; no guessed PR association')
+        extra={'source_kind':'branch','source_ref':ref}
+    else:need(source==main,'stale Main source')
     tree=api('commits/'+source)['commit']['tree']['sha']
+    workflow=os.environ['GITHUB_WORKFLOW_SHA'];original_ref=os.environ['GITHUB_REF']
+    need(os.environ['GITHUB_EVENT_NAME']==run['event']and
+         workflow==(pr['merge_commit_sha']if run['event']=='pull_request'else source),
+         'original workflow SHA is separate from PR head B; event/ref must not be rewritten')
     spec={'repository':REPO,'controller_commit':main,'candidate_commit':source,'base_commit':main,
           'pull_request':number,'repository_id':repo['id'],'head_repository_id':run['head_repository']['id'],
           'candidate_tree':tree,'workload':workload,'parent_run':parent_run,'parent_attempt':parent_attempt,
-          'parent_workflow':run['path']}
+          'parent_workflow':run['path'],'producer_event':run['event'],'producer_ref':original_ref,
+          'workflow_commit':workflow,**extra}
     selection(spec,main)
     created=datetime.fromisoformat(run['created_at'].replace('Z','+00:00')).timestamp()
     need(0<=time.time()-created<=10800,'original parent interval expired')
@@ -165,7 +175,8 @@ def assemble(reply,directory,workload):
         output.flush();os.fsync(output.fileno())
     need(count==package['bytes']and h.hexdigest()==package['sha256'],'whole source package tar EOF/hash')
     destinations={'windows-build':'dist/windows','appimage-package':'linux-package-artifact',
-                  'debian-12-package':'linux-package-artifact','seed-runtime-source':'build/runtime-cache/windows'}
+                  'debian-12-package':'linux-package-artifact','seed-runtime-source':'build/runtime-cache/windows',
+                  'macos-build':'build/macos-arm64-evidence'}
     target=Path.cwd()/destinations[workload];target.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
     need(unpack_tar(archive,target,count,package['sha256'])==package['file_count'],'complete guest package tree count')
 
@@ -185,7 +196,7 @@ def run(workload,directory):
         reply=Engine(directory/'private').source_workload(before)
         need(scope(parent,attempt,workload)==before,'source/head/base/attempt changed during guest operation')
         if reply.get('package')is not None:assemble(reply,directory,workload)
-        need(workload not in('windows-build','appimage-package','debian-12-package','seed-runtime-source')or
+        need(workload not in('windows-build','appimage-package','debian-12-package','seed-runtime-source','macos-build')or
              reply.get('package')is not None,'required actual guest package absent')
         value={'kind':'OMEN_REQUIRED_SOURCE_JOB_V1','status':'passed','selection':before,
             'parent_run':parent,'parent_attempt':attempt,'root_result_pin':reply['root_result_pin'],
@@ -221,7 +232,7 @@ def reports(directory,result,reason=''):
 
 
 def record(platform,artifact_id,artifact_name,artifact_sha,output):
-    workload='windows-build'if platform=='windows'else'appimage-package'
+    workload={'windows':'windows-build','ubuntu':'appimage-package','macos':'macos-build'}[platform]
     spec=scope(os.environ['GITHUB_RUN_ID'],os.environ['GITHUB_RUN_ATTEMPT'],workload);installed(spec)
     proof=strict((Path('source-results')/'source-proof.json').read_bytes())
     need(proof['status']=='passed'and proof['selection']==spec and proof['closure']['unknown']==[],
@@ -235,7 +246,7 @@ def record(platform,artifact_id,artifact_name,artifact_sha,output):
 def main():
     p=argparse.ArgumentParser();p.add_argument('mode',choices=('run-required','record'))
     p.add_argument('--workload',choices=tuple(WORKLOADS));p.add_argument('--directory',default='source-results')
-    p.add_argument('--platform',choices=('windows','ubuntu'));p.add_argument('--artifact-id')
+    p.add_argument('--platform',choices=('windows','ubuntu','macos'));p.add_argument('--artifact-id')
     p.add_argument('--artifact-name');p.add_argument('--artifact-sha');p.add_argument('--output')
     a=p.parse_args()
     try:

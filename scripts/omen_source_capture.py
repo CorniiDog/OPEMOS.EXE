@@ -11,11 +11,55 @@ import signal
 import subprocess
 import threading
 import time
+import sys
+import stat
 
 CAP = 32 * 1024**2
+_DARWIN=None
+
+
+def darwin_bridge():
+    global _DARWIN
+    if _DARWIN is None:
+        path=Path(os.environ['OPEMOS_DARWIN_PROCESS_BRIDGE']);expected=os.environ['OPEMOS_DARWIN_PROCESS_BRIDGE_SHA256']
+        fd=os.open(path,os.O_RDONLY|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_NONBLOCK',0))
+        try:
+            before=os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode)or not 0<before.st_size<=16*1024**2:
+                raise ValueError('bounded regular actual Darwin bridge required')
+            raw=os.read(fd,16*1024**2+1)
+            fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+            if not path.is_absolute()or before.st_nlink!=1 or before.st_mode&0o222 or len(raw)!=before.st_size or len(raw)>16*1024**2 or hashlib.sha256(raw).hexdigest()!=expected or any(getattr(before,k)!=getattr(os.fstat(fd),k)or getattr(before,k)!=getattr(path.lstat(),k)for k in fields):
+                raise ValueError('exact sealed SDK-built A Darwin process bridge required')
+            lib=ctypes.CDLL(str(path),use_errno=True)
+            lib.opemos_source_process.argtypes=[ctypes.c_int,ctypes.POINTER(ctypes.c_uint64)];lib.opemos_source_process.restype=ctypes.c_int
+            lib.opemos_source_pids.argtypes=[ctypes.POINTER(ctypes.c_int),ctypes.c_int];lib.opemos_source_pids.restype=ctypes.c_int
+            lib.opemos_source_child_exited.argtypes=[ctypes.c_int];lib.opemos_source_child_exited.restype=ctypes.c_int
+            if any(getattr(before,k)!=getattr(path.lstat(),k)for k in fields):raise ValueError('Darwin bridge changed at load')
+            _DARWIN=lib
+        finally:os.close(fd)
+    return _DARWIN
+
+
+def posix_process(pid):
+    if sys.platform=='darwin':
+        values=(ctypes.c_uint64*3)()
+        if darwin_bridge().opemos_source_process(pid,values)!=0:raise ProcessLookupError(pid)
+        return {'birth':int(values[0]),'uid':int(values[1]),'pgid':int(values[2])}
+    text=Path('/proc',str(pid),'stat').read_text();return {'birth':int(text.rsplit(')',1)[1].split()[19])}
 
 
 def linux_user_processes():
+    if sys.platform=='darwin':
+        values=(ctypes.c_int*65536)();n=darwin_bridge().opemos_source_pids(values,65536)
+        if n<=0:raise ValueError('Darwin actual process inventory incomplete')
+        result={}
+        for pid in values[:n]:
+            if pid<=0:continue
+            try:row=posix_process(pid)
+            except ProcessLookupError:continue
+            if row['uid']==os.getuid():result[pid]={'birth':row['birth'],'uids':[row['uid']]}
+        return result
     result={}
     for path in Path('/proc').iterdir():
         if not path.name.isdigit():continue
@@ -157,13 +201,19 @@ def capture(argv, cwd, env, directory, seconds):
             proc=subprocess.Popen(argv,cwd=cwd,env=env,stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
             row['pid']=proc.pid
-            row['birth']=int(Path('/proc',str(proc.pid),'stat').read_text().rsplit(')',1)[1].split()[19])
+            row['birth']=posix_process(proc.pid)['birth']
             def stop():
                 # Never signal a numeric group after losing the original birth.
-                current=int(Path('/proc',str(proc.pid),'stat').read_text().rsplit(')',1)[1].split()[19])
-                if current != row['birth']:raise ProcessLookupError('original command birth absent')
+                observed=posix_process(proc.pid);current=observed['birth']
+                if current != row['birth']or(sys.platform=='darwin'and
+                    (observed['uid']!=os.getuid()or observed['pgid']!=proc.pid)):
+                    raise ProcessLookupError('original command birth/UID/group absent')
                 os.killpg(proc.pid,signal.SIGKILL)
             def wait():
+                if sys.platform=='darwin':
+                    state=darwin_bridge().opemos_source_child_exited(proc.pid)
+                    if state<0:raise ChildProcessError('actual Darwin waitid WNOWAIT failed')
+                    return None if state==0 else proc.wait(timeout=5)
                 result=os.waitid(os.P_PID,proc.pid,os.WEXITED|os.WNOHANG|os.WNOWAIT)
                 return None if result is None else proc.wait(timeout=5)
             def empty():

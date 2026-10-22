@@ -131,7 +131,7 @@ export function validateOmenWindowsProducer(text) {
   requireText(text, "# OMEN_GUEST_SOURCE_WORKLOAD_V1:", "explicit OMEN-only producer schema");
   requireText(text, "permissions:\n  contents: read\n  actions: read", "read-only producer token");
   requireText(text, "cancel-in-progress: false", "preserved running guest/compiler ownership");
-  requireText(text, "needs: seed-runtime-source", "same-parent guest seed dependency");
+  requireText(text, "needs: [source-route, seed-runtime-source]", "same-parent guest seed and route dependency");
   for (const workload of ["seed-runtime-source", "windows-build"]) {
     requireText(text, `/var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py run-required --workload ${workload}`, "fixed A actual guest result consumer");
   }
@@ -143,17 +143,15 @@ export function validateOmenWindowsProducer(text) {
   requireText(text, "path: build/executable-producer/executable-producer.json", "separate producer identity");
   requireText(text, "include-hidden-files: true", "complete runtime bundle");
   requireText(text, UPLOAD, "immutable artifact action");
-  const untrusted = text.split("\n  omen-required-untrusted:\n")[1] || "";
-  const main = text.split("\n  omen-required:\n")[1]?.split("\n  omen-required-untrusted:\n")[0] || "";
-  requireText(main, "github.ref == 'refs/heads/main' && github.ref_protected", "protected Main-only GUI write scope");
-  requireText(main, "ref: ${{ github.sha }}", "immutable Main GUI gate checkout");
-  if (/actions: write|dispatch-and-wait|self-hosted/.test(untrusted) || (text.match(/actions: write/g) || []).length !== 1) {
-    throw new Error("Windows workflow must isolate its sole write token/dispatch to Main.");
+  requireText(text, "omen-producer-handoff:", "separate correlated producer handoff");
+  requireText(text, "pending-reviewed-controller", "no producer metadata acceptance claim");
+  if (/actions: write|dispatch-and-wait|Non-Main\/PR\/fork source is not admitted/.test(text)) {
+    throw new Error("Producer must complete without dispatch credentials, branch-only refusal or downstream wait cycle.");
   }
   if (/run:\s*(?:npm|cargo|node --test|\.\\bundle_windows|python.*unittest)|runs-on: windows-latest|secrets\.|signtool|gh\s+release/.test(text)) {
     throw new Error("Windows producer must not run hosted project commands or use signing/trust inputs.");
   }
-  const sourceJobs = text.split("\n  omen-required:\n")[0];
+  const sourceJobs = text.split("\n  omen-producer-handoff:\n")[0];
   if (/actions\/checkout@/.test(sourceJobs)) throw new Error("Source jobs must execute only the fixed installed A client, no candidate checkout.");
   // The original full native recipe and its strict fault suite remain separate
   // guest-only source contracts. This function does not turn those into passes.

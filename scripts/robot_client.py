@@ -242,14 +242,19 @@ class Engine:
         require(type(target)is dict and set(target)in(keys,keys|{'source_roles'}), 'exact finite producer target')
         if 'source_roles'in target:
             roles=target['source_roles']
-            require(type(roles)is dict and set(roles)=={'repository','controller_commit','candidate_commit',
-                    'pull_request','base_commit','repository_id','head_repository_id'}and
+            branch=type(roles)is dict and roles.get('source_kind')=='branch'
+            fields={'repository','controller_commit','candidate_commit','pull_request','base_commit','repository_id','head_repository_id'}
+            require(type(roles)is dict and set(roles)==(fields|{'source_kind','source_ref'}if branch else fields)and
                     roles['repository']==REPO and roles['controller_commit']==roles['base_commit']==self.identity['source_commit']and
                     type(roles['candidate_commit'])is str and re.fullmatch('[0-9a-f]{40}',roles['candidate_commit'])and
-                    roles['candidate_commit']!=roles['controller_commit']and
-                    type(roles['pull_request'])is int and 0<roles['pull_request']<2**31 and
+                    (branch or roles['candidate_commit']!=roles['controller_commit'])and
+                    type(roles['pull_request'])is int and(roles['pull_request']==0 if branch else 0<roles['pull_request']<2**31)and
                     all(type(roles[k])is int and roles[k]>0 for k in('repository_id','head_repository_id'))and
                     roles['repository_id']==roles['head_repository_id'],'finite same-repository A/B target only')
+            if branch:
+                ref=roles['source_ref'];require(type(ref)is str and re.fullmatch(r'refs/heads/[A-Za-z0-9_][A-Za-z0-9_./-]{0,239}',ref)and
+                    ref!='refs/heads/main'and not any(x in ref for x in('..','//','/.','.lock'))and not ref.endswith(('/','.')),
+                    'exact ordinary branch target')
         reply = self._request('execute-produced-platform', target)
         # Persist actual complete reply BEFORE a failure assertion. It contains
         # only public descriptors/typed outcome, never a host plan or disk bytes.

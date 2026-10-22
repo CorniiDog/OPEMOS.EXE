@@ -62,7 +62,9 @@ def execute(grant_pin, persist):
     pool={'cpus':10,'memoryBytes':34359738368,'swapBytes':0};need(pre['pool']==pool,'unchanged existing pool')
     peer.NativeOps().entry(intent,'PREPARED');peer.NativeOps().budget(request,'PREPARED',None)
     xml=protected_bytes(g['xmlPin']).decode();tree=ET.fromstring(xml)
-    need(tree.tag=='domain'and tree.get('type')=='kvm'and tree.findtext('uuid')==request['domainUUID']and
+    mac=WORKLOADS[spec['workload']][0]=='macos'
+    need(tree.tag=='domain'and tree.get('type')==('qemu'if mac else'kvm')and
+         tree.find('./os/type').get('arch')==('aarch64'if mac else'x86_64')and tree.findtext('uuid')==request['domainUUID']and
          tree.findtext('name')==request['domainName']and not tree.findall('.//interface')and
          not tree.findall('.//hostdev')and not tree.findall('.//filesystem')and
          not any('commandline'in e.tag for e in tree.iter()),'finite existing KVM domain; no NIC/hostdev/share/argv extension')

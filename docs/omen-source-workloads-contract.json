@@ -1,6 +1,7 @@
 {
   "kind": "OMEN_FINITE_SOURCE_WORKLOAD_SOURCE_CONTRACT_V1",
   "state": "AUTHORED_UNRUN_NOT_INSTALLED",
+  "nonMainSuccessor": "docs/omen-nonmain-admission-contract.json supplies the joined ordinary branch/manual, reviewed non-main implementation, completion-cycle and OMEN macOS successor. This does not transfer5ea review or old checks.",
   "runtimeAuthorized": false,
   "sameAssignment": "54b35cf205a726d788346a0d748e9562d5c500f8f7faf45d924827f9ad2172b9",
   "cause": "The existing required workflows executed project checks/builds on hosted runners; the GUI-only broker had no finite candidate-source guest ingress. Waiting for a workflow_run handler on an unmerged default branch would deadlock the replacement. Neither hosted success nor local syntax inspection verifies the new route.",
@@ -26,13 +27,14 @@
     "seed-runtime-source": {"guest": "ubuntu-x86_64", "seconds": 1800, "requiredJob": "seed-runtime-source"},
     "windows-build": {"guest": "windows-x86_64", "seconds": 7200, "requiredJob": "build"},
     "appimage-package": {"guest": "ubuntu-x86_64", "seconds": 3600, "requiredJob": "appimage-package"},
-    "producer-metadata-diagnostic": {"guest": "windows-x86_64", "seconds": 300, "requiredJob": "producer-metadata-diagnostic", "optionalDiagnosticOnly": true}
+    "producer-metadata-diagnostic": {"guest": "windows-x86_64", "seconds": 300, "requiredJob": "producer-metadata-diagnostic", "optionalDiagnosticOnly": true},
+    "macos-build": {"guest": "macos-arm64-on-OMEN", "seconds": 5400, "requiredJob": "native-app", "availability": "Requires actual qualified ARM boot bundle/SDK/channel/bridge; never hosted Mac substitute"}
   },
   "sourceIdentity": {
     "selection": ["repository", "controller_commit", "candidate_commit", "base_commit", "pull_request", "repository_id", "head_repository_id", "candidate_tree", "parent_run", "parent_attempt", "parent_workflow", "workload"],
     "RootBoundArchive": ["source_archive_sha256", "source_archive_bytes"],
     "controller": "Current protected Main is control identity A, candidate B is exact same-repository nonfork PR head/tree. Root separately authenticates the immutable reviewed privileged-controller implementation and complete file pins; newly authored files absent from Main are NOT relabelled as Main blobs. Explicit independent source qualification and normal Root adoption are prerequisites, not granted by a matching hash in this proposal.",
-    "branchPush": "Exact unchanged branch B must belong to exactly one current open same-repository PR based on A; at most five project PRs remains required. Main uses B=A and PR0.",
+    "branchPush": "Exact unchanged ordinary same-repository branch uses source_kind=branch/source_ref and PR0, verified official ref object before/after; no guessed PR association. PR events retain actual open PR/current-base checks. Original producer_event/producer_ref/workflow_commit distinguish source head from merge/workflow definition. Main uses B=A and PR0 without branch tag. At most five open project PRs remains unchanged.",
     "outerIdentity": "repository/source_commit/run_id/attempt/nonce stays the existing broker identity. The source subject additionally binds original parent workflow/run/attempt and candidate/archive/tree. No nonce substitution or approval transfer."
   },
   "RootAdoptionOperands": {

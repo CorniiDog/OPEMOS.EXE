@@ -11,7 +11,42 @@ from omen_source_workloads import REPO, PARENT_WORKLOADS, need
 JOB_WORKLOAD={'frontend-and-docs':'frontend-and-docs','rust':'rust','linux-integration':'linux-integration',
     'debian-12-package':'debian-12-package','seed-runtime-source':'seed-runtime-source',
     'build':'windows-build','appimage-package':'appimage-package',
-    'producer-metadata-diagnostic':'producer-metadata-diagnostic'}
+    'producer-metadata-diagnostic':'producer-metadata-diagnostic','native-app':'macos-build'}
+
+
+def validate_controller(run,job,execution,workflow_raw,profile):
+    """Finite policy for adoption by EXISTING Root job hook, not a new guard.
+
+    Unlike the hosted heartbeat reader, this compares the qualification with
+    independently protected Root profile data. Original kernel/one-use token
+    checks still surround this policy and cannot be supplied by candidate B.
+    """
+    need(profile['schema']=='FINITE_VM_ONLY_V1'and profile['enabled']is True and
+         type(workflow_raw)is bytes and 0<len(workflow_raw)<=131072 and
+         run['repository']['full_name']==run['head_repository']['full_name']==REPO and
+         run['repository']['id']==run['head_repository']['id']and
+         run['path']=='.github/workflows/omen-robot.yml'and run['event']in('workflow_dispatch','workflow_run')and
+         run['head_sha']==execution['implementation_commit']and
+         execution['control_commit']==profile['controller_commit']and
+         str(job['run_id'])==str(run['id'])and job['status']=='in_progress'and
+         job['name']in('actual-robot-transactions','required-platform-robot'),
+         'exact official controller run/job/implementation/current checkpoint')
+    qualification=execution['qualification']
+    if qualification is None:
+        need(run['head_branch']=='main'and execution['implementation_commit']==profile['controller_commit'],
+             'original Main controller invariant')
+        expected=profile['workflowPins'][run['path']]
+    else:
+        need(qualification==profile['controller_qualification']and
+             execution['workflow_ref']==REPO+'/'+run['path']+'@refs/heads/'+run['head_branch'],
+             'Repo variable/branch label cannot replace independent protected Root qualification')
+        expected=qualification['workflow_sha256']
+    need(hashlib.sha256(workflow_raw).hexdigest()==expected,'whole controller workflow bytes changed')
+    return {'kind':'ROOT_REVIEWED_CONTROLLER_JOB_SCOPE_V1','execution':execution,
+            'run_id':str(run['id']),'attempt':str(run['run_attempt']),'job_id':str(job['id']),
+            'allowed_actions':['execute-produced-platform']if job['name']=='required-platform-robot'else
+                ['execute-vm','execute-platform','persist'],
+            'retainsExistingKernelAndTokenGuards':True,'runtimeAuthorized':False}
 
 
 def validate(run,job,repository,current_main,workflow_raw,profile):

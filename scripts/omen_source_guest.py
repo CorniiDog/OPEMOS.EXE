@@ -133,8 +133,18 @@ def execute(manifest_path, manifest_sha, output):
          set(manifest['identity'])=={'repository','source_commit','run_id','attempt','nonce'} and
          0<manifest['remainingSeconds']<=WORKLOADS[spec['workload']][1], 'finite original source job identity/budget')
     expected_platform=WORKLOADS[spec['workload']][0]
-    need(platform.machine().lower()in('amd64','x86_64'),'actual x86-64 build guest, not host/ARM emulation label')
-    if os.name=='nt':
+    need(platform.machine().lower()in(('arm64','aarch64')if expected_platform=='macos'else('amd64','x86_64')),
+         'actual workload architecture required; no host/translation label')
+    if expected_platform=='macos':
+        need(sys.platform=='darwin'and os.getuid()==os.geteuid()!=0,'actual unprivileged macOS guest')
+        measured=subprocess.run(['/usr/sbin/sysctl','-n','kern.bootsessionuuid'],capture_output=True,check=True,timeout=5)
+        need(not measured.stderr and 0<len(measured.stdout.strip())<=128,'actual Darwin boot session')
+        boot=measured.stdout.decode().strip();need(boot==manifest['guestBoot'],'Root observed exact macOS guest boot')
+        uid=os.getuid();observed={'kernel':platform.release(),'architecture':platform.machine()}
+        bridge=manifest['darwinProcessBridge'];read(bridge['path'],16*1024**2,bridge['sha256'])
+        os.environ['OPEMOS_DARWIN_PROCESS_BRIDGE']=bridge['path']
+        os.environ['OPEMOS_DARWIN_PROCESS_BRIDGE_SHA256']=bridge['sha256']
+    elif os.name=='nt':
         need(expected_platform=='windows','actual Windows required')
         # Actual VM manufacturer/model/boot identity, not ImageOS from a hosted job.
         probe=subprocess.run(['powershell.exe','-NoLogo','-NoProfile','-NonInteractive','-Command',
@@ -178,6 +188,7 @@ def execute(manifest_path, manifest_sha, output):
     try:
         required={'omen_source_capture.py','omen_source_workloads.py','omen_source_guest.py','omen_source_guest_parent.py'}
         if spec['workload']=='windows-build':required.add('windows-source-smoke.ps1')
+        if spec['workload']=='macos-build':required.add('macos-source-package.py')
         need(required<=set(manifest['controllerFiles']),'complete sealed A guest execution graph')
         for name,pin in manifest['controllerFiles'].items():
             need(Path(name).name==name,'finite A source leaf');read(Path(manifest_path).parent/name,pin['bytes'],pin['sha256'])
@@ -195,7 +206,8 @@ def execute(manifest_path, manifest_sha, output):
         env={k:v for k,v in os.environ.items()if k in('PATH','SystemRoot','TEMP','TMP','HOME','USERPROFILE','LOCALAPPDATA',
              'DISPLAY','XAUTHORITY','DBUS_SESSION_BUS_ADDRESS','XDG_RUNTIME_DIR',
              'INCLUDE','LIB','LIBPATH','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion','UCRTVersion',
-             'UniversalCRTSdkDir','VSINSTALLDIR','VCINSTALLDIR','VSCMD_ARG_TGT_ARCH','VSCMD_VER')}
+             'UniversalCRTSdkDir','VSINSTALLDIR','VCINSTALLDIR','VSCMD_ARG_TGT_ARCH','VSCMD_VER',
+             'OPEMOS_DARWIN_PROCESS_BRIDGE','OPEMOS_DARWIN_PROCESS_BRIDGE_SHA256','SDKROOT','DEVELOPER_DIR')}
         need(not any(k in os.environ for k in('GITHUB_TOKEN','ACTIONS_RUNTIME_TOKEN','SSH_AUTH_SOCK')),
              'no host Actions/SSH credentials in candidate VM')
         env.update(CARGO_NET_OFFLINE='true',npm_config_offline='true',npm_config_audit='false',
@@ -203,7 +215,7 @@ def execute(manifest_path, manifest_sha, output):
             OPEMOS_CORE_CONTRACT_ROOT=str(source/'opemos-core-contracts'),OPEMOS_CORE_EXPECTED_COMMIT=
             'adf372b857cd348b6a18680b45ffcea790f04d4b'if spec['workload']=='linux-integration'else
             'f72aff92a5534b676083ccba974f4185f2d4551f')
-        if spec['workload']=='appimage-package':
+        if spec['workload']in('appimage-package','macos-build'):
             env['OPEMOS_CORE_EXPECTED_COMMIT']='01407aa6174b80e92cb7f3dcb534ade5cdd7bf00'
         env.update(CARGO_HOME=str(source/'.cargo'),npm_config_cache=str(source/'.npm'))
         env.update(OPEMOS_CORE_COMMIT=env['OPEMOS_CORE_EXPECTED_COMMIT'],RUST_TOOLCHAIN='1.98.1',NODE_VERSION='22.23.2')
@@ -214,9 +226,9 @@ def execute(manifest_path, manifest_sha, output):
         git=manifest['tools']['git'];read(git['path'],512*1024**2,git['sha256'],sealed=False)
         validations=[(['rev-parse','HEAD'],spec['candidate_commit']),
                      (['rev-parse','HEAD^{tree}'],spec['candidate_tree'])]
-        if spec['workload']in('rust','linux-integration','windows-build','appimage-package'):
+        if spec['workload']in('rust','linux-integration','windows-build','appimage-package','macos-build'):
             validations.append((['-C','opemos-core-contracts','rev-parse','HEAD'],
-                '01407aa6174b80e92cb7f3dcb534ade5cdd7bf00'if spec['workload']=='appimage-package'else env['OPEMOS_CORE_EXPECTED_COMMIT']))
+                '01407aa6174b80e92cb7f3dcb534ade5cdd7bf00'if spec['workload']in('appimage-package','macos-build')else env['OPEMOS_CORE_EXPECTED_COMMIT']))
         result['source_validation']=[]
         for number,(arguments,expected)in enumerate(validations):
             seconds=deadline-time.monotonic();need(seconds>0,'original source validation deadline')

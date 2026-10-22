@@ -23,10 +23,12 @@ WORKLOADS = {
     'windows-build': ('windows', 7200),
     'appimage-package': ('ubuntu', 3600),
     'producer-metadata-diagnostic': ('windows',300),
+    'macos-build': ('macos',5400),
 }
 PARENT_WORKLOADS={'.github/workflows/checks.yml':{'frontend-and-docs','rust','linux-integration','debian-12-package'},
     '.github/workflows/windows-portable.yml':{'seed-runtime-source','windows-build','producer-metadata-diagnostic'},
-    '.github/workflows/ubuntu-executable.yml':{'appimage-package'}}
+    '.github/workflows/ubuntu-executable.yml':{'appimage-package'},
+    '.github/workflows/macos-arm64.yml':{'macos-build'}}
 
 
 def need(ok, reason):
@@ -42,7 +44,21 @@ def selection(value, controller):
     fields = {'repository', 'controller_commit', 'candidate_commit', 'base_commit',
               'pull_request', 'repository_id', 'head_repository_id', 'workload',
               'candidate_tree','parent_run','parent_attempt','parent_workflow'}
-    need(type(value) is dict and set(value) == fields, 'finite source workload subject')
+    branch=type(value)is dict and value.get('source_kind')=='branch'
+    provenance={'producer_event','producer_ref','workflow_commit'}
+    if type(value)is dict and provenance&set(value):
+        need(provenance<=set(value),'complete original workflow/event/ref provenance')
+        fields|=provenance
+    need(type(value) is dict and set(value) == (fields|{'source_kind','source_ref'}if branch else fields), 'finite source workload subject')
+    if branch:
+        ref=value['source_ref'];need(type(ref)is str and re.fullmatch(r'refs/heads/[A-Za-z0-9_][A-Za-z0-9_./-]{0,239}',ref)and
+            ref!='refs/heads/main'and not any(x in ref for x in('..','//','/.','.lock'))and not ref.endswith(('/','.')),
+            'finite original branch source ref')
+    if provenance<=set(value):
+        need(value['producer_event']in('push','workflow_dispatch','pull_request')and
+             type(value['workflow_commit'])is str and COMMIT.fullmatch(value['workflow_commit'])and
+             value['producer_ref']==('refs/pull/'+str(value['pull_request'])+'/merge'if value['producer_event']=='pull_request'else
+                 value.get('source_ref','refs/heads/main')),'exact original event/ref/workflow identity')
     need(value['repository'] == REPO and value['controller_commit'] == controller and
          all(type(value[k]) is str and COMMIT.fullmatch(value[k]) for k in
              ('controller_commit', 'candidate_commit', 'base_commit', 'candidate_tree')) and
@@ -55,7 +71,8 @@ def selection(value, controller):
     need(value['parent_workflow']in PARENT_WORKLOADS and value['workload']in PARENT_WORKLOADS[value['parent_workflow']]and
          all(type(value[k])is str and NUMBER.fullmatch(value[k])for k in('parent_run','parent_attempt')),
          'finite original required parent run/attempt/workload scope')
-    if value['pull_request']:
+    if branch:need(value['pull_request']==0 and value['base_commit']==controller,'branch has no invented PR association')
+    elif value['pull_request']:
         need(value['base_commit'] == controller != value['candidate_commit'], 'distinct A/PR B roles')
     else:
         need(value['base_commit'] == value['candidate_commit'] == controller, 'exact Main source job')
@@ -82,6 +99,9 @@ def commands(workload, source):
             ['cargo', 'clippy', '--offline', '--locked', '--manifest-path', 'src-tauri/Cargo.toml',
              '--all-targets', '--all-features', '--', '-D', 'warnings'],
             ['cargo', 'test', '--offline', '--locked', '--manifest-path', 'src-tauri/Cargo.toml']]
+    if workload=='macos-build':
+        return npm+[['python','-B','-m','unittest','discover','-s','tests','-p','test_omen_source_jobs.py','-v']]+rust+[
+            ['npm','run','build:app'],['python','-B','@CONTROLLER@/macos-source-package.py']]
     if workload == 'frontend-and-docs':
         return npm + [['npm', 'run', 'test:frontend'], ['git', 'diff', '--check']]
     if workload == 'rust':

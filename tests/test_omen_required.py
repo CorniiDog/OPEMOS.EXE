@@ -50,23 +50,16 @@ class RequiredProducerTests(unittest.TestCase):
  def parent_failed_result(self, temp, stale=False, collision=False):
   m=Metadata();state={}
   failure={'kind':'OPEMOS_BROKER_FAILURE_V1','code':'ACTIONS_TOKEN_REQUIRED','reason':gate.PUBLIC_FAILURES['ACTIONS_TOKEN_REQUIRED'],'error_type':'ValueError','private_recorded':True,'secondary':[]}
-  class Response:
-   status=204
-   def __enter__(self):return self
-   def __exit__(self,*args):pass
-   def read(self,n):return b''
-  class Opener:
-   def open(self,req,timeout):
-    inputs=json.loads(req.data)['inputs'];nonce=inputs['correlation_nonce']
-    state['title']='04 SteamOS required ubuntu 10/2 '+nonce
-    context={'repository':gate.REPO,'source_commit':SOURCE,'target':gate.target(m.value),'nonce':nonce}
-    if stale:context['nonce']='0'*32
-    value={'kind':'OMEN_REQUIRED_PRODUCER_RESULT_V1','status':'failed','diagnostic_only':True,'actualGUIAccepted':False,'context':context,'producer':m.value,'consumer':{'run_id':'50','attempt':'1'},'broker_failure':failure}
-    state['raw']=encoded_zip('required-result.json',value)
-    return Response()
+  nonce='1'*32
+  context={'repository':gate.REPO,'source_commit':SOURCE,'target':gate.target(m.value),'nonce':nonce}
+  artifact_context=dict(context,nonce='0'*32)if stale else context
+  value={'kind':'OMEN_REQUIRED_PRODUCER_RESULT_V1','status':'failed','diagnostic_only':True,'actualGUIAccepted':False,
+         'context':artifact_context,'producer':m.value,'consumer':{'run_id':'50','attempt':'1'},'broker_failure':failure}
+  state['raw']=encoded_zip('required-result.json',value)
+  selected={'id':50,'run_attempt':1,'head_sha':SOURCE,'head_branch':'main','event':'workflow_dispatch',
+            'path':gate.ROUTE,'repository':{'full_name':gate.REPO},'status':'completed','conclusion':'failure'}
   def read(path):
-   if path.startswith('actions/workflows/omen-robot.yml/runs?'):
-    return {'total_count':1,'workflow_runs':[{'id':50,'run_attempt':1,'display_title':state['title'],'head_sha':SOURCE,'head_branch':'main','event':'workflow_dispatch','repository':{'full_name':gate.REPO},'status':'completed'}]}
+   if path=='actions/runs/50':return copy.deepcopy(selected)
    if path.startswith('actions/runs/50/attempts/1/jobs?'):
     return {'total_count':2,'jobs':[{'name':n,'status':'completed','conclusion':'failure'}for n in ('required-platform-robot','required-platform-result')]}
    if path.startswith('actions/runs/50/artifacts?'):
@@ -79,11 +72,11 @@ class RequiredProducerTests(unittest.TestCase):
    if collision:
     Path('required-omen-results/required-result-failed.json').mkdir(parents=True)
     Path('required-omen-results/failed-result-readback-secondary.json').mkdir()
-   # Only external API/HTTP adapters supply synthetic provider metadata. The
-   # dispatch, producer verifier, failed ZIP/schema/identity consumer and actual
-   # create-only filesystem persistence functions are never replaced.
-   with patch.dict(os.environ,env),patch.object(gate,'api_reader',return_value=read),patch.object(gate,'metadata_download',side_effect=download),patch.object(gate.request,'build_opener',return_value=Opener()):
-    self.assertEqual(gate.main_dispatch('ubuntu'),1)
+   # Completed consumer instead of a producer-owned dispatch/wait cycle. Only
+   # external API/ZIP data is synthetic; verifier, reader and real create-only
+   # persistence remain actual current functions, never method overrides.
+   with patch.dict(os.environ,env):
+    self.assertEqual(gate.consume_completed_result(SOURCE,m.value,context,selected,read,download),1)
    result=json.loads(Path('required-omen-results/required-failure.json').read_bytes())
    self.assertFalse(result['oldResultAdopted'])
    self.assertEqual('ACTIONS_TOKEN_REQUIRED'in result['reason'],not stale)
@@ -104,19 +97,15 @@ class RequiredProducerTests(unittest.TestCase):
    self.assertLess(section.index('job_guard.py --bind-job-token'),section.index(' -m robot '))
    self.assertIn('GITHUB_TOKEN: ${{ github.token }}',section)
    self.assertNotIn('--bind-job-token $',section)
- def test_dispatch_write_token_is_only_in_main_job_and_pr_diagnostics_are_read_only(self):
+ def test_all_producers_finish_without_dispatch_privilege_or_completion_cycle(self):
   root=Path(__file__).parents[1]
-  for name in('ubuntu-executable.yml','windows-portable.yml'):
+  for name in('ubuntu-executable.yml','windows-portable.yml','macos-arm64.yml'):
    workflow=(root/'.github/workflows'/name).read_text()
-   main,untrusted=workflow.split('\n  omen-required:\n',1)[1].split('\n  omen-required-untrusted:\n',1)
-   self.assertIn("github.ref == 'refs/heads/main' && github.ref_protected",main)
-   self.assertIn('actions: write',main)
-   self.assertIn('ref: ${{ github.sha }}',main)
-   self.assertIn('actions: read',untrusted)
-   self.assertNotIn('actions: write',untrusted)
-   self.assertNotIn('dispatch-and-wait',untrusted)
-   self.assertIn(' diagnostics --directory required-omen-results ',untrusted)
-   self.assertIn('exit 1',untrusted)
+   self.assertIn('actions: read',workflow)
+   self.assertNotIn('actions: write',workflow)
+   self.assertNotIn('dispatch-and-wait',workflow)
+   self.assertIn('pending-reviewed-controller',workflow)
+   self.assertIn("'actualGUIAccepted':False",workflow)
  def test_in_progress_parent_with_passed_package_is_eligible(self):
   m=Metadata();self.assertEqual(m.verify(),m.value)
  def test_windows_independent_of_ubuntu_mac_readiness(self):
@@ -293,6 +282,25 @@ class CandidateMetadata(Metadata):
    return gate.candidate_producer_ready(self.selection,'ubuntu','10','2',self.read,self.download)
 
 class CandidateProducerTests(unittest.TestCase):
+ def test_complete_branch_native_descriptor_consumer_without_fabricated_PR(self):
+  m=CandidateMetadata();m.selection.update(pull_request=0,source_kind='branch',source_ref='refs/heads/ordinary')
+  m.run.update(event='workflow_dispatch',head_branch='ordinary',pull_requests=[])
+  m.value.update(event='workflow_dispatch',ref='refs/heads/ordinary',workflow_commit=SOURCE);m.reseal()
+  calls=[]
+  def read(path):
+   calls.append(path)
+   if path=='':return {'id':1,'full_name':gate.REPO,'fork':False}
+   if path=='git/ref/heads/ordinary':return {'ref':'refs/heads/ordinary','object':{'type':'commit','sha':SOURCE}}
+   return m.read(path)
+  # External metadata clock fixture only, never a real OS clock assertion.
+  with patch.object(gate.time,'time',return_value=1792454520):
+   value=gate.candidate_producer_ready(m.selection,'ubuntu','10','2',read,m.download)
+  self.assertEqual(value['producer'],m.value);self.assertEqual(value['source_roles'],m.selection)
+  self.assertNotIn('pulls/0',calls);self.assertNotIn('pulls/210',calls)
+  m.value['workflow_commit']='f'*40;m.reseal()
+  with patch.object(gate.time,'time',return_value=1792454520),self.assertRaises(gate.Refusal):
+   gate.candidate_producer_ready(m.selection,'ubuntu','10','2',read,m.download)
+
  def test_descriptor_requires_explicit_roles_and_refuses_role_swap(self):
   m=CandidateMetadata()
   with self.assertRaises(ValueError):gate.descriptor(m.value,SOURCE)
@@ -309,7 +317,7 @@ class CandidateProducerTests(unittest.TestCase):
  def test_candidate_workflow_never_checks_out_guest_b_on_privileged_runner(self):
   workflow=(Path(__file__).parents[1]/'.github/workflows/omen-robot.yml').read_text()
   section=workflow.split('\n  required-platform-robot:\n')[1].split('\n  required-platform-result:\n')[0]
-  self.assertIn('ref: ${{ needs.trusted-runner-route.outputs.source }}',section)
+  self.assertIn('ref: ${{ needs.trusted-runner-route.outputs.implementation }}',section)
   self.assertNotIn('ref: ${{ inputs.candidate_sha }}',workflow)
   self.assertNotIn('pull_request_target:',workflow)
   self.assertNotIn('candidate_sha }}',section)

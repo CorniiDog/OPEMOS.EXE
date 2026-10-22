@@ -70,7 +70,16 @@ def run(manifest_path, digest, output):
     spec=subject(manifest['subject'],identity['source_commit']);controller=Path(manifest_path).parent
     for name,pin in manifest['controllerFiles'].items():read(controller/name,pin['bytes'],pin['sha256'])
     channel=manifest['channel'];need(channel['name']=='org.opemos.source-job.0','fixed source virtio channel')
-    if os.name!='nt':
+    if sys.platform=='darwin':
+        bridge=manifest['darwinProcessBridge'];read(bridge['path'],16*1024**2,bridge['sha256'])
+        os.environ['OPEMOS_DARWIN_PROCESS_BRIDGE']=bridge['path'];os.environ['OPEMOS_DARWIN_PROCESS_BRIDGE_SHA256']=bridge['sha256']
+        path=Path(channel['path']);need(path.parent==Path('/dev')and path.name.startswith(('cu.','tty.'))and
+             channel['actualGuestDevicePin']['boot']==manifest['guestBoot'],
+             'existing actual boot-bound macOS guest virtio/serial device required; no guessed port')
+        actual=path.stat();pin=channel['actualGuestDevicePin']
+        need(stat.S_ISCHR(actual.st_mode)and actual.st_dev==pin['st_dev']and actual.st_ino==pin['st_ino']and
+             actual.st_rdev==pin['st_rdev'],'actual sealed guest character channel identity')
+    elif os.name!='nt':
         path=Path(channel['path']);need(path.parent==Path('/dev/virtio-ports')and path.name==channel['name'],
              'actual named Linux virtio channel')
         real=path.resolve(strict=True);need(stat.S_ISCHR(real.stat().st_mode),'actual kernel character port')
@@ -115,7 +124,8 @@ def run(manifest_path, digest, output):
                 d.name.startswith(('command-','container-','validation-'))for name in('stdout','stderr')
             if (p:=d/(name+'.raw')).is_file())
         roots={'windows-build':'dist/windows','appimage-package':'linux-package-artifact',
-               'debian-12-package':'linux-package-artifact','seed-runtime-source':'build/runtime-cache/windows'}
+               'debian-12-package':'linux-package-artifact','seed-runtime-source':'build/runtime-cache/windows',
+               'macos-build':'build/macos-arm64-evidence'}
         package_root=output/'worker/source'/roots.get(spec['workload'],'__no_package__')
         package_value=None
         if spec['workload']in roots:

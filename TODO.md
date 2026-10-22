@@ -1,5 +1,36 @@
 # OPEMOS.EXE — Product Checklist
 
+## 2026-10-22 PR210 non-main/all-three correction — authored, UNRUN
+
+- Root ab22afe4 / Core ab7d3980 / Mac ce9c9176 source recovery: original Main
+  invariants remain; exact branch refs with PR0 are now distinct from real open
+  PR identities. Producer event/ref/workflow definition, candidate head/tree,
+  controller checkpoint and actual qualified implementation are not rewritten.
+- Windows/Ubuntu/macOS producers no longer reject a source solely because it
+  is non-main or wait on their own completed-workflow_run. Read-only pending
+  handoff metadata is not a VM pass. Separate trusted controller/manual route,
+  broker/planner/guest/pointer/result joins and completed failure-artifact reader
+  retain exact artifacts/run/attempt/nonce, stale/cancel/timeout/fork refusals and
+  first+secondary/create-only failure persistence. Original failed results stay.
+- Existing Root guard has a finite authored policy extension comparing actual
+  workflow bytes and protected Root qualification; public heartbeat/branch name
+  alone cannot authorize privileged code. A separately reviewed non-main test
+  implementation can be normally adopted without a forced Main merge. No live
+  guard/profile/source83/VM was changed or permission inferred from this source.
+- Mac now has the same finite OMEN guest-only source/package/descriptor route,
+  SDK-typed public Darwin process/wait bridge and real arm64 data packaging.
+  Actual boot bundle/channel/SDK/bridge/native API/display remain unqualified
+  inputs, not invented hardware or a hosted Mac fallback. All20/three-platform
+  unavailable states remain truthful; Windows/Ubuntu continue independently.
+- Source and metadata/failure regression cases are authored, not run. Tests
+  deliberately replace the obsolete dispatch/wait traversal with the actual
+  independent completed-result consumer; strict first-cause/collision/stale
+  assertions remain. No method under test is overridden to make its caller pass.
+  See docs/omen-nonmain-admission-contract.json for complete source joins and
+  the one ordinary actual transaction recipe after independent Root/Core review.
+  New required-check contexts include branch push and Mac PR jobs; no old pass
+  or approval transfers. All new project/SDK tests and actual VM work are UNRUN.
+
 ## 2026-10-22 PR210 finite OMEN source/check/build ingress — authored, UNRUN
 
 - Same unfinished54b35 scope: the original required check/package job names now

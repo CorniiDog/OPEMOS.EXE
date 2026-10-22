@@ -45,26 +45,37 @@ def source_roles(value, controller=None, candidate=None):
     The trusted Root producer revalidates this against official metadata before
     and after the operation. Consumers may not infer A from B or vice versa.
     """
-    require(type(value) is dict and set(value) == {
+    fields={
         "repository", "controller_commit", "candidate_commit", "pull_request",
-        "base_commit", "repository_id", "head_repository_id"}, "Exact A/B source role fields")
+        "base_commit", "repository_id", "head_repository_id"}
+    branch=type(value)is dict and value.get('source_kind')=='branch'
+    require(type(value)is dict and set(value)==(fields|{'source_kind','source_ref'}if branch else fields),
+            "Exact discriminated A/B source role fields")
     require(value["repository"] == REPOSITORY and
             all(type(value[k]) is str and COMMIT.fullmatch(value[k]) for k in
                 ("controller_commit", "candidate_commit", "base_commit")) and
             value["controller_commit"] == value["base_commit"] and
-            value["controller_commit"] != value["candidate_commit"], "Distinct controller A and PR candidate B")
-    require(type(value["pull_request"]) is int and 0 < value["pull_request"] < 2**31 and
+            (branch or value["controller_commit"] != value["candidate_commit"]), "Distinct controller A and PR candidate B roles")
+    require(type(value["pull_request"]) is int and
+            (value['pull_request']==0 if branch else 0<value['pull_request']<2**31)and
             all(type(value[k]) is int and value[k] > 0 for k in ("repository_id", "head_repository_id")) and
             value["repository_id"] == value["head_repository_id"], "Same-repository exact candidate identity")
+    if branch:
+        ref=value['source_ref']
+        require(type(ref)is str and re.fullmatch(r'refs/heads/[A-Za-z0-9_][A-Za-z0-9_./-]{0,239}',ref)and
+                ref!='refs/heads/main'and not any(x in ref for x in('..','//','/.','.lock'))and
+                not ref.endswith(('/','.')),'exact finite ordinary branch ref')
     require((controller is None or value["controller_commit"] == controller) and
             (candidate is None or value["candidate_commit"] == candidate), "A/B role source mismatch")
     return value
 
 
 def descriptor(value, source=None, roles=None):
-    require(isinstance(value, dict) and set(value) == FIELDS and value["schema"] == 1 and
+    require(isinstance(value, dict) and set(value) in(FIELDS,FIELDS|{'workflow_commit'})and value["schema"] == 1 and
             value["repository"] == REPOSITORY and COMMIT.fullmatch(value["source_commit"]) and
             (source is None or source == value["source_commit"]), "Exact executable producer descriptor/source required")
+    if 'workflow_commit'in value:require(type(value['workflow_commit'])is str and COMMIT.fullmatch(value['workflow_commit']),
+                                        'exact separate workflow definition commit')
     require(value["platform"] in PRODUCERS and value["workflow"] == PRODUCERS[value["platform"]]["workflow"],
             "Exact platform producer workflow")
     if roles is None:
@@ -72,8 +83,12 @@ def descriptor(value, source=None, roles=None):
                 "PR candidate requires separately authenticated controller/candidate role binding")
     else:
         source_roles(roles, candidate=value["source_commit"])
-        require(value["event"] == "pull_request" and value["ref"] ==
-                "refs/pull/" + str(roles["pull_request"]) + "/merge", "Original PR provenance required")
+        if roles.get('source_kind')=='branch':
+            require(value['event']in('push','workflow_dispatch')and value['ref']==roles['source_ref'],
+                    'original branch event/ref required')
+        else:
+            require(value["event"] == "pull_request" and value["ref"] ==
+                    "refs/pull/" + str(roles["pull_request"]) + "/merge", "Original PR provenance required")
     for key in ("producer_run_id", "producer_attempt", "artifact_id"):
         require(isinstance(value[key], str) and NUMBER.fullmatch(value[key]), "Exact producer numeric identity missing")
     for key in ("artifact_archive_sha256", "package_sha256", "executable_sha256"):

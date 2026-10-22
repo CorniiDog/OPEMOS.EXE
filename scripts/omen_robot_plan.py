@@ -28,13 +28,18 @@ def roles(r):
     if value is None:
         need('controller_source_commit'not in r,'controller without candidate role binding')
         return None
-    need(type(value)is dict and set(value)=={'repository','controller_commit','candidate_commit',
-         'pull_request','base_commit','repository_id','head_repository_id'},'finite A/B roles')
+    branch=type(value)is dict and value.get('source_kind')=='branch'
+    fields={'repository','controller_commit','candidate_commit','pull_request','base_commit','repository_id','head_repository_id'}
+    need(type(value)is dict and set(value)==(fields|{'source_kind','source_ref'}if branch else fields),'finite A/B roles')
+    if branch:
+        ref=value['source_ref'];need(type(ref)is str and re.fullmatch(r'refs/heads/[A-Za-z0-9_][A-Za-z0-9_./-]{0,239}',ref)and
+            ref!='refs/heads/main'and not any(x in ref for x in('..','//','/.','.lock'))and not ref.endswith(('/','.')),
+            'exact ordinary candidate branch')
     need(value['repository']==REPO and
          all(type(value[k])is str and COMMIT.fullmatch(value[k])for k in('controller_commit','candidate_commit','base_commit'))and
          value['controller_commit']==value['base_commit']==r['controller_source_commit']and
-         value['candidate_commit']==r['source_commit']!=value['controller_commit']and
-         type(value['pull_request'])is int and 0<value['pull_request']<2**31 and
+         value['candidate_commit']==r['source_commit']and(branch or r['source_commit']!=value['controller_commit'])and
+         type(value['pull_request'])is int and(value['pull_request']==0 if branch else 0<value['pull_request']<2**31)and
          all(type(value[k])is int and value[k]>0 for k in('repository_id','head_repository_id'))and
          value['repository_id']==value['head_repository_id'],'exact same-repository A/B identity')
     need(r['kind']=='artifact','candidate only for exact admitted artifact')

@@ -1,117 +1,180 @@
 name: 03 macOS Executable
-
+# OMEN_GUEST_SOURCE_WORKLOAD_V1: hosted jobs orchestrate; compilation stays in OMEN.
 on:
   push:
-    branches: [main]
+  pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
+  actions: read
 concurrency:
   group: macos-arm64-${{ github.ref }}
   cancel-in-progress: false
-
 jobs:
-  native-app:
-    # Hosted metadata only. Actual macOS ARM execution requires an admitted
-    # macOS guest on physical OMEN; never substitute a GitHub-hosted Mac.
+  source-route:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    permissions:
-      contents: read
-      actions: read
-    env:
-      OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-      OPEMOS_CORE_EXPECTED_COMMIT: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00
-      OPEMOS_CORE_CONTRACT_ROOT: ${{ github.workspace }}/opemos-core-contracts
-      OPEMOS_MACOS_FULLSTACK: '1'
-      CARGO_BUILD_JOBS: 1
-      RUST_TEST_THREADS: 1
+    timeout-minutes: 3
+    outputs:
+      ready: ${{ steps.route.outputs.ready }}
+      runner: ${{ steps.route.outputs.runner }}
     steps:
-      - name: Fail visibly until the required OMEN macOS route is admitted
-        shell: bash
-        run: |
-          python3 - <<'PYOMEN'
-          import html
-          import json
-          import os
-          from pathlib import Path
-          import xml.etree.ElementTree as ET
-          reason = 'OMEN macOS ARM guest/SDK/graphical route is not admitted; hosted macOS execution is forbidden. No app, VM, image or USB test was run.'
-          out = Path('build/macos-arm64-evidence')
-          out.mkdir(parents=True, exist_ok=False)
-          receipt = {'status': 'unavailable', 'reason': reason, 'execution_location': 'required: macOS guest on physical OMEN',
-                     'source': os.environ['OPEMOS_EXE_COMMIT'], 'run_id': os.environ['GITHUB_RUN_ID'],
-                     'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'diagnostic_only': True,
-                     'macos_executed': False, 'VMStarted': False, 'productAcceptance': False}
-          (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
-          (out / 'route-error.log').write_text(reason + '\n')
-          robot = ET.Element('robot', generator='OPEMOS unavailable-route diagnostic; NOT a VM test', schemaversion='5')
-          suite = ET.SubElement(robot, 'suite', id='s1', name='OMEN macOS route unavailable')
-          case = ET.SubElement(suite, 'test', id='s1-t1', name='Required native execution unavailable')
-          ET.SubElement(case, 'status', status='FAIL').text = reason
-          ET.SubElement(suite, 'status', status='FAIL').text = reason
-          ET.ElementTree(robot).write(out / 'output.xml', encoding='utf-8', xml_declaration=True)
-          junit = ET.Element('testsuite', name='OMEN macOS route unavailable', tests='1', failures='1', errors='0', skipped='0')
-          ET.SubElement(ET.SubElement(junit, 'testcase', name='Required native execution unavailable'), 'failure', message=reason).text = reason
-          ET.ElementTree(junit).write(out / 'xunit.xml', encoding='utf-8', xml_declaration=True)
-          for name in ('report.html', 'log.html'):
-              (out / name).write_text('<!doctype html><title>FAILED: OMEN macOS unavailable</title><h1>Unavailable route, not VM execution</h1><pre>' + html.escape(reason) + '</pre>')
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as report:
-              report.write('## FAILED: macOS must execute on OMEN\n\n' + reason + '\n\nFailure reports are route diagnostics, not actual Robot/VM acceptance. Screenshots unavailable: no graphical guest ran.\n')
-          print('::error title=OMEN macOS unavailable::' + reason)
-          raise SystemExit(1)
-          PYOMEN
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: ${{ env.OPEMOS_EXE_COMMIT }}
-          persist-credentials: false
-      - name: Verify the complete macOS producer is present
-        run: |
-          python3 - <<'PYMAC'
-          import json
-          from pathlib import Path
-          required = ['scripts/check_macos_arm64_ci.py', 'tests/macos-ui-smoke.swift']
-          missing = [name for name in required if not Path(name).is_file()]
-          result = {'platform': 'macos', 'source': '${{ env.OPEMOS_EXE_COMMIT }}',
-                    'producer_ready': not missing, 'missing_files': missing,
-                    'full_stack_passed': False}
-          out = Path('build/macos-arm64-evidence')
-          out.mkdir(parents=True, exist_ok=True)
-          (out / 'producer-readiness.json').write_text(json.dumps(result, indent=2) + '\n')
-          if missing:
-              raise SystemExit('macOS producer is not yet integrated on this source: ' + ', '.join(missing))
-          PYMAC
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          repository: CorniiDog/open-gpu-kernel-modules-steamos-support
-          ref: 01407aa6174b80e92cb7f3dcb534ade5cdd7bf00
-          path: opemos-core-contracts
-          fetch-depth: 186
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 22.23.2
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
-        with:
-          toolchain: 1.98.1
-          targets: aarch64-apple-darwin
-          components: clippy, rustfmt
-      - name: Read exact previously measured runtime and companion
+      - id: route
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh run download 39294846215 --repo CorniiDog/OPEMOS.EXE --name macos-arm64-7b8bf0eea38d7ab548bf4746707d8ab38ade05bb-1 --dir "$RUNNER_TEMP/retained-7b8"
-      - name: Native build and actual graphical transaction
-        env:
-          OPEMOS_RETAINED_MAC_APP_ARCHIVE: ${{ runner.temp }}/retained-7b8/SteamOS-NVIDIA-Builder-arm64.app.zip
-        run: python3 scripts/check_macos_arm64_ci.py
-      - name: Preserve exact app, failures and GUI evidence
+          GITHUB_TOKEN: ${{ github.token }}
+          OPEMOS_OMEN_ROBOT_RUNNER_STATE: ${{ vars.OPEMOS_OMEN_ROBOT_RUNNER_STATE }}
+        run: |
+          python3 - <<'PY'
+          import json,os,time,urllib.request,pathlib
+          ready=False;reason='Actual current OMEN route unavailable'
+          try:
+              assert os.environ['GITHUB_REPOSITORY']=='CorniiDog/OPEMOS.EXE'
+              headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json'}
+              url='https://api.github.com/repos/CorniiDog/OPEMOS.EXE/branches/main'
+              class NoRedirect(urllib.request.HTTPRedirectHandler):
+                  def redirect_request(self,*args):return None
+              with urllib.request.build_opener(NoRedirect).open(urllib.request.Request(url,headers=headers),timeout=20)as r:
+                  raw=r.read(1048577);assert len(raw)<=1048576;main=json.loads(raw)
+              state=json.loads(os.environ['OPEMOS_OMEN_ROBOT_RUNNER_STATE'])
+              assert main['protected']is True and state['repository']=='CorniiDog/OPEMOS.EXE'and state['source_commit']==main['commit']['sha']
+              assert state['version']==1 and type(state['checked_at'])is int and state['expires_at']==state['checked_at']+180
+              assert state['checked_at']<=time.time()<state['expires_at']and state['ready']is True
+              assert state['labels']==['self-hosted','Linux','X64','opemos-omen-robot']and state['runner_name']=='opemos-omen-robot'
+              assert type(state['runner_id'])is int and state['runner_id']>0
+              ready=True;reason='Online route only; no guest/source/compiler/GUI result'
+          except Exception as e:reason+=': '+type(e).__name__
+          pathlib.Path('source-route').mkdir()
+          pathlib.Path('source-route/route.json').write_text(json.dumps({'ready':ready,'reason':reason,'actualGuestExecuted':False,'compilerPassed':False}))
+          with open(os.environ['GITHUB_OUTPUT'],'a')as f:
+              f.write('ready='+str(ready).lower()+'\nrunner='+json.dumps(['self-hosted','Linux','X64','opemos-omen-robot']if ready else['ubuntu-24.04'])+'\n')
+          if not ready:print('::error::'+reason)
+          PY
+      - name: Retain exact route-only diagnostic
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: macos-arm64-${{ env.OPEMOS_EXE_COMMIT }}-${{ github.run_attempt }}
-          path: build/macos-arm64-evidence
-          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+          name: source-route-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-route/
           if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  native-app:
+    if: always()
+    needs: source-route
+    runs-on: ${{ fromJSON(needs.source-route.outputs.runner || '["ubuntu-24.04"]') }}
+    timeout-minutes: 95
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Fail visibly when the actual OMEN route is unavailable
+        if: needs.source-route.outputs.ready != 'true'
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          reason='Actual admitted OMEN source route unavailable; no guest test or compiler ran'
+          (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':reason,'actualGuestExecuted':False,'compilerPassed':False}))
+          suite=E.Element('testsuite',name='Unavailable actual source workload',tests='1',failures='1',skipped='0')
+          E.SubElement(E.SubElement(suite,'testcase',name='Actual OMEN source workload'),'failure').text=reason
+          E.ElementTree(suite).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+          (p/'report.html').write_text('<html><body><h1>FAILED / unavailable</h1><p>'+reason+'</p></body></html>')
+          print('::error::'+reason)
+          raise SystemExit(1)
+          PY
+      # Root job-start guard must verify this entire workflow blob against its
+      # adopted template before any step; no candidate checkout is permitted.
+      - name: Bind existing ephemeral token to the fixed source-only scope
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/timeout --signal=TERM --kill-after=5s 45s /usr/bin/python3 -I -B /var/lib/opemos-robot-control-r1/guard/job_guard.py --bind-job-token
+      - name: Wait for actual admitted OMEN guest native-app
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/python3 -E -s -B /var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py run-required --workload macos-build --directory source-results
+      - name: Upload guest-produced immutable package
+        id: executable
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-arm64-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: build/macos-arm64-evidence
+          if-no-files-found: error
+          include-hidden-files: true
           compression-level: 0
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+      - name: Bind exact executable and package to this producer artifact
+        env:
+          PRODUCER_ARTIFACT_ID: ${{ steps.executable.outputs.artifact-id }}
+          PRODUCER_ARTIFACT_SHA256: ${{ steps.executable.outputs.artifact-digest }}
+        run: >-
+          /usr/bin/python3 -E -s -B /var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py record
+          --platform macos
+          --artifact-id "$PRODUCER_ARTIFACT_ID"
+          --artifact-sha "$PRODUCER_ARTIFACT_SHA256"
+          --artifact-name "macos-arm64-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}"
+          --output build/executable-producer
+      - name: Retain small producer identity for separate SteamOS acceptance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: executable-producer-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/executable-producer/executable-producer.json
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+      - name: Make missing actual source proof explicit
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          if not (p/'source-proof.json').exists():
+              if not (p/'source-failure.json').exists():
+                  (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':'Fixed A guard/client or actual guest result unavailable; inspect retained job logs','compilerPassed':False}))
+              if not (p/'xunit.xml').exists():
+                  s=E.Element('testsuite',name='Missing actual OMEN source proof',tests='1',failures='1',skipped='0')
+                  E.SubElement(E.SubElement(s,'testcase',name='Actual source workload'),'failure').text='No accepted actual guest/compiler result'
+                  E.ElementTree(s).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+              (p/'report.html').write_text('<html><body><h1>FAILED / no actual source proof</h1></body></html>')
+          PY
+      - name: Always retain actual source results or precise failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-native-app-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  omen-producer-handoff:
+    name: Producer handoff metadata only (macos; actual OMEN result is separate)
+    needs: native-app
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Record exact producer completion without waiting on its workflow_run
+        env:
+          NATIVE_OUTCOME: ${{ needs.native-app.result }}
+        run: |
+          python3 - <<'PY'
+          import os,json,pathlib
+          p=pathlib.Path('required-omen-results');p.mkdir()
+          value={'kind':'OMEN_PRODUCER_HANDOFF_V1','platform':'macos',
+                 'repository':os.environ['GITHUB_REPOSITORY'],'producer_run':os.environ['GITHUB_RUN_ID'],
+                 'producer_attempt':os.environ['GITHUB_RUN_ATTEMPT'],'workflow_sha':os.environ['GITHUB_SHA'],
+                 'original_event':os.environ['GITHUB_EVENT_NAME'],'original_ref':os.environ['GITHUB_REF'],
+                 'native_outcome':os.environ['NATIVE_OUTCOME'],'status':'pending-reviewed-controller',
+                 'actualGUIAccepted':False,'actualVMResult':None,
+                 'completionProtocol':'Producer completes; separate trusted workflow_run verifies exact artifacts and actual OMEN result. Never wait here.'}
+          if value['native_outcome']!='success':value['status']='failed-producer'
+          (p/'producer-handoff.json').write_text(json.dumps(value,indent=2)+'\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as f:
+              f.write('Native source/package result only. Actual OMEN GUI/image/USB/SteamOS acceptance remains pending the independently correlated 04 workflow.\n')
+          raise SystemExit(0 if value['native_outcome']=='success'else 1)
+          PY
+      - name: Retain exact handoff; not an acceptance receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: required-omen-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: required-omen-results/
+          if-no-files-found: error
+          retention-days: ${{ github.ref == 'refs/heads/main' && 90 || 1 }}

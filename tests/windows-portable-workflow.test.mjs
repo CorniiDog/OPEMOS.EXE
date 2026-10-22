@@ -21,7 +21,7 @@ test("active Windows producer rejects hosted compiler and untrusted write-token 
 });
 
 function injectUntrustedWriteToken(text) {
-  const changed = text.replace(/  omen-required-untrusted:\r?\n/, "  omen-required-untrusted:\n    permissions:\n      actions: write\n");
+  const changed = text.replace(/  (omen-required-untrusted|omen-producer-handoff):\r?\n/, (_, name) => `  ${name}:\n    permissions:\n      actions: write\n`);
   assert.notEqual(changed, text, "untrusted write-token fault must actually be injected");
   return changed;
 }
