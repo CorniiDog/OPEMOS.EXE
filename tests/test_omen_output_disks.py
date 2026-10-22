@@ -50,6 +50,9 @@ class OutputDisks(unittest.TestCase):
         self.assertEqual(len(installed.findall('./devices/disk')), 1)
         self.assertEqual(installed.find('./devices/disk/source').get('file'), str(self.target))
         self.assertEqual(installed.find('./metadata/binding').text, 'preserved')
+        self.assertEqual(installed.find('./devices/serial').get('type'), 'pty')
+        self.assertEqual(installed.find('./devices/console').get('type'), 'pty')
+        self.assertFalse(installed.findall('./devices/serial/source'))
 
     def test_media_never_target_and_capacity_not_label(self):
         for changes in ({'path': str(self.media), 'identity': self.mp['identity']},

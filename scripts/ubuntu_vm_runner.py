@@ -116,7 +116,10 @@ def create_output_install_target(directory, name, capacity, dependencies, reserv
                 output_disk_identity(info) != output_disk_identity(os.stat(name, dir_fd=dfd, follow_symlinks=False))):
             raise ValueError('target allocation or named custody differs')
         after = output_storage_ledger([*dependencies, str(root / name)], reserved_bytes)
-        return {'path': str(root / name), 'format': 'raw', 'backingChain': [],
+        return {'kind': 'EXE_FRESH_OUTPUT_RAW_TARGET_V1',
+                'creatorPID': os.getpid(), 'creatorUID': os.getuid(),
+                'bootID': Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+                'path': str(root / name), 'format': 'raw', 'backingChain': [],
                 'capacityBytes': capacity, 'identity': output_disk_identity(info),
                 'allocatedBytes': info.st_blocks * 512,
                 'layoutMinimumBytes': OUTPUT_INSTALL_MINIMUM_BYTES,
@@ -176,6 +179,16 @@ def output_install_disks_xml(existing_xml, media, target, installation):
             disk.find('driver') is None or disk.find('driver').get('type') != 'raw'):
         raise ValueError('historical raw constructor shape required')
     devices.remove(disk)
+    # The new phase producer reads the managed console through a bounded
+    # libvirt stream. Do not leave an unbounded QEMU-written host serial file
+    # outside the ordinary owned-child output caps. The historical empty
+    # serial journal slot remains available for exact ACL-stage compatibility.
+    for serial in devices.findall('serial') + devices.findall('console'):
+        devices.remove(serial)
+    serial = ET.SubElement(devices, 'serial', type='pty')
+    ET.SubElement(serial, 'target', type='isa-serial', port='0')
+    console = ET.SubElement(devices, 'console', type='pty')
+    ET.SubElement(console, 'target', type='serial', port='0')
     for boot in domain.findall('./os/boot'):
         domain.find('os').remove(boot)
     if installation:
@@ -194,7 +207,8 @@ def output_install_disks_xml(existing_xml, media, target, installation):
     return ET.tostring(domain, encoding='unicode') + '\n'
 
 
-def observe_output_disk_fds(pid, expected_start, expected_uid, expected_cgroup, media, target, installation):
+def observe_output_disk_fds(pid, expected_start, expected_uid, expected_cgroup, media, target, installation,
+                            writable_paths=()):
     """Native same-leader FD flags; XML readonly alone is not OS proof.
 
     Caller first authenticates the current libvirt domain/queue/leader. Missing
@@ -211,6 +225,15 @@ def observe_output_disk_fds(pid, expected_start, expected_uid, expected_cgroup, 
         if (root / 'cgroup').read_text().strip() != '0::' + expected_cgroup:
             raise ValueError('domain outside exact current assigned scope')
     epoch(); rows = {'media': [], 'target': []}
+    allowed_writable = {(target['identity']['st_dev'], target['identity']['st_ino'])}
+    for value in writable_paths:
+        path = Path(value)
+        if not path.is_absolute() or path.resolve() != path:
+            raise ValueError('exact admitted mutable firmware/framework path required')
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ValueError('admitted mutable dependency must be an exclusive regular file')
+        allowed_writable.add((info.st_dev, info.st_ino))
     # Keep the enumeration directory itself held. In self-inspection, a closed
     # scandir FD would otherwise be listed and then disappear before inspection.
     dfd = os.open(root / 'fd', os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
@@ -222,13 +245,17 @@ def observe_output_disk_fds(pid, expected_start, expected_uid, expected_cgroup, 
             descriptor = root / 'fd' / name
             try:
                 info = descriptor.stat()
+                flags = [line.split()[1] for line in (root / 'fdinfo' / name).read_text().splitlines()
+                         if line.startswith('flags:')]
+                if len(flags) != 1:
+                    raise ValueError('missing actual FD flags')
+                access = int(flags[0], 8) & os.O_ACCMODE
+                if (stat.S_ISREG(info.st_mode) and access != os.O_RDONLY and
+                        (info.st_dev, info.st_ino) not in allowed_writable):
+                    raise ValueError('unadmitted writable regular descriptor: fd=' + name +
+                                     ' dev=' + str(info.st_dev) + ' ino=' + str(info.st_ino))
                 for role, pin in (('media', media), ('target', target)):
                     if (info.st_dev, info.st_ino) == (pin['identity']['st_dev'], pin['identity']['st_ino']):
-                        flags = [line.split()[1] for line in (root / 'fdinfo' / name).read_text().splitlines()
-                                 if line.startswith('flags:')]
-                        if len(flags) != 1:
-                            raise ValueError('missing actual FD flags')
-                        access = int(flags[0], 8) & os.O_ACCMODE
                         if access != (os.O_RDONLY if role == 'media' else os.O_RDWR):
                             raise ValueError('wrong actual disk descriptor access')
                         if (descriptor.stat().st_dev, descriptor.stat().st_ino) != (info.st_dev, info.st_ino):

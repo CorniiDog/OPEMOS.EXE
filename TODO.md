@@ -2,6 +2,21 @@
 
 ## 2026-10-22 H88 complete output consumer continuation — IN PROGRESS
 
+- Root branch-only CI release consumed: draft PR210, initial exact head
+  `9ae492dc866f165463f095c14062ac95f92057d6`; all11 ordinary source/package
+  checks passed. Expected non-Main Windows/Ubuntu OMEN diagnostics failed and
+  runtime gates skipped; neither is acceptance. No Main/runtime release.
+- New owning host lifecycle source `scripts/omen_output_lifecycle.py` now
+  implements separate Root-only source bootstrap/access preparation, exact new
+  four-boot scope, current source/canonical/resource/owner preflight, held
+  immutable medium plus mutable target, six ACL journals, real UID DAC probe,
+  per-boot actual FD flags, actual domain/GPU closure, distinct post-shutdown
+  readback and finalizers. Old R69 grants are rejected. Managed bounded console
+  replaces the unlimited host serial file. Source/native interfaces and their
+  still-unqualified ordinary SteamOS phase producers are explicit in
+  `docs/omen-output-lifecycle-contract.json`; no declaration becomes a real
+  GUI/guest agent or VM pass. Remaining same-assignment phase bridge integration
+  and native qualification are not silently assigned to Core or busy Windows.
 - Core107 F2 size mismatch corrected in the source: protected Root publication
   now pins a separate original raw manifest file of 1..1,048,576 bytes. Inline
   base64 is rejected, avoiding expansion beyond the 1 MiB Root receipt cap.
