@@ -1,0 +1,55 @@
+{
+  "kind": "SOURCE_CONTRACT_REVIEW_ONLY_STOPPED_WINDOWS_IMAGE_RANGE",
+  "runtimeAuthorized": false,
+  "scope": "One existing stopped, complete GUI-written file-backed virtual USB, prefix offset0; not arbitrary offset access. Full-file branch unchanged. Source module membership unchanged.",
+  "artifact": {
+    "existingKeys": [
+      "path (actual whole backing path)",
+      "size (image prefix bytes, NOT st_size)",
+      "sha256 (image prefix SHA, NOT whole backing SHA)",
+      "kind=output-image"
+    ],
+    "added": "imageArtifactRange",
+    "rangeKeys": [
+      "backingFile={path,size,sha256,identity full9,allocatedBytes} (whole backing identity)",
+      "offset=0",
+      "bytes=image size",
+      "sha256=image SHA",
+      "tailBytes=whole size-image size",
+      "root_final={path,size,sha256,identity}"
+    ]
+  },
+  "RootProducerRequiredDelta": {
+    "owner": "Root joins Windows producer at a safe checkpoint, not this source task",
+    "reuse": "Keep current product_root_result.accept_final actual imageArtifactRange and complete readback/noholder/source/canonical/native proof. Do not synthesize a passed final result.",
+    "projectionKind": "ROOT_VERIFIED_STOPPED_WINDOWS_IMAGE_RANGE_V1",
+    "identity": "Exact source_commit/run_id/attempt/operation_nonce/executable descriptor/consumer_job_ids build+heal from current admitted registered operation.",
+    "requiredFields": [
+      "imageArtifactRange exact backingFile/offset/bytes/sha256/tailBytes (no circular root_final pin)",
+      "normalWindowsImageAndVirtualUSB=true only after actual complete final validator",
+      "stoppedFullReadback=true and tailZero=true only after whole backing EOF/wholeSHA/prefixSHA/fsync/noholder/canonical/native closure",
+      "retainedForConsumerJobIds exact current build+heal ids",
+      "completedImagePreserved=true under actual active consumer retention",
+      "originalGuestManifestSHA256 actual original guest raw-file pin",
+      "originalManifest exact host files entry including path,size,sha256,identity,kind=output-manifest and uid if Root-owned",
+      "originalManifestRawBase64 exact original raw guest bytes <=65536 decoded bytes"
+    ],
+    "rawManifest": "Current guest parsed object is insufficient. Existing bounded raw transfer must read original adjacent manifest under actual guest SHA/full9, return raw bytes and pin, then publish exact bytes at admitted evidence location. Never assign original SHA to reserialized JSON. Public consumer hashes raw base64 and exact actual host file and compares bytes before parsing.",
+    "RootPublication": "Real /run tmpfs/root nonwritable full ancestry, root:root0444 regular single-link leaf with exact full9/size/SHA. Local user file or pretend UID/receipt cannot supply authority. Re-read after complete backing read.",
+    "notImplementedByThisPR": "Root/Windows raw-byte producer transfer and protected final projection, fresh runtime/admission/retention, canonical output read-only medium+separate writable installed-target/COW constructor (H88 J2), and actual disks/boots/NVIDIA/Robot remain owning dependencies; no installed source or busy Windows edits."
+  },
+  "joins": {
+    "artifact_read": "Current operation context mandatory for range. Reads actual whole backing once to EOF with exact whole size/full9/allocated before+after, both image and whole SHA, all tail bytes zero; returns typed range descriptor identity. Reject target copy without separate explicit full-file export admission.",
+    "validate_executable_output": "Requires originalManifest identical files pin, actual full9 host raw bytes identical to original transferred bytes, plus all existing parsed manifest/inspection/USB checks unchanged.",
+    "original_operand": "For typed range heal input, retain whole backing as original_source full9/whole size/SHA; input_sha256 remains prefix image SHA. No invented small st_size or original pin.",
+    "dispatch": "Only an exact registered executable_acceptance build/heal operand may supply range context. No arbitrary inventory range broker.",
+    "retention": "Validate range each use. No third large staging inode; existing cached whole image, if present, independently verified. Root must retain real backing for all current consumer jobs and completed output. This is not an implicit lease/cleanup waiver.",
+    "output_identity": "Same existing digest formula: {imaging_host_id,descriptor_identity}; range descriptor contains representation,backing_identity,backing_sha256,offset,size,sha256,root_final_sha256. Full-file descriptor identity unchanged. Installed receipt/target-generation and three real boot identities remain required."
+  },
+  "requiredVerification": [
+    "Required source CI: full-file positive/retained copy, prefix-as-whole refusal, no context/no implicit copy/nonzero offset/type/geometry/real untrusted authority negatives, raw manifest reserialization refusal, exact registered operand contexts.",
+    "Admitted OMEN VM actual UID1000 reader plus independent real Root publication: positive complete actual small prefix+zero-tail read, same fullfile comparison, wrong prefixSHA/wholeSHA/nonzero tail/full9/mode/UID/link/path/allocated-size/raced replacement/manifest raw/current source/run/attempt/nonce/producer/consumer ids/Root receipt changes/FD close faults. No method-under-test override or fake Root adapter.",
+    "One actual full normal producer->raw manifest transfer->protected Root final+stopped readback->Main artifact/collector->read-only output media+separate writable installed target->same target three boots/NVIDIA/Robot/GHA transaction only after exact counterpart/source gates and Root safe checkpoint. No native success from source checks."
+  ],
+  "budget": "H88 full-copy fallback exceeds80GB before output disks. No preserving cache-release route proven. Range avoids implicit third full image, but does NOT prove80/79GB Windows fit or60GB output target/COW fit. All outputs, unknowns and original data retained; no cleanup effect."
+}

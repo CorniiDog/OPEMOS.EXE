@@ -1,5 +1,11 @@
 # OPEMOS.EXE — Product Checklist
 
+## 2026-10-22 H88 stopped-USB image/raw-manifest consumer source checkpoint
+
+- Isolated from Main b4ae93065ca930b32010f94f24b109d4b7bccbae: preserve the existing full-file reader and add an exact current-operation Root-attested offset-zero stopped-USB prefix reader. Whole backing/prefix SHA, zero tail, EOF, full9 and allocated-byte custody remain distinct; no implicit third image copy.
+- Original manifest bytes must traverse the producer unchanged and match the actual pinned host file before parsing. Complete required producer projection and remaining Root/Windows/output-VM dependencies are in docs/omen-image-range-contract.json. No busy Windows154 inputs or installed sources changed.
+- Source-only, unmerged and not runtime-admitted. Project tests/native qualification remain UNRUN until normal required source CI/admitted OMEN VM. Exact counterpart approval and Root safe cut remain required; no VM/image/NVIDIA acceptance or cleanup authority follows from this checkpoint.
+
 ## PR170 post-PR181 reconciliation — 2026-10-22
 
 - [ ] Reconcile against protected Main `e452d5e7`, the exact reviewed PR181
