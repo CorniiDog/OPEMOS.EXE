@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
     inputs:
       producer-metadata-diagnostic:
-    needs: source-route
         type: boolean
         default: false
 permissions:

@@ -2,6 +2,12 @@
 
 ## 2026-10-22 PR210 non-main/all-three correction — authored, UNRUN
 
+- Final whole-workflow static review reproduced inherited Windows YAML
+  ScannerError at line10: job-level needs was misplaced inside a dispatch
+  input. Removed that stray field; the actual diagnostic job keeps its needs.
+  AST/JSON inspection had missed YAML entirely. Original5ea/db736f84 evidence
+  remains immutable; full workflow YAML parsing is now a source inspection gate,
+  never a project-test/compiler/VM pass.
 - Root ab22afe4 / Core ab7d3980 / Mac ce9c9176 source recovery: original Main
   invariants remain; exact branch refs with PR0 are now distinct from real open
   PR identities. Producer event/ref/workflow definition, candidate head/tree,
