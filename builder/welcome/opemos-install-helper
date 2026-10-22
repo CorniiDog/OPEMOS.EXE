@@ -43,7 +43,7 @@ require_inventory_tools() {
 require_install_tools() {
   local tool
   require_inventory_tools
-  for tool in btrfs cut flock grep install mktemp mount mountpoint sort steamos-chroot sync umount; do
+  for tool in btrfs cut flock grep install mktemp mount mountpoint sort steamos-chroot sync umount stat ln chown chmod; do
     need "$tool"
   done
 }
@@ -299,7 +299,7 @@ restore_maintainer_home() {
     die "installed SteamOS home partition is missing or duplicated"
   [[ -d "$MAINTAINER_ROOT" && ! -L "$MAINTAINER_ROOT" ]] ||
     die "the pinned Maintainer home payload is unavailable"
-  for source in opemos-rollback-last-update open-opemos-welcome Open-OPEMOS.desktop opemos.svg; do
+  for source in opemos-rollback-last-update open-opemos-welcome Open-OPEMOS.desktop opemos.svg opemos-output-observer.service; do
     [[ -f "$MAINTAINER_ROOT/$source" && ! -L "$MAINTAINER_ROOT/$source" ]] ||
       die "the pinned Maintainer home payload is incomplete"
   done
@@ -330,6 +330,9 @@ restore_maintainer_home() {
       "$home_mount/deck/Desktop" \
       "$home_mount/deck/.config" \
       "$home_mount/deck/.config/autostart" \
+      "$home_mount/deck/.config/systemd" \
+      "$home_mount/deck/.config/systemd/user" \
+      "$home_mount/deck/.config/systemd/user/default.target.wants" \
       "$home_mount/deck/.local" \
       "$home_mount/deck/.local/share" \
       "$home_mount/deck/.local/share/icons" \
@@ -344,6 +347,14 @@ restore_maintainer_home() {
     install -o "$deck_uid" -g "$deck_gid" -m 0755 "$MAINTAINER_ROOT/Open-OPEMOS.desktop" "$home_mount/deck/Desktop/Open-OPEMOS.desktop"
     install -o "$deck_uid" -g "$deck_gid" -m 0644 "$MAINTAINER_ROOT/Open-OPEMOS.desktop" "$home_mount/deck/.config/autostart/Open-OPEMOS.desktop"
     install -o "$deck_uid" -g "$deck_gid" -m 0644 "$MAINTAINER_ROOT/opemos.svg" "$home_mount/deck/.local/share/icons/hicolor/scalable/apps/opemos.svg"
+    observer_enable=$home_mount/deck/.config/systemd/user/default.target.wants/opemos-output-observer.service
+    if [[ -e "$observer_enable" || -L "$observer_enable" ]]; then
+      [[ -L "$observer_enable" && "$(readlink "$observer_enable")" == /usr/lib/systemd/user/opemos-output-observer.service ]] ||
+        die "refusing an unknown existing observer enable entry"
+    else
+      ln -s /usr/lib/systemd/user/opemos-output-observer.service "$observer_enable"
+    fi
+    chown -h "$deck_uid:$deck_gid" "$observer_enable"
     for source in \
       opemos-rollback-last-update \
       open-opemos-welcome \
@@ -439,6 +450,49 @@ install_guardian_slot() {
       --nvidia "$nvidia_version" \
       --interstitial-binary "$INTERSTITIAL_BINARY" \
       --interstitial-sha256 "$interstitial_sha256"
+    # Normal installed desktop boot must launch the observer independently of
+    # opening the installation-media window. This unit is inert without the
+    # exact VM firmware operand; no daemon, network or credential is installed.
+    require_real_directory_or_absent "$root_mount/usr/lib/systemd"
+    require_real_directory_or_absent "$root_mount/usr/lib/systemd/user"
+    install -d -o root -g root -m 0755 "$root_mount/usr/lib/systemd/user"
+    require_real_directory_or_absent "$root_mount/usr/lib/opemos-install-media"
+    install -d -o root -g root -m 0755 "$root_mount/usr/lib/opemos-install-media"
+    for observer_source in welcome_server.py opemos-install-helper; do
+      observer_input=/usr/lib/opemos-install-media/$observer_source
+      [[ -f "$observer_input" && ! -L "$observer_input" && "$(stat -c %u "$observer_input")" == 0 ]]
+      observer_target=$root_mount/usr/lib/opemos-install-media/$observer_source
+      [[ ! -L "$observer_target" ]]
+      if [[ -e "$observer_target" ]]; then
+        [[ -f "$observer_target" && "$(sha256sum "$observer_target" | awk '{print $1}')" == "$(sha256sum "$observer_input" | awk '{print $1}')" ]] ||
+          die "unknown different installed observer source: $observer_source"
+      else
+        install -o root -g root -m 0755 "$observer_input" "$observer_target"
+      fi
+    done
+    observer_unit=$root_mount/usr/lib/systemd/user/opemos-output-observer.service
+    [[ ! -L "$observer_unit" ]]
+    if [[ -e "$observer_unit" ]]; then
+      [[ -f "$observer_unit" && "$(sha256sum "$observer_unit" | awk '{print $1}')" == "$(sha256sum "$MAINTAINER_ROOT/opemos-output-observer.service" | awk '{print $1}')" ]]
+    else
+      install -o root -g root -m 0644 "$MAINTAINER_ROOT/opemos-output-observer.service" "$observer_unit"
+    fi
+    # Existing named VM observer port only. This grants no sudo, network or
+    # physical device access. Ordinary hosts without this virtio port do not
+    # match it; the user agent additionally requires the exact firmware pin.
+    observer_rule='SUBSYSTEM=="virtio-ports", ATTR{name}=="opemos.robot.observer", OWNER="1000", GROUP="1000", MODE="0600"'
+    require_real_directory_or_absent "$etc_root/udev"
+    require_real_directory_or_absent "$etc_root/udev/rules.d"
+    install -d -o root -g root -m 0755 "$etc_root/udev/rules.d"
+    observer_path=$etc_root/udev/rules.d/99-opemos-robot-observer.rules
+    [[ ! -L "$observer_path" ]]
+    if [[ -e "$observer_path" ]]; then
+      [[ -f "$observer_path" && "$(<"$observer_path")" == "$observer_rule" ]]
+    else
+      ( set -o noclobber; printf '%s\n' "$observer_rule" > "$observer_path" )
+    fi
+    chown root:root "$observer_path"
+    chmod 0644 "$observer_path"
     sync
   ) || {
     rmdir "$root_mount" "$home_mount" "$var_mount" "$workspace" 2>/dev/null || true

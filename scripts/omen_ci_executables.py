@@ -39,13 +39,41 @@ def strict_json(raw):
     return json.loads(raw, object_pairs_hook=unique, parse_constant=lambda x: (_ for _ in ()).throw(ValueError("Nonfinite executable JSON")))
 
 
-def descriptor(value, source=None):
+def source_roles(value, controller=None, candidate=None):
+    """Finite role binding, not PR authentication or runtime authority.
+
+    The trusted Root producer revalidates this against official metadata before
+    and after the operation. Consumers may not infer A from B or vice versa.
+    """
+    require(type(value) is dict and set(value) == {
+        "repository", "controller_commit", "candidate_commit", "pull_request",
+        "base_commit", "repository_id", "head_repository_id"}, "Exact A/B source role fields")
+    require(value["repository"] == REPOSITORY and
+            all(type(value[k]) is str and COMMIT.fullmatch(value[k]) for k in
+                ("controller_commit", "candidate_commit", "base_commit")) and
+            value["controller_commit"] == value["base_commit"] and
+            value["controller_commit"] != value["candidate_commit"], "Distinct controller A and PR candidate B")
+    require(type(value["pull_request"]) is int and 0 < value["pull_request"] < 2**31 and
+            all(type(value[k]) is int and value[k] > 0 for k in ("repository_id", "head_repository_id")) and
+            value["repository_id"] == value["head_repository_id"], "Same-repository exact candidate identity")
+    require((controller is None or value["controller_commit"] == controller) and
+            (candidate is None or value["candidate_commit"] == candidate), "A/B role source mismatch")
+    return value
+
+
+def descriptor(value, source=None, roles=None):
     require(isinstance(value, dict) and set(value) == FIELDS and value["schema"] == 1 and
             value["repository"] == REPOSITORY and COMMIT.fullmatch(value["source_commit"]) and
             (source is None or source == value["source_commit"]), "Exact executable producer descriptor/source required")
-    require(value["platform"] in PRODUCERS and value["workflow"] == PRODUCERS[value["platform"]]["workflow"] and
-            value["event"] in ("push", "workflow_dispatch") and value["ref"] == "refs/heads/main",
-            "Only reviewed protected-main executable producer workflows are accepted; PR/fork artifacts refused")
+    require(value["platform"] in PRODUCERS and value["workflow"] == PRODUCERS[value["platform"]]["workflow"],
+            "Exact platform producer workflow")
+    if roles is None:
+        require(value["event"] in ("push", "workflow_dispatch") and value["ref"] == "refs/heads/main",
+                "PR candidate requires separately authenticated controller/candidate role binding")
+    else:
+        source_roles(roles, candidate=value["source_commit"])
+        require(value["event"] == "pull_request" and value["ref"] ==
+                "refs/pull/" + str(roles["pull_request"]) + "/merge", "Original PR provenance required")
     for key in ("producer_run_id", "producer_attempt", "artifact_id"):
         require(isinstance(value[key], str) and NUMBER.fullmatch(value[key]), "Exact producer numeric identity missing")
     for key in ("artifact_archive_sha256", "package_sha256", "executable_sha256"):
@@ -169,10 +197,15 @@ def context(value):
 POINTER_ACTIONS=("chooser-open","chooser-confirm-exact-input","Build","virtualUSB-select-and-review","virtualUSB-Write-confirmation")
 
 
-def pointer_proof_valid(proof,value,row,source,run_id,attempt):
+def pointer_proof_valid(proof,value,row,source,run_id,attempt,roles=None):
     if not isinstance(proof,dict):return False
     expected={"schema":1,"verified":True,"source_commit":source,"run_id":run_id,"attempt":attempt,
         "operation_nonce":row.get("operation_nonce"),"executable":value}
+    if roles is not None:
+        try:source_roles(roles,candidate=source)
+        except (ValueError,KeyError,TypeError):return False
+        expected.update(controller_source_commit=roles['controller_commit'],source_roles=roles)
+    elif 'source_roles' in proof or 'controller_source_commit' in proof:return False
     if not all(proof.get(k)==v for k,v in expected.items())or proof.get("verified")is not True or type(proof.get("schema"))is not int:return False
     if proof.get("proof_sha256")!=digest({k:v for k,v in proof.items()if k!="proof_sha256"}):return False
     if not SHA.fullmatch(proof.get("sender_sha256","")or""):return False

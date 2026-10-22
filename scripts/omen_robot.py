@@ -12,10 +12,10 @@ import time
 
 REPO = 'CorniiDog/OPEMOS.EXE'
 CONFIG = Path.home()/'.config/opemos-ci/robot.json'
-HOOK = '/home/connor/.local/libexec/opemos-robot-job-plan'
+HOOK = '/var/lib/opemos-robot-control-r1/opemos-robot-job-plan'
 FULL9 = ('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
 SHA = re.compile(r'[0-9a-f]{64}\Z')
-MODULE_PINS = {'omen_ci_reader.py': '6b2d97a373001e8835400d5be22cef8c06004dab5c228bc1efbe7078dfe464df', 'omen_ci_executables.py': '435aa0901a39981fc26d2b5a87f283aa918985318fcd28213c86da918c4c5b1f', 'omen_ci_result.py': '5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85', 'omen_ci_stage.py': 'bcc4d369a6a12160c1d45bd01aacccca630d11f275814179ac8498fda4a5a026', 'omen_ci_inventory.py': 'e8873930651d4e1022fd3851b9bc35400ff54310e1d904f5d01c0f7dd903119e'}  # Filled when sealing; all bytes consumed before any operation.
+MODULE_PINS = {'omen_ci_reader.py': '6b2d97a373001e8835400d5be22cef8c06004dab5c228bc1efbe7078dfe464df', 'omen_ci_executables.py': '1497c39307dae3cb1796249d542b03618a1c911893dbbbad8a29ed7d9ffcf9b0', 'omen_ci_result.py': '5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85', 'omen_ci_stage.py': '46cdb4812fabe2ce26d4698c1acc180e30114a48e9b093474181254d95a89fd3', 'omen_ci_inventory.py': 'e8873930651d4e1022fd3851b9bc35400ff54310e1d904f5d01c0f7dd903119e', 'omen_output_lifecycle.py': '1cc1763bce26f8c4bdc21bfd90e615e4911ce0f573329d2a3f3c4df32f89edaf'}  # All bytes consumed before any operation; a pin is not runtime authority.
 
 
 def require(value, message):
@@ -72,6 +72,26 @@ def identity(env=None):
     require(all(re.fullmatch(r'[1-9][0-9]{0,19}',result[k])for k in ('run_id','attempt')),'Exact consumer run/attempt missing')
     require(env.get('GITHUB_REPOSITORY')==REPO,'Canonical repository required')
     result['repository']=REPO
+    if 'OPEMOS_CONTROLLER_SHA' in env:
+        controller=env['OPEMOS_CONTROLLER_SHA']
+        require(re.fullmatch(r'[0-9a-f]{40}',controller)and controller!=result['source_commit'],
+                'Distinct exact controller A required for candidate guest B')
+        roles=strict(env.get('OPEMOS_SOURCE_ROLES',''))
+        modules()['_EXECUTABLES']['source_roles'](roles,controller=controller,candidate=result['source_commit'])
+        result.update(controller_source_commit=controller,source_roles=roles)
+    else:require('OPEMOS_SOURCE_ROLES'not in env,'Candidate roles without controller A')
+    return result
+
+
+def request_identity(request):
+    keys=('repository','source_commit','run_id','attempt','nonce')
+    result={k:request[k]for k in keys}
+    if 'source_roles'in request:
+        roles=request['source_roles']
+        modules()['_EXECUTABLES']['source_roles'](roles,
+            controller=request['controller_source_commit'],candidate=request['source_commit'])
+        result.update(controller_source_commit=request['controller_source_commit'],source_roles=roles)
+    else:require('controller_source_commit'not in request,'Controller identity without candidate role binding')
     return result
 
 
@@ -82,19 +102,19 @@ def inventory():
 
 
 def installed():
-    value=strict(raw_file(CONFIG,1024**2,owner=os.getuid()))
+    value=strict(raw_file(CONFIG,1024**2,owner=0))
     require(value.get('schema')==1 and value.get('enabled')is True,'Reviewed Robot profile absent/disabled')
     require(value['hook']['path']==HOOK and SHA.fullmatch(value['hook']['sha256']),'Fixed installed plan hook pin missing')
     require(value['robotframework']=={'version':'7.5','wheel_sha256':'5a194db36524604fafa1da89adebc837db9a95adf15ffd746e09ce98251e6c68'},'Official pinned Robot runtime differs')
     require(value['stage']['sha256']==MODULE_PINS['omen_ci_stage.py'],'Installed stage/source graph differs')
-    raw_file(HOOK,expected=value['hook']['sha256'],owner=os.getuid())
+    raw_file(HOOK,expected=value['hook']['sha256'],owner=0)
     return value
 
 
 def hook(profile,request,out):
     """Run fixed, verified installed planner bytes. No PR argv/shell operation."""
     out=Path(out);out.mkdir(mode=0o700,parents=True,exist_ok=True)
-    source=raw_file(HOOK,expected=profile['hook']['sha256'],owner=os.getuid())
+    source=raw_file(HOOK,expected=profile['hook']['sha256'],owner=0)
     # Use a sealed descriptor instead of re-opening an executable after checking.
     stage=modules()
     command=[sys.executable,'-I','-c',"__file__="+repr(HOOK)+";exec(compile("+repr(source)+","+repr(HOOK)+",'exec'))"]
@@ -102,15 +122,14 @@ def hook(profile,request,out):
     require(receipt['numeric_exit']==0 and receipt['complete']is True,'Fixed planner failed; retained exact raw/transport diagnostics')
     row=receipt['streams']['stdout']
     result=strict(raw_file(row['path'],profile['result_contract']['max_bytes'],row['sha256'],os.getuid()))
-    require(result.get('identity')=={k:request[k]for k in ('repository','source_commit','run_id','attempt','nonce')},'Planner returned stale run/source/nonce')
+    require(result.get('identity')==request_identity(request),'Planner returned stale run/source/nonce/controller/candidate')
     return result
 
 
 
 def consume_collection(stage, collected, request, job_ids, robot, operand, limit):
     """Consume same-operation post-terminal publications, never dispatch work."""
-    require(collected.get('identity')=={k:request[k]for k in
-            ('repository','source_commit','run_id','attempt','nonce')},
+    require(collected.get('identity')==request_identity(request),
             'Post-terminal collector identity differs')
     require(collected.get('effect')=='READ_ONLY_CURRENT_OPERATION' and
             collected.get('job_ids')==job_ids and len(set(job_ids))==len(job_ids) and
@@ -153,18 +172,24 @@ class Engine:
         self.counter=0;self.current=None;self.runtime_original={};self.source_original={}
         self.reports=Path(os.environ['OPEMOS_ROBOT_REPORT_DIR']).absolute();self.reports.mkdir(parents=True,exist_ok=True,mode=0o700)
 
-    def request(self,kind,subject):
+    def request(self,kind,subject,source_roles=None):
         if self.profile is None:self.profile=installed();self.stage=modules()
         self.counter+=1
         nonce=os.urandom(16).hex()
         folder=self.output/(str(self.counter)+'-'+nonce);folder.mkdir(mode=0o700)
         request=dict(self.context,version=1,action='prepare',kind=kind,subject=subject,nonce=nonce,
                      consumer_started_epoch=int(os.environ['OPEMOS_CONSUMER_STARTED_EPOCH']))
+        if source_roles is not None:
+            self.stage['_EXECUTABLES']['source_roles'](source_roles,controller=self.context['source_commit'])
+            request.update(source_commit=source_roles['candidate_commit'],
+                controller_source_commit=self.context['source_commit'],source_roles=source_roles)
         dump(folder/'request.json',request)
         return request,hook(self.profile,request,folder),folder
 
-    def transaction(self,kind,subject,expected_producer=None):
-        request,prepared,folder=self.request(kind,subject)
+    def transaction(self,kind,subject,expected_producer=None,source_roles=None):
+        require(source_roles is None or kind=='artifact'and expected_producer is not None,
+                'Candidate source only with exact Root-authenticated producer')
+        request,prepared,folder=self.request(kind,subject,source_roles)
         require(prepared.get('available')is True,prepared.get('reason','Missing exact admitted operation'))
         if expected_producer is not None:
             require(kind=='artifact' and prepared.get('expected')==expected_producer,'Exact requested producer differs BEFORE any stage/submit/VM effect')
@@ -172,6 +197,11 @@ class Engine:
         operand=prepared['operand'];plan=prepared['plan'];case=operand['case']
         self.current=(request,prepared,folder,cfg)
         require(plan['source_commit']==request['source_commit'] and plan['nonce']==request['nonce'],'Fresh same-source plan required')
+        if source_roles is not None:
+            require(plan.get('source_roles')==source_roles and
+                    plan.get('controller_source_commit')==request['controller_source_commit'],
+                    'Planner must preserve reviewed A / candidate B before any staging effect')
+        else:require('source_roles'not in plan and 'controller_source_commit'not in plan,'Unexpected candidate plan on Main path')
         require(operand['inventory_vm_id']in self.results,'Unknown original inventory identity')
         require(kind!='inventory' or operand['inventory_vm_id']==subject,'Another original substituted')
         require(case in self.stage['CASES'],'Truthful existing role required')
@@ -208,10 +238,15 @@ class Engine:
         suite='guest.robot'if gui_required else 'role.robot'
         require(robot['library_sha256']==hashlib.sha256(raw_file(Path(__file__).with_name('OPEMOSPointer.py'))).hexdigest(),'Actual job pointer library differs')
         require(robot['source_commit']==request['source_commit']and robot['run_id']==request['run_id']and robot['attempt']==request['attempt']and robot['nonce']==request['nonce'],'Robot job not bound to consumer')
+        if source_roles is not None:
+            require(robot.get('source_roles')==source_roles and robot.get('controller_source_commit')==source_roles['controller_commit'],
+                    'Robot A control / B executable identity differs')
         require(robot['job_id']in operand['job_ids']and robot['suite_sha256']==hashlib.sha256(raw_file(Path(__file__).parents[1]/('tests/robot/'+suite))).hexdigest(),'Fresh actual guest Robot job absent')
         selected_job=next(j for j in manifest['jobs']if j['id']==robot['job_id'])
         require(selected_job['command']==robot['queue_command'],'Normal command differs from fixed reviewed Robot job')
         required_sources={'scripts/OPEMOSPointer.py','scripts/OPEMOSGuest.py','scripts/omen_robot.py','scripts/run_omen_robot_guest.py','tests/robot/'+suite}
+        if gui_required or source_roles is not None:
+            required_sources.update('scripts/'+name for name in MODULE_PINS)
         require(required_sources<=set(robot['source_pins']),'Complete Robot execution dependency pins missing')
         for relative in required_sources:
             pin=robot['source_pins'][relative]
@@ -277,7 +312,7 @@ class Engine:
             budget=cfg['max_run_bytes'];files=receipt.get('files',{})
             require(proof['suite_sha256']==robot['suite_sha256'],'Actual Robot suite bytes differ')
             if kind=='artifact':
-                expected=prepared['expected'];self.stage['_EXECUTABLES']['descriptor'](expected,request['source_commit'])
+                expected=prepared['expected'];self.stage['_EXECUTABLES']['descriptor'](expected,request['source_commit'],source_roles)
                 require(expected['platform']==subject['platform'] and expected['artifact_id']==subject['artifact_id'],'Another platform/artifact cannot cover missing executable')
                 transaction,_=self.stage['load_result'](prepared['executable_transaction_path'],cfg['result_contract']['max_bytes'])
                 entry=prepared['executable_entry']

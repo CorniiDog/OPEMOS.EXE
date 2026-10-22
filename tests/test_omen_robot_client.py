@@ -85,6 +85,32 @@ class NativeClientContract(unittest.TestCase):
         self.assertEqual(len(self.requests[0]['nonce']),32)
         self.assertTrue(all(v['status']=='unavailable' for v in client.results.values()))
 
+    def test_candidate_roles_cross_real_unix_transport_without_replacing_controller(self):
+        roles={'repository':M.REPO,'controller_commit':'a'*40,'candidate_commit':'b'*40,
+               'base_commit':'a'*40,'pull_request':210,'repository_id':1,'head_repository_id':1}
+        target={'platform':'windows','producer_run_id':'200','producer_attempt':'1',
+                'artifact_id':'300','descriptor_sha256':'c'*64,'source_roles':roles}
+        # Fixture reply only. This proves real transport/UID/JSON preservation,
+        # NOT broker authorization, native tests or any VM/GUI acceptance.
+        self.serve();client=self.engine()
+        with patch.dict(os.environ,OPEMOS_REQUIRED_PRODUCER=json.dumps(target)):
+            with self.assertRaisesRegex(ValueError,'complete Root acceptance missing'):
+                client.produced_platform()
+        request=self.requests[0]
+        self.assertEqual(request['source_commit'],'a'*40)
+        self.assertEqual(request['subject'],target)
+        retained=json.loads((self.root/'reports/broker-required.json').read_bytes())
+        self.assertEqual(retained['subject']['source_roles']['candidate_commit'],'b'*40)
+
+    def test_wrong_controller_candidate_roles_fail_before_socket_input(self):
+        roles={'repository':M.REPO,'controller_commit':'d'*40,'candidate_commit':'b'*40,
+               'base_commit':'d'*40,'pull_request':210,'repository_id':1,'head_repository_id':1}
+        target={'platform':'windows','producer_run_id':'200','producer_attempt':'1',
+                'artifact_id':'300','descriptor_sha256':'c'*64,'source_roles':roles}
+        with patch.dict(os.environ,OPEMOS_REQUIRED_PRODUCER=json.dumps(target)):
+            with self.assertRaisesRegex(ValueError,'A/B target'):self.engine().produced_platform()
+        self.assertEqual(self.requests,[])
+
     def test_connection_cannot_promote_other_acceptance(self):
         def mutate(reply):
             reply['vms']={next(iter(self.engine().results)):'passed'}

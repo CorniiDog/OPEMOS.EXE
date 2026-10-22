@@ -3620,6 +3620,40 @@ printf '%s\n' '{interstitial_sha256}' | sudo tee "$ROOT/usr/lib/opemos-install-m
 sudo chown root:root "$ROOT/usr/lib/opemos-install-media/interstitial.sha256"
 sudo chmod 0644 "$ROOT/usr/lib/opemos-install-media/interstitial.sha256"
 sudo install -m 0755 -o root -g root /tmp/welcome_server.py "$ROOT/usr/lib/opemos-install-media/welcome_server.py"
+for DIRECTORY in "$ROOT/usr/lib/udev" "$ROOT/usr/lib/udev/rules.d"; do
+  test ! -L "$DIRECTORY"
+  test ! -e "$DIRECTORY" || test -d "$DIRECTORY"
+  sudo install -d -m 0755 -o root -g root "$DIRECTORY"
+done
+OBSERVER_RULE='SUBSYSTEM=="virtio-ports", ATTR{{name}}=="opemos.robot.observer", OWNER="1000", GROUP="1000", MODE="0600"'
+OBSERVER_RULE_PATH="$ROOT/usr/lib/udev/rules.d/99-opemos-robot-observer.rules"
+test ! -L "$OBSERVER_RULE_PATH"
+if test -e "$OBSERVER_RULE_PATH"; then
+  test -f "$OBSERVER_RULE_PATH"
+  test "$(cat "$OBSERVER_RULE_PATH")" = "$OBSERVER_RULE"
+else
+  printf '%s\n' "$OBSERVER_RULE" | sudo tee "$OBSERVER_RULE_PATH" >/dev/null
+fi
+sudo chown root:root "$OBSERVER_RULE_PATH"
+sudo chmod 0644 "$OBSERVER_RULE_PATH"
+for DIRECTORY in "$ROOT/usr/lib/systemd" "$ROOT/usr/lib/systemd/user" "$ROOT/home/deck/.config/systemd" "$ROOT/home/deck/.config/systemd/user" "$ROOT/home/deck/.config/systemd/user/default.target.wants"; do
+  test ! -L "$DIRECTORY"
+  test ! -e "$DIRECTORY" || test -d "$DIRECTORY"
+done
+sudo install -d -m 0755 -o root -g root "$ROOT/usr/lib/systemd/user"
+OBSERVER_UNIT="$ROOT/usr/lib/systemd/user/opemos-output-observer.service"
+test ! -e "$OBSERVER_UNIT" && test ! -L "$OBSERVER_UNIT"
+printf '%s\n' '[Unit]' 'Description=Exact firmware-bound OPEMOS VM output observer' 'ConditionVirtualization=vm' 'ConditionPathExists=/sys/firmware/qemu_fw_cfg/by_name/opt/opemos/observer-manifest-sha256/raw' '[Service]' 'Type=exec' 'ExecStart=/usr/bin/python3 -I -B /usr/lib/opemos-install-media/welcome_server.py --output-observer-only' 'RuntimeMaxSec=900' 'TimeoutStopSec=10' 'KillMode=control-group' '[Install]' 'WantedBy=default.target' | sudo tee "$OBSERVER_UNIT" >/dev/null
+sudo chown root:root "$OBSERVER_UNIT"
+sudo chmod 0644 "$OBSERVER_UNIT"
+for DIRECTORY in "$ROOT/home/deck/.config/systemd" "$ROOT/home/deck/.config/systemd/user" "$ROOT/home/deck/.config/systemd/user/default.target.wants"; do
+  sudo install -d -m 0755 -o "${{DECK_ID%:*}}" -g "${{DECK_ID#*:}}" "$DIRECTORY"
+done
+OBSERVER_ENABLE="$ROOT/home/deck/.config/systemd/user/default.target.wants/opemos-output-observer.service"
+test ! -e "$OBSERVER_ENABLE" && test ! -L "$OBSERVER_ENABLE"
+sudo ln -s /usr/lib/systemd/user/opemos-output-observer.service "$OBSERVER_ENABLE"
+sudo chown -h "$DECK_ID" "$OBSERVER_ENABLE"
+sudo install -m 0644 -o root -g root "$OBSERVER_UNIT" "$ROOT/usr/lib/opemos-install-media/maintainer/opemos-output-observer.service"
 sudo install -m 0755 -o root -g root /tmp/opemos-rollback-last-update "$ROOT/usr/lib/opemos-install-media/maintainer/opemos-rollback-last-update"
 sudo install -m 0755 -o root -g root /tmp/open-opemos-welcome "$ROOT/usr/lib/opemos-install-media/maintainer/open-opemos-welcome"
 sudo install -m 0644 -o root -g root /tmp/Open-OPEMOS.desktop "$ROOT/usr/lib/opemos-install-media/maintainer/Open-OPEMOS.desktop"

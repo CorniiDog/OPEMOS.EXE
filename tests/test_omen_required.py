@@ -264,4 +264,113 @@ class RequiredProducerTests(unittest.TestCase):
   changed=copy.deepcopy(acceptance);changed['image_sha256']='b'*64
   with self.assertRaises(gate.Refusal):gate.verify_acceptance(changed,m.value,req)
 
+class CandidateMetadata(Metadata):
+ """Finite API fixtures only: never OS, VM, job or pointer acceptance."""
+ def __init__(self):
+  super().__init__()
+  self.selection={'repository':gate.REPO,'controller_commit':'e'*40,
+   'candidate_commit':SOURCE,'pull_request':210,'base_commit':'e'*40,
+   'repository_id':1,'head_repository_id':1}
+  repo={'id':1,'full_name':gate.REPO,'fork':False}
+  self.pr={'number':210,'state':'open','merged_at':None,
+   'base':{'ref':'main','sha':'e'*40,'repo':copy.deepcopy(repo)},
+   'head':{'ref':'topic','sha':SOURCE,'repo':copy.deepcopy(repo)}}
+  self.run.update(head_branch='topic',event='pull_request',
+   repository=copy.deepcopy(repo),head_repository=copy.deepcopy(repo),
+   pull_requests=[{'number':210,'head':{'sha':SOURCE},'base':{'sha':'e'*40}}])
+  self.value.update(event='pull_request',ref='refs/pull/210/merge')
+  self.reseal()
+ def reseal(self):
+  self.raw=encoded_zip('executable-producer.json',self.value)
+  self.artifacts[1]['digest']='sha256:'+hashlib.sha256(self.raw).hexdigest()
+ def read(self,path):
+  if path=='branches/main':return{'protected':True,'commit':{'sha':'e'*40}}
+  if path=='pulls/210':return copy.deepcopy(self.pr)
+  return super().read(path)
+ def verify_candidate(self):
+  # This clock substitution exercises metadata decisions only, not OS clocks.
+  with patch.object(gate.time,'time',return_value=1792454520):
+   return gate.candidate_producer_ready(self.selection,'ubuntu','10','2',self.read,self.download)
+
+class CandidateProducerTests(unittest.TestCase):
+ def test_descriptor_requires_explicit_roles_and_refuses_role_swap(self):
+  m=CandidateMetadata()
+  with self.assertRaises(ValueError):gate.descriptor(m.value,SOURCE)
+  self.assertEqual(gate.descriptor(m.value,SOURCE,m.selection),m.value)
+  swapped=dict(m.selection,controller_commit=SOURCE,base_commit=SOURCE,candidate_commit='e'*40)
+  with self.assertRaises(ValueError):gate.descriptor(m.value,SOURCE,swapped)
+  with self.assertRaises(ValueError):gate.descriptor(m.value,'e'*40,m.selection)
+ def test_candidate_target_carries_roles_without_changing_original_descriptor(self):
+  m=CandidateMetadata();original=copy.deepcopy(m.value)
+  value=gate.target(m.value,m.selection)
+  self.assertEqual(value['source_roles'],m.selection)
+  self.assertEqual(value['descriptor_sha256'],gate.digest(original))
+  self.assertEqual(m.value,original)
+ def test_candidate_workflow_never_checks_out_guest_b_on_privileged_runner(self):
+  workflow=(Path(__file__).parents[1]/'.github/workflows/omen-robot.yml').read_text()
+  section=workflow.split('\n  required-platform-robot:\n')[1].split('\n  required-platform-result:\n')[0]
+  self.assertIn('ref: ${{ needs.trusted-runner-route.outputs.source }}',section)
+  self.assertNotIn('ref: ${{ inputs.candidate_sha }}',workflow)
+  self.assertNotIn('pull_request_target:',workflow)
+  self.assertNotIn('candidate_sha }}',section)
+  self.assertIn('job_guard.py --bind-job-token',section)
+  self.assertIn('actions: read',workflow)
+ def test_passed_native_job_does_not_erase_failed_parent_diagnostic(self):
+  m=CandidateMetadata();m.run.update(status='completed',conclusion='failure')
+  value=m.verify_candidate()
+  self.assertEqual(value['parent_outcome'],{'status':'completed','conclusion':'failure'})
+  self.assertNotIn('runtime_admitted',value)
+  self.assertNotIn('checks_passed',value)
+ def test_original_b_provenance_and_separate_a_retained(self):
+  m=CandidateMetadata();value=m.verify_candidate()
+  self.assertEqual(value['source_roles'],m.selection)
+  self.assertEqual(value['producer'],m.value)
+  self.assertEqual(value['producer']['event'],'pull_request')
+  self.assertNotEqual(value['producer']['source_commit'],value['source_roles']['controller_commit'])
+  self.assertEqual(value['native_job_id'],'20')
+  # The original production route remains strict, not a PR fallback.
+  with self.assertRaises(gate.Refusal):m.verify()
+ def test_foreign_fork_stale_rebased_or_closed_pr_refused(self):
+  for mutate in (
+   lambda m:m.pr['head']['repo'].update(fork=True),
+   lambda m:m.pr['head']['repo'].update(id=2),
+   lambda m:m.pr['head'].update(sha='f'*40),
+   lambda m:m.pr['base'].update(sha='f'*40),
+   lambda m:m.pr.update(state='closed'),
+   lambda m:m.selection.update(controller_commit='f'*40),
+   lambda m:m.selection.update(head_repository_id=2),
+   lambda m:m.selection.update(pull_request=True),
+   lambda m:m.selection.update(command=['arbitrary'])):
+   with self.subTest(mutate=mutate):
+    m=CandidateMetadata();mutate(m)
+    with self.assertRaises(gate.Refusal):m.verify_candidate()
+ def test_wrong_native_attempt_step_artifact_or_pr_association_refused(self):
+  for mutate in (
+   lambda m:setattr(m,'live_attempt',3),
+   lambda m:m.jobs[0].update(status='in_progress'),
+   lambda m:m.jobs[0]['steps'][0].update(conclusion='skipped'),
+   lambda m:m.run['pull_requests'][0].update(number=211),
+   lambda m:m.artifacts[0].update(expired=True),
+   lambda m:m.artifacts[0].update(digest='sha256:'+'0'*64),
+   lambda m:m.artifacts[0]['workflow_run'].update(head_repository_id=2),
+   lambda m:m.artifacts[0].update(created_at='2026-10-19T00:00:40Z')):
+   with self.subTest(mutate=mutate):
+    m=CandidateMetadata();mutate(m)
+    with self.assertRaises(gate.Refusal):m.verify_candidate()
+ def test_descriptor_cannot_normalize_b_to_main_or_smuggle_paths(self):
+  for change in ({'event':'push','ref':'refs/heads/main'},
+                 {'source_commit':'e'*40},{'package_name':'../app'},
+                 {'package_bytes':True},{'executable_sha256':'bad'},
+                 {'ref':'refs/pull/211/merge'},{'host_command':['bad']}):
+   with self.subTest(change=change):
+    m=CandidateMetadata();m.value.update(change);m.reseal()
+    with self.assertRaises(gate.Refusal):m.verify_candidate()
+ def test_pr_changed_after_descriptor_download_is_not_adopted(self):
+  m=CandidateMetadata();download=m.download
+  def changed(path):
+   result=download(path);m.pr['head']['sha']='f'*40;return result
+  with patch.object(gate.time,'time',return_value=1792454520):
+   with self.assertRaises(gate.Refusal):
+    gate.candidate_producer_ready(m.selection,'ubuntu','10','2',m.read,changed)
+
 if __name__=='__main__':unittest.main()

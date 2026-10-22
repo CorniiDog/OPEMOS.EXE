@@ -238,7 +238,18 @@ class Engine:
     def produced_platform(self):
         """Exact producer target from hosted guard; host broker revalidates it."""
         target = strict_json(os.environ['OPEMOS_REQUIRED_PRODUCER'])
-        require(set(target) == {'platform','producer_run_id','producer_attempt','artifact_id','descriptor_sha256'}, 'exact finite producer target')
+        keys={'platform','producer_run_id','producer_attempt','artifact_id','descriptor_sha256'}
+        require(type(target)is dict and set(target)in(keys,keys|{'source_roles'}), 'exact finite producer target')
+        if 'source_roles'in target:
+            roles=target['source_roles']
+            require(type(roles)is dict and set(roles)=={'repository','controller_commit','candidate_commit',
+                    'pull_request','base_commit','repository_id','head_repository_id'}and
+                    roles['repository']==REPO and roles['controller_commit']==roles['base_commit']==self.identity['source_commit']and
+                    type(roles['candidate_commit'])is str and re.fullmatch('[0-9a-f]{40}',roles['candidate_commit'])and
+                    roles['candidate_commit']!=roles['controller_commit']and
+                    type(roles['pull_request'])is int and 0<roles['pull_request']<2**31 and
+                    all(type(roles[k])is int and roles[k]>0 for k in('repository_id','head_repository_id'))and
+                    roles['repository_id']==roles['head_repository_id'],'finite same-repository A/B target only')
         reply = self._request('execute-produced-platform', target)
         # Persist actual complete reply BEFORE a failure assertion. It contains
         # only public descriptors/typed outcome, never a host plan or disk bytes.
@@ -256,6 +267,16 @@ class Engine:
             raise
         require(reply['status'] == 'passed', outcome_reason(reply, 'exact current artifact GUI/SteamOS transaction failed or unavailable'))
         require(type(reply.get('required_acceptance')) is dict, 'current complete Root acceptance missing')
+        if 'source_roles'in target:
+            acceptance=reply['required_acceptance'];executable=acceptance.get('executable')
+            require(acceptance.get('source_roles')==roles and
+                    acceptance.get('controller_source_commit')==self.identity['source_commit']and
+                    acceptance.get('source_commit')==roles['candidate_commit']and
+                    type(executable)is dict and executable.get('source_commit')==roles['candidate_commit']and
+                    executable.get('platform')==target['platform']and
+                    all(executable.get(k)==target[k]for k in('producer_run_id','producer_attempt','artifact_id'))and
+                    hashlib.sha256(json.dumps(executable,sort_keys=True,separators=(',',':'),ensure_ascii=True,allow_nan=False).encode()).hexdigest()==target['descriptor_sha256'],
+                    'Root acceptance belongs to another controller/candidate/package')
         return {'exports': [{'path': str(self.reports / item['name']), 'kind': item['kind'], 'sha256': item['sha256']} for item in reply['public_evidence']]}
 
     def connection(self):

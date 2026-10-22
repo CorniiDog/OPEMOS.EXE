@@ -1,7 +1,71 @@
 # OPEMOS.EXE — Product Checklist
 
+## 2026-10-22 PR210 joined source continuation — authored, validation pending
+
+- Same Core109/H88 scope, not a new TODO or runtime release: controller A and
+  candidate B now propagate through the broker, exact live producer verifier,
+  fixed planner/current queue collector, guest/pointer context and finalizer.
+  The outer Root token/nonce/current-controller boundary is preserved. The
+  original PR descriptor is never normalized into a protected-Main producer.
+- Ordinary SteamOS source now includes the firmware-bound read-only controller
+  medium, actual UID/native AT-SPI observation/XTest input/neutral cleanup and
+  NVIDIA pixel readback, the real welcome installer terminal producer, pinned
+  Robot7.5 phase entrypoint, bounded file transport and host report consumer.
+  Ordinary phase/readback commands are implemented functions, not null Root
+  supply placeholders. Hardware/owner admission remains independently Root-owned.
+- Separate stopped readback uses an exclusively created read-only loop, actual
+  partition UUIDs and no-replay home mount. It compares durable native/Robot
+  files and independently unmounts/detaches. Unknown allocation, helper, mount
+  or loop closure prevents a CLOSED lease. Read-only controller media and the
+  writable target have actual QEMU FD checks and a real dropped-UID open/read/
+  write-refusal probe in the authored operational source.
+- Core map `6f0094d6` distinguishes a pending driver generation from verified
+  health on a new boot. The consumer rejects restored/no-pending/other-generation
+  results. This does not prove an OS slot/kernel transition, the three-kernel
+  NVIDIA575 matrix, Gamescope, hardware acceptance, or any real VM result.
+- Whole producer/consumer review found and corrected the fixed hook ABI:
+  retained accepted installer materializes Root-owned profile/planner under
+  `/var/lib/opemos-robot-control-r1`; the old repository caller required a
+  user-owned home hook. No live installed input was edited. Stage dependencies
+  still use the actual hook UID with a Root-owned profile/hash authority.
+- All new regression cases are authored UNRUN. Only source syntax/JSON/hash
+  inspection has occurred locally, not project imports, tests, builds, native
+  SDK execution, VM boots or acceptance. Published `68617add` results remain
+  historical and do not transfer. Changed-head checks must run through OMEN;
+  exact source review/Root normal adoption and fresh runtime admission remain.
+- The same joined source review also corrected inherited-port initialization,
+  timestamped-observation versus stable-boot comparison, coalesced64KiB stream
+  framing, and parent-observed actual agent numeric reap/EOF/diagnostic delivery.
+  Native input additionally joins AT-SPI controls to actual topmost X client
+  ownership through XRes, exact process epoch and qualified window geometry;
+  unknown/foreign actors cannot receive global Down/Up. These are authored
+  safeguards, not measured SDK results. The finite firmware-gated user service
+  is separate from opening the welcome window; real desktop availability is
+  still a failed prerequisite when absent, never a simulated session.
+- Remote review requires the exact new immutable head. Its commit deliberately
+  uses `[skip ci]` to prevent new hosted project test/compile attempts while
+  preserving all required checks as pending, not waived or passed. No normal
+  VM, Main merge, installed source activation or hardware authority follows.
+
 ## 2026-10-22 H88 complete output consumer continuation — IN PROGRESS
 
+- Core109 whole review `16455c49` identifies the conflated controller/package
+  identity. Trusted reviewed controller A must remain on protected Main; exact
+  same-repository PR package B may enter only the isolated guest. A finite
+  official-metadata candidate verifier and refusal cases are now authored in
+  the existing required producer module. It preserves original PR provenance,
+  checks live head/base/repository/job/attempt/artifact and retention clocks,
+  and does NOT open the existing Main-only route. Broker/planner/guest/pointer/
+  finalizer joins and ordinary SteamOS native phase/Robot implementation remain
+  unfinished owning work. Null commands are not an external Root supply gate.
+  No new push or project tests/compiles on the controller or hosted runner were
+  started for this delta; future execution must use the reviewed OMEN route.
+- Retained head `68617addee042c1e4a7537df807c0652b7fb0ea1` Windows job
+  `119931211491` completed SUCCESS at 2026-10-22T16:10:51Z, including native
+  tests, bundle, startup smoke and artifact binding. Together with the eight
+  Checks, Windows seed and Ubuntu package this closes its 11 source/package
+  checks only. Historical hosted feedback is not OMEN VM acceptance and does
+  not transfer to the current uncommitted delta.
 - Root branch-only CI release consumed: draft PR210, initial exact head
   `9ae492dc866f165463f095c14062ac95f92057d6`; all11 ordinary source/package
   checks passed. Expected non-Main Windows/Ubuntu OMEN diagnostics failed and

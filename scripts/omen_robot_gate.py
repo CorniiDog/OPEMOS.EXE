@@ -14,7 +14,7 @@ def main():
     report=Path('robot-preflight');report.mkdir(exist_ok=True)
     rows=json.loads(Path('ci/required-vms.json').read_text())['required_vms']
     value={'status':'failed','vms':{r['id']:{'name':r['name'],'status':'unavailable','reason':'Runner/event preflight not verified'}for r in rows},'executable_acceptance':{p:{'status':'unavailable','reason':'Fresh transaction not executed'}for p in ('windows','ubuntu','macos')}}
-    ready=False;source='';stage='canonical repository'
+    ready=False;source='';candidate=False;platform='';stage='canonical repository'
     try:
         assert os.environ['GITHUB_REPOSITORY']==REPO
         stage='complete event metadata'
@@ -25,12 +25,20 @@ def main():
             assert os.environ['GITHUB_REF']=='refs/heads/main'and os.environ['GITHUB_REF_PROTECTED']=='true'
             source=os.environ['GITHUB_SHA']
         else:
-            stage='completed canonical Main producer event'
+            stage='completed canonical producer event; trusted controller remains Main'
             assert name=='workflow_run'
             run=event['workflow_run']
-            assert run['path']in PRODUCERS and run['status']=='completed'and run['head_branch']=='main'
+            assert run['path']in PRODUCERS and run['status']=='completed'
             assert run['repository']['full_name']==REPO and run['head_repository']['id']==run['repository']['id']
-            source=run['head_sha']
+            if run['event']=='pull_request':
+                assert run['path']in('.github/workflows/windows-portable.yml','.github/workflows/ubuntu-executable.yml')
+                assert type(run['pull_requests'])is list and len(run['pull_requests'])==1
+                assert os.environ['GITHUB_REF']=='refs/heads/main'and os.environ['GITHUB_REF_PROTECTED']=='true'
+                source=os.environ['GITHUB_SHA'];candidate=True
+                platform='windows'if run['path'].endswith('windows-portable.yml')else'ubuntu'
+            else:
+                assert run['head_branch']=='main'and run['event']in('push','workflow_dispatch')
+                source=run['head_sha']
         stage='current Main GitHub metadata'
         req=urllib.request.Request('https://api.github.com/repos/'+REPO+'/branches/main',headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})
         with urllib.request.urlopen(req,timeout=20)as response:
@@ -59,7 +67,7 @@ def main():
         print('::error::'+value['reason'])
     finally:
         (report/'all20.json').write_text(json.dumps(value,indent=2)+'\n')
-        with open(os.environ['GITHUB_OUTPUT'],'a')as stream:stream.write('ready='+str(ready).lower()+'\nsource='+source+'\n')
+        with open(os.environ['GITHUB_OUTPUT'],'a')as stream:stream.write('ready='+str(ready).lower()+'\nsource='+source+'\ncandidate='+str(candidate).lower()+'\nplatform='+platform+'\n')
         with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as stream:
             stream.write('| Required VM | Result |\n|---|---|\n')
             for row in value['vms'].values():stream.write('| '+row['name']+' | unavailable until actual Robot transaction |\n')

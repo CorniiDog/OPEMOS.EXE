@@ -112,7 +112,7 @@ _inventory_path = Path(__file__).with_name("omen_ci_inventory.py")
 _inventory_pin, _inventory_raw = _READER.read_verified(_inventory_path, 1024**2, expected_sha=_INVENTORY_SHA, uid=os.getuid())
 _INVENTORY = _READER.verified_namespace(_inventory_raw, _inventory_path, "opemos_ci_inventory")
 
-_EXECUTABLES_SHA = "435aa0901a39981fc26d2b5a87f283aa918985318fcd28213c86da918c4c5b1f"
+_EXECUTABLES_SHA = "1497c39307dae3cb1796249d542b03618a1c911893dbbbad8a29ed7d9ffcf9b0"
 _executables_path = Path(__file__).with_name("omen_ci_executables.py")
 _executable_pin, _executable_raw = _READER.read_verified(_executables_path, 1024**2,
     expected_sha=_EXECUTABLES_SHA, uid=os.getuid())
@@ -121,6 +121,11 @@ _RESULT_SHA = "5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85"
 _result_path=Path(__file__).with_name("omen_ci_result.py")
 _result_pin,_result_raw=_READER.read_verified(_result_path,1024**2,expected_sha=_RESULT_SHA,uid=os.getuid())
 _RESULT=_READER.verified_namespace(_result_raw,_result_path,"opemos_ci_result")
+_OUTPUT_INSTALL_SHA="1cc1763bce26f8c4bdc21bfd90e615e4911ce0f573329d2a3f3c4df32f89edaf"
+_output_install_path=Path(__file__).with_name('omen_output_lifecycle.py')
+_output_install_pin,_output_install_raw=_READER.read_verified(_output_install_path,1024**2,
+    expected_sha=_OUTPUT_INSTALL_SHA,uid=os.getuid())
+_OUTPUT_INSTALL=_READER.verified_namespace(_output_install_raw,_output_install_path,'opemos_output_install')
 
 
 
@@ -968,13 +973,18 @@ def validate_gui_pointer(receipt,plan,operand,expected_executable=None):
         retained_converter,_=pointer_file(files,receipt.get("gui_converter_ref"),"gui-converter-source",operand,8*1024**2)
         require(retained_converter["sha256"]==operand["gui_converter"]["sha256"]and retained_converter["bytes"]==len(converter_bytes),"Actual converter source not retained")
     executable=expected_executable or operand.get("gui_executable")
-    _EXECUTABLES["descriptor"](executable,plan["source_commit"])
+    _EXECUTABLES["descriptor"](executable,plan["source_commit"],plan.get("source_roles"))
     require(executable["package_sha256"]==operand["package_sha256"]and executable["platform"]=={"windows":"windows","linux":"ubuntu","darwin":"macos"}[session["platform"]],"Pointer executable descriptor/package/platform differs")
     controls=operand.get("gui_controls",{})
     require(isinstance(controls,dict)and set(controls)==set(POINTER_ACTIONS),"Exact current-source native control map missing")
     identity={"source_commit":plan["source_commit"],"run_id":plan.get("run_id"),"attempt":plan.get("attempt"),
         "operation_nonce":plan["nonce"],"inventory_vm_id":operand["inventory_vm_id"],"runtime_instance_id":operand["runtime_instance_id"],
         "queue_job_ids":operand["job_ids"],"original_source":operand["original_source"],"executable":executable}
+    if 'source_roles' in plan:
+        roles=_EXECUTABLES['source_roles'](plan['source_roles'],
+            controller=plan['controller_source_commit'],candidate=plan['source_commit'])
+        identity.update(controller_source_commit=roles['controller_commit'],source_roles=roles)
+    else:require('controller_source_commit'not in plan,'Pointer controller without candidate binding')
     require(all(isinstance(identity.get(k),str)and identity[k]for k in ("run_id","attempt")),"Current pointer run/attempt missing")
     used=set();seen_ids=set();clock=None;last_tick=-1;actions=[]
     for sequence,action in enumerate(POINTER_ACTIONS,1):
@@ -1325,7 +1335,14 @@ def verify_original_operand(operand,cap,context=None):
 
 
 def validate_executable_transaction(value, expected, entry, plan, request, rows):
-    _EXECUTABLES["descriptor"](expected, request["source_commit"])
+    roles=request.get('source_roles')
+    _EXECUTABLES["descriptor"](expected, request["source_commit"],roles)
+    if roles is not None:
+        _EXECUTABLES['source_roles'](roles,controller=request['controller_source_commit'],candidate=request['source_commit'])
+        require(plan.get('source_roles')==roles and plan.get('controller_source_commit')==request['controller_source_commit']
+                and value.get('source_roles')==roles and value.get('controller_source_commit')==request['controller_source_commit'],
+                'Executable plan/result A/B roles changed')
+    else:require('source_roles'not in value and 'controller_source_commit'not in value,'Candidate result on Main-only transaction')
     nonce = entry.get("operation_nonce")
     require(re.fullmatch(r"[0-9a-f]{32}", nonce or "") and value.get("operation_nonce") == nonce
             and value.get("executable") == expected and value.get("source_commit") == request["source_commit"]
@@ -1350,6 +1367,9 @@ def validate_executable_transaction(value, expected, entry, plan, request, rows)
     local_plan = {**plan, "nonce": nonce, "run_id": request["run_id"], "attempt": request["attempt"]}
     build = load_pinned(value["build_receipt"])
     heal = load_pinned(value["heal_receipt"])
+    if roles is not None:
+        require(all(r.get('source_roles')==roles and r.get('controller_source_commit')==roles['controller_commit']
+                    for r in(build,heal)),'Build/heal must preserve both controller A and candidate B')
     require(all(receipt.get(k) == request[k] for receipt in (build, heal) for k in ("run_id", "attempt")),
             "Build/NVIDIA receipt belongs to an old consumer run or attempt")
     build_operand={**build_operand,"gui_executable":expected,"evidence_roots":entry["evidence_roots"]}
@@ -1363,6 +1383,9 @@ def validate_executable_transaction(value, expected, entry, plan, request, rows)
             and target["id"] != build["roles"]["imaging_host"]["id"] and target["id"] != build["roles"]["fedora_appliance"]["id"],
             "Each executable needs the same actual separately installed SteamOS target through NVIDIA recovery")
     install = load_pinned(value["install_receipt"])
+    if roles is not None:
+        require(install.get('source_roles')==roles and install.get('controller_source_commit')==roles['controller_commit'],
+                'Installed-target receipt lost A/B roles')
     required = {"kind": "OPEMOS_VIRTUAL_STEAMOS_INSTALL_V1", "source_commit": request["source_commit"],
         "run_id": request["run_id"], "attempt": request["attempt"], "operation_nonce": nonce,
         "executable_package_sha256": expected["package_sha256"], "output_image_sha256": build["output"]["sha256"],
@@ -1377,6 +1400,20 @@ def validate_executable_transaction(value, expected, entry, plan, request, rows)
                     ("target_generation", "output_identity", "installed_root_uuid", "installed_efi_uuid")),
             "Actual virtual SteamOS install/boot/output/disk generation proof missing for this executable")
     install_files = install.get("files", {})
+    install_graph=None
+    if any('imageArtifactRange'in item for item in heal_operand.get('inputs',[])):
+        # The new retained-media path must carry the actual complete output
+        # producer graph, not merely the old scalar install flags. Every
+        # existing build/heal/Core/GPU/role check above remains required.
+        require('output_install_receipt'in value,'actual complete output-install Root publication missing')
+        proof=protected_image_range_receipt(value['output_install_receipt'])
+        require(proof.get('leaseNonce')==heal_operand['lease_nonce']and
+                proof.get('sourceGraph',{}).get('outputProducerPin',{}).get('sha256')==_OUTPUT_INSTALL_SHA,
+                'actual output graph must use the current admitted lease and exact reviewed source')
+        install_graph=_OUTPUT_INSTALL['validate_output_install_proof'](proof,range_context,build['output']['sha256'])
+        require(all(install.get(key)==install_graph[key]for key in
+                    ('target_generation','installed_root_uuid','installed_efi_uuid','baseline_boot_id')),
+                'public installed target differs from actual four-phase/stopped graph')
     require({"install-log", "boot-log", "screenshot"} <= {x.get("kind") for x in install_files.values()},
             "Real install log, graphical boot and screenshot evidence required")
     archive, package, binary = value["archive_pin"], value["package_pin"], value["executable_pin"]
@@ -1391,7 +1428,7 @@ def validate_executable_transaction(value, expected, entry, plan, request, rows)
             require(SHA.fullmatch(item.get("sha256", "")) and pointer_evidence_size(item)
                     and Path(item.get("path", "")).is_absolute(), "Actual executable transaction evidence pin missing")
             files[prefix + ":" + name] = item
-    return {"status": "passed", "executable": expected, "source_commit": request["source_commit"],
+    outcome={"status": "passed", "executable": expected, "source_commit": request["source_commit"],
             "run_id": request["run_id"], "attempt": request["attempt"], "operation_nonce": nonce,
             "actual_receipt_verified": True, "active": False, "job_ids": build_jobs + heal_jobs,
             "pointer_acceptance":pointer_proof,
@@ -1402,7 +1439,12 @@ def validate_executable_transaction(value, expected, entry, plan, request, rows)
             "target_id": target["id"], "target_disk_identity": target["disk_identity"], "baseline_boot_id":target["baseline_boot_id"],
             "installed_root_uuid":install["installed_root_uuid"], "installed_efi_uuid":install["installed_efi_uuid"],
             "imaging_host_id":build["roles"]["imaging_host"]["id"],
-            "reason": "Distinct actual GUI image/manifest, complete virtualUSB, installed SteamOS target and same-target NVIDIA/kernel/recovery proof"}, files
+            "reason": "Distinct actual GUI image/manifest, complete virtualUSB, installed SteamOS target and same-target NVIDIA/kernel/recovery proof"}
+    if roles is not None:outcome.update(source_roles=roles,controller_source_commit=roles['controller_commit'])
+    if install_graph is not None:
+        outcome['actual_output_install_graph']=install_graph
+        files['install:complete-root-proof']=value['output_install_receipt']
+    return outcome, files
 
 
 def executable_outcomes(config, request, plan, rows, artifacts, budget):
@@ -1447,9 +1489,14 @@ def executable_outcomes(config, request, plan, rows, artifacts, budget):
 
 
 def image_range_context(request, nonce, executable, job_ids):
-    return {"source_commit": request["source_commit"], "run_id": request["run_id"],
+    value={"source_commit": request["source_commit"], "run_id": request["run_id"],
             "attempt": request["attempt"], "operation_nonce": nonce,
             "executable": executable, "consumer_job_ids": list(job_ids)}
+    if 'source_roles'in request:
+        roles=_EXECUTABLES['source_roles'](request['source_roles'],controller=request['controller_source_commit'],candidate=request['source_commit'])
+        value.update(source_roles=roles,controller_source_commit=roles['controller_commit'])
+    else:require('controller_source_commit'not in request,'Range controller without candidate role binding')
+    return value
 
 
 def operand_image_range_context(operand, plan, request, expected):
@@ -1801,7 +1848,7 @@ def validate_canonical_qualification(value, expected_pins, source, stage_sha):
 def require_canonical_qualification(config, request, rows):
     item = config.get("required_canonical_qualification", {})
     value = load_pinned(item["receipt"])
-    validate_canonical_qualification(value, item["source_pins"], request["source_commit"], request["stage_sha256"])
+    validate_canonical_qualification(value, item["source_pins"], request.get("controller_source_commit",request["source_commit"]), request["stage_sha256"])
     guest=value.get("guest",{})
     require(isinstance(item.get("runtime_instance_id"),str) and item["runtime_instance_id"]
             and guest.get("runtime_instance_id")==item["runtime_instance_id"]

@@ -11,7 +11,7 @@
   "root_owned_installation": {
     "job_guard": "ACTIONS_RUNNER_HOOK_JOB_STARTED external fixed current protected-Main guard",
     "profile": "/home/connor/.config/opemos-ci/robot.json",
-    "hook": "/home/connor/.local/libexec/opemos-robot-job-plan",
+    "hook": "/var/lib/opemos-robot-control-r1/opemos-robot-job-plan",
     "rf_version": "7.5",
     "rf_wheel_sha256": "5a194db36524604fafa1da89adebc837db9a95adf15ffd746e09ce98251e6c68",
     "environment": [
@@ -24,11 +24,12 @@
     "schema": 1,
     "enabled": true,
     "hook": {
-      "path": "/home/connor/.local/libexec/opemos-robot-job-plan",
+      "path": "/var/lib/opemos-robot-control-r1/opemos-robot-job-plan",
       "sha256": "EXACT_INSTALLED_HASH"
     },
     "stage": {
-      "sha256": "f5d9f34d4f7bf72b3d40ee324462cc7eb237f0e37a5090c6da1cda1b48d8b394"
+      "path": "EXACT_CURRENT_A_STAGE_PATH_OWNED_BY_HOOK_UID",
+      "sha256": "46cdb4812fabe2ce26d4698c1acc180e30114a48e9b093474181254d95a89fd3"
     },
     "robotframework": {
       "version": "7.5",
@@ -51,6 +52,14 @@
   "actions": {
     "prepare": "Pure fixed-plan materialization/current protected producer enumeration. No VM launch by hook. kind inventory subject exact20ID; kind artifacts subject platform; kind artifact subject {platform,artifact_id}.",
     "collect": "Read-only same current operation public evidence snapshot after failure. No retry, guest control, cleanup or new admission."
+  },
+  "candidate_extension": {
+    "scope": "Exact same-repository PR artifact only, never inventory or fork. Root registry/source and executable workflow remain reviewed current Main controller A; original official native package descriptor remains candidate B.",
+    "additional_request_and_response_fields": ["controller_source_commit", "source_roles"],
+    "source_roles_fields": ["repository", "controller_commit", "candidate_commit", "pull_request", "base_commit", "repository_id", "head_repository_id"],
+    "guards": "A equals current protected Main and live exact PR base, B equals live unchanged nonfork same-repository PR head. Official run/attempt/native-job/descriptor/artifact identity, archive/member hashes, retention clocks and PR/base/rerun are independently checked before and after. Original outer token/broker nonce and exact Root peer/UID/cgroup/birth/current checks are unchanged.",
+    "collection": "Current ordinary queue reader plus actual retained receipt, RF XML and complete terminal lifecycle observations, not a prewritten pass packet. Every A/B field must join planner, stage, guest, pointer, manifest, output and finalizer.",
+    "adoption": "Source proposal only. Existing installed Root profile/registry/job hook/control must be independently reviewed and normally adopted at a safe checkpoint. No replacement of a busy installed input or authority from this example. No prior source approval transfers."
   },
   "response_identity": [
     "repository",
@@ -116,6 +125,7 @@
       "GITHUB_RUN_ATTEMPT",
       "GITHUB_REPOSITORY",
       "OPEMOS_TRANSACTION_NONCE",
+      "candidate-only OPEMOS_CONTROLLER_SHA/OPEMOS_SOURCE_ROLES: normal guest entrypoint derives from held hash-bound request; conflicts rejected, existing candidate source/run/nonce never overwritten",
       "OPEMOS_POINTER_OPERATION",
       "OPEMOS_POINTER_OPERATION_SHA256",
       "OPEMOS_EXPECTED_BOOT_ID/OPEMOS_EXPECTED_KERNEL/OPEMOS_SUBJECT_ROLE for non-GUI"

@@ -143,7 +143,7 @@ def create_output_install_target(directory, name, capacity, dependencies, reserv
                 raise first
 
 
-def output_install_disks_xml(existing_xml, media, target, installation):
+def output_install_disks_xml(existing_xml, media, target, installation, observer=None, manifest_sha256=None):
     """Narrow two-device successor of an already reviewed domain constructor.
 
     Keeps all pool, firmware, metadata, display and GPU declarations unchanged.
@@ -204,11 +204,30 @@ def output_install_disks_xml(existing_xml, media, target, installation):
         ET.SubElement(node, 'serial').text = 'OPEMOSOUTPUT' + role.upper()
         ET.SubElement(node, 'boot', order=str(order))
         if role == 'media': ET.SubElement(node, 'readonly')
+    if observer is not None:
+        path=Path(observer['path']);info=path.lstat()
+        if (not path.is_absolute() or path.resolve()!=path or not stat.S_ISREG(info.st_mode)
+                or info.st_nlink!=1 or output_disk_identity(info)!=observer['identity']
+                or info.st_size!=observer['bytes'] or info.st_size>64*1024**2
+                or not re.fullmatch('[0-9a-f]{64}',manifest_sha256 or '')):
+            raise ValueError('exact finite source-A observer medium and firmware pin required')
+        if any((info.st_dev,info.st_ino)==(row['identity']['st_dev'],row['identity']['st_ino'])for row in(media,target)):
+            raise ValueError('observer medium cannot alias writable target or original image')
+        if devices.findall('channel')or domain.findall("sysinfo[@type='fwcfg']"):
+            raise ValueError('no adoption/replacement of an unknown existing channel or firmware scope')
+        node=ET.SubElement(devices,'disk',type='file',device='cdrom')
+        ET.SubElement(node,'driver',name='qemu',type='raw',cache='none')
+        ET.SubElement(node,'source',file=str(path));ET.SubElement(node,'target',dev='sdc',bus='sata')
+        ET.SubElement(node,'readonly');ET.SubElement(node,'serial').text='OPEMOSOUTPUTOBSERVER'
+        channel=ET.SubElement(devices,'channel',type='unix')
+        ET.SubElement(channel,'target',type='virtio',name='opemos.robot.observer')
+        config=ET.SubElement(domain,'sysinfo',type='fwcfg')
+        ET.SubElement(config,'entry',name='opt/opemos/observer-manifest-sha256').text=manifest_sha256
     return ET.tostring(domain, encoding='unicode') + '\n'
 
 
 def observe_output_disk_fds(pid, expected_start, expected_uid, expected_cgroup, media, target, installation,
-                            writable_paths=()):
+                            writable_paths=(), readonly_refs=()):
     """Native same-leader FD flags; XML readonly alone is not OS proof.
 
     Caller first authenticates the current libvirt domain/queue/leader. Missing
@@ -225,6 +244,11 @@ def observe_output_disk_fds(pid, expected_start, expected_uid, expected_cgroup, 
         if (root / 'cgroup').read_text().strip() != '0::' + expected_cgroup:
             raise ValueError('domain outside exact current assigned scope')
     epoch(); rows = {'media': [], 'target': []}
+    readonly={ref['path']:{'ref':ref,'fds':[]}for ref in readonly_refs}
+    if len(readonly)!=len(readonly_refs):raise ValueError('duplicate readonly controller dependencies')
+    for path,row in readonly.items():
+        if output_disk_identity(Path(path).lstat())!=row['ref']['identity']:
+            raise ValueError('readonly controller dependency identity changed')
     allowed_writable = {(target['identity']['st_dev'], target['identity']['st_ino'])}
     for value in writable_paths:
         path = Path(value)
@@ -261,6 +285,12 @@ def observe_output_disk_fds(pid, expected_start, expected_uid, expected_cgroup, 
                         if (descriptor.stat().st_dev, descriptor.stat().st_ino) != (info.st_dev, info.st_ino):
                             raise ValueError('domain disk FD changed')
                         rows[role].append(int(name))
+                for path,row in readonly.items():
+                    pin=row['ref']
+                    if(info.st_dev,info.st_ino)==(pin['identity']['st_dev'],pin['identity']['st_ino']):
+                        if access!=os.O_RDONLY or output_disk_identity(info)!=pin['identity']:
+                            raise ValueError('actual observer medium FD is not exact/read-only')
+                        row['fds'].append(int(name))
             except FileNotFoundError as error:
                 raise ValueError('domain descriptor enumeration raced; custody unknown') from error
     finally:
@@ -268,8 +298,12 @@ def observe_output_disk_fds(pid, expected_start, expected_uid, expected_cgroup, 
     epoch()
     if not rows['target'] or bool(rows['media']) != installation:
         raise ValueError('required target/media attachment state differs')
+    for path,row in readonly.items():
+        if not row['fds']or output_disk_identity(Path(path).lstat())!=row['ref']['identity']:
+            raise ValueError('actual required readonly controller FD missing/changed')
     return {'pid': pid, 'start': expected_start, 'uid': expected_uid,
-            'cgroup': expected_cgroup, 'diskFDs': rows, 'installation': installation}
+            'cgroup': expected_cgroup, 'diskFDs': rows, 'installation': installation,
+            'readonlyControllerFDs':{path:row['fds']for path,row in readonly.items()}}
 
 
 def pin_owned_qemu_network(launcher_pid, required_files, deadline, allow_setup_root=False):

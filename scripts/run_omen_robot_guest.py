@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
 sys.path.insert(0,str(Path(__file__).parent))
-from omen_robot import raw_file,strict,require,dump,FULL9
+from omen_robot import raw_file,strict,require,dump,FULL9,identity
 
 
 def main():
@@ -20,6 +20,20 @@ def main():
     for key,value in request.items():
         if key in ('run_id','attempt'):require(os.environ[{'run_id':'GITHUB_RUN_ID','attempt':'GITHUB_RUN_ATTEMPT'}[key]]==value,'Consumer identity mismatch')
     require(os.environ['OPEMOS_SOURCE_SHA']==request['source_commit']and os.environ['OPEMOS_TRANSACTION_NONCE']==request['nonce'],'Stale guest job source/nonce')
+    if 'source_roles'in request:
+        # The ordinary job already carries the held/hash-bound full request
+        # and its candidate source/nonce. Materialize the NEW finite control
+        # fields from that same input before Robot imports its libraries. Do
+        # not replace conflicting environment or alter source/run/nonce.
+        from omen_robot import request_identity
+        exact=request_identity(request)
+        for name,value in {'OPEMOS_CONTROLLER_SHA':exact['controller_source_commit'],
+                           'OPEMOS_SOURCE_ROLES':json.dumps(exact['source_roles'],sort_keys=True,separators=(',',':'))}.items():
+            require(name not in os.environ or os.environ[name]==value,'Conflicting preexisting candidate control environment')
+            os.environ[name]=value
+    current=identity()
+    for key in('controller_source_commit','source_roles'):
+        require(request.get(key)==current.get(key),'Guest code A / package B role identity differs')
     code=robot.run(str(suite),outputdir=str(output),output='output.xml',report='report.html',log='log.html',xunit='xunit.xml')
     reports=[];raw=raw_file(output/'output.xml',16*1024**2,owner=os.getuid());tree=ET.fromstring(raw)
     statuses=[test.find('status').attrib['status']for test in tree.findall('.//test')]
