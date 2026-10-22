@@ -1,0 +1,43 @@
+name: Full-stack acceptance
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_run:
+    workflows: [04 SteamOS]
+    types: [requested, in_progress, completed]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: full-stack-acceptance-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  full-stack-acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out this check's exact main source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require exact full-stack SteamOS acceptance
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPEMOS_UPSTREAM_SHA: ${{ github.event.workflow_run.head_sha }}
+          OPEMOS_UPSTREAM_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          OPEMOS_UPSTREAM_ACTION: ${{ github.event.action }}
+        run: python3 scripts/check_full_stack_acceptance.py
+      - name: Retain the acceptance result, including missing or failed prerequisites
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: full-stack-acceptance-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: full-stack-acceptance.json
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}

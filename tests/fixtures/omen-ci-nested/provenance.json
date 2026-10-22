@@ -1,0 +1,65 @@
+{
+  "kind": "GENERATED_SANITIZED_HISTORICAL_UNIT_TEST_EXAMPLES_V1",
+  "actual_runtime_acceptance": false,
+  "originals_preserved": true,
+  "recipes": [
+    "Neutralize personal mount/home paths and user label in generated copies only",
+    "Replace actual IPv4-shaped addresses with documentation-only isolated addresses; retain kernel/version strings",
+    "Replace MAC addresses and UUIDs with deterministic non-runtime test identifiers",
+    "Recompute generated serial size and SHA in generated result.json only"
+  ],
+  "private_canonical_queue_fixture": {
+    "publication": "not included; exact existing admitted VM input mandatory",
+    "bytes": 388189,
+    "sha256": "ba577d32e0ad4d582a2908521695056256f0d81c71f715486b83ff2648c379de"
+  },
+  "files": [
+    {
+      "relative_path": "omen-ci-nested/a-outer-serial.sanitized.log",
+      "original_sha256": "535b740fe58224c9785ebcb9f218727e781b71a50027b97b4da2a1e5f20271b4",
+      "original_bytes": 126637,
+      "generated_sha256": "0a04b861a7be8b44587944fb788dd78a30375494a32b9948e1fc16932806af39",
+      "generated_bytes": 126639
+    },
+    {
+      "relative_path": "omen-ci-nested/a-queue-result.json",
+      "original_sha256": "7e2a4baad51c828082139be34b593263e065355a3feba438802b320029716cc6",
+      "original_bytes": 24177,
+      "generated_sha256": "7e2a4baad51c828082139be34b593263e065355a3feba438802b320029716cc6",
+      "generated_bytes": 24177
+    },
+    {
+      "relative_path": "omen-ci-nested/a-result.json",
+      "original_sha256": "d1f31a3d19b5cb6a749ef6b2a0a497050331fd58609f483f4d84a860b443bd95",
+      "original_bytes": 2291,
+      "generated_sha256": "258229343e8ee8d912fa42ef98c766ddf65366b8c0dc5af12b164c8a0cc26376",
+      "generated_bytes": 2299
+    },
+    {
+      "relative_path": "omen-ci-nested/b-outer-serial.sanitized.log",
+      "original_sha256": "0339ddf95a3215d26c4de29e459006863123911567b50221b81cf4a2ad66be91",
+      "original_bytes": 126287,
+      "generated_sha256": "8a8175322ff87e6a57f14ee8f77f5d7325ce88daa52ccf483ff58ef80c4b2f8f",
+      "generated_bytes": 126289
+    },
+    {
+      "relative_path": "omen-ci-nested/b-queue-result.json",
+      "original_sha256": "943af15433d48dc5521fe00c77eaa7829bdcdfd40082d13566c8a66171d6c42f",
+      "original_bytes": 24175,
+      "generated_sha256": "943af15433d48dc5521fe00c77eaa7829bdcdfd40082d13566c8a66171d6c42f",
+      "generated_bytes": 24175
+    },
+    {
+      "relative_path": "omen-ci-nested/b-result.json",
+      "original_sha256": "1bf813ee3c95e04ccd640d91d1eaa8d29abc9380d424c284bcf5f84c283932f3",
+      "original_bytes": 2304,
+      "generated_sha256": "ba995a2093871216e01d86d08574802db16b2ab6f0decdea0cfd897f366da037",
+      "generated_bytes": 2312
+    }
+  ],
+  "replacement_counts": {
+    "uuid": 1,
+    "mac": 0,
+    "private_network_address": 1
+  }
+}

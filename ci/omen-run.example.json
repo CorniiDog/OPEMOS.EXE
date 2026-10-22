@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "source_commit": null,
+  "nonce": null,
+  "cases": {
+    "windows-full-stack": [],
+    "ubuntu-full-stack": [],
+    "macos-full-stack": [],
+    "steamos-autoheal": [],
+    "nested-ubuntu-linux": []
+  },
+  "admitted_vm_ids": [],
+  "vms": {
+    "81688cb8-c3a5-41c3-b7a3-75a9f6ba0e25": null,
+    "c54ddf9a-6060-44d7-9cd2-3476e8b4d996": null,
+    "9dc1d978-a83a-4699-aeb9-32c10fe22be3": null,
+    "d058543e-5b8c-4742-93a4-5bd2427621d8": null,
+    "97ad3a89-299d-44e6-92bc-880e197d2f89": null,
+    "130f2dc3-24b4-403f-8e28-7f1776251a15": null,
+    "d6011de4-0376-4109-a569-31ad00418f5d": null,
+    "9f63f6d9-a223-492d-8f68-49ef3948838d": null,
+    "OPEMOS-Ubuntu-Test": null,
+    "OPEMOS-Ubuntu-Test-B": null,
+    "OPEMOS-Ubuntu-Agent-Boot": null,
+    "OPEMOS-Ubuntu-Agent-Boot-B": null,
+    "OPEMOS-Ubuntu-Agent-UI": null,
+    "OPEMOS-Ubuntu-Agent-UI-B": null,
+    "OPEMOS-Ubuntu-KVM-A": null,
+    "OPEMOS-Ubuntu-KVM-B": null,
+    "macos-apple-silicon-fullstack": null,
+    "steamos-same-guest-gpu-autoheal": null,
+    "opemos-windows-debloat-20261019-r3b": null,
+    "OPEMOS-Ubuntu-FullStack-PR189-20261019-r1": null
+  },
+  "expected_executables": null,
+  "executable_acceptance": {}
+}

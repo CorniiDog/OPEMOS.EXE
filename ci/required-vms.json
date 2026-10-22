@@ -1,0 +1,240 @@
+{
+  "version": 1,
+  "required_vms": [
+    {
+      "id": "81688cb8-c3a5-41c3-b7a3-75a9f6ba0e25",
+      "name": "OPEMOS-Agent-Boot",
+      "family": "transferred-hyperv",
+      "required": true,
+      "owner": "exe",
+      "initial_state": "format-readable-runtime-unverified",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Agent-Boot"
+    },
+    {
+      "id": "c54ddf9a-6060-44d7-9cd2-3476e8b4d996",
+      "name": "OPEMOS-Agent-Boot-B",
+      "family": "transferred-hyperv",
+      "required": true,
+      "owner": "exe",
+      "initial_state": "format-open-failed-before-boot",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Agent-Boot-B"
+    },
+    {
+      "id": "9dc1d978-a83a-4699-aeb9-32c10fe22be3",
+      "name": "OPEMOS-Agent-UI",
+      "family": "transferred-hyperv",
+      "required": true,
+      "owner": "exe",
+      "initial_state": "format-open-failed-before-boot",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Agent-UI"
+    },
+    {
+      "id": "d058543e-5b8c-4742-93a4-5bd2427621d8",
+      "name": "OPEMOS-Agent-UI-B",
+      "family": "transferred-hyperv",
+      "required": true,
+      "owner": "exe",
+      "initial_state": "format-open-failed-before-boot",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Agent-UI-B"
+    },
+    {
+      "id": "97ad3a89-299d-44e6-92bc-880e197d2f89",
+      "name": "OPEMOS-KVM-A",
+      "family": "transferred-hyperv",
+      "required": true,
+      "owner": "exe",
+      "initial_state": "format-open-failed-before-boot",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-KVM-A"
+    },
+    {
+      "id": "130f2dc3-24b4-403f-8e28-7f1776251a15",
+      "name": "OPEMOS-KVM-B",
+      "family": "transferred-hyperv",
+      "required": true,
+      "owner": "exe",
+      "initial_state": "format-open-failed-before-boot",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-KVM-B"
+    },
+    {
+      "id": "d6011de4-0376-4109-a569-31ad00418f5d",
+      "name": "OPEMOS-Windows-Test",
+      "family": "transferred-hyperv",
+      "required": true,
+      "owner": "exe",
+      "initial_state": "format-open-failed-before-boot",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Windows-Test"
+    },
+    {
+      "id": "9f63f6d9-a223-492d-8f68-49ef3948838d",
+      "name": "OPEMOS-Windows-Test-B",
+      "family": "transferred-hyperv",
+      "required": true,
+      "owner": "exe",
+      "initial_state": "format-open-failed-before-boot",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Windows-Test-B"
+    },
+    {
+      "id": "OPEMOS-Ubuntu-Test",
+      "name": "OPEMOS-Ubuntu-Test",
+      "family": "ubuntu-counterpart",
+      "required": true,
+      "owner": "core",
+      "initial_state": "files-present-not-workflow-verified",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Ubuntu-Test"
+    },
+    {
+      "id": "OPEMOS-Ubuntu-Test-B",
+      "name": "OPEMOS-Ubuntu-Test-B",
+      "family": "ubuntu-counterpart",
+      "required": true,
+      "owner": "core",
+      "initial_state": "files-present-not-workflow-verified",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Ubuntu-Test-B"
+    },
+    {
+      "id": "OPEMOS-Ubuntu-Agent-Boot",
+      "name": "OPEMOS-Ubuntu-Agent-Boot",
+      "family": "ubuntu-counterpart",
+      "required": true,
+      "owner": "core",
+      "initial_state": "files-present-not-workflow-verified",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Ubuntu-Agent-Boot"
+    },
+    {
+      "id": "OPEMOS-Ubuntu-Agent-Boot-B",
+      "name": "OPEMOS-Ubuntu-Agent-Boot-B",
+      "family": "ubuntu-counterpart",
+      "required": true,
+      "owner": "core",
+      "initial_state": "files-present-not-workflow-verified",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Ubuntu-Agent-Boot-B"
+    },
+    {
+      "id": "OPEMOS-Ubuntu-Agent-UI",
+      "name": "OPEMOS-Ubuntu-Agent-UI",
+      "family": "ubuntu-counterpart",
+      "required": true,
+      "owner": "core",
+      "initial_state": "files-present-not-workflow-verified",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Ubuntu-Agent-UI"
+    },
+    {
+      "id": "OPEMOS-Ubuntu-Agent-UI-B",
+      "name": "OPEMOS-Ubuntu-Agent-UI-B",
+      "family": "ubuntu-counterpart",
+      "required": true,
+      "owner": "core",
+      "initial_state": "files-present-not-workflow-verified",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Ubuntu-Agent-UI-B"
+    },
+    {
+      "id": "OPEMOS-Ubuntu-KVM-A",
+      "name": "OPEMOS-Ubuntu-KVM-A",
+      "family": "ubuntu-counterpart",
+      "required": true,
+      "owner": "core",
+      "initial_state": "files-present-not-workflow-verified",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Ubuntu-KVM-A",
+      "required_case": "nested-ubuntu-linux",
+      "subject_role": "nested_linux",
+      "retained_evidence_scope": "Nested Ubuntu Linux boot and exact closure only; historical receipt is not a current source/run/nonce result or executable/Fedora/GPU/fullstack acceptance."
+    },
+    {
+      "id": "OPEMOS-Ubuntu-KVM-B",
+      "name": "OPEMOS-Ubuntu-KVM-B",
+      "family": "ubuntu-counterpart",
+      "required": true,
+      "owner": "core",
+      "initial_state": "files-present-not-workflow-verified",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Ubuntu-KVM-B",
+      "required_case": "nested-ubuntu-linux",
+      "subject_role": "nested_linux",
+      "retained_evidence_scope": "Nested Ubuntu Linux boot and exact closure only; historical receipt is not a current source/run/nonce result or executable/Fedora/GPU/fullstack acceptance."
+    },
+    {
+      "id": "macos-apple-silicon-fullstack",
+      "name": "Admitted Apple Silicon macOS graphical lane",
+      "family": "macos",
+      "required": true,
+      "owner": "exe",
+      "initial_state": "complete-fullstack-unverified",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/Admitted-Apple-Silicon-macOS-graphical-lane"
+    },
+    {
+      "id": "steamos-same-guest-gpu-autoheal",
+      "name": "Same SteamOS guest kernel update/NVIDIA/render/power recovery",
+      "family": "steamos",
+      "required": true,
+      "owner": "steamos/core",
+      "initial_state": "capacity/admission unresolved",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/Same-SteamOS-guest-kernel-update-NVIDIA-render-power-recovery"
+    },
+    {
+      "id": "opemos-windows-debloat-20261019-r3b",
+      "name": "opemos-windows-debloat-20261019-r3b",
+      "family": "fresh-windows-install",
+      "required": true,
+      "owner": "windows",
+      "initial_state": "running-unverified",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/opemos-windows-debloat-20261019-r3b"
+    },
+    {
+      "id": "OPEMOS-Ubuntu-FullStack-PR189-20261019-r1",
+      "name": "OPEMOS-Ubuntu-FullStack-PR189-20261019-r1",
+      "family": "ubuntu-graphical-fullstack",
+      "required": true,
+      "owner": "ubuntu",
+      "initial_state": "running-unverified",
+      "case_operand": "unconfigured",
+      "replacement_for": null,
+      "github_context": "opemos/vm/OPEMOS-Ubuntu-FullStack-PR189-20261019-r1"
+    }
+  ],
+  "policy": {
+    "include_broken_unavailable": true,
+    "missing_is_failure": true,
+    "extra_vm_requires_inventory_update": true,
+    "no_other_vm_substitution": true,
+    "all_required_must_pass": true,
+    "historical_failures_preserved": true
+  },
+  "status_context_policy": "Use these exact stable contexts; prior status publication is visibility only, not workflow integration or acceptance."
+}

@@ -1,16 +1,23 @@
-name: Windows portable artifact
+name: 01 Windows EXE
 
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      producer-metadata-diagnostic:
+        description: Finite native metadata capture only, no package build
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: windows-portable-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: windows-portable-Windows portable artifact-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   OPEMOS_EXE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -20,7 +27,28 @@ env:
   RUSTFLAGS: -C target-feature=+crt-static
 
 jobs:
+  producer-metadata-diagnostic:
+    if: github.event_name == 'workflow_dispatch' && inputs.producer-metadata-diagnostic
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.OPEMOS_EXE_COMMIT }}
+          persist-credentials: false
+      - name: Capture real Win32 and Python producer metadata
+        run: python scripts/diagnose_windows_producer_metadata.py
+      - name: Retain finite native metadata even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-producer-metadata-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/windows-metadata-diagnostic
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+          if-no-files-found: error
+
   seed-runtime-source:
+    if: ${{ !inputs.producer-metadata-diagnostic }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -54,7 +82,7 @@ jobs:
             build/runtime-cache/windows/schily-cdrtools-3.02a09.7z
             build/runtime-cache/windows/cdrtools-3.02a09.tar.gz
           if-no-files-found: error
-          retention-days: 1
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
           compression-level: 0
 
   build:
@@ -75,6 +103,9 @@ jobs:
           if ($actual -cne $env:OPEMOS_EXE_COMMIT) {
             throw "EXE checkout mismatch: $actual"
           }
+
+      - name: Verify native producer descriptor custody before expensive build
+        run: python -m unittest discover -s tests -p test_omen_producer_native.py -v
 
       - name: Preserve canonical Core bytes
         shell: pwsh
@@ -255,11 +286,89 @@ jobs:
           Set-Content -LiteralPath (Join-Path $output "SHA256SUMS.txt") -Value "$sha256  $name" -Encoding ascii
 
       - name: Upload short-lived workflow artifact
+        id: executable
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: OPEMOS.EXE-windows-x86_64-unsigned-${{ env.OPEMOS_EXE_COMMIT }}
+          name: OPEMOS.EXE-windows-x86_64-unsigned-${{ env.OPEMOS_EXE_COMMIT }}-${{ github.run_attempt }}
           path: dist/windows
           if-no-files-found: error
           include-hidden-files: true
-          retention-days: 1
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
           compression-level: 0
+
+      - name: Bind exact executable and package to this producer artifact
+        if: success() && steps.executable.outputs.artifact-id != ''
+        shell: bash
+        env:
+          PRODUCER_ARTIFACT_ID: ${{ steps.executable.outputs.artifact-id }}
+          PRODUCER_ARTIFACT_SHA256: ${{ steps.executable.outputs.artifact-digest }}
+        run: >-
+          python scripts/record_executable_artifact.py
+          --platform windows
+          --source "${{ env.OPEMOS_EXE_COMMIT }}"
+          --artifact-id "$PRODUCER_ARTIFACT_ID"
+          --artifact-sha "$PRODUCER_ARTIFACT_SHA256"
+          --artifact-name "OPEMOS.EXE-windows-x86_64-unsigned-${{ env.OPEMOS_EXE_COMMIT }}-${{ github.run_attempt }}"
+          --output build/executable-producer
+      - name: Retain small producer identity for separate SteamOS acceptance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: executable-producer-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/executable-producer/executable-producer.json
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  omen-required:
+    name: Required OMEN GUI image + SteamOS (windows)
+    needs: build
+    if: always() && github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && github.ref_protected && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 250
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Check out trusted Main gate only; never PR code on OMEN
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require current actual OMEN GUI Build, image, USB and SteamOS
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/required_omen.py dispatch-and-wait --platform windows
+      - name: Always retain required gate reports and unavailable diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: required-omen-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: required-omen-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+  omen-required-untrusted:
+    name: Required OMEN unavailable on non-Main source (windows)
+    needs: build
+    if: always() && !(github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && github.ref_protected && (github.event_name == 'push' || github.event_name == 'workflow_dispatch'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Record unsupported source as failed without dispatch credentials
+        run: |
+          python3 scripts/required_omen.py diagnostics --directory required-omen-results --reason 'Non-Main/PR/fork source is not admitted to OMEN; no dispatch, GUI, image, USB or SteamOS acceptance'
+          exit 1
+      - name: Always retain unavailable required outcome
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: required-omen-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: required-omen-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}

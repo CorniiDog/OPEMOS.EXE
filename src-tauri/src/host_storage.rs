@@ -263,6 +263,24 @@ pub(crate) fn preflight_normalization_and_build(
     admit_host_storage(&requests)
 }
 
+pub(crate) fn resolve_build_output_directory(
+    input_image: &Path,
+    selected_output: Option<&Path>,
+) -> Result<std::path::PathBuf, String> {
+    let directory = match selected_output {
+        Some(directory) => directory,
+        None => input_image
+            .parent()
+            .ok_or("Could not determine the future output folder.")?,
+    };
+    let directory = fs::canonicalize(directory)
+        .map_err(|error| format!("Could not resolve the output folder: {error}"))?;
+    if !directory.is_dir() {
+        return Err("The output folder is not a safe directory.".into());
+    }
+    Ok(directory)
+}
+
 pub(crate) fn storage_io_error(context: &str, error: std::io::Error) -> String {
     if is_storage_full_os_error(error.raw_os_error())
         || error.kind() == std::io::ErrorKind::StorageFull
@@ -317,6 +335,56 @@ fn no_space_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_selected_output_admission_preserves_readonly_input_and_capacity_guard() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-selected-output-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let input_dir = root.join("readonly-input");
+        let output = root.join("selected-output");
+        let runtime = root.join("runtime");
+        for directory in [&input_dir, &output, &runtime] {
+            fs::create_dir(directory).unwrap();
+        }
+        let input = input_dir.join("original.img");
+        fs::write(&input, b"original immutable source").unwrap();
+        let original_permissions = fs::metadata(&input).unwrap().permissions();
+        let mut readonly = original_permissions.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&input, readonly).unwrap();
+        let selected = resolve_build_output_directory(&input, Some(&output)).unwrap();
+        assert_eq!(selected, fs::canonicalize(&output).unwrap());
+        assert_ne!(selected, fs::canonicalize(&input_dir).unwrap());
+        preflight_normalization_and_build(&runtime, &selected, 1, false, true)
+            .expect("small build on the selected writable output is admitted");
+        fs::write(selected.join("write-probe"), b"output").unwrap();
+        let available = host_volume_space(&selected).unwrap().available_bytes;
+        let error = admit_host_storage(&[StorageRequest {
+            path: &selected,
+            bytes: available.checked_add(1).unwrap(),
+            inodes: 2,
+            purpose: "selected output insufficient-space regression",
+        }])
+        .expect_err("a real measured output-volume shortage must still fail");
+        assert!(error.contains(STORAGE_NO_SPACE_CODE));
+        assert!(error.contains("selected output"));
+        assert_eq!(fs::read(&input).unwrap(), b"original immutable source");
+        assert!(fs::metadata(&input).unwrap().permissions().readonly());
+        assert_eq!(
+            resolve_build_output_directory(&input, None).unwrap(),
+            fs::canonicalize(&input_dir).unwrap()
+        );
+        assert!(resolve_build_output_directory(&input, Some(&input)).is_err());
+        fs::set_permissions(&input, original_permissions).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+    }
 
     fn request(
         volume_id: u64,
