@@ -117,7 +117,7 @@ class FiniteOutcomeMetadata(unittest.TestCase):
         value['hard_stop']=event
         for i in range(1,len(rows)):rows[i]=blocked_command(rows[i]['template_argv'],[],rows,event)
         verify_diagnostics(value,identity,spec);self.assertEqual(value['first'],first)
-        for fault in('missing','ordinal','phase','index','manifest','digest','cause','early','later-attempt'):
+        for fault in('missing','ordinal','phase','index','manifest','digest','cause','early','later-attempt','duplicate','misordered'):
             bad=copy.deepcopy(value)
             if fault=='missing':bad['hard_stop']=None
             elif fault=='ordinal':bad['hard_stop']['failure_ordinal']=0
@@ -127,6 +127,8 @@ class FiniteOutcomeMetadata(unittest.TestCase):
             elif fault=='digest':bad['commands'][2]['hard_stop_sha256']='e'*64
             elif fault=='cause':bad['secondary'][0]['reason']='different original error'
             elif fault=='early':bad['hard_stop']['stop_before']=0
+            elif fault=='duplicate':bad['secondary'].append(copy.deepcopy(bad['secondary'][0]))
+            elif fault=='misordered':bad['secondary'].append({'phase':'source-command','command_index':2,'numeric_exit':3})
             else:bad['commands'][3]=metadata_result()[0]['commands'][3]
             with self.subTest(fault=fault),self.assertRaises(ValueError):verify_diagnostics(bad,identity,spec)
 

@@ -233,6 +233,10 @@ def verify_diagnostics(value, request, spec):
     graph=dependencies(spec['workload'])
     need('hard_stop'in value,'explicit hard-event absence/presence required')
     event=value['hard_stop'];boundary=len(rows);event_row=None
+    failures=[value['first'],*value['secondary']]
+    hard_ordinals=[i for i,f in enumerate(failures)if type(f)is dict and f.get('kind')=='source-hard-stop']
+    need((event is None and not hard_ordinals)or(event is not None and
+         hard_ordinals==[len(failures)-1]),'exact single final hard exception record and marker must appear together')
     if event is not None:
         need(type(event)is dict and set(event)=={'kind','manifest_sha256','phase','command_index',
              'stop_before','failure_ordinal','cause','row_sha256'}and
@@ -245,8 +249,8 @@ def verify_diagnostics(value, request, spec):
              event['phase']in('input-preparation','source-validation','command-preflight',
                              'command-capture','command-finalize'),
              'exact finite hard-event phase/index/manifest provenance')
-        failures=[value['first'],*value['secondary']];ordinal=event['failure_ordinal'];cause=event['cause']
-        need(type(ordinal)is int and 0<=ordinal<len(failures)and failures[ordinal]==cause and
+        ordinal=event['failure_ordinal'];cause=event['cause']
+        need(type(ordinal)is int and ordinal==len(failures)-1 and failures[ordinal]==cause and
              type(cause)is dict and set(cause)=={'kind','phase','command_index','type','reason'}and
              cause['kind']=='source-hard-stop'and cause['phase']==event['phase']and
              cause['command_index']==event['command_index']and
