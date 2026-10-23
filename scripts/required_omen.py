@@ -74,7 +74,7 @@ def root_api_reader(token):
  """Same existing GitHub API trust, finite original 1MiB Root metadata bound."""
  opener=request.build_opener(NoRedirect)
  def read(path):
-  require(path in('','branches/main')or re.fullmatch(r'git/ref/heads/[A-Za-z0-9_][A-Za-z0-9_./-]{0,239}',path)or re.fullmatch(r'pulls/[1-9][0-9]{0,9}',path)or re.fullmatch(r'actions/runs/[1-9][0-9]{0,19}(?:/attempts/[1-9][0-9]{0,19}(?:/jobs)?|/artifacts)?(?:\?per_page=100)?',path),'fixed Root producer metadata endpoint')
+  require(path in('','branches/main')or re.fullmatch(r'contents/\.github/workflows/omen-robot.yml\?ref=[0-9a-f]{40}',path)or re.fullmatch(r'commits/[0-9a-f]{40}',path)or re.fullmatch(r'git/ref/heads/[A-Za-z0-9_][A-Za-z0-9_./-]{0,239}',path)or re.fullmatch(r'pulls/[1-9][0-9]{0,9}',path)or re.fullmatch(r'actions/runs/[1-9][0-9]{0,19}(?:/attempts/[1-9][0-9]{0,19}(?:/jobs)?|/artifacts)?(?:\?per_page=100)?',path),'fixed Root producer metadata endpoint')
   try:
    with opener.open(request.Request('https://api.github.com/repos/'+REPO+'/'+path,headers=token_headers(token)),timeout=15)as response:
     raw=response.read(1048577);require(len(raw)<=1048576,'original Root API metadata bound');return strict(raw)
@@ -500,6 +500,10 @@ def scope_guard():
    require(inputs.get('candidate_sha')==roles['candidate_commit']and inputs.get('candidate_base')==roles['base_commit'],'manual exact candidate SHA/current control checkpoint')
    if roles.get('source_kind')=='branch':require(selected_ref==roles['source_ref']and not selected_pr,'manual branch must not invent a PR')
    else:require(selected_pr==str(roles['pull_request'])and not selected_ref,'manual exact PR selection')
+ if roles is not None:candidate_identity(roles,read)
+ save('robot-preflight/quality-source.json',{'kind':'OMEN_BUILD_VM_QUALITY_SOURCE_V1',
+      'platform':platform,'producer_run':run_id,'producer_attempt':attempt,
+      'source_commit':run['head_sha'],'source_roles':roles,'control_commit':source})
  value=(producer_ready(source,platform,run_id,attempt,read,metadata_download)if roles is None else
         candidate_producer_ready(roles,platform,run_id,attempt,read,metadata_download)['producer'])
  if name=='workflow_dispatch':require(value['artifact_id']==inputs['artifact_id'],'exact dispatch artifact')
@@ -591,9 +595,13 @@ def finalize_scope():
  tree=ET.parse('robot-results/output.xml');root=tree.getroot();require(root.tag=='robot'and root.attrib.get('generator','').startswith('Robot'),'actual Robot report, not fallback diagnostics')
  tests=root.findall('.//test');require(tests and all(t.find('status').attrib.get('status')=='PASS'for t in tests),'current actual RF cases failed/missing')
  require(not Path('robot-results/diagnostic.json').exists(),'fallback unavailable diagnostic cannot become pass')
- result={'kind':'OMEN_REQUIRED_PRODUCER_RESULT_V1','context':context['context'],'producer':expected,'consumer':{'run_id':identity['run_id'],'attempt':identity['attempt']},'status':'passed','diagnostic_only':False,'required_acceptance':verified,'public_evidence':public,'outer_reports':outer,'actualReportsArtifact':'robot-actual-'+identity['run_id']+'-'+identity['attempt']}
+ result={'kind':'OMEN_REQUIRED_PRODUCER_RESULT_V1','context':context['context'],'producer':expected,'consumer':{'run_id':identity['run_id'],'attempt':identity['attempt']},'status':'passed','diagnostic_only':False,'required_acceptance':verified,'public_evidence':public,'outer_reports':outer,'actualReportsArtifact':'robot-actual-'+identity['run_id']+'-'+identity['attempt'],'quality_source':quality_source_record()}
  require(len(canonical(result))+1<=65536,'small result contract; no cap expansion')
  save('required-result/required-result.json',result)
+
+def quality_source_record():
+ path=Path('robot-preflight/quality-source.json')
+ return strict(read_report(path,65536))if path.exists()else None
 
 if __name__=='__main__':
  parser=argparse.ArgumentParser();parser.add_argument('mode',choices=['dispatch-and-wait','scope-guard','finalize-scope','diagnostics']);parser.add_argument('--platform',choices=tuple(NATIVE));parser.add_argument('--directory',default='robot-results');parser.add_argument('--reason',default='Actual OMEN route/result unavailable; no guest pass')
@@ -616,6 +624,6 @@ if __name__=='__main__':
   try:emit_diagnostics(args.directory,reason)
   except Exception as secondary:print('Secondary diagnostic persistence failed: '+type(secondary).__name__,file=sys.stderr)
   if args.mode=='finalize-scope':
-   try:save('required-result/required-result.json',{'kind':'OMEN_REQUIRED_PRODUCER_RESULT_V1','status':'failed','diagnostic_only':True,'reason':reason,'actualGUIAccepted':False,'source_commit':os.environ.get('GITHUB_SHA'),'consumer':{'run_id':os.environ.get('GITHUB_RUN_ID'),'attempt':os.environ.get('GITHUB_RUN_ATTEMPT')},'broker_failure':getattr(exc,'broker_failure',None),'preflight_failure':getattr(exc,'preflight_failure',None),'context':getattr(exc,'failed_context',{}).get('context'),'producer':getattr(exc,'failed_context',{}).get('producer')})
+   try:save('required-result/required-result.json',{'kind':'OMEN_REQUIRED_PRODUCER_RESULT_V1','status':'failed','diagnostic_only':True,'reason':reason,'actualGUIAccepted':False,'source_commit':os.environ.get('GITHUB_SHA'),'consumer':{'run_id':os.environ.get('GITHUB_RUN_ID'),'attempt':os.environ.get('GITHUB_RUN_ATTEMPT')},'broker_failure':getattr(exc,'broker_failure',None),'preflight_failure':getattr(exc,'preflight_failure',None),'context':getattr(exc,'failed_context',{}).get('context'),'producer':getattr(exc,'failed_context',{}).get('producer'),'quality_source':quality_source_record()})
    except Exception as secondary:print('Secondary required-result persistence failed: '+type(secondary).__name__,file=sys.stderr)
   raise SystemExit(1)

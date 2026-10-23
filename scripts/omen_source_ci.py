@@ -70,6 +70,11 @@ def api(path):
 
 
 def scope(parent_run,parent_attempt,workload):
+    if workload in ('frontend-and-docs','rust','linux-integration','debian-12-package',
+                    'windows-quality','ubuntu-quality','macos-quality'):
+        from omen_quality import scope as late_scope
+        from required_omen import api_reader,metadata_download
+        return late_scope(api_reader(os.environ['GITHUB_TOKEN']),metadata_download,parent_run,parent_attempt,workload)
     run=api('actions/runs/'+parent_run);repo=api('');branch=api('branches/main');main=branch['commit']['sha']
     need(branch['protected']is True and run['repository']['full_name']==REPO and
          run['head_repository']['id']==repo['id']and run['head_repository']['full_name']==REPO and
@@ -120,7 +125,8 @@ def installed(spec):
         need(not Path(relative).is_absolute()and '..'not in Path(relative).parts,'fixed A relative source graph')
         held(Path(__file__).parents[1]/relative,8*1024**2,pin)
     need({'scripts/omen_source_ci.py','scripts/omen_source_workloads.py','scripts/robot_client.py',
-          'scripts/record_executable_artifact.py','scripts/omen_ci_executables.py','ci/required-vms.json'}<=
+          'scripts/record_executable_artifact.py','scripts/omen_ci_executables.py','scripts/omen_quality.py',
+          'scripts/required_omen.py','scripts/omen_robot_gate.py','scripts/check_full_stack_acceptance.py','ci/required-vms.json'}<=
           set(cfg['clientSourcePins']),'complete client dependency graph, not just self pin')
     # The installed hook must have already checked the exact workflow blob,
     # caller namespace/UID/birth/cgroup and one-use token. This is a checked
@@ -218,6 +224,13 @@ def run(workload,directory):
         try:reports(directory,actual_result,str(e))
         except BaseException as secondary:e.add_note('Command report finalizer: '+repr(secondary))
         raise
+    finally:
+        if 'quality_after'in before:
+            proof=directory/'source-proof.json';failed=directory/'source-failed-outcome.json'
+            outcome=(strict(proof.read_bytes())if proof.exists()else strict(failed.read_bytes())if failed.exists()else
+                {'status':'failed','selection':before,'parent_run':parent,'parent_attempt':attempt,
+                 'reason':'No successful actual late source proof; original raw evidence retained'})
+            save(directory/'quality-outcome.json',outcome)
 
 
 def reports(directory,result,reason=''):
@@ -239,7 +252,7 @@ def reports(directory,result,reason=''):
         if row.get('status')=='blocked':
             ET.SubElement(case,'skipped',type='blocked-prerequisite-or-hard-stop').text=json.dumps(
                 {'blocked_by':row['blocked_by'],'stop_reason':row['stop_reason'],
-                 'hard_stop_sha256':row['hard_stop_sha256']})
+                 'hard_stop_sha256':row['hard_stop_sha256'],'blocked_artifact':row['blocked_artifact']})
         elif not passed(row):
             ET.SubElement(case,'failure').text=json.dumps({'status':row.get('status'),
                 'numeric_exit':row.get('numeric_exit'),'capture_first':row.get('first'),

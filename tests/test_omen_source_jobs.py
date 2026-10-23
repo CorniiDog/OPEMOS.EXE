@@ -172,9 +172,9 @@ class SourceVocabularyOnly(unittest.TestCase):
     def test_pure_guard_requires_complete_exact_workflow_blob(self):
         raw=b'fixed safe A template';main='a'*40
         repo={'id':1};run={'repository':{'id':1,'full_name':'CorniiDog/OPEMOS.EXE'},
-            'head_repository':{'id':1,'full_name':'CorniiDog/OPEMOS.EXE'},'path':'.github/workflows/checks.yml',
+            'head_repository':{'id':1,'full_name':'CorniiDog/OPEMOS.EXE'},'path':'.github/workflows/windows-portable.yml',
             'event':'pull_request','id':12,'run_attempt':1,'head_sha':'b'*40}
-        job={'run_id':12,'status':'in_progress','name':'rust','id':34}
+        job={'run_id':12,'status':'in_progress','name':'build','id':34}
         profile={'schema':'FINITE_VM_ONLY_V1','enabled':True,'controller_commit':main,
                  'workflowPins':{run['path']:hashlib.sha256(raw).hexdigest()}}
         self.assertFalse(validate(run,job,repo,main,raw,profile)['runtimeAuthorized'])

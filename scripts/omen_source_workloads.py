@@ -24,8 +24,12 @@ WORKLOADS = {
     'appimage-package': ('ubuntu', 3600),
     'producer-metadata-diagnostic': ('windows',300),
     'macos-build': ('macos',5400),
+    'windows-quality': ('windows',7200),
+    'ubuntu-quality': ('ubuntu',3600),
+    'macos-quality': ('macos',5400),
 }
-PARENT_WORKLOADS={'.github/workflows/checks.yml':{'frontend-and-docs','rust','linux-integration','debian-12-package'},
+PARENT_WORKLOADS={'.github/workflows/checks.yml':{'frontend-and-docs','rust','linux-integration','debian-12-package',
+                                                'windows-quality','ubuntu-quality','macos-quality'},
     '.github/workflows/windows-portable.yml':{'seed-runtime-source','windows-build','producer-metadata-diagnostic'},
     '.github/workflows/ubuntu-executable.yml':{'appimage-package'},
     '.github/workflows/macos-arm64.yml':{'macos-build'}}
@@ -45,6 +49,26 @@ def selection(value, controller):
               'pull_request', 'repository_id', 'head_repository_id', 'workload',
               'candidate_tree','parent_run','parent_attempt','parent_workflow'}
     branch=type(value)is dict and value.get('source_kind')=='branch'
+    if type(value)is dict and 'quality_after'in value:
+        fields.add('quality_after');after=value['quality_after']
+        need(type(after)is dict and set(after)=={'kind','controller_run','controller_attempt','artifact_id',
+             'artifact_sha256','producer_run','producer_attempt','platform','source_commit','build_passed','vm_passed','build_artifact'}and
+             after['kind']=='OMEN_TERMINAL_VM_BEFORE_QUALITY_V1'and after['platform']in('windows','ubuntu','macos')and
+             after['source_commit']==value['candidate_commit']and
+             all(type(after[k])is str and NUMBER.fullmatch(after[k])for k in
+                 ('controller_run','controller_attempt','artifact_id','producer_run','producer_attempt'))and
+             type(after['artifact_sha256'])is str and SHA.fullmatch(after['artifact_sha256'])and
+             all(type(after[k])is bool for k in('build_passed','vm_passed'))and
+             value['parent_workflow']=='.github/workflows/checks.yml','exact terminal B artifact before finite late quality')
+        artifact=after['build_artifact']
+        need((not after['build_passed']and artifact is None)or(after['build_passed']and type(artifact)is dict and
+             artifact.get('source_commit')==value['candidate_commit']and
+             artifact.get('platform')==after['platform']and
+             all(type(artifact.get(k))is str and SHA.fullmatch(artifact[k])for k in
+                 ('artifact_archive_sha256','package_sha256','executable_sha256'))),
+             'quality artifact must be exact successful A producer or explicitly unavailable')
+    if type(value)is dict and value.get('parent_workflow')=='.github/workflows/checks.yml':
+        need('quality_after'in value,'quality cannot start before authenticated terminal VM result')
     provenance={'producer_event','producer_ref','workflow_commit'}
     if type(value)is dict and provenance&set(value):
         need(provenance<=set(value),'complete original workflow/event/ref provenance')
@@ -100,8 +124,11 @@ def commands(workload, source):
              '--all-targets', '--all-features', '--', '-D', 'warnings'],
             ['cargo', 'test', '--offline', '--locked', '--manifest-path', 'src-tauri/Cargo.toml']]
     if workload=='macos-build':
-        return npm+[['python','-B','-m','unittest','discover','-s','tests','-p','test_omen_source_jobs.py','-v']]+rust+[
-            ['npm','run','build:app'],['python','-B','@CONTROLLER@/macos-source-package.py']]
+        return npm+[['npm','run','build:app'],['python','-B','@CONTROLLER@/macos-source-package.py']]
+    if workload=='macos-quality':
+        return [['python','-B','-m','unittest','discover','-s','tests','-p','test_omen_source_jobs.py','-v']]+rust
+    if workload=='ubuntu-quality':
+        return [['python','-B','tests/linux_packaging.py'],['python','-B','scripts/check_linux_appimage.py']]
     if workload == 'frontend-and-docs':
         return npm + [['npm', 'run', 'test:frontend'], ['git', 'diff', '--check']]
     if workload == 'rust':
@@ -132,16 +159,18 @@ def commands(workload, source):
                  '--cache', 'build/runtime-cache/windows'] for name in
                 ('git-for-windows', 'github-cli', 'python', 'qemu', 'cdrtools-binary', 'cdrtools-source')]
     if workload == 'windows-build':
+        return npm+[['pwsh','-NoLogo','-NoProfile','-NonInteractive','-File','bundle_windows.ps1',
+                     '-CoreRoot','opemos-core-contracts'],
+                    ['pwsh','-NoLogo','-NoProfile','-NonInteractive','-File','@CONTROLLER@/windows-source-package.ps1']]
+    if workload == 'windows-quality':
         return [['python', '-B', '-m', 'unittest', 'discover', '-s', 'tests',
-                 '-p', 'test_omen_producer_native.py', '-v']] + npm + [
+                 '-p', 'test_omen_producer_native.py', '-v']] + [
             ['node', 'scripts/windows-portable-workflow.mjs'],
             ['node', '--test', 'tests/windows-portable-workflow.test.mjs'],
             ['node', 'scripts/check_core_maintainer_workflow.mjs'],
             ['python', '-B', '-m', 'unittest',
              'tests.runtime_bundle_packaging.RuntimeBundlePackagingTests.test_windows_runtime_adds_exact_core_zstd_dependency'],
             ['cargo', 'test', '--offline', '--locked', '--manifest-path', 'src-tauri/Cargo.toml', '--lib', 'windows_'],
-            ['pwsh', '-NoLogo', '-NoProfile', '-NonInteractive', '-File', 'bundle_windows.ps1',
-             '-CoreRoot', 'opemos-core-contracts'],
             ['pwsh', '-NoLogo', '-NoProfile', '-NonInteractive', '-File', '@CONTROLLER@/windows-source-smoke.ps1']]
     return npm + [['npm', 'run', 'build:linux-test'],
                   ['python', '-B', 'scripts/acquire_appliance_windows.py', '--output', 'build/appliance/linux'],
@@ -161,10 +190,13 @@ def dependencies(workload):
         'linux-integration': [(),(),(),(),()],
         'debian-12-package': [(),(),(0,1),(2,),(2,),(2,3),(),(2,3,4,6)],
         'seed-runtime-source': [(),(),(),(),(),()],
-        'windows-build': [(),(),(),(),(),(),(),(1,),(7,)],
+        'windows-build': [(),(0,),(1,)],
         'appimage-package': [(),(0,),(),(1,2)],
         'producer-metadata-diagnostic': [()],
-        'macos-build': [(),(),(),(),(),(0,),(5,)],
+        'macos-build': [(),(0,),(1,)],
+        'windows-quality': [(),(),(),(),(),(),()],
+        'ubuntu-quality': [(),()],
+        'macos-quality': [(),(),(),()],
     }
     need(workload in graph,'unknown finite command dependency graph')
     rows=graph[workload]
@@ -206,13 +238,22 @@ def hard_stop_event(manifest_sha, phase, index, rows, failure_ordinal, cause):
         'row_sha256':hashlib.sha256(canonical(rows[index])).hexdigest()if attempted else None}
 
 
-def blocked_command(template, dependencies, rows, hard_stop=None):
+def consumes_build_output(spec,index):
+    return (spec['workload']=='windows-quality'and index==6)or(spec['workload']=='ubuntu-quality'and index==1)
+
+
+def artifact_block(spec,index):
+    return 'phase-A-package-unavailable'if consumes_build_output(spec,index)and not spec['quality_after']['build_passed']else None
+
+
+def blocked_command(template, dependencies, rows, hard_stop=None, artifact=None):
     blocked=[p for p in dependencies if rows[p]['status']!='passed']
-    need(blocked or hard_stop,'only an actual prerequisite or hard stop blocks a command')
+    need(blocked or hard_stop or artifact=='phase-A-package-unavailable','only actual prerequisites or hard stop block a command')
     return {'template_argv':template,'status':'blocked','numeric_exit':None,
             'blocked_by':blocked,'stop_reason':None if hard_stop is None else
                 'Hard stop: '+hard_stop['cause']['type']+': '+hard_stop['cause']['reason'],
-            'hard_stop_sha256':None if hard_stop is None else hashlib.sha256(canonical(hard_stop)).hexdigest()}
+            'hard_stop_sha256':None if hard_stop is None else hashlib.sha256(canonical(hard_stop)).hexdigest(),
+            'blocked_artifact':artifact}
 
 
 def verify_diagnostics(value, request, spec):
@@ -273,12 +314,13 @@ def verify_diagnostics(value, request, spec):
     for i,(wanted,row)in enumerate(zip(expected,rows)):
         need(row['template_argv']==wanted,'fixed command order/identity changed')
         deps=[p for p in graph[i]if rows[p]['status']!='passed']
+        external=artifact_block(spec,i)
         if row.get('status')=='blocked':
             active=event if event is not None and i>=boundary else None
-            need(row==blocked_command(wanted,graph[i],rows,active),
+            need(row==blocked_command(wanted,graph[i],rows,active,external),
                  'blocked row must bind exact hard-event digest/boundary or actual prerequisite')
         else:
-            need(i<boundary and not deps and row.get('status')==command_status(row)and
+            need(i<boundary and not deps and not external and row.get('status')==command_status(row)and
                  (row['status']!='hard-failed'or i==event_row),
                  'attempted command after hard stop/failed prerequisite or misclassified capture')
     passed=event is None and all(r['status']=='passed'for r in rows)

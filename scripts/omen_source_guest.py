@@ -18,7 +18,7 @@ import tarfile
 import time
 
 from omen_source_workloads import (WORKLOADS, subject, commands, canonical, need,
-    verify_diagnostics, dependencies, command_status, blocked_command, hard_stop_event)
+    verify_diagnostics, dependencies, command_status, blocked_command, hard_stop_event, artifact_block, consumes_build_output)
 from omen_source_capture import capture
 
 FIELDS=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
@@ -157,7 +157,7 @@ def execute(manifest_path, manifest_sha, output):
         observed=json.loads(probe.stdout);need('QEMU'in observed['manufacturer']+observed['model']and
             observed['user']not in('S-1-5-18','S-1-5-19','S-1-5-20'),'non-system actual QEMU guest user')
         boot=str(observed['boot']);uid=observed['user'] # Actual Windows SID; never invent a Unix UID.
-        if spec['workload']=='windows-build':
+        if spec['workload']in('windows-build','windows-quality'):
             import ctypes
             from ctypes import wintypes
             session=wintypes.DWORD()
@@ -190,7 +190,8 @@ def execute(manifest_path, manifest_sha, output):
     phase='input-preparation';command_index=0
     try:
         required={'omen_source_capture.py','omen_source_workloads.py','omen_source_guest.py','omen_source_guest_parent.py'}
-        if spec['workload']=='windows-build':required.add('windows-source-smoke.ps1')
+        if spec['workload']=='windows-build':required.add('windows-source-package.ps1')
+        if spec['workload']=='windows-quality':required.add('windows-source-smoke.ps1')
         if spec['workload']=='macos-build':required.add('macos-source-package.py')
         need(required<=set(manifest['controllerFiles']),'complete sealed A guest execution graph')
         for name,pin in manifest['controllerFiles'].items():
@@ -206,6 +207,16 @@ def execute(manifest_path, manifest_sha, output):
                 'guest relative staged dependency destination')
             origin=Path(entry['path']);need(origin.is_dir()and not origin.is_symlink(),'staged dependency tree')
             copy_staged(entry,source/relative)
+        if spec['workload']in('windows-quality','ubuntu-quality')and spec['quality_after']['build_passed']:
+            q=manifest['qualityPackage'];producer=spec['quality_after']['build_artifact']
+            need(q['producer']==producer and q['artifact_archive_sha256']==producer['artifact_archive_sha256']and
+                 q['inventory_sha256']in{entry['inventory']['sha256']for entry in manifest['stagedTrees']},
+                 'late exact A output must come from Root verified original package inventory, not a rebuild')
+            leaf=(source/'dist/windows'/producer['executable_name']if spec['workload']=='windows-quality'else
+                  source/'src-tauri/target/debug/bundle/appimage'/producer['executable_name'])
+            need(leaf.name==producer['executable_name']and leaf.stat().st_size==producer['executable_bytes'],
+                 'same exact A executable byte length')
+            read(leaf,512*1024**2,producer['executable_sha256'],sealed=False)
         env={k:v for k,v in os.environ.items()if k in('PATH','SystemRoot','TEMP','TMP','HOME','USERPROFILE','LOCALAPPDATA',
              'DISPLAY','XAUTHORITY','DBUS_SESSION_BUS_ADDRESS','XDG_RUNTIME_DIR',
              'INCLUDE','LIB','LIBPATH','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion','UCRTVersion',
@@ -218,7 +229,7 @@ def execute(manifest_path, manifest_sha, output):
             OPEMOS_CORE_CONTRACT_ROOT=str(source/'opemos-core-contracts'),OPEMOS_CORE_EXPECTED_COMMIT=
             'adf372b857cd348b6a18680b45ffcea790f04d4b'if spec['workload']=='linux-integration'else
             'f72aff92a5534b676083ccba974f4185f2d4551f')
-        if spec['workload']in('appimage-package','macos-build'):
+        if spec['workload']in('appimage-package','macos-build','ubuntu-quality','macos-quality'):
             env['OPEMOS_CORE_EXPECTED_COMMIT']='01407aa6174b80e92cb7f3dcb534ade5cdd7bf00'
         env.update(CARGO_HOME=str(source/'.cargo'),npm_config_cache=str(source/'.npm'))
         env.update(OPEMOS_CORE_COMMIT=env['OPEMOS_CORE_EXPECTED_COMMIT'],RUST_TOOLCHAIN='1.98.1',NODE_VERSION='22.23.2')
@@ -229,9 +240,10 @@ def execute(manifest_path, manifest_sha, output):
         git=manifest['tools']['git'];read(git['path'],512*1024**2,git['sha256'],sealed=False)
         validations=[(['rev-parse','HEAD'],spec['candidate_commit']),
                      (['rev-parse','HEAD^{tree}'],spec['candidate_tree'])]
-        if spec['workload']in('rust','linux-integration','windows-build','appimage-package','macos-build'):
+        if spec['workload']in('rust','linux-integration','windows-build','appimage-package','macos-build',
+                             'windows-quality','ubuntu-quality','macos-quality'):
             validations.append((['-C','opemos-core-contracts','rev-parse','HEAD'],
-                '01407aa6174b80e92cb7f3dcb534ade5cdd7bf00'if spec['workload']in('appimage-package','macos-build')else env['OPEMOS_CORE_EXPECTED_COMMIT']))
+                '01407aa6174b80e92cb7f3dcb534ade5cdd7bf00'if spec['workload']in('appimage-package','macos-build','ubuntu-quality','macos-quality')else env['OPEMOS_CORE_EXPECTED_COMMIT']))
         result['source_validation']=[]
         phase='source-validation'
         for number,(arguments,expected)in enumerate(validations):
@@ -245,9 +257,17 @@ def execute(manifest_path, manifest_sha, output):
         client=hashlib.sha256((source/'scripts/robot_client.py').read_bytes()).hexdigest()
         graph=dependencies(spec['workload'])
         for number,template in enumerate(commands(spec['workload'],spec['candidate_commit'])):
-            if any(rows[p]['status']!='passed'for p in graph[number]):
-                rows.append(blocked_command(template,graph[number],rows));continue
+            external=artifact_block(spec,number)
+            if any(rows[p]['status']!='passed'for p in graph[number])or external:
+                rows.append(blocked_command(template,graph[number],rows,artifact=external))
+                if external:
+                    failure={'phase':'source-command-prerequisite','command_index':number,'reason':external,
+                        'quality_after_sha256':hashlib.sha256(canonical(spec['quality_after'])).hexdigest()}
+                    if first is None:first=failure
+                    else:secondary.append(failure)
+                continue
             phase='command-preflight';command_index=number
+            if consumes_build_output(spec,number):read(leaf,512*1024**2,producer['executable_sha256'],sealed=False)
             seconds=deadline-time.monotonic();need(seconds>0,'original guest source job deadline exhausted')
             tool=manifest['tools'][template[0]];read(tool['path'],512*1024**2,tool['sha256'],sealed=False)
             need(Path(tool['path']).is_absolute()and not Path(tool['path']).resolve().is_relative_to(source),
@@ -287,6 +307,7 @@ def execute(manifest_path, manifest_sha, output):
             row=capture(argv,source,child_env,output/('command-'+str(number)),seconds)
             row['template_argv']=template;row['tool_pin']=tool;row['status']=command_status(row);rows.append(row)
             phase='command-finalize'
+            if consumes_build_output(spec,number):read(leaf,512*1024**2,producer['executable_sha256'],sealed=False)
             if container is not None:
                 row['container']=container
                 observed=capture([docker['path'],'container','inspect',container['name']],source,env,
@@ -333,7 +354,7 @@ def execute(manifest_path, manifest_sha, output):
         result['hard_stop']=hard_stop_event(manifest_sha,phase,command_index,rows,ordinal,failure)
         graph=dependencies(spec['workload']);templates=commands(spec['workload'],spec['candidate_commit'])
         for i in range(len(rows),len(templates)):
-            rows.append(blocked_command(templates[i],graph[i],rows,result['hard_stop']))
+            rows.append(blocked_command(templates[i],graph[i],rows,result['hard_stop'],artifact_block(spec,i)))
     result['first']=first
     # Neither this guest nor its own result attests VM/QEMU/host closure. Root's
     # separate lifecycle finalizer is mandatory even after all commands pass.

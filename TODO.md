@@ -1,5 +1,37 @@
 # OPEMOS.EXE — Product Checklist
 
+## 2026-10-22 PR210 build -> exact-output VM -> late quality — authored, UNRUN
+
+- Exact new Root plan/full Core85d26d98 changes normal priority coherently:
+  early Windows/Ubuntu/macOS producers now contain only required setup/build/
+  structural package checks. Formatting/lint/general source/unit/policy and
+  portable-output diagnostics are late finite workloads. Windows retains early
+  PE/unsigned/hash integrity without app launch. No all-quality gate suppresses
+  an otherwise structurally valid A output; no failed build supplies a package.
+- Producer completes, existing protected04 consumes exact successful native
+  job/descriptor/digest into its admitted clean output VM test, then Checks
+  consumes terminal04 result before C. Existing four Checks job names retained;
+  selected platform quality is independent after ordinary B failure. No own
+  workflow_run wait, write/status permission, governance or Main merge shortcut.
+- Late source selection keeps candidate/ref/tree/A run/attempt/descriptor and
+  B result artifact separate from C implementation/run. Root guard/planner must
+  independently reauthenticate terminal B and admit the matching fixed A graph.
+  C artifact consumers recheck exact original A executable before/after use;
+  missing A blocks only those consumers. Strict A+B+C aggregate remains failed
+  on any failed/missing/blocked stage or missing same-candidate status admission.
+  Main-controller checks never become a different candidate's required passes.
+- Existing immutable-base/disposable working/no-adoption/unique queue and guest
+  workspace boundaries retained. Root must qualify actual clean factory output
+  per independent run, retain failed overlay/logs and keep same derivative for
+  required two-boot recovery; source readiness does not prove pristine guest OS.
+- F1 event/parent/Root/client/report binding remains mandatory; new external
+  artifact blocks are finite authenticated prerequisites, not invented hard
+  stops. All project regressions/builds/SDK/VM transactions UNRUN, OMEN only.
+  See docs/omen-build-vm-quality-contract.json for exact graph/current contexts,
+  guarded clean-rerun recipe, required Root adoption and precise unavailable case.
+  Existing PR210/source-only ff successor necessary for immutable review, no
+  new PR/installed/source83/SSH/queue/VM/Main merge/busy-owner or trust effects.
+
 ## 2026-10-22 PR210 F1 hard-stop provenance — authored, UNRUN
 
 - Core full1b6ddf5d/Root changed recovery plan: ordinary first failure plus a

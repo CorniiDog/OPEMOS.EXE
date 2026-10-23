@@ -1,9 +1,17 @@
 name: Checks
 # OMEN_GUEST_SOURCE_WORKLOAD_V1: hosted jobs perform metadata/data transport ONLY.
 on:
-  push:
-  pull_request:
+  workflow_run:
+    workflows: [04 SteamOS]
+    types: [completed]
   workflow_dispatch:
+    inputs:
+      controller_run:
+        type: string
+        required: true
+      controller_attempt:
+        type: string
+        required: true
 permissions:
   contents: read
   actions: read
@@ -17,7 +25,19 @@ jobs:
     outputs:
       ready: ${{ steps.route.outputs.ready }}
       runner: ${{ steps.route.outputs.runner }}
+      platform: ${{ steps.late.outputs.platform }}
     steps:
+      # Metadata only; actual project checks use fixed installed A inside OMEN.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: late
+        name: Bind exact completed B before any quality guest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPEMOS_OMEN_ROBOT_RUNNER_STATE: ${{ vars.OPEMOS_OMEN_ROBOT_RUNNER_STATE }}
+        run: python3 scripts/omen_quality.py route
       - id: route
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -28,6 +48,7 @@ jobs:
           ready=False;reason='Actual current OMEN route unavailable'
           try:
               assert os.environ['GITHUB_REPOSITORY']=='CorniiDog/OPEMOS.EXE'
+              assert pathlib.Path('quality-preflight/context.json').is_file()
               headers={'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],'Accept':'application/vnd.github+json'}
               url='https://api.github.com/repos/CorniiDog/OPEMOS.EXE/branches/main'
               class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -112,6 +133,26 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
 
+      - name: Ensure unavailable late result is explicit
+        if: always()
+        run: |
+          python3 - <<'PYOUTCOME'
+          import pathlib,json,os
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          out=p/'quality-outcome.json'
+          if not out.exists():
+              out.write_text(json.dumps({'status':'failed','selection':None,'reason':'No authenticated actual late guest result',
+                  'parent_run':os.environ['GITHUB_RUN_ID'],'parent_attempt':os.environ['GITHUB_RUN_ATTEMPT']}))
+          PYOUTCOME
+      - name: Retain exact small late outcome, failure too
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: quality-proof-frontend-and-docs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/quality-outcome.json
+          if-no-files-found: error
+          retention-days: 1
+
   rust:
     if: always()
     needs: source-route
@@ -166,6 +207,26 @@ jobs:
           path: source-results/
           if-no-files-found: error
           retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+      - name: Ensure unavailable late result is explicit
+        if: always()
+        run: |
+          python3 - <<'PYOUTCOME'
+          import pathlib,json,os
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          out=p/'quality-outcome.json'
+          if not out.exists():
+              out.write_text(json.dumps({'status':'failed','selection':None,'reason':'No authenticated actual late guest result',
+                  'parent_run':os.environ['GITHUB_RUN_ID'],'parent_attempt':os.environ['GITHUB_RUN_ATTEMPT']}))
+          PYOUTCOME
+      - name: Retain exact small late outcome, failure too
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: quality-proof-rust-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/quality-outcome.json
+          if-no-files-found: error
+          retention-days: 1
 
   linux-integration:
     if: always()
@@ -222,6 +283,26 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
 
+      - name: Ensure unavailable late result is explicit
+        if: always()
+        run: |
+          python3 - <<'PYOUTCOME'
+          import pathlib,json,os
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          out=p/'quality-outcome.json'
+          if not out.exists():
+              out.write_text(json.dumps({'status':'failed','selection':None,'reason':'No authenticated actual late guest result',
+                  'parent_run':os.environ['GITHUB_RUN_ID'],'parent_attempt':os.environ['GITHUB_RUN_ATTEMPT']}))
+          PYOUTCOME
+      - name: Retain exact small late outcome, failure too
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: quality-proof-linux-integration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/quality-outcome.json
+          if-no-files-found: error
+          retention-days: 1
+
   debian-12-package:
     if: always()
     needs: source-route
@@ -276,3 +357,271 @@ jobs:
           path: source-results/
           if-no-files-found: error
           retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+      - name: Ensure unavailable late result is explicit
+        if: always()
+        run: |
+          python3 - <<'PYOUTCOME'
+          import pathlib,json,os
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          out=p/'quality-outcome.json'
+          if not out.exists():
+              out.write_text(json.dumps({'status':'failed','selection':None,'reason':'No authenticated actual late guest result',
+                  'parent_run':os.environ['GITHUB_RUN_ID'],'parent_attempt':os.environ['GITHUB_RUN_ATTEMPT']}))
+          PYOUTCOME
+      - name: Retain exact small late outcome, failure too
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: quality-proof-debian-12-package-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/quality-outcome.json
+          if-no-files-found: error
+          retention-days: 1
+
+  windows-quality:
+    if: always() && needs.source-route.outputs.platform == 'windows'
+    needs: source-route
+    runs-on: ${{ fromJSON(needs.source-route.outputs.runner || '["ubuntu-24.04"]') }}
+    timeout-minutes: 125
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Fail visibly when the actual OMEN route is unavailable
+        if: needs.source-route.outputs.ready != 'true'
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          reason='Actual admitted OMEN source route unavailable; no guest test or compiler ran'
+          (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':reason,'actualGuestExecuted':False,'compilerPassed':False}))
+          suite=E.Element('testsuite',name='Unavailable actual source workload',tests='1',failures='1',skipped='0')
+          E.SubElement(E.SubElement(suite,'testcase',name='Actual OMEN source workload'),'failure').text=reason
+          E.ElementTree(suite).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+          (p/'report.html').write_text('<html><body><h1>FAILED / unavailable</h1><p>'+reason+'</p></body></html>')
+          print('::error::'+reason)
+          raise SystemExit(1)
+          PY
+      # Root job-start guard must verify this entire workflow blob against its
+      # adopted template before any step; no candidate checkout is permitted.
+      - name: Bind existing ephemeral token to the fixed source-only scope
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/timeout --signal=TERM --kill-after=5s 45s /usr/bin/python3 -I -B /var/lib/opemos-robot-control-r1/guard/job_guard.py --bind-job-token
+      - name: Wait for actual admitted OMEN guest windows-quality
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/python3 -E -s -B /var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py run-required --workload windows-quality --directory source-results
+      - name: Make missing actual source proof explicit
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          if not (p/'source-proof.json').exists():
+              if not (p/'source-failure.json').exists():
+                  (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':'Fixed A guard/client or actual guest result unavailable; inspect retained job logs','compilerPassed':False}))
+              if not (p/'xunit.xml').exists():
+                  s=E.Element('testsuite',name='Missing actual OMEN source proof',tests='1',failures='1',skipped='0')
+                  E.SubElement(E.SubElement(s,'testcase',name='Actual source workload'),'failure').text='No accepted actual guest/compiler result'
+                  E.ElementTree(s).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+              (p/'report.html').write_text('<html><body><h1>FAILED / no actual source proof</h1></body></html>')
+          PY
+      - name: Always retain actual source results or precise failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-windows-quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+      - name: Ensure unavailable late result is explicit
+        if: always()
+        run: |
+          python3 - <<'PYOUTCOME'
+          import pathlib,json,os
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          out=p/'quality-outcome.json'
+          if not out.exists():
+              out.write_text(json.dumps({'status':'failed','selection':None,'reason':'No authenticated actual late guest result',
+                  'parent_run':os.environ['GITHUB_RUN_ID'],'parent_attempt':os.environ['GITHUB_RUN_ATTEMPT']}))
+          PYOUTCOME
+      - name: Retain exact small late outcome, failure too
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: quality-proof-windows-quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/quality-outcome.json
+          if-no-files-found: error
+          retention-days: 1
+
+  ubuntu-quality:
+    if: always() && needs.source-route.outputs.platform == 'ubuntu'
+    needs: source-route
+    runs-on: ${{ fromJSON(needs.source-route.outputs.runner || '["ubuntu-24.04"]') }}
+    timeout-minutes: 65
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Fail visibly when the actual OMEN route is unavailable
+        if: needs.source-route.outputs.ready != 'true'
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          reason='Actual admitted OMEN source route unavailable; no guest test or compiler ran'
+          (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':reason,'actualGuestExecuted':False,'compilerPassed':False}))
+          suite=E.Element('testsuite',name='Unavailable actual source workload',tests='1',failures='1',skipped='0')
+          E.SubElement(E.SubElement(suite,'testcase',name='Actual OMEN source workload'),'failure').text=reason
+          E.ElementTree(suite).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+          (p/'report.html').write_text('<html><body><h1>FAILED / unavailable</h1><p>'+reason+'</p></body></html>')
+          print('::error::'+reason)
+          raise SystemExit(1)
+          PY
+      # Root job-start guard must verify this entire workflow blob against its
+      # adopted template before any step; no candidate checkout is permitted.
+      - name: Bind existing ephemeral token to the fixed source-only scope
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/timeout --signal=TERM --kill-after=5s 45s /usr/bin/python3 -I -B /var/lib/opemos-robot-control-r1/guard/job_guard.py --bind-job-token
+      - name: Wait for actual admitted OMEN guest ubuntu-quality
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/python3 -E -s -B /var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py run-required --workload ubuntu-quality --directory source-results
+      - name: Make missing actual source proof explicit
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          if not (p/'source-proof.json').exists():
+              if not (p/'source-failure.json').exists():
+                  (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':'Fixed A guard/client or actual guest result unavailable; inspect retained job logs','compilerPassed':False}))
+              if not (p/'xunit.xml').exists():
+                  s=E.Element('testsuite',name='Missing actual OMEN source proof',tests='1',failures='1',skipped='0')
+                  E.SubElement(E.SubElement(s,'testcase',name='Actual source workload'),'failure').text='No accepted actual guest/compiler result'
+                  E.ElementTree(s).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+              (p/'report.html').write_text('<html><body><h1>FAILED / no actual source proof</h1></body></html>')
+          PY
+      - name: Always retain actual source results or precise failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-ubuntu-quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+      - name: Ensure unavailable late result is explicit
+        if: always()
+        run: |
+          python3 - <<'PYOUTCOME'
+          import pathlib,json,os
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          out=p/'quality-outcome.json'
+          if not out.exists():
+              out.write_text(json.dumps({'status':'failed','selection':None,'reason':'No authenticated actual late guest result',
+                  'parent_run':os.environ['GITHUB_RUN_ID'],'parent_attempt':os.environ['GITHUB_RUN_ATTEMPT']}))
+          PYOUTCOME
+      - name: Retain exact small late outcome, failure too
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: quality-proof-ubuntu-quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/quality-outcome.json
+          if-no-files-found: error
+          retention-days: 1
+
+  macos-quality:
+    if: always() && needs.source-route.outputs.platform == 'macos'
+    needs: source-route
+    runs-on: ${{ fromJSON(needs.source-route.outputs.runner || '["ubuntu-24.04"]') }}
+    timeout-minutes: 95
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Fail visibly when the actual OMEN route is unavailable
+        if: needs.source-route.outputs.ready != 'true'
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          reason='Actual admitted OMEN source route unavailable; no guest test or compiler ran'
+          (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':reason,'actualGuestExecuted':False,'compilerPassed':False}))
+          suite=E.Element('testsuite',name='Unavailable actual source workload',tests='1',failures='1',skipped='0')
+          E.SubElement(E.SubElement(suite,'testcase',name='Actual OMEN source workload'),'failure').text=reason
+          E.ElementTree(suite).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+          (p/'report.html').write_text('<html><body><h1>FAILED / unavailable</h1><p>'+reason+'</p></body></html>')
+          print('::error::'+reason)
+          raise SystemExit(1)
+          PY
+      # Root job-start guard must verify this entire workflow blob against its
+      # adopted template before any step; no candidate checkout is permitted.
+      - name: Bind existing ephemeral token to the fixed source-only scope
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/timeout --signal=TERM --kill-after=5s 45s /usr/bin/python3 -I -B /var/lib/opemos-robot-control-r1/guard/job_guard.py --bind-job-token
+      - name: Wait for actual admitted OMEN guest macos-quality
+        if: needs.source-route.outputs.ready == 'true'
+        run: /usr/bin/python3 -E -s -B /var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py run-required --workload macos-quality --directory source-results
+      - name: Make missing actual source proof explicit
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,xml.etree.ElementTree as E
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          if not (p/'source-proof.json').exists():
+              if not (p/'source-failure.json').exists():
+                  (p/'source-failure.json').write_text(json.dumps({'status':'failed','reason':'Fixed A guard/client or actual guest result unavailable; inspect retained job logs','compilerPassed':False}))
+              if not (p/'xunit.xml').exists():
+                  s=E.Element('testsuite',name='Missing actual OMEN source proof',tests='1',failures='1',skipped='0')
+                  E.SubElement(E.SubElement(s,'testcase',name='Actual source workload'),'failure').text='No accepted actual guest/compiler result'
+                  E.ElementTree(s).write(p/'xunit.xml',encoding='utf-8',xml_declaration=True)
+              (p/'report.html').write_text('<html><body><h1>FAILED / no actual source proof</h1></body></html>')
+          PY
+      - name: Always retain actual source results or precise failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-macos-quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/
+          if-no-files-found: error
+          retention-days: ${{ github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && 90 || 1 }}
+
+      - name: Ensure unavailable late result is explicit
+        if: always()
+        run: |
+          python3 - <<'PYOUTCOME'
+          import pathlib,json,os
+          p=pathlib.Path('source-results');p.mkdir(exist_ok=True)
+          out=p/'quality-outcome.json'
+          if not out.exists():
+              out.write_text(json.dumps({'status':'failed','selection':None,'reason':'No authenticated actual late guest result',
+                  'parent_run':os.environ['GITHUB_RUN_ID'],'parent_attempt':os.environ['GITHUB_RUN_ATTEMPT']}))
+          PYOUTCOME
+      - name: Retain exact small late outcome, failure too
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: quality-proof-macos-quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-results/quality-outcome.json
+          if-no-files-found: error
+          retention-days: 1
+
+  final-build-vm-quality:
+    if: always()
+    needs: [source-route, frontend-and-docs, rust, linux-integration, debian-12-package, windows-quality, ubuntu-quality, macos-quality]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Strict exact-source A+B+C aggregate, no controller-SHA shortcut
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPEMOS_OMEN_ROBOT_RUNNER_STATE: ${{ vars.OPEMOS_OMEN_ROBOT_RUNNER_STATE }}
+        run: python3 scripts/omen_quality.py aggregate
+      - name: Always retain aggregate or precise unavailable diagnostic
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: build-vm-quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: quality-final/
+          if-no-files-found: error
+          retention-days: 1

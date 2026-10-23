@@ -11,7 +11,8 @@ from omen_source_workloads import REPO, PARENT_WORKLOADS, need
 JOB_WORKLOAD={'frontend-and-docs':'frontend-and-docs','rust':'rust','linux-integration':'linux-integration',
     'debian-12-package':'debian-12-package','seed-runtime-source':'seed-runtime-source',
     'build':'windows-build','appimage-package':'appimage-package',
-    'producer-metadata-diagnostic':'producer-metadata-diagnostic','native-app':'macos-build'}
+    'producer-metadata-diagnostic':'producer-metadata-diagnostic','native-app':'macos-build',
+    'windows-quality':'windows-quality','ubuntu-quality':'ubuntu-quality','macos-quality':'macos-quality'}
 
 
 def validate_controller(run,job,execution,workflow_raw,profile):
@@ -49,24 +50,35 @@ def validate_controller(run,job,execution,workflow_raw,profile):
             'retainsExistingKernelAndTokenGuards':True,'runtimeAuthorized':False}
 
 
-def validate(run,job,repository,current_main,workflow_raw,profile):
+def validate(run,job,repository,current_main,workflow_raw,profile,late_selection=None):
     need(type(workflow_raw)is bytes and 0<len(workflow_raw)<=128*1024,
          'complete finite workflow bytes, not API step-name labels')
     need(profile['schema']=='FINITE_VM_ONLY_V1'and profile['enabled']is True and
          profile['controller_commit']==current_main and run['repository']['full_name']==REPO and
          run['head_repository']['id']==repository['id']==run['repository']['id']and
          run['head_repository']['full_name']==REPO and run['path']in PARENT_WORKLOADS and
-         run['event']in('push','pull_request','workflow_dispatch')and
+         run['event']in('push','pull_request','workflow_dispatch','workflow_run')and
          str(job['run_id'])==str(run['id'])and job['status']=='in_progress'and
          job['name']in JOB_WORKLOAD and JOB_WORKLOAD[job['name']]in PARENT_WORKLOADS[run['path']],
          'only exact live source-workload job; no GUI/platform/persist capability')
     need(hashlib.sha256(workflow_raw).hexdigest()==profile['workflowPins'][run['path']],
          'all candidate workflow steps/env/actions must equal the Root-adopted safe template')
+    if run['path']=='.github/workflows/checks.yml':
+        # Root obtains this by verify_root_late_scope using its independently
+        # authenticated API adapters; never accept a client-supplied flag here.
+        need(run['event']in('workflow_run','workflow_dispatch')and type(late_selection)is dict and
+             late_selection.get('kind')=='ROOT_VERIFIED_LATE_QUALITY_SCOPE_V1'and
+             late_selection['selection']['parent_run']==str(run['id'])and
+             late_selection['selection']['parent_attempt']==str(run['run_attempt'])and
+             late_selection['selection']['workload']==JOB_WORKLOAD[job['name']],
+             'Root independently verified exact terminal B before admitting C')
+    else:need(run['event']!='workflow_run','only late Checks consumes terminal workflow event')
     # A matching hash authorizes no candidate checkout, source import, shell,
     # credentials, arbitrary command, hardware or publication on the host.
     return {'kind':'ROOT_FIXED_A_SOURCE_JOB_SCOPE_V1','repository':REPO,
-        'controller_commit':current_main,'candidate_commit':run['head_sha'],
+        'controller_commit':current_main,'candidate_commit':late_selection['selection']['candidate_commit']if late_selection else run['head_sha'],
+        'controller_implementation_commit':run['head_sha'],
         'run_id':str(run['id']),'attempt':str(run['run_attempt']),'job_id':str(job['id']),
         'workload':JOB_WORKLOAD[job['name']],'allowed_action':'execute-source-workload',
-        'workflow_sha256':hashlib.sha256(workflow_raw).hexdigest(),
+        'workflow_sha256':hashlib.sha256(workflow_raw).hexdigest(),'late_selection':late_selection,
         'retainsExistingKernelAndTokenGuards':True,'runtimeAuthorized':False}

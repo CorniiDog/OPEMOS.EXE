@@ -1,6 +1,7 @@
 {
   "kind": "OMEN_FINITE_SOURCE_WORKLOAD_SOURCE_CONTRACT_V1",
   "state": "AUTHORED_UNRUN_NOT_INSTALLED",
+  "orderingSuccessor": "docs/omen-build-vm-quality-contract.json splits early native build/package, exact built-output VM and late quality; original F1 provenance remains mandatory. This source proposal is not installed or runtime evidence.",
   "failureContinuationSuccessor": "docs/omen-source-continuation-contract.json defines the complete fixed dependency/outcome and failed-diagnostic consumer correction. Ordinary closed nonzero exits keep independent steps eligible; failed/blocked results never satisfy acceptance or feed package consumers.",
   "nonMainSuccessor": "docs/omen-nonmain-admission-contract.json supplies the joined ordinary branch/manual, reviewed non-main implementation, completion-cycle and OMEN macOS successor. This does not transfer5ea review or old checks.",
   "runtimeAuthorized": false,
@@ -21,6 +22,9 @@
     "The unchanged separate Main 04 Robot workflow remains responsible for real GUI Build/completed image/full hash, virtual USB, same installed target phases and Robot XML/HTML/xUnit/screenshots. Source/package proof never promotes those results."
   ],
   "finiteWorkloads": {
+    "windows-quality": {"guest": "windows-x86_64", "seconds": 7200, "requiredJob": "windows-quality", "prerequisite": "Authenticated terminal B; only smoke consumes original A output"},
+    "ubuntu-quality": {"guest": "ubuntu-x86_64", "seconds": 3600, "requiredJob": "ubuntu-quality", "prerequisite": "Authenticated terminal B; only AppImage resolver consumes original A output"},
+    "macos-quality": {"guest": "macos-arm64-on-OMEN", "seconds": 5400, "requiredJob": "macos-quality", "prerequisite": "Authenticated terminal B and actual qualified OMEN SDK/bridge; no hosted substitute"},
     "frontend-and-docs": {"guest": "ubuntu-x86_64", "seconds": 900, "requiredJob": "frontend-and-docs"},
     "rust": {"guest": "ubuntu-x86_64", "seconds": 1800, "requiredJob": "rust"},
     "linux-integration": {"guest": "ubuntu-x86_64", "seconds": 1800, "requiredJob": "linux-integration"},

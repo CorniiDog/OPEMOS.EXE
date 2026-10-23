@@ -32,10 +32,11 @@ def metadata_result(workload='rust'):
             **{k:{'sha256':hashlib.sha256(b'').hexdigest(),'bytes':0}for k in('stdout','stderr')}})
     value={'kind':'OMEN_GUEST_SOURCE_WORKLOAD_V1','identity':identity,'subject':spec,
         'guest':{'location':'OMEN_VM','virtualization':'qemu','platform':WORKLOADS[workload][0],
-            'boot_id':'metadata-only','uid':'S-1-5-21-1-2-3-1000'if workload=='windows-build'else 1000,
+            'boot_id':'metadata-only','uid':'S-1-5-21-1-2-3-1000'if WORKLOADS[workload][0]=='windows'else 1000,
             'controller_commit':'a'*40,'candidate_commit':'b'*40},
         'commands':rows,'status':'passed','first':None,'secondary':[],
         'controller_manifest_sha256':'c'*64,'hard_stop':None}
+    if workload.endswith('-quality'):spec['quality_after']={'build_passed':True}
     return value,identity,spec
 
 
@@ -58,7 +59,7 @@ class FiniteOutcomeMetadata(unittest.TestCase):
         with self.assertRaises(ValueError):verify_diagnostics(bad,identity,spec)
 
     def test_failed_npm_blocks_only_build_consumers_not_other_checks(self):
-        for workload,index in(('frontend-and-docs',0),('windows-build',1),('macos-build',0),('appimage-package',0)):
+        for workload,index in(('frontend-and-docs',0),('windows-build',0),('macos-build',0),('appimage-package',0)):
             with self.subTest(workload=workload):
                 value,identity,spec=metadata_result(workload);rows=value['commands'];graph=dependencies(workload)
                 rows[index].update(numeric_exit=1,status='failed')
@@ -68,8 +69,8 @@ class FiniteOutcomeMetadata(unittest.TestCase):
                 value.update(status='failed',first={'command_index':index})
                 verify_diagnostics(value,identity,spec)
                 if workload=='windows-build':
-                    self.assertEqual(rows[6]['status'],'passed');self.assertEqual(rows[8]['blocked_by'],[7])
-                if workload=='macos-build':self.assertEqual(rows[4]['status'],'passed')
+                    self.assertEqual(rows[1]['blocked_by'],[0])
+                if workload=='macos-build':self.assertEqual(rows[2]['blocked_by'],[1])
 
     def test_capture_unknown_overflow_signal_timeout_and_cleanup_are_hard_not_ordinary(self):
         value,_,_=metadata_result();base=value['commands'][0]

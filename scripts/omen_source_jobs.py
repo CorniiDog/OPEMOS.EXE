@@ -130,6 +130,13 @@ def normal_operation(engine, spec):
     need(prepared.get('available')is True,prepared.get('reason','source workload not admitted'))
     stage=engine.stage;cfg=stage['load_pinned'](prepared['config']);job=prepared['source_job']
     bound=subject(job['subject'],request['source_commit'])
+    if 'quality_after'in spec:
+        # Original Root planner/hook must supply its independently rechecked
+        # exact terminal artifact scope before queue admission. Not a client flag.
+        proof=job['late_quality_admission']
+        need(proof['kind']=='ROOT_VERIFIED_LATE_QUALITY_SCOPE_V1'and proof['selection']==spec and
+             proof['selection_sha256']==hashlib.sha256(canonical(spec)).hexdigest()and
+             proof['quality_after']==spec['quality_after'],'Root late quality selection not independently admitted')
     need(all(bound[k]==v for k,v in spec.items()) and job['identity']=={k:request[k]for k in
          ('repository','source_commit','run_id','attempt','nonce')}and
          job['backend']=='existing-managed-libvirt'and job['hardware_scope']=='virtual-only'and
