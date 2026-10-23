@@ -149,7 +149,57 @@ def commands(workload, source):
                    '--appliance-image', 'build/appliance/linux/fedora-builder.qcow2']]
 
 
-def verify_result(value, request, spec):
+def dependencies(workload):
+    """Only real output/setup prerequisites within the existing fixed commands.
+
+    Check failures do not gate independent checks or a useful build attempt.
+    Overall source/package acceptance still requires every command to pass.
+    """
+    graph={
+        'frontend-and-docs': [(),(0,),()],
+        'rust': [(),(),(),()],
+        'linux-integration': [(),(),(),(),()],
+        'debian-12-package': [(),(),(0,1),(2,),(2,),(2,3),(),(2,3,4,6)],
+        'seed-runtime-source': [(),(),(),(),(),()],
+        'windows-build': [(),(),(),(),(),(),(),(1,),(7,)],
+        'appimage-package': [(),(0,),(),(1,2)],
+        'producer-metadata-diagnostic': [()],
+        'macos-build': [(),(),(),(),(),(0,),(5,)],
+    }
+    need(workload in graph,'unknown finite command dependency graph')
+    rows=graph[workload]
+    need(len(rows)==len(commands(workload,'0'*40))and
+         all(all(type(p)is int and 0<=p<i for p in deps)for i,deps in enumerate(rows)),
+         'complete forward-only finite workload dependencies')
+    return rows
+
+
+def command_status(row):
+    """A nonzero exit is ordinary ONLY with complete healthy native capture.
+
+    Timeout/overflow/unknown identity/negative signal exit/cleanup errors are
+    hard stops, never an ordinary compiler failure to continue through.
+    """
+    healthy=(type(row.get('numeric_exit'))is int and row['numeric_exit']>=0 and
+        row.get('first')is None and row.get('secondary')==[]and
+        all(row.get(k)is True for k in('reaped','stdoutEOF','stderrEOF','FDsClosed','descendantsAbsent'))and
+        type(row.get('pid'))is int and row['pid']>0 and
+        type(row.get('birth'))is int and row['birth']>0)
+    for name in('stdout','stderr'):
+        pin=row.get(name,{})
+        healthy=healthy and type(pin.get('sha256'))is str and bool(SHA.fullmatch(pin['sha256']))and \
+            type(pin.get('bytes'))is int and 0<=pin['bytes']<=32*1024**2
+    return ('passed'if row['numeric_exit']==0 else'failed')if healthy else'hard-failed'
+
+
+def blocked_command(template, dependencies, rows, stop_reason=None):
+    blocked=[p for p in dependencies if rows[p]['status']!='passed']
+    need(blocked or stop_reason,'only an actual prerequisite or hard stop blocks a command')
+    return {'template_argv':template,'status':'blocked','numeric_exit':None,
+            'blocked_by':blocked,'stop_reason':stop_reason}
+
+
+def verify_diagnostics(value, request, spec):
     need(type(value) is dict and value.get('kind') == 'OMEN_GUEST_SOURCE_WORKLOAD_V1' and
          value.get('identity') == request and value.get('subject') == spec,
          'same current source workload result, not GUI acceptance')
@@ -164,16 +214,30 @@ def verify_result(value, request, spec):
     rows = value['commands']
     expected = commands(spec['workload'], spec['candidate_commit'])
     need(type(rows) is list and len(rows) == len(expected), 'complete fixed command set')
-    for wanted, row in zip(expected, rows):
-        need(row['template_argv'] == wanted and type(row['numeric_exit']) is int and
-             row['numeric_exit'] == 0 and row['reaped'] is True and row['stdoutEOF'] is True and
-             row['stderrEOF'] is True and row['FDsClosed'] is True and row['descendantsAbsent'] is True and
-             row['first'] is None and row['secondary'] == [] and
-             type(row['pid']) is int and row['pid'] > 0 and type(row['birth'])is int and row['birth']>0,
-             'actual command failure/incomplete native closure; raw evidence retained')
-        need(all(SHA.fullmatch(row[k]['sha256']) and type(row[k]['bytes']) is int and
-                 0 <= row[k]['bytes'] <= 32 * 1024**2 + 65536 for k in ('stdout', 'stderr')),
-             'complete bounded raw compiler/test logs')
+    graph=dependencies(spec['workload']);hard=False
+    for i,(wanted,row)in enumerate(zip(expected,rows)):
+        need(row['template_argv']==wanted,'fixed command order/identity changed')
+        deps=[p for p in graph[i]if rows[p]['status']!='passed']
+        if row.get('status')=='blocked':
+            need(set(row)=={'template_argv','status','numeric_exit','blocked_by','stop_reason'}and
+                 row['numeric_exit']is None and row['blocked_by']==deps and
+                 (deps or type(row['stop_reason'])is str and bool(row['stop_reason']))and
+                 (row['stop_reason']is None or value['first']is not None),
+                 'precise blocked result, never a fabricated child or passed dependency')
+            hard=hard or row['stop_reason']is not None
+        else:
+            need(not hard and not deps and row.get('status')==command_status(row),
+                 'attempted command after hard stop/failed prerequisite or misclassified capture')
+            hard=row['status']=='hard-failed'
+    passed=all(r['status']=='passed'for r in rows)
+    need(value['status']==('passed'if passed else'failed')and
+         (value['first']is None and value['secondary']==[]if passed else value['first']is not None),
+         'truthful failed/blocked aggregation')
+    return value
+
+
+def verify_result(value, request, spec):
+    verify_diagnostics(value,request,spec)
     need(value['first'] is None and value['secondary'] == [] and value['status'] == 'passed',
          'failed or incomplete source job')
     return value

@@ -295,7 +295,7 @@ class Engine:
                              for item in reply["public_evidence"]]}
 
     def source_workload(self, spec):
-        from omen_source_workloads import selection, subject, verify_result
+        from omen_source_workloads import selection, subject, verify_result, verify_diagnostics
         selection(spec,self.identity['source_commit'])
         reply=self._request('execute-source-workload',spec)
         # Persist the complete actual response before asserting success. A
@@ -305,14 +305,20 @@ class Engine:
         require(len(raw)<=MAX_REPLY,'bounded complete source reply')
         fd=os.open(target,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
         with os.fdopen(fd,'wb')as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
-        require(reply['status']=='passed',outcome_reason(reply,'Actual OMEN source job failed/unavailable'))
+        require(broker_failure(reply)is None,outcome_reason(reply,'Actual OMEN source job unavailable'))
         bound=subject(reply['source_subject'],self.identity['source_commit'])
         require(all(bound[k]==v for k,v in spec.items()),'Root substituted candidate/workload')
-        verify_result(reply['source_result'],reply['identity'],bound)
+        if reply['status']=='passed':verify_result(reply['source_result'],reply['identity'],bound)
+        else:
+            require(reply['status']=='failed','unknown source result status')
+            if reply['source_result'].get('kind')=='OMEN_GUEST_SOURCE_WORKLOAD_V1':
+                verify_diagnostics(reply['source_result'],reply['identity'],bound)
         require(reply['source_closure']['unknown']==[] and all(reply['source_closure'].get(k)is True for k in
             ('domainAbsent','originalPIDStartAbsent','cgroupEmpty','ownedFDsClosed','hostUnchanged',
              'observerClosed','controlClosed','mediaUnchanged','originalBaseUnchanged')),
             'actual source VM closure incomplete')
+        # Failed, fully closed replies may reach the report writer. Only the
+        # required source-job caller can assert success before package use.
         return reply
 
     def persist(self):

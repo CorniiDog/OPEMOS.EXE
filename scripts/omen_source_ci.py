@@ -192,9 +192,14 @@ def run(workload,directory):
            'OPEMOS_ROBOT_REPORT_EXCHANGE':'/home/connor/.local/share/opemos-ci/github-runner/robot-private/reports'}
     for key,value in fixed.items():
         need(os.environ.get(key,value)==value,'fixed source namespace/report/socket differs');os.environ[key]=value
+    actual_result=None
     try:
         reply=Engine(directory/'private').source_workload(before)
+        actual_result=reply['source_result']
+        save(directory/'source-actual-outcome.json',reply)
+        reports(directory,actual_result)
         need(scope(parent,attempt,workload)==before,'source/head/base/attempt changed during guest operation')
+        need(reply['status']=='passed','Actual OMEN source workload failed; complete command outcomes and raw evidence retained')
         if reply.get('package')is not None:assemble(reply,directory,workload)
         need(workload not in('windows-build','appimage-package','debian-12-package','seed-runtime-source','macos-build')or
              reply.get('package')is not None,'required actual guest package absent')
@@ -205,10 +210,13 @@ def run(workload,directory):
         reports(directory,reply['source_result'])
         save(directory/'source-proof.json',value)
     except BaseException as e:
-        save(directory/'source-failed-outcome.json',{'kind':'OMEN_REQUIRED_SOURCE_JOB_V1','status':'failed',
-            'selection':before,'parent_run':parent,'parent_attempt':attempt,
-            'type':type(e).__name__,'reason':str(e),'noGUIImageOrGPUAcceptance':True})
-        reports(directory,None,str(e))
+        try:
+            save(directory/'source-failed-outcome.json',{'kind':'OMEN_REQUIRED_SOURCE_JOB_V1','status':'failed',
+                'selection':before,'parent_run':parent,'parent_attempt':attempt,
+                'type':type(e).__name__,'reason':str(e),'noGUIImageOrGPUAcceptance':True})
+        except BaseException as secondary:e.add_note('Failed-outcome persistence: '+repr(secondary))
+        try:reports(directory,actual_result,str(e))
+        except BaseException as secondary:e.add_note('Command report finalizer: '+repr(secondary))
         raise
 
 
@@ -218,16 +226,29 @@ def reports(directory,result,reason=''):
     rows=[]if result is None else result.get('commands',[])
     if not rows:rows=[{'template_argv':['Actual OMEN source prerequisite unavailable'],
                        'numeric_exit':None,'first':reason or 'No actual command receipt'}]
-    failed=sum(not(type(r.get('numeric_exit'))is int and r['numeric_exit']==0 and r.get('first')is None)for r in rows)
+    passed=lambda r:r.get('status')=='passed'and type(r.get('numeric_exit'))is int and r['numeric_exit']==0 and r.get('first')is None
+    blocked=sum(r.get('status')=='blocked'for r in rows)
+    failed=sum(not passed(r)and r.get('status')!='blocked'for r in rows)
     suite=ET.Element('testsuite',name='Actual OMEN source commands; not GUI Robot acceptance',
-                     tests=str(len(rows)),failures=str(failed),skipped='0')
+                     tests=str(len(rows)),failures=str(failed),skipped=str(blocked))
     for row in rows:
         case=ET.SubElement(suite,'testcase',name=' '.join(row['template_argv']))
-        if not(type(row.get('numeric_exit'))is int and row['numeric_exit']==0 and row.get('first')is None):
-            ET.SubElement(case,'failure').text=str(row.get('first')or reason or 'Nonzero/unknown actual exit')
+        if row.get('status')=='blocked':
+            ET.SubElement(case,'skipped',type='blocked-prerequisite-or-hard-stop').text=json.dumps(
+                {'blocked_by':row['blocked_by'],'stop_reason':row['stop_reason']})
+        elif not passed(row):
+            ET.SubElement(case,'failure').text=json.dumps({'status':row.get('status'),
+                'numeric_exit':row.get('numeric_exit'),'capture_first':row.get('first'),
+                'capture_secondary':row.get('secondary',[]),'transaction_failure':reason})
+    if reason and not failed:
+        # A Root/publication/closure failure after successful commands is not
+        # allowed to leave an all-green JUnit file. This is not a child receipt.
+        suite.set('tests',str(len(rows)+1));suite.set('failures','1')
+        ET.SubElement(ET.SubElement(suite,'testcase',name='Source transaction finalization'),'failure').text=reason
     ET.ElementTree(suite).write(Path(directory)/'xunit.xml',encoding='utf-8',xml_declaration=True)
     text='<html><body><h1>OMEN source command results (not GUI/Robot acceptance)</h1><pre>'+html.escape(
-        json.dumps({'commands':rows,'first':reason or(None if result is None else result.get('first'))},indent=2))+'</pre></body></html>'
+        json.dumps({'commands':rows,'first':None if result is None else result.get('first'),
+            'secondary':[]if result is None else result.get('secondary',[]),'transaction_failure':reason},indent=2))+'</pre></body></html>'
     (Path(directory)/'report.html').write_text(text);(Path(directory)/'log.html').write_text(text)
 
 

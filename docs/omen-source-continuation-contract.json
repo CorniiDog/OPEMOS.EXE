@@ -1,0 +1,35 @@
+{
+  "kind": "FINITE_OMEN_SOURCE_FAILURE_CONTINUATION_V1",
+  "state": "AUTHORED_UNRUN_NOT_ADOPTED",
+  "runtimeAuthorized": false,
+  "rootPlan": "user-continue-independent-actions-20261022/exe-complete-independent-failure-continuation.json; immutable6c3 input preserved",
+  "cause": "Guest execute raised after the first ordinary fully closed nonzero exit. Strict result verification and client success assertion also prevented complete failed command diagnostics reaching normal reports. Independent outer always jobs already existed; broad YAML continue-on-error would neither fix the guest nor preserve required failure status.",
+  "ordinary": "Only nonnegative numeric exit with known positive PID/birth, no capture first/secondary, reap/EOF/FD/descendant closure and bounded log pins is ordinary. Zero is passed; positive is failed. Raw captures are not rewritten. First failure remains first and later ordinary failures are secondary.",
+  "hardStop": "Capture timeout/overflow, negative signal exit, unknown identity, incomplete closure, tool/source/input custody, credential/resource/deadline or container cleanup failure stops affected workload. Remaining rows are blocked with exact hard-stop reason and no fictional process/exit. Other independent Actions jobs/platforms remain eligible under their own admission.",
+  "commands": "All indices below are zero-based in unchanged commands(workload,source). No caller-supplied argv/graph or general scheduler is added. Implementation checks exact cardinality and backward-only dependencies.",
+  "dependencyTable": {
+    "frontend-and-docs": [[], [0], []],
+    "rust": [[], [], [], []],
+    "linux-integration": [[], [], [], [], []],
+    "debian-12-package": [[], [], [0,1], [2], [2], [2,3], [], [2,3,4,6]],
+    "seed-runtime-source": [[], [], [], [], [], []],
+    "windows-build": [[], [], [], [], [], [], [], [1], [7]],
+    "appimage-package": [[], [0], [], [1,2]],
+    "producer-metadata-diagnostic": [[]],
+    "macos-build": [[], [], [], [], [], [0], [5]]
+  },
+  "dependencyMeaning": {
+    "frontend": "npm installation gates frontend tests, not git whitespace check.",
+    "rustIntegration": "Each policy/fmt/clippy/test/peer/contract check remains independent; no ordinary check gates another.",
+    "debian": "Host qualification and npm gate build. Packaging/AppImage verification need build; install needs build and packaging verification. Acquisition is independent; final stage needs build, both package verifications and acquisition.",
+    "windows": "Native producer fixtures, workflow/test/policy/runtime tests and cargo tests remain independent of npm. Bundle build needs npm; actual smoke needs bundle. Failed checks still prevent accepted package export even if a useful build attempt ran.",
+    "ubuntu": "Build needs npm; acquisition independent; final stage needs build and acquisition.",
+    "macos": "Source fixture/fmt/clippy/Rust tests independent of npm; app build needs npm and data packaging needs app build. No actual SDK/boot claimed.",
+    "seed": "All six acquisitions independent. Failed complete seed never feeds Windows build."
+  },
+  "consumers": "Guest validates complete ordered outcomes. Root stream/collector and authenticated client validate failed diagnostics separately from strict all-pass acceptance. Failed fully closed client reply reaches source report writer; caller persists actual reply/reports then raises before any package assembly or source-proof pass. Guest parent archives packages only after successful worker and healthy numeric parent; otherwise logs/results still transfer. Root VM/process/full9/media/pool/budget finalizer remains mandatory, never attested by guest alone.",
+  "reports": "Command xUnit failures retain actual nonzero/hard exits; unrun steps are explicitly skipped with blocked type and prerequisite/stop reason, never passed. Overall required job remains failed. A finalization failure adds its own non-child failing testcase even if child rows passed. HTML includes complete rows/first; original persistence/report errors attach secondary notes without replacing primary exception. Existing always uploads retain failure artifacts.",
+  "validation": "ALL project tests/compiles UNRUN. Authored metadata tests do not prove OS properties; real-child test composes actual capture/classification/report functions without method override but does NOT substitute for complete normal workload/Root transaction. Source AST/JSON/YAML inspection only on controller.",
+  "oneActualRun": "After exact whole-source independent review and guarded Root adoption, run ordinary rust source workload inside actual OMEN guest using the exact candidate with a genuine known policy/fmt assertion failure and independent valid later command. Preserve failed row/raw logs plus later real numeric result and native closure; required job stays failed, no package/GUI promotion. Exercise separate npm/setup failure dependency block, capture timeout/overflow/cleanup hard-stop and finalizer failure cases in OMEN. Do not mutate original/user source to manufacture an accepted pass; any fault fixture is an explicit disposable derivative, not normal success. Reuse unchanged stages/results. Current source/identity/queue/resources/10CPU32GiB0swap/Windows80GBother60GB/trust/busy guards remain; actual VM/image/USB/Robot acceptance is separate.",
+  "governance": "No Main merge/new PR/hosted project tests/Root installed/source83/SSH/VM/trust/publication effects. Exact changed head invalidates prior approvals/checks; whole graph counterpart and required checks before any owning merge. Busy Windows176/Hubble132 immutable6c3 untouched."
+}

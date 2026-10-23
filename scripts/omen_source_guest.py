@@ -17,7 +17,8 @@ import sys
 import tarfile
 import time
 
-from omen_source_workloads import WORKLOADS, subject, commands, canonical, need, verify_result
+from omen_source_workloads import (WORKLOADS, subject, commands, canonical, need,
+    verify_diagnostics, dependencies, command_status, blocked_command)
 from omen_source_capture import capture
 
 FIELDS=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
@@ -239,7 +240,10 @@ def execute(manifest_path, manifest_sha, output):
                  Path(checked['stdout']['path']).read_bytes().strip()==expected.encode()and
                  Path(checked['stderr']['path']).read_bytes()==b'','actual exact guest EXE/tree/Core identity failed')
         client=hashlib.sha256((source/'scripts/robot_client.py').read_bytes()).hexdigest()
+        graph=dependencies(spec['workload'])
         for number,template in enumerate(commands(spec['workload'],spec['candidate_commit'])):
+            if any(rows[p]['status']!='passed'for p in graph[number]):
+                rows.append(blocked_command(template,graph[number],rows));continue
             seconds=deadline-time.monotonic();need(seconds>0,'original guest source job deadline exhausted')
             tool=manifest['tools'][template[0]];read(tool['path'],512*1024**2,tool['sha256'],sealed=False)
             need(Path(tool['path']).is_absolute()and not Path(tool['path']).resolve().is_relative_to(source),
@@ -300,19 +304,39 @@ def execute(manifest_path, manifest_sha, output):
                 need(removed['numeric_exit']==0 and removed['first']is None and removed['reaped']and
                      removed['stdoutEOF']and removed['stderrEOF']and removed['FDsClosed'],
                      'owned stopped container removal/closure failed')
-            need(row['numeric_exit']==0 and row['first']is None and row['secondary']==[]and row['reaped']and
-                 row['stdoutEOF']and row['stderrEOF']and row['FDsClosed']and row['descendantsAbsent'],
-                 'actual source command failed or process closure UNKNOWN')
-        result['status']='passed'
+            row['status']=command_status(row)
+            if row['status']!='passed':
+                failure={'phase':'source-command','command_index':number,'status':row['status'],
+                         'numeric_exit':row['numeric_exit'],'capture_first':row['first'],
+                         'capture_secondary':row['secondary']}
+                if first is None:first=failure
+                else:secondary.append(failure)
+            need(row['status']!='hard-failed','source capture/integrity/resource/lifecycle failure; affected workload stopped')
+        result['status']='passed'if first is None else'failed'
     except BaseException as error:
-        first={'type':type(error).__name__,'reason':str(error)}
+        failure={'type':type(error).__name__,'reason':str(error)}
+        if first is None:first=failure
+        else:secondary.append(failure)
+        # Preserve every actual child row. A preparation/capture/cleanup error
+        # may occur before its status annotation; it must never become ordinary.
+        for row in rows:
+            if 'status'not in row:
+                if row['first']is None:row['first']=failure
+                else:row['secondary'].append(failure)
+                row['status']='hard-failed'
+        graph=dependencies(spec['workload']);templates=commands(spec['workload'],spec['candidate_commit'])
+        for i in range(len(rows),len(templates)):
+            rows.append(blocked_command(templates[i],graph[i],rows,
+                'Hard stop: '+failure['type']+': '+failure['reason']))
     result['first']=first
     # Neither this guest nor its own result attests VM/QEMU/host closure. Root's
     # separate lifecycle finalizer is mandatory even after all commands pass.
-    if first is None:
-        try:verify_result(result,manifest['identity'],spec)
+    if 'sourceArchive'in result:
+        try:verify_diagnostics(result,manifest['identity'],spec)
         except BaseException as error:
-            result['status']='failed';result['first']={'type':type(error).__name__,'reason':str(error)}
+            result['status']='failed';failure={'phase':'guest-result-validation','type':type(error).__name__,'reason':str(error)}
+            if result['first']is None:result['first']=failure
+            else:secondary.append(failure)
     write(output/'source-result.json',result)
     return result
 

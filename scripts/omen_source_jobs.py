@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import time
 
-from omen_source_workloads import WORKLOADS, subject, selection, verify_result, need, canonical
+from omen_source_workloads import WORKLOADS, subject, selection, verify_result, verify_diagnostics, need, canonical
 
 
 def current_stage(profile):
@@ -100,6 +100,7 @@ def collect(stage, prepared, request):
     guest,gpin=root_leaf(stage,root['guestResultPin']['path'],expected=root['guestResultPin'])
     success=all(rows[j]['state']=='passed'for j in job['job_ids'])and root.get('first')is None and root.get('secondary')==[]
     if success:verify_result(guest,identity,spec)
+    elif guest.get('kind')=='OMEN_GUEST_SOURCE_WORKLOAD_V1':verify_diagnostics(guest,identity,spec)
     # File data is copied only by the broker's existing public exchange. Large
     # package chunks are explicitly typed/bounded, never executable host paths.
     public=root['publicEvidence'];need(type(public)is list and len(public)<=512,'finite source report/package chunks')

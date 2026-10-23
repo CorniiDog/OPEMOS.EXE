@@ -14,7 +14,7 @@ import sys
 import time
 from omen_source_capture import capture
 from omen_source_guest import read
-from omen_source_workloads import canonical, need, subject
+from omen_source_workloads import canonical, need, subject, command_status, verify_result
 
 
 def package_archive(package_root, output, identity, spec):
@@ -128,8 +128,12 @@ def run(manifest_path, digest, output):
                'macos-build':'build/macos-arm64-evidence'}
         package_root=output/'worker/source'/roots.get(spec['workload'],'__no_package__')
         package_value=None
-        if spec['workload']in roots:
+        worker=json.loads(result_path.read_bytes())
+        # Failed/blocked checks remain diagnostic data, never package inputs.
+        # Retain their raw files without attempting an absent/invalid artifact.
+        if spec['workload']in roots and worker.get('status')=='passed'and command_status(native)=='passed':
             try:
+                verify_result(worker,identity,spec)
                 package_value,leaves=package_archive(package_root,output,identity,spec);selected.extend(leaves)
             except Exception as error:
                 # Preserve the worker's original result and complete raw logs.

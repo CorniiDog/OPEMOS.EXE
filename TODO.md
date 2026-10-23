@@ -1,5 +1,27 @@
 # OPEMOS.EXE — Product Checklist
 
+## 2026-10-22 PR210 independent ordinary failure continuation — authored, UNRUN
+
+- Same Root complete continuation assignment from immutable6c3: guest capture
+  previously aborted on the first fully closed ordinary nonzero exit. Explicit
+  fixed workload prerequisites now block only actual setup/output consumers;
+  independent checks continue. Negative exits, timeout/overflow/capture/source/
+  ownership/resource/cleanup uncertainty stop affected work, never become passes.
+- Every fixed command has a passed/failed/hard-failed/blocked outcome; no invented
+  PID/exit for an unrun command. Preserve first and secondary failures. Diagnostic
+  readers accept complete truthful failed rows while success still requires all
+  commands pass and original Root/native/VM closure. Failed work never supplies
+  package consumers. Source reports retain real command failures plus blocked
+  reasons; a Root finalization error cannot leave a green xUnit report.
+- Existing independent always Actions jobs and always uploads remain, with no
+  broad continue-on-error. Regression cases authored for all9 finite graphs,
+  failed prerequisites/independent checks/hard stops/strict acceptance/reporting
+  and actual closed nonzero children; ALL project tests UNRUN, OMEN only.
+  Source-only AST/JSON/YAML/hash inspection is not the required new ordinary
+  producer-to-consumer runtime. Preserve6c3 inputs for busy Windows/Hubble.
+  Exact successor is needed for whole source review on existing PR210 only;
+  no Main merge, SDK/hosted project tests, installed or VM effects authorized.
+
 ## 2026-10-22 PR210 non-main/all-three correction — authored, UNRUN
 
 - Final whole-workflow static review reproduced inherited Windows YAML

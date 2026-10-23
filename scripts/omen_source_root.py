@@ -13,7 +13,7 @@ import stat
 import time
 import xml.etree.ElementTree as ET
 
-from omen_source_workloads import WORKLOADS, subject, canonical, need, verify_result
+from omen_source_workloads import WORKLOADS, subject, canonical, need, verify_result, verify_diagnostics
 from omen_output_lifecycle import protected_bytes, strict, backend, pop_guest_frame
 
 
@@ -247,6 +247,7 @@ def execute(grant_pin, persist):
                     if guest.get('status')=='passed':verify_result(guest,g['identity'],spec)
                     else:
                         need(guest.get('identity')==g['identity']and guest.get('subject')==spec,'exact failed guest identity')
+                        if guest.get('kind')=='OMEN_GUEST_SOURCE_WORKLOAD_V1':verify_diagnostics(guest,g['identity'],spec)
                         first={'phase':'guest-source-workload','actual':guest.get('first'),'parent':row['agentParent']}
                     parent=row['agentParent']
                     if parent['numericExit']!=0 or parent.get('first')is not None or parent.get('secondary'):

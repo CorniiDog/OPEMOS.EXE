@@ -1,6 +1,7 @@
 {
   "kind": "OMEN_FINITE_SOURCE_WORKLOAD_SOURCE_CONTRACT_V1",
   "state": "AUTHORED_UNRUN_NOT_INSTALLED",
+  "failureContinuationSuccessor": "docs/omen-source-continuation-contract.json defines the complete fixed dependency/outcome and failed-diagnostic consumer correction. Ordinary closed nonzero exits keep independent steps eligible; failed/blocked results never satisfy acceptance or feed package consumers.",
   "nonMainSuccessor": "docs/omen-nonmain-admission-contract.json supplies the joined ordinary branch/manual, reviewed non-main implementation, completion-cycle and OMEN macOS successor. This does not transfer5ea review or old checks.",
   "runtimeAuthorized": false,
   "sameAssignment": "54b35cf205a726d788346a0d748e9562d5c500f8f7faf45d924827f9ad2172b9",
