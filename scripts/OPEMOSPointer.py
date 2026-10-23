@@ -25,6 +25,8 @@ class OPEMOSPointer:
         operation=strict(raw_file(operation_path,1048576,operation_sha,os.getuid()))
         context=operation['pointer_context'];expected=identity()
         require(all(context['identity'][k]==expected[k]for k in ('source_commit','run_id','attempt')),'Pointer context belongs to another source/run/attempt')
+        for key in('controller_source_commit','source_roles'):
+            require(context['identity'].get(key)==expected.get(key),'Pointer A/B role binding differs')
         require(context['identity']['operation_nonce']==os.environ['OPEMOS_TRANSACTION_NONCE'],'Pointer nonce stale')
         platform=operation['platform']
         require(platform in ('windows','ubuntu'),'Current admitted native Mac sender absent; no invented Mac click')
@@ -34,6 +36,11 @@ class OPEMOSPointer:
         admission=strict(raw_file(operation['admission']['path'],1048576,operation['admission']['sha256'],os.getuid()))
         require(admission['identity']==context['identity'] and admission['driver_sha256']==driver['sha256'] and admission['admitted']is True,'Driver/current runtime admission mismatch')
         require(admission['kind']=='OPEMOS_ROBOT_POINTER_ADMISSION'and admission['operation_sha256']==operation['operation_payload_sha256'],'Wrong pointer operation admission')
+        if 'source_roles'in expected:
+            require(driver.get('controller_source_commit')==expected['controller_source_commit']and
+                    admission.get('controller_source_commit')==expected['controller_source_commit']and
+                    operation.get('observer_controller_source_commit')==expected['controller_source_commit'],
+                    'Candidate cannot supply privileged sender/observer code')
         payload={k:v for k,v in operation.items()if k not in ('admission','operation_payload_sha256')}
         require(hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest()==operation['operation_payload_sha256'],'Operation/admission payload differs')
         stage=modules();reader=stage['_READER'];ns=reader.verified_namespace(source,driver['path'],'robot_existing_actual_sender')
@@ -105,6 +112,8 @@ class OPEMOSPointer:
             time.sleep(.1)
         raw=raw_file(target,1048576,owner=os.getuid());result=strict(raw)
         require(all(result['identity'][k]==expected[k]for k in ('source_commit','run_id','attempt'))and result['identity']['operation_nonce']==os.environ['OPEMOS_TRANSACTION_NONCE'],'Observed result is stale')
+        for key in('controller_source_commit','source_roles'):
+            require(result['identity'].get(key)==expected.get(key),'Observed result lost A/B identity')
         require(result['observed']is True and result['expected_result']is True and result['native_observer']is True,'Expected real UI result was not observed')
         require(result['action_id']==self.last_context['action_id'] and result['runtime_instance_id']==self.last_context['identity']['runtime_instance_id'],'Observer belongs to another action/runtime')
         require(result['frame_sha256'] and result['window_id']and result['observer_source_sha256']==operation['observer_source_sha256'],'Observer frame/window/source identity missing')

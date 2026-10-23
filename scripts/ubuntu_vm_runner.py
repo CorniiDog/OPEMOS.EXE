@@ -20,7 +20,308 @@ import struct
 import base64
 import sqlite3
 import re
+import xml.etree.ElementTree as ET
 from vm_write_ceiling import compact_owned_image, bounded_file_ceiling, VM_BUDGET_BYTES, validate_chain
+
+
+OUTPUT_INSTALL_MINIMUM_BYTES = 12 * 1024**3
+OUTPUT_IDENTITY_FIELDS = ('st_dev', 'st_ino', 'st_mode', 'st_uid', 'st_gid',
+                          'st_nlink', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+
+
+def output_disk_identity(info):
+    return {key: getattr(info, key) for key in OUTPUT_IDENTITY_FIELDS}
+
+
+def output_storage_ledger(paths, reserved_bytes=0, *, platform='other', mutable_paths=()):
+    """Observe a complete caller-declared dependency union, not an admission.
+
+    Shared media must appear in each consuming VM's list. Raw targets charge
+    their complete capacity even on filesystems where allocation is sparse.
+    The canonical owner independently supplies the complete dependency list.
+    """
+    if platform not in('other','windows'):
+        raise ValueError('explicit Windows-only budget selection; no unrelated cap change')
+    budget=80_000_000_000 if platform=='windows'else VM_BUDGET_BYTES
+    if type(reserved_bytes) is not int or reserved_bytes < 0 or not paths:
+        raise ValueError('complete dependency list and bounded reservation required')
+    paths=list(dict.fromkeys(map(str,paths)))
+    mutable_paths=set(map(str,mutable_paths))
+    if not mutable_paths<=set(map(str,paths)):
+        raise ValueError('mutable accounting paths must be declared dependencies')
+    rows = []; inodes = {}
+    for value in paths:
+        path = Path(value)
+        if not path.is_absolute() or path.resolve() != path:
+            raise ValueError('absolute non-symlink dependency required')
+        before = path.lstat()
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise ValueError('only exclusive regular dependency files are accepted')
+        allocated = before.st_blocks * 512
+        row = {'path': str(path), 'identity': output_disk_identity(before),
+               'allocatedBytes': allocated, 'chargedBytes': max(before.st_size, allocated)}
+        key = (before.st_dev, before.st_ino)
+        if key in inodes and inodes[key]['identity'] != row['identity'] and str(path)not in mutable_paths:
+            raise ValueError('dependency inode changed during accounting')
+        inodes[key] = row; rows.append(row)
+    for row in rows:
+        now = Path(row['path']).lstat()
+        if row['path']in mutable_paths:
+            # A live guest's writable image changes size/times normally. It
+            # may not change inode, owner, mode or links. Charge the larger
+            # actual endpoint; the source controller separately reserves all
+            # possible growth under the actual kernel file ceiling.
+            stable=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink')
+            if any(getattr(now,k)!=row['identity'][k]for k in stable):
+                raise ValueError('mutable dependency identity changed during accounting')
+            row['afterIdentity']=output_disk_identity(now)
+            row['allocatedBytes']=max(row['allocatedBytes'],now.st_blocks*512)
+            row['chargedBytes']=max(row['chargedBytes'],now.st_size,row['allocatedBytes'])
+        elif output_disk_identity(now) != row['identity'] or now.st_blocks * 512 != row['allocatedBytes']:
+            raise ValueError('dependency changed during accounting')
+    total = sum(row['chargedBytes'] for row in inodes.values()) + reserved_bytes
+    if total > budget:
+        raise ValueError('VM complete dependency union exceeds '+str(budget)+' bytes')
+    return {'files': rows, 'uniqueInodes': len(inodes), 'reservedBytes': reserved_bytes,
+            'chargedBytes': total, 'hardBytes': budget,
+            'admissionClaimed': False}
+
+
+def create_output_install_target(directory, name, capacity, dependencies, reserved_bytes,
+                                 lifecycle_lock, minimum_helper_sha256):
+    """Create one *raw*, fully allocated, blank target; never overwrite/rebase.
+
+    Caller must already hold the current canonical output job/admission and
+    ordinary lifecycle lock. This function does not enqueue or launch anything.
+    Allocation failures retain the exact partial target for its owning audit.
+    """
+    root = Path(directory)
+    if (not root.is_absolute() or root.resolve() != root or
+            not stat.S_ISDIR(root.lstat().st_mode) or
+            root.lstat().st_uid != os.getuid() or root.lstat().st_mode & 0o077):
+        raise ValueError('private owned target directory required')
+    if not name or Path(name).name != name or name in ('.', '..'):
+        raise ValueError('one fresh target leaf required')
+    if type(capacity) is not int or not OUTPUT_INSTALL_MINIMUM_BYTES <= capacity < VM_BUDGET_BYTES or capacity % 512:
+        raise ValueError('sector-aligned target must meet the actual 12GiB installer minimum')
+    helper = Path(__file__).resolve().parents[1] / 'builder/welcome/opemos-install-helper'
+    helper_raw = helper.read_bytes()
+    if (hashlib.sha256(helper_raw).hexdigest() != minimum_helper_sha256 or
+            b'readonly MINIMUM_INSTALL_BYTES=$((12 * 1024 * 1024 * 1024))' not in helper_raw):
+        raise ValueError('exact production installation-layout minimum source required')
+    lock_path = root / '.lifecycle-lock'
+    before_lock = os.fstat(lifecycle_lock.fileno())
+    if (output_disk_identity(before_lock) != output_disk_identity(lock_path.lstat()) or
+            not stat.S_ISREG(before_lock.st_mode) or before_lock.st_uid != os.getuid() or
+            before_lock.st_nlink != 1 or before_lock.st_mode & 0o077):
+        raise ValueError('exact private normal lifecycle lock required')
+    fcntl.flock(lifecycle_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    before = output_storage_ledger(dependencies, reserved_bytes + capacity)
+    available = os.statvfs(root)
+    if available.f_bavail * available.f_frsize < capacity + reserved_bytes:
+        raise ValueError('actual host allocation headroom insufficient')
+    dfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    fd = None
+    primary = None
+    try:
+        if output_disk_identity(os.fstat(dfd)) != output_disk_identity(root.lstat()):
+            raise ValueError('target directory replaced')
+        fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dfd)
+        os.posix_fallocate(fd, 0, capacity)
+        os.fsync(fd); os.fsync(dfd)
+        info = os.fstat(fd)
+        if (info.st_size != capacity or info.st_blocks * 512 < capacity or
+                output_disk_identity(info) != output_disk_identity(os.stat(name, dir_fd=dfd, follow_symlinks=False))):
+            raise ValueError('target allocation or named custody differs')
+        after = output_storage_ledger([*dependencies, str(root / name)], reserved_bytes)
+        return {'kind': 'EXE_FRESH_OUTPUT_RAW_TARGET_V1',
+                'creatorPID': os.getpid(), 'creatorUID': os.getuid(),
+                'bootID': Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+                'path': str(root / name), 'format': 'raw', 'backingChain': [],
+                'capacityBytes': capacity, 'identity': output_disk_identity(info),
+                'allocatedBytes': info.st_blocks * 512,
+                'layoutMinimumBytes': OUTPUT_INSTALL_MINIMUM_BYTES,
+                'layoutHelperSHA256': minimum_helper_sha256, 'freshBlank': True,
+                'before': before, 'after': after}
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        # Attempt every owned close even if another close fails. Never delete
+        # a partial target, clear a queue job or retire retained source here.
+        first = None
+        for handle in (fd, dfd):
+            if handle is not None:
+                try: os.close(handle)
+                except OSError as error: first = first or error
+        if first is not None:
+            if primary is not None:
+                primary.add_note('target owned descriptor closure UNKNOWN: ' + str(first))
+            else:
+                raise first
+
+
+def output_install_disks_xml(existing_xml, media, target, installation, observer=None, manifest_sha256=None):
+    """Narrow two-device successor of an already reviewed domain constructor.
+
+    Keeps all pool, firmware, metadata, display and GPU declarations unchanged.
+    It does not reinterpret the historical two-boot grant: a new exact current
+    output-install grant and canonical binding are still required by its owner.
+    """
+    if type(installation) is not bool:
+        raise ValueError('explicit installation versus installed boot required')
+    if target.get('format') != 'raw' or target.get('backingChain') != []:
+        raise ValueError('standalone raw target required; no hidden COW parent')
+    if type(target.get('capacityBytes')) is not int or target['capacityBytes'] < OUTPUT_INSTALL_MINIMUM_BYTES:
+        raise ValueError('undersized installed target')
+    if target['identity']['st_size'] != target['capacityBytes']:
+        raise ValueError('raw target capacity must be its actual file length')
+    for row in (media, target):
+        path = Path(row['path'])
+        if not path.is_absolute() or path.resolve() != path or ',' in str(path):
+            raise ValueError('exact non-link disk path required')
+        info = path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or
+                output_disk_identity(info) != row['identity']):
+            raise ValueError('disk full identity differs')
+    if ((media['identity']['st_dev'], media['identity']['st_ino']) ==
+            (target['identity']['st_dev'], target['identity']['st_ino'])):
+        raise ValueError('installation media cannot be the writable target')
+    domain = ET.fromstring(existing_xml)
+    devices = domain.find('devices')
+    disks = [] if devices is None else devices.findall('disk')
+    if domain.tag != 'domain' or len(disks) != 1 or devices.findall('interface'):
+        raise ValueError('exact noNIC single-disk constructor input required')
+    disk = disks[0]
+    if (disk.get('type') != 'file' or disk.get('device') != 'disk' or
+            disk.find('driver') is None or disk.find('driver').get('type') != 'raw'):
+        raise ValueError('historical raw constructor shape required')
+    devices.remove(disk)
+    # The new phase producer reads the managed console through a bounded
+    # libvirt stream. Do not leave an unbounded QEMU-written host serial file
+    # outside the ordinary owned-child output caps. The historical empty
+    # serial journal slot remains available for exact ACL-stage compatibility.
+    for serial in devices.findall('serial') + devices.findall('console'):
+        devices.remove(serial)
+    serial = ET.SubElement(devices, 'serial', type='pty')
+    ET.SubElement(serial, 'target', type='isa-serial', port='0')
+    console = ET.SubElement(devices, 'console', type='pty')
+    ET.SubElement(console, 'target', type='serial', port='0')
+    for boot in domain.findall('./os/boot'):
+        domain.find('os').remove(boot)
+    if installation:
+        controller = devices.find("controller[@type='usb']")
+        if controller is None or controller.get('model') != 'qemu-xhci':
+            raise ValueError('existing xHCI controller required for virtual USB')
+    for role, row, dev, bus, order in ([('media', media, 'sdb', 'usb', 1)] if installation else []) + [
+            ('target', target, 'sda', 'sata', 2 if installation else 1)]:
+        node = ET.SubElement(devices, 'disk', type='file', device='disk')
+        ET.SubElement(node, 'driver', name='qemu', type='raw', cache='none', io='native')
+        ET.SubElement(node, 'source', file=row['path'])
+        ET.SubElement(node, 'target', dev=dev, bus=bus)
+        ET.SubElement(node, 'serial').text = 'OPEMOSOUTPUT' + role.upper()
+        ET.SubElement(node, 'boot', order=str(order))
+        if role == 'media': ET.SubElement(node, 'readonly')
+    if observer is not None:
+        path=Path(observer['path']);info=path.lstat()
+        if (not path.is_absolute() or path.resolve()!=path or not stat.S_ISREG(info.st_mode)
+                or info.st_nlink!=1 or output_disk_identity(info)!=observer['identity']
+                or info.st_size!=observer['bytes'] or info.st_size>64*1024**2
+                or not re.fullmatch('[0-9a-f]{64}',manifest_sha256 or '')):
+            raise ValueError('exact finite source-A observer medium and firmware pin required')
+        if any((info.st_dev,info.st_ino)==(row['identity']['st_dev'],row['identity']['st_ino'])for row in(media,target)):
+            raise ValueError('observer medium cannot alias writable target or original image')
+        if devices.findall('channel')or domain.findall("sysinfo[@type='fwcfg']"):
+            raise ValueError('no adoption/replacement of an unknown existing channel or firmware scope')
+        node=ET.SubElement(devices,'disk',type='file',device='cdrom')
+        ET.SubElement(node,'driver',name='qemu',type='raw',cache='none')
+        ET.SubElement(node,'source',file=str(path));ET.SubElement(node,'target',dev='sdc',bus='sata')
+        ET.SubElement(node,'readonly');ET.SubElement(node,'serial').text='OPEMOSOUTPUTOBSERVER'
+        channel=ET.SubElement(devices,'channel',type='unix')
+        ET.SubElement(channel,'target',type='virtio',name='opemos.robot.observer')
+        config=ET.SubElement(domain,'sysinfo',type='fwcfg')
+        ET.SubElement(config,'entry',name='opt/opemos/observer-manifest-sha256').text=manifest_sha256
+    return ET.tostring(domain, encoding='unicode') + '\n'
+
+
+def observe_output_disk_fds(pid, expected_start, expected_uid, expected_cgroup, media, target, installation,
+                            writable_paths=(), readonly_refs=()):
+    """Native same-leader FD flags; XML readonly alone is not OS proof.
+
+    Caller first authenticates the current libvirt domain/queue/leader. Missing
+    proc visibility or a racing leader is UNKNOWN (raises), never absence/pass.
+    """
+    if type(pid) is not int or pid <= 0 or pid == os.getpid() or type(expected_start) is not int or expected_start <= 0:
+        raise ValueError('exact current domain leader identity required')
+    root = Path('/proc') / str(pid)
+    def epoch():
+        fields = (root / 'stat').read_text().rsplit(')', 1)[1].split()
+        uid = [line.split()[1:] for line in (root / 'status').read_text().splitlines() if line.startswith('Uid:')]
+        if uid != [[str(expected_uid)] * 4] or int(fields[19]) != expected_start:
+            raise ValueError('domain UID or birth changed')
+        if (root / 'cgroup').read_text().strip() != '0::' + expected_cgroup:
+            raise ValueError('domain outside exact current assigned scope')
+    epoch(); rows = {'media': [], 'target': []}
+    readonly={ref['path']:{'ref':ref,'fds':[]}for ref in readonly_refs}
+    if len(readonly)!=len(readonly_refs):raise ValueError('duplicate readonly controller dependencies')
+    for path,row in readonly.items():
+        if output_disk_identity(Path(path).lstat())!=row['ref']['identity']:
+            raise ValueError('readonly controller dependency identity changed')
+    allowed_writable = {(target['identity']['st_dev'], target['identity']['st_ino'])}
+    for value in writable_paths:
+        path = Path(value)
+        if not path.is_absolute() or path.resolve() != path:
+            raise ValueError('exact admitted mutable firmware/framework path required')
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ValueError('admitted mutable dependency must be an exclusive regular file')
+        allowed_writable.add((info.st_dev, info.st_ino))
+    # Keep the enumeration directory itself held. In self-inspection, a closed
+    # scandir FD would otherwise be listed and then disappear before inspection.
+    dfd = os.open(root / 'fd', os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        names = os.listdir(dfd)
+        if len(names) > 16384:
+            raise ValueError('domain FD bound exceeded')
+        for name in names:
+            descriptor = root / 'fd' / name
+            try:
+                info = descriptor.stat()
+                flags = [line.split()[1] for line in (root / 'fdinfo' / name).read_text().splitlines()
+                         if line.startswith('flags:')]
+                if len(flags) != 1:
+                    raise ValueError('missing actual FD flags')
+                access = int(flags[0], 8) & os.O_ACCMODE
+                if (stat.S_ISREG(info.st_mode) and access != os.O_RDONLY and
+                        (info.st_dev, info.st_ino) not in allowed_writable):
+                    raise ValueError('unadmitted writable regular descriptor: fd=' + name +
+                                     ' dev=' + str(info.st_dev) + ' ino=' + str(info.st_ino))
+                for role, pin in (('media', media), ('target', target)):
+                    if (info.st_dev, info.st_ino) == (pin['identity']['st_dev'], pin['identity']['st_ino']):
+                        if access != (os.O_RDONLY if role == 'media' else os.O_RDWR):
+                            raise ValueError('wrong actual disk descriptor access')
+                        if (descriptor.stat().st_dev, descriptor.stat().st_ino) != (info.st_dev, info.st_ino):
+                            raise ValueError('domain disk FD changed')
+                        rows[role].append(int(name))
+                for path,row in readonly.items():
+                    pin=row['ref']
+                    if(info.st_dev,info.st_ino)==(pin['identity']['st_dev'],pin['identity']['st_ino']):
+                        if access!=os.O_RDONLY or output_disk_identity(info)!=pin['identity']:
+                            raise ValueError('actual observer medium FD is not exact/read-only')
+                        row['fds'].append(int(name))
+            except FileNotFoundError as error:
+                raise ValueError('domain descriptor enumeration raced; custody unknown') from error
+    finally:
+        os.close(dfd)
+    epoch()
+    if not rows['target'] or bool(rows['media']) != installation:
+        raise ValueError('required target/media attachment state differs')
+    for path,row in readonly.items():
+        if not row['fds']or output_disk_identity(Path(path).lstat())!=row['ref']['identity']:
+            raise ValueError('actual required readonly controller FD missing/changed')
+    return {'pid': pid, 'start': expected_start, 'uid': expected_uid,
+            'cgroup': expected_cgroup, 'diskFDs': rows, 'installation': installation,
+            'readonlyControllerFDs':{path:row['fds']for path,row in readonly.items()}}
 
 
 def pin_owned_qemu_network(launcher_pid, required_files, deadline, allow_setup_root=False):

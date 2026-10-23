@@ -88,7 +88,7 @@ _inventory_path = Path(__file__).with_name("omen_ci_inventory.py")
 _inventory_pin, _inventory_raw = _READER.read_verified(_inventory_path, 1024**2, expected_sha=_INVENTORY_SHA, uid=os.getuid())
 _INVENTORY = _READER.verified_namespace(_inventory_raw, _inventory_path, "opemos_ci_inventory")
 
-_EXECUTABLES_SHA = "435aa0901a39981fc26d2b5a87f283aa918985318fcd28213c86da918c4c5b1f"
+_EXECUTABLES_SHA = "3138ad9b9260d4591430ee8c560f673f8823150c805a7641307711b1fc70fb07"
 _executables_path = Path(__file__).with_name("omen_ci_executables.py")
 _executable_pin, _executable_raw = _READER.read_verified(_executables_path, 1024**2,
     expected_sha=_EXECUTABLES_SHA, uid=os.getuid())

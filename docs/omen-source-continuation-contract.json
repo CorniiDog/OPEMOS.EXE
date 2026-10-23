@@ -1,0 +1,138 @@
+{
+  "kind": "FINITE_OMEN_SOURCE_FAILURE_CONTINUATION_V1",
+  "state": "AUTHORED_UNRUN_NOT_ADOPTED",
+  "runtimeAuthorized": false,
+  "F1Recovery": "Core1b6ddf5d exact0b0a finding: ordinary failure already sets first, so first plus nonempty stop_reason was not hard-event provenance. The earlier test missed their combination. Successor requires explicit event or null; all old0b0a/6c3 evidence stays immutable.",
+  "hardStopProvenance": {
+    "producer": "Only sealed A execute caught hard exception emits OMEN_SOURCE_HARD_STOP_V1, with original admitted manifest SHA, finite input-preparation/source-validation/command-preflight/command-capture/command-finalize phase, exact command_index/stop_before, actual separate source-hard-stop failure record and its first/secondary ordinal. A returned capture is hashed unchanged; no PID/exit/first/secondary overwrite to manufacture a hard capture.",
+    "validator": "All blocked rows after exact boundary carry the canonical hard-event SHA and derived reason. Prior ordinary dependency blocks carry no event. Missing event, arbitrary label, ordinary first masquerading as a hard cause, mismatched phase/index/manifest/ordinal/row hash/digest, early or later attempted command and dangling marker fail. Captured hard phase with returned row requires actual hard classification, not ordinary exit7.",
+    "parentRootJoin": "Guest parent validates diagnostic_binding over original result+manifest+event before packaging, retains independent invalid-binding failure without rewriting original worker/parent capture, and streams the binding. Root independently validates and rejoins streamed binding bytes; Root sealed publication, collector, broker/client and report writer recheck that same result/event provenance. Original native/VM/UID/full9/caller/current/resource/clock/cleanup checks remain; a matching JSON label/hash alone is not OS proof or runtime authority.",
+    "tests": "F1 ordinary7 plus invented skip label; event pointed at ordinary first; genuine precommand/preparation/captured/cleanup events; missing/dangling/phase/index/manifest/ordinal/row/digest/cause tamper; later attempt; all-pass and multiple ordinary failures; parent/Root/client shared binding and report refusal. Authored UNRUN; no method override/fake adapter proves OS properties. Root later runs actual full ordinary OMEN producer-to-consumer and changed faults under matching adopted A graph."
+  },
+  "rootPlan": "user-continue-independent-actions-20261022/exe-complete-independent-failure-continuation.json; immutable6c3 input preserved",
+  "cause": "Guest execute raised after the first ordinary fully closed nonzero exit. Strict result verification and client success assertion also prevented complete failed command diagnostics reaching normal reports. Independent outer always jobs already existed; broad YAML continue-on-error would neither fix the guest nor preserve required failure status.",
+  "ordinary": "Only nonnegative numeric exit with known positive PID/birth, no capture first/secondary, reap/EOF/FD/descendant closure and bounded log pins is ordinary. Zero is passed; positive is failed. Raw captures are not rewritten. First failure remains first and later ordinary failures are secondary.",
+  "hardStop": "Capture timeout/overflow, negative signal exit, unknown identity, incomplete closure, tool/source/input custody, credential/resource/deadline or container cleanup failure stops affected workload. Remaining rows are blocked with exact hard-stop reason and no fictional process/exit. Other independent Actions jobs/platforms remain eligible under their own admission.",
+  "commands": "All indices below are zero-based in unchanged commands(workload,source). No caller-supplied argv/graph or general scheduler is added. Implementation checks exact cardinality and backward-only dependencies.",
+  "dependencyTable": {
+    "frontend-and-docs": [
+      [],
+      [
+        0
+      ],
+      []
+    ],
+    "rust": [
+      [],
+      [],
+      [],
+      []
+    ],
+    "linux-integration": [
+      [],
+      [],
+      [],
+      [],
+      []
+    ],
+    "debian-12-package": [
+      [],
+      [],
+      [
+        0,
+        1
+      ],
+      [
+        2
+      ],
+      [
+        2
+      ],
+      [
+        2,
+        3
+      ],
+      [],
+      [
+        2,
+        3,
+        4,
+        6
+      ]
+    ],
+    "seed-runtime-source": [
+      [],
+      [],
+      [],
+      [],
+      [],
+      []
+    ],
+    "windows-build": [
+      [],
+      [
+        0
+      ],
+      [
+        1
+      ]
+    ],
+    "appimage-package": [
+      [],
+      [
+        0
+      ],
+      [],
+      [
+        1,
+        2
+      ]
+    ],
+    "producer-metadata-diagnostic": [
+      []
+    ],
+    "macos-build": [
+      [],
+      [
+        0
+      ],
+      [
+        1
+      ]
+    ],
+    "windows-quality": [
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+      []
+    ],
+    "ubuntu-quality": [
+      [],
+      []
+    ],
+    "macos-quality": [
+      [],
+      [],
+      [],
+      []
+    ]
+  },
+  "dependencyMeaning": {
+    "frontend": "npm installation gates frontend tests, not git whitespace check.",
+    "rustIntegration": "Each policy/fmt/clippy/test/peer/contract check remains independent; no ordinary check gates another.",
+    "debian": "Host qualification and npm gate build. Packaging/AppImage verification need build; install needs build and packaging verification. Acquisition is independent; final stage needs build, both package verifications and acquisition.",
+    "windows": "A npm gates bundle build, which gates structural package validation. C native fixtures/workflow/policy/runtime/cargo checks are independent; only actual portable smoke requires the exact authenticated A package. Late quality failure cannot erase retained A output or make strict A+B+C pass.",
+    "ubuntu": "Build needs npm; acquisition independent; final stage needs build and acquisition.",
+    "macos": "A app build needs npm and structural data packaging needs app build. C source fixtures/fmt/clippy/Rust tests remain mutually independent after terminal B. No actual SDK/boot claimed.",
+    "seed": "All six acquisitions independent. Failed complete seed never feeds Windows build."
+  },
+  "consumers": "Guest validates complete ordered outcomes. Root stream/collector and authenticated client validate failed diagnostics separately from strict all-pass acceptance. Failed fully closed client reply reaches source report writer; caller persists actual reply/reports then raises before any package assembly or source-proof pass. Guest parent archives packages only after successful worker and healthy numeric parent; otherwise logs/results still transfer. Root VM/process/full9/media/pool/budget finalizer remains mandatory, never attested by guest alone.",
+  "reports": "Command xUnit failures retain actual nonzero/hard exits; unrun steps are explicitly skipped with blocked type and prerequisite/stop reason, never passed. Overall required job remains failed. A finalization failure adds its own non-child failing testcase even if child rows passed. HTML includes complete rows/first; original persistence/report errors attach secondary notes without replacing primary exception. Existing always uploads retain failure artifacts.",
+  "validation": "ALL project tests/compiles UNRUN. Authored metadata tests do not prove OS properties; real-child test composes actual capture/classification/report functions without method override but does NOT substitute for complete normal workload/Root transaction. Source AST/JSON/YAML inspection only on controller.",
+  "oneActualRun": "After exact whole-source independent review and guarded Root adoption, run ordinary rust source workload inside actual OMEN guest using the exact candidate with a genuine known policy/fmt assertion failure and independent valid later command. Preserve failed row/raw logs plus later real numeric result and native closure; required job stays failed, no package/GUI promotion. Exercise separate npm/setup failure dependency block, capture timeout/overflow/cleanup hard-stop and finalizer failure cases in OMEN. Do not mutate original/user source to manufacture an accepted pass; any fault fixture is an explicit disposable derivative, not normal success. Reuse unchanged stages/results. Current source/identity/queue/resources/10CPU32GiB0swap/Windows80GBother60GB/trust/busy guards remain; actual VM/image/USB/Robot acceptance is separate.",
+  "governance": "No Main merge/new PR/hosted project tests/Root installed/source83/SSH/VM/trust/publication effects. Exact changed head invalidates prior approvals/checks; whole graph counterpart and required checks before any owning merge. Busy Windows176/Hubble132 immutable6c3 untouched.",
+  "orderingSuccessor": "docs/omen-build-vm-quality-contract.json supersedes combined native build+quality phase order. F1 event provenance remains mandatory; C has typed exact A package unavailable blockers only for actual artifact consumers."
+}

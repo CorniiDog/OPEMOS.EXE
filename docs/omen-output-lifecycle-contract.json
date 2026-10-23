@@ -1,0 +1,59 @@
+{
+  "kind": "EXE_OUTPUT_INSTALL_NATIVE_SOURCE_CONTRACT_V1",
+  "runtimeGrant": null,
+  "runtimeAuthorized": false,
+  "VMAdmission": false,
+  "entrypoints": {
+    "target": "ubuntu_vm_runner.create_output_install_target: fresh fully allocated raw target, existing private lifecycle lock, actual production helper minimum pin; never media/COW relabel",
+    "stage": "omen_output_lifecycle.stage_access: new Root stage-only grant; derivative target/firmware/runtime/output ACL journals and actual UID64055 read-only media/read-write target DAC child; separate process before late runtime clocks",
+    "runtime": "omen_output_lifecycle.run: one new canonical libvirt job/current binding, new exact finite four-boot grant, existing queue peer/AUTODESTROY/GPU restoration/finalizers",
+    "console": "omen_output_lifecycle.read_console: actual managed noNIC domain/current QEMU birth, bounded nonblocking libvirt console read, create-only raw crossing capture, no guest input/login, no EOF/shutdown fabrication",
+    "ordinaryPhase": "omen_output_lifecycle.guest_phase + consume_guest_phase: actual named libvirt channel, complete create-only guest evidence transfer, Robot XML and native document join; no externally supplied ordinary phase command",
+    "guest": "omen_steamos_guest.main: firmware-bound readonly A sources and exact RF7.5 wheel; actual SteamOS UID1000 SDK/normal welcome pointer/install/Core public update/health/render; ordinary output-install.robot suite",
+    "medium": "omen_output_media.prepare: existing genisoimage route, exact Root-adopted A files and preauthenticated Core/B data; finite readonly ISO, not a VM",
+    "stoppedReadback": "omen_output_lifecycle.stopped_target_readback: after actual full domain/GPU closure only, new readonly loop and no-replay home mount, actual UUID/file hashes and independent unmount/detach; unknown resources remain held"
+  },
+  "newScope": {
+    "grantKind": "ROOT_EXACT_OUTPUT_INSTALL_FOUR_BOOT_V1",
+    "stageKind": "ROOT_OUTPUT_INSTALL_ACCESS_STAGE_V1",
+    "phases": ["installation", "baseline", "update", "recovery"],
+    "maxBoots": 4,
+    "latestStartSecondsFromOriginalIssue": 300,
+    "wholeDeadlineSecondsFromOriginalIssue": 900,
+    "normalPhaseMaximumSeconds": 480,
+    "minimumFutureHostEvidenceReserveBytes": 536870912,
+    "historicalR69GrantAccepted": false,
+    "noNIC": true,
+    "minimumTargetBytes": 12884901888,
+    "outputVMHardBytes": 60000000000,
+    "pool": "same existing10CPU/32GiB/zeroSwap; existing canonical4CPU/10GiB libvirt reservation includes controller+QEMU",
+    "windowsLimits": "79GB early/80GB hard unchanged; separate output canonical job only after actual Windows closure; shared media charged in each required graph"
+  },
+  "sourceAdoption": {
+    "beforeAnyBackendExecution": "Root-only nofollow/full9/EOF/hash/read-only ancestry bootstrap verifies protected transient new grant, then its entire exact backend refs; no privileged sys.path discovery",
+    "backendRoles": ["libvirt_peer", "libvirt_access", "libvirt_native", "libvirt_producer", "owned_command"],
+    "additionalExactPins": ["outputProducerPin", "outputRunnerPin", "outputCeilingPin", "installedSchemaReceiptPin", "nativeTools", "source-bound phasePreflights sourcePins", "observer", "observerManifest"],
+    "backendOrigin": "Existing reviewed R69 operational source plus existing owned_command primitive; Root must authenticate/adopt exact bytes at protected Root0444 paths. Local scheduler files/user metadata are not runtime authority. No sibling Core source imports.",
+    "currentSourceAndRuntimeQualification": "Exact final PR/base/head/scope/checkset counterpart approval and passing source gates, Root independent native qualification, installed-current/source match and genuine full fresh preflight are prerequisites. All actual new grants/paths/native qualification remain unavailable here."
+  },
+  "mediaAndTarget": {
+    "publicInput": "Exact protected ROOT_VERIFIED_STOPPED_WINDOWS_IMAGE_RANGE_V1 plus separate raw original manifest1..1048576 bytes; both distinct whole and prefix SHA/full9/zero tail/current source/run/attempt/nonce/executable/consumer IDs",
+    "media": "Creator-sealed, already readable but not writable by actual QEMU UID64055 BEFORE public attestation; target-only access stage must leave medium full9 unchanged. No hidden third full image copy, chmod or ACL of attested medium during consumers.",
+    "target": "Different inode/device serial OPEMOSOUTPUTTARGET; standalone preallocated raw, no backing chain. Initial/postACL pins distinct; same mutable inode/UID/GID/link/size/generation across installed boots. Actual root/EFI UUIDs must remain identical.",
+    "xml": "One read-only USB installation medium plus writable SATA target during installation; installation medium detached thereafter. A distinct readonly controller CD-ROM remains on all four boots, with exact firmware manifest hash and existing named virtio observer channel. Every dependency is charged. Existing firmware/metadata/GPU/pool preserved; managed PTY replaces unbounded host serial file.",
+    "resources": "Actual full dependency inode union max(logical,allocated) before/during/after; firmware/parent allocations/target/media/console/Robot/temp/evidence counted; real host allocation/headroom and complete canonical ownership proof. Sparse logical size still charged; source minimum is not fit or allocation proof."
+  },
+  "nativePhaseProducerInterface": {
+    "currentImplementationsQualified": false,
+    "currentCommandValues": {"ordinary": "intrinsic guest_phase/consume_guest_phase", "stopped": "intrinsic stopped_target_readback", "qualification": "UNRUN; no runtime grant or SDK/VM/closure pass"},
+    "boundary": "Concrete guest SDK/Robot phase, host receiver, media producer and stopped readback source are now authored in this same assignment, UNRUN and not yet independently qualified. Null historical command values are not an external Root implementation gate: ordinary phases/readback are intrinsic current functions. Root still independently authenticates the whole A source graph and current hardware/owner admission. No new source acceptance, real SDK/VM boot, GPU, image or hardware pass is inferred.",
+    "perPhase": "Root phasePreflights contain exact phase/request/identity/toolPin/sourcePins/preflightArgv/seconds/stopMode for actual fresh hardware/owner admission only. Ordinary work uses guest_phase and verified A medium; stopped readback is intrinsic. No external ordinary/readback argv, shell, interpolation or workflow-supplied VM implementation.",
+    "ordering": "Fresh real no-effect full preflight -> exact paused create/register/ACTIVE/current queue observation -> resume -> actual QEMU read-only media/writable target FD proof -> ordinary native phase child/Robot -> actual guest shutdown/domain/GPU closure -> PREPARED -> separate stopped target readback child -> actual ledger. No stopped helper before domain closure and no self-referential result hash.",
+    "ordinaryResult": "ROOT_OUTPUT_INSTALL_NATIVE_PHASE_V1; exact identity/Core contract/phase/target generation and serial; real welcome pointer/install numeric0; actual root+EFI UUIDs,1600x900, RF7.5 XML/HTML/xUnit/native PNG/file pins and distinct installed boot IDs. Baseline/update/recovery require actual current575 five-module Core status and native GPU pixel readback. Core update is pending-health, not boot success; recovery requires the same retained generation/authority/files and a new actual acknowledged healthy boot, never restored/no-pending/held. Core source map6f0094d6 distinguishes driver generation from OS slot/kernel transition; OS transitions, three-kernel fullstack and hardware acceptance remain NOT_PROVEN, not waived or relabelled as this test.",
+    "stoppedResult": "After closure only: exact phase/identity/generation and SHA of canonical ordinary result, actual partition/UUID-discovered stopped file readback, mountClosed/loopClosed and explicit allocation/command unknowns. No historical synthetic-home offsets/old two-boot readback.",
+    "publicConsumer": "run seals a create-only Root0444 local ROOT_VERIFIED_OUTPUT_INSTALL_FOUR_BOOT_V1 only after all four phases, independent stopped readbacks, actual final lifecycle and original preservation. publicInstallProof is the output_install_receipt field of the existing exact executable transaction; retained-range consumers additionally require validate_output_install_proof and matching root/EFI/generation/boot. Existing build/heal/Core/GPU/role checks remain mandatory. This local receipt is not release publication, and missing actual OS-kernel/fullstack evidence cannot be relabelled as a pass.",
+    "failures": "Retain first and secondary failures, create-only child raw logs, console complete first crossing and unknown tail, actual child numeric/EOF/reap/FD/children closure. A phase helper or source/admission missing/failing is failed, never N/A/skip/pass. Existing GHA/Robot collector/finalizer must carry actual failed receipts."
+  },
+  "closure": "Every phase proves actual transient domain/original PID-start/cgroup/VFIO holder absence and all four host functions restored. All six ACL journals must exist before restoration can succeed; empty/partial restoration cannot close a lease. Media full hash remains independently verified. Final native connections/callbacks/timer/disk FDs close independently, daemon QEMU numeric waitpid remains unknown. Known current failed closure may append CLOSED retaining first failure/history; any unknown keeps lease held. No source/user/release data cleanup or queue rearm.",
+  "acceptance": "NONE from source preparation/CI. Actual new source graph, ordinary native phase implementations, Robot source-only feedback and Root independent full qualification are still required before Root admits ONE real VM transaction. Main merge remains held until Root safe cut/exact counterpart/all checks."
+}

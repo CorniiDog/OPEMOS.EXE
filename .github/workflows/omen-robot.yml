@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       required_platform:
-        description: Exact protected-Main producer gate; empty runs full inventory
+        description: Exact authenticated producer gate; empty runs full inventory
         type: choice
-        options: ['', ubuntu, windows]
+        options: ['', ubuntu, windows, macos]
         default: ''
       producer_run:
         type: string
@@ -21,13 +21,26 @@ on:
       source_sha:
         type: string
         default: ''
+      candidate_pr:
+        description: Optional real same-repository PR; controller is independently qualified
+        type: string
+        default: ''
+      candidate_sha:
+        type: string
+        default: ''
+      candidate_ref:
+        description: Exact refs/heads branch; mutually exclusive with candidate_pr
+        type: string
+        default: ''
+      candidate_base:
+        type: string
+        default: ''
       correlation_nonce:
         type: string
         default: ''
   workflow_run:
     workflows: [01 Windows EXE, 02 Ubuntu AppImage, 03 macOS Executable]
     types: [completed]
-    branches: [main]
 
 permissions:
   contents: read
@@ -44,7 +57,9 @@ jobs:
     outputs:
       ready: ${{ steps.guard.outputs.ready }}
       source: ${{ steps.guard.outputs.source }}
+      implementation: ${{ steps.guard.outputs.implementation }}
       producer: ${{ steps.scope.outputs.producer }}
+      platform: ${{ steps.scope.outputs.platform || steps.guard.outputs.platform || inputs.required_platform }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -63,6 +78,10 @@ jobs:
                       'scripts/omen_ci_executables.py', 'scripts/omen_ci_inventory.py',
                       'scripts/omen_ci_reader.py', 'scripts/omen_ci_result.py',
                       'scripts/omen_ci_stage.py', 'tests/robot/inventory.robot',
+                      'scripts/omen_output_lifecycle.py', 'scripts/omen_output_media.py',
+                      'scripts/omen_robot_plan.py', 'scripts/omen_steamos_guest.py',
+                      'scripts/omen_steamos_native.py', 'scripts/omen_steamos_probe.py',
+                      'tests/robot/output-install.robot',
                       'tests/robot/role.robot', 'tests/robot/guest.robot',
                       'ci/gui-pointer-contract.json', 'ci/robot-installed-hook-contract.json',
                       'scripts/required_omen.py', 'tests/robot/required-platform.robot']
@@ -97,9 +116,10 @@ jobs:
         run: python3 scripts/omen_robot_gate.py
       - id: scope
         name: Bind exact artifact from passed native package JOB before OMEN
-        if: steps.guard.outputs.ready == 'true' && inputs.required_platform != ''
+        if: steps.guard.outputs.ready == 'true' && (inputs.required_platform != '' || steps.guard.outputs.candidate == 'true')
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          OPEMOS_OMEN_ROBOT_RUNNER_STATE: ${{ vars.OPEMOS_OMEN_ROBOT_RUNNER_STATE }}
         run: python3 scripts/required_omen.py scope-guard
       - name: Always provide unavailable reports when trusted route or scope failed
         if: always() && (steps.guard.outputs.ready != 'true' || steps.scope.outcome == 'failure')
@@ -115,7 +135,7 @@ jobs:
 
   actual-robot-transactions:
     needs: trusted-runner-route
-    if: needs.trusted-runner-route.outputs.ready == 'true' && inputs.required_platform == ''
+    if: needs.trusted-runner-route.outputs.ready == 'true' && needs.trusted-runner-route.outputs.platform == ''
     runs-on: [self-hosted, Linux, X64, opemos-omen-robot]
     timeout-minutes: 240
     env:
@@ -125,11 +145,12 @@ jobs:
       OPEMOS_ROBOT_REPORT_EXCHANGE: /home/connor/.local/share/opemos-ci/github-runner/robot-private/reports
       GITHUB_TOKEN: ${{ github.token }}
     steps:
-      # Root-installed ACTIONS_RUNNER_HOOK_JOB_STARTED independently verifies
-      # this workflow/ref/event/live Main BEFORE checkout; no PR/producer code.
+      # Existing Root job hook must verify the whole reviewed implementation,
+      # current Main checkpoint and protected qualification BEFORE checkout.
+      # A candidate source/ref or repository variable alone grants no scope.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ needs.trusted-runner-route.outputs.source }}
+          ref: ${{ needs.trusted-runner-route.outputs.implementation }}
           persist-credentials: false
       - name: Bind existing ephemeral job token to the accepted fixed host guard
         shell: bash
@@ -163,7 +184,7 @@ jobs:
 
   required-platform-robot:
     needs: trusted-runner-route
-    if: needs.trusted-runner-route.result == 'success' && inputs.required_platform != ''
+    if: needs.trusted-runner-route.result == 'success' && needs.trusted-runner-route.outputs.platform != ''
     runs-on: [self-hosted, Linux, X64, opemos-omen-robot]
     timeout-minutes: 240
     env:
@@ -178,7 +199,7 @@ jobs:
       # no PR workflow/caller argv/host credential or queue bypass.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ needs.trusted-runner-route.outputs.source }}
+          ref: ${{ needs.trusted-runner-route.outputs.implementation }}
           persist-credentials: false
       - name: Bind existing ephemeral job token to the accepted fixed host guard
         shell: bash
@@ -211,7 +232,7 @@ jobs:
 
   required-platform-result:
     needs: [trusted-runner-route, required-platform-robot]
-    if: always() && inputs.required_platform != ''
+    if: always() && needs.trusted-runner-route.outputs.platform != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -232,6 +253,9 @@ jobs:
           name: robot-actual-${{ github.run_id }}-${{ github.run_attempt }}
           path: robot-results
       - name: Strict current producer broker Robot image USB SteamOS final result
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPEMOS_OMEN_ROBOT_RUNNER_STATE: ${{ vars.OPEMOS_OMEN_ROBOT_RUNNER_STATE }}
         run: python3 scripts/required_omen.py finalize-scope
       - name: Always upload exact required outcome, including failed missing roles
         if: always()

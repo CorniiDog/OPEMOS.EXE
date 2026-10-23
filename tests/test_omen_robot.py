@@ -35,6 +35,12 @@ class DescriptorSafety(unittest.TestCase):
         with self.assertRaises(ValueError):M.raw_file(p)
     def test_oversized_source_is_refused(self):
         with self.assertRaises(ValueError):M.raw_file(self.file(),cap=4)
+    def test_actual_file_owner_is_not_a_profile_flag(self):
+        path=self.file(b'actual owner-bound bytes')
+        if os.getuid()==0:self.assertEqual(M.raw_file(path,owner=0),b'actual owner-bound bytes')
+        else:
+            with self.assertRaises(ValueError):M.raw_file(path,owner=0)
+        self.assertEqual(M.HOOK,'/var/lib/opemos-robot-control-r1/opemos-robot-job-plan')
     def test_duplicate_json_is_refused(self):
         with self.assertRaises(ValueError):M.strict(b'{"nonce":1,"nonce":2}')
     def test_all20_inventory_and_both_nested_roles_visible(self):

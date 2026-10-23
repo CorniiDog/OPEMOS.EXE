@@ -178,10 +178,10 @@ class Engine:
             except Exception:
                 raise ValueError(outcome_reason(reply, "host operation failed") +
                                  "; public failure receipt persistence failed") from None
-        self._copy_public(reply.get("public_evidence", []))
+        self._copy_public(reply.get("public_evidence", []), source=action=='execute-source-workload')
         # A retained-package connection proof cannot promote the independently
         # required current-source VM/platform cases, even via a malformed reply.
-        if action == "connection-proof":
+        if action in ("connection-proof",'execute-source-workload'):
             return reply
         for key, status in reply.get("vms", {}).items():
             require(key in self.results and status in
@@ -193,8 +193,8 @@ class Engine:
             self.artifacts[key]["status"] = status
         return reply
 
-    def _copy_public(self, rows):
-        require(type(rows) is list and len(rows) <= 64, "public evidence count")
+    def _copy_public(self, rows, source=False):
+        require(type(rows) is list and len(rows) <= (512 if source else 64), "public evidence count")
         total = 0
         for row in rows:
             name = row["name"]
@@ -206,7 +206,7 @@ class Engine:
                     type(row["sha256"]) is str and re.fullmatch(r"[0-9a-f]{64}", row["sha256"]),
                     "bounded exact public descriptor")
             total += row["bytes"]
-            require(total <= MAX_PUBLIC_TOTAL, "public operation total cap")
+            require(total <= (5*1024**3 if source else MAX_PUBLIC_TOTAL), "public operation total cap")
             data = _read_public(self.exchange / name, row["sha256"])
             require(len(data) == row["bytes"], "public report size")
             target = self.reports / name
@@ -238,7 +238,23 @@ class Engine:
     def produced_platform(self):
         """Exact producer target from hosted guard; host broker revalidates it."""
         target = strict_json(os.environ['OPEMOS_REQUIRED_PRODUCER'])
-        require(set(target) == {'platform','producer_run_id','producer_attempt','artifact_id','descriptor_sha256'}, 'exact finite producer target')
+        keys={'platform','producer_run_id','producer_attempt','artifact_id','descriptor_sha256'}
+        require(type(target)is dict and set(target)in(keys,keys|{'source_roles'}), 'exact finite producer target')
+        if 'source_roles'in target:
+            roles=target['source_roles']
+            branch=type(roles)is dict and roles.get('source_kind')=='branch'
+            fields={'repository','controller_commit','candidate_commit','pull_request','base_commit','repository_id','head_repository_id'}
+            require(type(roles)is dict and set(roles)==(fields|{'source_kind','source_ref'}if branch else fields)and
+                    roles['repository']==REPO and roles['controller_commit']==roles['base_commit']==self.identity['source_commit']and
+                    type(roles['candidate_commit'])is str and re.fullmatch('[0-9a-f]{40}',roles['candidate_commit'])and
+                    (branch or roles['candidate_commit']!=roles['controller_commit'])and
+                    type(roles['pull_request'])is int and(roles['pull_request']==0 if branch else 0<roles['pull_request']<2**31)and
+                    all(type(roles[k])is int and roles[k]>0 for k in('repository_id','head_repository_id'))and
+                    roles['repository_id']==roles['head_repository_id'],'finite same-repository A/B target only')
+            if branch:
+                ref=roles['source_ref'];require(type(ref)is str and re.fullmatch(r'refs/heads/[A-Za-z0-9_][A-Za-z0-9_./-]{0,239}',ref)and
+                    ref!='refs/heads/main'and not any(x in ref for x in('..','//','/.','.lock'))and not ref.endswith(('/','.')),
+                    'exact ordinary branch target')
         reply = self._request('execute-produced-platform', target)
         # Persist actual complete reply BEFORE a failure assertion. It contains
         # only public descriptors/typed outcome, never a host plan or disk bytes.
@@ -256,6 +272,16 @@ class Engine:
             raise
         require(reply['status'] == 'passed', outcome_reason(reply, 'exact current artifact GUI/SteamOS transaction failed or unavailable'))
         require(type(reply.get('required_acceptance')) is dict, 'current complete Root acceptance missing')
+        if 'source_roles'in target:
+            acceptance=reply['required_acceptance'];executable=acceptance.get('executable')
+            require(acceptance.get('source_roles')==roles and
+                    acceptance.get('controller_source_commit')==self.identity['source_commit']and
+                    acceptance.get('source_commit')==roles['candidate_commit']and
+                    type(executable)is dict and executable.get('source_commit')==roles['candidate_commit']and
+                    executable.get('platform')==target['platform']and
+                    all(executable.get(k)==target[k]for k in('producer_run_id','producer_attempt','artifact_id'))and
+                    hashlib.sha256(json.dumps(executable,sort_keys=True,separators=(',',':'),ensure_ascii=True,allow_nan=False).encode()).hexdigest()==target['descriptor_sha256'],
+                    'Root acceptance belongs to another controller/candidate/package')
         return {'exports': [{'path': str(self.reports / item['name']), 'kind': item['kind'], 'sha256': item['sha256']} for item in reply['public_evidence']]}
 
     def connection(self):
@@ -267,6 +293,36 @@ class Engine:
         return {"exports": [{"path": str(self.reports / item["name"]),
                               "kind": item["kind"], "sha256": item["sha256"]}
                              for item in reply["public_evidence"]]}
+
+    def source_workload(self, spec):
+        from omen_source_workloads import selection, subject, verify_result, verify_diagnostics, diagnostic_binding
+        selection(spec,self.identity['source_commit'])
+        reply=self._request('execute-source-workload',spec)
+        # Persist the complete actual response before asserting success. A
+        # failed compiler is useful evidence, never GUI or package acceptance.
+        target=self.reports/('source-workload-'+spec['workload']+'.json')
+        raw=json.dumps(reply,sort_keys=True,separators=(',',':'),allow_nan=False).encode()+b'\n'
+        require(len(raw)<=MAX_REPLY,'bounded complete source reply')
+        fd=os.open(target,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+        with os.fdopen(fd,'wb')as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
+        require(broker_failure(reply)is None,outcome_reason(reply,'Actual OMEN source job unavailable'))
+        bound=subject(reply['source_subject'],self.identity['source_commit'])
+        require(all(bound[k]==v for k,v in spec.items()),'Root substituted candidate/workload')
+        if reply['status']=='passed':verify_result(reply['source_result'],reply['identity'],bound)
+        else:
+            require(reply['status']=='failed','unknown source result status')
+            if reply['source_result'].get('kind')=='OMEN_GUEST_SOURCE_WORKLOAD_V1':
+                verify_diagnostics(reply['source_result'],reply['identity'],bound)
+        if reply['source_result'].get('kind')in('OMEN_GUEST_SOURCE_WORKLOAD_V1','OMEN_GUEST_SOURCE_PREREQUISITE_FAILED'):
+            require(reply.get('diagnostic_binding')==diagnostic_binding(reply['source_result'],reply['identity'],bound,
+                reply['source_result']['controller_manifest_sha256']),'broker/client diagnostic hard-event provenance differs')
+        require(reply['source_closure']['unknown']==[] and all(reply['source_closure'].get(k)is True for k in
+            ('domainAbsent','originalPIDStartAbsent','cgroupEmpty','ownedFDsClosed','hostUnchanged',
+             'observerClosed','controlClosed','mediaUnchanged','originalBaseUnchanged')),
+            'actual source VM closure incomplete')
+        # Failed, fully closed replies may reach the report writer. Only the
+        # required source-job caller can assert success before package use.
+        return reply
 
     def persist(self):
         reply = self._request("persist", "all")

@@ -5,6 +5,7 @@ No VM command is accepted on stdin. Original packages, images, case directories
 and queue history are never expired. Only copies under this adapter's dedicated
 marked CI root can be removed, with current queue and active-run guards.
 """
+import base64
 import fcntl
 import gc
 import io
@@ -111,7 +112,7 @@ _inventory_path = Path(__file__).with_name("omen_ci_inventory.py")
 _inventory_pin, _inventory_raw = _READER.read_verified(_inventory_path, 1024**2, expected_sha=_INVENTORY_SHA, uid=os.getuid())
 _INVENTORY = _READER.verified_namespace(_inventory_raw, _inventory_path, "opemos_ci_inventory")
 
-_EXECUTABLES_SHA = "435aa0901a39981fc26d2b5a87f283aa918985318fcd28213c86da918c4c5b1f"
+_EXECUTABLES_SHA = "3138ad9b9260d4591430ee8c560f673f8823150c805a7641307711b1fc70fb07"
 _executables_path = Path(__file__).with_name("omen_ci_executables.py")
 _executable_pin, _executable_raw = _READER.read_verified(_executables_path, 1024**2,
     expected_sha=_EXECUTABLES_SHA, uid=os.getuid())
@@ -120,6 +121,11 @@ _RESULT_SHA = "5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85"
 _result_path=Path(__file__).with_name("omen_ci_result.py")
 _result_pin,_result_raw=_READER.read_verified(_result_path,1024**2,expected_sha=_RESULT_SHA,uid=os.getuid())
 _RESULT=_READER.verified_namespace(_result_raw,_result_path,"opemos_ci_result")
+_OUTPUT_INSTALL_SHA="ec192d3ba47752f966196987d9e3edeed5f79ccc9fba00a2b394f897fe20848b"
+_output_install_path=Path(__file__).with_name('omen_output_lifecycle.py')
+_output_install_pin,_output_install_raw=_READER.read_verified(_output_install_path,1024**2,
+    expected_sha=_OUTPUT_INSTALL_SHA,uid=os.getuid())
+_OUTPUT_INSTALL=_READER.verified_namespace(_output_install_raw,_output_install_path,'opemos_output_install')
 
 
 
@@ -967,13 +973,18 @@ def validate_gui_pointer(receipt,plan,operand,expected_executable=None):
         retained_converter,_=pointer_file(files,receipt.get("gui_converter_ref"),"gui-converter-source",operand,8*1024**2)
         require(retained_converter["sha256"]==operand["gui_converter"]["sha256"]and retained_converter["bytes"]==len(converter_bytes),"Actual converter source not retained")
     executable=expected_executable or operand.get("gui_executable")
-    _EXECUTABLES["descriptor"](executable,plan["source_commit"])
+    _EXECUTABLES["descriptor"](executable,plan["source_commit"],plan.get("source_roles"))
     require(executable["package_sha256"]==operand["package_sha256"]and executable["platform"]=={"windows":"windows","linux":"ubuntu","darwin":"macos"}[session["platform"]],"Pointer executable descriptor/package/platform differs")
     controls=operand.get("gui_controls",{})
     require(isinstance(controls,dict)and set(controls)==set(POINTER_ACTIONS),"Exact current-source native control map missing")
     identity={"source_commit":plan["source_commit"],"run_id":plan.get("run_id"),"attempt":plan.get("attempt"),
         "operation_nonce":plan["nonce"],"inventory_vm_id":operand["inventory_vm_id"],"runtime_instance_id":operand["runtime_instance_id"],
         "queue_job_ids":operand["job_ids"],"original_source":operand["original_source"],"executable":executable}
+    if 'source_roles' in plan:
+        roles=_EXECUTABLES['source_roles'](plan['source_roles'],
+            controller=plan['controller_source_commit'],candidate=plan['source_commit'])
+        identity.update(controller_source_commit=roles['controller_commit'],source_roles=roles)
+    else:require('controller_source_commit'not in plan,'Pointer controller without candidate binding')
     require(all(isinstance(identity.get(k),str)and identity[k]for k in ("run_id","attempt")),"Current pointer run/attempt missing")
     used=set();seen_ids=set();clock=None;last_tick=-1;actions=[]
     for sequence,action in enumerate(POINTER_ACTIONS,1):
@@ -1219,13 +1230,22 @@ def verify_macos_binary(item, executable):
     finally:os.close(fd)
 
 
-def validate_executable_output(build, expected):
+def validate_executable_output(build, expected, context=None):
     output, files, usb = build["output"], build["files"], build["roles"]["virtual_usb"]
     images = [x for x in files.values() if x.get("kind") == "output-image" and x.get("sha256") == output["sha256"]]
     manifests = [x for x in files.values() if x.get("kind") == "output-manifest" and x.get("sha256") == output["manifest_sha256"]]
     require(len(images) == len(manifests) == 1 and type(images[0].get("size")) is int and images[0]["size"] > 0,
             "One actual completed image and adjacent build manifest required")
-    manifest = strict_json(pinned(manifests[0], 8 * 1024**2))
+    if "imageArtifactRange" in images[0]:
+        observed = artifact_read(images[0], 60_000_000_000, context=context)
+        require(observed["originalManifest"] == manifests[0], "Range must retain the exact original raw manifest pin")
+        original, raw = _READER.read_verified(manifests[0]["path"], 8 * 1024**2,
+            expected_sha=manifests[0]["sha256"], expected_size=manifests[0]["size"], uid=manifests[0].get("uid", os.getuid()))
+        require(original["identity"] == manifests[0]["identity"], "Original raw manifest full9 differs")
+        require(raw == observed["originalManifestRaw"], "Parsed/reserialized manifest is not original guest bytes")
+        manifest = strict_json(raw)
+    else:
+        manifest = strict_json(pinned(manifests[0], 8 * 1024**2))
     require(manifest.get("schemaVersion") == 1 and manifest.get("resultClass") == "nvidia-mutation-valid"
             and manifest.get("input", {}).get("sourceSha256") == output["input_sha256"]
             and manifest.get("output", {}).get("format") == "raw"
@@ -1301,10 +1321,13 @@ def executable_job_origin(operand, rows, proofs, started):
     return manifest
 
 
-def verify_original_operand(operand,cap):
+def verify_original_operand(operand,cap,context=None):
     original=operand.get("original_source",{})
     require(_INVENTORY["original_source_valid"](original),"Exact retained original source pin required")
     for item in operand.get("inputs",[]):
+        if "imageArtifactRange" in item:
+            observed = artifact_read(item, cap, context=context)
+            if observed["backing"] == original:return
         if item.get("sha256")==original["sha256"]and item.get("size")==original["size"]:
             observed=artifact_read(item,cap)
             if {k:observed[k]for k in ("sha256","size","identity")}==original:return
@@ -1312,15 +1335,23 @@ def verify_original_operand(operand,cap):
 
 
 def validate_executable_transaction(value, expected, entry, plan, request, rows):
-    _EXECUTABLES["descriptor"](expected, request["source_commit"])
+    roles=request.get('source_roles')
+    _EXECUTABLES["descriptor"](expected, request["source_commit"],roles)
+    if roles is not None:
+        _EXECUTABLES['source_roles'](roles,controller=request['controller_source_commit'],candidate=request['source_commit'])
+        require(plan.get('source_roles')==roles and plan.get('controller_source_commit')==request['controller_source_commit']
+                and value.get('source_roles')==roles and value.get('controller_source_commit')==request['controller_source_commit'],
+                'Executable plan/result A/B roles changed')
+    else:require('source_roles'not in value and 'controller_source_commit'not in value,'Candidate result on Main-only transaction')
     nonce = entry.get("operation_nonce")
     require(re.fullmatch(r"[0-9a-f]{32}", nonce or "") and value.get("operation_nonce") == nonce
             and value.get("executable") == expected and value.get("source_commit") == request["source_commit"]
             and value.get("run_id") == request["run_id"] and value.get("attempt") == request["attempt"],
             "Exact executable/source/current acceptance run/attempt/operation identity differs")
     build_operand, heal_operand = entry["build_operand"], entry["heal_operand"]
-    verify_original_operand(build_operand,60_000_000_000)
-    verify_original_operand(heal_operand,60_000_000_000)
+    range_context = image_range_context(request, nonce, expected, build_operand["job_ids"] + heal_operand["job_ids"])
+    verify_original_operand(build_operand,60_000_000_000,range_context)
+    verify_original_operand(heal_operand,60_000_000_000,range_context)
     require(build_operand.get("package_sha256") == expected["package_sha256"]
             and build_operand.get("subject_role") == "imaging_host"
             and heal_operand.get("subject_role") == "steamos_target", "Exact artifact must be consumed by its genuine platform imaging host")
@@ -1336,6 +1367,9 @@ def validate_executable_transaction(value, expected, entry, plan, request, rows)
     local_plan = {**plan, "nonce": nonce, "run_id": request["run_id"], "attempt": request["attempt"]}
     build = load_pinned(value["build_receipt"])
     heal = load_pinned(value["heal_receipt"])
+    if roles is not None:
+        require(all(r.get('source_roles')==roles and r.get('controller_source_commit')==roles['controller_commit']
+                    for r in(build,heal)),'Build/heal must preserve both controller A and candidate B')
     require(all(receipt.get(k) == request[k] for receipt in (build, heal) for k in ("run_id", "attempt")),
             "Build/NVIDIA receipt belongs to an old consumer run or attempt")
     build_operand={**build_operand,"gui_executable":expected,"evidence_roots":entry["evidence_roots"]}
@@ -1343,12 +1377,15 @@ def validate_executable_transaction(value, expected, entry, plan, request, rows)
     require(heal_operand.get("input_sha256") == build["output"]["sha256"], "NVIDIA/recovery input must be this exact actual GUI image output")
     heal_files = validate_receipt(heal, "steamos-autoheal", local_plan, heal_operand)
     pointer_proof=validate_gui_pointer(build,local_plan,build_operand,expected)
-    validate_executable_output(build, expected)
+    validate_executable_output(build, expected, range_context)
     target, healed = build["roles"]["steamos_target"], heal["roles"]["steamos_target"]
     require(all(target.get(k) == healed.get(k) for k in ("id", "disk_identity", "baseline_boot_id", "normal_boot_id", "abrupt_boot_id"))
             and target["id"] != build["roles"]["imaging_host"]["id"] and target["id"] != build["roles"]["fedora_appliance"]["id"],
             "Each executable needs the same actual separately installed SteamOS target through NVIDIA recovery")
     install = load_pinned(value["install_receipt"])
+    if roles is not None:
+        require(install.get('source_roles')==roles and install.get('controller_source_commit')==roles['controller_commit'],
+                'Installed-target receipt lost A/B roles')
     required = {"kind": "OPEMOS_VIRTUAL_STEAMOS_INSTALL_V1", "source_commit": request["source_commit"],
         "run_id": request["run_id"], "attempt": request["attempt"], "operation_nonce": nonce,
         "executable_package_sha256": expected["package_sha256"], "output_image_sha256": build["output"]["sha256"],
@@ -1363,6 +1400,20 @@ def validate_executable_transaction(value, expected, entry, plan, request, rows)
                     ("target_generation", "output_identity", "installed_root_uuid", "installed_efi_uuid")),
             "Actual virtual SteamOS install/boot/output/disk generation proof missing for this executable")
     install_files = install.get("files", {})
+    install_graph=None
+    if any('imageArtifactRange'in item for item in heal_operand.get('inputs',[])):
+        # The new retained-media path must carry the actual complete output
+        # producer graph, not merely the old scalar install flags. Every
+        # existing build/heal/Core/GPU/role check above remains required.
+        require('output_install_receipt'in value,'actual complete output-install Root publication missing')
+        proof=protected_image_range_receipt(value['output_install_receipt'])
+        require(proof.get('leaseNonce')==heal_operand['lease_nonce']and
+                proof.get('sourceGraph',{}).get('outputProducerPin',{}).get('sha256')==_OUTPUT_INSTALL_SHA,
+                'actual output graph must use the current admitted lease and exact reviewed source')
+        install_graph=_OUTPUT_INSTALL['validate_output_install_proof'](proof,range_context,build['output']['sha256'])
+        require(all(install.get(key)==install_graph[key]for key in
+                    ('target_generation','installed_root_uuid','installed_efi_uuid','baseline_boot_id')),
+                'public installed target differs from actual four-phase/stopped graph')
     require({"install-log", "boot-log", "screenshot"} <= {x.get("kind") for x in install_files.values()},
             "Real install log, graphical boot and screenshot evidence required")
     archive, package, binary = value["archive_pin"], value["package_pin"], value["executable_pin"]
@@ -1377,7 +1428,7 @@ def validate_executable_transaction(value, expected, entry, plan, request, rows)
             require(SHA.fullmatch(item.get("sha256", "")) and pointer_evidence_size(item)
                     and Path(item.get("path", "")).is_absolute(), "Actual executable transaction evidence pin missing")
             files[prefix + ":" + name] = item
-    return {"status": "passed", "executable": expected, "source_commit": request["source_commit"],
+    outcome={"status": "passed", "executable": expected, "source_commit": request["source_commit"],
             "run_id": request["run_id"], "attempt": request["attempt"], "operation_nonce": nonce,
             "actual_receipt_verified": True, "active": False, "job_ids": build_jobs + heal_jobs,
             "pointer_acceptance":pointer_proof,
@@ -1388,7 +1439,12 @@ def validate_executable_transaction(value, expected, entry, plan, request, rows)
             "target_id": target["id"], "target_disk_identity": target["disk_identity"], "baseline_boot_id":target["baseline_boot_id"],
             "installed_root_uuid":install["installed_root_uuid"], "installed_efi_uuid":install["installed_efi_uuid"],
             "imaging_host_id":build["roles"]["imaging_host"]["id"],
-            "reason": "Distinct actual GUI image/manifest, complete virtualUSB, installed SteamOS target and same-target NVIDIA/kernel/recovery proof"}, files
+            "reason": "Distinct actual GUI image/manifest, complete virtualUSB, installed SteamOS target and same-target NVIDIA/kernel/recovery proof"}
+    if roles is not None:outcome.update(source_roles=roles,controller_source_commit=roles['controller_commit'])
+    if install_graph is not None:
+        outcome['actual_output_install_graph']=install_graph
+        files['install:complete-root-proof']=value['output_install_receipt']
+    return outcome, files
 
 
 def executable_outcomes(config, request, plan, rows, artifacts, budget):
@@ -1413,7 +1469,8 @@ def executable_outcomes(config, request, plan, rows, artifacts, budget):
                 if item.get("kind") == "screenshot":
                     require(artifact_read(item, config["max_run_bytes"])["prefix"] == b"\x89PNG\r\n\x1a\n", "Actual graphical PNG proof missing")
                 target = artifacts / item["sha256"]
-                charged,observed=retain_pin(item,target,budget,config["max_run_bytes"])
+                range_context = image_range_context(request, entry["operation_nonce"], executable, outcome["job_ids"])
+                charged,observed=retain_pin(item,target,budget,config["max_run_bytes"],context=range_context)
                 budget-=charged
                 if item.get("kind") == "output-image":
                     actual_output_identity = _EXECUTABLES["digest"]({"imaging_host_id":outcome["imaging_host_id"],
@@ -1431,12 +1488,288 @@ def executable_outcomes(config, request, plan, rows, artifacts, budget):
     return _EXECUTABLES["report"](expected, result, request["source_commit"], request["run_id"], request["attempt"]), budget
 
 
-def artifact_read(item, cap, target=None):
+def image_range_context(request, nonce, executable, job_ids):
+    value={"source_commit": request["source_commit"], "run_id": request["run_id"],
+            "attempt": request["attempt"], "operation_nonce": nonce,
+            "executable": executable, "consumer_job_ids": list(job_ids)}
+    if 'source_roles'in request:
+        roles=_EXECUTABLES['source_roles'](request['source_roles'],controller=request['controller_source_commit'],candidate=request['source_commit'])
+        value.update(source_roles=roles,controller_source_commit=roles['controller_commit'])
+    else:require('controller_source_commit'not in request,'Range controller without candidate role binding')
+    return value
+
+
+def operand_image_range_context(operand, plan, request, expected):
+    matches = [(name, entry) for name, entry in plan.get("executable_acceptance", {}).items()
+               if name in expected and isinstance(entry, dict)
+               and operand in (entry.get("build_operand"), entry.get("heal_operand"))]
+    require(len(matches) == 1, "Range input must be the exact registered executable operation operand")
+    name, entry = matches[0]
+    return image_range_context(request, entry["operation_nonce"], expected[name],
+        entry["build_operand"]["job_ids"] + entry["heal_operand"]["job_ids"])
+
+
+def protected_image_range_receipt(item, mode=0o444, cap=1024**2):
+    """Only the existing Root-owned /run publication domain may attest a range."""
+    path = Path(item["path"])
+    require(path.is_absolute() and path.is_relative_to("/run") and ".." not in path.parts
+            and len(path.parts) <= 32, "Range authority must be an exact bounded Root /run receipt")
+    mounts = [line for line in Path("/proc/self/mountinfo").read_text().splitlines()
+              if line.split()[4] == "/run"]
+    require(len(mounts) == 1 and " - tmpfs " in mounts[0], "Actual Root /run tmpfs required")
+    fds = []
+    try:
+        fds.append(os.open("/run", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC))
+        for part in path.parts[2:-1]:
+            parent = os.fstat(fds[-1])
+            require(parent.st_uid == parent.st_gid == 0 and not parent.st_mode & 0o022,
+                    "Range authority writable/foreign ancestry")
+            fds.append(os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fds[-1]))
+        parent = os.fstat(fds[-1])
+        require(parent.st_uid == parent.st_gid == 0 and not parent.st_mode & 0o022,
+                "Range authority parent custody")
+        observed, raw = _READER.read_verified(path, cap, expected_sha=item["sha256"],
+                                              expected_size=item["size"], uid=0)
+        identity = observed["identity"]
+        require(all(type(v) is int for v in item["identity"].values())
+                and identity == item["identity"] and identity["st_gid"] == 0
+                and stat.S_IMODE(identity["st_mode"]) == mode
+                and identity == _READER.identity(os.stat(path.name, dir_fd=fds[-1], follow_symlinks=False)),
+                "Exact protected Root range receipt full9/mode")
+        return strict_json(raw)
+    finally:
+        first = sys.exc_info()[1];errors = []
+        for fd in reversed(fds):
+            try:os.close(fd)
+            except BaseException as error:errors.append(repr(error))
+        if errors:
+            if first is not None:first.add_note("Independent range authority descriptor closure UNKNOWN: " + repr(errors))
+            else:raise ValueError("Range authority descriptor closure UNKNOWN: " + repr(errors))
+
+
+def artifact_image_range(item, cap, context):
+    """Read one attested stopped virtual-USB prefix AND its entire backing.
+
+    Not an arbitrary offset broker. The backing remains one immutable media
+    inode, never relabeled as an image-sized whole file or copied implicitly.
+    """
+    require(context is not None and item.get("kind") == "output-image",
+            "Range requires the current executable operation context")
+    extent = item["imageArtifactRange"]
+    require(set(extent) == {"backingFile", "offset", "bytes", "sha256", "tailBytes", "root_final"},
+            "Exact stopped virtual-USB extent schema")
+    backing = extent["backingFile"]
+    require(set(backing) == {"path", "size", "sha256", "identity", "allocatedBytes"}
+            and type(cap) is int and cap > 0 and type(item["size"]) is int
+            and type(backing["size"]) is int and 0 < item["size"] < backing["size"] <= cap
+            and type(extent["offset"]) is int and extent["offset"] == 0 and type(extent["bytes"]) is int
+            and extent["bytes"] == item["size"] and extent["sha256"] == item["sha256"]
+            and type(extent["tailBytes"]) is int and extent["tailBytes"] == backing["size"] - item["size"]
+            and type(backing["allocatedBytes"]) is int and backing["allocatedBytes"] >= 0
+            and all(type(v) is int for v in backing["identity"].values())
+            and item["path"] == backing["path"]
+            and SHA.fullmatch(item["sha256"]) and SHA.fullmatch(backing["sha256"]),
+            "Exact prefix/image/backing/tail identities required")
+    root = protected_image_range_receipt(extent["root_final"])
+    declared = {k:v for k,v in extent.items() if k != "root_final"}
+    require(root.get("kind") == "ROOT_VERIFIED_STOPPED_WINDOWS_IMAGE_RANGE_V1"
+            and root.get("identity") == context and context["executable"]["platform"] == "windows"
+            and root.get("imageArtifactRange") == declared
+            and root.get("normalWindowsImageAndVirtualUSB") is True
+            and root.get("stoppedFullReadback") is True and root.get("tailZero") is True
+            and root.get("retainedForConsumerJobIds") == context["consumer_job_ids"]
+            and root.get("completedImagePreserved") is True
+            and root.get("originalGuestManifestSHA256") == root.get("originalManifest", {}).get("sha256")
+            and SHA.fullmatch(root.get("originalGuestManifestSHA256", "")),
+            "Current Root final/readback/retention authority missing")
+    closed = range_publication_closure(root, extent['root_final'], item, context)
+    manifest_raw = original_range_manifest(root, extent['root_final'])
+    path = Path(backing["path"])
+    require(path.is_absolute() and str(path.resolve()) == str(path), "Range backing canonical path")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        before = os.fstat(fd);identity = _READER.identity(before)
+        require(stat.S_ISREG(before.st_mode) and before.st_uid == os.getuid() and before.st_nlink == 1
+                and not before.st_mode & 0o022 and identity == backing["identity"]
+                and before.st_size == backing["size"]
+                and before.st_blocks * 512 == backing["allocatedBytes"], "Range backing FD/full9/allocation guard")
+        whole, image, total, prefix = hashlib.sha256(), hashlib.sha256(), 0, b""
+        while block := os.read(fd, min(1024**2, backing["size"] + 1 - total)):
+            start = total;total += len(block);require(total <= backing["size"], "Range backing overflow")
+            whole.update(block);image_part = block[:max(0, min(len(block), item["size"] - start))]
+            image.update(image_part);prefix = (prefix + image_part)[:8]
+            require(not any(block[len(image_part):]), "Stopped virtual USB nonzero tail")
+        require(total == backing["size"] and image.hexdigest() == item["sha256"]
+                and whole.hexdigest() == backing["sha256"]
+                and identity == _READER.identity(os.fstat(fd)) == _READER.identity(os.lstat(path))
+                and before.st_blocks == os.fstat(fd).st_blocks == os.lstat(path).st_blocks,
+                "Complete range/backing EOF/hash/full9/allocation drift")
+    finally:
+        first = sys.exc_info()[1]
+        try:os.close(fd)
+        except BaseException as error:
+            if first is not None:first.add_note("Range backing descriptor closure UNKNOWN: " + repr(error))
+            else:raise
+    # Recheck protected authority after the complete potentially long read.
+    require(protected_image_range_receipt(extent["root_final"]) == root, "Range authority drift")
+    require(range_publication_closure(root,extent['root_final'],item,context)==closed,
+            'Independent range publisher/finalizer closure changed')
+    require(original_range_manifest(root,extent['root_final']) == manifest_raw, "Original manifest changed during backing read")
+    typed = {"representation": "root-stopped-virtual-usb-prefix-v1",
+             "backing_identity": identity, "backing_sha256": backing["sha256"],
+             "offset": 0, "size": item["size"], "sha256": item["sha256"],
+             "root_final_sha256": extent["root_final"]["sha256"]}
+    return {"size": item["size"], "sha256": image.hexdigest(), "prefix": prefix,
+            "identity": typed, "backing": {"size": backing["size"], "sha256": whole.hexdigest(),
+                                          "identity": identity},
+            "originalManifest": root["originalManifest"], "originalManifestRaw": manifest_raw}
+
+
+def publication_clock(root):
+    value=root.get('publicationValidity',{})
+    require(set(value)=={'hostBoot','notBeforeMonotonic','notAfterMonotonic'}and
+            value['hostBoot']==Path('/proc/sys/kernel/random/boot_id').read_text().strip()and
+            all(type(value[k])in(int,float)for k in('notBeforeMonotonic','notAfterMonotonic'))and
+            0<value['notAfterMonotonic']-value['notBeforeMonotonic']<=14400 and
+            value['notBeforeMonotonic']<=time.monotonic()<value['notAfterMonotonic'],
+            'same actual boot/original four-hour publication interval, no clock extension')
+
+
+def range_publication_closure(root, range_pin, item, context):
+    publication_clock(root)
+    path=Path(range_pin['path']).parent/'publication-closed.json'
+    require(root.get('publicationClosurePath')==str(path)and
+            root.get('requiresIndependentActualPublisherNativeClosure')is True,
+            'mandatory separate publication closure path')
+    pin,raw=_READER.read_verified(path,16384,uid=0)
+    closed=protected_image_range_receipt(dict(path=str(path),size=pin['bytes'],sha256=pin['sha256'],
+                                            identity=pin['identity']),cap=16384)
+    require(closed.get('kind')=='ROOT_VERIFIED_WINDOWS_RANGE_PUBLICATION_NATIVE_CLOSED_V1'and
+            closed.get('identity')==context and closed['rangePin']==range_pin and
+            closed['publicationRequestPin']==root['RootAttestation']['requestPin']and
+            closed['publisherSourcePin']==root['RootAttestation']['sourcePin']and
+            closed['sourceBodySHA256']==closed['publisherSourcePin']['sha256']and
+            closed['publicationValidity']==root['publicationValidity']and
+            closed['originalManifestAllocation']==root['originalManifestAllocation']and
+            closed['completePostWriteAndPostNativeFinalEqual']is True,
+            'same range/request/source/context/allocation native closure')
+    summary=closed['publisher']
+    require(type(summary['numericExit'])is int and summary['numericExit']==0 and
+            all(summary.get(k)is True for k in('reaped','stdoutEOF','stderrEOF','FDSetRestored',
+                                               'childSetRestored','sameBirthAbsent')),
+            'actual independent publisher closed, not a successful local label')
+    # Root0400 records intentionally stay private. The already-authorized Root
+    # parent must observe the finalizer's actual native capture after it exits,
+    # then seal this separate readable observation. No new private-read grant,
+    # pathname normalization or self-reap assertion is made by this consumer.
+    final=item.get('publicationFinalizer')
+    require(type(final)is dict and set(final)=={'path','size','sha256','identity'}and
+            Path(final['path'])==path.parent/'publication-finalizer-observed.json',
+            'Root parent readable finalizer observation required')
+    observed=protected_image_range_receipt(final,cap=65536)
+    require(observed.get('kind')=='ROOT_VERIFIED_WINDOWS_RANGE_FINALIZER_OBSERVED_V1'and
+            observed.get('identity')==context and observed['rangePin']==range_pin and
+            observed['closurePin']==pin and observed['publicationRequestPin']==closed['publicationRequestPin']and
+            observed['publicationValidity']==root['publicationValidity']and
+            observed['RootParentRequestPin']==closed['RootParentRequestPin']and
+            observed['publisherSourcePin']==closed['publisherSourcePin']and
+            observed['actualPublisherNativePin']==closed['actualPublisherNativePin']and
+            observed['actualPublisherStdoutPin']==closed['actualPublisherStdoutPin']and
+            observed['actualPublisherStderrPin']==closed['actualPublisherStderrPin'],
+            'same actual parent/source/publisher/finalizer/retention proof')
+    record=observed['finalizer']
+    require(type(record['numericExit'])is int and record['numericExit']==0 and
+            all(record.get(k)is True for k in('reaped','stdoutEOF','stderrEOF','FDSetRestored',
+                                               'childSetRestored','sameBirthAbsent','completeRawReadback'))and
+            record['firstError']is None and record['errors']==[]and record['tailUNKNOWN']is False and
+            type(record['pid'])is int and record['pid']>0 and
+            len(observed['expectedFinalizerArgv'])==6 and
+            observed['expectedFinalizerArgv'][:3]==['/usr/bin/python3','-B','-I']and
+            observed['expectedFinalizerArgv'][4:]==['close-publication',closed['RootParentRequestPin']['path']],
+            'Root parent actual close-publication native0/full EOF/reap/FD observation')
+    for name in('actualFinalizerNativePin','actualFinalizerStdoutPin','actualFinalizerStderrPin'):
+        private=observed[name]
+        require(set(private)=={'path','bytes','sha256','identity'}and
+                Path(private['path']).is_absolute()and Path(private['path']).is_relative_to('/run')and
+                type(private['bytes'])is int and 0<=private['bytes']<=1024**2 and
+                SHA.fullmatch(private['sha256'])and private['identity']['st_uid']==private['identity']['st_gid']==0 and
+                stat.S_IMODE(private['identity']['st_mode'])==0o400,
+                'retained exact private actual finalizer evidence references, not public copies')
+    require(observed['actualFinalizerStderrPin']['bytes']==0 and
+            all(observed['actualClosurePersistence'].get(k)is True for k in
+                ('fsyncCompleted','FDClosed','directoryFsyncCompleted','directoryFDClosed','readbackCompleted')),
+            'actual independent closure leaf persistence/readback')
+    try:birth=Path('/proc',str(record['pid']),'stat').read_text().rsplit(')',1)[1].split()[19]
+    except FileNotFoundError:birth=None
+    require(birth!=str(record['start']),'actual original finalizer still alive')
+    publication_clock(root)
+    return {'closed':closed,'observed':observed}
+
+
+def original_range_manifest(root, range_pin=None):
+    """Separate actual raw file, never base64 inside the bounded Root receipt.
+
+    R27 admits a 1MiB original manifest. Its raw bytes cannot fit in a 1MiB
+    JSON authority leaf after base64 expansion. Root authenticates the exact
+    separate host file pin; this reader hashes the held bytes before parsing.
+    """
+    require("originalManifestRawBase64" not in root, "Inline manifest representation is not supported")
+    item = root.get("originalManifest", {})
+    require(item.get("kind") == "output-manifest" and type(item.get("size")) is int
+            and 0 < item["size"] <= 1024**2
+            and item.get("sha256") == root.get("originalGuestManifestSHA256")
+            and SHA.fullmatch(item.get("sha256", ""))
+            and type(item.get("uid", os.getuid())) is int,
+            "Exact bounded original raw manifest file pin required")
+    require(range_pin is not None,'Root raw representation requires exact authority location')
+    publication_clock(root)
+    require(root.get('originalManifestRepresentation')=={'kind':'ROOT_PINNED_ORIGINAL_RAW_FILE_V1',
+                'maximumBytes':1048576,'pin':item}and item.get('uid')==0 and
+            Path(item['path'])==Path(range_pin['path']).parent/'original-image-manifest.raw',
+            'exact separate original Root raw representation/location')
+    allocation=root.get('originalManifestAllocation',{})
+    core={'path':item['path'],'bytes':item['size'],'sha256':item['sha256'],'identity':item['identity']}
+    require(allocation.get('pin')==core and allocation.get('logicalBytes')==item['size']and
+            type(allocation.get('allocatedBytes'))is int and allocation['allocatedBytes']>=0 and
+            allocation.get('chargedBytes')==max(item['size'],allocation['allocatedBytes']),
+            'explicit size/bytes raw allocation schema join')
+    raw=read_original_manifest_file(item,allocation,uid=0)
+    require(stat.S_IMODE(item['identity']['st_mode'])==0o444 and item['identity']['st_gid']==0,
+            'exact protected original raw file mode/group')
+    protected_image_range_receipt(dict(path=item['path'],size=item['size'],sha256=item['sha256'],identity=item['identity']))
+    publication_clock(root)
+    return raw
+
+
+def read_original_manifest_file(item, allocation, uid):
+    """Ordinary held raw I/O shared by Root wrapper and owned-file regressions.
+
+    This returns bytes only, never publication authority. The Root wrapper
+    retains ancestry/mode/UID/interval/independent-parent requirements.
+    """
+    require(type(item['size'])is int and 0<item['size']<=1024**2 and SHA.fullmatch(item['sha256']),
+            'actual original raw producer one-MiB bound')
+    fd=os.open(item['path'],os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    try:
+        before=os.fstat(fd);require(_READER.identity(before)==item['identity']and
+            before.st_blocks*512==allocation['allocatedBytes'],'actual held raw allocation before read')
+        observed, raw = _READER.read_verified(item["path"], 1024**2, expected_sha=item["sha256"],
+            expected_size=item["size"], uid=uid)
+        require(observed["identity"]==item['identity']==_READER.identity(os.fstat(fd))and
+                os.fstat(fd).st_blocks*512==allocation['allocatedBytes'],
+                'actual held raw file full9/allocation drift')
+    finally:os.close(fd)
+    return raw
+
+def artifact_read(item, cap, target=None, context=None):
     """Streaming equivalent of canonical full9 custody for large artifacts.
 
     One source FD supplies hashing/copying. A bounded prefix is retained only
     for typed PNG checks; full code/JSON uses the canonical reader directly.
     """
+    if "imageArtifactRange" in item:
+        require(target is None, "No implicit large range export; separate whole-budget admission required")
+        return artifact_image_range(item, cap, context)
     path = Path(item["path"])
     require(path.is_absolute() and str(path.resolve()) == str(path), "Artifact path guard")
     require(isinstance(item.get("sha256"), str) and SHA.fullmatch(item["sha256"]),
@@ -1489,9 +1822,16 @@ def artifact_read(item, cap, target=None):
         os.close(fd)
 
 
-def retain_pin(item,target,remaining,cap):
+def retain_pin(item,target,remaining,cap,context=None):
     # Deduplication saves storage only. Every declared source and every existing
     # cached object independently prove complete full9/size/hash custody.
+    if "imageArtifactRange" in item:
+        observed=artifact_read(item,cap,context=context)
+        # The protected Root receipt retains the actual media for all consumer
+        # jobs. Do not invent an additional image inode under the staging cap.
+        if target.exists():
+            artifact_read({"path":str(target),"sha256":item["sha256"],"size":item["size"],"kind":item.get("kind")},cap)
+        return 0,observed
     if target.exists():
         observed=artifact_read(item,cap)
         artifact_read({"path":str(target),"sha256":item["sha256"],"size":item["size"],"kind":item.get("kind")},cap)
@@ -1627,7 +1967,7 @@ def validate_canonical_qualification(value, expected_pins, source, stage_sha):
 def require_canonical_qualification(config, request, rows):
     item = config.get("required_canonical_qualification", {})
     value = load_pinned(item["receipt"])
-    validate_canonical_qualification(value, item["source_pins"], request["source_commit"], request["stage_sha256"])
+    validate_canonical_qualification(value, item["source_pins"], request.get("controller_source_commit",request["source_commit"]), request["stage_sha256"])
     guest=value.get("guest",{})
     require(isinstance(item.get("runtime_instance_id"),str) and item["runtime_instance_id"]
             and guest.get("runtime_instance_id")==item["runtime_instance_id"]
@@ -1793,14 +2133,17 @@ def dispatch(config, request, plan, root=ROOT):
             # mandatory heavy entry; queue.sh separately accounts guest work.
             source_proven=False
             for item in operand["inputs"]:
-                observed=artifact_read(item,config["max_input_bytes"])
-                if {k:observed[k]for k in ("sha256","size","identity")}==operand["original_source"]:source_proven=True
+                context = operand_image_range_context(operand,plan,request,expected) if "imageArtifactRange" in item else None
+                observed=artifact_read(item,config["max_input_bytes"],context=context)
+                original = observed["backing"] if "imageArtifactRange" in item else {k:observed[k]for k in ("sha256","size","identity")}
+                if original==operand["original_source"]:source_proven=True
             require(source_proven,"Original source pin was not an actually verified ordinary input")
             for pin in operand["artifacts"]:
                 require(isinstance(pin.get("sha256"), str) and SHA.fullmatch(pin["sha256"]),
                         "Artifact digest/path identity invalid")
                 target = artifacts / pin["sha256"]
-                charged,_=retain_pin(pin,target,budget,config["max_run_bytes"])
+                context = operand_image_range_context(operand,plan,request,expected) if "imageArtifactRange" in pin else None
+                charged,_=retain_pin(pin,target,budget,config["max_run_bytes"],context=context)
                 budget-=charged
                 result["staged_files"].append({"sha256": pin["sha256"], "size": pin["size"]})
             require(operand["payload_sha256"] if case == "nested-ubuntu-linux" else operand["package_sha256"], "Role-specific artifact missing")

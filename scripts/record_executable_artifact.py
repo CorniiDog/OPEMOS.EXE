@@ -147,7 +147,8 @@ def record(platform, source, artifact_id, artifact_name, artifact_sha, output):
         receipt = json.loads(raw)
         require(receipt.get("exe_source_commit") == source and receipt.get("artifact", {}).get("architectures") == "arm64",
                 "Actual same-source native Mac executable receipt missing")
-        executable = Path(receipt["artifact"]["executable"])
+        executable = (root/'build/macos-arm64-evidence/steamos-nvidia-image-builder'if
+                      receipt.get('kind')=='OMEN_NATIVE_MAC_PACKAGE_V1'else Path(receipt["artifact"]["executable"]))
         require(executable.is_relative_to(root), "Mac executable escapes exact producer root")
         package = root / "build/macos-arm64-evidence/SteamOS-NVIDIA-Builder-arm64.app.zip"
     packaged, _ = held(package, 60_000_000_000)
@@ -158,6 +159,9 @@ def record(platform, source, artifact_id, artifact_name, artifact_sha, output):
              "artifact_id": artifact_id, "artifact_name": artifact_name, "artifact_archive_sha256": artifact_sha,
              "package_name": packaged["name"], "package_sha256": packaged["sha256"], "package_bytes": packaged["bytes"],
              "executable_name": binary["name"], "executable_sha256": binary["sha256"], "executable_bytes": binary["bytes"]}
+    if env.get('GITHUB_WORKFLOW_SHA'):
+        require(COMMIT.fullmatch(env['GITHUB_WORKFLOW_SHA']),'actual workflow definition SHA')
+        value['workflow_commit']=env['GITHUB_WORKFLOW_SHA']
     # PR builds may retain provenance. The acceptance consumer rejects their
     # event/ref, so recording a diagnostic does not admit PR code to SSH.
     output = Path(output)

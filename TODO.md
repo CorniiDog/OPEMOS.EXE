@@ -1,5 +1,264 @@
 # OPEMOS.EXE — Product Checklist
 
+## 2026-10-22 PR210 build -> exact-output VM -> late quality — authored, UNRUN
+
+- Exact new Root plan/full Core85d26d98 changes normal priority coherently:
+  early Windows/Ubuntu/macOS producers now contain only required setup/build/
+  structural package checks. Formatting/lint/general source/unit/policy and
+  portable-output diagnostics are late finite workloads. Windows retains early
+  PE/unsigned/hash integrity without app launch. No all-quality gate suppresses
+  an otherwise structurally valid A output; no failed build supplies a package.
+- Producer completes, existing protected04 consumes exact successful native
+  job/descriptor/digest into its admitted clean output VM test, then Checks
+  consumes terminal04 result before C. Existing four Checks job names retained;
+  selected platform quality is independent after ordinary B failure. No own
+  workflow_run wait, write/status permission, governance or Main merge shortcut.
+- Late source selection keeps candidate/ref/tree/A run/attempt/descriptor and
+  B result artifact separate from C implementation/run. Root guard/planner must
+  independently reauthenticate terminal B and admit the matching fixed A graph.
+  C artifact consumers recheck exact original A executable before/after use;
+  missing A blocks only those consumers. Strict A+B+C aggregate remains failed
+  on any failed/missing/blocked stage or missing same-candidate status admission.
+  Main-controller checks never become a different candidate's required passes.
+- Existing immutable-base/disposable working/no-adoption/unique queue and guest
+  workspace boundaries retained. Root must qualify actual clean factory output
+  per independent run, retain failed overlay/logs and keep same derivative for
+  required two-boot recovery; source readiness does not prove pristine guest OS.
+- F1 event/parent/Root/client/report binding remains mandatory; new external
+  artifact blocks are finite authenticated prerequisites, not invented hard
+  stops. All project regressions/builds/SDK/VM transactions UNRUN, OMEN only.
+  See docs/omen-build-vm-quality-contract.json for exact graph/current contexts,
+  guarded clean-rerun recipe, required Root adoption and precise unavailable case.
+  Existing PR210/source-only ff successor necessary for immutable review, no
+  new PR/installed/source83/SSH/queue/VM/Main merge/busy-owner or trust effects.
+
+## 2026-10-22 PR210 F1 hard-stop provenance — authored, UNRUN
+
+- Core full1b6ddf5d/Root changed recovery plan: ordinary first failure plus a
+  free-text stop_reason could previously suppress independent later commands.
+  Earlier tests omitted that exact combination. Immutable0b0a/6c3 and original
+  failures stay; no old check or approval transfers to this successor.
+- Actual sealed A exception boundary now records finite phase/index, admitted
+  manifest, exact original first/secondary failure ordinal and captured-row hash
+  where a row exists. Blocked rows bind that event digest and exact stop-before
+  boundary; ordinary first alone, invented labels and missing/dangling/moved/
+  inconsistent markers fail. Original capture first/secondary are not rewritten.
+- Parent binds validated original diagnostic and event bytes before package
+  consumption. Root stream/publication, collector/broker, client and reports
+  rejoin the same binding under existing manifest/custody/native closure guards.
+  Malformed skipped diagnostics are rejected, never rendered as accepted skips.
+  All-pass acceptance/package and resource/time/trust gates remain unchanged.
+- Regression cases for F1, real-vs-ordinary capture classification, precommand/
+  preparation/captured/post-command boundaries and tampered event joins authored
+  for OMEN. All project tests/SDK/compiles remain UNRUN. Source inspection alone
+  does not authenticate an OS exception; actual producer/parent/Root custody and
+  a new complete ordinary OMEN transaction remain required after whole review.
+  Exact same-PR source handoff only, no new PR/Main merge/installed/VM effects.
+
+## 2026-10-22 PR210 independent ordinary failure continuation — authored, UNRUN
+
+- Same Root complete continuation assignment from immutable6c3: guest capture
+  previously aborted on the first fully closed ordinary nonzero exit. Explicit
+  fixed workload prerequisites now block only actual setup/output consumers;
+  independent checks continue. Negative exits, timeout/overflow/capture/source/
+  ownership/resource/cleanup uncertainty stop affected work, never become passes.
+- Every fixed command has a passed/failed/hard-failed/blocked outcome; no invented
+  PID/exit for an unrun command. Preserve first and secondary failures. Diagnostic
+  readers accept complete truthful failed rows while success still requires all
+  commands pass and original Root/native/VM closure. Failed work never supplies
+  package consumers. Source reports retain real command failures plus blocked
+  reasons; a Root finalization error cannot leave a green xUnit report.
+- Existing independent always Actions jobs and always uploads remain, with no
+  broad continue-on-error. Regression cases authored for all9 finite graphs,
+  failed prerequisites/independent checks/hard stops/strict acceptance/reporting
+  and actual closed nonzero children; ALL project tests UNRUN, OMEN only.
+  Source-only AST/JSON/YAML/hash inspection is not the required new ordinary
+  producer-to-consumer runtime. Preserve6c3 inputs for busy Windows/Hubble.
+  Exact successor is needed for whole source review on existing PR210 only;
+  no Main merge, SDK/hosted project tests, installed or VM effects authorized.
+
+## 2026-10-22 PR210 non-main/all-three correction — authored, UNRUN
+
+- Final whole-workflow static review reproduced inherited Windows YAML
+  ScannerError at line10: job-level needs was misplaced inside a dispatch
+  input. Removed that stray field; the actual diagnostic job keeps its needs.
+  AST/JSON inspection had missed YAML entirely. Original5ea/db736f84 evidence
+  remains immutable; full workflow YAML parsing is now a source inspection gate,
+  never a project-test/compiler/VM pass.
+- Root ab22afe4 / Core ab7d3980 / Mac ce9c9176 source recovery: original Main
+  invariants remain; exact branch refs with PR0 are now distinct from real open
+  PR identities. Producer event/ref/workflow definition, candidate head/tree,
+  controller checkpoint and actual qualified implementation are not rewritten.
+- Windows/Ubuntu/macOS producers no longer reject a source solely because it
+  is non-main or wait on their own completed-workflow_run. Read-only pending
+  handoff metadata is not a VM pass. Separate trusted controller/manual route,
+  broker/planner/guest/pointer/result joins and completed failure-artifact reader
+  retain exact artifacts/run/attempt/nonce, stale/cancel/timeout/fork refusals and
+  first+secondary/create-only failure persistence. Original failed results stay.
+- Existing Root guard has a finite authored policy extension comparing actual
+  workflow bytes and protected Root qualification; public heartbeat/branch name
+  alone cannot authorize privileged code. A separately reviewed non-main test
+  implementation can be normally adopted without a forced Main merge. No live
+  guard/profile/source83/VM was changed or permission inferred from this source.
+- Mac now has the same finite OMEN guest-only source/package/descriptor route,
+  SDK-typed public Darwin process/wait bridge and real arm64 data packaging.
+  Actual boot bundle/channel/SDK/bridge/native API/display remain unqualified
+  inputs, not invented hardware or a hosted Mac fallback. All20/three-platform
+  unavailable states remain truthful; Windows/Ubuntu continue independently.
+- Source and metadata/failure regression cases are authored, not run. Tests
+  deliberately replace the obsolete dispatch/wait traversal with the actual
+  independent completed-result consumer; strict first-cause/collision/stale
+  assertions remain. No method under test is overridden to make its caller pass.
+  See docs/omen-nonmain-admission-contract.json for complete source joins and
+  the one ordinary actual transaction recipe after independent Root/Core review.
+  New required-check contexts include branch push and Mac PR jobs; no old pass
+  or approval transfers. All new project/SDK tests and actual VM work are UNRUN.
+
+## 2026-10-22 PR210 finite OMEN source/check/build ingress — authored, UNRUN
+
+- Same unfinished54b35 scope: the original required check/package job names now
+  route only metadata on hosted workers and fixed independently adopted A code
+  on the existing OMEN runner. Candidate B is readonly guest data, never host
+  checkout/import/argv. Missing/offline route remains a failed required context.
+  The separate Main04 graphical image/USB/Robot workflow is unchanged.
+- The finite broker/planner/current-A canonical queue join, managed-libvirt
+  controller, sealed guest agents, actual Linux/Windows capture and bounded
+  package/public collector are authored together. Source-specific job-start
+  guard adoption preserves original token/kernel/caller controls. No installed
+  guard, profile, source83, Root15/Engine15 or busy OS input was changed.
+- Whole source inspection corrected a default-branch workflow-run bootstrap
+  deadlock, current-A versus changed GUI stage pin mismatch, live writable-image
+  accounting, original failure preservation and packaging-before-log delivery.
+  New source reserves full future writable growth under an actual paused-QEMU
+  kernel file ceiling and retains measured before/during/after union data; these
+  OS properties still require real OMEN execution, not schema assertions.
+- Core1116f0094d6 and R29ef0db are consumed. The public range reader now binds
+  original raw manifest allocation/clock/identity and independent Root parent's
+  actual finalizer capture/closure readback, without reading private400 as UID1000
+  or changing its mode. The finite Root parent source is not an installed caller.
+- Complete authored contract and existing lock/tool/media map are in
+  docs/omen-source-workloads-contract.json. Current OMEN SDK/cache/base presence
+  is UNVERIFIED; no network/SSH/VM effect or compiler/test attempt occurred here.
+  New actual archive producer-to-consumer and native failure tests are UNRUN.
+  Local syntax/JSON/hash inspection is preparation only. Exact changed graph,
+  independent Core review, all required OMEN checks and separate actual Root
+  admission remain mandatory. fc3/68617 history and original failures stay intact.
+
+## 2026-10-22 PR210 joined source continuation — authored, validation pending
+
+- Same Core109/H88 scope, not a new TODO or runtime release: controller A and
+  candidate B now propagate through the broker, exact live producer verifier,
+  fixed planner/current queue collector, guest/pointer context and finalizer.
+  The outer Root token/nonce/current-controller boundary is preserved. The
+  original PR descriptor is never normalized into a protected-Main producer.
+- Ordinary SteamOS source now includes the firmware-bound read-only controller
+  medium, actual UID/native AT-SPI observation/XTest input/neutral cleanup and
+  NVIDIA pixel readback, the real welcome installer terminal producer, pinned
+  Robot7.5 phase entrypoint, bounded file transport and host report consumer.
+  Ordinary phase/readback commands are implemented functions, not null Root
+  supply placeholders. Hardware/owner admission remains independently Root-owned.
+- Separate stopped readback uses an exclusively created read-only loop, actual
+  partition UUIDs and no-replay home mount. It compares durable native/Robot
+  files and independently unmounts/detaches. Unknown allocation, helper, mount
+  or loop closure prevents a CLOSED lease. Read-only controller media and the
+  writable target have actual QEMU FD checks and a real dropped-UID open/read/
+  write-refusal probe in the authored operational source.
+- Core map `6f0094d6` distinguishes a pending driver generation from verified
+  health on a new boot. The consumer rejects restored/no-pending/other-generation
+  results. This does not prove an OS slot/kernel transition, the three-kernel
+  NVIDIA575 matrix, Gamescope, hardware acceptance, or any real VM result.
+- Whole producer/consumer review found and corrected the fixed hook ABI:
+  retained accepted installer materializes Root-owned profile/planner under
+  `/var/lib/opemos-robot-control-r1`; the old repository caller required a
+  user-owned home hook. No live installed input was edited. Stage dependencies
+  still use the actual hook UID with a Root-owned profile/hash authority.
+- All new regression cases are authored UNRUN. Only source syntax/JSON/hash
+  inspection has occurred locally, not project imports, tests, builds, native
+  SDK execution, VM boots or acceptance. Published `68617add` results remain
+  historical and do not transfer. Changed-head checks must run through OMEN;
+  exact source review/Root normal adoption and fresh runtime admission remain.
+- The same joined source review also corrected inherited-port initialization,
+  timestamped-observation versus stable-boot comparison, coalesced64KiB stream
+  framing, and parent-observed actual agent numeric reap/EOF/diagnostic delivery.
+  Native input additionally joins AT-SPI controls to actual topmost X client
+  ownership through XRes, exact process epoch and qualified window geometry;
+  unknown/foreign actors cannot receive global Down/Up. These are authored
+  safeguards, not measured SDK results. The finite firmware-gated user service
+  is separate from opening the welcome window; real desktop availability is
+  still a failed prerequisite when absent, never a simulated session.
+- Remote review requires the exact new immutable head. Its commit deliberately
+  uses `[skip ci]` to prevent new hosted project test/compile attempts while
+  preserving all required checks as pending, not waived or passed. No normal
+  VM, Main merge, installed source activation or hardware authority follows.
+
+## 2026-10-22 H88 complete output consumer continuation — IN PROGRESS
+
+- Core109 whole review `16455c49` identifies the conflated controller/package
+  identity. Trusted reviewed controller A must remain on protected Main; exact
+  same-repository PR package B may enter only the isolated guest. A finite
+  official-metadata candidate verifier and refusal cases are now authored in
+  the existing required producer module. It preserves original PR provenance,
+  checks live head/base/repository/job/attempt/artifact and retention clocks,
+  and does NOT open the existing Main-only route. Broker/planner/guest/pointer/
+  finalizer joins and ordinary SteamOS native phase/Robot implementation remain
+  unfinished owning work. Null commands are not an external Root supply gate.
+  No new push or project tests/compiles on the controller or hosted runner were
+  started for this delta; future execution must use the reviewed OMEN route.
+- Retained head `68617addee042c1e4a7537df807c0652b7fb0ea1` Windows job
+  `119931211491` completed SUCCESS at 2026-10-22T16:10:51Z, including native
+  tests, bundle, startup smoke and artifact binding. Together with the eight
+  Checks, Windows seed and Ubuntu package this closes its 11 source/package
+  checks only. Historical hosted feedback is not OMEN VM acceptance and does
+  not transfer to the current uncommitted delta.
+- Root branch-only CI release consumed: draft PR210, initial exact head
+  `9ae492dc866f165463f095c14062ac95f92057d6`; all11 ordinary source/package
+  checks passed. Expected non-Main Windows/Ubuntu OMEN diagnostics failed and
+  runtime gates skipped; neither is acceptance. No Main/runtime release.
+- New owning host lifecycle source `scripts/omen_output_lifecycle.py` now
+  implements separate Root-only source bootstrap/access preparation, exact new
+  four-boot scope, current source/canonical/resource/owner preflight, held
+  immutable medium plus mutable target, six ACL journals, real UID DAC probe,
+  per-boot actual FD flags, actual domain/GPU closure, distinct post-shutdown
+  readback and finalizers. Old R69 grants are rejected. Managed bounded console
+  replaces the unlimited host serial file. Source/native interfaces and their
+  still-unqualified ordinary SteamOS phase producers are explicit in
+  `docs/omen-output-lifecycle-contract.json`; no declaration becomes a real
+  GUI/guest agent or VM pass. Remaining same-assignment phase bridge integration
+  and native qualification are not silently assigned to Core or busy Windows.
+- Core107 F2 size mismatch corrected in the source: protected Root publication
+  now pins a separate original raw manifest file of 1..1,048,576 bytes. Inline
+  base64 is rejected, avoiding expansion beyond the 1 MiB Root receipt cap.
+  The public reader checks raw SHA/size/UID/full9 and rereads after the full
+  backing scan. Cases at 65,536, 65,537, 1,048,576 and 1,048,577 bytes are
+  authored but UNRUN. Root producer publication and whole native lifecycle
+  integration remain incomplete; no source/native acceptance is claimed.
+- Continue the same isolated `exe-image-range-manifest-20261022` assignment;
+  this is not a completed implementation or a new infrastructure task. Existing
+  stopped-USB range/raw-manifest source remains at local `3e920c2e`.
+- Current uncommitted host-runner additions implement create-only fully
+  allocated raw target preparation, whole logical/allocated dependency-union
+  accounting, distinct read-only virtual USB/writable target XML construction,
+  media detachment for installed boots, and actual Linux leader/UID/cgroup/FD
+  access inspection. The production welcome helper requires **12 GiB**; the
+  earlier 6 GiB example is not a valid installation target.
+- Native lifecycle integration is NOT complete. Historical R69 is explicitly
+  limited to two boots and a single working disk, with coupled original/working
+  ACL, preflight, intent and readback contracts. Its grant, prepared access or
+  pass cannot be transferred to the new installation plus three installed-boot
+  transaction. Complete those coupled native consumers before freezing a whole
+  implementation for Root/Core review. Root will supply the final immutable
+  Windows R27 raw-manifest/protected projection at its safe checkpoint.
+- AST parsing and Git whitespace inspection only; new real-file/child-FD
+  regressions are authored but **UNRUN**. No project import, test, compile,
+  source CI, push/PR, SSH, queue, target allocation or VM effect occurred.
+  Existing Root safe-cut and exact counterpart/required-check gates remain.
+
+## 2026-10-22 H88 stopped-USB image/raw-manifest consumer source checkpoint
+
+- Isolated from Main b4ae93065ca930b32010f94f24b109d4b7bccbae: preserve the existing full-file reader and add an exact current-operation Root-attested offset-zero stopped-USB prefix reader. Whole backing/prefix SHA, zero tail, EOF, full9 and allocated-byte custody remain distinct; no implicit third image copy.
+- Original manifest bytes must traverse the producer unchanged and match the actual pinned host file before parsing. Complete required producer projection and remaining Root/Windows/output-VM dependencies are in docs/omen-image-range-contract.json. No busy Windows154 inputs or installed sources changed.
+- Source-only, unmerged and not runtime-admitted. Project tests/native qualification remain UNRUN until normal required source CI/admitted OMEN VM. Exact counterpart approval and Root safe cut remain required; no VM/image/NVIDIA acceptance or cleanup authority follows from this checkpoint.
+
 ## PR170 post-PR181 reconciliation — 2026-10-22
 
 - [ ] Reconcile against protected Main `e452d5e7`, the exact reviewed PR181

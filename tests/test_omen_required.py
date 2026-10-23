@@ -50,23 +50,16 @@ class RequiredProducerTests(unittest.TestCase):
  def parent_failed_result(self, temp, stale=False, collision=False):
   m=Metadata();state={}
   failure={'kind':'OPEMOS_BROKER_FAILURE_V1','code':'ACTIONS_TOKEN_REQUIRED','reason':gate.PUBLIC_FAILURES['ACTIONS_TOKEN_REQUIRED'],'error_type':'ValueError','private_recorded':True,'secondary':[]}
-  class Response:
-   status=204
-   def __enter__(self):return self
-   def __exit__(self,*args):pass
-   def read(self,n):return b''
-  class Opener:
-   def open(self,req,timeout):
-    inputs=json.loads(req.data)['inputs'];nonce=inputs['correlation_nonce']
-    state['title']='04 SteamOS required ubuntu 10/2 '+nonce
-    context={'repository':gate.REPO,'source_commit':SOURCE,'target':gate.target(m.value),'nonce':nonce}
-    if stale:context['nonce']='0'*32
-    value={'kind':'OMEN_REQUIRED_PRODUCER_RESULT_V1','status':'failed','diagnostic_only':True,'actualGUIAccepted':False,'context':context,'producer':m.value,'consumer':{'run_id':'50','attempt':'1'},'broker_failure':failure}
-    state['raw']=encoded_zip('required-result.json',value)
-    return Response()
+  nonce='1'*32
+  context={'repository':gate.REPO,'source_commit':SOURCE,'target':gate.target(m.value),'nonce':nonce}
+  artifact_context=dict(context,nonce='0'*32)if stale else context
+  value={'kind':'OMEN_REQUIRED_PRODUCER_RESULT_V1','status':'failed','diagnostic_only':True,'actualGUIAccepted':False,
+         'context':artifact_context,'producer':m.value,'consumer':{'run_id':'50','attempt':'1'},'broker_failure':failure}
+  state['raw']=encoded_zip('required-result.json',value)
+  selected={'id':50,'run_attempt':1,'head_sha':SOURCE,'head_branch':'main','event':'workflow_dispatch',
+            'path':gate.ROUTE,'repository':{'full_name':gate.REPO},'status':'completed','conclusion':'failure'}
   def read(path):
-   if path.startswith('actions/workflows/omen-robot.yml/runs?'):
-    return {'total_count':1,'workflow_runs':[{'id':50,'run_attempt':1,'display_title':state['title'],'head_sha':SOURCE,'head_branch':'main','event':'workflow_dispatch','repository':{'full_name':gate.REPO},'status':'completed'}]}
+   if path=='actions/runs/50':return copy.deepcopy(selected)
    if path.startswith('actions/runs/50/attempts/1/jobs?'):
     return {'total_count':2,'jobs':[{'name':n,'status':'completed','conclusion':'failure'}for n in ('required-platform-robot','required-platform-result')]}
    if path.startswith('actions/runs/50/artifacts?'):
@@ -79,11 +72,11 @@ class RequiredProducerTests(unittest.TestCase):
    if collision:
     Path('required-omen-results/required-result-failed.json').mkdir(parents=True)
     Path('required-omen-results/failed-result-readback-secondary.json').mkdir()
-   # Only external API/HTTP adapters supply synthetic provider metadata. The
-   # dispatch, producer verifier, failed ZIP/schema/identity consumer and actual
-   # create-only filesystem persistence functions are never replaced.
-   with patch.dict(os.environ,env),patch.object(gate,'api_reader',return_value=read),patch.object(gate,'metadata_download',side_effect=download),patch.object(gate.request,'build_opener',return_value=Opener()):
-    self.assertEqual(gate.main_dispatch('ubuntu'),1)
+   # Completed consumer instead of a producer-owned dispatch/wait cycle. Only
+   # external API/ZIP data is synthetic; verifier, reader and real create-only
+   # persistence remain actual current functions, never method overrides.
+   with patch.dict(os.environ,env):
+    self.assertEqual(gate.consume_completed_result(SOURCE,m.value,context,selected,read,download),1)
    result=json.loads(Path('required-omen-results/required-failure.json').read_bytes())
    self.assertFalse(result['oldResultAdopted'])
    self.assertEqual('ACTIONS_TOKEN_REQUIRED'in result['reason'],not stale)
@@ -104,19 +97,15 @@ class RequiredProducerTests(unittest.TestCase):
    self.assertLess(section.index('job_guard.py --bind-job-token'),section.index(' -m robot '))
    self.assertIn('GITHUB_TOKEN: ${{ github.token }}',section)
    self.assertNotIn('--bind-job-token $',section)
- def test_dispatch_write_token_is_only_in_main_job_and_pr_diagnostics_are_read_only(self):
+ def test_all_producers_finish_without_dispatch_privilege_or_completion_cycle(self):
   root=Path(__file__).parents[1]
-  for name in('ubuntu-executable.yml','windows-portable.yml'):
+  for name in('ubuntu-executable.yml','windows-portable.yml','macos-arm64.yml'):
    workflow=(root/'.github/workflows'/name).read_text()
-   main,untrusted=workflow.split('\n  omen-required:\n',1)[1].split('\n  omen-required-untrusted:\n',1)
-   self.assertIn("github.ref == 'refs/heads/main' && github.ref_protected",main)
-   self.assertIn('actions: write',main)
-   self.assertIn('ref: ${{ github.sha }}',main)
-   self.assertIn('actions: read',untrusted)
-   self.assertNotIn('actions: write',untrusted)
-   self.assertNotIn('dispatch-and-wait',untrusted)
-   self.assertIn(' diagnostics --directory required-omen-results ',untrusted)
-   self.assertIn('exit 1',untrusted)
+   self.assertIn('actions: read',workflow)
+   self.assertNotIn('actions: write',workflow)
+   self.assertNotIn('dispatch-and-wait',workflow)
+   self.assertIn('pending-reviewed-controller',workflow)
+   self.assertIn("'actualGUIAccepted':False",workflow)
  def test_in_progress_parent_with_passed_package_is_eligible(self):
   m=Metadata();self.assertEqual(m.verify(),m.value)
  def test_windows_independent_of_ubuntu_mac_readiness(self):
@@ -263,5 +252,133 @@ class RequiredProducerTests(unittest.TestCase):
   self.assertEqual(value['required_acceptance'],acceptance)
   changed=copy.deepcopy(acceptance);changed['image_sha256']='b'*64
   with self.assertRaises(gate.Refusal):gate.verify_acceptance(changed,m.value,req)
+
+class CandidateMetadata(Metadata):
+ """Finite API fixtures only: never OS, VM, job or pointer acceptance."""
+ def __init__(self):
+  super().__init__()
+  self.selection={'repository':gate.REPO,'controller_commit':'e'*40,
+   'candidate_commit':SOURCE,'pull_request':210,'base_commit':'e'*40,
+   'repository_id':1,'head_repository_id':1}
+  repo={'id':1,'full_name':gate.REPO,'fork':False}
+  self.pr={'number':210,'state':'open','merged_at':None,
+   'base':{'ref':'main','sha':'e'*40,'repo':copy.deepcopy(repo)},
+   'head':{'ref':'topic','sha':SOURCE,'repo':copy.deepcopy(repo)}}
+  self.run.update(head_branch='topic',event='pull_request',
+   repository=copy.deepcopy(repo),head_repository=copy.deepcopy(repo),
+   pull_requests=[{'number':210,'head':{'sha':SOURCE},'base':{'sha':'e'*40}}])
+  self.value.update(event='pull_request',ref='refs/pull/210/merge')
+  self.reseal()
+ def reseal(self):
+  self.raw=encoded_zip('executable-producer.json',self.value)
+  self.artifacts[1]['digest']='sha256:'+hashlib.sha256(self.raw).hexdigest()
+ def read(self,path):
+  if path=='branches/main':return{'protected':True,'commit':{'sha':'e'*40}}
+  if path=='pulls/210':return copy.deepcopy(self.pr)
+  return super().read(path)
+ def verify_candidate(self):
+  # This clock substitution exercises metadata decisions only, not OS clocks.
+  with patch.object(gate.time,'time',return_value=1792454520):
+   return gate.candidate_producer_ready(self.selection,'ubuntu','10','2',self.read,self.download)
+
+class CandidateProducerTests(unittest.TestCase):
+ def test_complete_branch_native_descriptor_consumer_without_fabricated_PR(self):
+  m=CandidateMetadata();m.selection.update(pull_request=0,source_kind='branch',source_ref='refs/heads/ordinary')
+  m.run.update(event='workflow_dispatch',head_branch='ordinary',pull_requests=[])
+  m.value.update(event='workflow_dispatch',ref='refs/heads/ordinary',workflow_commit=SOURCE);m.reseal()
+  calls=[]
+  def read(path):
+   calls.append(path)
+   if path=='':return {'id':1,'full_name':gate.REPO,'fork':False}
+   if path=='git/ref/heads/ordinary':return {'ref':'refs/heads/ordinary','object':{'type':'commit','sha':SOURCE}}
+   return m.read(path)
+  # External metadata clock fixture only, never a real OS clock assertion.
+  with patch.object(gate.time,'time',return_value=1792454520):
+   value=gate.candidate_producer_ready(m.selection,'ubuntu','10','2',read,m.download)
+  self.assertEqual(value['producer'],m.value);self.assertEqual(value['source_roles'],m.selection)
+  self.assertNotIn('pulls/0',calls);self.assertNotIn('pulls/210',calls)
+  m.value['workflow_commit']='f'*40;m.reseal()
+  with patch.object(gate.time,'time',return_value=1792454520),self.assertRaises(gate.Refusal):
+   gate.candidate_producer_ready(m.selection,'ubuntu','10','2',read,m.download)
+
+ def test_descriptor_requires_explicit_roles_and_refuses_role_swap(self):
+  m=CandidateMetadata()
+  with self.assertRaises(ValueError):gate.descriptor(m.value,SOURCE)
+  self.assertEqual(gate.descriptor(m.value,SOURCE,m.selection),m.value)
+  swapped=dict(m.selection,controller_commit=SOURCE,base_commit=SOURCE,candidate_commit='e'*40)
+  with self.assertRaises(ValueError):gate.descriptor(m.value,SOURCE,swapped)
+  with self.assertRaises(ValueError):gate.descriptor(m.value,'e'*40,m.selection)
+ def test_candidate_target_carries_roles_without_changing_original_descriptor(self):
+  m=CandidateMetadata();original=copy.deepcopy(m.value)
+  value=gate.target(m.value,m.selection)
+  self.assertEqual(value['source_roles'],m.selection)
+  self.assertEqual(value['descriptor_sha256'],gate.digest(original))
+  self.assertEqual(m.value,original)
+ def test_candidate_workflow_never_checks_out_guest_b_on_privileged_runner(self):
+  workflow=(Path(__file__).parents[1]/'.github/workflows/omen-robot.yml').read_text()
+  section=workflow.split('\n  required-platform-robot:\n')[1].split('\n  required-platform-result:\n')[0]
+  self.assertIn('ref: ${{ needs.trusted-runner-route.outputs.implementation }}',section)
+  self.assertNotIn('ref: ${{ inputs.candidate_sha }}',workflow)
+  self.assertNotIn('pull_request_target:',workflow)
+  self.assertNotIn('candidate_sha }}',section)
+  self.assertIn('job_guard.py --bind-job-token',section)
+  self.assertIn('actions: read',workflow)
+ def test_passed_native_job_does_not_erase_failed_parent_diagnostic(self):
+  m=CandidateMetadata();m.run.update(status='completed',conclusion='failure')
+  value=m.verify_candidate()
+  self.assertEqual(value['parent_outcome'],{'status':'completed','conclusion':'failure'})
+  self.assertNotIn('runtime_admitted',value)
+  self.assertNotIn('checks_passed',value)
+ def test_original_b_provenance_and_separate_a_retained(self):
+  m=CandidateMetadata();value=m.verify_candidate()
+  self.assertEqual(value['source_roles'],m.selection)
+  self.assertEqual(value['producer'],m.value)
+  self.assertEqual(value['producer']['event'],'pull_request')
+  self.assertNotEqual(value['producer']['source_commit'],value['source_roles']['controller_commit'])
+  self.assertEqual(value['native_job_id'],'20')
+  # The original production route remains strict, not a PR fallback.
+  with self.assertRaises(gate.Refusal):m.verify()
+ def test_foreign_fork_stale_rebased_or_closed_pr_refused(self):
+  for mutate in (
+   lambda m:m.pr['head']['repo'].update(fork=True),
+   lambda m:m.pr['head']['repo'].update(id=2),
+   lambda m:m.pr['head'].update(sha='f'*40),
+   lambda m:m.pr['base'].update(sha='f'*40),
+   lambda m:m.pr.update(state='closed'),
+   lambda m:m.selection.update(controller_commit='f'*40),
+   lambda m:m.selection.update(head_repository_id=2),
+   lambda m:m.selection.update(pull_request=True),
+   lambda m:m.selection.update(command=['arbitrary'])):
+   with self.subTest(mutate=mutate):
+    m=CandidateMetadata();mutate(m)
+    with self.assertRaises(gate.Refusal):m.verify_candidate()
+ def test_wrong_native_attempt_step_artifact_or_pr_association_refused(self):
+  for mutate in (
+   lambda m:setattr(m,'live_attempt',3),
+   lambda m:m.jobs[0].update(status='in_progress'),
+   lambda m:m.jobs[0]['steps'][0].update(conclusion='skipped'),
+   lambda m:m.run['pull_requests'][0].update(number=211),
+   lambda m:m.artifacts[0].update(expired=True),
+   lambda m:m.artifacts[0].update(digest='sha256:'+'0'*64),
+   lambda m:m.artifacts[0]['workflow_run'].update(head_repository_id=2),
+   lambda m:m.artifacts[0].update(created_at='2026-10-19T00:00:40Z')):
+   with self.subTest(mutate=mutate):
+    m=CandidateMetadata();mutate(m)
+    with self.assertRaises(gate.Refusal):m.verify_candidate()
+ def test_descriptor_cannot_normalize_b_to_main_or_smuggle_paths(self):
+  for change in ({'event':'push','ref':'refs/heads/main'},
+                 {'source_commit':'e'*40},{'package_name':'../app'},
+                 {'package_bytes':True},{'executable_sha256':'bad'},
+                 {'ref':'refs/pull/211/merge'},{'host_command':['bad']}):
+   with self.subTest(change=change):
+    m=CandidateMetadata();m.value.update(change);m.reseal()
+    with self.assertRaises(gate.Refusal):m.verify_candidate()
+ def test_pr_changed_after_descriptor_download_is_not_adopted(self):
+  m=CandidateMetadata();download=m.download
+  def changed(path):
+   result=download(path);m.pr['head']['sha']='f'*40;return result
+  with patch.object(gate.time,'time',return_value=1792454520):
+   with self.assertRaises(gate.Refusal):
+    gate.candidate_producer_ready(m.selection,'ubuntu','10','2',m.read,changed)
 
 if __name__=='__main__':unittest.main()

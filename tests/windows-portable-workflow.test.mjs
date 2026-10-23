@@ -3,13 +3,25 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { validateWindowsPortableWorkflow } from "../scripts/windows-portable-workflow.mjs";
+import { validateWindowsPortableWorkflow, validateOmenWindowsProducer } from "../scripts/windows-portable-workflow.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const workflow = await readFile(path.join(repo, ".github", "workflows", "windows-portable.yml"), "utf8");
+// Preserve every original recipe guard/fault body against its exact retained
+// guest-only recipe. Active orchestration has its own strict checks below.
+const workflow = await readFile(path.join(repo, "ci", "guest-workloads", "windows-portable.yml"), "utf8");
+const activeWorkflow = await readFile(path.join(repo, ".github", "workflows", "windows-portable.yml"), "utf8");
+
+test("active Windows producer transports actual guest data without hosted builds", () => {
+  assert.equal(validateOmenWindowsProducer(activeWorkflow), true);
+});
+test("active Windows producer rejects hosted compiler and untrusted write-token restoration", () => {
+  for (const changed of [activeWorkflow + "\n      - run: cargo test\n", injectUntrustedWriteToken(activeWorkflow)]) {
+    assert.throws(() => validateOmenWindowsProducer(changed));
+  }
+});
 
 function injectUntrustedWriteToken(text) {
-  const changed = text.replace(/  omen-required-untrusted:\r?\n/, "  omen-required-untrusted:\n    permissions:\n      actions: write\n");
+  const changed = text.replace(/  (omen-required-untrusted|omen-producer-handoff):\r?\n/, (_, name) => `  ${name}:\n    permissions:\n      actions: write\n`);
   assert.notEqual(changed, text, "untrusted write-token fault must actually be injected");
   return changed;
 }

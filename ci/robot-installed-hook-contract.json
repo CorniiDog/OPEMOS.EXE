@@ -1,7 +1,28 @@
 {
   "schema": 1,
   "state": "SOURCE_PROPOSAL_UNRUN_NOT_INSTALLED",
-  "workflow": ".github/workflows/omen-robot.yml@refs/heads/main",
+  "source_workload_extension": {
+    "state": "DISABLED_PROPOSAL_REQUIRES_INDEPENDENT_ROOT_ADOPTION",
+    "enabled": false,
+    "contract": "docs/omen-source-workloads-contract.json",
+    "fixed_client": "/var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py",
+    "action": "execute-source-workload",
+    "scope": "Only finite same-repository authenticated candidate B source/check/build inside managed OMEN guests. No checkout/import/project command on the runner host; no GUI/inventory/persist permission from this scope.",
+    "bootstrap": "Existing job-start guard must independently adopt the exact entire safe workflow bytes and reviewed A code graph at a safe checkpoint. Current Main control identity and privileged implementation provenance are separate; new code absent from Main must never be relabelled as Main code. Original UID/namespace/birth/cgroup/one-use token checks remain mandatory.",
+    "current_stage": "Use source_workloads.currentStage {path,sha256,source_commit,owner_uid} and its actual current canonical qualification, not the new GUI MODULE_PINS stage hash. Source profile may be enabled independently of GUI only after separate Root adoption/admission.",
+    "closure": "Actual guest worker/native parent/QEMU/daemon/control/observer/FD/input/resource closure plus independent actual Root native wait and canonical UID0-inclusive publisher/cgroup closure. Root public exports are0444; original private native captures remain0400.",
+    "required_checks": "Original required source/package job names retained. Offline/missing/not-run work is red with diagnostic reports; no hosted fallback test or transfer of old-head checks.",
+    "no_effect": "This proposal changes no installed profile, registry, source83, runner guard, guest or Root control. See full contract for complete finite operands and actual unverified media/SDK prerequisites."
+  },
+  "workflow": ".github/workflows/omen-robot.yml@EXACT_MAIN_OR_INDEPENDENTLY_ROOT_QUALIFIED_TEST_REF",
+  "nonmain_controller_extension": {
+    "state": "SOURCE_ONLY_NOT_ADOPTED",
+    "contract": "docs/omen-nonmain-admission-contract.json",
+    "qualification": "ROOT_REVIEWED_TEST_CONTROLLER_V1 exact control_commit,implementation_commit,workflow_ref,workflow_sha256,source_graph_sha256,review_receipt_sha256 under existing original180-second heartbeat",
+    "root_guard": "omen_source_guard.validate_controller compares actual official controller run/job/full workflow bytes AND independently protected Root profile qualification. Hosted controller_selection and a Repo variable alone grant no scope. Existing kernel UID/namespace/birth/cgroup/latest-job/one-use token/runtime admission guards remain.",
+    "source_roles": "Main unchanged; original exact seven-field PR variant; ordinary same-repository branch adds source_kind=branch,source_ref and uses pull_request=0 without inventing PR association. Current checkpoint and actual reviewed implementation/source workflow remain separate identities through final result.",
+    "completion": "All three producers complete after pending metadata handoff; separate completed workflow_run or authenticated qualified-controller manual dispatch owns actual acceptance. No producer dispatch credential or wait cycle. Missing actual OMEN result is not a pass."
+  },
   "runner_labels": [
     "self-hosted",
     "Linux",
@@ -9,9 +30,9 @@
     "opemos-omen-robot"
   ],
   "root_owned_installation": {
-    "job_guard": "ACTIONS_RUNNER_HOOK_JOB_STARTED external fixed current protected-Main guard",
+    "job_guard": "Existing fixed ACTIONS_RUNNER_HOOK_JOB_STARTED guard with current protected control checkpoint and independently protected exact implementation qualification; no candidate privilege or installed change from this proposal",
     "profile": "/home/connor/.config/opemos-ci/robot.json",
-    "hook": "/home/connor/.local/libexec/opemos-robot-job-plan",
+    "hook": "/var/lib/opemos-robot-control-r1/opemos-robot-job-plan",
     "rf_version": "7.5",
     "rf_wheel_sha256": "5a194db36524604fafa1da89adebc837db9a95adf15ffd746e09ce98251e6c68",
     "environment": [
@@ -24,11 +45,12 @@
     "schema": 1,
     "enabled": true,
     "hook": {
-      "path": "/home/connor/.local/libexec/opemos-robot-job-plan",
+      "path": "/var/lib/opemos-robot-control-r1/opemos-robot-job-plan",
       "sha256": "EXACT_INSTALLED_HASH"
     },
     "stage": {
-      "sha256": "f5d9f34d4f7bf72b3d40ee324462cc7eb237f0e37a5090c6da1cda1b48d8b394"
+      "path": "EXACT_CURRENT_A_STAGE_PATH_OWNED_BY_HOOK_UID",
+      "sha256": "d8e742eb971e758f0f70dc51da584c56e95de9bddb85010b63c5a0e98554a852"
     },
     "robotframework": {
       "version": "7.5",
@@ -51,6 +73,14 @@
   "actions": {
     "prepare": "Pure fixed-plan materialization/current protected producer enumeration. No VM launch by hook. kind inventory subject exact20ID; kind artifacts subject platform; kind artifact subject {platform,artifact_id}.",
     "collect": "Read-only same current operation public evidence snapshot after failure. No retry, guest control, cleanup or new admission."
+  },
+  "candidate_extension": {
+    "scope": "Exact same-repository PR or authenticated ordinary branch artifact only, never inventory or fork. Current protected Main control checkpoint and separately reviewed/admitted actual controller implementation remain explicit; original official native descriptor stays candidate B with its original event/ref/workflow commit.",
+    "additional_request_and_response_fields": ["controller_source_commit", "source_roles"],
+    "source_roles_fields": ["repository", "controller_commit", "candidate_commit", "pull_request", "base_commit", "repository_id", "head_repository_id"],
+    "guards": "A equals current protected Main and live exact PR base, B equals live unchanged nonfork same-repository PR head. Official run/attempt/native-job/descriptor/artifact identity, archive/member hashes, retention clocks and PR/base/rerun are independently checked before and after. Original outer token/broker nonce and exact Root peer/UID/cgroup/birth/current checks are unchanged.",
+    "collection": "Current ordinary queue reader plus actual retained receipt, RF XML and complete terminal lifecycle observations, not a prewritten pass packet. Every A/B field must join planner, stage, guest, pointer, manifest, output and finalizer.",
+    "adoption": "Source proposal only. Existing installed Root profile/registry/job hook/control must be independently reviewed and normally adopted at a safe checkpoint. No replacement of a busy installed input or authority from this example. No prior source approval transfers."
   },
   "response_identity": [
     "repository",
@@ -116,6 +146,7 @@
       "GITHUB_RUN_ATTEMPT",
       "GITHUB_REPOSITORY",
       "OPEMOS_TRANSACTION_NONCE",
+      "candidate-only OPEMOS_CONTROLLER_SHA/OPEMOS_SOURCE_ROLES: normal guest entrypoint derives from held hash-bound request; conflicts rejected, existing candidate source/run/nonce never overwritten",
       "OPEMOS_POINTER_OPERATION",
       "OPEMOS_POINTER_OPERATION_SHA256",
       "OPEMOS_EXPECTED_BOOT_ID/OPEMOS_EXPECTED_KERNEL/OPEMOS_SUBJECT_ROLE for non-GUI"
@@ -190,6 +221,8 @@
     }
   },
   "required_producer_join": {
+    "ordering_successor": "docs/omen-build-vm-quality-contract.json supersedes historical producer-wait ordering: complete build-only A, terminal exact-output B, then C quality. No producer waits for its own workflow_run completion.",
+    "late_quality_adoption": "Before admitting a Checks guest job, the independently pinned existing Root hook calls omen_quality.verify_root_late_scope with authenticated read-only API/download adapters, validates the whole safe workflow/current job and passes the exact protected proof as late_quality_admission through existing planner/SourceJobs. Stage original A package only after archive/descriptor/full hash verification and bind qualityPackage to sealed staged inventory. Client-provided proof or heartbeat alone never grants this scope. Actual matching hook/factory adoption, fresh immutable-base derivative and current native/resource admission remain Root-owned and unperformed.",
     "workflow_unchanged_trust_boundary": ".github/workflows/omen-robot.yml@refs/heads/main; workflow_dispatch current protected Main; unchanged Root ACTIONS_RUNNER_HOOK_JOB_STARTED validates before checkout",
     "deadlock_correction": "Native package JOB completes and artifacts upload; separate hosted producer required job dispatches04 directly once and waits exact nonce/run/attempt.04 does not wait parent workflow completion. Parent workflow_run-completed remains independent full all20 inventory and cannot cover scoped required job.",
     "trusted_root_broker_branch": "After existing peer/current-job/source/action authentication: required_omen.broker_execute_produced(actualEngine,request,existingAuthenticatedAPIReader,existingBoundedMetadataDownload). Publish returned exports through existing read-only public exchange/closed response; add required_acceptance only from returned actual verified transaction. Missing branch/profile stage case => failed unavailable, no alternate route.",
