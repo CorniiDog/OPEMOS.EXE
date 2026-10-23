@@ -14,7 +14,7 @@ import sys
 import time
 from omen_source_capture import capture
 from omen_source_guest import read
-from omen_source_workloads import canonical, need, subject, command_status, verify_result
+from omen_source_workloads import canonical, need, subject, command_status, verify_result, diagnostic_binding
 
 
 def package_archive(package_root, output, identity, spec):
@@ -129,9 +129,20 @@ def run(manifest_path, digest, output):
         package_root=output/'worker/source'/roots.get(spec['workload'],'__no_package__')
         package_value=None
         worker=json.loads(result_path.read_bytes())
+        try:validation=diagnostic_binding(worker,identity,spec,digest)
+        except Exception as error:
+            # Retain original worker/parent raw records. A failed validation
+            # cannot authorize a package or become accepted skipped outcomes.
+            validation={'kind':'OMEN_SOURCE_DIAGNOSTIC_BINDING_FAILED_V1',
+                'manifest_sha256':digest,'result_sha256':hashlib.sha256(canonical(worker)).hexdigest(),
+                'type':type(error).__name__,'reason':str(error)}
+        validation_path=output/'diagnostic-binding.json'
+        with validation_path.open('xb')as target:target.write(canonical(validation)+b'\n');target.flush();os.fsync(target.fileno())
+        selected.append(('diagnostic-binding.json',validation_path,'source-result'))
         # Failed/blocked checks remain diagnostic data, never package inputs.
         # Retain their raw files without attempting an absent/invalid artifact.
-        if spec['workload']in roots and worker.get('status')=='passed'and command_status(native)=='passed':
+        if validation['kind']=='OMEN_SOURCE_DIAGNOSTIC_BINDING_V1'and spec['workload']in roots and \
+                worker.get('status')=='passed'and command_status(native)=='passed':
             try:
                 verify_result(worker,identity,spec)
                 package_value,leaves=package_archive(package_root,output,identity,spec);selected.extend(leaves)
@@ -181,7 +192,7 @@ def run(manifest_path, digest, output):
                 ('st_dev','st_ino','st_size','st_mtime_ns','st_ctime_ns')),'actual exported leaf unchanged')
             transferred+=count;need(transferred<=5*1024**3,'whole actual source output transfer cap')
             send({'kind':'source-file-end'});files[name]={'bytes':count,'sha256':sha,'file_kind':kind}
-        send({'kind':'source-terminal','files':files,'agentParent':{
+        send({'kind':'source-terminal','files':files,'diagnosticBinding':validation,'agentParent':{
             'pid':native.get('pid'),'birth':native.get('birth'),'numericExit':native['numeric_exit'],
             'reaped':native['reaped'],'stdoutEOF':native['stdoutEOF'],'stderrEOF':native['stderrEOF'],
             'FDsClosed':native['FDsClosed'],'first':native['first'],'secondary':native['secondary']}})

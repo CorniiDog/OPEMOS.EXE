@@ -295,7 +295,7 @@ class Engine:
                              for item in reply["public_evidence"]]}
 
     def source_workload(self, spec):
-        from omen_source_workloads import selection, subject, verify_result, verify_diagnostics
+        from omen_source_workloads import selection, subject, verify_result, verify_diagnostics, diagnostic_binding
         selection(spec,self.identity['source_commit'])
         reply=self._request('execute-source-workload',spec)
         # Persist the complete actual response before asserting success. A
@@ -313,6 +313,9 @@ class Engine:
             require(reply['status']=='failed','unknown source result status')
             if reply['source_result'].get('kind')=='OMEN_GUEST_SOURCE_WORKLOAD_V1':
                 verify_diagnostics(reply['source_result'],reply['identity'],bound)
+        if reply['source_result'].get('kind')in('OMEN_GUEST_SOURCE_WORKLOAD_V1','OMEN_GUEST_SOURCE_PREREQUISITE_FAILED'):
+            require(reply.get('diagnostic_binding')==diagnostic_binding(reply['source_result'],reply['identity'],bound,
+                reply['source_result']['controller_manifest_sha256']),'broker/client diagnostic hard-event provenance differs')
         require(reply['source_closure']['unknown']==[] and all(reply['source_closure'].get(k)is True for k in
             ('domainAbsent','originalPIDStartAbsent','cgroupEmpty','ownedFDsClosed','hostUnchanged',
              'observerClosed','controlClosed','mediaUnchanged','originalBaseUnchanged')),

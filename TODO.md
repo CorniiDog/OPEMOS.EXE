@@ -1,5 +1,28 @@
 # OPEMOS.EXE — Product Checklist
 
+## 2026-10-22 PR210 F1 hard-stop provenance — authored, UNRUN
+
+- Core full1b6ddf5d/Root changed recovery plan: ordinary first failure plus a
+  free-text stop_reason could previously suppress independent later commands.
+  Earlier tests omitted that exact combination. Immutable0b0a/6c3 and original
+  failures stay; no old check or approval transfers to this successor.
+- Actual sealed A exception boundary now records finite phase/index, admitted
+  manifest, exact original first/secondary failure ordinal and captured-row hash
+  where a row exists. Blocked rows bind that event digest and exact stop-before
+  boundary; ordinary first alone, invented labels and missing/dangling/moved/
+  inconsistent markers fail. Original capture first/secondary are not rewritten.
+- Parent binds validated original diagnostic and event bytes before package
+  consumption. Root stream/publication, collector/broker, client and reports
+  rejoin the same binding under existing manifest/custody/native closure guards.
+  Malformed skipped diagnostics are rejected, never rendered as accepted skips.
+  All-pass acceptance/package and resource/time/trust gates remain unchanged.
+- Regression cases for F1, real-vs-ordinary capture classification, precommand/
+  preparation/captured/post-command boundaries and tampered event joins authored
+  for OMEN. All project tests/SDK/compiles remain UNRUN. Source inspection alone
+  does not authenticate an OS exception; actual producer/parent/Root custody and
+  a new complete ordinary OMEN transaction remain required after whole review.
+  Exact same-PR source handoff only, no new PR/Main merge/installed/VM effects.
+
 ## 2026-10-22 PR210 independent ordinary failure continuation — authored, UNRUN
 
 - Same Root complete continuation assignment from immutable6c3: guest capture

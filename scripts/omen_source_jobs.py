@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import time
 
-from omen_source_workloads import WORKLOADS, subject, selection, verify_result, verify_diagnostics, need, canonical
+from omen_source_workloads import WORKLOADS, subject, selection, verify_result, verify_diagnostics, diagnostic_binding, need, canonical
 
 
 def current_stage(profile):
@@ -101,6 +101,9 @@ def collect(stage, prepared, request):
     success=all(rows[j]['state']=='passed'for j in job['job_ids'])and root.get('first')is None and root.get('secondary')==[]
     if success:verify_result(guest,identity,spec)
     elif guest.get('kind')=='OMEN_GUEST_SOURCE_WORKLOAD_V1':verify_diagnostics(guest,identity,spec)
+    if guest.get('kind')in('OMEN_GUEST_SOURCE_WORKLOAD_V1','OMEN_GUEST_SOURCE_PREREQUISITE_FAILED'):
+        need(root.get('diagnosticBinding')==diagnostic_binding(guest,identity,spec,guest['controller_manifest_sha256']),
+             'Root publication lost original diagnostic/hard-event binding')
     # File data is copied only by the broker's existing public exchange. Large
     # package chunks are explicitly typed/bounded, never executable host paths.
     public=root['publicEvidence'];need(type(public)is list and len(public)<=512,'finite source report/package chunks')
@@ -115,7 +118,7 @@ def collect(stage, prepared, request):
     need(again==root,'Root source publication changed during collection')
     return {'identity':identity,'subject':request['subject'],'source_subject':spec,'available':True,'effect':'READ_ONLY_CURRENT_OPERATION',
             'status':'passed'if success else'failed','job_ids':job['job_ids'],'root_result_pin':pin,
-            'guest_result_pin':gpin,'source_result':guest,'source_closure':root['closure'],
+            'guest_result_pin':gpin,'source_result':guest,'diagnostic_binding':root.get('diagnosticBinding'),'source_closure':root['closure'],
             'public_evidence':public,'package':root.get('package'),'first':root.get('first'),
             'secondary':root.get('secondary',[])}
 

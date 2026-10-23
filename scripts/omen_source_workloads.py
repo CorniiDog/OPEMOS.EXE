@@ -192,11 +192,27 @@ def command_status(row):
     return ('passed'if row['numeric_exit']==0 else'failed')if healthy else'hard-failed'
 
 
-def blocked_command(template, dependencies, rows, stop_reason=None):
+def hard_stop_event(manifest_sha, phase, index, rows, failure_ordinal, cause):
+    """Called only at the sealed A producer's caught hard exception boundary.
+
+    The Root-pinned manifest/result transport authenticates the producer; this
+    record binds its exact event to the failure list and original captured row.
+    An ordinary command failure is never a hard-event cause.
+    """
+    attempted=len(rows)>index
+    return {'kind':'OMEN_SOURCE_HARD_STOP_V1','manifest_sha256':manifest_sha,
+        'phase':phase,'command_index':index,'stop_before':index+int(attempted),
+        'failure_ordinal':failure_ordinal,'cause':cause,
+        'row_sha256':hashlib.sha256(canonical(rows[index])).hexdigest()if attempted else None}
+
+
+def blocked_command(template, dependencies, rows, hard_stop=None):
     blocked=[p for p in dependencies if rows[p]['status']!='passed']
-    need(blocked or stop_reason,'only an actual prerequisite or hard stop blocks a command')
+    need(blocked or hard_stop,'only an actual prerequisite or hard stop blocks a command')
     return {'template_argv':template,'status':'blocked','numeric_exit':None,
-            'blocked_by':blocked,'stop_reason':stop_reason}
+            'blocked_by':blocked,'stop_reason':None if hard_stop is None else
+                'Hard stop: '+hard_stop['cause']['type']+': '+hard_stop['cause']['reason'],
+            'hard_stop_sha256':None if hard_stop is None else hashlib.sha256(canonical(hard_stop)).hexdigest()}
 
 
 def verify_diagnostics(value, request, spec):
@@ -214,24 +230,56 @@ def verify_diagnostics(value, request, spec):
     rows = value['commands']
     expected = commands(spec['workload'], spec['candidate_commit'])
     need(type(rows) is list and len(rows) == len(expected), 'complete fixed command set')
-    graph=dependencies(spec['workload']);hard=False
+    graph=dependencies(spec['workload'])
+    need('hard_stop'in value,'explicit hard-event absence/presence required')
+    event=value['hard_stop'];boundary=len(rows);event_row=None
+    if event is not None:
+        need(type(event)is dict and set(event)=={'kind','manifest_sha256','phase','command_index',
+             'stop_before','failure_ordinal','cause','row_sha256'}and
+             event['kind']=='OMEN_SOURCE_HARD_STOP_V1'and
+             event['manifest_sha256']==value['controller_manifest_sha256']and
+             type(event['manifest_sha256'])is str and SHA.fullmatch(event['manifest_sha256'])and
+             type(event['command_index'])is int and 0<=event['command_index']<len(rows)and
+             type(event['stop_before'])is int and
+             event['stop_before']in(event['command_index'],event['command_index']+1)and
+             event['phase']in('input-preparation','source-validation','command-preflight',
+                             'command-capture','command-finalize'),
+             'exact finite hard-event phase/index/manifest provenance')
+        failures=[value['first'],*value['secondary']];ordinal=event['failure_ordinal'];cause=event['cause']
+        need(type(ordinal)is int and 0<=ordinal<len(failures)and failures[ordinal]==cause and
+             type(cause)is dict and set(cause)=={'kind','phase','command_index','type','reason'}and
+             cause['kind']=='source-hard-stop'and cause['phase']==event['phase']and
+             cause['command_index']==event['command_index']and
+             all(type(cause[k])is str and 0<len(cause[k])<=65536 for k in('type','reason')),
+             'hard event must reference its actual distinct caught failure, not ordinary first')
+        boundary=event['stop_before'];i=event['command_index']
+        if event['phase']in('input-preparation','source-validation'):
+            need(i==boundary==0 and event['row_sha256']is None,'preparation precedes all workload commands')
+        elif event['phase']=='command-preflight':
+            need(boundary==i and event['row_sha256']is None,'preflight precedes its unstarted command')
+        elif event['phase']=='command-capture'and boundary==i:
+            need(event['row_sha256']is None,'capture exception has no invented returned child')
+        else:
+            need(boundary==i+1 and rows[i].get('status')!='blocked'and
+                 event['row_sha256']==hashlib.sha256(canonical(rows[i])).hexdigest(),
+                 'post-capture hard event binds original actual row at exact boundary')
+            if event['phase']=='command-capture':need(command_status(rows[i])=='hard-failed',
+                'ordinary numeric failure is not a captured hard event')
+            event_row=i
     for i,(wanted,row)in enumerate(zip(expected,rows)):
         need(row['template_argv']==wanted,'fixed command order/identity changed')
         deps=[p for p in graph[i]if rows[p]['status']!='passed']
         if row.get('status')=='blocked':
-            need(set(row)=={'template_argv','status','numeric_exit','blocked_by','stop_reason'}and
-                 row['numeric_exit']is None and row['blocked_by']==deps and
-                 (deps or type(row['stop_reason'])is str and bool(row['stop_reason']))and
-                 (row['stop_reason']is None or value['first']is not None),
-                 'precise blocked result, never a fabricated child or passed dependency')
-            hard=hard or row['stop_reason']is not None
+            active=event if event is not None and i>=boundary else None
+            need(row==blocked_command(wanted,graph[i],rows,active),
+                 'blocked row must bind exact hard-event digest/boundary or actual prerequisite')
         else:
-            need(not hard and not deps and row.get('status')==command_status(row),
+            need(i<boundary and not deps and row.get('status')==command_status(row)and
+                 (row['status']!='hard-failed'or i==event_row),
                  'attempted command after hard stop/failed prerequisite or misclassified capture')
-            hard=row['status']=='hard-failed'
-    passed=all(r['status']=='passed'for r in rows)
+    passed=event is None and all(r['status']=='passed'for r in rows)
     need(value['status']==('passed'if passed else'failed')and
-         (value['first']is None and value['secondary']==[]if passed else value['first']is not None),
+         (value['first']is None and value['secondary']==[]and event is None if passed else value['first']is not None),
          'truthful failed/blocked aggregation')
     return value
 
@@ -241,3 +289,20 @@ def verify_result(value, request, spec):
     need(value['first'] is None and value['secondary'] == [] and value['status'] == 'passed',
          'failed or incomplete source job')
     return value
+
+
+def diagnostic_binding(value, request, spec, manifest_sha):
+    """Parent/Root/collector join over original result bytes, not a skip grant."""
+    need(type(manifest_sha)is str and SHA.fullmatch(manifest_sha)and
+         value.get('controller_manifest_sha256')==manifest_sha,
+         'diagnostics belong to exact independently admitted A guest manifest')
+    if value.get('kind')=='OMEN_GUEST_SOURCE_WORKLOAD_V1':verify_diagnostics(value,request,spec)
+    else:
+        need(value.get('kind')=='OMEN_GUEST_SOURCE_PREREQUISITE_FAILED'and
+             value.get('identity')==request and value.get('subject')==spec and
+             value.get('status')=='failed'and value.get('commands')==[]and value.get('first')is not None,
+             'only exact failed bootstrap diagnostic, never invented command outcomes')
+    event=value.get('hard_stop')
+    return {'kind':'OMEN_SOURCE_DIAGNOSTIC_BINDING_V1','manifest_sha256':manifest_sha,
+        'result_sha256':hashlib.sha256(canonical(value)).hexdigest(),
+        'hard_stop_sha256':None if event is None else hashlib.sha256(canonical(event)).hexdigest()}

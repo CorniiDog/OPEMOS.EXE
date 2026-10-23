@@ -13,7 +13,7 @@ import stat
 import time
 import xml.etree.ElementTree as ET
 
-from omen_source_workloads import WORKLOADS, subject, canonical, need, verify_result, verify_diagnostics
+from omen_source_workloads import WORKLOADS, subject, canonical, need, verify_result, verify_diagnostics, diagnostic_binding
 from omen_output_lifecycle import protected_bytes, strict, backend, pop_guest_frame
 
 
@@ -81,7 +81,7 @@ def execute(grant_pin, persist):
     need(len({(p['identity']['st_dev'],p['identity']['st_ino'])for p in g['readonlyPins']+g['writablePins']})==
          len(g['readonlyPins']+g['writablePins']),'no mutable target aliases any readonly source/base')
     held=[];owned=None;observer=None;stream=None;domain=None;callback=None;timer=None;leader=None;scope=None
-    events=[];first=None;secondary=[];guest=None;buffer=bytearray();active=None;transferred=0;files={};observations={}
+    events=[];first=None;secondary=[];guest=None;buffer=bytearray();active=None;transferred=0;files={};observations={};binding=None
     started=time.time();root.mkdir(mode=0o700);domain_created=False
     def current():
         need(time.time()<deadline and time.monotonic()<g['wholeDeadlineMonotonic']and
@@ -244,6 +244,10 @@ def execute(grant_pin, persist):
                     guest=strict((root/'source-result.json').read_bytes())
                     need(guest.get('controller_manifest_sha256')==g['guestManifestPin']['sha256'],
                          'actual guest used another controller/source/tool manifest')
+                    binding=diagnostic_binding(guest,g['identity'],spec,g['guestManifestPin']['sha256'])
+                    need(row['diagnosticBinding']==binding and
+                         strict((root/'diagnostic-binding.json').read_bytes())==binding,
+                         'independent guest parent/Root original diagnostic and hard-event binding differs')
                     if guest.get('status')=='passed':verify_result(guest,g['identity'],spec)
                     else:
                         need(guest.get('identity')==g['identity']and guest.get('subject')==spec,'exact failed guest identity')
@@ -326,7 +330,7 @@ def execute(grant_pin, persist):
         except BaseException as error:secondary.append({'phase':'final-storage','reason':str(error)})
     result={'kind':'ROOT_OMEN_SOURCE_JOB_ACTUAL_EXECUTION_V1','identity':g['identity'],'subject':spec,
         'hostBoot':g['hostBoot'],'startedUnix':started,'finishedUnix':time.time(),'guest':guest,
-        'files':files,'leader':leader,'events':events,'pool':pool,'storage':observations,
+        'files':files,'leader':leader,'events':events,'pool':pool,'storage':observations,'diagnosticBinding':binding,
         'first':first,'secondary':secondary,'closureKnown':closed and len(secondary)==cleanup_start,
         'domainCreated':domain_created,'noGUIImageOrGPUAcceptance':True}
     persist('actual-source-job-final',result)
@@ -417,7 +421,7 @@ def publish(grant_pin, execution_pin, native_pin):
     result['storage']['after']=dict(after,unknown=[])
     value={'kind':'ROOT_VERIFIED_OMEN_SOURCE_JOB_CLOSED_V1','identity':g['identity'],'subject':spec,
         'hostBoot':g['hostBoot'],'startedUnix':result['startedUnix'],'finishedUnix':result['finishedUnix'],
-        'guestResultPin':guest,'publicEvidence':rows,'package':package,
+        'guestResultPin':guest,'publicEvidence':rows,'package':package,'diagnosticBinding':result.get('diagnosticBinding'),
         'controllerNativePin':native_pin,'executionPin':execution_pin,'pool':result['pool'],
         'storage':{'limitBytes':limit,'earlyLimitBytes':limit-1_000_000_000,'observations':result['storage']},
         'closure':{**{k:True for k in('domainAbsent','originalPIDStartAbsent','cgroupEmpty','ownedFDsClosed',

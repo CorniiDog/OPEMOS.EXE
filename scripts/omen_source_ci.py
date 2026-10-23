@@ -16,7 +16,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from urllib import request
-from omen_source_workloads import REPO, WORKLOADS, PARENT_WORKLOADS, selection, need, canonical
+from omen_source_workloads import REPO, WORKLOADS, PARENT_WORKLOADS, selection, need, canonical, diagnostic_binding
 
 ROOT_CLIENT='/var/lib/opemos-robot-control-r1/source/scripts/omen_source_ci.py'
 FULL9=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
@@ -223,6 +223,9 @@ def run(workload,directory):
 def reports(directory,result,reason=''):
     """Command JUnit/HTML, explicitly NOT an actual Robot GUI output."""
     import html
+    binding=None
+    if result is not None and result.get('kind')=='OMEN_GUEST_SOURCE_WORKLOAD_V1':
+        binding=diagnostic_binding(result,result['identity'],result['subject'],result['controller_manifest_sha256'])
     rows=[]if result is None else result.get('commands',[])
     if not rows:rows=[{'template_argv':['Actual OMEN source prerequisite unavailable'],
                        'numeric_exit':None,'first':reason or 'No actual command receipt'}]
@@ -235,7 +238,8 @@ def reports(directory,result,reason=''):
         case=ET.SubElement(suite,'testcase',name=' '.join(row['template_argv']))
         if row.get('status')=='blocked':
             ET.SubElement(case,'skipped',type='blocked-prerequisite-or-hard-stop').text=json.dumps(
-                {'blocked_by':row['blocked_by'],'stop_reason':row['stop_reason']})
+                {'blocked_by':row['blocked_by'],'stop_reason':row['stop_reason'],
+                 'hard_stop_sha256':row['hard_stop_sha256']})
         elif not passed(row):
             ET.SubElement(case,'failure').text=json.dumps({'status':row.get('status'),
                 'numeric_exit':row.get('numeric_exit'),'capture_first':row.get('first'),
@@ -248,6 +252,7 @@ def reports(directory,result,reason=''):
     ET.ElementTree(suite).write(Path(directory)/'xunit.xml',encoding='utf-8',xml_declaration=True)
     text='<html><body><h1>OMEN source command results (not GUI/Robot acceptance)</h1><pre>'+html.escape(
         json.dumps({'commands':rows,'first':None if result is None else result.get('first'),
+            'hard_stop':None if result is None else result.get('hard_stop'),'diagnostic_binding':binding,
             'secondary':[]if result is None else result.get('secondary',[]),'transaction_failure':reason},indent=2))+'</pre></body></html>'
     (Path(directory)/'report.html').write_text(text);(Path(directory)/'log.html').write_text(text)
 

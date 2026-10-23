@@ -18,7 +18,7 @@ import tarfile
 import time
 
 from omen_source_workloads import (WORKLOADS, subject, commands, canonical, need,
-    verify_diagnostics, dependencies, command_status, blocked_command)
+    verify_diagnostics, dependencies, command_status, blocked_command, hard_stop_event)
 from omen_source_capture import capture
 
 FIELDS=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
@@ -185,7 +185,9 @@ def execute(manifest_path, manifest_sha, output):
             'guest':{'location':'OMEN_VM','platform':expected_platform,'boot_id':boot,'uid':uid,
                      'virtualization':'qemu','controller_commit':spec['controller_commit'],
                      'candidate_commit':spec['candidate_commit'],'observed':observed},
-            'commands':rows,'status':'failed','first':None,'secondary':secondary,'outputs':[]}
+            'commands':rows,'status':'failed','first':None,'secondary':secondary,'outputs':[],
+            'hard_stop':None}
+    phase='input-preparation';command_index=0
     try:
         required={'omen_source_capture.py','omen_source_workloads.py','omen_source_guest.py','omen_source_guest_parent.py'}
         if spec['workload']=='windows-build':required.add('windows-source-smoke.ps1')
@@ -231,6 +233,7 @@ def execute(manifest_path, manifest_sha, output):
             validations.append((['-C','opemos-core-contracts','rev-parse','HEAD'],
                 '01407aa6174b80e92cb7f3dcb534ade5cdd7bf00'if spec['workload']in('appimage-package','macos-build')else env['OPEMOS_CORE_EXPECTED_COMMIT']))
         result['source_validation']=[]
+        phase='source-validation'
         for number,(arguments,expected)in enumerate(validations):
             seconds=deadline-time.monotonic();need(seconds>0,'original source validation deadline')
             checked=capture([git['path'],*arguments],source,env,output/('validation-'+str(number)),min(30,seconds))
@@ -244,6 +247,7 @@ def execute(manifest_path, manifest_sha, output):
         for number,template in enumerate(commands(spec['workload'],spec['candidate_commit'])):
             if any(rows[p]['status']!='passed'for p in graph[number]):
                 rows.append(blocked_command(template,graph[number],rows));continue
+            phase='command-preflight';command_index=number
             seconds=deadline-time.monotonic();need(seconds>0,'original guest source job deadline exhausted')
             tool=manifest['tools'][template[0]];read(tool['path'],512*1024**2,tool['sha256'],sealed=False)
             need(Path(tool['path']).is_absolute()and not Path(tool['path']).resolve().is_relative_to(source),
@@ -279,11 +283,15 @@ def execute(manifest_path, manifest_sha, output):
                 container={'name':name,'image':image,'before':probe}
             if os.name=='nt'and template[0]=='cargo'and 'windows_'in template:
                 child_env['RUSTFLAGS']+=' -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:'+str(source/'scripts/windows-test-v6.manifest')
+            phase='command-capture'
             row=capture(argv,source,child_env,output/('command-'+str(number)),seconds)
-            row['template_argv']=template;row['tool_pin']=tool;rows.append(row)
+            row['template_argv']=template;row['tool_pin']=tool;row['status']=command_status(row);rows.append(row)
+            phase='command-finalize'
             if container is not None:
+                row['container']=container
                 observed=capture([docker['path'],'container','inspect',container['name']],source,env,
                     output/('container-after-'+str(number)),min(15,max(.1,deadline-time.monotonic())))
+                container['observation']=observed
                 need(observed['numeric_exit']==0 and observed['first']is None and observed['reaped']and
                      observed['stdoutEOF']and observed['stderrEOF']and observed['FDsClosed'],
                      'actual container exit observer closure')
@@ -311,23 +319,21 @@ def execute(manifest_path, manifest_sha, output):
                          'capture_secondary':row['secondary']}
                 if first is None:first=failure
                 else:secondary.append(failure)
+            phase='command-capture'
             need(row['status']!='hard-failed','source capture/integrity/resource/lifecycle failure; affected workload stopped')
         result['status']='passed'if first is None else'failed'
     except BaseException as error:
-        failure={'type':type(error).__name__,'reason':str(error)}
+        failure={'kind':'source-hard-stop','phase':phase,'command_index':command_index,
+                 'type':type(error).__name__,'reason':str(error)or type(error).__name__}
+        ordinal=0 if first is None else 1+len(secondary)
         if first is None:first=failure
         else:secondary.append(failure)
-        # Preserve every actual child row. A preparation/capture/cleanup error
-        # may occur before its status annotation; it must never become ordinary.
-        for row in rows:
-            if 'status'not in row:
-                if row['first']is None:row['first']=failure
-                else:row['secondary'].append(failure)
-                row['status']='hard-failed'
+        # Do not rewrite a returned capture's first/secondary or numeric facts.
+        # A separate actual caught exception records post-command cleanup errors.
+        result['hard_stop']=hard_stop_event(manifest_sha,phase,command_index,rows,ordinal,failure)
         graph=dependencies(spec['workload']);templates=commands(spec['workload'],spec['candidate_commit'])
         for i in range(len(rows),len(templates)):
-            rows.append(blocked_command(templates[i],graph[i],rows,
-                'Hard stop: '+failure['type']+': '+failure['reason']))
+            rows.append(blocked_command(templates[i],graph[i],rows,result['hard_stop']))
     result['first']=first
     # Neither this guest nor its own result attests VM/QEMU/host closure. Root's
     # separate lifecycle finalizer is mandatory even after all commands pass.

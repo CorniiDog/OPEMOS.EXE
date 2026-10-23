@@ -17,7 +17,7 @@ sys.path.insert(0,str(Path(__file__).parents[1]/'scripts'))
 from omen_source_capture import capture
 from omen_source_ci import reports
 from omen_source_workloads import (WORKLOADS,commands,dependencies,command_status,
-    blocked_command,verify_diagnostics,verify_result)
+    blocked_command,verify_diagnostics,verify_result,hard_stop_event,diagnostic_binding)
 
 
 def metadata_result(workload='rust'):
@@ -34,7 +34,8 @@ def metadata_result(workload='rust'):
         'guest':{'location':'OMEN_VM','virtualization':'qemu','platform':WORKLOADS[workload][0],
             'boot_id':'metadata-only','uid':'S-1-5-21-1-2-3-1000'if workload=='windows-build'else 1000,
             'controller_commit':'a'*40,'candidate_commit':'b'*40},
-        'commands':rows,'status':'passed','first':None,'secondary':[]}
+        'commands':rows,'status':'passed','first':None,'secondary':[],
+        'controller_manifest_sha256':'c'*64,'hard_stop':None}
     return value,identity,spec
 
 
@@ -81,10 +82,64 @@ class FiniteOutcomeMetadata(unittest.TestCase):
     def test_hard_stop_blocks_all_remaining_and_rejects_a_later_attempt(self):
         value,identity,spec=metadata_result();rows=value['commands'];graph=dependencies('rust')
         rows[0].update(status='hard-failed',first={'reason':'capture deadline'},numeric_exit=-15)
-        value.update(status='failed',first={'command_index':0,'reason':'capture deadline'})
-        for i in range(1,len(rows)):rows[i]=blocked_command(rows[i]['template_argv'],graph[i],rows,'Hard stop: capture deadline')
+        cause={'kind':'source-hard-stop','phase':'command-capture','command_index':0,
+               'type':'ValueError','reason':'capture deadline'}
+        value.update(status='failed',first={'command_index':0,'reason':'capture deadline'},secondary=[cause])
+        value['hard_stop']=hard_stop_event(value['controller_manifest_sha256'],'command-capture',0,rows[:1],1,cause)
+        for i in range(1,len(rows)):rows[i]=blocked_command(rows[i]['template_argv'],graph[i],rows,value['hard_stop'])
         verify_diagnostics(value,identity,spec)
         bad=copy.deepcopy(value);bad['commands'][2]=metadata_result()[0]['commands'][2]
+        with self.assertRaises(ValueError):verify_diagnostics(bad,identity,spec)
+
+    def test_F1_ordinary_failure_plus_invented_stop_never_suppresses_independent_commands(self):
+        value,identity,spec=metadata_result();rows=value['commands']
+        rows[0].update(status='failed',numeric_exit=7)
+        value.update(status='failed',first={'phase':'source-command','command_index':0,'numeric_exit':7,
+                     'type':'CommandFailure','reason':'ordinary exit7'})
+        for i in range(1,len(rows)):
+            rows[i]={'template_argv':rows[i]['template_argv'],'status':'blocked','numeric_exit':None,
+                     'blocked_by':[],'stop_reason':'Hard stop: invented','hard_stop_sha256':None}
+        with self.assertRaises(ValueError):verify_diagnostics(value,identity,spec)
+        # Even an event-shaped label cannot point at the ordinary first cause.
+        fake=hard_stop_event(value['controller_manifest_sha256'],'command-preflight',1,rows[:1],0,value['first'])
+        value['hard_stop']=fake
+        for i in range(1,len(rows)):rows[i]=blocked_command(rows[i]['template_argv'],[],rows,fake)
+        with self.assertRaises(ValueError):verify_diagnostics(value,identity,spec)
+
+    def test_genuine_precommand_event_after_ordinary_failure_and_tamper_refusals(self):
+        value,identity,spec=metadata_result();rows=value['commands']
+        rows[0].update(status='failed',numeric_exit=7)
+        first={'phase':'source-command','command_index':0,'numeric_exit':7}
+        cause={'kind':'source-hard-stop','phase':'command-preflight','command_index':1,
+               'type':'ValueError','reason':'sealed SDK tool hash changed'}
+        value.update(status='failed',first=first,secondary=[cause])
+        event=hard_stop_event(value['controller_manifest_sha256'],'command-preflight',1,rows[:1],1,cause)
+        value['hard_stop']=event
+        for i in range(1,len(rows)):rows[i]=blocked_command(rows[i]['template_argv'],[],rows,event)
+        verify_diagnostics(value,identity,spec);self.assertEqual(value['first'],first)
+        for fault in('missing','ordinal','phase','index','manifest','digest','cause','early','later-attempt'):
+            bad=copy.deepcopy(value)
+            if fault=='missing':bad['hard_stop']=None
+            elif fault=='ordinal':bad['hard_stop']['failure_ordinal']=0
+            elif fault=='phase':bad['hard_stop']['phase']='command-capture'
+            elif fault=='index':bad['hard_stop']['command_index']=2
+            elif fault=='manifest':bad['hard_stop']['manifest_sha256']='d'*64
+            elif fault=='digest':bad['commands'][2]['hard_stop_sha256']='e'*64
+            elif fault=='cause':bad['secondary'][0]['reason']='different original error'
+            elif fault=='early':bad['hard_stop']['stop_before']=0
+            else:bad['commands'][3]=metadata_result()[0]['commands'][3]
+            with self.subTest(fault=fault),self.assertRaises(ValueError):verify_diagnostics(bad,identity,spec)
+
+    def test_postcommand_guard_error_binds_original_row_without_rewriting_capture(self):
+        value,identity,spec=metadata_result();rows=value['commands'];original=copy.deepcopy(rows[0])
+        cause={'kind':'source-hard-stop','phase':'command-finalize','command_index':0,
+               'type':'ValueError','reason':'actual container cleanup observer failed'}
+        value.update(status='failed',first=cause)
+        event=hard_stop_event(value['controller_manifest_sha256'],'command-finalize',0,rows[:1],0,cause)
+        value['hard_stop']=event
+        for i in range(1,len(rows)):rows[i]=blocked_command(rows[i]['template_argv'],[],rows,event)
+        verify_diagnostics(value,identity,spec);self.assertEqual(rows[0],original)
+        bad=copy.deepcopy(value);bad['commands'][0]['stdout']['sha256']='f'*64
         with self.assertRaises(ValueError):verify_diagnostics(bad,identity,spec)
 
     def test_no_silent_omission_fake_block_or_nonzero_pass(self):
@@ -97,10 +152,31 @@ class FiniteOutcomeMetadata(unittest.TestCase):
                 'status':'blocked','numeric_exit':None,'blocked_by':[],'stop_reason':None}
             with self.assertRaises(ValueError):verify_diagnostics(bad,identity,spec)
 
+    def test_preparation_and_capture_events_require_exact_position_and_evidence(self):
+        for phase in('input-preparation','source-validation'):
+            value,identity,spec=metadata_result();rows=value['commands']
+            cause={'kind':'source-hard-stop','phase':phase,'command_index':0,
+                   'type':'ValueError','reason':'actual sealed input guard refused'}
+            value.update(status='failed',first=cause)
+            event=hard_stop_event(value['controller_manifest_sha256'],phase,0,[],0,cause)
+            value['hard_stop']=event
+            for i in range(len(rows)):rows[i]=blocked_command(rows[i]['template_argv'],[],rows,event)
+            verify_diagnostics(value,identity,spec)
+        value,identity,spec=metadata_result();rows=value['commands']
+        rows[0].update(status='failed',numeric_exit=7)
+        cause={'kind':'source-hard-stop','phase':'command-capture','command_index':0,
+               'type':'ValueError','reason':'invented captured hard failure'}
+        value.update(status='failed',first=cause)
+        event=hard_stop_event(value['controller_manifest_sha256'],'command-capture',0,rows[:1],0,cause)
+        value['hard_stop']=event
+        for i in range(1,len(rows)):rows[i]=blocked_command(rows[i]['template_argv'],[],rows,event)
+        with self.assertRaises(ValueError):verify_diagnostics(value,identity,spec)
+
     def test_report_retains_failed_passed_and_blocked_and_finalizer_failure(self):
         value,_,_=metadata_result('frontend-and-docs');rows=value['commands']
         rows[0].update(status='failed',numeric_exit=1)
         rows[1]=blocked_command(rows[1]['template_argv'],dependencies('frontend-and-docs')[1],rows)
+        value.update(status='failed',first={'phase':'source-command','command_index':0,'numeric_exit':1})
         with tempfile.TemporaryDirectory()as d:
             reports(d,value,'original failure')
             suite=ET.parse(Path(d)/'xunit.xml').getroot()
@@ -111,6 +187,22 @@ class FiniteOutcomeMetadata(unittest.TestCase):
         with tempfile.TemporaryDirectory()as d:
             reports(d,metadata_result()[0],'actual Root closure failure')
             suite=ET.parse(Path(d)/'xunit.xml').getroot();self.assertEqual(suite.get('failures'),'1')
+
+    def test_binding_rejoins_actual_result_and_manifest_and_report_refuses_F1(self):
+        value,identity,spec=metadata_result()
+        binding=diagnostic_binding(value,identity,spec,value['controller_manifest_sha256'])
+        self.assertEqual(binding['result_sha256'],hashlib.sha256(__import__('json').dumps(
+            value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest())
+        with self.assertRaises(ValueError):diagnostic_binding(value,identity,spec,'d'*64)
+        rows=value['commands'];rows[0].update(status='failed',numeric_exit=7)
+        value.update(status='failed',first={'command_index':0,'numeric_exit':7})
+        for i in range(1,len(rows)):
+            rows[i]={'template_argv':rows[i]['template_argv'],'status':'blocked','numeric_exit':None,
+                     'blocked_by':[],'stop_reason':'Hard stop: invented','hard_stop_sha256':None}
+        with self.assertRaises(ValueError):diagnostic_binding(value,identity,spec,value['controller_manifest_sha256'])
+        with tempfile.TemporaryDirectory()as d:
+            with self.assertRaises(ValueError):reports(d,value,'F1 original retained')
+            self.assertFalse((Path(d)/'xunit.xml').exists())
 
 
 class RealCaptureContinuationBoundary(unittest.TestCase):
