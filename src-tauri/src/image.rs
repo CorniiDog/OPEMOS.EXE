@@ -6218,6 +6218,17 @@ fn linux_usb_removal_identity(
 }
 
 #[cfg(target_os = "linux")]
+fn linux_usb_physical_parent(name: &str) -> Result<PathBuf, String> {
+    if name.is_empty() || name.len() > 16 || !name.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return Err("Invalid USB topology block name.".into());
+    }
+    let device = fs::canonicalize(format!("/sys/class/block/{name}/device"))
+        .map_err(|e| format!("Cannot authenticate USB parent: {e}"))?;
+    device.ancestors().find(|path| path.join("idVendor").is_file() && path.join("idProduct").is_file())
+        .map(Path::to_path_buf).ok_or("No authenticated USB device parent for removal.".into())
+}
+
+#[cfg(target_os = "linux")]
 fn safely_remove_linux_usb(target: &UsbTargetCandidate) -> Result<(), String> {
     use std::collections::HashMap;
     use std::os::unix::fs::MetadataExt as _;
@@ -6225,6 +6236,7 @@ fn safely_remove_linux_usb(target: &UsbTargetCandidate) -> Result<(), String> {
         HashMap<String, HashMap<String, zbus::zvariant::OwnedValue>>>;
     let connection = zbus::blocking::Connection::system().map_err(|e| e.to_string())?;
     let names = linux_usb_removal_identity(&connection, target)?;
+    let usb_parent = linux_usb_physical_parent(&target.device_identifier)?;
     let block_path = format!("/org/freedesktop/UDisks2/block_devices/{}", target.device_identifier);
     let block = zbus::blocking::Proxy::new(&connection, "org.freedesktop.UDisks2", block_path.as_str(), "org.freedesktop.UDisks2.Block")
         .map_err(|e| e.to_string())?;
@@ -6239,6 +6251,9 @@ fn safely_remove_linux_usb(target: &UsbTargetCandidate) -> Result<(), String> {
         if linux_usb_removal_identity(&connection, target)? != names {
             return Err("USB partition identity changed during safe removal.".into());
         }
+        if linux_usb_physical_parent(&target.device_identifier)? != usb_parent {
+            return Err("USB physical parent changed during safe removal.".into());
+        }
         let objects: Objects = manager.call("GetManagedObjects", &()).map_err(|e| e.to_string())?;
         if objects.len() > 1024 { return Err("Excessive UDisks topology.".into()); }
         let mut filesystems = Vec::new();
@@ -6252,10 +6267,19 @@ fn safely_remove_linux_usb(target: &UsbTargetCandidate) -> Result<(), String> {
             if !interfaces.contains_key("org.freedesktop.UDisks2.Block") { continue; }
             let part = zbus::blocking::Proxy::new(&connection, "org.freedesktop.UDisks2", path.as_str(), "org.freedesktop.UDisks2.Block").map_err(|e| e.to_string())?;
             let owner: zbus::zvariant::OwnedObjectPath = part.get_property("Drive").map_err(|e| e.to_string())?;
-            if owner != drive_path { continue; }
             let raw: Vec<u8> = part.get_property("Device").map_err(|e| e.to_string())?;
             let node = std::str::from_utf8(raw.strip_suffix(&[0]).unwrap_or(&raw)).map_err(|e| e.to_string())?;
             let name = node.strip_prefix("/dev/").ok_or("Invalid removal device.")?;
+            if owner != drive_path {
+                // SiblingId may be blank. Independently refuse other LUNs on
+                // the same USB device before a hub-port power-off can affect
+                // them. Only actual USB-backed block objects need this check.
+                let sysfs = fs::canonicalize(format!("/sys/class/block/{name}/device"));
+                if sysfs.as_ref().is_ok_and(|path| path.starts_with(&usb_parent)) {
+                    return Err("Safe removal refuses another block device on the same USB device.".into());
+                }
+                continue;
+            }
             let system: bool = part.get_property("HintSystem").map_err(|e| e.to_string())?;
             let number: u64 = part.get_property("DeviceNumber").map_err(|e| e.to_string())?;
             let metadata = fs::symlink_metadata(node).map_err(|e| e.to_string())?;

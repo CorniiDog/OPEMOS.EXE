@@ -1,5 +1,21 @@
 # OPEMOS.EXE — Product Checklist
 
+## 2026-10-26 safe-removal packaging clarification and source review
+
+- Latest explicit user clarification authorizes the existing exact
+  ubuntu-executable.yml hosted Rust1.98.1/Node22.23.2 packaging producer before
+  Ubuntu product runtime. This supersedes only the prior no-CI-before-runtime
+  sequencing below, not VM acceptance, trust or merge gates. Existing workflow
+  and locked dependencies unchanged unless actual compiler evidence requires it.
+- Whole writer/retry/frontend review found a missing shared-device case:
+  UDisks SiblingId can be blank. Removal now also binds the actual sysfs USB
+  device parent and refuses other block devices/LUNs under it before effects.
+  Keep original a85d0ca1 checkpoint/failures; no pass or approval transfer.
+- Normal isolated branch/PR required checks and exact imaging-sensitive Core
+  review, then retain official appimage-package run/job/artifact/digest/source
+  identity and route that exact AppImage to Ubuntu VM for actual safe-removal
+  acceptance. Hosted build is not VM/USB success. No merge/Main push/publication.
+
 ## 2026-10-25 Linux integrated verified-USB safe removal — implementation checkpoint, UNRUN
 
 - New bounded branch from protected Main b4ae9306; held PR210 unchanged.
