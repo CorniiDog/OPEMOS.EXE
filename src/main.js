@@ -314,6 +314,7 @@ async function dismissUsbMenu() {
     return;
   }
   usbContextGeneration += 1;
+  clearUsbRemovalRetry();
   const session = usbPreflightSession;
   usbPreflightSession = null;
   renderUsbConfirmationPhase(false);
@@ -611,6 +612,7 @@ async function selectImage(path, { preferredUsbTarget = null, focusUsb = false }
   const selectionGeneration = ++imageSelectionGeneration;
   let selectionError = null;
   usbContextGeneration += 1;
+  clearUsbRemovalRetry();
   const previousUsbSession = usbPreflightSession;
   usbPreflightSession = null;
   completedOutput = null;
@@ -1088,6 +1090,7 @@ async function refreshUsbTargets(preferredTarget = null) {
     return { completed: false, targetCount: 0, preferredTargetRestored: false };
   }
   usbContextGeneration += 1;
+  clearUsbRemovalRetry();
   const generation = usbContextGeneration;
   const imagePath = completedOutput?.path || currentImage;
   elements.refreshUsbTargets.disabled = true;
@@ -1216,6 +1219,7 @@ function renderUsbTargetSelection() {
 elements.usbTarget.addEventListener("change", async () => {
   if (!admitUsbTargetSelection(currentBuildSnapshot()).accepted) return;
   const generation = ++usbContextGeneration;
+  clearUsbRemovalRetry();
   const previousSession = usbPreflightSession;
   usbPreflightSession = null;
   renderUsbTargetSelection();
@@ -1250,7 +1254,17 @@ elements.usbConfirmation.addEventListener("input", () => {
     || !usbConfirmationMatches(elements.usbConfirmation.value);
 });
 
+function clearUsbRemovalRetry() {
+  const button = $("#retry-usb-removal");
+  button.classList.add("hidden");
+  delete button.dataset.sessionToken;
+  delete button.dataset.generation;
+}
+
 async function writePreparedUsb() {
+  const removalButton = $("#retry-usb-removal");
+  removalButton.classList.add("hidden");
+  delete removalButton.dataset.sessionToken;
   const admission = admitUsbWriteStart(currentBuildSnapshot(), {
     hasPreflightSession: Boolean(usbPreflightSession?.sessionToken),
   });
@@ -1306,6 +1320,11 @@ async function writePreparedUsb() {
     }
     usbPreflightSession = null;
     elements.usbMessage.textContent = result.message;
+    if (!result.ejected && result.removalRetryToken === writeContext.sessionToken) {
+      removalButton.dataset.sessionToken = result.removalRetryToken;
+      removalButton.dataset.generation = String(usbContextGeneration);
+      removalButton.classList.remove("hidden");
+    }
     elements.usbMessage.className = `result-message ${result.ejected ? "success" : "caution"}`;
     elements.usbPickerMessage.textContent = result.message;
   } catch (error) {
@@ -1331,6 +1350,36 @@ async function writePreparedUsb() {
     updateBuildButton();
   }
 }
+
+$("#retry-usb-removal").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const sessionToken = button.dataset.sessionToken;
+  if (!sessionToken || usbWriting || usbArmPending) return;
+  if (button.dataset.generation !== String(usbContextGeneration)) {
+    clearUsbRemovalRetry();
+    return;
+  }
+  button.disabled = true;
+  usbWriting = true;
+  renderExportMode();
+  try {
+    const removed = await invoke("retry_usb_safe_removal", { sessionToken });
+    if (removed !== true) throw new Error("The operating system did not confirm safe removal.");
+    elements.usbMessage.textContent = "UDisks confirmed safe removal of the verified drive. No image was rewritten.";
+    elements.usbMessage.className = "result-message success";
+    button.classList.add("hidden");
+    delete button.dataset.sessionToken;
+  } catch (error) {
+    elements.usbMessage.textContent = `Safe removal is NOT confirmed; keep the drive connected. ${String(error)}`;
+    elements.usbMessage.className = "result-message error";
+  } finally {
+    elements.usbPickerMessage.textContent = elements.usbMessage.textContent;
+    usbWriting = false;
+    button.disabled = false;
+    renderExportMode();
+    updateBuildButton();
+  }
+});
 
 elements.armUsbPreflight.addEventListener("click", async () => {
   const option = elements.usbTarget.selectedOptions[0];

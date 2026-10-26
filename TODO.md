@@ -1,5 +1,31 @@
 # OPEMOS.EXE — Product Checklist
 
+## 2026-10-25 Linux integrated verified-USB safe removal — implementation checkpoint, UNRUN
+
+- New bounded branch from protected Main b4ae9306; held PR210 unchanged.
+  After normal exact write/flush/full readback and exclusive descriptor closure,
+  use supported UDisks Unmount (no force), then CanPowerOff/PowerOff or Ejectable/
+  Eject. Recheck full selected identity, disk/partition/UDisks topology, node
+  device number, holders, system hints and mounts before effects. Shared USB
+  sibling drives, unsafe/system mounts, layered dependencies, drift, busy and
+  authorization failures refuse removal. No broad unmount/kill/privilege bypass.
+- Verified bytes and OS-confirmed removal remain separate. No false ejected
+  success or manual Ubuntu instruction. Failed/unsupported removal exposes a
+  normal app retry that cannot write: server-retained exact target/session,
+  original 60-second bound, active-operation serialization and complete fresh
+  guards. New intent/cancellation/context changes revoke the retry; no caller
+  target pathname or identity is accepted by retry IPC.
+- Authored Rust mount-tree/retry-lifecycle and JS receipt-token regression cases
+  UNRUN. Rust formatter parse/source diff inspection only on controller; no
+  compiler, project tests, VM operation or physical-media effects. Ubuntu U264
+  busy write and its passed Build/image evidence untouched.
+- Next at safe independent review/admission: compile this exact local product
+  inside Ubuntu OMEN; normal GUI write/flush/full readback on existing owned
+  file-backed VM USB, real unmount/OS removal outcome, unsupported/busy/Polkit/
+  changed-identity/retry faults and closure. No CI or GitHub deployment before
+  real Ubuntu product acceptance. Then normal imaging-sensitive PR/checks and
+  exact Core counterpart review; no merge/publication authority inferred.
+
 ## PR170 post-PR181 reconciliation — 2026-10-22
 
 - [ ] Reconcile against protected Main `e452d5e7`, the exact reviewed PR181

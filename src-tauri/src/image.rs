@@ -2674,6 +2674,8 @@ struct ArmedUsbPreflight {
 
 #[derive(Default)]
 pub(crate) struct UsbPreparationManager {
+    #[cfg(target_os = "linux")]
+    pending_removal: Option<(String, UsbTargetCandidate, Instant)>,
     generation: u64,
     armed: Option<ArmedUsbPreflight>,
     active_token: Option<String>,
@@ -2687,6 +2689,8 @@ impl UsbPreparationManager {
     }
 
     pub(crate) fn cancel_all(&mut self) {
+        #[cfg(target_os = "linux")]
+        { self.pending_removal = None; }
         self.armed = None;
         if let Some(cancel) = self.cancel_write.take() {
             cancel.store(true, Ordering::Relaxed);
@@ -2703,6 +2707,8 @@ impl UsbPreparationManager {
         identity_token: String,
         now: Instant,
     ) {
+        #[cfg(target_os = "linux")]
+        { self.pending_removal = None; }
         self.generation = self.generation.wrapping_add(1).max(1);
         self.armed = Some(ArmedUsbPreflight {
             session_token,
@@ -2714,6 +2720,10 @@ impl UsbPreparationManager {
     }
 
     pub(crate) fn cancel(&mut self, session_token: &str, now: Instant) -> bool {
+        #[cfg(target_os = "linux")]
+        if self.pending_removal.as_ref().is_some_and(|p| p.0 == session_token || now >= p.2) {
+            self.pending_removal = None;
+        }
         if self
             .armed
             .as_ref()
@@ -5309,6 +5319,7 @@ fn launch_elevated_windows_usb_writer(
             .into(),
     });
     Ok(UsbWriteResult {
+        removal_retry_token: None,
         status: "verified".into(),
         device_identifier: target.device_identifier.clone(),
         device_node: target.device_node.clone(),
@@ -6143,9 +6154,162 @@ fn unmount_usb_target(identifier: &str) -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 fn eject_usb_target(_identifier: &str) -> bool {
-    // A node name alone is not enough to bind a later power-off operation to
-    // the written drive. Keep the verified FD receipt and ask for safe removal.
+    // Failure cleanup must never power off by a node name alone. Successful
+    // readback uses safely_remove_linux_usb with the full verified identity.
     false
+}
+
+// Removal is deliberately separate from write admission: only the exact
+// successfully read-back target may reach it, and desktop automounts may now
+// exist. Never relax the writer's unmounted/exclusive admission.
+#[cfg(any(target_os = "linux", test))]
+fn linux_usb_removal_tree(row: &mut serde_json::Value, root: bool) -> Result<Vec<String>, String> {
+    let kind = if root { "disk" } else { "part" };
+    if row.get("type").and_then(serde_json::Value::as_str) != Some(kind) {
+        return Err("Safe removal refuses non-disk/partition dependencies.".into());
+    }
+    let name = row.get("name").and_then(serde_json::Value::as_str)
+        .ok_or("Missing removal block name.")?.to_owned();
+    if !name.bytes().all(|b| b.is_ascii_alphanumeric()) || name.len() > 16 {
+        return Err("Invalid removal block name.".into());
+    }
+    let points = row.get("mountpoints").and_then(serde_json::Value::as_array)
+        .ok_or("Missing removal mount inventory.")?;
+    for point in points.iter().filter(|p| !p.is_null()) {
+        let path = point.as_str().ok_or("Invalid mount path.")?;
+        if !(path.starts_with("/media/") || path.starts_with("/run/media/") || path.starts_with("/mnt/"))
+            || Path::new(path).components().any(|p| matches!(p, std::path::Component::ParentDir)) {
+            return Err("Safe removal refuses system or non-removable mount locations.".into());
+        }
+    }
+    row["mountpoints"] = serde_json::json!([null]);
+    let mut names = vec![name];
+    if let Some(children) = row.get_mut("children") {
+        let children = children.as_array_mut().ok_or("Invalid removal children.")?;
+        if children.len() > 32 { return Err("Too many removal partitions.".into()); }
+        for child in children { names.extend(linux_usb_removal_tree(child, false)?); }
+    }
+    Ok(names)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_usb_removal_identity(
+    connection: &zbus::blocking::Connection,
+    target: &UsbTargetCandidate,
+) -> Result<Vec<String>, String> {
+    let (status, stdout, _) = bounded_command_output_with_limits(
+        Path::new("/usr/bin/lsblk"),
+        &["--json", "--bytes", "--output", LINUX_USB_LSBLK_COLUMNS],
+        "revalidate verified USB for safe removal", Duration::from_secs(15), 4 * 1024 * 1024,
+    )?;
+    if !status.success() { return Err("Safe-removal block inspection failed.".into()); }
+    let mut inventory: serde_json::Value = serde_json::from_slice(&stdout)
+        .map_err(|e| format!("Invalid safe-removal block inventory: {e}"))?;
+    let rows = inventory["blockdevices"].as_array_mut().ok_or("Missing removal inventory.")?;
+    if rows.len() > 256 { return Err("Excessive removal inventory.".into()); }
+    let mut matching = rows.iter_mut().filter(|r| r["name"].as_str() == Some(target.device_identifier.as_str()));
+    let row = matching.next().ok_or("Verified USB is no longer present.")?;
+    let names = linux_usb_removal_tree(row, true)?;
+    if matching.next().is_some() || !linux_usb_lsblk_candidate(row, 0)
+        || linux_usb_candidate(connection, row)?.identity_token != target.identity_token {
+        return Err("Verified USB identity changed; no safe-removal action was authorized.".into());
+    }
+    Ok(names)
+}
+
+#[cfg(target_os = "linux")]
+fn safely_remove_linux_usb(target: &UsbTargetCandidate) -> Result<(), String> {
+    use std::collections::HashMap;
+    use std::os::unix::fs::MetadataExt as _;
+    type Objects = HashMap<zbus::zvariant::OwnedObjectPath,
+        HashMap<String, HashMap<String, zbus::zvariant::OwnedValue>>>;
+    let connection = zbus::blocking::Connection::system().map_err(|e| e.to_string())?;
+    let names = linux_usb_removal_identity(&connection, target)?;
+    let block_path = format!("/org/freedesktop/UDisks2/block_devices/{}", target.device_identifier);
+    let block = zbus::blocking::Proxy::new(&connection, "org.freedesktop.UDisks2", block_path.as_str(), "org.freedesktop.UDisks2.Block")
+        .map_err(|e| e.to_string())?;
+    let drive_path: zbus::zvariant::OwnedObjectPath = block.get_property("Drive").map_err(|e| e.to_string())?;
+    let drive = zbus::blocking::Proxy::new(&connection, "org.freedesktop.UDisks2", drive_path.as_str(), "org.freedesktop.UDisks2.Drive")
+        .map_err(|e| e.to_string())?;
+    let sibling: String = drive.get_property("SiblingId").map_err(|e| e.to_string())?;
+    let manager = zbus::blocking::Proxy::new(&connection, "org.freedesktop.UDisks2", "/org/freedesktop/UDisks2", "org.freedesktop.DBus.ObjectManager")
+        .map_err(|e| e.to_string())?;
+    // Run a complete topology check before each side effect, not just once.
+    let inspect = || -> Result<Vec<String>, String> {
+        if linux_usb_removal_identity(&connection, target)? != names {
+            return Err("USB partition identity changed during safe removal.".into());
+        }
+        let objects: Objects = manager.call("GetManagedObjects", &()).map_err(|e| e.to_string())?;
+        if objects.len() > 1024 { return Err("Excessive UDisks topology.".into()); }
+        let mut filesystems = Vec::new();
+        let mut seen = Vec::new();
+        for (path, interfaces) in &objects {
+            if interfaces.contains_key("org.freedesktop.UDisks2.Drive") && path != &drive_path && !sibling.is_empty() {
+                let other = zbus::blocking::Proxy::new(&connection, "org.freedesktop.UDisks2", path.as_str(), "org.freedesktop.UDisks2.Drive").map_err(|e| e.to_string())?;
+                let id: String = other.get_property("SiblingId").map_err(|e| e.to_string())?;
+                if id == sibling { return Err("Safe removal refuses a USB device shared with another drive.".into()); }
+            }
+            if !interfaces.contains_key("org.freedesktop.UDisks2.Block") { continue; }
+            let part = zbus::blocking::Proxy::new(&connection, "org.freedesktop.UDisks2", path.as_str(), "org.freedesktop.UDisks2.Block").map_err(|e| e.to_string())?;
+            let owner: zbus::zvariant::OwnedObjectPath = part.get_property("Drive").map_err(|e| e.to_string())?;
+            if owner != drive_path { continue; }
+            let raw: Vec<u8> = part.get_property("Device").map_err(|e| e.to_string())?;
+            let node = std::str::from_utf8(raw.strip_suffix(&[0]).unwrap_or(&raw)).map_err(|e| e.to_string())?;
+            let name = node.strip_prefix("/dev/").ok_or("Invalid removal device.")?;
+            let system: bool = part.get_property("HintSystem").map_err(|e| e.to_string())?;
+            let number: u64 = part.get_property("DeviceNumber").map_err(|e| e.to_string())?;
+            let metadata = fs::symlink_metadata(node).map_err(|e| e.to_string())?;
+            if system || !names.iter().any(|n| n == name) || !metadata.file_type().is_block_device()
+                || metadata.file_type().is_symlink() || metadata.rdev() != number {
+                return Err("Safe removal refuses an unrelated/system/replaced block object.".into());
+            }
+            seen.push(name.to_owned());
+            if interfaces.contains_key("org.freedesktop.UDisks2.Filesystem") { filesystems.push(path.to_string()); }
+        }
+        seen.sort(); let mut expected = names.clone(); expected.sort();
+        if seen != expected { return Err("Incomplete or aliased UDisks removal topology.".into()); }
+        Ok(filesystems)
+    };
+    let filesystems = inspect()?;
+    let options: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+    for path in &filesystems {
+        if !inspect()?.contains(path) { return Err("Removal filesystem changed.".into()); }
+        let filesystem = zbus::blocking::Proxy::new(&connection, "org.freedesktop.UDisks2", path.as_str(), "org.freedesktop.UDisks2.Filesystem").map_err(|e| e.to_string())?;
+        let points: Vec<Vec<u8>> = filesystem.get_property("MountPoints").map_err(|e| e.to_string())?;
+        // Check the current daemon mount paths too, not just the earlier
+        // lsblk snapshot. Never unmount a newly repurposed system mount.
+        let paths: Vec<serde_json::Value> = points.iter().map(|point| {
+            std::str::from_utf8(point.strip_suffix(&[0]).unwrap_or(point))
+                .map(|s| serde_json::Value::String(s.to_owned()))
+                .map_err(|e| e.to_string())
+        }).collect::<Result<_, _>>()?;
+        let mut guard = serde_json::json!({"name": target.device_identifier, "type": "disk", "mountpoints": paths});
+        linux_usb_removal_tree(&mut guard, true)?;
+        if !points.is_empty() {
+            // No force/lazy option or privilege bypass. UDisks/Polkit owns
+            // authorization and refuses a filesystem that is in use.
+            let _: () = filesystem.call("Unmount", &(&options,)).map_err(|e| format!("Safe unmount failed: {e}"))?;
+        }
+    }
+    for path in inspect()? {
+        let filesystem = zbus::blocking::Proxy::new(&connection, "org.freedesktop.UDisks2", path.as_str(), "org.freedesktop.UDisks2.Filesystem").map_err(|e| e.to_string())?;
+        let points: Vec<Vec<u8>> = filesystem.get_property("MountPoints").map_err(|e| e.to_string())?;
+        if !points.is_empty() { return Err("A target filesystem remounted; safe removal refused.".into()); }
+    }
+    let power: bool = drive.get_property("CanPowerOff").map_err(|e| e.to_string())?;
+    let eject: bool = drive.get_property("Ejectable").map_err(|e| e.to_string())?;
+    inspect()?;
+    if revalidate_usb_target(&target.device_identifier, 0)?.identity_token != target.identity_token {
+        return Err("Selected drive changed or is not fully unmounted before removal.".into());
+    }
+    if power {
+        let _: () = drive.call("PowerOff", &(&options,)).map_err(|e| format!("Safe power-off failed: {e}"))?;
+    } else if eject {
+        let _: () = drive.call("Eject", &(&options,)).map_err(|e| format!("Safe eject failed: {e}"))?;
+    } else {
+        return Err("This drive does not support UDisks safe power-off or eject; removal is not confirmed.".into());
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -6497,9 +6661,34 @@ pub(crate) async fn write_image_to_usb(
         };
         #[cfg(target_os = "windows")]
         let ejected = recover_windows_usb_target(&revalidated)?;
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
+        emit_usb_write_progress(&app_for_progress, &session_for_progress, UsbWriteProgress {
+            phase: "releasing".into(), bytes_completed: image_bytes, bytes_total: image_bytes,
+            message: "Readback verified. Revalidating and safely removing only the selected USB drive.".into(),
+        });
+        #[cfg(target_os = "linux")]
+        let removal = safely_remove_linux_usb(&revalidated);
+        #[cfg(target_os = "linux")]
+        let ejected = removal.is_ok();
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         let ejected = eject_usb_target(&revalidated.device_identifier);
+        #[cfg(target_os = "linux")]
+        let removal_message = match removal {
+            Ok(()) => "USB writing, flush and full readback completed; UDisks confirmed safe removal of the selected drive.".to_owned(),
+            Err(error) => format!("USB writing, flush and full readback completed. Safe removal is NOT confirmed; keep the drive connected. {error}"),
+        };
+        #[cfg(not(target_os = "linux"))]
+        let removal_retry_token = None;
+        #[cfg(target_os = "linux")]
+        let removal_retry_token = if !ejected {
+            let state = app_for_progress.state::<Mutex<UsbPreparationManager>>();
+            let mut manager = state.lock()
+                .map_err(|_| "Could not retain verified safe-removal retry identity.")?;
+            manager.pending_removal = Some((session_for_progress.clone(), revalidated.clone(), Instant::now() + USB_PREFLIGHT_TTL));
+            Some(session_for_progress.clone())
+        } else { None };
         Ok(UsbWriteResult {
+            removal_retry_token,
             status: "verified".into(),
             device_identifier,
             device_node,
@@ -6507,20 +6696,21 @@ pub(crate) async fn write_image_to_usb(
             image_sha256: expected_sha256,
             verified_sha256,
             ejected,
-            message: if ejected {
+            message: {
+            #[cfg(target_os = "linux")]
+            { removal_message }
+            #[cfg(not(target_os = "linux"))]
+            { if ejected {
                 if cfg!(target_os = "windows") {
                     "USB writing and byte-for-byte verification completed; Windows ejected the device."
                 } else {
                     "USB writing and byte-for-byte verification completed; the device was ejected safely."
                 }
             } else {
-                if cfg!(target_os = "linux") {
-                    "USB writing and byte-for-byte verification completed. The drive remains connected; use Ubuntu's safe-removal workflow before unplugging it."
-                } else {
-                    "USB writing and byte-for-byte verification completed, but the operating system could not eject the device; use its safe-removal workflow before unplugging it."
-                }
+                "USB writing and byte-for-byte verification completed, but the operating system could not eject the device; use its safe-removal workflow before unplugging it."
             }
-            .into(),
+            .into() }
+            },
         })
         })
         .await;
@@ -6533,9 +6723,84 @@ pub(crate) async fn write_image_to_usb(
     outcome
 }
 
+#[tauri::command]
+pub(crate) async fn retry_usb_safe_removal(app: tauri::AppHandle, session_token: String) -> Result<bool, String> {
+    #[cfg(not(target_os = "linux"))]
+    { let _ = (app, session_token); Err("Safe-removal retry is available on Linux only.".into()) }
+    #[cfg(target_os = "linux")]
+    {
+        if !valid_usb_preflight_session_token(&session_token) { return Err("Invalid removal session.".into()); }
+        let pending = {
+            let state = app.state::<Mutex<UsbPreparationManager>>();
+            let mut manager = state.lock().map_err(|_| "USB state unavailable.")?;
+            if manager.has_active_write() { return Err("Another USB operation is active.".into()); }
+            let pending = manager.pending_removal.as_ref().ok_or("No verified removal retry is available.")?;
+            if pending.0 != session_token || Instant::now() >= pending.2 {
+                return Err("Verified removal retry expired or was replaced; no device was changed.".into());
+            }
+            let pending = manager.pending_removal.take().unwrap();
+            manager.active_token = Some(session_token.clone());
+            pending
+        };
+        let target = pending.1.clone();
+        let outcome = tauri::async_runtime::spawn_blocking(move || safely_remove_linux_usb(&target)).await
+            .map_err(|e| format!("Safe-removal worker failed: {e}"))
+            .and_then(|result| result);
+        let state = app.state::<Mutex<UsbPreparationManager>>();
+        let mut manager = state.lock().map_err(|_| "USB state unavailable after removal.")?;
+        manager.finish_write(&session_token);
+        if outcome.is_err() && Instant::now() < pending.2 { manager.pending_removal = Some(pending); }
+        outcome.map(|_| true)
+    }
+}
+
 #[cfg(test)]
 mod windows_usb_inventory_tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_removal_retry_is_cleared_by_new_intent_and_cancel() {
+        let target = UsbTargetCandidate {
+            device_identifier: "sdb".into(), device_node: "/dev/sdb".into(),
+            media_name: "owned VM USB".into(), bus_protocol: "USB".into(),
+            bytes: 32768000, block_size: 512, identity_token: "b".repeat(64),
+        };
+        let now = Instant::now();
+        let token = "a".repeat(64);
+        let mut manager = UsbPreparationManager::default();
+        manager.pending_removal = Some((token.clone(), target.clone(), now + USB_PREFLIGHT_TTL));
+        manager.cancel(&token, now);
+        assert!(manager.pending_removal.is_none());
+        manager.pending_removal = Some((token.clone(), target.clone(), now + USB_PREFLIGHT_TTL));
+        manager.arm("c".repeat(64), "sdc".into(), "d".repeat(64), "e".repeat(64), now);
+        assert!(manager.pending_removal.is_none());
+        manager.pending_removal = Some((token, target, now + USB_PREFLIGHT_TTL));
+        manager.cancel_all();
+        assert!(manager.pending_removal.is_none());
+    }
+
+    #[test]
+    fn linux_safe_removal_allows_only_selected_plain_removable_mount_tree() {
+        let mut row = serde_json::json!({"name":"sdb", "type":"disk", "mountpoints":[null],
+            "children":[{"name":"sdb1", "type":"part", "mountpoints":["/media/user/USB"]}]});
+        assert_eq!(linux_usb_removal_tree(&mut row, true).unwrap(), vec!["sdb", "sdb1"]);
+        assert!(linux_usb_tree_unmounted(&row, true));
+        for path in ["/", "/boot", "/home", "/usr", "/media/../boot", "/run/media/../root"] {
+            let mut unsafe_row = serde_json::json!({"name":"sdb", "type":"disk", "mountpoints":[path]});
+            assert!(linux_usb_removal_tree(&mut unsafe_row, true).is_err(), "{path}");
+        }
+        for kind in ["crypt", "lvm", "raid1", "loop", "swap"] {
+            let mut unsafe_row = serde_json::json!({"name":"sdb", "type":"disk", "mountpoints":[null],
+                "children":[{"name":"dm0", "type":kind, "mountpoints":[null]}]});
+            assert!(linux_usb_removal_tree(&mut unsafe_row, true).is_err(), "{kind}");
+        }
+        for malformed in [serde_json::json!({"name":"sdb", "type":"disk"}),
+            serde_json::json!({"name":"../sda", "type":"disk", "mountpoints":[]}),
+            serde_json::json!({"name":"sdb", "type":"disk", "mountpoints":[7]})] {
+            assert!(linux_usb_removal_tree(&mut malformed.clone(), true).is_err());
+        }
+    }
 
     #[test]
     fn usb_writer_progress_targets_main_window_and_receipt_closes_exact_write() {

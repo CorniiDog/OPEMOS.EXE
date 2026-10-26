@@ -221,6 +221,16 @@ test("USB write completion requires an exact verified result for the admitted de
   assert.deepEqual(admitUsbWriteCompletion(writing, result, capability), {
     accepted: true, phase: "usb-writing", blocker: null,
   });
+  assert.equal(admitUsbWriteCompletion(writing, {
+    ...result, ejected: false, removalRetryToken: capability.sessionToken,
+  }, capability).accepted, true);
+  for (const changed of [
+    { ejected: false, removalRetryToken: "another-session" },
+    { ejected: true, removalRetryToken: capability.sessionToken },
+    { ejected: false, removalRetryToken: null },
+  ]) {
+    assert.equal(admitUsbWriteCompletion(writing, { ...result, ...changed }, capability).accepted, false);
+  }
   for (const changed of [
     { status: "complete" },
     { deviceIdentifier: "disk5" },
