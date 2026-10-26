@@ -1,5 +1,29 @@
 # OPEMOS.EXE — Product Checklist
 
+## PR211 first actual hosted package and formatting result — 2026-10-26
+
+- Normal FF published a85d0ca1/fb669973 on isolated topic, aggregate open PRs2
+  before PR211 (now3). Mainb4/PR210 unchanged. No new dependency/toolchain or
+  workflow change: exact existing Rust1.98.1/Node22.23.2 producer used.
+- Exact fb669973 Ubuntu run40338884239 job121627774046 appimage-package
+  SUCCESS, actual AppImage137783800B SHA
+  d5024c04dcc28803854e692a324c66230baaf3bb941d7baf19e869d2cc6e68c1.
+  Official archive12658147692 SHA
+  dbb809f15f31ec509b75dd0877be0a577f5062279ee42173364f1774631e522e;
+  small descriptor12658297584 independently fetched/digest checked. Whole run
+  FAILURE from intentional non-Main OMEN diagnostic; Main runtime gate SKIPPED,
+  neither relabelled as pass or VM acceptance. Full native compile/package log
+  retained in exe-pr211-fb669973-safe-removal-hosted-packaging-20261026.
+- First PR Checks40338884216 Rust121627773749 failed cargo fmt before Clippy/
+  Rust unit checks; full197302B official log retained, source formatting only
+  corrected with rustfmt (no assertion/guard/locked-dependency changes). Earlier
+  formatter parse had not asserted formatting compliance. Frontend/Linux/
+  Debian checks pass separately. Preserve original running push job and Windows
+  package; do not cancel via a new push while cancel-in-progress applies.
+- New formatted exact head still needs its own checks/package and whole Core
+  review; no transfer of first head passes. Ubuntu runtime remains pending on
+  exact eventual approved AppImage, not source/hosted evidence alone.
+
 ## 2026-10-26 safe-removal packaging clarification and source review
 
 - Latest explicit user clarification authorizes the existing exact
