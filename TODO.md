@@ -1,5 +1,26 @@
 # OPEMOS.EXE — Product Checklist
 
+## PR211 Core review corrections — 2026-10-26
+
+- Core primary withheld approval for exact `9162df86` after a complete
+  authenticated eight-file review. Preserve that source/checkpoint and the
+  successful hosted package as historical evidence; neither transfers to this
+  changed head. F1: an admitted removal retry now stays active through worker
+  closure with its exact token/generation/deadline and cancellation flag.
+  Cancellation, new intent and cancel-all revoke that actual capability before
+  further UDisks effects; failed workers may restore only the still-current,
+  unrevoked generation. The frontend revokes the backend capability on context
+  changes and ignores a late retry result. F2: a foreign UDisks block whose
+  sysfs USB parent cannot be authenticated is a refusal, not unrelated; only a
+  proven distinct USB parent or non-USB/layered object can continue. Focused
+  state and topology fault cases cover cancellation/replacement/serialization
+  and unknown/shared/distinct parent classification. This is source-only,
+  unrun locally; no VM/UDisks/physical-media/merge effect.
+- Required next: normal exact-head CI/package checks and a fresh Core review of
+  the corrected immutable PR scope. The original final artifact remains a
+  verified historical input only; a new head requires a new exact artifact
+  before any separately admitted Ubuntu runtime route.
+
 ## PR211 first actual hosted package and formatting result — 2026-10-26
 
 - Normal FF published a85d0ca1/fb669973 on isolated topic, aggregate open PRs2

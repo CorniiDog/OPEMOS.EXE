@@ -1256,9 +1256,16 @@ elements.usbConfirmation.addEventListener("input", () => {
 
 function clearUsbRemovalRetry() {
   const button = $("#retry-usb-removal");
+  const sessionToken = button.dataset.sessionToken;
   button.classList.add("hidden");
   delete button.dataset.sessionToken;
   delete button.dataset.generation;
+  // The button is only a presentation of a server-retained capability. Every
+  // context change must revoke that capability too, including an in-flight
+  // removal retry, rather than merely hiding its UI affordance.
+  if (sessionToken) {
+    void invoke("cancel_usb_write_preflight", { sessionToken }).catch(() => {});
+  }
 }
 
 async function writePreparedUsb() {
@@ -1354,28 +1361,36 @@ async function writePreparedUsb() {
 $("#retry-usb-removal").addEventListener("click", async (event) => {
   const button = event.currentTarget;
   const sessionToken = button.dataset.sessionToken;
+  const generation = button.dataset.generation;
   if (!sessionToken || usbWriting || usbArmPending) return;
-  if (button.dataset.generation !== String(usbContextGeneration)) {
+  if (generation !== String(usbContextGeneration)) {
     clearUsbRemovalRetry();
     return;
   }
+  const retryIsCurrent = () => button.dataset.sessionToken === sessionToken
+    && button.dataset.generation === generation
+    && generation === String(usbContextGeneration);
   button.disabled = true;
   usbWriting = true;
   renderExportMode();
   try {
     const removed = await invoke("retry_usb_safe_removal", { sessionToken });
+    if (!retryIsCurrent()) return;
     if (removed !== true) throw new Error("The operating system did not confirm safe removal.");
     elements.usbMessage.textContent = "UDisks confirmed safe removal of the verified drive. No image was rewritten.";
     elements.usbMessage.className = "result-message success";
     button.classList.add("hidden");
     delete button.dataset.sessionToken;
   } catch (error) {
+    if (!retryIsCurrent()) return;
     elements.usbMessage.textContent = `Safe removal is NOT confirmed; keep the drive connected. ${String(error)}`;
     elements.usbMessage.className = "result-message error";
   } finally {
-    elements.usbPickerMessage.textContent = elements.usbMessage.textContent;
+    if (retryIsCurrent()) {
+      elements.usbPickerMessage.textContent = elements.usbMessage.textContent;
+    }
     usbWriting = false;
-    button.disabled = false;
+    if (retryIsCurrent()) button.disabled = false;
     renderExportMode();
     updateBuildButton();
   }
