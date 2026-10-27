@@ -64,6 +64,8 @@ export function admitUsbWriteCompletion(snapshot, result, capability) {
     && result.imageSha256.toLowerCase() === capability.imageSha256.toLowerCase()
     && result.imageSha256.toLowerCase() === result.verifiedSha256.toLowerCase()
     && typeof result.ejected === "boolean"
+    && (result.removalRetryToken === undefined
+      || (!result.ejected && result.removalRetryToken === capability.sessionToken))
     && validBoundedString(result.message, 8192);
   return Object.freeze({
     accepted: Boolean(validResult),

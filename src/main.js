@@ -314,6 +314,7 @@ async function dismissUsbMenu() {
     return;
   }
   usbContextGeneration += 1;
+  clearUsbRemovalRetry();
   const session = usbPreflightSession;
   usbPreflightSession = null;
   renderUsbConfirmationPhase(false);
@@ -611,6 +612,7 @@ async function selectImage(path, { preferredUsbTarget = null, focusUsb = false }
   const selectionGeneration = ++imageSelectionGeneration;
   let selectionError = null;
   usbContextGeneration += 1;
+  clearUsbRemovalRetry();
   const previousUsbSession = usbPreflightSession;
   usbPreflightSession = null;
   completedOutput = null;
@@ -1088,6 +1090,7 @@ async function refreshUsbTargets(preferredTarget = null) {
     return { completed: false, targetCount: 0, preferredTargetRestored: false };
   }
   usbContextGeneration += 1;
+  clearUsbRemovalRetry();
   const generation = usbContextGeneration;
   const imagePath = completedOutput?.path || currentImage;
   elements.refreshUsbTargets.disabled = true;
@@ -1216,6 +1219,7 @@ function renderUsbTargetSelection() {
 elements.usbTarget.addEventListener("change", async () => {
   if (!admitUsbTargetSelection(currentBuildSnapshot()).accepted) return;
   const generation = ++usbContextGeneration;
+  clearUsbRemovalRetry();
   const previousSession = usbPreflightSession;
   usbPreflightSession = null;
   renderUsbTargetSelection();
@@ -1250,7 +1254,24 @@ elements.usbConfirmation.addEventListener("input", () => {
     || !usbConfirmationMatches(elements.usbConfirmation.value);
 });
 
+function clearUsbRemovalRetry() {
+  const button = $("#retry-usb-removal");
+  const sessionToken = button.dataset.sessionToken;
+  button.classList.add("hidden");
+  button.disabled = false;
+  delete button.dataset.sessionToken;
+  delete button.dataset.generation;
+  // The button is only a presentation of a server-retained capability. Every
+  // context change must revoke that capability too, including an in-flight
+  // removal retry, rather than merely hiding its UI affordance.
+  if (sessionToken) {
+    void invoke("cancel_usb_write_preflight", { sessionToken }).catch(() => {});
+  }
+}
+
 async function writePreparedUsb() {
+  const removalButton = $("#retry-usb-removal");
+  clearUsbRemovalRetry();
   const admission = admitUsbWriteStart(currentBuildSnapshot(), {
     hasPreflightSession: Boolean(usbPreflightSession?.sessionToken),
   });
@@ -1306,6 +1327,14 @@ async function writePreparedUsb() {
     }
     usbPreflightSession = null;
     elements.usbMessage.textContent = result.message;
+    if (!result.ejected && result.removalRetryToken === writeContext.sessionToken) {
+      // This is a fresh server capability. A prior successful retry may have
+      // retired the same persistent DOM node while it was disabled.
+      removalButton.disabled = false;
+      removalButton.dataset.sessionToken = result.removalRetryToken;
+      removalButton.dataset.generation = String(usbContextGeneration);
+      removalButton.classList.remove("hidden");
+    }
     elements.usbMessage.className = `result-message ${result.ejected ? "success" : "caution"}`;
     elements.usbPickerMessage.textContent = result.message;
   } catch (error) {
@@ -1331,6 +1360,47 @@ async function writePreparedUsb() {
     updateBuildButton();
   }
 }
+
+$("#retry-usb-removal").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const sessionToken = button.dataset.sessionToken;
+  const generation = button.dataset.generation;
+  if (!sessionToken || usbWriting || usbArmPending) return;
+  if (generation !== String(usbContextGeneration)) {
+    clearUsbRemovalRetry();
+    return;
+  }
+  const retryIsCurrent = () => button.dataset.sessionToken === sessionToken
+    && button.dataset.generation === generation
+    && generation === String(usbContextGeneration);
+  button.disabled = true;
+  usbWriting = true;
+  renderExportMode();
+  try {
+    const removed = await invoke("retry_usb_safe_removal", { sessionToken });
+    if (!retryIsCurrent()) return;
+    if (removed !== true) throw new Error("The operating system did not confirm safe removal.");
+    elements.usbMessage.textContent = "UDisks confirmed safe removal of the verified drive. No image was rewritten.";
+    elements.usbMessage.className = "result-message success";
+    elements.usbPickerMessage.textContent = elements.usbMessage.textContent;
+    button.classList.add("hidden");
+    delete button.dataset.sessionToken;
+    delete button.dataset.generation;
+    button.disabled = false;
+  } catch (error) {
+    if (!retryIsCurrent()) return;
+    elements.usbMessage.textContent = `Safe removal is NOT confirmed; keep the drive connected. ${String(error)}`;
+    elements.usbMessage.className = "result-message error";
+  } finally {
+    if (retryIsCurrent()) {
+      elements.usbPickerMessage.textContent = elements.usbMessage.textContent;
+    }
+    usbWriting = false;
+    if (retryIsCurrent()) button.disabled = false;
+    renderExportMode();
+    updateBuildButton();
+  }
+});
 
 elements.armUsbPreflight.addEventListener("click", async () => {
   const option = elements.usbTarget.selectedOptions[0];
