@@ -2683,11 +2683,19 @@ struct PendingUsbRemoval {
 
 #[cfg(target_os = "linux")]
 #[derive(Clone)]
+struct RemovalContext {
+    cancelled: Arc<AtomicBool>,
+    // Automatic post-write removal remains current until the write worker
+    // closes; a retry capability has the original bounded expiry as well.
+    expires_at: Option<Instant>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone)]
 struct ActiveUsbRemoval {
     session_token: String,
-    expires_at: Instant,
     generation: u64,
-    cancelled: Arc<AtomicBool>,
+    context: RemovalContext,
 }
 
 #[derive(Default)]
@@ -2714,7 +2722,7 @@ impl UsbPreparationManager {
         {
             self.pending_removal = None;
             if let Some(removal) = &self.active_removal {
-                removal.cancelled.store(true, Ordering::Relaxed);
+                removal.context.cancelled.store(true, Ordering::Relaxed);
             }
         }
         self.armed = None;
@@ -2748,7 +2756,7 @@ impl UsbPreparationManager {
         {
             self.pending_removal = None;
             if let Some(removal) = &self.active_removal {
-                removal.cancelled.store(true, Ordering::Relaxed);
+                removal.context.cancelled.store(true, Ordering::Relaxed);
             }
         }
         self.generation = self.generation.wrapping_add(1).max(1);
@@ -2790,7 +2798,7 @@ impl UsbPreparationManager {
             }
             #[cfg(target_os = "linux")]
             if let Some(removal) = &self.active_removal {
-                removal.cancelled.store(true, Ordering::Relaxed);
+                removal.context.cancelled.store(true, Ordering::Relaxed);
             }
             cancelled = true;
         }
@@ -2865,9 +2873,11 @@ impl UsbPreparationManager {
             .expect("checked pending removal");
         let active = ActiveUsbRemoval {
             session_token: pending.session_token.clone(),
-            expires_at: pending.expires_at,
             generation: pending.generation,
-            cancelled: Arc::new(AtomicBool::new(false)),
+            context: RemovalContext {
+                cancelled: Arc::new(AtomicBool::new(false)),
+                expires_at: Some(pending.expires_at),
+            },
         };
         self.active_token = Some(active.session_token.clone());
         self.active_removal = Some(active.clone());
@@ -2885,7 +2895,7 @@ impl UsbPreparationManager {
         let current = self.active_removal.as_ref().is_some_and(|current| {
             current.session_token == active.session_token
                 && current.generation == active.generation
-                && Arc::ptr_eq(&current.cancelled, &active.cancelled)
+                && Arc::ptr_eq(&current.context.cancelled, &active.context.cancelled)
         });
         if current {
             self.active_removal = None;
@@ -2894,8 +2904,11 @@ impl UsbPreparationManager {
         }
         if failed
             && current
-            && !active.cancelled.load(Ordering::Relaxed)
-            && now < active.expires_at
+            && !active.context.cancelled.load(Ordering::Relaxed)
+            && active
+                .context
+                .expires_at
+                .is_some_and(|expires_at| now < expires_at)
             && self.generation == active.generation
             && self.pending_removal.is_none()
         {
@@ -6365,16 +6378,36 @@ fn linux_usb_physical_parent(name: &str) -> Result<PathBuf, String> {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_usb_parent_for_block(name: &str) -> Result<Option<PathBuf>, String> {
-    if name.is_empty() || name.len() > 16 || !name.bytes().all(|b| b.is_ascii_alphanumeric()) {
+fn linux_sysfs_block_path(name: &str) -> Result<PathBuf, String> {
+    if name.is_empty()
+        || name.len() > 63
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
         return Err("Invalid USB topology block name.".into());
     }
-    let device = fs::canonicalize(format!("/sys/class/block/{name}/device"))
-        .map_err(|e| format!("Cannot authenticate USB topology parent for {name}: {e}"))?;
-    Ok(device
+    fs::canonicalize(format!("/sys/class/block/{name}"))
+        .map_err(|e| format!("Cannot authenticate USB topology parent for {name}: {e}"))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_usb_parent_from_sysfs_block_path(block: &Path) -> Option<PathBuf> {
+    block
         .ancestors()
         .find(|path| path.join("idVendor").is_file() && path.join("idProduct").is_file())
-        .map(Path::to_path_buf))
+        .map(Path::to_path_buf)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_usb_parent_for_block(name: &str) -> Result<Option<PathBuf>, String> {
+    // Resolve the class block link itself. Partition paths such as sdb1 do not
+    // necessarily own a `device` child, while their containing disk's physical
+    // ancestry is still visible above the canonical class path. Drive-less
+    // virtual/layered objects resolve below /sys/devices/virtual and return
+    // None; a missing or malformed class entry remains an explicit refusal.
+    let block = linux_sysfs_block_path(name)?;
+    Ok(linux_usb_parent_from_sysfs_block_path(&block))
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -6394,7 +6427,7 @@ fn linux_usb_foreign_parent_is_safe(
 }
 
 #[cfg(target_os = "linux")]
-fn ensure_active_removal_context(context: Option<&ActiveUsbRemoval>) -> Result<(), String> {
+fn ensure_active_removal_context(context: Option<&RemovalContext>) -> Result<(), String> {
     if let Some(context) = context {
         if context.cancelled.load(Ordering::Relaxed) {
             return Err(
@@ -6402,7 +6435,10 @@ fn ensure_active_removal_context(context: Option<&ActiveUsbRemoval>) -> Result<(
                     .into(),
             );
         }
-        if Instant::now() >= context.expires_at {
+        if context
+            .expires_at
+            .is_some_and(|expires_at| Instant::now() >= expires_at)
+        {
             return Err("Safe-removal retry expired before the requested device action.".into());
         }
     }
@@ -6412,7 +6448,7 @@ fn ensure_active_removal_context(context: Option<&ActiveUsbRemoval>) -> Result<(
 #[cfg(target_os = "linux")]
 fn safely_remove_linux_usb(
     target: &UsbTargetCandidate,
-    context: Option<&ActiveUsbRemoval>,
+    context: Option<&RemovalContext>,
 ) -> Result<(), String> {
     use std::collections::HashMap;
     use std::os::unix::fs::MetadataExt as _;
@@ -6572,6 +6608,7 @@ fn safely_remove_linux_usb(
         if !points.is_empty() {
             // No force/lazy option or privilege bypass. UDisks/Polkit owns
             // authorization and refuses a filesystem that is in use.
+            ensure_active_removal_context(context)?;
             let _: () = filesystem
                 .call("Unmount", &(&options,))
                 .map_err(|e| format!("Safe unmount failed: {e}"))?;
@@ -6975,7 +7012,12 @@ pub(crate) async fn write_image_to_usb(
             message: "Readback verified. Revalidating and safely removing only the selected USB drive.".into(),
         });
         #[cfg(target_os = "linux")]
-        let removal = safely_remove_linux_usb(&revalidated, None);
+        let automatic_removal = RemovalContext {
+            cancelled: cancel.clone(),
+            expires_at: None,
+        };
+        #[cfg(target_os = "linux")]
+        let removal = safely_remove_linux_usb(&revalidated, Some(&automatic_removal));
         #[cfg(target_os = "linux")]
         let ejected = removal.is_ok();
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -6988,17 +7030,21 @@ pub(crate) async fn write_image_to_usb(
         #[cfg(not(target_os = "linux"))]
         let removal_retry_token = None;
         #[cfg(target_os = "linux")]
-        let removal_retry_token = if !ejected {
+        let removal_retry_token = if !ejected && !cancel.load(Ordering::Relaxed) {
             let state = app_for_progress.state::<Mutex<UsbPreparationManager>>();
             let mut manager = state.lock()
                 .map_err(|_| "Could not retain verified safe-removal retry identity.")?;
-            manager.pending_removal = Some(PendingUsbRemoval {
-                session_token: session_for_progress.clone(),
-                target: revalidated.clone(),
-                expires_at: Instant::now() + USB_PREFLIGHT_TTL,
-                generation: manager.generation,
-            });
-            Some(session_for_progress.clone())
+            if manager.is_writing(&session_for_progress) {
+                manager.pending_removal = Some(PendingUsbRemoval {
+                    session_token: session_for_progress.clone(),
+                    target: revalidated.clone(),
+                    expires_at: Instant::now() + USB_PREFLIGHT_TTL,
+                    generation: manager.generation,
+                });
+                Some(session_for_progress.clone())
+            } else {
+                None
+            }
         } else { None };
         Ok(UsbWriteResult {
             removal_retry_token,
@@ -7057,9 +7103,9 @@ pub(crate) async fn retry_usb_safe_removal(
             manager.begin_removal_retry(&session_token, Instant::now())?
         };
         let target = pending.target.clone();
-        let worker_active = active.clone();
+        let worker_context = active.context.clone();
         let outcome = tauri::async_runtime::spawn_blocking(move || {
-            safely_remove_linux_usb(&target, Some(&worker_active))
+            safely_remove_linux_usb(&target, Some(&worker_context))
         })
         .await
         .map_err(|e| format!("Safe-removal worker failed: {e}"))
@@ -7149,7 +7195,7 @@ mod windows_usb_inventory_tests {
         assert!(manager.has_active_write());
         assert!(manager.pending_removal.is_none());
         assert!(manager.cancel(&token, now));
-        assert!(active.cancelled.load(Ordering::Relaxed));
+        assert!(active.context.cancelled.load(Ordering::Relaxed));
         assert!(manager.has_active_write());
         assert!(manager.begin_removal_retry(&token, now).is_err());
         manager.finish_removal_retry(pending, &active, true, now);
@@ -7186,7 +7232,7 @@ mod windows_usb_inventory_tests {
             "e".repeat(64),
             now,
         );
-        assert!(active.cancelled.load(Ordering::Relaxed));
+        assert!(active.context.cancelled.load(Ordering::Relaxed));
         manager.finish_removal_retry(pending, &active, true, now);
         assert!(manager.pending_removal.is_none());
         assert!(manager.is_armed());
@@ -7208,6 +7254,38 @@ mod windows_usb_inventory_tests {
         )
         .is_ok());
         assert!(linux_usb_foreign_parent_is_safe(Ok(None), &selected).is_ok());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_foreign_parent_classifies_containing_disk_and_drive_less_sysfs_shapes() {
+        let root = std::env::temp_dir().join(format!(
+            "opemos-usb-parent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before Unix epoch")
+                .as_nanos()
+        ));
+        let selected = root.join("devices/pci0000:00/usb1/1-1");
+        let partition = selected.join("1-1:1.0/host0/target0:0:0/0:0:0:0/block/sdb/sdb1");
+        let loopback = root.join("devices/virtual/block/loop0");
+        fs::create_dir_all(&partition).unwrap();
+        fs::create_dir_all(&loopback).unwrap();
+        fs::write(selected.join("idVendor"), "1234").unwrap();
+        fs::write(selected.join("idProduct"), "5678").unwrap();
+
+        assert_eq!(
+            linux_usb_parent_from_sysfs_block_path(&partition),
+            Some(selected)
+        );
+        assert_eq!(linux_usb_parent_from_sysfs_block_path(&loopback), None);
+        assert!(linux_usb_foreign_parent_is_safe(
+            Ok(linux_usb_parent_from_sysfs_block_path(&loopback)),
+            &root.join("devices/pci0000:00/usb2/2-1"),
+        )
+        .is_ok());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

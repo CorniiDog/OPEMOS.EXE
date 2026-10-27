@@ -152,6 +152,9 @@ test("retained output folder and later USB imaging are independent controls", ()
   assert.match(script, /let current = true;[\s\S]*catch \{[\s\S]*transient IPC failure must not stop[\s\S]*if \(current && usbWriting/);
   assert.match(script, /finally \{[\s\S]*clearTimeout\(usbProgressPollTimer\);[\s\S]*usbProgressPollGeneration \+= 1;[\s\S]*usbWriting = false/);
   assert.match(script, /usbWriteProgress = progress;[\s\S]*usbMessage\.textContent = "";[\s\S]*usbPickerMessage\.textContent = status/);
+  assert.match(script, /function clearUsbRemovalRetry\(\)[\s\S]*button\.classList\.add\("hidden"\);[\s\S]*button\.disabled = false;[\s\S]*delete button\.dataset\.sessionToken;[\s\S]*delete button\.dataset\.generation/);
+  assert.match(script, /async function writePreparedUsb\(\)[\s\S]*clearUsbRemovalRetry\(\);[\s\S]*if \(!result\.ejected && result\.removalRetryToken === writeContext\.sessionToken\) \{[\s\S]*removalButton\.disabled = false;[\s\S]*removalButton\.dataset\.sessionToken/);
+  assert.match(script, /await invoke\("retry_usb_safe_removal", \{ sessionToken \}\);[\s\S]*usbPickerMessage\.textContent = elements\.usbMessage\.textContent;[\s\S]*delete button\.dataset\.sessionToken;[\s\S]*delete button\.dataset\.generation;[\s\S]*button\.disabled = false;/);
   assert.match(script, /usb-write-close-refused[\s\S]*application must remain open until the active USB write settles/);
   assert.match(script, /onCloseRequested[\s\S]*if \(!usbWriting\) return;[\s\S]*preventDefault\(\)[\s\S]*progress remains visible here/);
   assert.match(script, /No eligible removable drive is visible\. If a previously written drive was removed, reconnect it, then choose Refresh Drives\./);

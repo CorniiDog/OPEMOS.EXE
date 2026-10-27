@@ -1258,6 +1258,7 @@ function clearUsbRemovalRetry() {
   const button = $("#retry-usb-removal");
   const sessionToken = button.dataset.sessionToken;
   button.classList.add("hidden");
+  button.disabled = false;
   delete button.dataset.sessionToken;
   delete button.dataset.generation;
   // The button is only a presentation of a server-retained capability. Every
@@ -1270,8 +1271,7 @@ function clearUsbRemovalRetry() {
 
 async function writePreparedUsb() {
   const removalButton = $("#retry-usb-removal");
-  removalButton.classList.add("hidden");
-  delete removalButton.dataset.sessionToken;
+  clearUsbRemovalRetry();
   const admission = admitUsbWriteStart(currentBuildSnapshot(), {
     hasPreflightSession: Boolean(usbPreflightSession?.sessionToken),
   });
@@ -1328,6 +1328,9 @@ async function writePreparedUsb() {
     usbPreflightSession = null;
     elements.usbMessage.textContent = result.message;
     if (!result.ejected && result.removalRetryToken === writeContext.sessionToken) {
+      // This is a fresh server capability. A prior successful retry may have
+      // retired the same persistent DOM node while it was disabled.
+      removalButton.disabled = false;
       removalButton.dataset.sessionToken = result.removalRetryToken;
       removalButton.dataset.generation = String(usbContextGeneration);
       removalButton.classList.remove("hidden");
@@ -1379,8 +1382,11 @@ $("#retry-usb-removal").addEventListener("click", async (event) => {
     if (removed !== true) throw new Error("The operating system did not confirm safe removal.");
     elements.usbMessage.textContent = "UDisks confirmed safe removal of the verified drive. No image was rewritten.";
     elements.usbMessage.className = "result-message success";
+    elements.usbPickerMessage.textContent = elements.usbMessage.textContent;
     button.classList.add("hidden");
     delete button.dataset.sessionToken;
+    delete button.dataset.generation;
+    button.disabled = false;
   } catch (error) {
     if (!retryIsCurrent()) return;
     elements.usbMessage.textContent = `Safe removal is NOT confirmed; keep the drive connected. ${String(error)}`;

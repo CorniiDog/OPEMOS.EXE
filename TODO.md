@@ -1,5 +1,28 @@
 # OPEMOS.EXE — Product Checklist
 
+## PR211 b0901 Core review follow-up — 2026-10-27
+
+- Core withheld approval for exact `b0901bd6` despite all eleven source/package
+  jobs succeeding. Preserve both preceding heads, all successful packages and
+  the review findings; none transfer to the next head. F1-R: carry the active
+  write cancellation context into automatic post-readback removal, check it
+  again immediately before Unmount after property validation, and never mint a
+  retry after that capability was revoked. F2-R: resolve foreign block ancestry
+  from the canonical class-block path so partitions find their containing disk
+  and drive-less/layered objects are positively non-USB, while missing or
+  ambiguous possible USB ancestry still refuses. F3: reset the persistent retry
+  button for each fresh capability and retire a successful retry's presentation
+  without stale completion mutation. Focused source cases cover the containing
+  partition/drive-less classifier and frontend lifecycle wiring. They remain
+  unrun locally; no VM, UDisks, Polkit, virtual USB, physical media, merge or
+  publication result is claimed.
+- Required next: normal checks/package for the new immutable head and a fresh
+  exact Core review. The separately admitted Ubuntu VM transaction must use the
+  eventual new official artifact for real UDisks/Polkit/UID/topology/clock and
+  lifecycle proof, including property-read-to-Unmount cancellation, initial
+  automatic removal cancellation, unrelated partition/loop versus unresolved
+  shared ancestry, and retry success followed by a later removal failure.
+
 ## PR211 Core review corrections — 2026-10-26
 
 - Core primary withheld approval for exact `9162df86` after a complete
