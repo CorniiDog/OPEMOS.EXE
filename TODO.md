@@ -1,5 +1,24 @@
 # OPEMOS.EXE — Product Checklist
 
+## PR211 `130d57de` Core F1-R2 follow-up — 2026-10-27
+
+- Core withheld approval for the exact `130d57de` head because automatic
+  removal retry publication observed cancellation outside the manager mutex and
+  could stamp an old write with a newly armed generation. Keep all prior heads,
+  package results, deliberate non-Main OMEN refusals, and withheld reviews as
+  history. The bounded correction retains the admitted write's exact token,
+  generation and cancellation object until worker closure; retry publication
+  now checks that same identity, unrevoked state and generation under the
+  manager mutex. A later arm explicitly revokes an active write while retaining
+  serialization through worker closure. Focused manager cases cover normal
+  automatic result-to-retry publication and cancel/new-arm before late result
+  publication. They are unrun locally: no VM, UDisks, Polkit, physical media,
+  merge, or publication outcome is claimed.
+- Required next: fresh normal source/package checks and exact Core review of
+  the changed immutable head. Any later admitted Ubuntu runtime must exercise
+  the real automatic failure-to-retry and cancel/new-intent-to-late-result
+  transactions with genuine process, clock, UID and UDisks boundaries.
+
 ## PR211 b0901 Core review follow-up — 2026-10-27
 
 - Core withheld approval for exact `b0901bd6` despite all eleven source/package

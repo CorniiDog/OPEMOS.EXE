@@ -2698,6 +2698,13 @@ struct ActiveUsbRemoval {
     context: RemovalContext,
 }
 
+#[derive(Clone)]
+struct ActiveUsbWrite {
+    session_token: String,
+    generation: u64,
+    cancelled: Arc<AtomicBool>,
+}
+
 #[derive(Default)]
 pub(crate) struct UsbPreparationManager {
     #[cfg(target_os = "linux")]
@@ -2707,7 +2714,7 @@ pub(crate) struct UsbPreparationManager {
     generation: u64,
     armed: Option<ArmedUsbPreflight>,
     active_token: Option<String>,
-    cancel_write: Option<Arc<AtomicBool>>,
+    active_write: Option<ActiveUsbWrite>,
     progress: Option<UsbWriteProgress>,
 }
 
@@ -2717,7 +2724,7 @@ impl UsbPreparationManager {
     }
 
     pub(crate) fn cancel_all(&mut self) {
-        let had_active_write = self.cancel_write.is_some();
+        let had_active_write = self.active_write.is_some();
         #[cfg(target_os = "linux")]
         {
             self.pending_removal = None;
@@ -2726,8 +2733,8 @@ impl UsbPreparationManager {
             }
         }
         self.armed = None;
-        if let Some(cancel) = self.cancel_write.take() {
-            cancel.store(true, Ordering::Relaxed);
+        if let Some(write) = &self.active_write {
+            write.cancelled.store(true, Ordering::Relaxed);
         }
         // The worker retains active ownership until it closes. Clearing this
         // token early would allow a second operation to overlap a cancelled
@@ -2758,6 +2765,12 @@ impl UsbPreparationManager {
             if let Some(removal) = &self.active_removal {
                 removal.context.cancelled.store(true, Ordering::Relaxed);
             }
+        }
+        // A new intent may be armed while the old worker is closing, but it
+        // must revoke that old write's automatic-removal publication right
+        // now. The old token remains serialized until its worker closes.
+        if let Some(write) = &self.active_write {
+            write.cancelled.store(true, Ordering::Relaxed);
         }
         self.generation = self.generation.wrapping_add(1).max(1);
         self.armed = Some(ArmedUsbPreflight {
@@ -2793,8 +2806,8 @@ impl UsbPreparationManager {
             self.armed = None;
         }
         if self.active_token.as_deref() == Some(session_token) {
-            if let Some(cancel) = &self.cancel_write {
-                cancel.store(true, Ordering::Relaxed);
+            if let Some(write) = &self.active_write {
+                write.cancelled.store(true, Ordering::Relaxed);
             }
             #[cfg(target_os = "linux")]
             if let Some(removal) = &self.active_removal {
@@ -2813,7 +2826,7 @@ impl UsbPreparationManager {
         &mut self,
         session_token: &str,
         now: Instant,
-    ) -> Option<(ArmedUsbPreflight, Arc<AtomicBool>)> {
+    ) -> Option<(ArmedUsbPreflight, Arc<AtomicBool>, u64)> {
         if self
             .armed
             .as_ref()
@@ -2834,18 +2847,50 @@ impl UsbPreparationManager {
             return None;
         }
         let cancel = Arc::new(AtomicBool::new(false));
+        let generation = self.generation;
         self.active_token = Some(session_token.into());
-        self.cancel_write = Some(cancel.clone());
+        self.active_write = Some(ActiveUsbWrite {
+            session_token: session_token.into(),
+            generation,
+            cancelled: cancel.clone(),
+        });
         self.progress = None;
-        Some((armed, cancel))
+        Some((armed, cancel, generation))
     }
 
     fn finish_write(&mut self, session_token: &str) {
         if self.active_token.as_deref() == Some(session_token) {
             self.active_token = None;
-            self.cancel_write = None;
+            self.active_write = None;
             self.progress = None;
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn retain_automatic_removal_retry(
+        &mut self,
+        session_token: &str,
+        generation: u64,
+        cancelled: &Arc<AtomicBool>,
+        target: UsbTargetCandidate,
+        now: Instant,
+    ) -> bool {
+        let current = self.active_write.as_ref().is_some_and(|write| {
+            write.session_token == session_token
+                && write.generation == generation
+                && Arc::ptr_eq(&write.cancelled, cancelled)
+                && !write.cancelled.load(Ordering::Relaxed)
+        });
+        if !current || self.generation != generation || !self.is_writing(session_token) {
+            return false;
+        }
+        self.pending_removal = Some(PendingUsbRemoval {
+            session_token: session_token.into(),
+            target,
+            expires_at: now + USB_PREFLIGHT_TTL,
+            generation,
+        });
+        true
     }
 
     #[cfg(target_os = "linux")]
@@ -3038,7 +3083,7 @@ impl UsbPreparationManager {
         now: Instant,
     ) -> Option<Arc<AtomicBool>> {
         self.begin_write(session_token, now)
-            .map(|(_armed, cancel)| cancel)
+            .map(|(_armed, cancel, _generation)| cancel)
     }
 
     #[cfg(test)]
@@ -6828,7 +6873,7 @@ pub(crate) async fn write_image_to_usb(
         return Err("The USB intent session token is invalid.".into());
     }
     let manager_state = app.state::<Mutex<UsbPreparationManager>>();
-    let (armed, cancel) = {
+    let (armed, cancel, write_generation) = {
         let mut manager = manager_state
             .lock()
             .map_err(|_| "USB preparation state is unavailable.")?;
@@ -7030,17 +7075,17 @@ pub(crate) async fn write_image_to_usb(
         #[cfg(not(target_os = "linux"))]
         let removal_retry_token = None;
         #[cfg(target_os = "linux")]
-        let removal_retry_token = if !ejected && !cancel.load(Ordering::Relaxed) {
+        let removal_retry_token = if !ejected {
             let state = app_for_progress.state::<Mutex<UsbPreparationManager>>();
             let mut manager = state.lock()
                 .map_err(|_| "Could not retain verified safe-removal retry identity.")?;
-            if manager.is_writing(&session_for_progress) {
-                manager.pending_removal = Some(PendingUsbRemoval {
-                    session_token: session_for_progress.clone(),
-                    target: revalidated.clone(),
-                    expires_at: Instant::now() + USB_PREFLIGHT_TTL,
-                    generation: manager.generation,
-                });
+            if manager.retain_automatic_removal_retry(
+                &session_for_progress,
+                write_generation,
+                &cancel,
+                revalidated.clone(),
+                Instant::now(),
+            ) {
                 Some(session_for_progress.clone())
             } else {
                 None
@@ -7234,6 +7279,87 @@ mod windows_usb_inventory_tests {
         );
         assert!(active.context.cancelled.load(Ordering::Relaxed));
         manager.finish_removal_retry(pending, &active, true, now);
+        assert!(manager.pending_removal.is_none());
+        assert!(manager.is_armed());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_automatic_removal_retry_keeps_the_original_write_context() {
+        let now = Instant::now();
+        let token = "a".repeat(64);
+        let target = UsbTargetCandidate {
+            device_identifier: "sdb".into(),
+            device_node: "/dev/sdb".into(),
+            media_name: "owned VM USB".into(),
+            bus_protocol: "USB".into(),
+            bytes: 32768000,
+            block_size: 512,
+            identity_token: "b".repeat(64),
+        };
+        let mut manager = UsbPreparationManager::default();
+        manager.arm(
+            token.clone(),
+            "sdb".into(),
+            "c".repeat(64),
+            "d".repeat(64),
+            now,
+        );
+        let (_, cancelled, generation) = manager.begin_write(&token, now).unwrap();
+        assert!(manager.retain_automatic_removal_retry(
+            &token,
+            generation,
+            &cancelled,
+            target.clone(),
+            now,
+        ));
+        assert_eq!(
+            manager.pending_removal.as_ref().unwrap().generation,
+            generation
+        );
+
+        manager.pending_removal = None;
+        assert!(manager.cancel(&token, now));
+        assert!(
+            !manager.retain_automatic_removal_retry(&token, generation, &cancelled, target, now,)
+        );
+        assert!(manager.pending_removal.is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_new_intent_cannot_publish_a_late_automatic_removal_retry() {
+        let now = Instant::now();
+        let first = "a".repeat(64);
+        let target = UsbTargetCandidate {
+            device_identifier: "sdb".into(),
+            device_node: "/dev/sdb".into(),
+            media_name: "owned VM USB".into(),
+            bus_protocol: "USB".into(),
+            bytes: 32768000,
+            block_size: 512,
+            identity_token: "b".repeat(64),
+        };
+        let mut manager = UsbPreparationManager::default();
+        manager.arm(
+            first.clone(),
+            "sdb".into(),
+            "c".repeat(64),
+            "d".repeat(64),
+            now,
+        );
+        let (_, cancelled, generation) = manager.begin_write(&first, now).unwrap();
+        manager.arm(
+            "e".repeat(64),
+            "sdc".into(),
+            "f".repeat(64),
+            "g".repeat(64),
+            now,
+        );
+        assert!(cancelled.load(Ordering::Relaxed));
+        assert!(
+            !manager.retain_automatic_removal_retry(&first, generation, &cancelled, target, now,)
+        );
         assert!(manager.pending_removal.is_none());
         assert!(manager.is_armed());
     }
