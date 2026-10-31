@@ -72,37 +72,51 @@ def require_git_clean(worktree):
     if tracked.returncode or tracked.stdout: fail("tracked target content")
 
 
+def process_pid_references(pid, target_stat, target, prefix, own_target_fd=None):
+    """Reject one process holding the target, except this scan's exact FD.
+
+    The exception is intentionally descriptor-scoped.  A duplicate descriptor,
+    cwd, map, or any other process reference remains a consumer and blocks
+    cleanup, including when it belongs to this process.
+    """
+    entry = Path("/proc") / str(pid)
+    probes = [entry / "cwd", entry / "root", entry / "maps", entry / "fd"]
+    for probe in probes:
+        try:
+            values = list(probe.iterdir()) if probe.name == "fd" else [probe]
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            fail(f"unknown process visibility: {entry.name}/{probe.name}")
+        for value in values:
+            if pid == os.getpid() and value.name == str(own_target_fd):
+                continue
+            try:
+                text = value.read_text(errors="replace") if value.name == "maps" else os.readlink(value)
+            except FileNotFoundError:
+                continue
+            except (PermissionError, OSError) as error:
+                fail(f"unknown process reference: {entry.name}/{value.name}: {error}")
+            if target == text or text.startswith(prefix) or prefix in text:
+                fail(f"live process path reference: {entry.name}/{value.name}")
+            if value.name != "maps":
+                try:
+                    held = os.stat(value, follow_symlinks=True)
+                except FileNotFoundError:
+                    continue
+                except (PermissionError, OSError) as error:
+                    fail(f"unknown process identity: {entry.name}/{value.name}: {error}")
+                if (held.st_dev, held.st_ino) == (target_stat.st_dev, target_stat.st_ino):
+                    fail(f"live process inode reference: {entry.name}/{value.name}")
+
+
 def process_references(target_fd, target, own_target_fd):
     target_stat = os.fstat(target_fd)
     prefix = os.path.realpath(target) + os.sep
     for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit(): continue
-        probes = [entry / "cwd", entry / "root", entry / "maps"]
-        try: probes.append(entry / "fd")
-        except OSError: fail("process probe construction failed")
-        for probe in probes:
-            try:
-                if probe.name == "fd": values = list(probe.iterdir())
-                elif probe.name == "maps": values = [probe]
-                else: values = [probe]
-            except FileNotFoundError: continue
-            except PermissionError: fail(f"unknown process visibility: {entry.name}/{probe.name}")
-            for value in values:
-                if entry.name == str(os.getpid()) and value.name == str(own_target_fd):
-                    continue
-                try:
-                    text = value.read_text(errors="replace") if value.name == "maps" else os.readlink(value)
-                except FileNotFoundError: continue
-                except (PermissionError, OSError) as error: fail(f"unknown process reference: {entry.name}/{value.name}: {error}")
-                if target == text or text.startswith(prefix) or prefix in text:
-                    fail(f"live process path reference: {entry.name}/{value.name}")
-                if value.name != "maps":
-                    try:
-                        held = os.stat(value, follow_symlinks=True)
-                    except FileNotFoundError: continue
-                    except (PermissionError, OSError) as error: fail(f"unknown process identity: {entry.name}/{value.name}: {error}")
-                    if (held.st_dev, held.st_ino) == (target_stat.st_dev, target_stat.st_ino):
-                        fail(f"live process inode reference: {entry.name}/{value.name}")
+        if not entry.name.isdigit():
+            continue
+        process_pid_references(int(entry.name), target_stat, target, prefix, own_target_fd)
 
 
 def tree_inventory(target_fd, uid, now):
@@ -119,7 +133,7 @@ def tree_inventory(target_fd, uid, now):
             if stat.S_ISLNK(info.st_mode): fail("symlink in target tree")
             if info.st_uid != uid: fail("foreign-owned target entry")
             if info.st_mtime_ns > newest or info.st_ctime_ns > newest: newest = max(info.st_mtime_ns, info.st_ctime_ns)
-            if name in MARKERS or name.lower().endswith(ARTIFACT_SUFFIXES): fail("retained marker or artifact in target tree: " + os.path.join(base, name))
+            if name in MARKERS or name in ACTIVE_MARKERS or name.lower().endswith(ARTIFACT_SUFFIXES): fail("retained marker, producer lease, or artifact in target tree: " + os.path.join(base, name))
             total += info.st_blocks * 512; names.append((info.st_dev, info.st_ino, base, name))
     if now - newest / 1_000_000_000 < STALE_SECONDS: fail("recent target descendant")
     return total, tuple(sorted(names))
@@ -135,16 +149,26 @@ def durable_json(directory, stem, value):
     return name
 
 
+class PartialDeleteError(OSError):
+    def __init__(self, removed, error):
+        super().__init__(error.errno, str(error))
+        self.removed = removed
+        self.original = error
+
+
 def remove_held_contents(target_fd):
     """Descriptor-relative removal; callers retain typed partial-effect evidence."""
     removed = 0
-    for base, dirs, files, directory_fd in os.fwalk('.', topdown=False, follow_symlinks=False, dir_fd=target_fd):
-        for entry in files:
-            info = os.stat(entry, dir_fd=directory_fd, follow_symlinks=False)
-            if stat.S_ISLNK(info.st_mode): fail("late symlink")
-            os.unlink(entry, dir_fd=directory_fd); removed += 1
-        for entry in dirs:
-            os.rmdir(entry, dir_fd=directory_fd); removed += 1
+    try:
+        for base, dirs, files, directory_fd in os.fwalk('.', topdown=False, follow_symlinks=False, dir_fd=target_fd):
+            for entry in files:
+                info = os.stat(entry, dir_fd=directory_fd, follow_symlinks=False)
+                if stat.S_ISLNK(info.st_mode): fail("late symlink")
+                os.unlink(entry, dir_fd=directory_fd); removed += 1
+            for entry in dirs:
+                os.rmdir(entry, dir_fd=directory_fd); removed += 1
+    except OSError as error:
+        raise PartialDeleteError(removed, error) from error
     return removed
 
 
@@ -180,8 +204,10 @@ def evaluate(repository, receipts, execute):
                             removed = remove_held_contents(tf)
                             os.close(tf); tf = -1
                             os.rmdir("target", dir_fd=parent_fd)
+                        except PartialDeleteError as error:
+                            outcome["partialDeletion"] = {"path": str(target), "removedEntries": error.removed, "error": repr(error.original), "kind": "delete-operation"}; raise
                         except OSError as error:
-                            outcome["partialDeletion"] = {"path": str(target), "removedEntries": removed, "error": repr(error)}; raise
+                            outcome["partialDeletion"] = {"path": str(target), "removedEntries": removed, "error": repr(error), "kind": "target-fd-or-final-rmdir"}; raise
                         finally: os.close(parent_fd)
                         outcome["deleted"].append(dict(row, intent=str(intent), removedEntries=removed)); outcome["bytesReclaimed"] += bytes_before
                 finally:
