@@ -35,7 +35,7 @@ class LocalTargetRetentionTests(unittest.TestCase):
             with patch.object(retention, "process_references", return_value=None):
                 result = retention.evaluate(root, Path(temp.name) / "receipts", False)
             self.assertEqual(result["candidates"], [])
-            self.assertIn("retention marker", result["refused"][0]["reason"])
+            self.assertIn("retained marker or artifact", result["refused"][0]["reason"])
 
     def test_dirty_source_is_refused(self):
         temp, root, wt = self.make_tree()

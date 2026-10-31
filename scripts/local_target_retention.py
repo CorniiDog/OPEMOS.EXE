@@ -19,6 +19,7 @@ import uuid
 STALE_SECONDS = 24 * 60 * 60
 MARKERS = {".opemos-retain", ".keep", "RETENTION.md", ".frozen-input", ".required-artifact"}
 ACTIVE_MARKERS = {".opemos-active-job", ".opemos-consumer-lease"}
+ARTIFACT_SUFFIXES = (".appimage", ".deb", ".img", ".qcow2")
 MAX_ENTRIES = 200000
 
 
@@ -76,6 +77,8 @@ def process_references(target_fd, target):
     prefix = os.path.realpath(target) + os.sep
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit(): continue
+        # This process owns the deliberate held descriptor used for the guard.
+        if entry.name == str(os.getpid()): continue
         probes = [entry / "cwd", entry / "root", entry / "maps"]
         try: probes.append(entry / "fd")
         except OSError: fail("process probe construction failed")
@@ -116,7 +119,7 @@ def tree_inventory(target_fd, uid, now):
             if stat.S_ISLNK(info.st_mode): fail("symlink in target tree")
             if info.st_uid != uid: fail("foreign-owned target entry")
             if info.st_mtime_ns > newest or info.st_ctime_ns > newest: newest = max(info.st_mtime_ns, info.st_ctime_ns)
-            if name in MARKERS: fail("retention marker in target tree: " + os.path.join(base, name))
+            if name in MARKERS or name.lower().endswith(ARTIFACT_SUFFIXES): fail("retained marker or artifact in target tree: " + os.path.join(base, name))
             total += info.st_blocks * 512; names.append((info.st_dev, info.st_ino, base, name))
     if now - newest / 1_000_000_000 < STALE_SECONDS: fail("recent target descendant")
     return total, tuple(sorted(names))
@@ -132,7 +135,7 @@ def durable_json(directory, stem, value):
     return name
 
 
-def remove_held_tree(target_fd, parent_fd, target_name):
+def remove_held_contents(target_fd):
     """Descriptor-relative removal; callers retain typed partial-effect evidence."""
     removed = 0
     for base, dirs, files, directory_fd in os.fwalk('.', topdown=False, follow_symlinks=False, dir_fd=target_fd):
@@ -142,7 +145,7 @@ def remove_held_tree(target_fd, parent_fd, target_name):
             os.unlink(entry, dir_fd=directory_fd); removed += 1
         for entry in dirs:
             os.rmdir(entry, dir_fd=directory_fd); removed += 1
-    os.rmdir(target_name, dir_fd=parent_fd); return removed
+    return removed
 
 
 def evaluate(repository, receipts, execute):
@@ -157,6 +160,7 @@ def evaluate(repository, receipts, execute):
             try:
                 wf, wi = held_dir(worktree); sf, si = held_dir(worktree / "src-tauri"); tf, ti = held_dir(target)
                 try:
+                    if any(identity[2] != os.getuid() for identity in (wi, si, ti)): fail("creator ownership contract failed")
                     try: fcntl.flock(tf, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     except BlockingIOError: fail("target consumer lease is held")
                     if os.path.realpath(worktree.parent) != os.path.realpath(repository / ".worktrees"): fail("worktree parent drift")
@@ -171,13 +175,18 @@ def evaluate(repository, receipts, execute):
                         require_no_mount_boundary(target); require_git_clean(worktree); process_references(tf, str(target))
                         if tree_inventory(tf, os.getuid(), time.time()) != (bytes_before, entries): fail("target changed before deletion")
                         parent_fd = os.open(worktree / "src-tauri", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
-                        try: removed = remove_held_tree(tf, parent_fd, "target")
+                        removed = 0
+                        try:
+                            removed = remove_held_contents(tf)
+                            os.close(tf); tf = -1
+                            os.rmdir("target", dir_fd=parent_fd)
                         except OSError as error:
-                            outcome["partialDeletion"] = {"path": str(target), "removedEntries": removed if "removed" in locals() else 0, "error": repr(error)}; raise
+                            outcome["partialDeletion"] = {"path": str(target), "removedEntries": removed, "error": repr(error)}; raise
                         finally: os.close(parent_fd)
                         outcome["deleted"].append(dict(row, intent=str(intent), removedEntries=removed)); outcome["bytesReclaimed"] += bytes_before
                 finally:
-                    for fd in (tf, sf, wf): os.close(fd)
+                    for fd in (tf, sf, wf):
+                        if fd >= 0: os.close(fd)
             except (RuntimeError, OSError) as error: outcome["refused"].append({"path": str(target), "reason": str(error)})
     finally:
         os.close(roots_fd); os.close(repo_fd)
