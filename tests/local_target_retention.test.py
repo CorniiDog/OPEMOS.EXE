@@ -20,12 +20,21 @@ class LocalTargetRetentionTests(unittest.TestCase):
         subprocess.run(["git", "init", "-q", str(wt)], check=True)
         subprocess.run(["git", "-C", str(wt), "config", "user.email", "test@example.invalid"], check=True)
         subprocess.run(["git", "-C", str(wt), "config", "user.name", "test"], check=True)
-        (wt / ".gitignore").write_text("src-tauri/target/\n")
+        (wt / ".gitignore").write_text("src-tauri/target/\nsrc-tauri/.opemos-target-custody.json\n")
         (wt / "tracked").write_text("x")
         subprocess.run(["git", "-C", str(wt), "add", ".gitignore", "tracked"], check=True)
         subprocess.run(["git", "-C", str(wt), "commit", "-qm", "initial"], check=True)
+        self.write_custody(wt)
         old = time.time() - retention.STALE_SECONDS - 5
         os.utime(wt / "src-tauri" / "target", (old, old)); return temp, root, wt
+
+    def write_custody(self, wt, **overrides):
+        path = wt / "src-tauri" / retention.CUSTODY_NAME
+        path.touch(exist_ok=True)
+        source = (wt / "src-tauri").stat(); target = (wt / "src-tauri" / "target").stat(); worktree = wt.stat()
+        record = {"version": 1, "creatorUid": os.getuid(), "worktree": [worktree.st_dev, worktree.st_ino], "source": [source.st_dev, source.st_ino], "target": [target.st_dev, target.st_ino], "jobId": "fixture-stale-output", "jobState": "complete", "producerLease": "released", "requiredArtifact": None, "latestArtifact": None}
+        record.update(overrides)
+        path.write_text(json.dumps(record))
 
     def test_nested_marker_is_refused(self):
         temp, root, wt = self.make_tree()
@@ -33,6 +42,7 @@ class LocalTargetRetentionTests(unittest.TestCase):
             nested = wt / "src-tauri" / "target" / "nested"; nested.mkdir(); (nested / ".frozen-input").write_text("keep")
             old = time.time() - retention.STALE_SECONDS - 5
             for path in (nested / ".frozen-input", nested, wt / "src-tauri" / "target"): os.utime(path, (old, old))
+            self.write_custody(wt)
             with patch.object(retention, "process_references", return_value=None):
                 result = retention.evaluate(root, Path(temp.name) / "receipts", False)
             self.assertEqual(result["candidates"], [])
@@ -56,6 +66,7 @@ class LocalTargetRetentionTests(unittest.TestCase):
             (target / ".opemos-producer-lease").write_text("active")
             old = time.time() - retention.STALE_SECONDS - 5
             for path in (target / ".opemos-producer-lease", target): os.utime(path, (old, old))
+            self.write_custody(wt)
             with patch.object(retention, "process_references", return_value=None):
                 result = retention.evaluate(root, Path(temp.name) / "receipts", False)
             self.assertEqual(result["candidates"], [])
@@ -74,6 +85,7 @@ class LocalTargetRetentionTests(unittest.TestCase):
         temp, root, wt = self.make_tree()
         with temp:
             target = wt / "src-tauri" / "target"; (target / "debug").mkdir(); (target / "debug" / "new").write_text("x")
+            self.write_custody(wt)
             with patch.object(retention, "process_references", return_value=None):
                 result = retention.evaluate(root, Path(temp.name) / "receipts", False)
             self.assertIn("recent target descendant", result["refused"][0]["reason"])
@@ -99,6 +111,7 @@ class LocalTargetRetentionTests(unittest.TestCase):
             target = wt / "src-tauri" / "target"; (target / "debug").mkdir(); (target / "debug" / "old").write_text("x")
             old = time.time() - retention.STALE_SECONDS - 5
             for path in (target / "debug" / "old", target / "debug", target): os.utime(path, (old, old))
+            self.write_custody(wt)
             future = time.time() + retention.STALE_SECONDS + 5
             with patch.object(retention, "process_references", return_value=None), patch.object(retention.time, "time", return_value=future):
                 result = retention.evaluate(root, Path(temp.name) / "receipts", True)
@@ -107,6 +120,59 @@ class LocalTargetRetentionTests(unittest.TestCase):
             self.assertTrue(any(name.startswith("target-retention-intent-") for name in names))
             self.assertTrue(any(name.startswith("target-retention-result-") for name in names))
 
+    def test_actual_normal_producer_to_consumer_transaction(self):
+        temp, root, wt = self.make_tree()
+        with temp:
+            target = wt / "src-tauri" / "target"; (target / "release").mkdir(); (target / "release" / "stale").write_text("x")
+            old = time.time() - retention.STALE_SECONDS - 5
+            for path in (target / "release" / "stale", target / "release", target): os.utime(path, (old, old))
+            self.write_custody(wt)
+            future = time.time() + retention.STALE_SECONDS + 5
+            with patch.object(retention.time, "time", return_value=future):
+                result = retention.evaluate(root, Path(temp.name) / "receipts", True)
+            self.assertEqual(result["deleted"], [])
+            self.assertTrue(target.exists())
+            self.assertIn("unknown process reference", result["refused"][0]["reason"])
+            self.assertFalse(result.get("closeErrors"))
+
+    def test_late_symlink_fault_retains_progress_and_intent(self):
+        temp, root, wt = self.make_tree()
+        with temp:
+            target = wt / "src-tauri" / "target"; (target / "debug").mkdir()
+            (target / "debug" / "first").write_text("x"); (target / "debug" / "second").write_text("y")
+            old = time.time() - retention.STALE_SECONDS - 5
+            for path in (target / "debug" / "first", target / "debug" / "second", target / "debug", target): os.utime(path, (old, old))
+            self.write_custody(wt)
+            real_unlink = retention.os.unlink; injected = False
+            def replace_peer(path, *args, **kwargs):
+                nonlocal injected
+                result = real_unlink(path, *args, **kwargs)
+                if not injected:
+                    injected = True; peer = "second" if path == "first" else "first"
+                    real_unlink(peer, dir_fd=kwargs["dir_fd"])
+                    retention.os.symlink("/outside", peer, dir_fd=kwargs["dir_fd"])
+                return result
+            future = time.time() + retention.STALE_SECONDS + 5
+            with patch.object(retention, "process_references", return_value=None), patch.object(retention.time, "time", return_value=future), patch.object(retention.os, "unlink", side_effect=replace_peer):
+                result = retention.evaluate(root, Path(temp.name) / "receipts", True)
+            self.assertEqual(result["partialDeletion"]["removedEntries"], 1)
+            self.assertEqual(result["partialDeletion"]["kind"], "delete-operation")
+            self.assertIn("intent", result["partialDeletion"])
+
+    def test_unreadable_inventory_is_refused_before_effect(self):
+        temp, root, wt = self.make_tree()
+        with temp:
+            target = wt / "src-tauri" / "target"; blocked = target / "blocked"; blocked.mkdir()
+            (blocked / "input").write_text("x"); os.chmod(blocked, 0)
+            self.write_custody(wt)
+            try:
+                with patch.object(retention, "process_references", return_value=None):
+                    result = retention.evaluate(root, Path(temp.name) / "receipts", False)
+            finally:
+                os.chmod(blocked, 0o700)
+            self.assertEqual(result["candidates"], [])
+            self.assertIn("target traversal error", result["refused"][0]["reason"])
+
     def test_partial_delete_records_current_count_and_result_receipt(self):
         temp, root, wt = self.make_tree()
         with temp:
@@ -114,6 +180,7 @@ class LocalTargetRetentionTests(unittest.TestCase):
             (target / "debug" / "first").write_text("x"); (target / "debug" / "second").write_text("y")
             old = time.time() - retention.STALE_SECONDS - 5
             for path in (target / "debug" / "first", target / "debug" / "second", target / "debug", target): os.utime(path, (old, old))
+            self.write_custody(wt)
             real_unlink = retention.os.unlink
             unlink_calls = 0
             def fail_second(path, *args, **kwargs):
