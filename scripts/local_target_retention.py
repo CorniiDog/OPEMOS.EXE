@@ -18,7 +18,7 @@ import uuid
 
 STALE_SECONDS = 24 * 60 * 60
 MARKERS = {".opemos-retain", ".keep", "RETENTION.md", ".frozen-input", ".required-artifact"}
-ACTIVE_MARKERS = {".opemos-active-job", ".opemos-consumer-lease"}
+ACTIVE_MARKERS = {".opemos-active-job", ".opemos-consumer-lease", ".opemos-producer-lease"}
 ARTIFACT_SUFFIXES = (".appimage", ".deb", ".img", ".qcow2")
 MAX_ENTRIES = 200000
 
@@ -72,13 +72,11 @@ def require_git_clean(worktree):
     if tracked.returncode or tracked.stdout: fail("tracked target content")
 
 
-def process_references(target_fd, target):
+def process_references(target_fd, target, own_target_fd):
     target_stat = os.fstat(target_fd)
     prefix = os.path.realpath(target) + os.sep
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit(): continue
-        # This process owns the deliberate held descriptor used for the guard.
-        if entry.name == str(os.getpid()): continue
         probes = [entry / "cwd", entry / "root", entry / "maps"]
         try: probes.append(entry / "fd")
         except OSError: fail("process probe construction failed")
@@ -90,6 +88,8 @@ def process_references(target_fd, target):
             except FileNotFoundError: continue
             except PermissionError: fail(f"unknown process visibility: {entry.name}/{probe.name}")
             for value in values:
+                if entry.name == str(os.getpid()) and value.name == str(own_target_fd):
+                    continue
                 try:
                     text = value.read_text(errors="replace") if value.name == "maps" else os.readlink(value)
                 except FileNotFoundError: continue
@@ -165,14 +165,14 @@ def evaluate(repository, receipts, execute):
                     except BlockingIOError: fail("target consumer lease is held")
                     if os.path.realpath(worktree.parent) != os.path.realpath(repository / ".worktrees"): fail("worktree parent drift")
                     if any((worktree / marker).exists() for marker in ACTIVE_MARKERS): fail("active worktree job marker")
-                    require_no_mount_boundary(target); require_git_clean(worktree); process_references(tf, str(target))
+                    require_no_mount_boundary(target); require_git_clean(worktree); process_references(tf, str(target), tf)
                     bytes_before, entries = tree_inventory(tf, os.getuid(), time.time())
                     row = {"path": str(target), "allocatedBytes": bytes_before, "entries": len(entries)}
                     outcome["candidates"].append(row)
                     if execute:
                         intent = durable_json(receipts, "target-retention-intent", {"target": str(target), "identity": ti, "bytes": bytes_before})
                         for fd, ident, label in ((repo_fd, repo_id, "repository"), (roots_fd, roots_id, "worktrees"), (wf, wi, "worktree"), (sf, si, "src-tauri"), (tf, ti, "target")): unchanged(fd, ident, label)
-                        require_no_mount_boundary(target); require_git_clean(worktree); process_references(tf, str(target))
+                        require_no_mount_boundary(target); require_git_clean(worktree); process_references(tf, str(target), tf)
                         if tree_inventory(tf, os.getuid(), time.time()) != (bytes_before, entries): fail("target changed before deletion")
                         parent_fd = os.open(worktree / "src-tauri", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
                         removed = 0
