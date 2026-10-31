@@ -73,17 +73,25 @@ def require_git_clean(worktree):
     if tracked.returncode or tracked.stdout: fail("tracked target content")
 
 
-def require_custody(worktree, worktree_identity, source_identity, target_identity):
+def require_custody(source_fd, worktree_identity, source_identity, target_identity):
     """Require the producer's exact, released stale-output custody record."""
-    custody = worktree / "src-tauri" / CUSTODY_NAME
+    custody_fd = -1
     try:
-        raw = custody.read_bytes()
-        info = custody.stat(follow_symlinks=False)
+        custody_fd = os.open(CUSTODY_NAME, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=source_fd)
+        info = os.fstat(custody_fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_mode & 0o022:
+            fail("invalid producer custody file")
+        raw = b""
+        while len(raw) <= 65536:
+            block = os.read(custody_fd, 8192)
+            if not block: break
+            raw += block
+        if len(raw) > 65536: fail("producer custody exceeds bound")
         record = json.loads(raw)
     except (OSError, ValueError, UnicodeDecodeError) as error:
         fail(f"missing or malformed producer custody: {error}")
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
-        fail("invalid producer custody file")
+    finally:
+        if custody_fd >= 0: os.close(custody_fd)
     expected = {
         "version": 1,
         "creatorUid": os.getuid(),
@@ -92,10 +100,10 @@ def require_custody(worktree, worktree_identity, source_identity, target_identit
         "target": list(target_identity[:2]),
         "jobState": "complete",
         "producerLease": "released",
-        "requiredArtifact": None,
-        "latestArtifact": None,
+        "requiredArtifact": {"state": "none"},
+        "latestArtifact": {"state": "none"},
     }
-    if not isinstance(record, dict) or any(record.get(key) != value for key, value in expected.items()):
+    if not isinstance(record, dict) or set(expected) - set(record) or any(record[key] != value for key, value in expected.items()):
         fail("producer custody contract mismatch")
     if not isinstance(record.get("jobId"), str) or not record["jobId"].strip():
         fail("producer custody job is missing")
@@ -231,14 +239,14 @@ def evaluate(repository, receipts, execute):
                     except BlockingIOError: fail("target consumer lease is held")
                     if os.path.realpath(worktree.parent) != os.path.realpath(repository / ".worktrees"): fail("worktree parent drift")
                     if any((worktree / marker).exists() for marker in ACTIVE_MARKERS): fail("active worktree job marker")
-                    require_no_mount_boundary(target); require_git_clean(worktree); require_custody(worktree, wi, si, ti); process_references(tf, str(target), tf)
+                    require_no_mount_boundary(target); require_git_clean(worktree); require_custody(sf, wi, si, ti); process_references(tf, str(target), tf)
                     bytes_before, root_cut, entries = tree_inventory(tf, os.getuid(), time.time())
                     row = {"path": str(target), "allocatedBytes": bytes_before, "entries": len(entries), "identity": ti[:2]}
                     outcome["candidates"].append(row)
                     if execute:
                         intent = durable_json(receipts, "target-retention-intent", {"target": str(target), "identity": ti, "bytes": bytes_before})
                         for fd, ident, label in ((repo_fd, repo_id, "repository"), (roots_fd, roots_id, "worktrees"), (wf, wi, "worktree"), (sf, si, "src-tauri"), (tf, ti, "target")): unchanged(fd, ident, label)
-                        require_no_mount_boundary(target); require_git_clean(worktree); require_custody(worktree, wi, si, ti); process_references(tf, str(target), tf)
+                        require_no_mount_boundary(target); require_git_clean(worktree); require_custody(sf, wi, si, ti); process_references(tf, str(target), tf)
                         if tree_inventory(tf, os.getuid(), time.time()) != (bytes_before, root_cut, entries): fail("target changed before deletion")
                         bound = os.stat("target", dir_fd=sf, follow_symlinks=False)
                         if (bound.st_dev, bound.st_ino) != ti[:2]: fail("target name no longer bound to held target")

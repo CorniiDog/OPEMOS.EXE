@@ -32,7 +32,7 @@ class LocalTargetRetentionTests(unittest.TestCase):
         path = wt / "src-tauri" / retention.CUSTODY_NAME
         path.touch(exist_ok=True)
         source = (wt / "src-tauri").stat(); target = (wt / "src-tauri" / "target").stat(); worktree = wt.stat()
-        record = {"version": 1, "creatorUid": os.getuid(), "worktree": [worktree.st_dev, worktree.st_ino], "source": [source.st_dev, source.st_ino], "target": [target.st_dev, target.st_ino], "jobId": "fixture-stale-output", "jobState": "complete", "producerLease": "released", "requiredArtifact": None, "latestArtifact": None}
+        record = {"version": 1, "creatorUid": os.getuid(), "worktree": [worktree.st_dev, worktree.st_ino], "source": [source.st_dev, source.st_ino], "target": [target.st_dev, target.st_ino], "jobId": "fixture-stale-output", "jobState": "complete", "producerLease": "released", "requiredArtifact": {"state": "none"}, "latestArtifact": {"state": "none"}}
         record.update(overrides)
         path.write_text(json.dumps(record))
 
@@ -80,6 +80,22 @@ class LocalTargetRetentionTests(unittest.TestCase):
                 result = retention.evaluate(root, Path(temp.name) / "receipts", False)
             self.assertEqual(result["candidates"], [])
             self.assertIn("dirty", result["refused"][0]["reason"])
+
+    def test_missing_artifact_key_and_unsafe_custody_are_refused(self):
+        temp, root, wt = self.make_tree()
+        with temp:
+            custody = wt / "src-tauri" / retention.CUSTODY_NAME
+            record = json.loads(custody.read_text()); del record["latestArtifact"]; custody.write_text(json.dumps(record))
+            with patch.object(retention, "process_references", return_value=None):
+                result = retention.evaluate(root, Path(temp.name) / "receipts", False)
+            self.assertIn("producer custody contract mismatch", result["refused"][0]["reason"])
+            self.write_custody(wt); os.chmod(custody, 0o666)
+            try:
+                with patch.object(retention, "process_references", return_value=None):
+                    result = retention.evaluate(root, Path(temp.name) / "receipts", False)
+            finally:
+                os.chmod(custody, 0o600)
+            self.assertIn("invalid producer custody", result["refused"][0]["reason"])
 
     def test_recent_descendant_and_mount_or_process_unknown_are_refused(self):
         temp, root, wt = self.make_tree()
