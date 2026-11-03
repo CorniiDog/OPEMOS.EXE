@@ -39,7 +39,10 @@
 + need(attempt not in('e842cfa1daa5412aba5d454cca9ab58f','34117bbb1f4d4418b4eff9c1190233f2','96af5ac9637c40309055725bb9df0c17'),'new execution scope only');return plan
 --- a/controller_probe_custody.py
 +++ b/controller_probe_custody.py
-@@ -9,44 +9,78 @@
+@@ -5 +5 @@
+-import os,json,time,hashlib,traceback
++import hashlib,json,os,re,stat,subprocess,sys,time,types
+@@ -9,44 +9,235 @@
 -def observe(module,out):
 - out=Path(out);real=module.subprocess;events=[];secondary=[];primary=None;counter=0
 - def persist(name,raw):
@@ -100,32 +103,18 @@
 +    need(sha(config)==p['sshConfigSHA256'],'current pinned existing SSH route')
 +    m=module(raw,'current_github_and_remote_probe_source')
 +    github_policy=dict(p,mainCommit=current_main)
-+    github=m.current_github(github_policy) # controller only; existing gh/credential, no copy
-+    prefix=('REMOTE_POLICY='+repr(p)+'\nREMOTE_GITHUB='+repr(github)+
-+            '\nimport sys\nsys.argv=["reviewed-remote-probe","--probe"]\n').encode()
-+    source=prefix+raw
-+    need(len(source)<=1048576,'bounded pinned probe carrier')
-+    argv=['/usr/sbin/runuser','-u','connor','--','/usr/bin/ssh','-F',str(SSH),'-o','BatchMode=yes',
-+          '-o','ConnectTimeout=8','opemos-ubuntu-host',
-+          'sudo -n /usr/bin/python3 -I -B -']
-+    proc=subprocess.run(argv,input=source,stdout=subprocess.PIPE,
-+                        stderr=subprocess.PIPE,timeout=25,check=False)
-+    need(proc.returncode==0 and len(proc.stdout)<=1048576 and
-+         proc.stderr==b'' and proc.stdout.count(b'\n')==1 and
-+         proc.stdout.endswith(b'\n'),'authenticated current OMEN probe numeric/EOF; stderrSHA='+sha(proc.stderr))
-+    v=trigger.strict(proc.stdout)
-+    trigger.validate_probe(v,github_policy,int(time.time()))
++    github=current_media_github(github_policy,m.gh_json,m.runner21_assigned_jobs) # controller only; existing gh/credential, no copy
++    v=observe_machine(p,github,raw,github_policy,trigger.strict)
 +    # A second current API read closes the controller-to-OMEN observation.
-+    after=m.current_github(github_policy)
++    after=current_media_github(github_policy,m.gh_json,m.runner21_assigned_jobs)
 +    if after!=github:
 +        # The local probe has no effect, but readiness may legitimately cross a
 +        # heartbeat boundary while the bounded OMEN observation is in flight.
 +        # Re-observe rather than treating that expected transition as permanent
 +        # ambiguity. All non-heartbeat control and ownership facts must remain
-+        # identical; a source, runner, or Actions transition still refuses.
-+        stable=('networkReachable','protectedMain','mainCommit','runnerOnline',
-+                'runnerBusy','actionsInProgress','actionsQueued')
-+        need(all(after[k]==github[k] for k in stable),
++        # identical; a source, runner, or assigned-build transition refuses.
++        # Repository-wide queued work is diagnostic and cannot own OMEN resources.
++        need(media_control_stable(github,after),
 +             'GitHub non-heartbeat control changed during OMEN probe')
 +    need(sha(held(SSH,65536,1000,0o600))==p['sshConfigSHA256'] and
 +         sha(held(ROOT/'normal_probe.py',1048576,0,0o444))==p['normalProbeSHA256'],
@@ -161,6 +150,177 @@
 +    if not x:raise RuntimeError(msg)
 +
 +def sha(x):return hashlib.sha256(x).hexdigest()
++
++def current_media_github(p, read_json, assigned_jobs):
++    try:
++        branch=read_json('repos/CorniiDog/OPEMOS.EXE/branches/main')
++        runners=read_json('repos/CorniiDog/OPEMOS.EXE/actions/runners?per_page=100')
++        active=read_json('repos/CorniiDog/OPEMOS.EXE/actions/runs?status=in_progress&per_page=100')
++    except (OSError,subprocess.TimeoutExpired):
++        return {'networkReachable':False,'protectedMain':False,'mainCommit':None,
++                'runnerOnline':False,'runnerBusy':False,'actionsInProgress':None,
++                'actionsQueued':None,'heartbeatCurrent':False,
++                'heartbeatNonce':None}
++    need(branch.get('protected') is True and
++         branch.get('commit',{}).get('sha')==p['mainCommit'],
++         'CURRENT_SOURCE_DRIFT protected Main')
++    matches=[r for r in runners.get('runners',[]) if r.get('id')==21]
++    need(len(matches)==1 and matches[0].get('name')=='opemos-omen-robot' and
++         'opemos-omen-robot' in {x.get('name') for x in matches[0].get('labels',[])},
++         'exact registered GitHub runner21')
++    runner=matches[0]
++    need(runner.get('status') in ('online','offline') and type(runner.get('busy')) is bool,
++         'known current runner status and assigned-work state')
++    # Repository-wide queue telemetry owns no OMEN process or resource.
++    # Keep truthful unknown data if this optional endpoint is unavailable.
++    try:
++        queued=read_json('repos/CorniiDog/OPEMOS.EXE/actions/runs?status=queued&per_page=1')
++        count=queued.get('total_count')
++        if type(count) is not int or count<0:count=None
++    except (OSError,subprocess.TimeoutExpired,RuntimeError,KeyError,TypeError,ValueError,AttributeError):count=None
++    owned=assigned_jobs(active,read_json)
++    try:
++        heartbeat=read_json('repos/CorniiDog/OPEMOS.EXE/actions/variables/OPEMOS_OMEN_ROBOT_RUNNER_STATE')
++        h=json.loads(heartbeat['value'])
++        if type(h) is not dict or type(h.get('checked_at')) not in (int,float) or type(h.get('expires_at')) not in (int,float):h={}
++    except (OSError,subprocess.TimeoutExpired,RuntimeError,KeyError,TypeError,ValueError):h={}
++    current=(h.get('source_commit')==p['mainCommit'] and
++             h.get('queue_source_sha256')==p['queueSourceSHA256'] and
++             h.get('runner_id')==21 and
++             h.get('ready') is True and h.get('checked_at',0)>=time.time()-180 and
++             h.get('expires_at',0)>time.time())
++    nonce=h.get('recovery_nonce')
++    if type(nonce) is not str or not re.fullmatch(r'[0-9a-f]{32}',nonce):nonce=None
++    return {'networkReachable':True,'protectedMain':True,
++            'mainCommit':p['mainCommit'],'runnerOnline':runner.get('status')=='online',
++            'runnerBusy':runner.get('busy') is True,
++            'actionsInProgress':owned,
++            'actionsQueued':count,'heartbeatCurrent':current,
++            'heartbeatNonce':nonce}
++
++
++def validate_media_probe(v, policy, now):
++    keys={'kind','atUnix','boot','protectedMain','mainCommit','runnerId',
++          'registeredRunnerId','runnerManifestSHA256','queueSourceSHA256',
++          'queueLoggerSHA256','jobStartedSHA256','jobGuardSHA256',
++          'privatePeerSHA256','normalInstallerSHA256','normalQueueEntrySHA256',
++          'heartbeatProducerSHA256','heartbeatCurrent',
++          'heartbeatNonce','controlBrokerSHA256',
++          'networkReachable','runnerOnline','runnerBusy','actionsInProgress',
++          'actionsQueued',
++          'sourceOwnerBusy','queueKnown','workerLockFree','unknownReservations',
++          'otherActiveJobs','guestActive','gpuLeaseActive','hostGraphics',
++          'control','effects'}
++    need(type(v) is dict and set(v)==keys and v['kind']=='ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1'
++         and v['effects']==[] and
++         v['runnerId']==v['registeredRunnerId']==21 and
++         type(v['boot']) is str and re.fullmatch(r'[0-9a-f-]{36}',v['boot']) and
++         type(v['atUnix']) in (int,float) and
++         0 <= int(now)-int(v['atUnix']) <= 15,
++         'fresh protected Main/runner/boot probe')
++    for key in ('runnerManifestSHA256','queueSourceSHA256','queueLoggerSHA256',
++                'jobStartedSHA256','jobGuardSHA256','privatePeerSHA256',
++                'normalInstallerSHA256','normalQueueEntrySHA256',
++                'heartbeatProducerSHA256'):
++        need(v[key]==policy[key], 'current pinned source drift: '+key)
++    need(v['controlBrokerSHA256'] is None or v['controlBrokerSHA256'] in
++         (policy['controlBrokerSHA256'],policy['priorControlBrokerSHA256']),
++         'current broker outside reviewed old/new transition')
++    need(v['hostGraphics']=='INTEL_HOST_NVIDIA_GUEST_ONLY' and
++         type(v['unknownReservations']) is list and
++         type(v['otherActiveJobs']) is list and
++         type(v['control']) is dict,
++         'exact Intel host and current queue/Actions schema')
++    for key in ('networkReachable','runnerOnline','runnerBusy','heartbeatCurrent',
++                'sourceOwnerBusy',
++                'queueKnown','workerLockFree','guestActive','gpuLeaseActive'):
++        need(type(v[key]) is bool, 'unknown current guard: '+key)
++    need(v['heartbeatNonce'] is None or
++         type(v['heartbeatNonce']) is str and
++         re.fullmatch(r'[0-9a-f]{32}',v['heartbeatNonce']),
++         'bounded current heartbeat nonce')
++    if v['networkReachable']:
++        need(v['protectedMain'] is True and v['mainCommit']==policy['mainCommit'] and
++             type(v['actionsInProgress']) is int and v['actionsInProgress']>=0,
++             'fresh protected Main/Actions proof')
++    else:
++        need(v['protectedMain'] is False and v['mainCommit'] is None and
++             v['actionsInProgress'] is None and v['actionsQueued'] is None and
++             v['runnerOnline'] is False and v['heartbeatCurrent'] is False,
++             'offline state never cached as current GitHub proof')
++        need(v['heartbeatNonce'] is None,'offline heartbeat nonce cannot be cached')
++    c=v['control']
++    need(set(c)=={'jobId','state','terminalLifecycle','reservationRetained',
++                 'sourceCommit','queueSourceSHA256','leaseExpiresUnix',
++                 'listenerAlive','controllerAlive','workerAlive','ownUnitBound'},
++         'complete current own control state')
++    need(c['state'] in ('absent','pending','running','passed','failed',
++                       'timed_out','blocked','unknown','output_limit','terminal_cleanup')
++         and (c['jobId'] is None or re.fullmatch(
++             r'root-github-robot-control-[0-9a-f]{32}',c['jobId'])) and
++         (c['sourceCommit'] is None or re.fullmatch(r'[0-9a-f]{40}',c['sourceCommit'])) and
++         (c['queueSourceSHA256'] is None or
++          re.fullmatch(r'[0-9a-f]{64}',c['queueSourceSHA256'])),
++         'authentic typed own control row')
++    for key in ('reservationRetained','listenerAlive','controllerAlive',
++                'workerAlive','ownUnitBound'):
++        need(type(c[key]) is bool, 'unknown own-control guard: '+key)
++    need(c['leaseExpiresUnix'] is None or
++         type(c['leaseExpiresUnix']) in (int,float), 'lease expiry type')
++    if c['state']=='absent':
++        need(v['controlBrokerSHA256'] is None,'absent control has no broker')
++    elif v['controlBrokerSHA256']==policy['priorControlBrokerSHA256']:
++        need(c['jobId']=='root-github-robot-control-'+policy['currentReleaseTx'] and
++             c['state'] in ('running','pending','terminal_cleanup','passed','failed',
++                            'timed_out','blocked','unknown','output_limit'),
++             'old broker only with exact historical predecessor')
++    else:
++        need(v['controlBrokerSHA256']==policy['controlBrokerSHA256'],
++             'new current control broker source not authenticated')
++        need(c['jobId'] is None or c['jobId']!=
++             'root-github-robot-control-'+policy['currentReleaseTx'] or
++             c['terminalLifecycle']=='CLOSED',
++             'new broker cannot be represented as still-live old control')
++    if c['state']=='absent':
++        need(c['jobId'] is None and c['terminalLifecycle'] is None and
++             not c['reservationRetained'] and not c['listenerAlive'] and
++             not c['controllerAlive'] and not c['workerAlive'] and
++             not c['ownUnitBound'], 'truly absent current control')
++    else:
++        need(c['jobId'] is not None and c['sourceCommit'] is not None and
++             c['queueSourceSHA256'] is not None,
++             'exact bound or historical control row')
++    if c['state'] in ('passed','failed','timed_out','blocked','unknown','output_limit'):
++        need(c['terminalLifecycle']=='CLOSED' and not c['reservationRetained'],
++             'canonical terminal closure, never old lease replay')
++    elif c['state']!='absent':
++        need(c['sourceCommit']==policy['mainCommit'] and
++             c['queueSourceSHA256']==policy['queueSourceSHA256'],
++             'live control must bind current source; historical closed source retained')
++    return v
++
++
++def media_control_stable(before,after):
++ keys=('networkReachable','protectedMain','mainCommit','runnerOnline','runnerBusy','actionsInProgress')
++ return all(before[k]==after[k]for k in keys)
++
++
++def observe_machine(p,github,raw,github_policy,strict):
++    prefix=('REMOTE_POLICY='+repr(p)+'\nREMOTE_GITHUB='+repr(github)+
++            '\nimport sys\nsys.argv=["reviewed-remote-probe","--probe"]\n').encode()
++    source=prefix+raw
++    need(len(source)<=1048576,'bounded pinned probe carrier')
++    argv=['/usr/sbin/runuser','-u','connor','--','/usr/bin/ssh','-F',str(SSH),'-o','BatchMode=yes',
++          '-o','ConnectTimeout=8','opemos-ubuntu-host',
++          'sudo -n /usr/bin/python3 -I -B -']
++    proc=subprocess.run(argv,input=source,stdout=subprocess.PIPE,
++                        stderr=subprocess.PIPE,timeout=25,check=False)
++    need(proc.returncode==0 and len(proc.stdout)<=1048576 and
++         proc.stderr==b'' and proc.stdout.count(b'\n')==1 and
++         proc.stdout.endswith(b'\n'),'authenticated current OMEN probe numeric/EOF; stderrSHA='+sha(proc.stderr))
++    v=strict(proc.stdout)
++    validate_media_probe(v,github_policy,int(time.time()))
++    return v
 +
 --- a/current-queue-test_queue.py
 +++ b/current-queue-test_queue.py
@@ -954,3 +1114,59 @@
 @@ -26 +26 @@
 - cp=load(W.held(ROOT/'controller_probe.py',plan['installed']['controller_probe.py']['sha256'])[0],'actual_machine_probe',ROOT/'controller_probe.py')
 + cp=load(W.held(HERE/'controller_probe_custody.py',m['localInputs']['controller_probe_custody.py']['sha256'])[0],'actual_machine_probe',HERE/'controller_probe_custody.py')
+@@ -28 +28,3 @@
+- out=session/'window';out.mkdir(mode=0o700);W.put(out,'exact-review-consumed.json',dict(receipt=rp,codeManifestSHA256=digest,windowPlan=planpin,genericRuntimeGrantInferred=False))
++ out=session/'window';out.mkdir(mode=0o700);diagnosticErrors=[]
++ def report(name,value):return W.put_diagnostic(out,name,value,diagnosticErrors)
++ report('exact-review-consumed.json',dict(receipt=rp,codeManifestSHA256=digest,windowPlan=planpin,genericRuntimeGrantInferred=False))
+@@ -37,4 +39 @@
+- def probe():
+-  v=cp.observe();c=v['control'];terminal=c['state']=='absent'or(c['terminalLifecycle']=='CLOSED'and c['reservationRetained']is False)
+-  need(terminal and v['queueKnown']and v['workerLockFree']and not v['runnerOnline']and not v['runnerBusy']and v['actionsInProgress']==v['actionsQueued']==0 and not v['sourceOwnerBusy']and not v['otherActiveJobs']and not v['unknownReservations']and not v['guestActive']and not v['gpuLeaseActive']and v['hostGraphics']=='INTEL_HOST_NVIDIA_GUEST_ONLY','actual canonical CLOSED/resources/source/idle-build/Intel guards; no AI thread predicate')
+-  return v
++ def probe():return media_admission(cp.observe())
+@@ -47 +46 @@
+-  idle_service();before=probe();W.put(out,'actual-before.json',before)
++  idle_service();before=probe();report('actual-before.json',before)
+@@ -50 +49 @@
+-  state,statepin=W.held(ROOT/'state.json');W.put(out,'recovery-state-preserved-before.json',dict(pin=statepin,value=json.loads(state),clearedOrReplayed=False))
++  state,statepin=W.held(ROOT/'state.json');report('recovery-state-preserved-before.json',dict(pin=statepin,value=json.loads(state),clearedOrReplayed=False))
+@@ -54 +53 @@
+-  paused=True;W.native(owned,out,'pause-timer',['/usr/bin/systemctl','stop',TIMER]);need(W.manager(TIMER)['ActiveState']=='inactive','actual renewal timer paused');idle_service();W.put(out,'actual-at-media-entry.json',probe())
++  paused=True;W.native(owned,out,'pause-timer',['/usr/bin/systemctl','stop',TIMER]);need(W.manager(TIMER)['ActiveState']=='inactive','actual renewal timer paused');idle_service();report('actual-at-media-entry.json',probe())
+@@ -57 +56 @@
+-  W.put(out,'media-entry-intent.json',dict(program=str(session/'run.py'),freshFiniteDecisionRequired=True,replay=False,AIServiceRequired=False))
++  report('media-entry-intent.json',dict(program=str(session/'run.py'),freshFiniteDecisionRequired=True,replay=False,AIServiceRequired=False))
+@@ -59 +58 @@
+- except BaseException as error:first=dict(type=type(error).__name__,reason=str(error));raise
++ except BaseException as error:first=dict(type=type(error).__name__,reason=str(error),failedPredicates=getattr(error,'failedPredicates',None),observation=getattr(error,'admissionObservation',None),nativeEvidence=getattr(error,'nativeEvidence',None));raise
+@@ -67 +66,13 @@
+-  os.close(mutex);W.put(out,'final.json',dict(first=first,cleanup=cleanup,timer=W.manager(TIMER),guestBootClaimed=False));need(not cleanup,'restoration not proved; finite backstop retained')
++  os.close(mutex)
++  try:timerAfter=W.manager(TIMER)
++  except Exception as diagnostic:timerAfter={'observationUnavailable':type(diagnostic).__name__};diagnosticErrors.append({'stage':'final-timer-summary','reason':str(diagnostic)})
++  report('final.json',dict(first=first,cleanup=cleanup,timer=timerAfter,diagnosticErrors=diagnosticErrors,guestBootClaimed=False));need(not cleanup,'restoration not proved; finite backstop retained; original first='+str(first))
++def media_admission(v):
++ c=v['control'];terminal=c['state']=='absent'or(c['terminalLifecycle']=='CLOSED'and c['reservationRetained']is False)
++ checks={'canonicalClosed':terminal,'queueKnown':v['queueKnown']is True,'workerLockFree':v['workerLockFree']is True,'runnerOffline':v['runnerOnline']is False,'runnerIdle':v['runnerBusy']is False,'noRunner21AssignedBuild':type(v['actionsInProgress'])is int and v['actionsInProgress']==0,'sourceOwnerFree':v['sourceOwnerBusy']is False,'noOtherActiveJobs':v['otherActiveJobs']==[],'noUnknownReservations':v['unknownReservations']==[],'noGuestActive':v['guestActive']is False,'noGPULease':v['gpuLeaseActive']is False,'hostIntel':v['hostGraphics']=='INTEL_HOST_NVIDIA_GUEST_ONLY'}
++ failed=[name for name,ok in checks.items()if not ok]
++ if failed:
++  detail={'failedPredicates':failed,'observation':v}
++  error=RuntimeError('actual machine media admission refused: '+json.dumps(detail,sort_keys=True,separators=(',',':')));error.failedPredicates=failed;error.admissionObservation=v;raise error
++ return v
++
+--- a/window_common.py
++++ b/window_common.py
+@@ -34,2 +34,4 @@
+- x=owned.run_owned_command(argv,body,seconds,[root/(label+'-stdout.raw'),root/(label+'-stderr.raw')],stream_limit=cap);put(root,label+'-native.json',x)
+- need(x['numericExit']==0 and x['lifecycleClosed']and(allow_stderr or(root/(label+'-stderr.raw')).stat().st_size==0),'actual '+label+' numeric/EOF/reap/FD refusal')
++ x=owned.run_owned_command(argv,body,seconds,[root/(label+'-stdout.raw'),root/(label+'-stderr.raw')],stream_limit=cap);diagnostics=[];put_diagnostic(root,label+'-native.json',x,diagnostics)
++ if diagnostics:x['optionalReceiptErrors']=diagnostics
++ if not(x['numericExit']==0 and x['lifecycleClosed']and(allow_stderr or(root/(label+'-stderr.raw')).stat().st_size==0)):
++  error=RuntimeError('actual '+label+' numeric/EOF/reap/FD refusal; numeric='+str(x['numericExit']));error.nativeEvidence=x;raise error
+@@ -54,0 +57,5 @@
++def put_diagnostic(root,name,value,errors):
++ try:return put(root,name,value)
++ except Exception as error:
++  errors.append({'stage':name,'type':type(error).__name__,'reason':str(error),'diagnosticOnly':True});return None
++

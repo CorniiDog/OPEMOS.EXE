@@ -29,3 +29,16 @@ closure, held inventory, file hashes and current ownership checks still apply.
 The assignment remains bound to its original RUNNING row and export digest;
 only the normal terminal fields may differ in the CLOSED row. Its explicit
 non-authority flags and unchanged invocation binding are independently checked.
+
+Repository-wide queued Actions counts are optional telemetry, not ownership of
+the OMEN runner or a prerequisite for manual VM admission. The manual producer
+retains unknown telemetry as unknown; its validator and window use actual
+assigned Runner21 work, OS processes, kernel locks and canonical reservations.
+Source, runner identity and assigned-work changes still refuse admission.
+
+Window summaries and duplicate native JSON receipts are optional diagnostics.
+Their absence or write failure cannot prevent startup, mask the original native
+failure or skip timer restoration. Required authenticated inputs, one-use
+attempt ownership, raw process transport, numeric exits, EOF/reap/FD closure and
+verified cleanup remain authoritative. A genuine admission refusal retains its
+failed predicates and complete observation.
