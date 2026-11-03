@@ -42,3 +42,9 @@ failure or skip timer restoration. Required authenticated inputs, one-use
 attempt ownership, raw process transport, numeric exits, EOF/reap/FD closure and
 verified cleanup remain authoritative. A genuine admission refusal retains its
 failed predicates and complete observation.
+
+Preflight grant binding compares the complete canonical bytes emitted by the
+normal JSON publisher, then consumes that held wire value. Native Python tuple
+containers and their JSON list representation do not carry different authority.
+The full pin/hash/ownership, phase, source, worker, disk and finite-clock checks
+remain mandatory; no proof field is omitted or synthesized.
