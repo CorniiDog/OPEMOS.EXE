@@ -25,7 +25,7 @@
 + if 'assignment.json'in c['runtime']['pins']:
 +  raw=base64.b64decode(c['canonicalAssignmentRawBase64'],validate=True);ref=c['runtime']['pins']['assignment.json'];a=json.loads(raw);original=c['submittedRow']
 +  need(len(raw)==ref['bytes']and hashlib.sha256(raw).hexdigest()==ref['sha256']and L.canon(a)==raw,'complete immutable canonical assignment data')
-+  need(a['kind']=='ROOT_CANONICAL_QUEUE_LIBVIRT_ASSIGNMENT_R4'and a['runtimeAuthorized']is False and a['queueExport']['RootAuthority']is False and a['queueExport']['closureOrLeaseReleaseClaimed']is False and a['request']==a['queueExport']['request']==request,'canonical assignment data is not a hardware grant or terminal authority')
++  need(a['kind']=='ROOT_CANONICAL_QUEUE_LIBVIRT_ASSIGNMENT_R4'and a['runtimeAuthorized']is False and a['queueExport']['RootAuthority']is False and a['queueExport']['closureOrLeaseReleaseClaimed']is False and a['request']==a['queueExport']['request']==request and a['queueExport']['bootID']==p['bootID'],'canonical assignment data is not a hardware grant or terminal authority')
 +  need(original['state']=='running'and original['finished']is original['result']is None and {k:v for k,v in original.items()if k not in('state','finished','result')}=={k:v for k,v in row.items()if k not in('state','finished','result')},'original submitted row preserved through only normal terminal transition')
 +  need(a['proof']['ownRowSHA256']==hashlib.sha256(L.canon(original)).hexdigest()and a['proof']['ownBindingSHA256']==hashlib.sha256(L.canon(bound)).hexdigest(),'assignment authenticates exact original RUNNING row and unchanged invocation binding')
 @@ -80 +87 @@
