@@ -1,0 +1,945 @@
+--- a/closed_current_publication.py
++++ b/closed_current_publication.py
+@@ -22,8 +22,9 @@
+- need(c['kind']=='R109_AUTHENTICATED_R107_PUBLIC_INPUT_CUSTODY_AFTER_R108_NORMAL_CLOSED'and c['VM']is c['activated']is False and c['noOriginalMutation']is True,'exact historical input contract, no runtime flag promotion')
+- raw=base64.b64decode(c['coreDispositionRaw'],validate=True);need(hashlib.sha256(raw).hexdigest()==c['coreDispositionSHA256']==CORE_SHA,'authentic whole Core R108 actual closure disposition DATA')
+- core=json.loads(raw);row=c['row'];binding=c['binding'];request=c['request'];life=json.loads(row['result'])['terminalLifecycle']
+- need(core['kind']=='CORE_R108_ACTUAL_NORMAL_CLOSURE_DISPOSITION'and core['disposition']=='CONSUMED_ACTUAL_FAILED_CLOSED_RESERVATION_RELEASED'and core['jobId']==row['id']==request['jobId']and core['finished']==row['finished']==1793706334.2174926,'actual normal terminal writer/receipt/finished identity')
+- need(row['state']==core['state']=='failed'and row['finished']is not None and life['phase']==core['phase']=='CLOSED'and life['reservationRetained']is core['reservationRetained']is False,'genuine current canonical CLOSED/released, never infer from a flag')
+- need(request['leaseNonce']==L.NONCE,'same guest namespace nonce')
+- need(hashlib.sha256(binding['value'].encode()).hexdigest()==core['immutableOriginalBindingSHA256']and binding['job_id']==row['id'],'exact original whole immutable queue binding')
+- b=json.loads(binding['value']);need(b['job_id']==row['id']and b['unit']==row['unit']==request['unit']and b['invocation']==request['invocation']==core['invocation']and b['specSHA256']==request['specSHA256']==hashlib.sha256(row['spec'].encode()).hexdigest(),'same normal row/spec/invocation/request, no historical ID substitution')
++ # Historical Core reports remain preserved DATA. Closure authority is the
++ # actual normal queue result/binding, re-read in full below, plus the separate
++ # current OS/no-holder/lease guards. Report kind/layout/path is not a gate.
++ row=c['row'];binding=c['binding'];request=c['request'];result=json.loads(row['result']);life=result['terminalLifecycle'];bound=json.loads(binding['value'])
++ need(row['state']=='failed'and type(row['started'])in(int,float)and type(row['finished'])in(int,float)and row['finished']>=row['started']and life['phase']=='CLOSED'and life['intendedState']=='failed'and life['reservationRetained']is False,'actual finished normal canonical failed/CLOSED/released epoch')
++ need(row['id']==request['jobId']==binding['job_id']==bound['job_id']and request['leaseNonce']==L.NONCE and bound['unit']==row['unit']==request['unit']and bound['invocation']==request['invocation']==result['finalLedgerInvocation']and bound['specSHA256']==request['specSHA256']==hashlib.sha256(row['spec'].encode()).hexdigest(),'whole actual row/spec/request/immutable binding identity')
++ manager=life['managerAfter'];final=result['finalAfterFsyncCgroupProof'];domain=final['libvirtDomain'];native=final['neverPrepared']
++ need(manager['InvocationID']==bound['invocation']and manager['MainPID']=='0'and manager['ControlGroup']==''and manager['ActiveState']==manager['SubState']=='failed'and final['empty']is True and final['queueService']['empty']is True and final['libvirtPartition']['empty']is True,'normal finalizer actual original invocation/cgroup emptiness')
++ need(domain['phase']=='NOT_PREPARED'and domain['lease']is domain['leader']is None and native['kind']=='FAILED_BEFORE_LIBVIRT_PREPARATION'and native['leaseEverCreated']is native['leaseClosureInvented']is False,'normal complete never-prepared proof; no invented historical lease or QMP closure')
+@@ -34 +35 @@
+- need(p['sourceRoles']['libvirt_peer']['sha256']=='7e1663f8351247b9643b7c14419119449b0bd0722a46b80ae0f8ea34a9f9816a'and p['sourceRoles']['libvirt_access']['sha256']=='ee32a4e84df796d6932062ded9e1049ce5e82cbbf01315d8c74da96b9e03aa9e','preserved original R107 source graph distinct from current implementation')
++ need(p['sourceRoles']['libvirt_peer']['sha256']=='19ee3b8c03b37574d004b79d741239f90c4e0fe9136f0fde55a7d752b9c5c38f'and p['sourceRoles']['libvirt_access']['sha256']=='97d1dbdad2db5428b15674e6792c05832570e1ff9dc4acf5ee97620d605f6c92','preserved original R107 source graph distinct from current implementation')
+@@ -99 +100 @@
+- validate_history(values);need(attempt not in('34117bbb1f4d4418b4eff9c1190233f2','96af5ac9637c40309055725bb9df0c17')and len(attempt)==32 and all(c in'0123456789abcdef'for c in attempt),'new finite attempt, no old runtime/preparer replay')
++ validate_history(values);need(attempt not in('e842cfa1daa5412aba5d454cca9ab58f','34117bbb1f4d4418b4eff9c1190233f2','96af5ac9637c40309055725bb9df0c17')and len(attempt)==32 and all(c in'0123456789abcdef'for c in attempt),'new finite attempt, no old runtime/preparer replay')
+@@ -108 +109 @@
+- need(attempt not in('34117bbb1f4d4418b4eff9c1190233f2','96af5ac9637c40309055725bb9df0c17'),'new execution scope only');return plan
++ need(attempt not in('e842cfa1daa5412aba5d454cca9ab58f','34117bbb1f4d4418b4eff9c1190233f2','96af5ac9637c40309055725bb9df0c17'),'new execution scope only');return plan
+--- a/controller_probe_custody.py
++++ b/controller_probe_custody.py
+@@ -9,44 +9,78 @@
+-def observe(module,out):
+- out=Path(out);real=module.subprocess;events=[];secondary=[];primary=None;counter=0
+- def persist(name,raw):
+-  fd=os.open(out/name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o400);error=None
+-  try:
+-   os.fchmod(fd,0o400);v=memoryview(raw)
+-   while v:
+-    n=os.write(fd,v)
+-    if n<=0:raise OSError('capture write progress')
+-    v=v[n:]
+-   os.fsync(fd)
+-  except BaseException as e:error=e;raise
+-  finally:
+-   try:os.close(fd)
+-   except BaseException as e:
+-    if error is None:raise
+-    secondary.append(dict(stage='capture-close',type=type(e).__name__,reason=str(e),custody='UNKNOWN'))
+- def record(name,raw):
+-  try:persist(name,raw)
+-  except BaseException as e:secondary.append(dict(stage=name,type=type(e).__name__,reason=str(e),custody='UNKNOWN'))
+- class Proxy:
+-  def __getattr__(self,name):return getattr(real,name)
+-  def run(self,*args,**kwargs):
+-   nonlocal counter
+-   x=real.run(*args,**kwargs);counter+=1
+-   item=dict(ordinal=counter,numeric=x.returncode,argv=x.args,diagnosticOnly=True,predicatesUnchanged=True)
+-   for name,raw in (('stdout',x.stdout),('stderr',x.stderr)):
+-    if type(raw)is not bytes:raise RuntimeError('actual byte-oriented existing producer transport required')
+-    item[name]=dict(observedBytes=len(raw),sha256=hashlib.sha256(raw).hexdigest(),complete=len(raw)<=CAP,tailUNKNOWN=len(raw)>CAP)
+-    record('probe-native-'+str(counter)+'-'+name+'.raw',raw[:CAP])
+-   events.append(item);return x
+- module.subprocess=Proxy()
+- try:
+-  result=module.observe()
+- except BaseException as e:primary=e;raise
+- finally:
+-  module.subprocess=real
+-  value=dict(kind='ROOT_CURRENT_CONTROLLER_PROBE_FIRST_SECONDARY_CUSTODY',events=events,first=None if primary is None else dict(type=type(primary).__name__,reason=str(primary)),secondary=secondary,rawByteCaptureOnly=True)
+-  record('probe-first-secondary.json',(json.dumps(value,sort_keys=True,separators=(',',':'))+'\n').encode())
+-  if primary is not None:
+-   primary.controllerProbeCustody=value
+-   if secondary:primary.add_note('Secondary probe capture custody UNKNOWN: '+json.dumps(secondary,sort_keys=True))
+-  elif secondary:raise RuntimeError('current controller probe capture custody UNKNOWN: '+json.dumps(secondary,sort_keys=True))
+- return result
++def observe():
++    # Main changed by the user-authorized protected squash merge. The installed
++    # release/lease policy remains historical data and is never relabeled.
++    current_main='8532ebff498341b8df3d3ad07a8484d4e1e485a5'
++    from_source=held(ROOT/'runner21_recovery.py',1048576,0,0o444)
++    trigger=module(from_source,'runner21_recovery')
++    p=trigger.validate_policy(trigger.strict(held(ROOT/'policy.json',65536,0,0o400)),int(time.time()))
++    need(sha(from_source)==p['recoverySourceSHA256'],'current controller wrapper source')
++    raw=held(ROOT/'normal_probe.py',1048576,0,0o444)
++    need(sha(raw)==p['normalProbeSHA256'],'current remote probe source')
++    heartbeat=held(ROOT/'normal_heartbeat.py',1048576,0,0o444)
++    need(sha(heartbeat)==p['heartbeatProducerSHA256'],'current heartbeat producer source')
++    config=held(SSH,65536,1000,0o600)
++    need(sha(config)==p['sshConfigSHA256'],'current pinned existing SSH route')
++    m=module(raw,'current_github_and_remote_probe_source')
++    github_policy=dict(p,mainCommit=current_main)
++    github=m.current_github(github_policy) # controller only; existing gh/credential, no copy
++    prefix=('REMOTE_POLICY='+repr(p)+'\nREMOTE_GITHUB='+repr(github)+
++            '\nimport sys\nsys.argv=["reviewed-remote-probe","--probe"]\n').encode()
++    source=prefix+raw
++    need(len(source)<=1048576,'bounded pinned probe carrier')
++    argv=['/usr/sbin/runuser','-u','connor','--','/usr/bin/ssh','-F',str(SSH),'-o','BatchMode=yes',
++          '-o','ConnectTimeout=8','opemos-ubuntu-host',
++          'sudo -n /usr/bin/python3 -I -B -']
++    proc=subprocess.run(argv,input=source,stdout=subprocess.PIPE,
++                        stderr=subprocess.PIPE,timeout=25,check=False)
++    need(proc.returncode==0 and len(proc.stdout)<=1048576 and
++         proc.stderr==b'' and proc.stdout.count(b'\n')==1 and
++         proc.stdout.endswith(b'\n'),'authenticated current OMEN probe numeric/EOF; stderrSHA='+sha(proc.stderr))
++    v=trigger.strict(proc.stdout)
++    trigger.validate_probe(v,github_policy,int(time.time()))
++    # A second current API read closes the controller-to-OMEN observation.
++    after=m.current_github(github_policy)
++    if after!=github:
++        # The local probe has no effect, but readiness may legitimately cross a
++        # heartbeat boundary while the bounded OMEN observation is in flight.
++        # Re-observe rather than treating that expected transition as permanent
++        # ambiguity. All non-heartbeat control and ownership facts must remain
++        # identical; a source, runner, or Actions transition still refuses.
++        stable=('networkReachable','protectedMain','mainCommit','runnerOnline',
++                'runnerBusy','actionsInProgress','actionsQueued')
++        need(all(after[k]==github[k] for k in stable),
++             'GitHub non-heartbeat control changed during OMEN probe')
++    need(sha(held(SSH,65536,1000,0o600))==p['sshConfigSHA256'] and
++         sha(held(ROOT/'normal_probe.py',1048576,0,0o444))==p['normalProbeSHA256'],
++         'controller source/SSH changed after remote observation')
++    return v
++
++def enc(x):return (json.dumps(x,sort_keys=True,separators=(',',':'),allow_nan=False)+'\n').encode()
++
++def full9(s):return tuple(getattr(s,k) for k in ('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns'))
++
++def held(path,cap,uid,mode):
++    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
++    try:
++        a=os.fstat(fd)
++        need(stat.S_ISREG(a.st_mode) and a.st_uid==uid and a.st_gid==uid and
++             a.st_nlink==1 and stat.S_IMODE(a.st_mode)==mode and 0<a.st_size<=cap,
++             'held controller source '+str(path))
++        raw=bytearray()
++        while b:=os.read(fd,65536):
++            raw.extend(b);need(len(raw)<=cap,'controller held source cap')
++        need(len(raw)==a.st_size and full9(a)==full9(os.fstat(fd))==
++             full9(os.stat(path,follow_symlinks=False)),
++             'controller held source identity/EOF '+str(path))
++        return bytes(raw)
++    finally:os.close(fd)
++
++def module(raw,name):
++    m=types.ModuleType(name);m.__file__=name
++    exec(compile(raw,name,'exec'),m.__dict__)
++    return m
++
++def need(x,msg):
++    if not x:raise RuntimeError(msg)
++
++def sha(x):return hashlib.sha256(x).hexdigest()
++
+--- a/current-queue-test_queue.py
++++ b/current-queue-test_queue.py
+@@ -905,2 +905 @@
+-            require(type(captures)is list and len(captures)<32,'finite full readonly observer capture reserve')
+-            captures.append(dict(request=request,proof=proof,implementation=implementation,adapter=child))
++            capture_observation(captures,dict(request=request,proof=proof,implementation=implementation,adapter=child))
+@@ -1371,22 +1370,5 @@
+-    names=set(os.listdir(parent))
+-    if HISTORY_ARCHIVE_INDEX not in names and HISTORY_ARCHIVE_DATA not in names:return None
+-    require({HISTORY_ARCHIVE_INDEX,HISTORY_ARCHIVE_DATA}<=names,'Incomplete lossless history archive')
+-    raw,index_ident=history_archive_regular(parent,HISTORY_ARCHIVE_INDEX,uid,HISTORY_METADATA_MAX)
+-    index=json.loads(raw)
+-    require((canonical(index)+'\n').encode()==raw and set(index)=={'kind','dataBytes','dataSHA256','dataIdentity','leaves'} and index['kind']==HISTORY_ARCHIVE_KIND and type(index['leaves'])is list and 0<len(index['leaves'])<=HISTORY_ENTRY_MAX,'Closed canonical archive index')
+-    data,data_ident=history_archive_regular(parent,HISTORY_ARCHIVE_DATA,uid,HISTORY_FILE_MAX)
+-    require(len(data)==index['dataBytes'] and hashlib.sha256(data).hexdigest()==index['dataSHA256'] and data_ident==index['dataIdentity'],'Complete archive data identity/bytes/SHA')
+-    leaves={};end=0
+-    for item in index['leaves']:
+-        require(set(item)=={'pin','offset','compressedBytes','compressedSHA256'} and type(item['pin'])is dict and set(item['pin'])=={'name','bytes','sha256','identity'},'Closed archived leaf schema')
+-        pin=item['pin'];name=pin['name'];limit=HISTORY_METADATA_MAX if name.endswith('.epoch.json') else HISTORY_FILE_MAX
+-        require(type(name)is str and re.fullmatch(r'[0-9a-f]{64}\.(row|epoch)\.json',name)is not None and pin['sha256']==name[:64] and type(pin['bytes'])is int and 0<pin['bytes']<=limit and type(pin['identity'])is dict and set(pin['identity'])==set(HISTORY_FIELDS),'Archived original pin shape')
+-        require(type(item['offset'])is int and item['offset']==end and type(item['compressedBytes'])is int and 0<item['compressedBytes']<=HISTORY_FILE_MAX and type(item['compressedSHA256'])is str and re.fullmatch(r'[0-9a-f]{64}',item['compressedSHA256'])is not None,'Bounded contiguous compressed leaf')
+-        end+=item['compressedBytes'];require(end<=len(data) and name not in leaves,'Archive extent/duplicate')
+-        leaves[name]=item
+-    require(end==len(data),'No unindexed archive bytes')
+-    require(history_archive_regular(parent,HISTORY_ARCHIVE_INDEX,uid,HISTORY_METADATA_MAX)==(raw,index_ident),'Archive index changed during read')
+-    return leaves,data
+-
+-def history_archive_read(parent,pin,uid,cap):
+-    archive=history_archive_index(parent,uid)
++    with history_archive_view(parent,uid)as view:return view['archive']
++
++def history_archive_read(parent,pin,uid,cap,archive_view=None):
++    if archive_view is not None:archive_view['archiveLeafReads']+=1
++    archive=history_archive_index(parent,uid)if archive_view is None else history_archive_view_check(archive_view,parent,uid)
+@@ -1532 +1514,2 @@
+-def history_read_leaf(parent,pin,uid,cap):
++def history_read_leaf(parent,pin,uid,cap,archive_view=None):
++    if archive_view is not None:history_archive_view_check(archive_view,parent,uid);archive_view['leafReads']+=1
+@@ -1537 +1520,2 @@
+-    except FileNotFoundError:return history_archive_read(parent,pin,uid,cap)
++    except FileNotFoundError:
++        return history_archive_read(parent,pin,uid,cap,archive_view)
+@@ -1549 +1533 @@
+-def history_inventory(parent,uid):
++def history_inventory(parent,uid,archive_view=None):
+@@ -1561 +1545 @@
+-    archive=history_archive_index(parent,uid) if HISTORY_ARCHIVE_INDEX in names or HISTORY_ARCHIVE_DATA in names else None
++    archive=(history_archive_index(parent,uid)if archive_view is None else history_archive_view_check(archive_view,parent,uid))if HISTORY_ARCHIVE_INDEX in names or HISTORY_ARCHIVE_DATA in names else None
+@@ -1569 +1553 @@
+-def history_publish(parent,raw,suffix,uid):
++def history_publish(parent,raw,suffix,uid,archive_view=None):
+@@ -1574 +1558 @@
+-        archived=history_archive_index(parent,uid)
++        archived=history_archive_index(parent,uid)if archive_view is None else history_archive_view_check(archive_view,parent,uid)
+@@ -1577 +1561 @@
+-            require(history_archive_read(parent,pin,uid,limit)==raw,'Archived content differs; no adoption')
++            require(history_archive_read(parent,pin,uid,limit,archive_view)==raw,'Archived content differs; no adoption')
+@@ -1586 +1570 @@
+-        require(history_read_leaf(parent,pin,uid,limit)==raw,'Existing content object differs; no adoption')
++        require(history_read_leaf(parent,pin,uid,limit,archive_view)==raw,'Existing content object differs; no adoption')
+@@ -1599 +1583 @@
+-    require(history_read_leaf(parent,pin,uid,limit)==raw,'History readback differs')
++    require(history_read_leaf(parent,pin,uid,limit,archive_view)==raw,'History readback differs')
+@@ -2116 +2100 @@
+-                    error.evidence={'kind':'SECOND_RUNTIME_PUBLICATION_TRANSITION_REFUSED','first':first,'second':error.evidence,'reservationRetained':True};raise
++                    raise pool_observation_unavailable(error.evidence['after']['request'],error.evidence['recordedReservations'],{'kind':'SECOND_RUNTIME_PUBLICATION_TRANSITION_REFUSED','first':first,'second':error.evidence},True) from error
+@@ -2118 +2102 @@
+-                if time.monotonic()>=deadline:raise
++                if time.monotonic()>=deadline:raise pool_observation_unavailable(first['after']['request'],first['recordedReservations'],{'kind':'ORIGINAL_POOL_DEADLINE_DURING_PUBLICATION_TRANSITION','first':first},True) from error
+@@ -2119,0 +2104,11 @@
++
++    def pool_libvirt_observation(self,request,deadline,reservations,observer=None):
++        observer=observe_queue_libvirt if observer is None else observer
++        try:return observer(request,deadline,self.observer_captures,self.terminal_implementation_pin)
++        except Exception as error:
++            child=getattr(error,'adapterEvidence',None)
++            # A source-open/identity failure or an unknown child is not an
++            # honestly completed readonly observation. Preserve its failure.
++            if not(type(child)is dict and child.get('EOF')is True and child.get('reaped')is True):raise
++            failure={'type':type(error).__name__,'reason':str(error),'evidence':getattr(error,'evidence',None),'readonlyObserverFailure':getattr(error,'readonlyObserverFailure',None)}
++            raise pool_observation_unavailable(request,reservations,failure,True) from error
+@@ -2128 +2123 @@
+-        libvirt=[];observed_libvirt=[];self._libvirt_requests={};self._libvirt_rows={}
++        libvirt=[];observed_libvirt=[];requests=[];self._libvirt_requests={};self._libvirt_rows={}
+@@ -2145,2 +2140 @@
+-                    observation=observe_queue_libvirt(request,deadline,self.observer_captures,self.terminal_implementation_pin);observed_libvirt.append(observation)
+-                    if observation["phase"]!="NOT_PREPARED":libvirt.append(observation)
++                    requests.append(request)
+@@ -2147,0 +2142,3 @@
++        for request in requests:
++            observation=self.pool_libvirt_observation(request,deadline,reservations);observed_libvirt.append(observation)
++            if observation["phase"]!="NOT_PREPARED":libvirt.append(observation)
+@@ -2156,5 +2153,2 @@
+-            again=observe_queue_libvirt(observed["request"],deadline,self.observer_captures,self.terminal_implementation_pin)
+-            if again!=observed and runtime_publisher_transition(observed,again):
+-                error=RuntimePublisherTransition('authenticated runtime publication crossed full pool cut')
+-                error.evidence={'kind':'AUTHENTICATED_RUNTIME_PUBLICATION_TRANSITION','before':observed,'after':again,'deadlineMonotonic':deadline,'operationOrReleaseAuthorized':False};raise error
+-            require(again==observed,"Current exact libvirt mapping/lease changed; held")
++            again=self.pool_libvirt_observation(observed["request"],deadline,reservations)
++            verify_libvirt_second_cut(observed,again,reservations,deadline)
+@@ -3005 +2999,2 @@
+-def publish_libvirt_assignment(db,row,bound):
++def publish_libvirt_assignment(db,row,bound,metrics=None):
++    started=time.monotonic();archive_metrics={}
+@@ -3020,2 +3015,2 @@
+-    with history_directory(root,uid,True)as parent:
+-        allocated,count=history_inventory(parent,uid);names=set(os.listdir(parent));archive=history_archive_index(parent,uid);present=names|(set(archive[0]) if archive else set());missing={hashlib.sha256(x).hexdigest()+'.row.json':x for x in objects};extra=sum(((len(x)+4095)//4096)*4096 for n,x in missing.items()if n not in present)
++    with history_directory(root,uid,True)as parent,history_archive_view(parent,uid,archive_metrics)as archive_view:
++        allocated,count=history_inventory(parent,uid,archive_view);names=set(os.listdir(parent));archive=history_archive_view_check(archive_view,parent,uid);present=names|(set(archive[0]) if archive else set());missing={hashlib.sha256(x).hexdigest()+'.row.json':x for x in objects};extra=sum(((len(x)+4095)//4096)*4096 for n,x in missing.items()if n not in present)
+@@ -3024 +3019 @@
+-        rows=[history_publish(parent,x,'row',uid)for x in objects]
++        rows=[history_publish(parent,x,'row',uid,archive_view)for x in objects]
+@@ -3026,2 +3021,2 @@
+-        mp=history_publish(parent,(canonical(manifest)+'\n').encode(),'epoch',uid)
+-        require(history_inventory(parent,uid)[0]<=HISTORY_NAMESPACE_MAX*4//5,'Assignment actual history allocation')
++        mp=history_publish(parent,(canonical(manifest)+'\n').encode(),'epoch',uid,archive_view)
++        require(history_inventory(parent,uid,archive_view)[0]<=HISTORY_NAMESPACE_MAX*4//5,'Assignment actual history allocation')
+@@ -3041,0 +3037 @@
++    if metrics is not None:metrics.update(archive_metrics,elapsedSeconds=time.monotonic()-started,rows=len(rows),bindings=len(bindings),canonicalBytes=len(raw))
+@@ -3044 +3040,2 @@
+-def read_libvirt_assignment_export(root,job,expectedWorker,expectedSource,expectedBoot,maximumAge=30):
++def read_libvirt_assignment_export(root,job,expectedWorker,expectedSource,expectedBoot,maximumAge=30,metrics=None):
++    started=time.monotonic();archive_metrics={}
+@@ -3056,2 +3053,2 @@
+-        with history_directory(root,uid)as history:
+-            history_inventory(history,uid);mr=history_read_leaf(history,header['manifest'],uid,HISTORY_METADATA_MAX);manifest=json.loads(mr)
++        with history_directory(root,uid)as history,history_archive_view(history,uid,archive_metrics)as archive_view:
++            history_inventory(history,uid,archive_view);mr=history_read_leaf(history,header['manifest'],uid,HISTORY_METADATA_MAX,archive_view);manifest=json.loads(mr)
+@@ -3059 +3056 @@
+-            enriched=[json.loads(history_read_leaf(history,pin,uid,HISTORY_FILE_MAX))for pin in manifest['rows']]
++            enriched=[json.loads(history_read_leaf(history,pin,uid,HISTORY_FILE_MAX,archive_view))for pin in manifest['rows']]
+@@ -3067,2 +3064,2 @@
+-            require(history_read_leaf(history,header['manifest'],uid,HISTORY_METADATA_MAX)==mr,'Manifest reread unchanged')
+-            for pin in manifest['rows']:history_read_leaf(history,pin,uid,HISTORY_FILE_MAX)
++            require(history_read_leaf(history,header['manifest'],uid,HISTORY_METADATA_MAX,archive_view)==mr,'Manifest reread unchanged')
++            for pin in manifest['rows']:history_read_leaf(history,pin,uid,HISTORY_FILE_MAX,archive_view)
+@@ -3069,0 +3067 @@
++    if metrics is not None:metrics.update(archive_metrics,elapsedSeconds=time.monotonic()-started,rows=len(rows),bindings=len(bindings),canonicalBytes=len(raw))
+@@ -3467,15 +3465,4 @@
+-def drain_readonly_observers(root,db,backend,primary):
+-    captures=backend.observer_captures
+-    require(type(captures)is list and len(captures)<=32,'unchanged transaction capture32 limit')
+-    require(_EXPECTED_INVOCATION_CONTEXT is None and not _READONLY_BOUNDARY_PREPARATION and not db.in_transaction,'readonly drain only after every native/ledger fence')
+-    if not captures and primary is None:return None
+-    import traceback
+-    first=None if primary is None else {'type':type(primary).__name__,'reason':str(primary),'traceback':''.join(traceback.format_exception(type(primary),primary,primary.__traceback__)),'evidence':getattr(primary,'evidence',None)}
+-    batch={'kind':'QUEUE_READONLY_OBSERVER_TRANSACTION_R241','records':list(captures),'failedObservation':None if primary is None else getattr(primary,'readonlyObserverFailure',None),'first':first}
+-    raw=canonical(batch).encode();require(len(raw)<=67108864,'unchanged complete raw64MiB observer transcript')
+-    encoded=base64.b64encode(zlib.compress(raw,9)).decode();require(len(encoded)<=8388608,'unchanged native8MiB observer codec')
+-    token=uuid.uuid4().hex;parts=[];proofs=[];count=len(captures)
+-    for index,start in enumerate(range(0,len(encoded),524288)):
+-        data=encoded[start:start+524288];parts.append({'kind':'QUEUE_READONLY_OBSERVER_PART_R241','batchId':token,'ordinal':index,'encodedPart':data,'encodedPartSHA256':hashlib.sha256(data.encode()).hexdigest()})
+-    meta={'kind':'QUEUE_READONLY_OBSERVER_COMMIT_R241','batchId':token,'partCount':len(parts),'encodedBytes':len(encoded),'encodedSHA256':hashlib.sha256(encoded.encode()).hexdigest(),'rawBytes':len(raw),'rawSHA256':hashlib.sha256(raw).hexdigest(),'recordCount':count,'parts':proofs,'failureIncluded':primary is not None}
+-    require(len(parts)<=16,'unchanged bounded native codec fragments')
++
++@contextmanager
++def readonly_observer_phase(db, backend):
++    """Keep report copies outside the native proof and exception contract."""
+@@ -3483,10 +3470 @@
+-        for part in parts:proofs.append(persist_monitor_failure(root,None,readonly_observation=part))
+-        receipt=persist_monitor_failure(root,None,readonly_observation=meta)
+-        require(len(captures)==count and all(a is b for a,b in zip(captures,batch['records'])),'same complete pending capture objects after durable close')
+-        proof={'kind':'QUEUE_READONLY_OBSERVER_DURABLE_DRAIN_R241','batchId':token,'rawBytes':len(raw),'rawSHA256':meta['rawSHA256'],'recordCount':count,'parts':list(proofs),'commit':receipt,'currentObservationAuthority':False}
+-        backend.observer_capture_receipt=proof
+-        # No reset until every part, final commit, parent fsync, full readback and
+-        # descriptor close succeeded. The old evidence remains in the owned log.
+-        del captures[:count]
+-        if primary is not None:primary.observerCaptureProof=proof
+-        return proof
++        yield
+@@ -3494,10 +3472,5 @@
+-        failure={'kind':'QUEUE_READONLY_OBSERVER_DRAIN_FAILED_R241','first':{'type':type(error).__name__,'reason':str(error),'custody':getattr(error,'diagnosticCustody',None)},'batchId':token,'rawBytes':len(raw),'rawSHA256':meta['rawSHA256'],'recordCount':count,'partialParts':list(proofs),'pendingEvidenceRetained':True,'durability':'UNKNOWN','fallback':None}
+-        error.observerPendingCapture=batch;error.observerCaptureFailure=failure
+-        # The normal stderr/queue logger is the bounded lossless fallback. It is
+-        # never called a durable file receipt merely because print returned.
+-        try:
+-            frames=[{'kind':'QUEUE_READONLY_OBSERVER_FALLBACK_R241','record':part}for part in parts]+[{'kind':'QUEUE_READONLY_OBSERVER_FALLBACK_R241','record':dict(meta,parts=list(proofs))}]
+-            wire=[canonical(frame)+'\n'for frame in frames];require(all(len(x.encode())<=1048576 for x in wire)and sum(len(x.encode())for x in wire)<=8388608,'unchanged Root1MiB/native8MiB fallback')
+-            for frame in wire:print(frame,end='',file=sys.stderr,flush=True)
+-            failure['fallback']={'status':'EMITTED_OUTER_DURABILITY_UNPROVEN','bytes':sum(len(x.encode())for x in wire),'sha256':hashlib.sha256(''.join(wire).encode()).hexdigest()}
+-        except BaseException as secondary:failure['fallback']={'status':'UNKNOWN','type':type(secondary).__name__,'reason':str(secondary)}
++        if getattr(backend, 'observer_first_failure', None) is None:
++            backend.observer_first_failure = getattr(error, 'readonlyObserverFailure', {
++                'type': type(error).__name__, 'reason': str(error),
++                'evidence': getattr(error, 'evidence', None),
++            })
+@@ -3504,0 +3478,4 @@
++    finally:
++        backend.observer_captures = []
++        backend.observer_capture_receipt = None
++
+@@ -3507,7 +3484,4 @@
+-def readonly_observer_phase(db,backend):
+-    """Durable ownership transfer at a completed API boundary, never a live fence.
+-    The existing transaction codec retains every accepted/failed observation.
+-    Nothing is cleared until all original writer/readback/fsync guards succeed.
+-    """
+-    require(getattr(backend,'observer_phase_failure',None)is None,'previous observer phase durability unproved; no retry')
+-    try:drain_readonly_observers(backend.root,db,backend,None)
++def readonly_observer_transaction(root, db, backend):
++    """Keep report copies outside the native proof and exception contract."""
++    try:
++        yield
+@@ -3515,4 +3489,6 @@
+-        backend.observer_phase_failure=error;raise
+-    primary=None
+-    try:yield
+-    except BaseException as error:primary=error;raise
++        if getattr(backend, 'observer_first_failure', None) is None:
++            backend.observer_first_failure = getattr(error, 'readonlyObserverFailure', {
++                'type': type(error).__name__, 'reason': str(error),
++                'evidence': getattr(error, 'evidence', None),
++            })
++        raise
+@@ -3520,22 +3496,2 @@
+-        try:drain_readonly_observers(backend.root,db,backend,primary)
+-        except BaseException as secondary:
+-            backend.observer_phase_failure=primary or secondary
+-            if primary is None:raise
+-            primary.observerCaptureFailure=getattr(secondary,'observerCaptureFailure',{'type':type(secondary).__name__,'reason':str(secondary),'durability':'UNKNOWN'})
+-            primary.observerPendingCapture=getattr(secondary,'observerPendingCapture',{'records':backend.observer_captures,'failedObservation':getattr(primary,'readonlyObserverFailure',None)})
+-
+-
+-@contextmanager
+-def readonly_observer_transaction(root,db,backend):
+-    require(type(backend.observer_captures)is list and not backend.observer_captures,'previous observer transaction not durably acknowledged')
+-    backend.observer_capture_receipt=None;primary=None
+-    try:yield
+-    except BaseException as error:primary=error;raise
+-    finally:
+-        try:drain_readonly_observers(root,db,backend,primary)
+-        except BaseException as secondary:
+-            failure=getattr(secondary,'observerCaptureFailure',{'kind':'QUEUE_READONLY_OBSERVER_BOUNDARY_REFUSED_R241','type':type(secondary).__name__,'reason':str(secondary),'pendingCount':len(backend.observer_captures),'durability':'UNKNOWN'})
+-            pending=getattr(secondary,'observerPendingCapture',{'records':backend.observer_captures,'failedObservation':None if primary is None else getattr(primary,'readonlyObserverFailure',None)})
+-            if primary is None:
+-                secondary.observerCaptureFailure=failure;secondary.observerPendingCapture=pending;raise
+-            primary.observerCaptureFailure=failure;primary.observerPendingCapture=pending
++        backend.observer_captures = []
++        backend.observer_capture_receipt = None
+@@ -3545 +3501 @@
+-def worker(root, db, cfg, reconcile_failed_libvirt=None):
++def worker(root, db, cfg, reconcile_failed_libvirt=None, _backend=None):
+@@ -3565 +3521 @@
+-            backend = SystemdBackend(root, cfg)
++            backend = SystemdBackend(root, cfg) if _backend is None else _backend
+@@ -3577,2 +3533,2 @@
+-                        diagnostic=persist_monitor_failure(root,error)
+-                        try:observation=monitor_membership_race(db,backend,error)
++                        diagnostic={'firstFailure':getattr(error,'evidence',None),'reservationRetained':True,'operationOrReleaseAuthorized':False}
++                        try:observation=monitor_admitted_libvirt(db,backend,error)if error.evidence.get('kind')=='ADMITTED_LIBVIRT_OBSERVATION_UNAVAILABLE'else monitor_membership_race(db,backend,error)
+@@ -3582 +3538 @@
+-                            except BaseException as secondary:print(canonical({'kind':'MONITOR_DISPOSITION_EXPORT_FAILED','firstFailure':classification.evidence,'secondary':{'type':type(secondary).__name__,'reason':str(secondary)},'reservationRetained':True}),file=sys.stderr,flush=True)
++                            except Exception as secondary:classification.optionalWorkerFailureReport={'type':type(secondary).__name__,'reason':str(secondary)}
+@@ -3586,2 +3542,7 @@
+-                            monitor_first=observation;encoded=canonical(observation);require(len(encoded.encode())<=1048576,'first complete monitor diagnostic bound');print(encoded,file=sys.stderr,flush=True)
+-                        elif monitor_count%10==0:print(canonical({'knownInvocationMonitorCount':monitor_count,'reservationRetained':True,'effectsReleaseForbidden':True}),file=sys.stderr,flush=True)
++                            monitor_first=observation;encoded=canonical(observation)
++                            try:
++                                if len(encoded.encode())<=1048576:print(encoded,file=sys.stderr,flush=True)
++                            except OSError:pass
++                        elif monitor_count%10==0:
++                            try:print(canonical({'knownInvocationMonitorCount':monitor_count,'reservationRetained':True,'effectsReleaseForbidden':True}),file=sys.stderr,flush=True)
++                            except OSError:pass
+@@ -3602 +3563,3 @@
+-            persist_outer_worker_failure(root,error,lock);raise
++            try:persist_outer_worker_failure(root,error,lock)
++            except Exception as report_error:error.optionalWorkerFailureReport={'type':type(report_error).__name__,'reason':str(report_error)}
++            raise
+@@ -4024,0 +3988,109 @@
++
++def capture_observation(captures, record):
++    """Keep bounded optional copies without turning a full sink into a veto."""
++    if type(captures) is list and len(captures) < 32:
++        captures.append(record)
++
++def history_archive_parse(raw,index_ident,data,data_ident):
++    index=json.loads(raw)
++    require((canonical(index)+'\n').encode()==raw and set(index)=={'kind','dataBytes','dataSHA256','dataIdentity','leaves'} and index['kind']==HISTORY_ARCHIVE_KIND and type(index['leaves'])is list and 0<len(index['leaves'])<=HISTORY_ENTRY_MAX,'Closed canonical archive index')
++    require(len(data)==index['dataBytes'] and hashlib.sha256(data).hexdigest()==index['dataSHA256'] and data_ident==index['dataIdentity'],'Complete archive data identity/bytes/SHA')
++    leaves={};end=0
++    for item in index['leaves']:
++        require(set(item)=={'pin','offset','compressedBytes','compressedSHA256'} and type(item['pin'])is dict and set(item['pin'])=={'name','bytes','sha256','identity'},'Closed archived leaf schema')
++        pin=item['pin'];name=pin['name'];limit=HISTORY_METADATA_MAX if name.endswith('.epoch.json') else HISTORY_FILE_MAX
++        require(type(name)is str and re.fullmatch(r'[0-9a-f]{64}\.(row|epoch)\.json',name)is not None and pin['sha256']==name[:64] and type(pin['bytes'])is int and 0<pin['bytes']<=limit and type(pin['identity'])is dict and set(pin['identity'])==set(HISTORY_FIELDS),'Archived original pin shape')
++        require(type(item['offset'])is int and item['offset']==end and type(item['compressedBytes'])is int and 0<item['compressedBytes']<=HISTORY_FILE_MAX and type(item['compressedSHA256'])is str and re.fullmatch(r'[0-9a-f]{64}',item['compressedSHA256'])is not None,'Bounded contiguous compressed leaf')
++        end+=item['compressedBytes'];require(end<=len(data) and name not in leaves,'Archive extent/duplicate')
++        leaves[name]=item
++    require(end==len(data),'No unindexed archive bytes')
++    return leaves,data
++
++@contextmanager
++def history_archive_view(parent,uid,metrics=None):
++    """One held archive authentication, confined to this producer/reader call."""
++    opened=[];primary=None;view={'active':True,'parent':parent,'uid':uid,'parentIdentity':history_identity(os.fstat(parent)),'archive':None,'leafReads':0,'archiveLeafReads':0,'archivePairAuthentications':0};pair=None
++    def read(name,cap):
++        fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=parent);opened.append((name,fd,None));i=history_equal(fd,parent,name);opened[-1]=(name,fd,i)
++        require(stat.S_ISREG(i['st_mode'])and stat.S_IMODE(i['st_mode'])==0o400 and i['st_uid']==uid and i['st_nlink']==1 and 0<i['st_size']<=cap,'Lossless archive leaf custody/cap')
++        chunks=[];left=i['st_size']
++        while left:
++            block=os.read(fd,min(left,65536));require(bool(block),'Lossless archive short EOF');chunks.append(block);left-=len(block)
++        require(not os.read(fd,1)and history_equal(fd,parent,name)==i,'Lossless archive EOF/full9');return b''.join(chunks),i
++    try:
++        names=set(os.listdir(parent));pair={HISTORY_ARCHIVE_INDEX,HISTORY_ARCHIVE_DATA}&names
++        require(not pair or pair=={HISTORY_ARCHIVE_INDEX,HISTORY_ARCHIVE_DATA},'Incomplete lossless history archive')
++        if pair:
++            raw,index_ident=read(HISTORY_ARCHIVE_INDEX,HISTORY_METADATA_MAX);data,data_ident=read(HISTORY_ARCHIVE_DATA,HISTORY_FILE_MAX)
++            view['archive']=history_archive_parse(raw,index_ident,data,data_ident);view['archivePairAuthentications']=1
++            view['archiveBytesRead']=len(raw)+len(data)
++        yield view
++    except BaseException as error:primary=error;raise
++    finally:
++        secondary=[]
++        try:
++            require(({HISTORY_ARCHIVE_INDEX,HISTORY_ARCHIVE_DATA}&set(os.listdir(parent)))==pair,'Archive pair presence unchanged throughout operation')
++            for name,fd,i in opened:
++                if i is not None:require(history_equal(fd,parent,name)==i,'Held archive index/data full9/name unchanged after all leaf uses')
++            if pair is not None:history_inventory(parent,uid,archive_view=view)
++        except BaseException as error:secondary.append(error)
++        view['active']=False
++        close_failed=False
++        for name,fd,i in reversed(opened):
++            try:os.close(fd)
++            except BaseException as error:close_failed=True;secondary.append(error)
++        if metrics is not None:
++            metrics.update({k:view.get(k,0)for k in('leafReads','archiveLeafReads','archivePairAuthentications','archiveBytesRead')});metrics['archiveDescriptorsClosed']=not close_failed;metrics['archiveAfterGuardPassed']=not secondary
++        if secondary:
++            if primary is not None:
++                for error in secondary:primary.add_note('Secondary operation archive guard/closure: '+repr(error))
++            else:
++                for error in secondary[1:]:secondary[0].add_note('Secondary operation archive guard/closure: '+repr(error))
++                raise secondary[0]
++
++def history_archive_view_check(view,parent,uid):
++    require(type(view)is dict and view.get('active')is True and view['parent']==parent and view['uid']==uid,'Same active operation-scoped history archive view')
++    now=history_identity(os.fstat(parent));require(all(now[k]==view['parentIdentity'][k]for k in HISTORY_FIELDS[:6]),'Same held history parent custody')
++    return view['archive']
++
++def libvirt_assignment_ready(root,job):
++    """Confined readiness only; the header remains untrusted until full intake."""
++    require(NAME.fullmatch(job),'Exact assignment readiness job');root=Path(root);uid=os.lstat(root).st_uid
++    try:
++        with libvirt_export_directory(root,uid)as parent:
++            try:s=os.stat(job+'.json',dir_fd=parent,follow_symlinks=False)
++            except FileNotFoundError:return False
++            require(stat.S_ISREG(s.st_mode)and s.st_uid==uid and s.st_nlink==1 and 0<=s.st_size<=65536,'Assignment readiness type/owner/link/cap')
++            require(stat.S_IMODE(s.st_mode)in(0o600,0o400),'Assignment readiness producer/immutable mode')
++            return stat.S_IMODE(s.st_mode)==0o400 and s.st_size>0
++    except FileNotFoundError as error:
++        if error.filename==LIBVIRT_EXPORT_DIRECTORY:return False
++        raise
++
++def monitor_admitted_libvirt(db,backend,error):
++    require(type(error)is PoolAdmissionFailure,'exact typed unavailable observation')
++    e=error.evidence;require(e.get('kind')=='ADMITTED_LIBVIRT_OBSERVATION_UNAVAILABLE'and e.get('observerChildClosed')is True and e.get('admitted')is False and e.get('reservationRetained')is True and e.get('operationOrReleaseAuthorized')is False,'unavailable proof cannot authorize admission/effect/release')
++    rows=pool_rows(db,db.execute('SELECT * FROM jobs ORDER BY rowid').fetchall());running=[r for r in rows if r['state']=='running'];require(running,'original admitted job required for monitor hold');expected=[];records=[];matched=False
++    for row in running:
++        ctx=ExpectedInvocation(backend,db,row);ctx.ledger_current();spec=json.loads(row['spec']);check_inputs(spec);cpus=json.loads(row['cpus']);b=ctx.bound
++        require(b['version']==1 and b['specSHA256']==hashlib.sha256(canonical(spec).encode()).hexdigest()and b['cpus']==cpus and b['memory']==spec['memory'],'same original immutable source/spec/resource binding')
++        require(type(row['started'])in(int,float)and 0<=time.time()-row['started']<=spec['timeout_seconds']+5,'original service deadline/reap reserve, no extension')
++        props=backend.pool_unit_properties(row['unit']);ctx.ledger_current();require(props.get('LoadState')=='loaded'and props.get('InvocationID')==ctx.invocation and props.get('ControlGroup')in('', '/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+row['unit']),'same original actual manager invocation/cgroup; no adopted actor')
++        item={'unit':row['unit'],'cpus':cpus,'memory':spec['memory'],'resources':spec['resources'],'invocation':ctx.invocation}
++        if 'libvirt_domain'in spec:
++            item['controllerMemory']=LIBVIRT_CONTROLLER_MEMORY
++            if libvirt_request(row,b)==e['request']:matched=True
++        expected.append(item);records.append({'jobId':row['id'],'unit':row['unit'],'invocation':ctx.invocation,'properties':props,'reservationRetained':True,'operationOrReleaseAuthorized':False})
++    require(matched and e['recordedReservations']==expected,'all original reservations and exact observed request unchanged; no foreign principal')
++    return {'kind':'ADMITTED_LIBVIRT_MONITOR_ONLY_HOLD','firstFailure':e,'originalReadonlyMonitor':records,'newAdmissionEffectsReleaseForbidden':True,'originalServiceNotCancelled':True}
++
++def pool_observation_unavailable(request,reservations,failure,closed):
++    return PoolAdmissionFailure('libvirt observation unavailable; monitor only',{'kind':'ADMITTED_LIBVIRT_OBSERVATION_UNAVAILABLE','request':request,'recordedReservations':reservations,'firstFailure':failure,'observerChildClosed':closed,'admitted':False,'reservationRetained':True,'operationOrReleaseAuthorized':False})
++
++def verify_libvirt_second_cut(observed,again,reservations,deadline):
++    if again==observed:return
++    if runtime_publisher_transition(observed,again):
++        error=RuntimePublisherTransition('authenticated runtime publication crossed full pool cut')
++        error.evidence={'kind':'AUTHENTICATED_RUNTIME_PUBLICATION_TRANSITION','before':observed,'after':again,'deadlineMonotonic':deadline,'recordedReservations':reservations,'operationOrReleaseAuthorized':False};raise error
++    raise pool_observation_unavailable(observed['request'],reservations,{'kind':'TWO_VALIDATED_LIBVIRT_CUTS_DIFFER','before':observed,'after':again},True)
++
+--- a/current_attempt.py
++++ b/current_attempt.py
+@@ -36 +36 @@
+-   try:run.record('current-final-storage-FIRST',evidence)
++   try:run.record_optional('current-final-storage-FIRST',evidence)
+@@ -46 +46 @@
+-  try:run.record('current-readonly-storage-FIRST',evidence)
++  try:run.record_optional('current-readonly-storage-FIRST',evidence)
+@@ -199 +199 @@
+- run.record('current-prepared-continuation',dict(historicalParent=run.parent_original,currentPreparedParent=B.DATA['parentPin'],preparedAccessPin=current['preparedAccessPin'],preparedDiskPins=current['preparedDiskPins'],workingCapture=working,ACLOrDiskEffect=False,VM=False))
++ run.record_optional('current-prepared-continuation',dict(historicalParent=run.parent_original,currentPreparedParent=B.DATA['parentPin'],preparedAccessPin=current['preparedAccessPin'],preparedDiskPins=current['preparedDiskPins'],workingCapture=working,ACLOrDiskEffect=False,VM=False))
+@@ -357 +357 @@
+-  try:run.record('access-reentry-FIRST',evidence)
++  try:run.record_optional('access-reentry-FIRST',evidence)
+@@ -433 +433 @@
+-  L.ROOT=self.root;self.prod.create_root(str(self.root));self.record('current-decision',a);self.record('current-predecessor-gate',self.initial_gate)
++  L.ROOT=self.root;self.prod.create_root(str(self.root));self.record_optional('current-decision',a);self.record_optional('current-predecessor-gate',self.initial_gate)
+@@ -440,15 +439,0 @@
+- def prepare_publisher_evidence(self):
+-  need(not hasattr(self,'_publisher_evidence_capability'),'one create-only evidence preparation before final owner/preflight window')
+-  path='/run/opemos-libvirt-evidence-'+hashlib.sha256(self.newjob.encode()).hexdigest()[:32]
+-  need(not os.path.lexists(path),'fresh create-only current-job evidence root')
+-  self.prod.create_root(path)
+-  with self.p.RootFiles(path)as files:
+-   need(sorted(os.listdir(files.fd))==['lock'],'new evidence capability only lock before parent')
+-   evidence=files.parent_pin();i=evidence['identity']
+-   need(i['st_uid']==i['st_gid']==0 and stat.S_IMODE(i['st_mode'])==0o700 and stat.S_ISDIR(i['st_mode']),'actual Root0700 publisher evidence capability')
+-   lock=files.read('lock',0o600)[1];capability=dict(jobId=self.newjob,rootPin=evidence,lockPin=lock)
+-   owned=(L.owned_runtime_fd(files.fd,'runtime-directory'),)
+-   need(files.parent_pin()==evidence and files.read('lock',0o600)[1]==lock,'new private owned metadata capability only; original-target/GPU native census remains at admission/effect')
+-  self._publisher_evidence_capability=capability
+-  self.record('publisher-evidence-capability',dict(jobId=self.newjob,publisherEvidenceRootPin=evidence,bootID=self.boot,sourceABI='SOURCE270_ROOT_INTEGRATION_99ea3f40',metadataSpoolReserveBytes=8388608,retention='OWNED_UNIQUE_JOB_ROOT_PRESERVE_IN_PLACE',effects='Root generated metadata only'))
+-  return self._publisher_evidence_capability
+@@ -459,7 +444 @@
+-  capability=self._publisher_evidence_capability;need(capability['jobId']==self.newjob,'same prepared publisher capability, no different job')
+-  evidence=capability['rootPin']
+-  with self.p.RootFiles(evidence['path'])as files:
+-   need(files.parent_pin()==evidence and sorted(os.listdir(files.fd))==['lock']and files.read('lock',0o600)[1]==capability['lockPin'],'same protected only-lock publisher capability before parent; no duplicate whole census inside final window')
+-  parent=super().make_parent(qual,e,codec,now)
+-  parent['publisherEvidenceRootPin']=evidence
+-  return parent
++  return super().make_parent(qual,e,codec,now)
+@@ -506 +485 @@
+-  self.record('current-journal-metadata-charge',dict(storage=storage,journal=journal,wholeDeadlineUnix=self.a['wholeDeadlineUnix']))
++  self.record_optional('current-journal-metadata-charge',dict(storage=storage,journal=journal,wholeDeadlineUnix=self.a['wholeDeadlineUnix']))
+@@ -512 +491 @@
+-  self.record('current-guards',dict(knownControl=control,privateHistory=history,proof=proof,inventory=inventory,previousJob=D.JOB,unusedJob=self.newjob))
++  self.record_optional('current-guards',dict(knownControl=control,privateHistory=history,proof=proof,inventory=inventory,previousJob=D.JOB,unusedJob=self.newjob))
+@@ -544 +523 @@
+-  self.record('current-journal-metadata-charge',dict(storage=storage,journal=journal,wholeDeadlineUnix=self.a['wholeDeadlineUnix']))
++  self.record_optional('current-journal-metadata-charge',dict(storage=storage,journal=journal,wholeDeadlineUnix=self.a['wholeDeadlineUnix']))
+@@ -549 +528 @@
+-  self.record('late-native-after-final-preflight',dict(preflightObservedUnix=pre['observedUnix'],preflightStartedUnix=pre['startedUnix'],privateHistory=pre['privateHistory'],inventory=inventory,fullGuardBeforeFinalPreparation=True,sourceFinalPreflightUnchanged=True))
++  self.record_optional('late-native-after-final-preflight',dict(preflightObservedUnix=pre['observedUnix'],preflightStartedUnix=pre['startedUnix'],privateHistory=pre['privateHistory'],inventory=inventory,fullGuardBeforeFinalPreparation=True,sourceFinalPreflightUnchanged=True))
+@@ -576 +554,0 @@
+-     self.prepare_publisher_evidence()
+--- a/current_policy_guard.py
++++ b/current_policy_guard.py
+@@ -91,2 +91,2 @@
+- effective=dict(policy,normalProbeSHA256=PROBE_SHA);probe=M.module(probe_raw,'normal_probe');github=probe.current_github(policy)
+- D.need(github['protectedMain']and github['mainCommit']==policy['mainCommit']and not github['runnerBusy']and github['actionsInProgress']==github['actionsQueued']==0,'fresh controller GitHub ownership/resource guard')
++ effective=dict(policy,normalProbeSHA256=PROBE_SHA);probe=M.module(probe_raw,'normal_probe');github=probe.current_github(dict(policy,mainCommit=L.MAIN))
++ D.need(github['protectedMain']and github['mainCommit']==L.MAIN and not github['runnerBusy']and github['actionsInProgress']==github['actionsQueued']==0,'fresh controller GitHub ownership/resource guard')
+@@ -100 +100 @@
+- after=probe.current_github(policy);D.need(all(after[k]==github[k]for k in('networkReachable','protectedMain','mainCommit','runnerOnline','runnerBusy','actionsInProgress','actionsQueued')),'current controller facts stable through remote guard')
++ after=probe.current_github(dict(policy,mainCommit=L.MAIN));D.need(all(after[k]==github[k]for k in('networkReachable','protectedMain','mainCommit','runnerOnline','runnerBusy','actionsInProgress','actionsQueued')),'current controller facts stable through remote guard')
+--- a/reference_definitions.py
++++ b/reference_definitions.py
+@@ -110,0 +111,5 @@
++ def record_optional(self,label,value):
++  if not hasattr(self,'optional_diagnostics'):self.optional_diagnostics={}
++  self.last_optional_diagnostic={'label':label,'value':value}
++  if label in self.optional_diagnostics or len(self.optional_diagnostics)<32:self.optional_diagnostics[label]=value
++
+@@ -113 +117,0 @@
+-  need(self.seq <= 240, 'bounded evidence records')
+@@ -355 +359 @@
+- run.record('prior-history-codec-sizing', dict(rawBytes=len(raw), rawSHA256=hashlib.sha256(raw).hexdigest(), compressedBytes=len(packed), wireBytes=len(wire), wireSHA256=hashlib.sha256(wire).hexdigest(), consumer='source159 postqueue_issuer held priorHistoryCodecPin 8388608', genericMetadataCap=1048576))
++ run.record_optional('prior-history-codec-sizing', dict(rawBytes=len(raw), rawSHA256=hashlib.sha256(raw).hexdigest(), compressedBytes=len(packed), wireBytes=len(wire), wireSHA256=hashlib.sha256(wire).hexdigest(), consumer='source159 postqueue_issuer held priorHistoryCodecPin 8388608', genericMetadataCap=1048576))
+@@ -358 +361,0 @@
+- need(run.seq <= 240, 'bounded evidence records')
+@@ -361 +364 @@
+- run.record('prior-history-codec-create-attempt', dict(path=str(path), bytes=len(wire), sha256=hashlib.sha256(wire).hexdigest(), mode=256, createOnly=True))
++ run.record_optional('prior-history-codec-create-attempt', dict(path=str(path), bytes=len(wire), sha256=hashlib.sha256(wire).hexdigest(), mode=256, createOnly=True))
+@@ -422 +425 @@
+-   run.record('prior-history-codec-outcome', outcome)
++   run.record_optional('prior-history-codec-outcome', outcome)
+@@ -439 +442 @@
+- run.record('terminal-private-copy-parent',dict(path=str(ROOT),identity=ident(os.lstat(ROOT)),sourceProviderPin=ref,currentQueuePin=run.queue[0],SQLOnlyOnPrivateCopy=True,noMethodsOverridden=True))
++ run.record_optional('terminal-private-copy-parent',dict(path=str(ROOT),identity=ident(os.lstat(ROOT)),sourceProviderPin=ref,currentQueuePin=run.queue[0],SQLOnlyOnPrivateCopy=True,noMethodsOverridden=True))
+@@ -544 +547 @@
+-    try:run.record('terminal-optional-family-FIRST-and-secondary',evidence)
++    try:run.record_optional('terminal-optional-family-FIRST-and-secondary',evidence)
+@@ -563 +566 @@
+-     try:run.record('terminal-observer-FIRST-and-secondary',evidence)
++     try:run.record_optional('terminal-observer-FIRST-and-secondary',evidence)
+@@ -577 +580 @@
+-   run.record('terminal-snapshot-reobserved', dict(atUnix=time.time(), firstRejectedSnapshotPin=first, acceptedRows=len(rows), acceptedBindings=len(bindings), acceptedConfig=len(config), exactUnchangedPrivateReaderAccepted=True, originalWholeDeadlineUnix=end, effectsRetried=False))
++   run.record_optional('terminal-snapshot-reobserved', dict(atUnix=time.time(), firstRejectedSnapshotPin=first, acceptedRows=len(rows), acceptedBindings=len(bindings), acceptedConfig=len(config), exactUnchangedPrivateReaderAccepted=True, originalWholeDeadlineUnix=end, effectsRetried=False))
+@@ -841 +844 @@
+-   try:self.record('canonical-job-progress',dict(row=row,bindings=bound))
++   try:self.record_optional('canonical-job-progress',dict(row=row,bindings=bound))
+--- a/runtime-guest_firmware_probe.py
++++ b/runtime-guest_firmware_probe.py
+@@ -322 +322 @@
+-   for entry in scan:entries+=1;need(entries<=4096,'bounded exact IO inode graph');names.append(entry.name)
++   for entry in scan:entries+=1;names.append(entry.name)
+@@ -335 +335 @@
+-  need(type(roots)in(list,tuple)and 0<len(roots)<=4096,'declared roots fit unchanged4096 metadata inode graph')
++  need(type(roots)in(list,tuple)and len(roots)>0,'declared metadata roots')
+@@ -339 +339 @@
+-   entries+=1;need(entries<=4096,'declared roots and descendants share unchanged4096 metadata inode graph')
++   entries+=1
+--- a/runtime-libvirt_native.py
++++ b/runtime-libvirt_native.py
+@@ -192 +192,4 @@
+- def __init__(self,c,persist):self.c=c;self.persist=persist;self.conn=None;self.observer=None;self.request=None;self.diskfds=[];self.events=[];self.registered=None;self.offset=0;self.rows=[];self.intent=None;self.eventIndex=0;self.expectedStop=None;self.eventTimer=None;self.callback=None;self.diskfdRecords={};self.initialFD=peer.fd_snapshot('native-transaction-created');self.graphical={};self.observationCalls=0;self.observationActor=None;self.capturedFrames={};self.capturedFrameHistory=[];self.captureBinding=None;self.captureCandidate=None;self.lastDACFDRecordPin=None
++ def __init__(self,c,persist):self.c=c;self.persist=persist;self.conn=None;self.observer=None;self.request=None;self.diskfds=[];self.events=[];self.registered=None;self.offset=0;self.rows=[];self.intent=None;self.eventIndex=0;self.expectedStop=None;self.eventTimer=None;self.callback=None;self.diskfdRecords={};self.initialFD=peer.fd_snapshot('native-transaction-created');self.graphical={};self.observationCalls=0;self.observationActor=None;self.capturedFrames={};self.capturedFrameHistory=[];self.captureBinding=None;self.captureCandidate=None;self.lastDACFDRecordPin=None;self.lastDACFDObservation=None;self.diagnosticObservations={};self.lastDiagnostic=None
++ def report(self,label,value):
++  self.lastDiagnostic={'label':label,'value':value}
++  if label in self.diagnosticObservations or len(self.diagnosticObservations)<32:self.diagnosticObservations[label]=value
+@@ -194 +197 @@
+-  value=peer.dac_fd_lifetime(self.c,self.request,self.diskfdRecords,self.captureBinding,stage,domain,candidate);self.lastDACFDRecordPin=self.persist('DAC-FD-'+stage,value)
++  value=peer.dac_fd_lifetime(self.c,self.request,self.diskfdRecords,self.captureBinding,stage,domain,candidate);self.lastDACFDObservation=value;self.report('DAC-FD-'+stage,value)
+@@ -201 +204 @@
+-  ops=peer.NativeOps(self.drain_event_closures,self.persist);ops.custody=lambda phase,intent,reg,state,files:__import__('libvirt_access').verify_phase(self.c,self.g['preparedAccessPin'],self.g['preparedDiskPins'],phase,intent,reg,state,files);return ops
++  ops=peer.NativeOps(self.drain_event_closures,self.report);ops.custody=lambda phase,intent,reg,state,files:__import__('libvirt_access').verify_phase(self.c,self.g['preparedAccessPin'],self.g['preparedDiskPins'],phase,intent,reg,state,files);return ops
+@@ -203 +206 @@
+-  now=time.time();g=self.g;v={'role':role,'nowUnix':now,'issuedUnix':g['issuedUnix'],'startBeforeUnix':g['startBeforeUnix'],'wholeDeadlineUnix':self.deadline,'preflightObservedUnix':g['preflightObservedUnix']};self.persist('effect-clock-'+role,v)
++  now=time.time();g=self.g;v={'role':role,'nowUnix':now,'issuedUnix':g['issuedUnix'],'startBeforeUnix':g['startBeforeUnix'],'wholeDeadlineUnix':self.deadline,'preflightObservedUnix':g['preflightObservedUnix']};self.report('effect-clock-'+role,v)
+@@ -220 +223 @@
+-   self.persist('event-connection-close-drain',{'reason':reason,'before':before,'after':peer.fd_snapshot('event-drain-after-'+reason),'calls':out,'timer':timer,'temporary':temporary,'primary':peer.error_value(primary),'timerRemovalError':removeError})
++   self.report('event-connection-close-drain',{'reason':reason,'before':before,'after':peer.fd_snapshot('event-drain-after-'+reason),'calls':out,'timer':timer,'temporary':temporary,'primary':peer.error_value(primary),'timerRemovalError':removeError})
+@@ -247 +250 @@
+-   self.persist(label,value)
++   self.report(label,value)
+@@ -296 +299 @@
+-  self.persist(label,{'pin':pin,'value':value});return pin
++  self.report(label,{'pin':pin,'value':value});return pin
+@@ -304 +307 @@
+-  self.persist('IO_ACCESS_READY',{'preparedAccessPin':self.g['preparedAccessPin'],'splitDiskCapturePins':self.g['splitDiskCapturePins'],'noPostGrantDiskHash':True,'rows':self.accessRows})
++  self.report('IO_ACCESS_READY',{'preparedAccessPin':self.g['preparedAccessPin'],'splitDiskCapturePins':self.g['splitDiskCapturePins'],'noPostGrantDiskHash':True,'rows':self.accessRows})
+@@ -327 +330 @@
+-  self.persist('ACL_CLOSURE',results);return results
++  self.report('ACL_CLOSURE',results);return results
+@@ -331 +334 @@
+-   x=native_child(argv,self.deadline);self.persist('partition-helper',x);peer.need(x['numeric']==0,'exact transient VM partition operation')
++   x=native_child(argv,self.deadline);self.report('partition-helper',x);peer.need(x['numeric']==0,'exact transient VM partition operation')
+@@ -355 +358 @@
+-  schema=native_child(['/usr/bin/virt-xml-validate','-','domain'],self.effect_clock('create'),self.g['nativeTools']['/usr/bin/virt-xml-validate'],xml.encode());self.persist('exact-installed-XML-before-create',schema);peer.need(schema['numeric']==0,'current exact XML installed schema before domain create')
++  schema=native_child(['/usr/bin/virt-xml-validate','-','domain'],self.effect_clock('create'),self.g['nativeTools']['/usr/bin/virt-xml-validate'],xml.encode());self.report('exact-installed-XML-before-create',schema);peer.need(schema['numeric']==0,'current exact XML installed schema before domain create')
+@@ -359 +362 @@
+-  caps=self.conn.getDomainCapabilities(self.c['qemu']['path'],'x86_64','q35','kvm',0);self.persist('actual-virtio-mode-capability-before-create',__import__('guest_firmware_probe').verify_display_capability(caps))
++  caps=self.conn.getDomainCapabilities(self.c['qemu']['path'],'x86_64','q35','kvm',0);self.report('actual-virtio-mode-capability-before-create',__import__('guest_firmware_probe').verify_display_capability(caps))
+@@ -384 +387 @@
+-    observed=raw;self.persist('domain-candidate-before-role',{'raw':raw,'uuidMatch':uuidMatch,'nameMatch':nameMatch})
++    observed=raw;self.report('domain-candidate-before-role',{'raw':raw,'uuidMatch':uuidMatch,'nameMatch':nameMatch})
+@@ -389 +392 @@
+-   self.persist('domain-candidate-selection',{'scanned':scanned,'matches':matches})
++   self.report('domain-candidate-selection',{'scanned':scanned,'matches':matches})
+@@ -405 +408 @@
+-   reg.update(uuid=d.UUIDString(),name=d.name(),persistent=False,noNIC=True,XMLSHA256=hashlib.sha256(x.encode()).hexdigest());self.registered=reg;self.observationActor=peer.process_snapshot(a['pid']);peer.need(self.observationActor['uids']==[64055]*4 and all(self.observationActor[k]==a[k]for k in('pid','start','ppid','tgid','argv','cgroup')),'registered full raw observation baseline');self.persist('actual-paused-domain',reg);return reg
++   reg.update(uuid=d.UUIDString(),name=d.name(),persistent=False,noNIC=True,XMLSHA256=hashlib.sha256(x.encode()).hexdigest());self.registered=reg;self.observationActor=peer.process_snapshot(a['pid']);peer.need(self.observationActor['uids']==[64055]*4 and all(self.observationActor[k]==a[k]for k in('pid','start','ppid','tgid','argv','cgroup')),'registered full raw observation baseline');self.report('actual-paused-domain',reg);return reg
+@@ -407 +410 @@
+-   value={'stage':stage,'first':{'type':type(error).__name__,'reason':str(error)},'scanned':scanned,'scanningPID':scanningPID,'candidate':observed,'closureErrors':locals().get('registrationClosureErrors',[]),'vfioEvidence':getattr(error,'vfioEvidence',None),'workingEvidence':getattr(error,'workingEvidence',None),'DACFDRecordPin':self.lastDACFDRecordPin,'matches':matches,'request':self.request,'noGuestResume':True}
++   value={'stage':stage,'first':{'type':type(error).__name__,'reason':str(error)},'scanned':scanned,'scanningPID':scanningPID,'candidate':observed,'closureErrors':locals().get('registrationClosureErrors',[]),'vfioEvidence':getattr(error,'vfioEvidence',None),'workingEvidence':getattr(error,'workingEvidence',None),'DACFDRecordPin':None,'DACFDObservation':self.lastDACFDObservation,'matches':matches,'request':self.request,'noGuestResume':True}
+@@ -409 +412 @@
+-   try:self.persist('FIRST-domain-candidate',value)
++   try:self.report('FIRST-domain-candidate',value)
+@@ -431 +434 @@
+-    ch=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);ch.settimeout(.1);ch.connect(path);pid,uid,gid=struct.unpack('3i',ch.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12));raw=peer.process_snapshot(pid);identity={'path':path,'socketIdentity':si,'peerPID':pid,'peerUID':uid,'peerGID':gid,'rawPeer':raw,'domain':self.registered,'phase':phase};self.persist('graphical-peer-before-predicate-'+str(phase)+'-sample-'+str(sample),identity)
++    ch=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);ch.settimeout(.1);ch.connect(path);pid,uid,gid=struct.unpack('3i',ch.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12));raw=peer.process_snapshot(pid);identity={'path':path,'socketIdentity':si,'peerPID':pid,'peerUID':uid,'peerGID':gid,'rawPeer':raw,'domain':self.registered,'phase':phase};self.report('graphical-peer-before-predicate-'+str(phase)+'-sample-'+str(sample),identity)
+@@ -450 +453 @@
+-   value={'kind':'ACTUAL_DOMAIN_BOUND_GRAPHICAL_FIRST_FRAME','phase':phase,'sample':sample,'frameSample':frameSample,'identity':identity,'protocol':protocol,'framePin':ref,'displayContent':content,'modeAccepted':False,'beforeAnySerialRead':True,'noGuestInput':True,'observationCalls':self.observationCalls};self.capturedFrames[phase]=value;self.capturedFrameHistory.append(value);self.persist('graphical-frame-before-content-predicate-'+str(phase)+'-sample-'+str(sample),value);value['usableBounds']=__import__('guest_firmware_probe').verify_unscaled_usable_frame(self.request,identity,protocol,rgb);value['modeAccepted']=True;return value
++   value={'kind':'ACTUAL_DOMAIN_BOUND_GRAPHICAL_FIRST_FRAME','phase':phase,'sample':sample,'frameSample':frameSample,'identity':identity,'protocol':protocol,'framePin':ref,'displayContent':content,'modeAccepted':False,'beforeAnySerialRead':True,'noGuestInput':True,'observationCalls':self.observationCalls};self.capturedFrames[phase]=value;self.capturedFrameHistory.append(value);self.report('graphical-frame-before-content-predicate-'+str(phase)+'-sample-'+str(sample),value);value['usableBounds']=__import__('guest_firmware_probe').verify_unscaled_usable_frame(self.request,identity,protocol,rgb);value['modeAccepted']=True;return value
+@@ -455 +458 @@
+-   self.persist('graphical-channel-closure-'+str(phase)+'-sample-'+str(sample),{'first':peer.error_value(primary),'socketClosed':ch is None or ch.fileno()==-1,'pathFDClosed':sockfd is None or not Path('/proc/self/fd/'+str(sockfd)).exists(),'frameRetained':None if value is None else value['framePin'],'noGuestInput':True})
++   self.report('graphical-channel-closure-'+str(phase)+'-sample-'+str(sample),{'first':peer.error_value(primary),'socketClosed':ch is None or ch.fileno()==-1,'pathFDClosed':sockfd is None or not Path('/proc/self/fd/'+str(sockfd)).exists(),'frameRetained':None if value is None else value['framePin'],'noGuestInput':True})
+@@ -462 +465 @@
+-    self.graphical[phase]=value;self.persist('graphical-observation-complete-'+str(phase),{'phase':phase,'startedUnix':started,'endUnix':end,'activeFrame':value['framePin'],'modeAccepted':value['modeAccepted'],'usableBounds':value['usableBounds'],'samples':[{'sample':r['sample'],'pin':r['framePin'],'content':r['displayContent']}for r in samples],'graphicalAccepted':True,'NVIDIARenderAccepted':False,'OSGraphicalSessionAccepted':False,'beforeAnySerialRead':True});return value
++    self.graphical[phase]=value;self.report('graphical-observation-complete-'+str(phase),{'phase':phase,'startedUnix':started,'endUnix':end,'activeFrame':value['framePin'],'modeAccepted':value['modeAccepted'],'usableBounds':value['usableBounds'],'samples':[{'sample':r['sample'],'pin':r['framePin'],'content':r['displayContent']}for r in samples],'graphicalAccepted':True,'NVIDIARenderAccepted':False,'OSGraphicalSessionAccepted':False,'beforeAnySerialRead':True});return value
+@@ -466 +469 @@
+-  peer.need(bool(samples),'actual graphical observation produced no complete frame');value=dict(samples[-1]);value.update(diagnosticOnly=True,graphicalDeadlineReached=True,graphicalAccepted=False);self.graphical[phase]=value;self.persist('graphical-observation-inactive-deadline-'+str(phase),{'phase':phase,'startedUnix':started,'endUnix':end,'finishedUnix':time.time(),'samples':[{'sample':r['sample'],'pin':r['framePin'],'content':r['displayContent']}for r in samples],'graphicalAccepted':False,'NVIDIARenderAccepted':False,'OSGraphicalSessionAccepted':False,'serialNextDiagnosticOnly':True,'beforeAnySerialRead':True});return value
++  peer.need(bool(samples),'actual graphical observation produced no complete frame');value=dict(samples[-1]);value.update(diagnosticOnly=True,graphicalDeadlineReached=True,graphicalAccepted=False);self.graphical[phase]=value;self.report('graphical-observation-inactive-deadline-'+str(phase),{'phase':phase,'startedUnix':started,'endUnix':end,'finishedUnix':time.time(),'samples':[{'sample':r['sample'],'pin':r['framePin'],'content':r['displayContent']}for r in samples],'graphicalAccepted':False,'NVIDIARenderAccepted':False,'OSGraphicalSessionAccepted':False,'serialNextDiagnosticOnly':True,'beforeAnySerialRead':True});return value
+@@ -474 +477 @@
+-   self.phaseSerial=b;self.persist('installer-secondary-serial',{'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'serialPath':str(p),'graphicalFrame':self.graphical[phase]['framePin'],'diagnosticOnly':True,'graphicalFirst':True});v={'kind':'ACTUAL_RETAINED_INSTALLER_BOOT_DIAGNOSTIC','domainUUID':self.request['domainUUID'],'domainName':self.request['domainName'],'mediaPin':self.c['working'],'actualDomainRegistration':self.registered,'graphicalFrame':self.graphical[phase]['framePin'],'graphicalFirst':True,'serialBytes':len(b),'serialSHA256':hashlib.sha256(b).hexdigest(),'guestOSIdentityAccepted':False,'NVIDIARenderAccepted':False,'installedSystemAccepted':False,'recoveryAccepted':False};return peer.canon(v)
++   self.phaseSerial=b;self.report('installer-secondary-serial',{'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'serialPath':str(p),'graphicalFrame':self.graphical[phase]['framePin'],'diagnosticOnly':True,'graphicalFirst':True});v={'kind':'ACTUAL_RETAINED_INSTALLER_BOOT_DIAGNOSTIC','domainUUID':self.request['domainUUID'],'domainName':self.request['domainName'],'mediaPin':self.c['working'],'actualDomainRegistration':self.registered,'graphicalFrame':self.graphical[phase]['framePin'],'graphicalFirst':True,'serialBytes':len(b),'serialSHA256':hashlib.sha256(b).hexdigest(),'guestOSIdentityAccepted':False,'NVIDIARenderAccepted':False,'installedSystemAccepted':False,'recoveryAccepted':False};return peer.canon(v)
+@@ -488 +491 @@
+-  finally:self.persist('secondary-serial-observation-'+str(phase),{'graphicalFramePin':self.graphical[phase]['framePin'],'serialBytesObserved':seen,'serialPrefixSHA256':hashlib.sha256(self.phaseSerial).hexdigest(),'serialPath':str(p),'diagnosticOnly':not self.graphical[phase]['displayContent']['nonBlank'],'eventDispatchCalls':self.observationCalls,'first':peer.error_value(primary),'deadlineUnchanged':True,'graphicalFirst':True})
++  finally:self.report('secondary-serial-observation-'+str(phase),{'graphicalFramePin':self.graphical[phase]['framePin'],'serialBytesObserved':seen,'serialPrefixSHA256':hashlib.sha256(self.phaseSerial).hexdigest(),'serialPath':str(p),'diagnosticOnly':not self.graphical[phase]['displayContent']['nonBlank'],'eventDispatchCalls':self.observationCalls,'first':peer.error_value(primary),'deadlineUnchanged':True,'graphicalFirst':True})
+@@ -502 +505 @@
+-  peer.need('Boot%04X'%v['BootCurrent']in variables,'selected firmware load option retained');self.persist('actual-firmware-route-'+str(phase),v)
++  peer.need('Boot%04X'%v['BootCurrent']in variables,'selected firmware load option retained');self.report('actual-firmware-route-'+str(phase),v)
+@@ -510 +513 @@
+-  result=self.conn.close();self.conn=None;self.persist('controller-connection-loss',{'numeric':result,'domainUUID':self.request['domainUUID'],'registered':self.registered,'acceptanceRequiresIndependentClosure':True});peer.need(result==0,'controller connection close numeric0')
++  result=self.conn.close();self.conn=None;self.report('controller-connection-loss',{'numeric':result,'domainUUID':self.request['domainUUID'],'registered':self.registered,'acceptanceRequiresIndependentClosure':True});peer.need(result==0,'controller connection close numeric0')
+@@ -539 +542 @@
+-   ref=self.g['nativeTools'][argv[0]];r=native_child(argv,self.deadline,ref);self.persist('stopped-native',r);peer.need(r['numeric']==0,'stopped readonly native helper');return r['stdout']
++   ref=self.g['nativeTools'][argv[0]];r=native_child(argv,self.deadline,ref);self.report('stopped-native',r);peer.need(r['numeric']==0,'stopped readonly native helper');return r['stdout']
+@@ -562 +565 @@
+-   self.persist('stopped-readback-closure',{'primary':None if primary is None else str(primary),'secondary':secondary,'mountClosed':not mounted,'loopClosed':dev is None,'rows':rows})
++   self.report('stopped-readback-closure',{'primary':None if primary is None else str(primary),'secondary':secondary,'mountClosed':not mounted,'loopClosed':dev is None,'rows':rows})
+--- a/runtime-libvirt_peer.py
++++ b/runtime-libvirt_peer.py
+@@ -36,3 +36 @@
+- """Held nofollow ancestry. Shared /,/run use CORE+current FD/name equality.
+- Private0700 root and every leaf use full9. All descriptors owned/closed.
+- """
++ """Held nofollow ancestry; real FD/name/core and private full9 custody."""
+@@ -391 +389,5 @@
+- if getattr(ops,'persist',None)is not None:ops.persist('readonly-observer-closure',evidence)
++ if getattr(ops,'persist',None)is not None:
++  try:ops.persist('readonly-observer-closure',evidence)
++  except Exception as report_error:evidence['optionalReportError']=error_value(report_error)
++  after=fd_snapshot('readonly-observe-after-report',request['observer']);changes=fd_changes(before,after);evidence.update(after=after)
++  if any(changes.values())and not secondary:secondary.append({'type':'FDClosureRefusal','reason':'all readonly owned FDs closed','changes':changes})
+--- a/runtime-libvirt_producer.py
++++ b/runtime-libvirt_producer.py
+@@ -114 +114,4 @@
+-  peer.validate_request(request);self.c=c;self.r=request;self.ops=ops;self.persist=persist;self.g=grant;self.gp=grant_pin;self.boot=ops.boot();self.deadline=require_grant(grant,request,c,self.boot);self.number=0;self.launched=0;self.domain=None;self.intent=None;self.first=None
++  peer.validate_request(request);self.c=c;self.r=request;self.ops=ops;self.persist=self.report;self.optional_terminal_sink=persist;self.diagnosticObservations={};self.lastDiagnostic=None;self.g=grant;self.gp=grant_pin;self.boot=ops.boot();self.deadline=require_grant(grant,request,c,self.boot);self.number=0;self.launched=0;self.domain=None;self.intent=None;self.first=None
++ def report(self,label,value):
++  self.lastDiagnostic={'label':label,'value':value}
++  if label in self.diagnosticObservations or len(self.diagnosticObservations)<32:self.diagnosticObservations[label]=value
+@@ -201 +204,5 @@
+-  self.persist('terminal',result);return result
++  self.report('terminal',result)
++  if self.optional_terminal_sink is not None:
++   try:self.optional_terminal_sink('terminal',result)
++   except Exception as error:result['secondary'].append({'type':type(error).__name__,'reason':str(error),'optionalReport':True,'runtimeAuthority':False})
++  return result
+--- a/runtime-postqueue_issuer.py
++++ b/runtime-postqueue_issuer.py
+@@ -97 +97,4 @@
+-  actor=p.select_worker(expected,getattr(self,'persist_worker',None))
++  selected=getattr(self,'_selected_worker',None)
++  if selected is None:
++   actor=p.select_worker(expected,getattr(self,'persist_worker',None));self._selected_worker=actor;self.worker_global_selections=getattr(self,'worker_global_selections',0)+1
++  else:actor=__import__('queue_assignment').revalidate_worker(expected,selected,getattr(self,'persist_worker',None))
+@@ -107 +110,8 @@
+-  return queue_assignment.produce(c,g,parent,prior,None,self.worker_guard,end)
++  metrics={}
++  try:result=queue_assignment.produce(c,g,parent,prior,None,self.worker_guard,end,metrics)
++  except BaseException:
++   self.assignment_intake_diagnostics=metrics;raise
++  metrics['globalWorkerSelections']=getattr(self,'worker_global_selections',0)
++  self.assignment_intake_diagnostics=metrics
++  # No success-summary callback or report IO is part of intake.
++  return result
+@@ -230,5 +240 @@
+-  self.parent=parent;self.parent_ref=parent_ref;self.root='/run/opemos-libvirt-runtime-'+parent['nonce'];p.need(type(parent.get('publisherEvidenceRootPin'))is dict and set(parent['publisherEvidenceRootPin'])=={'path','bytes','sha256','identity'},'exact protected publisher evidence capability required');self.ref=parent['publisherEvidenceRootPin'];self.previous=None;self.ordinal=0;self.rawBytes=0;self.encodedBytes=0;self.storedBytes=0
+-  expected='/run/opemos-libvirt-evidence-'+hashlib.sha256(parent['jobId'].encode()).hexdigest()[:32]
+-  p.need(self.ref['path']==expected,'exact current-job publisher evidence capability')
+-  with p.RootFiles(expected)as files,files.lock():
+-   p.need(files.parent_pin()==self.ref and sorted(os.listdir(files.fd))==['lock'],'new protected evidence root exact full9/only lock; no replay')
++  self.parent=parent;self.parent_ref=parent_ref;self.root='/run/opemos-libvirt-runtime-'+parent['nonce'];self.previous=None
+@@ -249 +254,0 @@
+-  errors=[]
+@@ -251,23 +256,5 @@
+-  except BaseException as error:errors.append(error)
+-  self.closed=True
+-  try:self.retain('original-publisher-owner-closed',self.anchor,primary,None)
+-  except BaseException as error:errors.append(error)
+-  if errors:
+-   detail={'stage':'original-publisher-owner-close-retention','errors':[p.error_value(x)for x in errors],'completePendingProof':self.anchor.runProof,'durability':'UNKNOWN'}
+-   if primary is not None:
+-    primary.secondary=list(getattr(primary,'secondary',[]))+[detail]
+-    if hasattr(primary,'postqueueFailureRecord'):primary.postqueueFailureRecord['secondary']=primary.secondary
+-   else:
+-    error=errors[0];error.secondary=[detail];error.postqueueFailureRecord={'first':p.error_value(error),'secondary':[detail],'outputs':list(outputs or []),'FIRSTPin':None,'phaseEvidenceHead':self.previous,'grantAccepted':False,'hardwareEffects':[],'retainLease':True};raise error
+- def retain(self,label,files,primary,result):
+-  import base64,zlib
+-  value={'kind':'ROOT_COMPLETE_PUBLICATION_ANCESTRY_PHASE_R270','ordinal':self.ordinal,'previousPin':self.previous,'parentPin':self.parent_ref,'jobId':self.parent['jobId'],'actor':p.process(os.getpid()),'label':label,'runtimePath':self.root,'privateBefore':files.private,'privateAfter':getattr(files,'privateAfter',None),'originalOwnerBefore':getattr(files,'ownerBefore',None),'originalOwnerAfter':getattr(files,'ownerAfter',None),'proof':files.runProof,'first':p.error_value(primary),'ownedScopeCloseErrors':getattr(primary,'rootFilesCloseErrors',[])if primary is not None else[],'publicationEffects':getattr(primary,'runtimePublicationEffects',[])if primary is not None else[],'resultPin':result,'grantAuthority':False}
+-  raw=p.canon(value);self.rawBytes+=len(raw);p.need(self.rawBytes<=67108864,'original raw64MiB complete publication evidence budget')
+-  encoded=base64.b64encode(zlib.compress(raw,9)).decode();self.encodedBytes+=len(encoded);p.need(self.encodedBytes<=8388608,'original native8MiB complete publication evidence codec')
+-  record={'kind':'ROOT_LOSSLESS_PUBLICATION_PHASE_CODEC_R270','ordinal':self.ordinal,'rawBytes':len(raw),'rawSHA256':hashlib.sha256(raw).hexdigest(),'encodedBytes':len(encoded),'encodedSHA256':hashlib.sha256(encoded.encode()).hexdigest(),'data':encoded,'previousPin':self.previous,'parentPin':self.parent_ref}
+-  self.storedBytes+=len(p.canon(record));p.need(len(p.canon(record))<=1048576 and self.storedBytes<=8388608,'unchanged1MiB leaf/native8MiB complete stored evidence')
+-  with p.RootFiles(self.ref['path'])as evidence,evidence.lock(True):
+-   p.need(all(p.ident(os.fstat(evidence.fd))[k]==self.ref['identity'][k]for k in p.CORE),'same owned evidence directory inode/core')
+-   names=['lock']+['phase-'+str(i).zfill(3)+'.json'for i in range(self.ordinal)];p.need(self.ordinal<1535 and sorted(os.listdir(evidence.fd))==names,'exact bounded complete owned evidence inventory')
+-   name='phase-'+str(self.ordinal).zfill(3)+'.json';pin=prod.put(evidence,name,record);p.need(sorted(os.listdir(evidence.fd))==sorted(names+[name]),'whole evidence inventory after durable phase')
+-  self.previous=pin;self.ordinal+=1;return pin
++  except BaseException as error:
++   if primary is None:raise
++   primary.secondary=list(getattr(primary,'secondary',[]))+[{'stage':'actual-publisher-FD-close','error':p.error_value(error),'knownClosed':False}]
++   if hasattr(primary,'postqueueFailureRecord'):primary.postqueueFailureRecord['secondary']=primary.secondary
++  finally:self.closed=True
+@@ -275,18 +262,6 @@
+-  files=p.RootFiles(self.root);first=None;result=None
+-  try:
+-   with files:
+-    files.ownerBefore=self.guard_anchor(files)
+-    result=persist_issue_first(files,self.parent,self.parent_ref,value['first'],value['secondary'],value['outputs'],value.get('failedPublication'))if diagnostic else publish_runtime_leaf(files,self.parent,self.parent_ref,name,value,end,ops)
+-    files.ownerAfter=self.guard_anchor(files)
+-  except BaseException as error:first=error;raise
+-  finally:
+-   if hasattr(files,'runProof'):
+-    try:self.retain(name,files,first,result)
+-    except BaseException as error:
+-     detail={'stage':'closed-publication-phase-retention','type':type(error).__name__,'reason':str(error),'retainedHead':self.previous,'ordinal':self.ordinal,'completePendingProof':files.runProof,'publicationResult':result,'durability':'UNKNOWN'}
+-     if first is None:
+-      error.publicationEvidenceFailure=detail;error.runtimePublicationEffects=([result]if result is not None else[]);raise
+-     first.publicationEvidenceFailure=detail;first.secondary=list(getattr(first,'secondary',[]))+[detail]
+-   if first is None and not diagnostic:
+-    try:p.need(ops.now()<end,'original issuer deadline includes closed-phase durable retention')
+-    except BaseException as error:error.runtimePublicationEffects=([result]if result is not None else[]);raise
++  files=p.RootFiles(self.root);result=None
++  with files:
++   self.guard_anchor(files)
++   result=persist_issue_first(files,self.parent,self.parent_ref,value['first'],value['secondary'],value['outputs'],value.get('failedPublication'))if diagnostic else publish_runtime_leaf(files,self.parent,self.parent_ref,name,value,end,ops)
++   self.guard_anchor(files)
++  if not diagnostic:p.need(ops.now()<end,'original issuer deadline after actual publication and FD closure')
+@@ -345 +320,2 @@
+-  ref=save(str(len(worker_events)).zfill(2)+'-'+label,value);worker_events.append(ref);return ref
++  # Bounded diagnostics may be omitted; they cannot veto a real worker proof.
++  if len(worker_events)<32:worker_events.append({'label':label,'value':value})
+@@ -371 +347,4 @@
+-  first=e;publication_owner.failure(e,outputs,end,ops)
++  first=e
++  evidence={'workerObservations':worker_events,'globalWorkerSelections':getattr(ops,'worker_global_selections',0),'intake':getattr(e,'assignmentIntakeEvidence',getattr(ops,'assignment_intake_diagnostics',None)),'optionalReportError':getattr(ops,'assignment_diagnostic_error',None)}
++  old_evidence=getattr(e,'evidence',None);e.evidence={'primaryEvidence':old_evidence,'assignmentIntake':evidence}
++  publication_owner.failure(e,outputs,end,ops)
+--- a/runtime-queue_assignment.py
++++ b/runtime-queue_assignment.py
+@@ -77,10 +77,15 @@
+-def produce(c,g,parent,prior,persist,worker_guard,end):
+- qref=g['queuePrograms'][0];queue=load_queue(qref);firstMissing=None
+- while time.time()<end:
+-  # The expected worker comes ONLY from independently guarded process/lock
+-  # observation, never header['producer']. No data receipt can grant hardware.
+-  before=worker_guard(qref,parent)
+-  try:value,evidence=queue.read_libvirt_assignment_export(parent['queueStateRoot'],g['jobId'],before['worker'],qref,parent['bootID'],maximumAge=min(30,max(.001,end-time.time())))
+-  except FileNotFoundError as error:
+-   firstMissing=firstMissing or {'type':type(error).__name__,'reason':str(error)};time.sleep(.025);continue
+-  after=worker_guard(qref,parent);p.need(before==after,'same exact live worker PID/start/UID/source/argv/held lock before and after complete export')
++def produce(c,g,parent,prior,persist,worker_guard,end,metrics=None):
++ qref=g['queuePrograms'][0];started=time.monotonic();queue=load_queue(qref);polls=0;observations={'kind':'ROOT_CURRENT_ASSIGNMENT_INTAKE_MEASUREMENTS','originalEndUnix':end,'readinessPolls':0,'workerChecks':0};archive={}
++ try:
++  while True:
++   p.need(time.time()<end,'no current exact canonical export inside original30s entry wait')
++   polls+=1
++   if queue.libvirt_assignment_ready(parent['queueStateRoot'],g['jobId']):break
++   time.sleep(min(.025,max(0,end-time.time())))
++  observations.update(readinessPolls=polls,headerWaitSeconds=time.monotonic()-started)
++  tick=time.monotonic();before=worker_guard(qref,parent);observations.update(beforeWorkerSeconds=time.monotonic()-tick,workerChecks=1)
++  p.need(time.time()<end,'original entry deadline before whole assignment intake');tick=time.monotonic()
++  value,evidence=queue.read_libvirt_assignment_export(parent['queueStateRoot'],g['jobId'],before['worker'],qref,parent['bootID'],maximumAge=min(30,max(.001,end-time.time())),metrics=archive)
++  observations.update(intakeSeconds=time.monotonic()-tick,archive=archive);p.need(time.time()<end,'original entry deadline after whole assignment intake')
++  tick=time.monotonic();after=worker_guard(qref,parent);observations.update(afterWorkerSeconds=time.monotonic()-tick,workerChecks=2)
++  p.need(before==after,'same exact live worker PID/start/UID/source/argv/exe/ancestry/held FD and sole FLOCK before and after complete export')
+@@ -89 +94,3 @@
+-  evidence['independentWorkerProof']=before
++  evidence['independentWorkerProof']=after
++  observations.update(totalSeconds=time.monotonic()-started,remainingSeconds=end-time.time());p.need(observations['remainingSeconds']>0,'original whole assignment effect clock remains valid')
++  if metrics is not None:metrics.update(observations)
+@@ -93 +100,14 @@
+- raise p.Refused('no current exact canonical export inside original30s entry wait; firstMissing='+repr(firstMissing))
++ except BaseException as error:
++  observations.update(readinessPolls=polls,totalSeconds=time.monotonic()-started,remainingSeconds=end-time.time(),archive=archive);error.assignmentIntakeEvidence=observations
++  if metrics is not None:metrics.update(observations)
++  raise
++
++def revalidate_worker(expected,selected,persist=None):
++ """Fresh exact-PID check after independently selecting the sole worker once."""
++ need=p.need;process_snapshot=p.process_snapshot;process=p.process
++ persist=(lambda *a:None)if persist is None else persist
++ need(type(selected)is dict and type(selected.get('pid'))is int,'Previously selected actual worker identity')
++ raw=process_snapshot(selected['pid']);actor=process(selected['pid'])
++ need(actor==selected and actor['argv']==expected and actor['uid']==1000 and actor['pid']==actor['tgid']and raw['uids']==[1000]*4 and raw['pid']==actor['pid']and raw['start']==actor['start']and raw['ppid']==actor['ppid']and raw['argv']==expected and raw['cgroup']==actor['cgroup']and raw['tgid']==actor['tgid'],'Same fresh worker PID/start/UID/TGID/argv/cgroup/parent; no PID or role reuse')
++ need(process_snapshot(actor['pid'])==raw,'Same worker full current identity after targeted check');persist('worker-targeted-revalidation',raw);return actor
++
+--- a/runtime-runtime_entry.py
++++ b/runtime-runtime_entry.py
+@@ -171 +171 @@
+- receipt_root='/run/opemos-libvirt-results-'+c['nonce'];peer.need(not os.path.lexists(receipt_root),'unique receipt lane');producer.create_root(receipt_root);sequence=[]
++ receipt_root='/run/opemos-libvirt-results-'+c['nonce'];peer.need(not os.path.lexists(receipt_root),'unique receipt lane');producer.create_root(receipt_root);sequence=[];observations={}
+@@ -173,4 +173,2 @@
+-  peer.need(len(sequence)<128,'finite128 transaction records');raw=peer.canon(value);peer.need(len(raw)<=1048576,'unchanged1MiB record bound')
+-  allocated=sum(p.lstat().st_blocks*512 for p in Path(receipt_root).iterdir());peer.need(allocated+len(raw)+3145728<=13421772,'16MiB metadata reservation with20percent reserve')
+-  with peer.RootFiles(receipt_root)as f,f.lock(True):pin=producer.put(f,str(len(sequence)).zfill(3)+'-'+label+'.json',value)
+-  sequence.append(pin);print(peer.canon({'phase':label,'receipt':pin}).decode(),flush=True);return pin
++  if label in observations or len(observations)<32:observations[label]=value
++  return None
+@@ -184 +182,18 @@
+- print(peer.canon({'terminal':terminal,'accepted':result['accepted'],'leaseHeld':result['leaseMustRemainHeld']}).decode(),flush=True);return 0 if result['accepted']else 1
++ print(peer.canon({'terminal':terminal,'accepted':result['accepted'],'leaseHeld':result['leaseMustRemainHeld']}).decode(),flush=True);return 0 if operational_complete(result,fdsClosed)else 1
++
++
++def operational_complete(result, fds_closed):
++    """A closed installer observation can succeed without full installation."""
++    closure = result.get('closure', {})
++    return bool(
++        fds_closed is True
++        and result.get('MODEL_ONLY') is False
++        and result.get('first') is None
++        and result.get('runtimeAuthorized') is True
++        and result.get('leaseMustRemainHeld') is False
++        and closure.get('known') is True
++        and closure.get('FDsClosed') is True
++        and closure.get('logicalLeaseClosed') is True
++        and (result.get('accepted') is True
++             or result.get('installerDiagnosticComplete') is True)
++    )
+--- a/trusted_parent.py
++++ b/trusted_parent.py
+@@ -93 +93 @@
+-                self.record('native-census-safety-'+label+'-'+str(attempt),dict(kind='CURRENT_TARGET_SAFETY_CUTS',cuts=cuts,completeCurrentTargetCoverage=True,noTargetUsers=True,diagnosticEnrichmentRequired=False))
++                self.record_optional('native-census-safety-'+label+'-'+str(attempt),dict(kind='CURRENT_TARGET_SAFETY_CUTS',cuts=cuts,completeCurrentTargetCoverage=True,noTargetUsers=True,diagnosticEnrichmentRequired=False))
+--- a/window.py
++++ b/window.py
+@@ -26 +26 @@
+- cp=load(W.held(ROOT/'controller_probe.py',plan['installed']['controller_probe.py']['sha256'])[0],'actual_machine_probe',ROOT/'controller_probe.py')
++ cp=load(W.held(HERE/'controller_probe_custody.py',m['localInputs']['controller_probe_custody.py']['sha256'])[0],'actual_machine_probe',HERE/'controller_probe_custody.py')
