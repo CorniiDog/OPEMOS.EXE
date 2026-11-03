@@ -21,13 +21,20 @@
 @@ -34 +35 @@
 - need(p['sourceRoles']['libvirt_peer']['sha256']=='7e1663f8351247b9643b7c14419119449b0bd0722a46b80ae0f8ea34a9f9816a'and p['sourceRoles']['libvirt_access']['sha256']=='ee32a4e84df796d6932062ded9e1049ce5e82cbbf01315d8c74da96b9e03aa9e','preserved original R107 source graph distinct from current implementation')
 + need(p['sourceRoles']==domain['observerExecution']['implementation']['sourceRoles'],'whole historical source graph matches actual normal finalizer observation')
-@@ -80 +81 @@
+@@ -38,0 +40,6 @@
++ if 'assignment.json'in c['runtime']['pins']:
++  raw=base64.b64decode(c['canonicalAssignmentRawBase64'],validate=True);ref=c['runtime']['pins']['assignment.json'];a=json.loads(raw);original=c['submittedRow']
++  need(len(raw)==ref['bytes']and hashlib.sha256(raw).hexdigest()==ref['sha256']and L.canon(a)==raw,'complete immutable canonical assignment data')
++  need(a['kind']=='ROOT_CANONICAL_QUEUE_LIBVIRT_ASSIGNMENT_R4'and a['runtimeAuthorized']is False and a['queueExport']['RootAuthority']is False and a['queueExport']['closureOrLeaseReleaseClaimed']is False and a['request']==a['queueExport']['request']==request,'canonical assignment data is not a hardware grant or terminal authority')
++  need(original['state']=='running'and original['finished']is original['result']is None and {k:v for k,v in original.items()if k not in('state','finished','result')}=={k:v for k,v in row.items()if k not in('state','finished','result')},'original submitted row preserved through only normal terminal transition')
++  need(a['proof']['ownRowSHA256']==hashlib.sha256(L.canon(original)).hexdigest()and a['proof']['ownBindingSHA256']==hashlib.sha256(L.canon(bound)).hexdigest(),'assignment authenticates exact original RUNNING row and unchanged invocation binding')
+@@ -80 +87 @@
 -  need('child-grant.json'not in DATA['runtime']['pins']and 'context.json'not in DATA['runtime']['pins']and 'assignment.json'not in DATA['runtime']['pins'],'no R107 runtime authority was published')
 +  need('child-grant.json'not in DATA['runtime']['pins']and 'context.json'not in DATA['runtime']['pins'],'no runtime grant/context was published; canonical assignment is data')
-@@ -99 +100 @@
+@@ -99 +106 @@
 - validate_history(values);need(attempt not in('34117bbb1f4d4418b4eff9c1190233f2','96af5ac9637c40309055725bb9df0c17')and len(attempt)==32 and all(c in'0123456789abcdef'for c in attempt),'new finite attempt, no old runtime/preparer replay')
 + validate_history(values);need(attempt not in('e842cfa1daa5412aba5d454cca9ab58f','34117bbb1f4d4418b4eff9c1190233f2','96af5ac9637c40309055725bb9df0c17')and len(attempt)==32 and all(c in'0123456789abcdef'for c in attempt),'new finite attempt, no old runtime/preparer replay')
-@@ -108 +109 @@
+@@ -108 +115 @@
 - need(attempt not in('34117bbb1f4d4418b4eff9c1190233f2','96af5ac9637c40309055725bb9df0c17'),'new execution scope only');return plan
 + need(attempt not in('e842cfa1daa5412aba5d454cca9ab58f','34117bbb1f4d4418b4eff9c1190233f2','96af5ac9637c40309055725bb9df0c17'),'new execution scope only');return plan
 --- a/controller_probe_custody.py
