@@ -1013,11 +1013,19 @@
 +   result=persist_issue_first(files,self.parent,self.parent_ref,value['first'],value['secondary'],value['outputs'],value.get('failedPublication'))if diagnostic else publish_runtime_leaf(files,self.parent,self.parent_ref,name,value,end,ops)
 +   self.guard_anchor(files)
 +  if not diagnostic:p.need(ops.now()<end,'original issuer deadline after actual publication and FD closure')
-@@ -345 +320,2 @@
+@@ -314 +289,6 @@
+- p.need(json.loads(held(proof_pin,1048576))==observed,'whole emitted preflight value equals held proof')
++ # The producer publishes canonical JSON. Bind every emitted byte before
++ # reading its wire representation; native tuple/list distinctions confer no
++ # grant authority and must not reject the producer's own complete proof.
++ raw=held(proof_pin,1048576)
++ p.need(raw==p.canon(observed),'whole emitted canonical preflight bytes equal held proof')
++ observed=json.loads(raw)
+@@ -345 +325,2 @@
 -  ref=save(str(len(worker_events)).zfill(2)+'-'+label,value);worker_events.append(ref);return ref
 +  # Bounded diagnostics may be omitted; they cannot veto a real worker proof.
 +  if len(worker_events)<32:worker_events.append({'label':label,'value':value})
-@@ -371 +347,4 @@
+@@ -371 +352,4 @@
 -  first=e;publication_owner.failure(e,outputs,end,ops)
 +  first=e
 +  evidence={'workerObservations':worker_events,'globalWorkerSelections':getattr(ops,'worker_global_selections',0),'intake':getattr(e,'assignmentIntakeEvidence',getattr(ops,'assignment_intake_diagnostics',None)),'optionalReportError':getattr(ops,'assignment_diagnostic_error',None)}
