@@ -1881,6 +1881,8 @@ pub(crate) struct UsbWriteProgress {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UsbWriteResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) removal_retry_token: Option<String>,
     pub(crate) status: String,
     pub(crate) device_identifier: String,
     pub(crate) device_node: String,

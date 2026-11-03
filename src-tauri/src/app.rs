@@ -177,6 +177,7 @@ pub fn run() {
             cancel_usb_write_preflight,
             get_usb_write_preflight_status,
             write_image_to_usb,
+            retry_usb_safe_removal,
             windows::open_valve_download_page,
             windows::open_progress_window,
             windows::hide_progress_window,

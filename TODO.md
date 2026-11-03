@@ -1,5 +1,134 @@
 # OPEMOS.EXE — Product Checklist
 
+## PR211 `130d57de` Core F1-R2 follow-up — 2026-10-27
+
+- Core withheld approval for the exact `130d57de` head because automatic
+  removal retry publication observed cancellation outside the manager mutex and
+  could stamp an old write with a newly armed generation. Keep all prior heads,
+  package results, deliberate non-Main OMEN refusals, and withheld reviews as
+  history. The bounded correction retains the admitted write's exact token,
+  generation and cancellation object until worker closure; retry publication
+  now checks that same identity, unrevoked state and generation under the
+  manager mutex. A later arm explicitly revokes an active write while retaining
+  serialization through worker closure. Focused manager cases cover normal
+  automatic result-to-retry publication and cancel/new-arm before late result
+  publication. They are unrun locally: no VM, UDisks, Polkit, physical media,
+  merge, or publication outcome is claimed.
+- Required next: fresh normal source/package checks and exact Core review of
+  the changed immutable head. Any later admitted Ubuntu runtime must exercise
+  the real automatic failure-to-retry and cancel/new-intent-to-late-result
+  transactions with genuine process, clock, UID and UDisks boundaries.
+
+## PR211 b0901 Core review follow-up — 2026-10-27
+
+- Core withheld approval for exact `b0901bd6` despite all eleven source/package
+  jobs succeeding. Preserve both preceding heads, all successful packages and
+  the review findings; none transfer to the next head. F1-R: carry the active
+  write cancellation context into automatic post-readback removal, check it
+  again immediately before Unmount after property validation, and never mint a
+  retry after that capability was revoked. F2-R: resolve foreign block ancestry
+  from the canonical class-block path so partitions find their containing disk
+  and drive-less/layered objects are positively non-USB, while missing or
+  ambiguous possible USB ancestry still refuses. F3: reset the persistent retry
+  button for each fresh capability and retire a successful retry's presentation
+  without stale completion mutation. Focused source cases cover the containing
+  partition/drive-less classifier and frontend lifecycle wiring. They remain
+  unrun locally; no VM, UDisks, Polkit, virtual USB, physical media, merge or
+  publication result is claimed.
+- Required next: normal checks/package for the new immutable head and a fresh
+  exact Core review. The separately admitted Ubuntu VM transaction must use the
+  eventual new official artifact for real UDisks/Polkit/UID/topology/clock and
+  lifecycle proof, including property-read-to-Unmount cancellation, initial
+  automatic removal cancellation, unrelated partition/loop versus unresolved
+  shared ancestry, and retry success followed by a later removal failure.
+
+## PR211 Core review corrections — 2026-10-26
+
+- Core primary withheld approval for exact `9162df86` after a complete
+  authenticated eight-file review. Preserve that source/checkpoint and the
+  successful hosted package as historical evidence; neither transfers to this
+  changed head. F1: an admitted removal retry now stays active through worker
+  closure with its exact token/generation/deadline and cancellation flag.
+  Cancellation, new intent and cancel-all revoke that actual capability before
+  further UDisks effects; failed workers may restore only the still-current,
+  unrevoked generation. The frontend revokes the backend capability on context
+  changes and ignores a late retry result. F2: a foreign UDisks block whose
+  sysfs USB parent cannot be authenticated is a refusal, not unrelated; only a
+  proven distinct USB parent or non-USB/layered object can continue. Focused
+  state and topology fault cases cover cancellation/replacement/serialization
+  and unknown/shared/distinct parent classification. This is source-only,
+  unrun locally; no VM/UDisks/physical-media/merge effect.
+- Required next: normal exact-head CI/package checks and a fresh Core review of
+  the corrected immutable PR scope. The original final artifact remains a
+  verified historical input only; a new head requires a new exact artifact
+  before any separately admitted Ubuntu runtime route.
+
+## PR211 first actual hosted package and formatting result — 2026-10-26
+
+- Normal FF published a85d0ca1/fb669973 on isolated topic, aggregate open PRs2
+  before PR211 (now3). Mainb4/PR210 unchanged. No new dependency/toolchain or
+  workflow change: exact existing Rust1.98.1/Node22.23.2 producer used.
+- Exact fb669973 Ubuntu run40338884239 job121627774046 appimage-package
+  SUCCESS, actual AppImage137783800B SHA
+  d5024c04dcc28803854e692a324c66230baaf3bb941d7baf19e869d2cc6e68c1.
+  Official archive12658147692 SHA
+  dbb809f15f31ec509b75dd0877be0a577f5062279ee42173364f1774631e522e;
+  small descriptor12658297584 independently fetched/digest checked. Whole run
+  FAILURE from intentional non-Main OMEN diagnostic; Main runtime gate SKIPPED,
+  neither relabelled as pass or VM acceptance. Full native compile/package log
+  retained in exe-pr211-fb669973-safe-removal-hosted-packaging-20261026.
+- First PR Checks40338884216 Rust121627773749 failed cargo fmt before Clippy/
+  Rust unit checks; full197302B official log retained, source formatting only
+  corrected with rustfmt (no assertion/guard/locked-dependency changes). Earlier
+  formatter parse had not asserted formatting compliance. Frontend/Linux/
+  Debian checks pass separately. Preserve original running push job and Windows
+  package; do not cancel via a new push while cancel-in-progress applies.
+- New formatted exact head still needs its own checks/package and whole Core
+  review; no transfer of first head passes. Ubuntu runtime remains pending on
+  exact eventual approved AppImage, not source/hosted evidence alone.
+
+## 2026-10-26 safe-removal packaging clarification and source review
+
+- Latest explicit user clarification authorizes the existing exact
+  ubuntu-executable.yml hosted Rust1.98.1/Node22.23.2 packaging producer before
+  Ubuntu product runtime. This supersedes only the prior no-CI-before-runtime
+  sequencing below, not VM acceptance, trust or merge gates. Existing workflow
+  and locked dependencies unchanged unless actual compiler evidence requires it.
+- Whole writer/retry/frontend review found a missing shared-device case:
+  UDisks SiblingId can be blank. Removal now also binds the actual sysfs USB
+  device parent and refuses other block devices/LUNs under it before effects.
+  Keep original a85d0ca1 checkpoint/failures; no pass or approval transfer.
+- Normal isolated branch/PR required checks and exact imaging-sensitive Core
+  review, then retain official appimage-package run/job/artifact/digest/source
+  identity and route that exact AppImage to Ubuntu VM for actual safe-removal
+  acceptance. Hosted build is not VM/USB success. No merge/Main push/publication.
+
+## 2026-10-25 Linux integrated verified-USB safe removal — implementation checkpoint, UNRUN
+
+- New bounded branch from protected Main b4ae9306; held PR210 unchanged.
+  After normal exact write/flush/full readback and exclusive descriptor closure,
+  use supported UDisks Unmount (no force), then CanPowerOff/PowerOff or Ejectable/
+  Eject. Recheck full selected identity, disk/partition/UDisks topology, node
+  device number, holders, system hints and mounts before effects. Shared USB
+  sibling drives, unsafe/system mounts, layered dependencies, drift, busy and
+  authorization failures refuse removal. No broad unmount/kill/privilege bypass.
+- Verified bytes and OS-confirmed removal remain separate. No false ejected
+  success or manual Ubuntu instruction. Failed/unsupported removal exposes a
+  normal app retry that cannot write: server-retained exact target/session,
+  original 60-second bound, active-operation serialization and complete fresh
+  guards. New intent/cancellation/context changes revoke the retry; no caller
+  target pathname or identity is accepted by retry IPC.
+- Authored Rust mount-tree/retry-lifecycle and JS receipt-token regression cases
+  UNRUN. Rust formatter parse/source diff inspection only on controller; no
+  compiler, project tests, VM operation or physical-media effects. Ubuntu U264
+  busy write and its passed Build/image evidence untouched.
+- Next at safe independent review/admission: compile this exact local product
+  inside Ubuntu OMEN; normal GUI write/flush/full readback on existing owned
+  file-backed VM USB, real unmount/OS removal outcome, unsupported/busy/Polkit/
+  changed-identity/retry faults and closure. No CI or GitHub deployment before
+  real Ubuntu product acceptance. Then normal imaging-sensitive PR/checks and
+  exact Core counterpart review; no merge/publication authority inferred.
+
 ## PR170 post-PR181 reconciliation — 2026-10-22
 
 - [ ] Reconcile against protected Main `e452d5e7`, the exact reviewed PR181
