@@ -42,7 +42,7 @@
 @@ -5 +5 @@
 -import os,json,time,hashlib,traceback
 +import hashlib,json,os,re,stat,subprocess,sys,time,types
-@@ -9,44 +9,232 @@
+@@ -9,44 +9,235 @@
 -def observe(module,out):
 - out=Path(out);real=module.subprocess;events=[];secondary=[];primary=None;counter=0
 - def persist(name,raw):
@@ -169,6 +169,8 @@
 +         'opemos-omen-robot' in {x.get('name') for x in matches[0].get('labels',[])},
 +         'exact registered GitHub runner21')
 +    runner=matches[0]
++    need(runner.get('status') in ('online','offline') and type(runner.get('busy')) is bool,
++         'known current runner status and assigned-work state')
 +    # Repository-wide queue telemetry owns no OMEN process or resource.
 +    # Keep truthful unknown data if this optional endpoint is unavailable.
 +    try:
@@ -180,6 +182,7 @@
 +    try:
 +        heartbeat=read_json('repos/CorniiDog/OPEMOS.EXE/actions/variables/OPEMOS_OMEN_ROBOT_RUNNER_STATE')
 +        h=json.loads(heartbeat['value'])
++        if type(h) is not dict or type(h.get('checked_at')) not in (int,float) or type(h.get('expires_at')) not in (int,float):h={}
 +    except (OSError,subprocess.TimeoutExpired,RuntimeError,KeyError,TypeError,ValueError):h={}
 +    current=(h.get('source_commit')==p['mainCommit'] and
 +             h.get('queue_source_sha256')==p['queueSourceSHA256'] and
