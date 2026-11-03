@@ -663,73 +663,74 @@
 @@ -220 +223 @@
 -   self.persist('event-connection-close-drain',{'reason':reason,'before':before,'after':peer.fd_snapshot('event-drain-after-'+reason),'calls':out,'timer':timer,'temporary':temporary,'primary':peer.error_value(primary),'timerRemovalError':removeError})
 +   self.report('event-connection-close-drain',{'reason':reason,'before':before,'after':peer.fd_snapshot('event-drain-after-'+reason),'calls':out,'timer':timer,'temporary':temporary,'primary':peer.error_value(primary),'timerRemovalError':removeError})
-@@ -247 +250 @@
+@@ -246,2 +249 @@
+-   peer.need(len(peer.canon(value))<=65536,'bounded exact entry diagnostics')
 -   self.persist(label,value)
 +   self.report(label,value)
-@@ -296 +299 @@
+@@ -296 +298 @@
 -  self.persist(label,{'pin':pin,'value':value});return pin
 +  self.report(label,{'pin':pin,'value':value});return pin
-@@ -304 +307 @@
+@@ -304 +306 @@
 -  self.persist('IO_ACCESS_READY',{'preparedAccessPin':self.g['preparedAccessPin'],'splitDiskCapturePins':self.g['splitDiskCapturePins'],'noPostGrantDiskHash':True,'rows':self.accessRows})
 +  self.report('IO_ACCESS_READY',{'preparedAccessPin':self.g['preparedAccessPin'],'splitDiskCapturePins':self.g['splitDiskCapturePins'],'noPostGrantDiskHash':True,'rows':self.accessRows})
-@@ -327 +330 @@
+@@ -327 +329 @@
 -  self.persist('ACL_CLOSURE',results);return results
 +  self.report('ACL_CLOSURE',results);return results
-@@ -331 +334 @@
+@@ -331 +333 @@
 -   x=native_child(argv,self.deadline);self.persist('partition-helper',x);peer.need(x['numeric']==0,'exact transient VM partition operation')
 +   x=native_child(argv,self.deadline);self.report('partition-helper',x);peer.need(x['numeric']==0,'exact transient VM partition operation')
-@@ -355 +358 @@
+@@ -355 +357 @@
 -  schema=native_child(['/usr/bin/virt-xml-validate','-','domain'],self.effect_clock('create'),self.g['nativeTools']['/usr/bin/virt-xml-validate'],xml.encode());self.persist('exact-installed-XML-before-create',schema);peer.need(schema['numeric']==0,'current exact XML installed schema before domain create')
 +  schema=native_child(['/usr/bin/virt-xml-validate','-','domain'],self.effect_clock('create'),self.g['nativeTools']['/usr/bin/virt-xml-validate'],xml.encode());self.report('exact-installed-XML-before-create',schema);peer.need(schema['numeric']==0,'current exact XML installed schema before domain create')
-@@ -359 +362 @@
+@@ -359 +361 @@
 -  caps=self.conn.getDomainCapabilities(self.c['qemu']['path'],'x86_64','q35','kvm',0);self.persist('actual-virtio-mode-capability-before-create',__import__('guest_firmware_probe').verify_display_capability(caps))
 +  caps=self.conn.getDomainCapabilities(self.c['qemu']['path'],'x86_64','q35','kvm',0);self.report('actual-virtio-mode-capability-before-create',__import__('guest_firmware_probe').verify_display_capability(caps))
-@@ -384 +387 @@
+@@ -384 +386 @@
 -    observed=raw;self.persist('domain-candidate-before-role',{'raw':raw,'uuidMatch':uuidMatch,'nameMatch':nameMatch})
 +    observed=raw;self.report('domain-candidate-before-role',{'raw':raw,'uuidMatch':uuidMatch,'nameMatch':nameMatch})
-@@ -389 +392 @@
+@@ -389 +391 @@
 -   self.persist('domain-candidate-selection',{'scanned':scanned,'matches':matches})
 +   self.report('domain-candidate-selection',{'scanned':scanned,'matches':matches})
-@@ -405 +408 @@
+@@ -405 +407 @@
 -   reg.update(uuid=d.UUIDString(),name=d.name(),persistent=False,noNIC=True,XMLSHA256=hashlib.sha256(x.encode()).hexdigest());self.registered=reg;self.observationActor=peer.process_snapshot(a['pid']);peer.need(self.observationActor['uids']==[64055]*4 and all(self.observationActor[k]==a[k]for k in('pid','start','ppid','tgid','argv','cgroup')),'registered full raw observation baseline');self.persist('actual-paused-domain',reg);return reg
 +   reg.update(uuid=d.UUIDString(),name=d.name(),persistent=False,noNIC=True,XMLSHA256=hashlib.sha256(x.encode()).hexdigest());self.registered=reg;self.observationActor=peer.process_snapshot(a['pid']);peer.need(self.observationActor['uids']==[64055]*4 and all(self.observationActor[k]==a[k]for k in('pid','start','ppid','tgid','argv','cgroup')),'registered full raw observation baseline');self.report('actual-paused-domain',reg);return reg
-@@ -407 +410 @@
+@@ -407 +409 @@
 -   value={'stage':stage,'first':{'type':type(error).__name__,'reason':str(error)},'scanned':scanned,'scanningPID':scanningPID,'candidate':observed,'closureErrors':locals().get('registrationClosureErrors',[]),'vfioEvidence':getattr(error,'vfioEvidence',None),'workingEvidence':getattr(error,'workingEvidence',None),'DACFDRecordPin':self.lastDACFDRecordPin,'matches':matches,'request':self.request,'noGuestResume':True}
 +   value={'stage':stage,'first':{'type':type(error).__name__,'reason':str(error)},'scanned':scanned,'scanningPID':scanningPID,'candidate':observed,'closureErrors':locals().get('registrationClosureErrors',[]),'vfioEvidence':getattr(error,'vfioEvidence',None),'workingEvidence':getattr(error,'workingEvidence',None),'DACFDRecordPin':None,'DACFDObservation':self.lastDACFDObservation,'matches':matches,'request':self.request,'noGuestResume':True}
-@@ -409 +412 @@
+@@ -409 +411 @@
 -   try:self.persist('FIRST-domain-candidate',value)
 +   try:self.report('FIRST-domain-candidate',value)
-@@ -431 +434 @@
+@@ -431 +433 @@
 -    ch=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);ch.settimeout(.1);ch.connect(path);pid,uid,gid=struct.unpack('3i',ch.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12));raw=peer.process_snapshot(pid);identity={'path':path,'socketIdentity':si,'peerPID':pid,'peerUID':uid,'peerGID':gid,'rawPeer':raw,'domain':self.registered,'phase':phase};self.persist('graphical-peer-before-predicate-'+str(phase)+'-sample-'+str(sample),identity)
 +    ch=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);ch.settimeout(.1);ch.connect(path);pid,uid,gid=struct.unpack('3i',ch.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12));raw=peer.process_snapshot(pid);identity={'path':path,'socketIdentity':si,'peerPID':pid,'peerUID':uid,'peerGID':gid,'rawPeer':raw,'domain':self.registered,'phase':phase};self.report('graphical-peer-before-predicate-'+str(phase)+'-sample-'+str(sample),identity)
-@@ -450 +453 @@
+@@ -450 +452 @@
 -   value={'kind':'ACTUAL_DOMAIN_BOUND_GRAPHICAL_FIRST_FRAME','phase':phase,'sample':sample,'frameSample':frameSample,'identity':identity,'protocol':protocol,'framePin':ref,'displayContent':content,'modeAccepted':False,'beforeAnySerialRead':True,'noGuestInput':True,'observationCalls':self.observationCalls};self.capturedFrames[phase]=value;self.capturedFrameHistory.append(value);self.persist('graphical-frame-before-content-predicate-'+str(phase)+'-sample-'+str(sample),value);value['usableBounds']=__import__('guest_firmware_probe').verify_unscaled_usable_frame(self.request,identity,protocol,rgb);value['modeAccepted']=True;return value
 +   value={'kind':'ACTUAL_DOMAIN_BOUND_GRAPHICAL_FIRST_FRAME','phase':phase,'sample':sample,'frameSample':frameSample,'identity':identity,'protocol':protocol,'framePin':ref,'displayContent':content,'modeAccepted':False,'beforeAnySerialRead':True,'noGuestInput':True,'observationCalls':self.observationCalls};self.capturedFrames[phase]=value;self.capturedFrameHistory.append(value);self.report('graphical-frame-before-content-predicate-'+str(phase)+'-sample-'+str(sample),value);value['usableBounds']=__import__('guest_firmware_probe').verify_unscaled_usable_frame(self.request,identity,protocol,rgb);value['modeAccepted']=True;return value
-@@ -455 +458 @@
+@@ -455 +457 @@
 -   self.persist('graphical-channel-closure-'+str(phase)+'-sample-'+str(sample),{'first':peer.error_value(primary),'socketClosed':ch is None or ch.fileno()==-1,'pathFDClosed':sockfd is None or not Path('/proc/self/fd/'+str(sockfd)).exists(),'frameRetained':None if value is None else value['framePin'],'noGuestInput':True})
 +   self.report('graphical-channel-closure-'+str(phase)+'-sample-'+str(sample),{'first':peer.error_value(primary),'socketClosed':ch is None or ch.fileno()==-1,'pathFDClosed':sockfd is None or not Path('/proc/self/fd/'+str(sockfd)).exists(),'frameRetained':None if value is None else value['framePin'],'noGuestInput':True})
-@@ -462 +465 @@
+@@ -462 +464 @@
 -    self.graphical[phase]=value;self.persist('graphical-observation-complete-'+str(phase),{'phase':phase,'startedUnix':started,'endUnix':end,'activeFrame':value['framePin'],'modeAccepted':value['modeAccepted'],'usableBounds':value['usableBounds'],'samples':[{'sample':r['sample'],'pin':r['framePin'],'content':r['displayContent']}for r in samples],'graphicalAccepted':True,'NVIDIARenderAccepted':False,'OSGraphicalSessionAccepted':False,'beforeAnySerialRead':True});return value
 +    self.graphical[phase]=value;self.report('graphical-observation-complete-'+str(phase),{'phase':phase,'startedUnix':started,'endUnix':end,'activeFrame':value['framePin'],'modeAccepted':value['modeAccepted'],'usableBounds':value['usableBounds'],'samples':[{'sample':r['sample'],'pin':r['framePin'],'content':r['displayContent']}for r in samples],'graphicalAccepted':True,'NVIDIARenderAccepted':False,'OSGraphicalSessionAccepted':False,'beforeAnySerialRead':True});return value
-@@ -466 +469 @@
+@@ -466 +468 @@
 -  peer.need(bool(samples),'actual graphical observation produced no complete frame');value=dict(samples[-1]);value.update(diagnosticOnly=True,graphicalDeadlineReached=True,graphicalAccepted=False);self.graphical[phase]=value;self.persist('graphical-observation-inactive-deadline-'+str(phase),{'phase':phase,'startedUnix':started,'endUnix':end,'finishedUnix':time.time(),'samples':[{'sample':r['sample'],'pin':r['framePin'],'content':r['displayContent']}for r in samples],'graphicalAccepted':False,'NVIDIARenderAccepted':False,'OSGraphicalSessionAccepted':False,'serialNextDiagnosticOnly':True,'beforeAnySerialRead':True});return value
 +  peer.need(bool(samples),'actual graphical observation produced no complete frame');value=dict(samples[-1]);value.update(diagnosticOnly=True,graphicalDeadlineReached=True,graphicalAccepted=False);self.graphical[phase]=value;self.report('graphical-observation-inactive-deadline-'+str(phase),{'phase':phase,'startedUnix':started,'endUnix':end,'finishedUnix':time.time(),'samples':[{'sample':r['sample'],'pin':r['framePin'],'content':r['displayContent']}for r in samples],'graphicalAccepted':False,'NVIDIARenderAccepted':False,'OSGraphicalSessionAccepted':False,'serialNextDiagnosticOnly':True,'beforeAnySerialRead':True});return value
-@@ -474 +477 @@
+@@ -474 +476 @@
 -   self.phaseSerial=b;self.persist('installer-secondary-serial',{'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'serialPath':str(p),'graphicalFrame':self.graphical[phase]['framePin'],'diagnosticOnly':True,'graphicalFirst':True});v={'kind':'ACTUAL_RETAINED_INSTALLER_BOOT_DIAGNOSTIC','domainUUID':self.request['domainUUID'],'domainName':self.request['domainName'],'mediaPin':self.c['working'],'actualDomainRegistration':self.registered,'graphicalFrame':self.graphical[phase]['framePin'],'graphicalFirst':True,'serialBytes':len(b),'serialSHA256':hashlib.sha256(b).hexdigest(),'guestOSIdentityAccepted':False,'NVIDIARenderAccepted':False,'installedSystemAccepted':False,'recoveryAccepted':False};return peer.canon(v)
 +   self.phaseSerial=b;self.report('installer-secondary-serial',{'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'serialPath':str(p),'graphicalFrame':self.graphical[phase]['framePin'],'diagnosticOnly':True,'graphicalFirst':True});v={'kind':'ACTUAL_RETAINED_INSTALLER_BOOT_DIAGNOSTIC','domainUUID':self.request['domainUUID'],'domainName':self.request['domainName'],'mediaPin':self.c['working'],'actualDomainRegistration':self.registered,'graphicalFrame':self.graphical[phase]['framePin'],'graphicalFirst':True,'serialBytes':len(b),'serialSHA256':hashlib.sha256(b).hexdigest(),'guestOSIdentityAccepted':False,'NVIDIARenderAccepted':False,'installedSystemAccepted':False,'recoveryAccepted':False};return peer.canon(v)
-@@ -488 +491 @@
+@@ -488 +490 @@
 -  finally:self.persist('secondary-serial-observation-'+str(phase),{'graphicalFramePin':self.graphical[phase]['framePin'],'serialBytesObserved':seen,'serialPrefixSHA256':hashlib.sha256(self.phaseSerial).hexdigest(),'serialPath':str(p),'diagnosticOnly':not self.graphical[phase]['displayContent']['nonBlank'],'eventDispatchCalls':self.observationCalls,'first':peer.error_value(primary),'deadlineUnchanged':True,'graphicalFirst':True})
 +  finally:self.report('secondary-serial-observation-'+str(phase),{'graphicalFramePin':self.graphical[phase]['framePin'],'serialBytesObserved':seen,'serialPrefixSHA256':hashlib.sha256(self.phaseSerial).hexdigest(),'serialPath':str(p),'diagnosticOnly':not self.graphical[phase]['displayContent']['nonBlank'],'eventDispatchCalls':self.observationCalls,'first':peer.error_value(primary),'deadlineUnchanged':True,'graphicalFirst':True})
-@@ -502 +505 @@
+@@ -502 +504 @@
 -  peer.need('Boot%04X'%v['BootCurrent']in variables,'selected firmware load option retained');self.persist('actual-firmware-route-'+str(phase),v)
 +  peer.need('Boot%04X'%v['BootCurrent']in variables,'selected firmware load option retained');self.report('actual-firmware-route-'+str(phase),v)
-@@ -510 +513 @@
+@@ -510 +512 @@
 -  result=self.conn.close();self.conn=None;self.persist('controller-connection-loss',{'numeric':result,'domainUUID':self.request['domainUUID'],'registered':self.registered,'acceptanceRequiresIndependentClosure':True});peer.need(result==0,'controller connection close numeric0')
 +  result=self.conn.close();self.conn=None;self.report('controller-connection-loss',{'numeric':result,'domainUUID':self.request['domainUUID'],'registered':self.registered,'acceptanceRequiresIndependentClosure':True});peer.need(result==0,'controller connection close numeric0')
-@@ -539 +542 @@
+@@ -539 +541 @@
 -   ref=self.g['nativeTools'][argv[0]];r=native_child(argv,self.deadline,ref);self.persist('stopped-native',r);peer.need(r['numeric']==0,'stopped readonly native helper');return r['stdout']
 +   ref=self.g['nativeTools'][argv[0]];r=native_child(argv,self.deadline,ref);self.report('stopped-native',r);peer.need(r['numeric']==0,'stopped readonly native helper');return r['stdout']
-@@ -562 +565 @@
+@@ -562 +564 @@
 -   self.persist('stopped-readback-closure',{'primary':None if primary is None else str(primary),'secondary':secondary,'mountClosed':not mounted,'loopClosed':dev is None,'rows':rows})
 +   self.report('stopped-readback-closure',{'primary':None if primary is None else str(primary),'secondary':secondary,'mountClosed':not mounted,'loopClosed':dev is None,'rows':rows})
 --- a/runtime-libvirt_peer.py
