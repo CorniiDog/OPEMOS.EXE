@@ -20,7 +20,10 @@
 + need(domain['phase']=='NOT_PREPARED'and domain['lease']is domain['leader']is None and native['kind']=='FAILED_BEFORE_LIBVIRT_PREPARATION'and native['leaseEverCreated']is native['leaseClosureInvented']is False,'normal complete never-prepared proof; no invented historical lease or QMP closure')
 @@ -34 +35 @@
 - need(p['sourceRoles']['libvirt_peer']['sha256']=='7e1663f8351247b9643b7c14419119449b0bd0722a46b80ae0f8ea34a9f9816a'and p['sourceRoles']['libvirt_access']['sha256']=='ee32a4e84df796d6932062ded9e1049ce5e82cbbf01315d8c74da96b9e03aa9e','preserved original R107 source graph distinct from current implementation')
-+ need(p['sourceRoles']['libvirt_peer']['sha256']=='19ee3b8c03b37574d004b79d741239f90c4e0fe9136f0fde55a7d752b9c5c38f'and p['sourceRoles']['libvirt_access']['sha256']=='97d1dbdad2db5428b15674e6792c05832570e1ff9dc4acf5ee97620d605f6c92','preserved original R107 source graph distinct from current implementation')
++ need(p['sourceRoles']==domain['observerExecution']['implementation']['sourceRoles'],'whole historical source graph matches actual normal finalizer observation')
+@@ -80 +81 @@
+-  need('child-grant.json'not in DATA['runtime']['pins']and 'context.json'not in DATA['runtime']['pins']and 'assignment.json'not in DATA['runtime']['pins'],'no R107 runtime authority was published')
++  need('child-grant.json'not in DATA['runtime']['pins']and 'context.json'not in DATA['runtime']['pins'],'no runtime grant/context was published; canonical assignment is data')
 @@ -99 +100 @@
 - validate_history(values);need(attempt not in('34117bbb1f4d4418b4eff9c1190233f2','96af5ac9637c40309055725bb9df0c17')and len(attempt)==32 and all(c in'0123456789abcdef'for c in attempt),'new finite attempt, no old runtime/preparer replay')
 + validate_history(values);need(attempt not in('e842cfa1daa5412aba5d454cca9ab58f','34117bbb1f4d4418b4eff9c1190233f2','96af5ac9637c40309055725bb9df0c17')and len(attempt)==32 and all(c in'0123456789abcdef'for c in attempt),'new finite attempt, no old runtime/preparer replay')
