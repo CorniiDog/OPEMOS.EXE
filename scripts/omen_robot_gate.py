@@ -9,6 +9,10 @@ import urllib.request
 REPO='CorniiDog/OPEMOS.EXE'
 LABELS=['self-hosted','Linux','X64','opemos-omen-robot']
 PRODUCERS={'.github/workflows/windows-portable.yml','.github/workflows/ubuntu-executable.yml','.github/workflows/macos-arm64.yml'}
+# Only these fields authorize routing to the ordinary runner admission path.
+# Recovery provenance and optional diagnostics may evolve independently.
+RUNNER_STATE_FIELDS={'version','repository','source_commit','checked_at',
+                     'expires_at','ready','runner_id','runner_name','labels'}
 
 def main():
     report=Path('robot-preflight');report.mkdir(exist_ok=True)
@@ -40,12 +44,12 @@ def main():
         assert len(source)==40 and all(x in '0123456789abcdef'for x in source)
         stage='runner heartbeat JSON/schema'
         state=json.loads(os.environ.get('OPEMOS_OMEN_ROBOT_RUNNER_STATE',''))
-        assert set(state)=={'version','repository','source_commit','checked_at','expires_at','ready','runner_id','runner_name','labels','reason'}
+        assert type(state)is dict and RUNNER_STATE_FIELDS<=state.keys()
         stage='runner heartbeat repository/source/version'
-        assert state['version']==1 and state['repository']==REPO and state['source_commit']==source
+        assert type(state['version'])is int and state['version']==1 and state['repository']==REPO and state['source_commit']==source
         now=int(time.time())
         stage='runner heartbeat clock/180-second freshness'
-        assert type(state['checked_at'])is int and state['expires_at']==state['checked_at']+180 and state['checked_at']<=now<state['expires_at']
+        assert type(state['checked_at'])is int and type(state['expires_at'])is int and state['expires_at']==state['checked_at']+180 and state['checked_at']<=now<state['expires_at']
         stage='runner exact labels/name/id'
         assert state['labels']==LABELS and state['runner_name']=='opemos-omen-robot'and type(state['runner_id'])is int and state['runner_id']>0
         stage='runner heartbeat explicitly ready=true'
