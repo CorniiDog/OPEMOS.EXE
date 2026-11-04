@@ -5,10 +5,10 @@ Queue owner must independently adopt exact bytes and consumer contract.
 import contextlib,copy,hashlib,json,os,re,stat,sys,time,traceback,types
 from pathlib import Path
 ORIGINAL_SOURCE_ROOT='/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r107b'
-PEER_SHA='acaa0bf055da14e85f0785fefdc0e4ebc30e37249450ff36ee2c2e27f35f052b'
+PEER_SHA='3557262e144d2c881a2a1a3392c21a87a0d0c77b1180430a9c42244d4062a81d'
 F=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns');CORE=F[:6]
 NONCE='cd9ef0826364409da287f6f3e3830c95';CONTRACT='R109_CURRENT_NORMAL_QUEUE_FULL_PHASE_READONLY'
-PEER_BYTES=60336
+PEER_BYTES=61261
 ORIGINAL_PEER_SHA='7e1663f8351247b9643b7c14419119449b0bd0722a46b80ae0f8ea34a9f9816a';ORIGINAL_PEER_BYTES=64727
 SOURCE_ROOT='/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r120'
 ACCESS_SHA='43afe945afde15f62a0733cb1dfde430a075b3521c35e4027174264cd6a156de';ACCESS_BYTES=35714

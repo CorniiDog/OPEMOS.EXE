@@ -1,6 +1,21 @@
 import os,json,stat,re,hashlib
 from pathlib import Path
 
+def working_geometry(evidence,expected,installer,adopted,persist=None,config=None):
+ """Optional observation sink cannot replace the genuine custody predicate."""
+ from libvirt_peer import require_working_metadata
+ errors=[]
+ if persist is not None:
+  try:persist('working-inode-geometry-before-predicate',evidence)
+  except Exception as error:errors.append({'type':type(error).__name__,'reason':str(error),'diagnosticOnly':True})
+ try:
+  if adopted:__import__('retained_media').observe(config)
+  value=require_working_metadata(evidence,expected,installer,adopted)
+ except BaseException as error:
+  if errors:error.optionalDiagnosticErrors=errors
+  raise
+ return value,errors
+
 def storage_contract(nonce,request=None,persist=None):
  """Exact one declared Games regular-file container; no physical-device API."""
  from libvirt_peer import need,SOURCE_PLACEMENT_NONCE,SOURCE_PLACEMENT_PIN,RootFiles,CORE,ident,working_metadata,require_working_metadata,metadata_cohort
@@ -12,7 +27,7 @@ def storage_contract(nonce,request=None,persist=None):
  config=__import__('guest_firmware_probe').storage_installer_config(v,nonce,v['boot'])if installer else None;graph=__import__('guest_firmware_probe').installer_contract(config)if installer else None
  need(v['wholeGraphUpperBound']==(graph['wholeGraphUpperBound']if installer else 58449672960)and v['wholeGraphUpperBound']<60000000000 and v['hostFloor']==72000000000,'whole60GB graph and unchanged20percent host headroom')
  if installer:__import__('guest_firmware_probe').authenticate_copy_receipt(config,v['boot']);need(v['backing']==v['installer']['backing']and v['retainedPartial']==v['installer']['retainedPartial'],'same entire charged backing and retained partial')
- fds=[];chain=[];fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);fds.append(fd);chain.append(('/',fd));path=Path('/')
+ fds=[];chain=[];diagnosticErrors=[];fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);fds.append(fd);chain.append(('/',fd));path=Path('/')
  try:
   for name in Path(v['placement']['path']).parts[1:]:
    fd=os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd);fds.append(fd);path=path/name;chain.append((str(path),fd))
@@ -44,12 +59,8 @@ def storage_contract(nonce,request=None,persist=None):
     except BaseException as secondary:error.capturePersistenceError={'type':type(secondary).__name__,'reason':str(secondary)}
    raise
   fds.append(wf);evidence=working_metadata(wf,mf,v['working']['path'],v['working'],captureScope,'storage-working-before-predicate')
-  if persist is not None:
-   try:persist('working-inode-geometry-before-predicate',evidence)
-   except BaseException as error:error.workingEvidence=evidence;raise
   adopted=installer and __import__('retained_media').is_adopted(config)
-  if adopted:__import__('retained_media').observe(config)
-  wi=require_working_metadata(evidence,v['working'],installer,adopted);wmode=stat.S_IMODE(wi['st_mode']);need(wmode in((0o600,0o640)if installer else(0o600,0o660)),'only private or exact libvirt working mode')
+  wi,diagnosticErrors=working_geometry(evidence,v['working'],installer,adopted,persist,config);wmode=stat.S_IMODE(wi['st_mode']);need(wmode in((0o600,0o640)if installer else(0o600,0o660)),'only private or exact libvirt working mode')
   if wmode!=0o600 and not adopted:need(access.ACL().get(wf)==access.expected_acl(0o600,access.UID,'r--'if installer else'rw-')[1],'exact generated working ACL')
   inner=os.fstatvfs(mf);outer=os.fstatvfs(parentfd);need(inner.f_blocks*inner.f_frsize<=v['backing']['bytes']and inner.f_bavail*inner.f_frsize>=(134217728 if installer else 3000000000) and os.fstat(wf).st_blocks*512<=v['backing']['bytes'],'hard fixed filesystem/inner allocation plus20percent backing growth separation');need(outer.f_bavail*outer.f_frsize>=72000000000,'actual Games after-allocation72GB headroom')
   need(set(os.listdir(mf)).issubset({'lost+found','working.raw','run','output'}),'only finite declared inner IO roots')
@@ -64,6 +75,9 @@ def storage_contract(nonce,request=None,persist=None):
    queueRoot=v['currentQueueRoot'];need(re.fullmatch('/var/lib/opemos-queue-r120-[0-9a-f]{32}',queueRoot)is not None,'exact installed current queue metadata charge');roots.append(queueRoot)
   if request is not None:roots+=['/run/opemos-libvirt-queue-'+request['jobToken'],'/home/connor/.local/state/opemos-test-queue-r2/state/logs/'+request['jobId']]
   observedExtra,entries,metadataClosure=__import__('guest_firmware_probe').metadata_cohort(roots,allowed_socket=socket);need(observedExtra<=500000000,'all metadata/source/capture/private SQL growth remains in declared500MB reserve')
-  return{'receiptPin':ref,'wholeGraphUpperBound':v['wholeGraphUpperBound'],'outerAvailableBytes':outer.f_bavail*outer.f_frsize,'backingCurrent':ident(os.fstat(bf)),'backingCharge':v['backingCharge'],'innerAvailableBytes':inner.f_bavail*inner.f_frsize,'innerAllocatedWorkingBytes':os.fstat(wf).st_blocks*512,'currentMountID':mid,'loop':looprow,'workingCurrent':wi,'workingAfter':afterWorking,'workingObservation':evidence,'extraIOObservedBytes':observedExtra,'extraIOEntries':entries,'metadataFDClosure':metadataClosure,'mutableEpochsOnlyForDeclaredBackingWorkingAndMount':True}
+  return{'receiptPin':ref,'wholeGraphUpperBound':v['wholeGraphUpperBound'],'outerAvailableBytes':outer.f_bavail*outer.f_frsize,'backingCurrent':ident(os.fstat(bf)),'backingCharge':v['backingCharge'],'innerAvailableBytes':inner.f_bavail*inner.f_frsize,'innerAllocatedWorkingBytes':os.fstat(wf).st_blocks*512,'currentMountID':mid,'loop':looprow,'workingCurrent':wi,'workingAfter':afterWorking,'workingObservation':evidence,'extraIOObservedBytes':observedExtra,'extraIOEntries':entries,'metadataFDClosure':metadataClosure,'mutableEpochsOnlyForDeclaredBackingWorkingAndMount':True,'optionalDiagnosticErrors':diagnosticErrors}
+ except BaseException as error:
+  if diagnosticErrors:error.optionalDiagnosticErrors=diagnosticErrors
+  raise
  finally:
   for fd in fds[::-1]:os.close(fd)

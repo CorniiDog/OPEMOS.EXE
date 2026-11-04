@@ -170,14 +170,18 @@ def operational_complete(result, fds_closed):
              or result.get('installerDiagnosticComplete') is True)
     )
 
+def validate_context_sources(context):
+ peer.need(set(context['sourceRoles'])==__import__('source_contract').RUNTIME_ROLES,'complete installed current source graph')
+ for name,ref in context['sourceRoles'].items():
+  peer.need(ref['path']==str(Path(__file__).parent/(name+'.py')),'exact same staged source bundle path')
+  peer.need(ref['identity']['st_uid']==ref['identity']['st_gid']==0 and stat.S_IMODE(ref['identity']['st_mode'])==0o444,'Root immutable source role');compile(held(ref,65536),ref['path'],'exec')
+ return context['sourceRoles']
+
 def main(context_ref):
  initial=peer.fd_snapshot('Root-entry-initial');peer.need(os.getuid()==0,'actual Root queue entry')
  peer.need(context_ref['identity']['st_uid']==context_ref['identity']['st_gid']==0 and stat.S_IMODE(context_ref['identity']['st_mode'])==0o400,'exact protected context')
  context=json.loads(held(context_ref,1048576));peer.need(context['kind']=='ROOT_LIBVIRT_R4_RUNTIME_CONTEXT'and context['runtimeAuthorized']is True and context.get('MODEL_ONLY')is not True,'independently issued exact context, never disabled model')
- for name,ref in context['sourceRoles'].items():
-  peer.need(ref['path']==str(Path(__file__).parent/(name+'.py')),'exact same staged source bundle path')
-  peer.need(ref['identity']['st_uid']==ref['identity']['st_gid']==0 and stat.S_IMODE(ref['identity']['st_mode'])==0o444,'Root immutable source role');compile(held(ref,65536),ref['path'],'exec')
- peer.need(set(context['sourceRoles'])=={'libvirt_peer','libvirt_access','libvirt_native','libvirt_preflight','libvirt_producer','queue_assignment','runtime_entry','guest_delta','guest_firmware_probe','held_history_reader','two_boot_contract','postqueue_issuer'},'closed complete twelve-role source graph')
+ validate_context_sources(context)
  c=context['candidate'];grant_ref=context['grantPin'];g=json.loads(held(grant_ref,1048576))
  parent=json.loads(held(context['parentPin'],1048576));bind_placement(peer,parent,context['parentPin'],context);peer.need(g['sourcePlacementPin']==context['sourcePlacementPin']and g['placementQualificationPin']==context['placementQualificationPin'],'child grant/context exact fresh placement pins');peer.need(g['parentPin']==context['parentPin']and parent['RootIssued']is True and parent['issuedUnix']<=g['issuedUnix']<g['startBeforeUnix']<=parent['startBeforeUnix']and g['wholeDeadlineUnix']<=parent['wholeDeadlineUnix'],'finite child within exact independently issued parent clocks; no refresh/extension')
  assignment=json.loads(held(context['assignmentPin'],1048576));peer.need(assignment['kind']=='ROOT_CANONICAL_QUEUE_LIBVIRT_ASSIGNMENT_R4'and assignment['proof']['priorCounts']==g['priorHistoryCounts']and assignment['proof']['priorRawSHA256']==g['priorHistorySHA256']and assignment['proof']['currentCounts']=={'rows':g['priorHistoryCounts']['rows']+1,'bindings':g['priorHistoryCounts']['bindings']+1,'config':g['priorHistoryCounts']['config']},'genuine adopted prior plus one own row/binding before GPU')

@@ -100,7 +100,10 @@ jobs:
         run: python3 -m unittest discover -s tests -p 'test_omen*.py' -v
 
       - name: Exercise retained-media queue consumer through actual protected Root metadata
-        run: sudo python3 -m unittest discover -s tests -p 'test_omen_retained_media.py' -v
+        run: |
+          sudo apt-get install --yes python3-libvirt libvirt-daemon-system
+          sudo systemctl start libvirtd
+          sudo python3 -m unittest discover -s tests -p 'test_omen_retained_media.py' -v
 
       - name: Check out immutable OPEMOS Core integration sources
         uses: actions/checkout@v4

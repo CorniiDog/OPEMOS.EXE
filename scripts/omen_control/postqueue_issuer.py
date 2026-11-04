@@ -176,7 +176,7 @@ def bind_placement(peer,parent,parent_ref,context=None):
  nonce=parent['nonce'];roles=parent['sourceRoles'];candidate=parent['candidate']
  peer.need(nonce=='cd9ef0826364409da287f6f3e3830c95'and peer.SOURCE_PLACEMENT_NONCE==nonce and candidate['nonce']==nonce and __import__('queue_assignment').execution_job(candidate,parent)==parent['jobId'],'D23 unused scope only; D22 is consumed')
  peer.need(parent['RootIssued']is True and parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['bootID']==candidate['hostBoot']and parent_ref['path']=='/run/opemos-libvirt-parent-'+nonce+'.json','existing exact Root parent/boot/source scope')
- peer.need(set(roles)=={'libvirt_peer','libvirt_access','libvirt_native','libvirt_preflight','libvirt_producer','queue_assignment','runtime_entry','guest_delta','guest_firmware_probe','held_history_reader','two_boot_contract','postqueue_issuer'},'closed twelve-role binding')
+ peer.need(set(roles)==__import__('source_contract').RUNTIME_ROLES,'closed twelve-role binding')
  __import__('source_contract').validate(roles,parent['queuePrograms'],parent['installedSourceContractPin'])
  ref=parent['sourcePlacementPin'];qr=parent['placementQualificationPin'];root='/run/opemos-steamos-placement-'+nonce
  peer.need(ref['path']==root+'/storage-contract.json'and qr['path']==root+'/placement-qualified.json','fresh exact placement+qualification names, no historical receipt')

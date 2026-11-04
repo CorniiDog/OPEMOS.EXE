@@ -60,6 +60,30 @@ def operand():
 
 class RetainedMediaContract(unittest.TestCase):
     @unittest.skipUnless(os.geteuid()==0 and sys.platform=='linux','disposable Linux CI Root only')
+    def test_real_geometry_not_optional_sink_is_authority(self):
+        """Sparse geometry fixture only, not F9AA content/native-media acceptance."""
+        import libvirt_peer as peer
+        import libvirt_storage as storage
+        with tempfile.TemporaryDirectory(dir='/run',prefix='opemos-geometry-')as directory:
+            path=Path(directory)/'working.raw';path.touch(mode=0o600)
+            with path.open('r+b')as file:file.truncate(media.RAW_BYTES)
+            expected=pin(str(path),0o100600,0,0,media.RAW_BYTES,1,media.RAW_SHA)
+            expected['identity']=peer.ident(path.stat())
+            fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW);parent=os.open(directory,os.O_RDONLY|os.O_DIRECTORY)
+            def failed_sink(label,value):raise OSError('optional diagnostic is unwritable')
+            try:
+                actual=peer.working_metadata(fd,parent,str(path),expected,{},'fixture-geometry')
+                value,errors=storage.working_geometry(actual,expected,True,False,failed_sink)
+                self.assertEqual(value,expected['identity']);self.assertEqual(len(errors),1)
+                with path.open('r+b')as file:file.truncate(4096)
+                actual=peer.working_metadata(fd,parent,str(path),expected,{},'fixture-wrong-geometry')
+                with self.assertRaises(peer.Refused)as caught:
+                    storage.working_geometry(actual,expected,True,False,failed_sink)
+                self.assertIn('inode/geometry',str(caught.exception))
+                self.assertEqual(len(caught.exception.optionalDiagnosticErrors),1)
+            finally:os.close(fd);os.close(parent)
+
+    @unittest.skipUnless(os.geteuid()==0 and sys.platform=='linux','disposable Linux CI Root only')
     def test_actual_bash_ancestor_ofd_fence_without_forwarding_fd(self):
         """Real kernel ancestry/OFD; fixture UID0/path are not normal UID1000 admission."""
         import install_media_controller as installer
@@ -127,6 +151,12 @@ class RetainedMediaContract(unittest.TestCase):
         public_parent=Path('/run/opemos-libvirt-parent-cd9ef0826364409da287f6f3e3830c95.json')
         if os.path.lexists(public_parent): self.skipTest('existing public owner preserved')
         parent_identity=None
+        fixture=Path('/run/opemos-connected-fixture-'+token)
+        placement=Path('/run/opemos-steamos-placement-cd9ef0826364409da287f6f3e3830c95')
+        runtime=Path('/run/opemos-libvirt-runtime-cd9ef0826364409da287f6f3e3830c95')
+        for path in (fixture,placement,runtime):
+            if os.path.lexists(path):self.skipTest('existing connected fixture owner preserved')
+        created=[]
         def member(raw):
             return {'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
                     'base64':__import__('base64').b64encode(raw).decode()}
@@ -177,34 +207,121 @@ class RetainedMediaContract(unittest.TestCase):
             observer={k:roles['libvirt_peer'][k]for k in ('path','bytes','sha256')}
             domain={'leaseNonce':nonce,'name':'opemos-libvirt-'+nonce,
                     'uuid':'64f43b0c-9a98-494d-adc1-0782aea1d32e','observer':observer}
-            spec={'id':'fixture-fresh-job','cores':4,'memory':10737418240,'timeout_seconds':900,
+            spec={'id':'fixture-fresh-job','platform':'steamos','owner':'root','cwd':'/run',
+                  'files':[{k:roles[n][k]for k in ('path','bytes','sha256')}for n in sorted(roles)],
+                  'cores':4,'memory':10737418240,'timeout_seconds':900,'depends_on':[],'requires_success':True,
                   'resources':['omen-iommu-group-1'],'libvirt_domain':domain,
                   'approval':'EXACT_PARENT_MINIMAL_PIN',
                   'command':['sudo','-n','/usr/bin/python3','-B',roles['runtime_entry']['path'],
                              '--parent-pin-json','EXACT_PARENT_FULL_PIN_JSON']}
+            # Byte-sized media is an explicit content/storage MODEL. This case
+            # cannot satisfy the real fixed-F9AA preflight or issue a VM grant.
+            # Source files, ACLs, protected metadata, /run FDs, readonly system
+            # libvirt connection, adapter process and final queue consumer are real.
+            import libvirt_producer as producer
+            import libvirt_access as acl
+            import libvirt_peer as peer
+            import time
+            for path in (fixture,placement,runtime):producer.create_root(str(path));created.append(path)
+            for name in ('media','run','output'):(fixture/name).mkdir(mode=0o700)
+            original=installer.put(fixture/'original.raw',b'fixture original',0o400)
+            working=installer.put(fixture/'media/working.raw',b'fixture media',0o600)
+            installer.put(fixture/'run/OVMF_VARS_4M.fd',b'fixture vars',0o600)
+            installer.put(fixture/'output/serial.raw',b'',0o600)
+            c={'nonce':nonce,'hostBoot':boot,'jobId':spec['id'],'guestUUID':domain['uuid'],'name':domain['name'],
+               'original':original,'working':working,'run':str(fixture/'run'),'output':str(fixture/'output'),
+               'installer':{'kind':'AUTHENTICATED_F9AA_RAW_RECOVERY_USB_FIRSTBOOT','noInstallTarget':True}}
+            def save(label,value):return installer.put(fixture/(label+'.json'),installer.canon(value),0o400)
+            rows=[];after=[]
+            leaves=[(fixture/'media','working-parent'),(fixture/'media/working.raw','working'),
+                    (fixture/'run','runtime-parent'),(fixture/'run/OVMF_VARS_4M.fd','vars'),
+                    (fixture/'output','output-parent'),(fixture/'output/serial.raw','serial')]
+            for path,role in leaves:
+                ref=working if role=='working'else acl.metadata_pin(str(path))
+                if not role.endswith('parent')and role!='working':ref=installer.pin(path)
+                row=acl.plan(str(path),ref,role,verified_content=working if role=='working'else None,
+                             readonly_media=role=='working')
+                rows.append(row);after.append(acl.apply(row,save,defer_working_hash=True))
+            disks={'original':original,'working':installer.pin(fixture/'media/working.raw')}
+            stage={'kind':'LIBVIRT_R7_ACCESS_STAGE_PENDING_FULL_HASH','nonce':nonce,'bootID':boot,'candidate':c,
+                   'grantPin':save('fixture-stage-data',{'fixtureOnly':True}),'rows':rows,'after':after,
+                   'original':original,'workingBefore':working,'pendingFullContentProof':True,'runtimeAuthorized':False}
+            stagepin=save('access-stage',stage)
+            captures={n:save('capture-'+n,{'explicitNativeMediaModel':True})for n in('original','working')}
+            binding={'sourceRoles':roles,'queuePrograms':installed['queuePrograms'],
+                     'sourceGraphSHA256':hashlib.sha256(installer.canon(roles)).hexdigest(),
+                     'preparedAccessPin':stagepin,'preparedDiskPins':disks,'splitDiskCapturePins':captures}
+            storage={'kind':'ROOT_EXACT_STEAMOS_INSTALLER_GAMES_PLACEMENT','nonce':nonce,'boot':boot,
+                     'original':original,'working':working,'installer':c['installer'],'preparationBinding':binding}
+            storagepin=installer.put(placement/'storage-contract.json',installer.canon(storage),0o400)
+            now=time.time()
+            pre={'bootID':boot,'kind':'ACTUAL_LIBVIRT_R4_CURRENT_PREFLIGHT','observedUnix':now,
+                 'original':original,'working':disks['working'],'preparedAccessPin':stagepin,
+                 'splitDiskCapturePins':captures,'queuePrograms':installed['queuePrograms'],
+                 'storagePlacement':{'receiptPin':storagepin},'explicitNativeMediaModel':True}
+            prepin=save('preflight-data',pre)
+            qualification={'kind':'ROOT_VERIFIED_FRESH_STEAMOS_PLACEMENT','qualifiedPlacementPin':storagepin,
+                           'nonce':nonce,'bootID':boot,'sourceRoles':roles,'queuePrograms':installed['queuePrograms'],
+                           'runtimeAuthorized':False,'RootIssuedRuntimeAuthority':False,
+                           'currentPreflightPin':prepin,'currentPreflight':pre}
+            qualifiedpin=installer.put(placement/'placement-qualified.json',installer.canon(qualification),0o400)
             parent={'kind':'ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT','RootIssued':True,
                     'runtimeAuthorized':True,'MODEL_ONLY':False,'bootID':boot,'nonce':nonce,
                     'contextPath':'/run/opemos-libvirt-runtime-'+nonce+'/context.json',
-                    'candidate':{'installer':{'kind':media.KIND,'noInstallTarget':True}},
-                    'issuedUnix':1,'startBeforeUnix':2,'wholeDeadlineUnix':3,
-                    'sourceRoles':roles,'jobId':spec['id'],'normalizedSpecTemplate':spec}
+                    'candidate':c,'issuedUnix':now,'startBeforeUnix':now+299,'wholeDeadlineUnix':now+900,
+                    'sourceRoles':roles,'jobId':spec['id'],'normalizedSpecTemplate':spec,
+                    'installedSourceContractPin':installed['sourceContractPin'],'queuePrograms':installed['queuePrograms'],
+                    'preparedAccessPin':stagepin,'preparedDiskPins':disks,'splitDiskCapturePins':captures,
+                    'sourcePlacementPin':storagepin,'placementQualificationPin':qualifiedpin,'prequeuePreflightPin':prepin,
+                    'TEST_SCOPE':'Structural/source/ACL/readonly observer only; no real media qualification or grant'}
             parent_ref=installer.put(public_parent,installer.canon(parent),0o444)
             parent_identity=parent_ref['identity']
             actual_spec=adapter.parent_spec(parent,parent_ref)
             request={'leaseNonce':nonce,'domainName':domain['name'],'domainUUID':domain['uuid'],
                      'observer':observer,'jobId':spec['id'],
                      'specSHA256':hashlib.sha256(installer.canon(actual_spec)).hexdigest()}
+            jobtoken=uuid.uuid4().hex
+            request.update(jobToken=jobtoken,unit='opemos-testq-abcdefabcdef-'+jobtoken+'.service',invocation='a'*32,
+                           cpus=[0,1,2,3],controllerMemory=2147483648,domainMemory=8589934592,
+                           reservationMemory=10737418240,vmSlice='opemos-vm-pool-libvirt'+jobtoken+'.slice',
+                           partition='/opemos/vm/pool/libvirt'+jobtoken,gpuGroup='omen-iommu-group-1')
             with adapter.RootInputs()as inputs:
                 accepted=adapter.verify_inputs(request,inputs,boot,include_context=False)
                 self.assertEqual(accepted['implementationAccessPin'],roles['libvirt_access'])
                 self.assertFalse(accepted['originalInputOnly'])
-                for wrong in (dict(request,specSHA256='0'*64),dict(request,jobId='foreign-job')):
+                with adapter.load_pair(accepted)as(current_peer,current_access):
+                    import postqueue_issuer as issuer
+                    current_peer.SOURCE_PLACEMENT_PIN=None
+                    issuer.bind_placement(current_peer,parent,parent_ref)
+                    entry=types.ModuleType('actual_installed_entry');entry.__file__=roles['runtime_entry']['path']
+                    exec(compile(Path(entry.__file__).read_bytes(),entry.__file__,'exec'),entry.__dict__)
+                    self.assertEqual(entry.validate_context_sources({'sourceRoles':roles}),roles)
+                    entry.bind_placement(current_peer,parent,parent_ref)
+                    issuer.submission_manifest(parent,parent_ref,'/run')
+                    for fault in ('missing','foreign','original-current'):
+                        bad=copy.deepcopy(parent)
+                        if fault=='missing':bad['sourceRoles'].pop('libvirt_storage')
+                        elif fault=='foreign':bad['sourceRoles']['foreign']=bad['sourceRoles']['libvirt_storage']
+                        else:bad['sourceRoles']['libvirt_peer']['sha256']=adapter.ORIGINAL_PEER_SHA
+                        with self.assertRaises(Exception):issuer.bind_placement(current_peer,bad,parent_ref)
+                queue_spec=importlib.util.spec_from_file_location('actual_connected_queue',SOURCE/'test_queue.py')
+                queue=importlib.util.module_from_spec(queue_spec);sys.modules[queue_spec.name]=queue
+                try:
+                    queue_spec.loader.exec_module(queue)
+                    captures=[]
+                    actual=queue.observe_queue_libvirt(request,captures=captures)
+                    self.assertEqual(actual['phase'],'NOT_PREPARED')
+                    self.assertTrue(captures)
+                    self.assertTrue(captures[-1]['proof']['allOwnedDescriptorsClosed'])
+                finally:sys.modules.pop(queue_spec.name,None)
+                for wrong in (dict(request,specSHA256='0'*64),dict(request,jobId='foreign-job'),
+                              dict(request,observer=dict(observer,sha256=adapter.ORIGINAL_PEER_SHA))):
                     with self.assertRaises(RuntimeError):adapter.verify_inputs(wrong,inputs,boot,include_context=False)
         finally:
             if parent_identity is not None:
                 self.assertEqual(media.identity(os.lstat(public_parent)),parent_identity)
                 public_parent.unlink()
-            for path in (installer.SOURCE_ROOT,queue_root,drain_root):
+            for path in (installer.SOURCE_ROOT,queue_root,drain_root,*reversed(created)):
                 if path.exists(): shutil.rmtree(path)
 
     def test_repository_queue_and_heartbeat_are_not_media_permission(self):
@@ -307,6 +424,21 @@ class RetainedMediaContract(unittest.TestCase):
         queue = importlib.util.module_from_spec(spec); sys.modules[spec.name] = queue
         try:
             spec.loader.exec_module(queue)
+            # The original D24 source schema remains twelve-role DATA. A real
+            # wrong-scope refusal must not become a NameError from current-only
+            # variables accidentally inserted in this legacy consumer.
+            legacy=set(source_contract.RUNTIME_ROLES)-{'libvirt_storage','retained_media','source_contract'}
+            roles={n:pin('/run/legacy/'+n+'.py',0o100444,0,0,1,500+i)for i,n in enumerate(sorted(legacy))}
+            roles['libvirt_peer']=pin('/run/legacy/libvirt_peer.py',0o100444,0,0,queue.D24_PEER_BYTES,600,queue.D24_PEER_SHA)
+            roles['libvirt_access']=pin('/run/legacy/libvirt_access.py',0o100444,0,0,15340,601,queue.D24_ACCESS_SHA)
+            observer={k:roles['libvirt_peer'][k]for k in ('path','bytes','sha256')}
+            envelope={'kind':'ROOT_REVIEWED_LIBVIRT_PEER_INPUT_AND_IMPLEMENTATION','effects':[],
+                      'upstreamObserver':roles['libvirt_peer'],'proof':{},
+                      'implementation':{'contract':queue.D24_ADAPTER_CONTRACT,'peer':roles['libvirt_peer'],
+                        'access':roles['libvirt_access'],'sourceRoles':roles,'parent':None,'context':None,
+                        'assignment':None,'grant':None,'placementBinding':None}}
+            with self.assertRaisesRegex(ValueError,'only fresh D23 scope'):
+                queue.validate_d24_peer_envelope(envelope,{'observer':observer,'leaseNonce':'c'*32},roles['libvirt_peer'])
             c, v = operand()
             self.assertEqual(queue.R109_PEER_SHA,
                              hashlib.sha256((SOURCE / 'libvirt_peer.py').read_bytes()).hexdigest())

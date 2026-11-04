@@ -4,7 +4,7 @@ No SQLite API, DB copy/index or closure inference on this postlaunch path.
 import hashlib,json,time,types,sys
 import libvirt_peer as p
 from libvirt_native import held
-QUEUE_SHA='1c7365fb465effc53fbcb2df017925c7307b0dd1ef75d9af5bf46ec09e71576a'
+QUEUE_SHA='ca81637ea8327a96f136493c1ce9174796dc21b84c51fe9b87c4fee516c5a34e'
 CONTROL_QUEUE_SHA='16177e18b25de4b5b4a45849f5eddb7f7b58527f7d3425d48849927d5843103e'
 
 def protected_continuation_value(ref,mode=0o400):
