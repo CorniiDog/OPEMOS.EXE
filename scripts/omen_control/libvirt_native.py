@@ -30,11 +30,9 @@ def schema_executable(provenance,pid):
  return dict(provenance,actualExecutableVerified=True)
 def native_child(argv,deadline,tool_pin=None,input_bytes=None,loop=None):
  return _native_child(argv,deadline,tool_pin,input_bytes,10,loop)
-
 def native_queue_worker(argv,deadline,tool_pin):
  now=time.time();peer.need(now<deadline<=now+1000,'bounded normal-worker deadline')
  return _native_child(argv,deadline,tool_pin,None,1000)
-
 def _native_child(argv,deadline,tool_pin,input_bytes,transport_seconds,loop=None):
  from retained_media import loop_guard,loop_fd_changes
  proof=loop_guard(loop) if loop is not None else None
@@ -242,8 +240,6 @@ class NativeTransactionOps:
   for key in('producerPin','peerPin','accessPin'):
    ref=g[key];b=held(ref,65536);peer.need(ref['identity']['st_uid']==ref['identity']['st_gid']==0 and ref['identity']['st_mode']&0o777==0o444,'reviewed Root0444 source role');compile(b,ref['path'],'exec')
   peer.need({k:g['peerPin'][k]for k in('path','bytes','sha256')}==g['observerPin'],'full Root source pin joins exact upstream minimal job pin')
-  # The exact installed validator checks the actual XML immediately before
-  # createXML. A historical qualification report owns no launch authority.
  def full_preflight_and_entry(self,g,r,c):
   self.request=r;self.g=g;self.deadline=g['wholeDeadlineUnix']
   for ref in(g['currentPreflightPin'],):
@@ -369,7 +365,7 @@ class NativeTransactionOps:
   for path in('/usr/bin/virt-xml-validate','/usr/bin/xmllint'):held(self.g['nativeTools'][path],33554432)
   schema=native_child(['/usr/bin/virt-xml-validate','-','domain'],self.effect_clock('create'),self.g['nativeTools']['/usr/bin/virt-xml-validate'],xml.encode());self.report('exact-installed-XML-before-create',schema)
   if schema['numeric']!=0:
-   error=peer.Refused('current exact XML installed schema before domain create');error.nativeChildEvidence=schema;error.evidence={'nativeChildEvidence':schema,'XML':xml,'XMLBytes':len(xml.encode()),'XMLSHA256':hashlib.sha256(xml.encode()).hexdigest()};raise error
+   error=peer.Refused('current exact XML installed schema before domain create');error.nativeChildEvidence=schema;error.evidence=dict(nativeChildEvidence=schema,XML=xml,XMLBytes=len(xml.encode()),XMLSHA256=hashlib.sha256(xml.encode()).hexdigest());raise error
   peer.need(self.observer is not None,'independent observer must be subscribed before first domain')
   if self.conn is None:self.conn=libvirt.open('qemu:///system')
   peer.need(self.conn is not None and self.conn.getURI()=='qemu:///system','exact controlling connection')
@@ -383,7 +379,7 @@ class NativeTransactionOps:
    import types
    ref=self.g['nativeTools']['/var/lib/opemos-vfio-idle-d3/managed_vfio.py'];raw=held(ref,65536);self.vfioPolicy=types.ModuleType('managed_vfio');exec(compile(raw,ref['path'],'exec'),self.vfioPolicy.__dict__)
   self.vfioPolicy.prepare(self,peer,native_child)
-  self.effect_clock('create')  # fresh immediately after module preparation/scans
+  self.effect_clock('create')
   return self.conn.createXML(xml,libvirt.VIR_DOMAIN_START_PAUSED|libvirt.VIR_DOMAIN_START_AUTODESTROY)
  def pump_events(self):
   import libvirt
