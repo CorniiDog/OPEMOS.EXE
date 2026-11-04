@@ -12,7 +12,7 @@ import libvirt_peer as p
 from libvirt_native import held
 from libvirt_access import Held,hashfd
 
-QUEUE_SHA='2ce23519e71a591358036de036dc42ed5ad152b13ebd25ba065a0310a4a44e72'
+QUEUE_SHA='7085e4fe693faac89223b4851262f92cd69595dce3aa77034dcb30bcdd1da1db'
 CONTROL_QUEUE_SHA='16177e18b25de4b5b4a45849f5eddb7f7b58527f7d3425d48849927d5843103e'
 HISTORY_SHA='03f36772612aabffdbe6be6b76f4353402797fd9e17d4896ced3739de7b6f1c3'
 
@@ -37,10 +37,13 @@ def measured(ref,cap,rootOnly=True,carrier_custody=None):
 def disk_capture(ref,proof,boot,rootOnly=True,candidate=None):
  # proof is a separately Root-adopted protected capture. Never re-stamp its
  # start/end or infer remote numeric status from local process disappearance.
- p.need(proof['kind']=='ROOT_LIBVIRT_R7_COMPLETE_DISK_CAPTURE'and proof['bootID']==boot,'exact adopted same-boot full disk capture')
+ p.need(proof['kind']in('ROOT_LIBVIRT_R7_COMPLETE_DISK_CAPTURE','ROOT_CURRENT_HELD_INPROCESS_DISK_CAPTURE')and proof['bootID']==boot,'exact adopted same-boot full disk capture')
  p.need(proof['before']==ref==proof['after']==proof['fullPin'],'full disk bytes/SHA/full9 before and after')
  p.need(proof['bytesRead']==ref['bytes']and proof['EOF']is True and proof['readOnly']is True and proof['FDSetRestored']is True and proof['children']==[],'whole disk/EOF/FD/child proof')
- p.need(proof['numeric']==0 and proof['stdoutEOF']is True and proof['stderrEOF']is True and proof['reaped']is True and proof['originalAbsent']is True,'actual bounded transport complete, no UNKNOWN adoption')
+ if proof['kind']=='ROOT_LIBVIRT_R7_COMPLETE_DISK_CAPTURE':
+  p.need(proof['numeric']==0 and proof['stdoutEOF']is True and proof['stderrEOF']is True and proof['reaped']is True and proof['originalAbsent']is True,'actual bounded transport complete, no UNKNOWN adoption')
+ else:
+  p.need(proof.get('childCreated')is False and proof.get('sameProcessRead')is True and not any(k in proof for k in('numeric','reaped','stdoutEOF','stderrEOF','originalAbsent')),'in-process FD proof must not fabricate a transport child')
  p.need(proof['startedUnix']<=proof['finishedUnix']and proof['finishedUnix']-proof['startedUnix']<=70,'unchanged single-capture run bound')
  if rootOnly:
   cm=__import__('libvirt_access').held_disk(candidate,'working',ref)if candidate is not None and ref==candidate['working']else Held(ref['path'])

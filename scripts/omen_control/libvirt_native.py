@@ -230,8 +230,8 @@ class NativeTransactionOps:
   for key in('producerPin','peerPin','accessPin'):
    ref=g[key];b=held(ref,65536);peer.need(ref['identity']['st_uid']==ref['identity']['st_gid']==0 and ref['identity']['st_mode']&0o777==0o444,'reviewed Root0444 source role');compile(b,ref['path'],'exec')
   peer.need({k:g['peerPin'][k]for k in('path','bytes','sha256')}==g['observerPin'],'full Root source pin joins exact upstream minimal job pin')
-  peer.need(g['installedSchemaReceiptPin']is not None,'installed libvirt XML qualification before runtime')
-  held(g['installedSchemaReceiptPin'],1048576)
+  # The exact installed validator checks the actual XML immediately before
+  # createXML. A historical qualification report owns no launch authority.
  def full_preflight_and_entry(self,g,r,c):
   self.request=r;self.g=g;self.deadline=g['wholeDeadlineUnix']
   for ref in(g['currentPreflightPin'],):

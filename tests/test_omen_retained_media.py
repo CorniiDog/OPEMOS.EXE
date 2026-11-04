@@ -1,7 +1,9 @@
 """Typed producer/queue joins. Kernel mount and hardware are explicitly not modeled as passes."""
 import copy
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -14,6 +16,8 @@ SOURCE = Path(__file__).resolve().parents[1] / 'scripts' / 'omen_control'
 sys.path.insert(0, str(SOURCE))
 import retained_media as media
 import source_contract
+import media_window
+import idle_signal_owner
 
 
 def pin(path, mode, uid, gid, size, ino, sha='a' * 64):
@@ -50,6 +54,38 @@ def operand():
 
 
 class RetainedMediaContract(unittest.TestCase):
+    def test_repository_queue_and_heartbeat_are_not_media_permission(self):
+        for queued in (None, 0, 100):
+            value = {'networkReachable':True,'runnerBusy':False,'actionsInProgress':0,
+                     'actionsQueued':queued,'heartbeatCurrent':False,'sourceOwnerBusy':False,
+                     'queueKnown':True,'otherActiveJobs':[],'unknownReservations':[],
+                     'guestActive':False,'gpuLeaseActive':False,
+                     'hostGraphics':'INTEL_HOST_NVIDIA_GUEST_ONLY','workerLockFree':True,
+                     'runnerOnline':False,'control':{'state':'absent'}}
+            media_window.admitted_media(value)
+            bad = dict(value, actionsInProgress=1)
+            with self.assertRaises(RuntimeError): media_window.admitted_media(bad)
+            bad = dict(value, sourceOwnerBusy=True)
+            with self.assertRaises(RuntimeError): media_window.admitted_media(bad)
+
+    def test_pidfd_selection_keeps_actual_worker_and_owner_guards(self):
+        expected = {'job':'control-one','unit':'fixture.service','invocation':'a'*32,
+                    'boot':'actual-boot','listenerPID':11,'listenerStart':101,
+                    'loggerPID':10,'loggerStart':100}
+        group = '/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/fixture.service'
+        row = {'id':'control-one','unit':'fixture.service','state':'running'}
+        probe = {'control':{'jobId':'control-one'},'runnerBusy':False,
+                 'actionsInProgress':0,'actionsQueued':200,'guestActive':False}
+        manager = {'ActiveState':'active','InvocationID':'a'*32,'MainPID':'10','ControlGroup':group}
+        live = [{'pid':10,'start':100,'uids':[1000]*4,'cgroup':'0::'+group,'argv':[b'logger']},
+                {'pid':11,'start':101,'uids':[1000]*4,'cgroup':'0::'+group,
+                 'argv':[idle_signal_owner.LISTENER,b'run',b'--startuptype',b'service']}]
+        self.assertEqual(idle_signal_owner.selected(row,probe,expected,manager,live,'actual-boot')['pid'],11)
+        foreign = copy.deepcopy(live); foreign[1]['start'] += 1
+        with self.assertRaises(RuntimeError): idle_signal_owner.selected(row,probe,expected,manager,foreign,'actual-boot')
+        foreign = live + [{'pid':12,'start':102,'uids':[1000]*4,'cgroup':'0::'+group,'argv':[b'Runner.Worker']}]
+        with self.assertRaises(RuntimeError): idle_signal_owner.selected(row,probe,expected,manager,foreign,'actual-boot')
+
     def test_historical_origin_is_data_current_custody_is_current(self):
         c, v = operand()
         self.assertIs(media.validate_record(c, v), v)
@@ -125,6 +161,30 @@ class RetainedMediaContract(unittest.TestCase):
                              hashlib.sha256((SOURCE / 'libvirt_access.py').read_bytes()).hexdigest())
             self.assertEqual(queue.R109_CURRENT_ADAPTER,
                              (SOURCE / 'standalone_peer_access_adapter.py').read_text())
+        finally: sys.modules.pop(spec.name, None)
+
+    @unittest.skipIf(os.geteuid() == 0, 'normal queue CLI runs as the unprivileged queue owner')
+    def test_normal_exact_job_status_preserves_complete_row(self):
+        spec = importlib.util.spec_from_file_location('retained_status_actual_queue', SOURCE / 'test_queue.py')
+        queue = importlib.util.module_from_spec(spec); sys.modules[spec.name] = queue
+        spec.loader.exec_module(queue)
+        try:
+            with tempfile.TemporaryDirectory(prefix='opemos-job-status-') as directory:
+                state = Path(directory) / 'state'
+                with contextlib.redirect_stdout(io.StringIO()): queue.main(['--queue', str(state), 'init'])
+                root, db = queue.connect(state)
+                value = {'terminalLifecycle': {'phase': 'CLOSED', 'reservationRetained': False},
+                         'first': {'reason': 'actual test failure retained'}, 'unknown': None}
+                row = {'id': 'fixture-one', 'spec': '{"platform":"steamos"}', 'state': 'failed',
+                       'cpus': '[0,1,2,3]', 'unit': 'fixture.service', 'started': 10.0,
+                       'finished': 11.0, 'result': json.dumps(value)}
+                db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)', tuple(row.values()))
+                db.commit(); db.close()
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(queue.main(['--queue', str(state), 'status', '--job-id', row['id']]), 0)
+                got = json.loads(output.getvalue())
+                self.assertEqual(got, {'kind': 'NORMAL_QUEUE_EXACT_JOB_STATUS_V1', 'job': row, 'binding': None})
         finally: sys.modules.pop(spec.name, None)
 
     @unittest.skipUnless(os.geteuid() == 0, 'real protected-parent transport requires disposable CI Root')

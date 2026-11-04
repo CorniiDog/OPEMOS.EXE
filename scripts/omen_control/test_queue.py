@@ -3917,7 +3917,7 @@ def main(argv=None):
     add.add_argument("--approval", type=Path, required=True)
     add.add_argument("--resource", action="append", required=True)
     commands.add_parser("plan")
-    commands.add_parser("status")
+    status_parser=commands.add_parser("status");status_parser.add_argument("--job-id")
     run_parser=commands.add_parser("run");run_parser.add_argument("--collected-proof",type=Path);run_parser.add_argument("--collected-approval",type=Path);run_parser.add_argument("--diagnostic-proof",type=Path);run_parser.add_argument("--diagnostic-approval",type=Path);run_parser.add_argument("--reconcile-failed-libvirt",choices=tuple(FAILED_LIBVIRT_TERMINAL_TARGETS))
     args = parser.parse_args(argv)
     if args.action=='run' and args.reconcile_failed_libvirt is not None:
@@ -3970,6 +3970,15 @@ def main(argv=None):
         enqueue(db, jobs)
         print(canonical({"queued": [x["id"] for x in jobs]}))
     elif args.action in ("plan", "status"):
+        if args.action=="status"and args.job_id is not None:
+            try:
+                require(re.fullmatch(r"[A-Za-z0-9_.-]{1,80}",args.job_id)is not None,"Exact normal job identifier")
+                row=db.execute("SELECT * FROM jobs WHERE id=?",(args.job_id,)).fetchone()
+                require(row is not None,"Normal job is not present")
+                binding=db.execute("SELECT * FROM pool_unit_bindings WHERE job_id=?",(args.job_id,)).fetchone()
+                print(canonical({"kind":"NORMAL_QUEUE_EXACT_JOB_STATUS_V1","job":dict(row),"binding":None if binding is None else dict(binding)}))
+                return 0
+            finally:db.close()
         rows = db.execute("SELECT * FROM jobs ORDER BY rowid").fetchall()
         selected, blocked = choose(rows, cfg)
         print(json.dumps({"pool": cfg, "runnable_now": [{"id": x[0]["id"], "cpus": x[2],

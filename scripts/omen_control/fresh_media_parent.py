@@ -34,6 +34,7 @@ def produce(preparation, expectation, installed_contract_pin, execution_job, pub
            and parent.get('failureControl') == 'LIBVIRT_AUTODESTROY_CONTROLLER_CONNECTION',
            'installed firstboot-only operation profile')
     parent.pop('unbootedContinuationPin', None)
+    parent['installedSchemaReceiptPin'] = None  # historical report is not launch authority
     parent.update(kind='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT', RootIssued=True,
                   runtimeAuthorized=True, MODEL_ONLY=False, nonce=c['nonce'],
                   bootID=c['hostBoot'], candidate=c, jobId=execution_job,
@@ -51,11 +52,21 @@ def produce(preparation, expectation, installed_contract_pin, execution_job, pub
                   workerStatePin=expectation['workerStatePin'],
                   workerLockMode=expectation['workerLockMode'],
                   nativeReadOnlyPin=expectation['nativeReadOnlyPin'],
+                  priorLeases=expectation['priorLeases'],
+                  unusedPaths=['/run/opemos-vfio-' + c['nonce'], '/run/opemos-libvirt-results-' + c['nonce']],
+                  postqueueDelegation='ROOT_EXACT_CANONICAL_BINDING_ONLY_R5',
+                  workerArgv=['/usr/bin/python3', expectation['queuePrograms'][0]['path'],
+                              '--queue', parent['queueStateRoot'], 'run'],
                   contextPath='/run/opemos-libvirt-runtime-' + c['nonce'] + '/context.json',
                   **{k: q[k] for k in ('sourcePlacementPin', 'placementQualificationPin', 'prequeuePreflightPin')})
     # Static privileged commands and tool identities come from the installed
     # reviewed profile; the per-run plan may not supply executable bodies.
     spec = parent['normalizedSpecTemplate']
+    parent['guestContract'] = {'nonce': c['guestReporterNonce'], 'guestUUID': c['guestUUID']}
+    parent['childGrantTemplate'].update(reservationMemory=10737418240, controllerMemory=2147483648,
+                                       domainMemory=8589934592, noNIC=True, noInstall=True,
+                                       maxBoots=1, physicalGroup=p.GROUP,
+                                       failureControl='LIBVIRT_AUTODESTROY_CONTROLLER_CONNECTION')
     spec.update(id=execution_job,
                 command=['sudo', '-n', '/usr/bin/python3', '-B',
                          parent['sourceRoles']['runtime_entry']['path'],

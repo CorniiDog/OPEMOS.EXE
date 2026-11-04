@@ -117,12 +117,12 @@ class NativeIssueOps:
   return result
  def observe(self,parent,parent_ref,request,value,evidence,g):
   c=parent['candidate'];before=set(os.listdir('/proc/self/fd'));old=protected(parent['prequeuePreflightPin']);now=self.now()
-  p.need(parent['installedSchemaReceiptPin']is not None and parent['sudoPin']is not None and parent['nativeTools']is not None,'actual installed schema/sudo/native tool operands before grant')
-  protected(parent['installedSchemaReceiptPin']);pre.measured(parent['sudoPin'],33554432)
+  p.need(parent['sudoPin']is not None and parent['nativeTools']is not None,'actual sudo/native tool operands before grant')
+  pre.measured(parent['sudoPin'],33554432)
   expected_tools={'/usr/bin/virt-xml-validate','/usr/bin/xmllint','/usr/sbin/losetup','/usr/bin/mount','/usr/bin/umount','/var/lib/opemos-vfio-idle-d3/modprobe','/var/lib/opemos-vfio-idle-d3/rmmod','/var/lib/opemos-vfio-idle-d3/managed_vfio.py'}
   p.need(set(parent['nativeTools'])==expected_tools,'closed exact native tool role set')
   for path,ref in parent['nativeTools'].items():p.need(ref['path']==path,'exact native tool path');pre.measured(ref,33554432)
-  g.update(installedSchemaReceiptPin=parent['installedSchemaReceiptPin'],sudoPin=parent['sudoPin'],nativeTools=parent['nativeTools'])
+  g.update(installedSchemaReceiptPin=parent.get('installedSchemaReceiptPin'),sudoPin=parent['sudoPin'],nativeTools=parent['nativeTools'])
   p.need(0<=now-old['observedUnix']<=30 and old['original']==c['original']and old['working']==parent['preparedDiskPins']['working']and old['preparedAccessPin']==parent['preparedAccessPin']and old['splitDiskCapturePins']==parent['splitDiskCapturePins'],'prequeue complete40GiB hashes remain original<=30s, never retimestamped')
   p.need(old['queuePrograms']==parent['queuePrograms']and old.get('abi')==pre.MACHINE_PREFLIGHT_ABI and old['privateHistory']['rawSHA256']==parent['priorHistory']['sha256'],'original prequeue proof/current prior history/machine preflight source')
   for ref in parent['queuePrograms']:pre.measured(ref,1048576,False)

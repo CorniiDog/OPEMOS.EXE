@@ -9,6 +9,8 @@ RUNTIME_ROLES = frozenset({
     'guest_firmware_probe', 'held_history_reader', 'two_boot_contract',
     'postqueue_issuer', 'libvirt_storage', 'retained_media', 'source_contract',
 })
+PREPARATION_ROLES = frozenset({'current_media_preparation', 'fresh_placement_producer',
+                               'fresh_media_parent', 'run_current_media'})
 
 
 def validate(roles, queue, ref):
@@ -28,6 +30,7 @@ def validate(roles, queue, ref):
          and set(roles) == RUNTIME_ROLES, 'complete installed controller/queue identity')
     names = [Path(x['path']).name for x in queue]
     need(len(queue) == 7 and len(set(names)) == 7
+         and names[:5] == ['test_queue.py', 'queue_job.py', 'heavy.sh', 'queue.sh', 'queue-files.sh']
          and names[-2:] == ['retained_media.py', 'source_contract.py'],
          'whole queue deployment includes its two immutable consumers')
     for name, pin in zip(('retained_media', 'source_contract'), queue[-2:]):
@@ -37,7 +40,10 @@ def validate(roles, queue, ref):
              'same exact controller/queue helper bytes')
         held(pin, 1048576)
     root = Path(ref['path']).parent
-    for name, pin in roles.items():
+    preparation = value['preparationRoles']
+    need(set(preparation) == PREPARATION_ROLES and not set(preparation) & set(roles),
+         'complete static preparation entry and runtime consumer')
+    for name, pin in {**roles, **preparation}.items():
         need(Path(pin['path']) == root / (name + '.py'), 'confined installed role')
         s = pin['identity']
         need(s['st_uid'] == s['st_gid'] == 0 and stat.S_ISREG(s['st_mode'])

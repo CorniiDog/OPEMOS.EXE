@@ -37,6 +37,29 @@ It returns an unsubmitted manifest; the existing queue submit/worker/issuer/
 libvirt lifecycle owns execution, resource admission, exclusive GPU lease,
 finite clocks and cleanup. The R119 first-initialization mitigation is unchanged.
 
+`run_current_media.py` connects these functions to the actual queue submit and
+worker entry, followed by the exact-job status API and normal terminal/native
+closure. Its read-only loop is held through the operation and detached only
+after canonical release and current no-holder/domain/host checks. It records a
+failed VM result as a failure, even when normal cleanup succeeded. In-process
+disk reads use a distinct capture type; they do not invent a transport child,
+exit status or waitpid claim.
+
+The installed `media_window.py` and `media_client.py` take ordinary request
+identifiers as data. They retain the existing recovery mutex, current assigned
+build/owner checks, single normal idle-control retirement, ordered closure,
+45-minute restoration backstop and verified timer restoration. Exact code and
+effects review precedes installation; no LLM receipt, agent or nonce-specific
+executable is a runtime input. The normal drain preserves Root source/lease,
+canonical binding, PID/start/UID/argv/cgroup and pidfd checks. Repository-wide
+queued Actions and an unrelated old control row/tick-report format no longer
+authorize or veto retirement. Actual assigned work still refuses it.
+
+The historical installed-schema report also has no launch authority. The real
+installed schema validator still checks the actual XML immediately before
+`createXML`, using its bound executable/source identity. A missing old report
+does not substitute for that check or prevent it from being reached.
+
 The installed source contract binds immutable controller roles and the whole
 queue deployment, including its two current custody consumers. Current job,
 boot and candidate metadata are data, not generated executable bodies. The
@@ -55,3 +78,9 @@ hardware acceptance. A complete new native qualification, actual submitted job,
 domain creation, CPU resume, domain-bound console/installer screen, NVIDIA
 operation and normal closure must be recorded separately. A source/CI pass or
 paused domain proves none of the later milestones.
+
+This firstboot operation tests the retained authenticated recovery media and
+the reviewed controller. Candidate application/package execution is separate
+coverage. The automatic-push routing merged in PR218 still needs its actual
+installed recipe/heartbeat reconciliation and guest candidate delivery before
+an automatic development check can truthfully claim that candidate was tested.
