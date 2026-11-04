@@ -50,7 +50,7 @@ class RebootReconciliationTests(unittest.TestCase):
         self.db.execute('INSERT INTO pool_unit_bindings VALUES(?,?)',(JOB,R.canonical(binding)))
         self.db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',('queued-independent','{}','pending',None,None,None,None,None))
         self.db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',('historical','{}','failed',None,None,10,20,'{"original":true}'))
-        self.db.execute('INSERT INTO config VALUES(1,?)',('{"cpu_ids":[0,1,2,3,4,5,6,7,8,9],"memory_bytes":34359738368}'))
+        self.db.execute('INSERT INTO config VALUES(1,?)',('{"cpu_ids":[0,1,2,3,4,5,6,7,8,9],"memory_bytes":34359738368}',))
         self.before=R.ledger(self.db)
         self.worker=os.open(self.root/'worker.lock',os.O_RDWR|os.O_CREAT,0o600)
         self.heavy_owner=os.open(self.root/'heavy.lock',os.O_RDWR|os.O_CREAT,0o600)
