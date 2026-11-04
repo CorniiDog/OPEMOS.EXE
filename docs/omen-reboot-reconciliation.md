@@ -53,3 +53,9 @@ The separate ACPI/VFIO power-transition failure needs an evidence-backed repair
 and review before another GPU activation. Nothing here changes PM, the physical
 Intel host, exclusive group ownership, virtual-USB-only policy, CPU10/RAM32GiB,
 no-swap or the whole-VM 60-GB limit.
+
+Admission precedes the original queue connection and any schema/sidecar access.
+The actual kernel heavy-lock holder must be the caller or its stable ancestor,
+with the pinned existing wrapper body and Bash interpreter; an unrelated busy
+lock and environment marker never grant admission. Log operands are confined
+before any mkdir and canonical selection precedes owned history creation.

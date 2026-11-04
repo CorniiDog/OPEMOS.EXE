@@ -155,4 +155,24 @@ class RebootReconciliationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'lock inode'):self.consume(ModeledNativeBoundary(self.db))
         self.assertEqual(R.ledger(self.db),self.before)
 
+    def test_unrelated_real_heavy_holder_is_not_admission(self):
+        fcntl.flock(self.heavy_owner,fcntl.LOCK_UN)
+        child=subprocess.Popen([sys.executable,'-c',
+            "import fcntl,sys; f=open(sys.argv[1],'r+'); fcntl.flock(f,fcntl.LOCK_EX); print('held',flush=True); sys.stdin.read()",
+            str(self.root/'heavy.lock')],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
+        try:
+            self.assertEqual(child.stdout.readline(),b'held\n')
+            with self.assertRaisesRegex(ValueError,'ancestor'):
+                R.LockFence(self.worker,self.root/'worker.lock',self.heavy_probe,self.root/'heavy.lock',os.getuid())
+            self.assertEqual(R.ledger(self.db),self.before)
+        finally:child.communicate(b'',timeout=5)
+    def test_confined_normal_log_history_and_bad_job_operands(self):
+        parent=self.root/'logs'/JOB;parent.mkdir(parents=True,mode=0o700)
+        history=R.create_history(self.root,JOB);self.assertEqual(history.parent,parent)
+        self.assertEqual(history.stat().st_mode&0o777,0o700)
+        for job in('/tmp/escaped','../escaped','a/b','..',''):
+            with self.subTest(job=job),self.assertRaises(ValueError):R.create_history(self.root,job)
+        other=self.root/'logs'/'foreign';other.symlink_to(parent,target_is_directory=True)
+        with self.assertRaises(ValueError):R.create_history(self.root,'foreign')
+
 if __name__=='__main__':unittest.main()

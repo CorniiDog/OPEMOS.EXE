@@ -13,6 +13,7 @@ import importlib.util
 import json
 import math
 import os
+import re
 from pathlib import Path
 import stat
 import subprocess
@@ -77,7 +78,7 @@ def load_profile(path):
     s=path.lstat();need(stat.S_ISREG(s.st_mode)and s.st_size<=1048576,'bounded installed profile')
     raw=path.read_bytes();pin={'path':str(path),'bytes':len(raw),'sha256':sha(raw),'identity':identity(s)}
     data=json.loads(read_pin(pin,1048576,0,0o444))
-    need(set(data)=={'schema','queue_root','queue_code','peer','capture','original','endpoints','recovery_code'},'closed installed recovery profile')
+    need(set(data)=={'schema','queue_root','queue_code','peer','capture','original','endpoints','recovery_code','heavy_wrapper'},'closed installed recovery profile')
     code=Path(__file__).resolve();s=code.lstat()
     need(code.parent==PROFILE_ROOT and s.st_uid==s.st_gid==0 and stat.S_IMODE(s.st_mode)==0o444 and s.st_nlink==1,
          'only immutable installed Root recovery code, never candidate or checkout code')
@@ -103,7 +104,6 @@ def selected(epoch,job):
     rows=[r for r in epoch['rows']if r['id']==job];bindings=[b for b in epoch['bindings']if b['job_id']==job]
     need(len(rows)==len(bindings)==1,'exact original row/binding')
     row=rows[0];binding=json.loads(bindings[0]['value']);spec=json.loads(row['spec'])
-    import re
     need(re.fullmatch(r'opemos-testq-[0-9a-f]{12}-[0-9a-f]{32}\.service',row['unit'])is not None and
          re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*',job)is not None,'original normal job/unit names')
     need(row['state']in('running','terminal_cleanup')and row['finished']is None,'original retained reservation only')
@@ -215,23 +215,82 @@ def writer(db):
         except BaseException as secondary:first.add_note('Queue rollback also failed: '+repr(secondary))
         raise
 
+def process(pid):
+    """Existing proc PID/start/UID/argv/exe/ancestry shape; no process control."""
+    root=Path('/proc')/str(pid);before=(root/'stat').read_text().rsplit(')',1)[1].split()
+    status=(root/'status').read_text().splitlines()
+    uids=next(x for x in status if x.startswith('Uid:')).split()[1:]
+    need(len(set(uids))==1,'single genuine process UID')
+    value={'pid':pid,'start':int(before[19]),'ppid':int(before[1]),'uid':int(uids[0]),
+           'argv':os.fsdecode((root/'cmdline').read_bytes()).rstrip('\0').split('\0'),
+           'exe':os.readlink(root/'exe')}
+    need((root/'stat').read_text().rsplit(')',1)[1].split()[19]==str(value['start']),'process start drift')
+    return value
+
+def kernel_holders(st):
+    holders=[]
+    for line in Path('/proc/locks').read_text().splitlines():
+        fields=line.split()
+        if len(fields)<8 or fields[1]!='FLOCK'or fields[3]!='WRITE':continue
+        major,minor,inode=fields[5].split(':')
+        if (int(major,16),int(minor,16),int(inode))==(os.major(st.st_dev),os.minor(st.st_dev),st.st_ino):
+            holders.append(int(fields[4]))
+    return holders
+
 class LockFence:
-    """Same kernel lock objects throughout this finite normal owner API."""
-    def __init__(self,worker,worker_path,heavy,heavy_path,uid):
+    """Bind actual kernel FLOCKs to this worker and its admitted ancestor."""
+    def __init__(self,worker,worker_path,heavy,heavy_path,uid,heavy_source=None):
         self.rows=[(worker,Path(worker_path)),(heavy,Path(heavy_path))];self.uid=uid
         self.original=[tuple(getattr(os.fstat(fd),k)for k in FIELDS[:6])for fd,_ in self.rows]
+        holders=kernel_holders(os.fstat(heavy));need(len(holders)==1,'one actual heavy owner')
+        self.holder=process(holders[0]);self.source=heavy_source
+        self.chain=[];pid=os.getpid()
+        for _ in range(32):
+            actor=process(pid);self.chain.append(actor)
+            if actor['pid']==self.holder['pid']:break
+            need(actor['ppid']>1 and actor['ppid']!=pid,'heavy owner must be caller ancestor, not unrelated work')
+            pid=actor['ppid']
+        need(self.chain[-1]==self.holder and all(x['uid']==uid for x in self.chain),'same admitted caller/heavy ancestry')
+        self.check()
     def check(self):
         for (fd,path),before in zip(self.rows,self.original):
             held=os.fstat(fd);named=path.lstat()
             need(tuple(getattr(held,k)for k in FIELDS[:6])==before==tuple(getattr(named,k)for k in FIELDS[:6])and
                  stat.S_ISREG(held.st_mode)and held.st_uid==self.uid and held.st_nlink==1,'normal lock inode/owner changed')
-        # Lock-file timestamps are not ownership: unsuccessful normal contenders
-        # can truncate that same empty file before their flock fails.
-        heavy=self.rows[1][0]
-        try:fcntl.flock(heavy,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except BlockingIOError:return
-        fcntl.flock(heavy,fcntl.LOCK_UN)
-        raise ValueError('normal heavy owner no longer holds its lock')
+        # Failed normal contenders may truncate this empty file: timestamps are
+        # not lock authority. Kernel FLOCK PID plus held inode and ancestry are.
+        need(kernel_holders(os.fstat(self.rows[0][0]))==[os.getpid()],'own actual canonical worker FLOCK')
+        need(kernel_holders(os.fstat(self.rows[1][0]))==[self.holder['pid']],'normal heavy owner no longer holds its lock')
+        need(all(process(x['pid'])==x for x in self.chain),'admitted caller/holder PID-start-UID-argv-exe drift')
+        if self.source is not None:
+            read_pin(self.source,1048576,self.uid)
+            need(self.holder['exe']=='/usr/bin/bash'and self.holder['argv'][1]==self.source['path'],
+                 'actual normal heavy wrapper source and interpreter')
+        held=[]
+        for path in (Path('/proc')/str(self.holder['pid'])/'fd').iterdir():
+            try:st=path.stat()
+            except FileNotFoundError:continue
+            if(st.st_dev,st.st_ino)==self.original[1][:2]:held.append(path.name)
+        need(held,'actual heavy holder descriptor remains open')
+
+def valid_job(job):
+    need(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*',job)is not None and len(job)<=200,'confined normal job identifier')
+
+def create_history(root,job):
+    """No mkdir until canonical selection, with an owned nofollow log parent."""
+    valid_job(job);parent=Path(root)/'logs'/job
+    need(parent.resolve()==parent,'confined real normal job log parent')
+    fd=os.open(parent,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    with closing(lambda:os.close(fd)):
+        original=os.fstat(fd)
+        need(stat.S_ISDIR(original.st_mode)and original.st_uid==original.st_gid==os.getuid()and not original.st_mode&0o022,
+             'owned normal job log parent')
+        name='reboot-reconciliation-'+uuid.uuid4().hex
+        need(identity(os.fstat(fd))==identity(parent.lstat()),'held normal log parent before mkdir')
+        os.mkdir(name,mode=0o700,dir_fd=fd);os.fsync(fd)
+        need(tuple(getattr(os.fstat(fd),k)for k in FIELDS[:6])==tuple(getattr(parent.lstat(),k)for k in FIELDS[:6]),
+             'held normal log parent after mkdir')
+        return parent/name
 
 def reconcile(db,job,capture,history,locks):
     """One failed-only normal writer transaction; native capture is external I/O.
@@ -290,6 +349,7 @@ def reconcile(db,job,capture,history,locks):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('action',choices=('observe','reconcile'));parser.add_argument('profile',type=Path);parser.add_argument('job');args=parser.parse_args()
+    valid_job(args.job)
     profile,pin=load_profile(args.profile)
     if args.action=='observe':
         proof=observe(profile,args.job);read_pin(pin,1048576,0,0o444)
@@ -298,18 +358,22 @@ def main():
     need(os.getuid()==os.geteuid()==1000,'normal queue owner only')
     root=Path(profile['queue_root']);need(root.resolve()==root and root.is_dir(),'existing real normal queue root')
     dbst=(root/'queue.sqlite3').lstat();need(stat.S_ISREG(dbst.st_mode)and dbst.st_uid==1000 and dbst.st_nlink==1,'existing normal queue; never initialize')
-    queue=module(profile['queue_code'],'installed_normal_queue_reboot_api');root,db=queue.connect(root)
-    with closing(db.close):
-        worker=os.open(root/'worker.lock',os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC)
-        with closing(lambda:os.close(worker)):
-            need(stat.S_ISREG(os.fstat(worker).st_mode)and os.fstat(worker).st_uid==1000,'normal worker lock custody')
-            fcntl.flock(worker,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            need(os.environ.get('OPEMOS_QUEUE_HEAVY_ENTRY')=='1','normal heavy admission entry required')
-            heavy=os.open(Path(os.environ.get('XDG_RUNTIME_DIR','/run/user/1000'))/'opemos-heavy.lock',os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC)
-            with closing(lambda:os.close(heavy)):
-                need(stat.S_ISREG(os.fstat(heavy).st_mode)and os.fstat(heavy).st_uid==1000,'normal heavy lock custody')
-                locks=LockFence(worker,root/'worker.lock',heavy,Path(os.environ.get('XDG_RUNTIME_DIR','/run/user/1000'))/'opemos-heavy.lock',1000);locks.check()
-                history=root/'logs'/args.job/('reboot-reconciliation-'+uuid.uuid4().hex);history.mkdir(mode=0o700);sync_directory(history.parent)
+    queue=module(profile['queue_code'],'installed_normal_queue_reboot_api')
+    worker=os.open(root/'worker.lock',os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC)
+    with closing(lambda:os.close(worker)):
+        need(stat.S_ISREG(os.fstat(worker).st_mode)and os.fstat(worker).st_uid==1000,'normal worker lock custody')
+        fcntl.flock(worker,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        need(os.environ.get('OPEMOS_QUEUE_HEAVY_ENTRY')=='1','normal heavy admission entry required')
+        heavy_path=Path(os.environ.get('XDG_RUNTIME_DIR','/run/user/1000'))/'opemos-heavy.lock'
+        heavy=os.open(heavy_path,os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC)
+        with closing(lambda:os.close(heavy)):
+            locks=LockFence(worker,root/'worker.lock',heavy,heavy_path,1000,profile['heavy_wrapper']);locks.check()
+            # queue.connect can execute schema/PRAGMAs. It must follow genuine
+            # worker/heavy admission; no original SQL happens on a refusal.
+            root,db=queue.connect(root)
+            with closing(db.close):
+                selected(ledger(db),args.job)
+                history=create_history(root,args.job)
                 helper=module(profile['capture'],'installed_owned_capture');index=0
                 def capture(job):
                     nonlocal index
