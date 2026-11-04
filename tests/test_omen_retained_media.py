@@ -735,6 +735,17 @@ except peer.Refused as error:
                     'entryFDClosure':{'known':True,'ownedAnchorClosed':True},
                     'secondary':[{'role':role,'reason':'exact source12/parent-manifest/current-queue/new-scope capture binding'}
                         for role in ('DAC-FD-before-close','DAC-FD-after-current-closure','DAC-FD-after-ACL-restore')]}}
+            # The actual recovery ancestry join consumes raw /proc cgroup
+            # text from queue_job and the parsed path from peer snapshots.
+            # External ancestry facts are modeled; no lease write occurs.
+            logger_path=peer.POOL+'/'+request['unit']
+            logger_chain=[{'cgroup':logger_path}]
+            logger_record={'cgroup':'0::'+logger_path+'\n'}
+            self.assertEqual(runtime_entry.recovery_logger_cgroup(logger_chain,logger_record,request['unit']),logger_path)
+            for value in ('0::'+logger_path+'-foreign\n','0::'+logger_path+'\n0::/foreign\n',
+                          '1:name=systemd:'+logger_path+'\n',logger_path,'0::'+logger_path+'\\n'):
+                with self.assertRaises(Exception):runtime_entry.recovery_logger_cgroup(logger_chain,{'cgroup':value},request['unit'])
+            with self.assertRaises(Exception):runtime_entry.recovery_logger_cgroup([{'cgroup':logger_path+'-foreign'}],logger_record,request['unit'])
             old_grant={'jobId':request['jobId'],'bootID':boot}
             self.assertEqual(runtime_entry.failed_prepared_terminal(classification,child_start,child_result,
                              classified_context,parent,old_grant),request)

@@ -200,6 +200,13 @@ def main(context_ref):
  with peer.RootFiles(receipt_root)as f,f.lock(True):terminal=producer.put(f,'terminal-index.json',{'result':result,'orderedRecords':sequence,'allOwnedFDsClosed':fdsClosed,'processLifetimeEventDriver':driver,'processLifetimeClosureRequiresOriginalRootReap':True,'actor':{k:peer.process(os.getpid())[k]for k in('pid','start','uid')},'atUnix':time.time()})
  print(peer.canon({'terminal':terminal,'accepted':result['accepted'],'leaseHeld':result['leaseMustRemainHeld']}).decode(),flush=True);return 0 if operational_complete(result,fdsClosed)else 1
 
+def recovery_logger_cgroup(chain,provenance,unit):
+ """Join the original kernel serialization to the authenticated process path."""
+ expected=peer.POOL+'/'+unit
+ peer.need(type(provenance['cgroup'])is str and provenance['cgroup']=='0::'+expected+'\n','exact original unified logger cgroup serialization')
+ peer.need(chain[-1]['cgroup']==expected,'same original logger ancestry cgroup path')
+ return expected
+
 def failed_prepared_terminal(terminal,child_start,child_result,context,parent,grant):
  """Validate the original failed writer, never reinterpret it as successful."""
  r=terminal['result'];c=context['candidate'];request=json.loads(held(context['assignmentPin'],1048576))['request']
@@ -253,7 +260,7 @@ def recover_failed_prepared(profile_ref,definition_ref):
   qroot='/run/opemos-libvirt-queue-'+request['jobToken'];lroot='/run/opemos-vfio-'+request['leaseNonce'];end=time.monotonic()+20
   with peer.RootFiles(qroot)as files,files.lock(True,end),peer.RootFiles(lroot)as lf,lf.lock(True,end):
    raw,intent_pin=files.read('intent.json');intent=json.loads(raw);peer.need(intent['request']==request and intent['grantPin']==context['grantPin']and intent['originalPin']==c['original']and intent['workingPin']==c['working']and intent['endpoints']==c['hostdev']and len(intent['endpoints'])==4 and intent['qemuPin']==c['qemu']and intent['nativeTools']==grant['nativeTools']and intent['bootID']==c['hostBoot'],'exact original intent, never reopen domain')
-   actor=intent['entry'];chain=actor['ancestry'];peer.need({k:actor[k]for k in('pid','start','uid')}==terminal['actor']and actor['argvSHA256']==hashlib.sha256(peer.canon(grant['controllerArgv'])).hexdigest()and actor['managerMainPID']==start['loggerProvenance']['pid']and chain[-1]['pid']==start['loggerProvenance']['pid']and chain[-1]['start']==start['loggerProvenance']['startTicks']and chain[-1]['uid']==1000 and chain[-1]['cgroup'].strip()==start['loggerProvenance']['cgroup'].strip()==peer.POOL+'/'+request['unit']and parent['issuedUnix']<=terminal['atUnix']<=child['finished']and any(x['pid']==start['pid']and x['start']==start['startTicks']for x in chain)and all(absent(x)for x in chain),'authenticated original Root/sudo/logger ancestry and current absence')
+   actor=intent['entry'];chain=actor['ancestry'];peer.need({k:actor[k]for k in('pid','start','uid')}==terminal['actor']and actor['argvSHA256']==hashlib.sha256(peer.canon(grant['controllerArgv'])).hexdigest()and actor['managerMainPID']==start['loggerProvenance']['pid']and chain[-1]['pid']==start['loggerProvenance']['pid']and chain[-1]['start']==start['loggerProvenance']['startTicks']and chain[-1]['uid']==1000 and recovery_logger_cgroup(chain,start['loggerProvenance'],request['unit'])==peer.POOL+'/'+request['unit']and parent['issuedUnix']<=terminal['atUnix']<=child['finished']and any(x['pid']==start['pid']and x['start']==start['startTicks']for x in chain)and all(absent(x)for x in chain),'authenticated original Root/sudo/logger ancestry and current absence')
    phase_raw,phase_head=files.read('phase-head.json');h=json.loads(phase_raw);phase_raw,phase_pin=files.read(h['record']);phase=json.loads(phase_raw)
    peer.need(h=={'record':'phase-00.json','sha256':phase_pin['sha256']}and phase['phase']=='PREPARED'and phase['bootID']==c['hostBoot']and phase['leader']is None and phase['scope']is None and phase['requestSHA256']==hashlib.sha256(peer.canon(request)).hexdigest(),'only original unactivated PREPARED phase, no ACTIVE history')
    state,binding,lease_raw=peer.read_lease(lf,request,c['hostBoot']);peer.need(state['revision']==0 and state['closed']is False and state['restored']is True and state['changed']==[]and state['event']=='PREPARED'and state.get('domain')is None,'initial unchanged PREPARED lease, never closed rearm')
