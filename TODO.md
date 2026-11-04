@@ -5056,3 +5056,17 @@ current and their repository ownership is unambiguous.
   fresh correlated API pagination. Prior failures and the frozen reviewed head
   remain intact. New exact source/effects review and admitted CI are required;
   actual R118/installed owner and the TWO cap remain held.
+
+
+## 2026-11-03 EXE R118 new-boot interrupted-job recovery (same VM stream)
+
+- [x] PR218 automatic-push controller/candidate source squash verified: ce3cc45097f078ceb8417bfdfd6aa927c18be1d9; exact cafe415a/tree42d73a97, Core f3e2a15c plus repository-only cc33909c amendment, all11 required source/package checks. Actual merge receipt191ce6f3; one open PR remains (#213). Installed controller/Root policy unchanged; no VM claim.
+- [x] Current newboot7cd5198f passive original-driver/whole-hostVFIO-FD cuts and full20GiB original hash/full9 passed; trusted journal joins oldboot3b85/unitf6f8/invocation0346. Core fe03c435 consumes actuald3c9c546. Original e8947 row remains running/reserved; old lease/QMP/ACL/exit unknown, no forced SQL/release or old scope replay.
+- [ ] This source adds a stable failed-after-reboot normal API, real private-SQLite regressions and a pinned Root observer boundary. AST/diff checked only; project tests must run in admitted CI. No candidate privileged execution or deployment before exact Core source/PR/effects review.
+- [ ] After review/merge, install exact immutable code/data at the safe checkpoint, run actual readonly producer and one normal retained-then-failed transaction with whole readback. Then repair the separately demonstrated managed-PCI power transition using matching old38/new42 kernel facts before a fresh normal SteamOS virtualUSB/NVIDIA attempt. No guessed PM flag, reset, competing VM or new watcher.
+
+- 2026-11-03 EXE PR219 entry repair: defer original queue.connect until actual worker/heavy admission; bind kernel heavy FLOCK to stable caller ancestry and the pinned normal wrapper; validate/confine normal log parent before mkdir. Preserved Core ENTRY1/2/3 and original CI tuple failures. New remote commit is required for the same privileged-source review and admitted CI; no machine installation/reconciliation/GPU effect has occurred.
+
+- Same PR219 bounded VFIO mitigation: material normal native/parent/issuer bodies now in repo, preserving old source as history. First existing module initialization supplies disable_idle_d3=1 before sole libvirt managed binding; original unloaded state restored only after genuine closure/no foreign users. Exact Ubuntu42 source and passive unloaded metadata retained externally. No PM/module/queue effect yet; remote CI/Core exact source/caller/effects still required.
+
+- Same PR219 successor addresses Core R119-F1/F2/F3: actual inherited Bash OFD/fdinfo owner, immediate post-prepare create clock, attempted/proven module custody and exact single-module removal preserving pre-existing dependencies. Existing real wrapper fixture and modeled dependency/partial/foreign cases added; no controller project tests or machine effect. Frozen35d and all failed evidence preserved.
