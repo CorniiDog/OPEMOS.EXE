@@ -658,9 +658,10 @@ class RetainedMediaContract(unittest.TestCase):
             # before any phase/lease or recovery namespace can be created.
             invalid_recovery=save('not-a-runtime-context',{'kind':'NOT_A_RUNTIME_CONTEXT'})
             refused_recovery=subprocess.run(['/usr/bin/python3','-I','-B',str(source_root/'run_current_media.py'),
-                '--profile-pin-json',json.dumps(ref),'--complete-failed-context-pin-json',json.dumps(invalid_recovery),
+                '--profile-pin-json',json.dumps(installed['operationProfilePin']),'--complete-failed-context-pin-json',json.dumps(invalid_recovery),
                 '--recovery-nonce',uuid.uuid4().hex],capture_output=True,timeout=15,preexec_fn=deny_connect)
             self.assertNotEqual(refused_recovery.returncode,0)
+            self.assertIn('original failed runtime context data',refused_recovery.stderr.decode())
             self.assertFalse(os.path.lexists('/run/opemos-vfio-'+nonce))
             parent_ref=installer.put(public_parent,installer.canon(parent),0o444)
             parent_identity=parent_ref['identity']
