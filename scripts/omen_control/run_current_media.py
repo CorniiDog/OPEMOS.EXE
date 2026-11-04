@@ -455,12 +455,157 @@ class Run:
         self.loop = None
 
 
+def finish_failed_queue(parent_ref):
+    """Original owning queue APIs, one failed target; never dispatch other work."""
+    import fcntl
+    p.need(os.getuid()==os.geteuid()==1000,'ordinary queue owner only')
+    parent=protected(parent_ref,0o444)
+    contract=source_contract.validate(parent['sourceRoles'],parent['queuePrograms'],parent['installedSourceContractPin'])
+    root=Path(parent['queueStateRoot']);p.need(root.is_dir()and not root.is_symlink()and root.stat().st_uid==1000,'existing owned original queue only')
+    dbpath=root/'queue.sqlite3';st=dbpath.lstat();p.need(stat.S_ISREG(st.st_mode)and st.st_uid==1000 and st.st_nlink==1,'existing original queue DB; never initialize')
+    queue=load_current_queue(parent['candidate'],{'sourceRoles':parent['sourceRoles'],'queuePrograms':parent['queuePrograms'],'installedSourceContractPin':parent['installedSourceContractPin']})
+    fd=os.open(root/'worker.lock',os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC)
+    try:
+        before=p.ident(os.fstat(fd));p.need(before==p.ident(os.lstat(root/'worker.lock'))and before['st_uid']==before['st_gid']==1000 and before['st_nlink']==1 and stat.S_ISREG(before['st_mode']),'held/named original worker lock')
+        fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        heavy=heavy_custody(parent['queuePrograms'][2])
+        root,db=queue.connect(root)
+        try:
+            before_ledger=queue.diagnostic_ledger(db);cfg=queue.config(db);backend=queue.SystemdBackend(root,cfg)
+            rows,pool=queue.fresh_pool_epoch(db,backend,'failed-prepared-completion')
+            targets=[row for row in rows if row['id']==parent['jobId']];p.need(len(targets)==1,'exact existing target only');row=targets[0]
+            from postqueue_issuer import expected_spec
+            p.need(row['state']=='running'and row['finished']is None and json.loads(row['spec'])==expected_spec(parent,parent_ref),'original unfinished exact approved spec, no rearm')
+            with queue.ExpectedInvocation(backend,db,row)as guard:
+                state,evidence,empty=backend.inspect(row['unit']);guard.verify()
+            p.need(state=='failed'and empty is True and evidence['InvocationID']==row['_poolBinding']['invocation'],'actual failed original invocation and complete current native closure')
+            for path in (root/'logs'/row['id']).iterdir():
+                if path.is_file()and not path.is_symlink():
+                    log=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+                    try:os.fsync(log)
+                    finally:os.close(log)
+            directory=os.open(root/'logs'/row['id'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+            try:os.fsync(directory)
+            finally:os.close(directory)
+            again=heavy_custody(parent['queuePrograms'][2]);p.need(all(again[k]==heavy[k]for k in('owner','OFD','lockCore'))and before==p.ident(os.fstat(fd))==p.ident(os.lstat(root/'worker.lock')),'same heavy/worker custody before canonical completion')
+            queue.finish_bound(db,backend,row,'failed',evidence)
+            after=queue.diagnostic_ledger(db)
+            p.need(before_ledger['bindings']==after['bindings']and before_ledger['config']==after['config']and [r for r in before_ledger['rows']if r['id']!=row['id']]==[r for r in after['rows']if r['id']!=row['id']],'every other complete row/binding/config preserved')
+            final=next(r for r in after['rows']if r['id']==row['id']);life=json.loads(final['result'])['terminalLifecycle']
+            p.need(final['state']=='failed'and final['finished']is not None and life['phase']=='CLOSED'and life['reservationRetained']is False,'only normal true canonical CLOSED/released completion')
+            return {'kind':'NORMAL_FAILED_PREPARED_QUEUE_COMPLETION_V1','jobId':row['id'],'state':final['state'],'finished':final['finished'],'terminalLifecycle':life,'otherRowsPreserved':len(after['rows'])-1,'dispatches':[]}
+        finally:db.close()
+    finally:os.close(fd)
+
+
+def continue_closed_mount(profile_ref):
+    """Continue ONLY unfinished own readonly loop cleanup after canonical release."""
+    p.need(os.getuid()==os.geteuid()==0,'Root owned mount completion only')
+    cfg=protected(profile_ref,0o400)
+    p.need(set(cfg)=={'kind','contextPin','operationProfilePin','recoveryNonce','issuedUnix','startBeforeUnix'}and cfg['kind']=='ROOT_CLOSED_MEDIA_MOUNT_COMPLETION_V1','cleanup-only typed data, no VM request')
+    now=time.time();p.need(type(cfg['issuedUnix'])in(int,float)and cfg['issuedUnix']<=now<cfg['startBeforeUnix']<=cfg['issuedUnix']+300 and re.fullmatch('[0-9a-f]{32}',cfg['recoveryNonce']),'finite new cleanup purpose, never old VM grant extension')
+    context=protected(cfg['contextPin'],0o400);parent=protected(context['parentPin'],0o444);c=context['candidate']
+    old=protected(cfg['operationProfilePin'],0o444);contract=source_contract.validate(old['sourceRoles'],old['queuePrograms'],old['installedSourceContractPin'])
+    p.need(context['sourceRoles']==parent['sourceRoles']==old['sourceRoles']and old['queuePrograms']==parent['queuePrograms']and parent['candidate']==c and c['hostBoot']==Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'same original installed source/candidate/current boot as data')
+    source_contract.bind_scope(p,parent);p.SOURCE_PLACEMENT_PIN=context['sourcePlacementPin']
+    request=json.loads(held(context['assignmentPin'],1048576))['request']
+    with p.RootFiles('/run/opemos-vfio-'+request['leaseNonce'])as files,files.lock(False,time.monotonic()+10):
+        state,lease,_=p.read_lease(files,request,c['hostBoot']);p.need(state['closed']and state['restored']and state['changed']==[],'actual original logical closure, not Root process absence')
+    observed=media.observe(c)
+    paths=source_contract.candidate_paths(c);scratch=Path(paths['operationRoot'])/('recovery-'+cfg['recoveryNonce'])
+    p.need(not os.path.lexists(scratch),'create-only owned recovery records, originals preserved')
+    producer.create_root(str(scratch))
+    # Reconstitute only this already-owned cleanup state. execute/prepare are
+    # never called, and the new clock authorizes no VM, ACL or device binding.
+    run=object.__new__(Run);run.profile=old;run.contract=contract;run.contract_pin=old['installedSourceContractPin'];run.c=c
+    run.request={'kind':'CLOSED_MOUNT_CLEANUP_ONLY','startBeforeUnix':cfg['startBeforeUnix'],'wholeDeadlineUnix':cfg['startBeforeUnix']}
+    run.root=scratch;run.placement_root=Path(paths['placementRoot']);run.mount=Path(paths['mountRoot']);run.io=Path(paths['ioRoot'])
+    run.loop=observed['loop']['path'];run.loop_fd=None;run.mounted=True;run.submitted=True;run.sequence=0;run.effects=[];run.last_job=None;run.diagnostic_errors=[]
+    run.heavy=heavy_custody(old['queuePrograms'][2]);run.native=native_module(old['nativeReadOnlyPin'])
+    try:
+        run.loop_fd=os.open(run.loop,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        media.loop_guard(run.loop_role())
+        run.close_current_mount()
+        return {'kind':'NORMAL_CLOSED_MEDIA_MOUNT_COMPLETION_V1','jobId':c['jobId'],'logicalLease':lease,'mountAbsent':not media.owned_mount(run.mount,observed['loop']['path']),'backingUnchanged':True,'diagnosticErrors':run.diagnostic_errors,'VMOrGPUActivation':False}
+    finally:
+        if run.loop_fd is not None:os.close(run.loop_fd);run.loop_fd=None
+
+
+def complete_failed_media(profile_pin,transaction_ref):
+    """Logical owner completion -> normal queue finalizer -> own mount cleanup."""
+    import runtime_entry
+    cfg=protected(profile_pin,0o444);transaction=protected(transaction_ref,0o400)
+    contract=source_contract.validate(cfg['sourceRoles'],cfg['queuePrograms'],cfg['installedSourceContractPin'])
+    p.need(contract['preparationRoles']['run_current_media']['path']==str(Path(__file__).absolute()),'actual immutable completion executable')
+    p.need(set(transaction)=={'kind','closurePin','cleanupPin'}and transaction['kind']=='ROOT_FAILED_MEDIA_COMPLETION_TRANSACTION_V1','one metadata completion transaction only')
+    closure_input=protected(transaction['closurePin'],0o400);cleanup_input=protected(transaction['cleanupPin'],0o400)
+    p.need(closure_input['apply']is True and closure_input['contextPin']==cleanup_input['contextPin']and cleanup_input['startBeforeUnix']<=closure_input['notAfterUnix'],'same finite target/whole metadata clock')
+    old_context=protected(closure_input['contextPin'],0o400)
+    closure=runtime_entry.recover_failed_prepared(transaction['closurePin'],cfg['installedSourceContractPin'])
+    argv=['/usr/bin/sudo','-n','-u','connor','/usr/bin/env','XDG_RUNTIME_DIR=/run/user/1000','DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus','OPEMOS_QUEUE_HEAVY_ENTRY=1','/usr/bin/python3','-I','-B',str(Path(__file__).absolute()),
+          '--profile-pin-json',p.canon(profile_pin).decode(),'--finish-failed-parent-pin-json',p.canon(old_context['parentPin']).decode()]
+    # The helper invokes only normal existing target finalizers, never dispatch.
+    result=native_queue_worker(argv,min(closure_input['notAfterUnix'],time.time()+120),cfg['nativeTools']['/usr/bin/sudo'])
+    if result['numeric']!=0:
+        error=p.Refused('normal existing failed target completion refused');error.evidence=result;error.nativeChildEvidence=result;raise error
+    final=json.loads(result['stdout']);p.need(final['jobId']==closure['jobId']and final['terminalLifecycle']['phase']=='CLOSED'and final['terminalLifecycle']['reservationRetained']is False,'actual original canonical release before mount completion')
+    cleanup=continue_closed_mount(transaction['cleanupPin'])
+    return {'kind':'ACTUAL_FAILED_MEDIA_COMPLETION_TRANSACTION_V1','logicalCompletion':closure,
+            'normalQueueCompletion':final,'normalQueueChildEvidence':result,'ownMountCompletion':cleanup,
+            'VMOrGPUActivation':False,'originalFailureReinterpretedAsSuccess':False}
+
+
+def complete_failed_context(profile_pin,context_ref,recovery_nonce):
+    """Machine-captured per-recovery DATA; executable code is installed once."""
+    p.need(os.getuid()==os.geteuid()==0 and re.fullmatch('[0-9a-f]{32}',recovery_nonce),'Root typed recovery identity')
+    cfg=protected(profile_pin,0o444);source_contract.validate(cfg['sourceRoles'],cfg['queuePrograms'],cfg['installedSourceContractPin'])
+    old_context=protected(context_ref,0o400);parent=protected(old_context['parentPin'],0o444)
+    definition=source_contract.validate(parent['sourceRoles'],parent['queuePrograms'],parent['installedSourceContractPin'])
+    c=old_context['candidate'];paths=source_contract.candidate_paths(c)
+    p.need(old_context['sourceRoles']==parent['sourceRoles']and parent['candidate']==c and c['hostBoot']==Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'same actual failed context/parent/current boot')
+    heavy_custody(parent['queuePrograms'][2])
+    with p.RootFiles('/run/opemos-libvirt-results-'+c['nonce'])as files:
+        _,terminal_pin=files.read('terminal-index.json')
+    job=parent['jobId'];p.need(re.fullmatch('[A-Za-z0-9_.-]{1,80}',job),'confined original job id')
+    logs=Path(parent['queueStateRoot'])/'logs'/job
+    child_start=pin(logs/'child-start.json',1048576);child_result=pin(logs/'child-result.json',1048576)
+    worker=pin(Path(parent['queueStateRoot'])/'worker.lock',65536)
+    old_profile=pin(Path(definition['deployment']['paths']['sourceRoot'])/'operation-profile.json',1048576)
+    # All generated records remain inside the already charged original metadata
+    # namespace. They cannot grant a new VM or change original artifacts.
+    root=Path(paths['operationRoot'])/('recovery-inputs-'+recovery_nonce)
+    p.need(not os.path.lexists(root),'create-only recovery data; prior attempts preserved')
+    producer.create_root(str(root));now=time.time();end=now+300
+    with p.RootFiles(root)as files,files.lock(True,time.monotonic()+10):
+        closure=producer.put(files,'logical-completion.json',{'kind':'ROOT_FAILED_UNLAUNCHED_PREPARED_COMPLETION_V1','apply':True,'contextPin':context_ref,'terminalPin':terminal_pin,'childStartPin':child_start,'childResultPin':child_result,'workerLockPin':worker,'notBeforeUnix':now,'notAfterUnix':end})
+        cleanup=producer.put(files,'mount-completion.json',{'kind':'ROOT_CLOSED_MEDIA_MOUNT_COMPLETION_V1','contextPin':context_ref,'operationProfilePin':old_profile,'recoveryNonce':recovery_nonce,'issuedUnix':now,'startBeforeUnix':end})
+        transaction=producer.put(files,'transaction.json',{'kind':'ROOT_FAILED_MEDIA_COMPLETION_TRANSACTION_V1','closurePin':closure,'cleanupPin':cleanup})
+    return complete_failed_media(profile_pin,transaction)
+
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--profile-pin-json', required=True)
     requests = ap.add_mutually_exclusive_group(required=True)
     requests.add_argument('--request-pin-json'); requests.add_argument('--request-stdin', action='store_true')
-    requests.add_argument('--observe-boot', action='store_true'); args = ap.parse_args()
+    requests.add_argument('--observe-boot', action='store_true'); requests.add_argument('--complete-prepared-pin-json'); requests.add_argument('--finish-failed-parent-pin-json'); requests.add_argument('--complete-mount-pin-json'); requests.add_argument('--complete-failed-media-pin-json'); requests.add_argument('--complete-failed-context-pin-json'); ap.add_argument('--recovery-nonce'); args = ap.parse_args()
     profile_pin = json.loads(args.profile_pin_json)
+    if args.complete_failed_context_pin_json:
+        print(p.canon(complete_failed_context(profile_pin,json.loads(args.complete_failed_context_pin_json),args.recovery_nonce)).decode(),flush=True);return
+    if args.complete_failed_media_pin_json:
+        print(p.canon(complete_failed_media(profile_pin,json.loads(args.complete_failed_media_pin_json))).decode(),flush=True);return
+    if args.finish_failed_parent_pin_json or args.complete_mount_pin_json:
+        cfg=protected(profile_pin,0o444)
+        contract=source_contract.validate(cfg['sourceRoles'],cfg['queuePrograms'],cfg['installedSourceContractPin'])
+        p.need(contract['preparationRoles']['run_current_media']['path']==str(Path(__file__).absolute()),'actual reviewed completion entry')
+        result=finish_failed_queue(json.loads(args.finish_failed_parent_pin_json))if args.finish_failed_parent_pin_json else continue_closed_mount(json.loads(args.complete_mount_pin_json))
+        print(p.canon(result).decode(),flush=True);return
+    if args.complete_prepared_pin_json:
+        cfg=protected(profile_pin,0o444)
+        contract=source_contract.validate(cfg['sourceRoles'],cfg['queuePrograms'],cfg['installedSourceContractPin'])
+        p.need(contract['preparationRoles']['run_current_media']['path']==str(Path(__file__).absolute()),'actual reviewed recovery entry')
+        import runtime_entry
+        print(p.canon(runtime_entry.recover_failed_prepared(json.loads(args.complete_prepared_pin_json),cfg['installedSourceContractPin'])).decode(),flush=True)
+        return
     if args.observe_boot:
         cfg = protected(profile_pin, 0o444)
         p.need(cfg['kind'] == 'OPEMOS_INSTALLED_CURRENT_MEDIA_OPERATION_V1', 'installed operation')

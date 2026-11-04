@@ -709,6 +709,38 @@ except peer.Refused as error:
                     with self.assertRaises(Exception):peer.dac_fd_lifetime(c,request,{fd:{'key':'working'}},bad,'fixture-close')
                 self.assertEqual(initial_fds,set(os.listdir('/proc/self/fd')))
             finally:os.close(fd)
+            # Synthetic external facts classify metadata only: no native
+            # closure or recovery/lease write is exercised by this unit case.
+            classified_context=dict(capture_context,assignmentPin=save('classification-assignment',{'request':request}))
+            provenance={'jobId':request['jobId'],'invocation':request['invocation'],
+                        'sourceSHA256':installed['queuePrograms'][1]['sha256'],
+                        'command':actual_spec['command']}
+            child_start={'pid':123,'startTicks':456,'loggerProvenance':provenance}
+            child_result={'childNumericExit':1,'childReaped':True,'pipeEOF':True,'outputLimit':False,
+                          'childPID':123,'loggerProvenance':provenance}
+            classification={'actor':{'pid':124,'start':457,'uid':0},'allOwnedFDsClosed':True,
+                'result':{'MODEL_ONLY':False,'accepted':False,'runtimeAuthorized':True,'launches':0,
+                    'leaseMustRemainHeld':True,
+                    'first':{'type':'Refused','reason':'current exact XML installed schema before domain create'},
+                    'closure':{'known':False,'logicalLeaseClosed':False,'FDsClosed':True,'leaseHeld':True},
+                    'entryFDClosure':{'known':True,'ownedAnchorClosed':True},
+                    'secondary':[{'role':role,'reason':'exact source12/parent-manifest/current-queue/new-scope capture binding'}
+                        for role in ('DAC-FD-before-close','DAC-FD-after-current-closure','DAC-FD-after-ACL-restore')]}}
+            old_grant={'jobId':request['jobId'],'bootID':boot}
+            self.assertEqual(runtime_entry.failed_prepared_terminal(classification,child_start,child_result,
+                             classified_context,parent,old_grant),request)
+            for fault in ('launched','closed','unknownFD','otherfailure','missingsecondary','livechild','job','hash'):
+                bad=copy.deepcopy(classification);bad_child=copy.deepcopy(child_result);bad_context=copy.deepcopy(classified_context)
+                if fault=='launched':bad['result']['launches']=1
+                elif fault=='closed':bad['result']['closure']['logicalLeaseClosed']=True
+                elif fault=='unknownFD':bad['allOwnedFDsClosed']=False
+                elif fault=='otherfailure':bad['result']['first']['reason']='unknown hardware outcome'
+                elif fault=='missingsecondary':bad['result']['secondary'].pop()
+                elif fault=='livechild':bad_child['childReaped']=False
+                elif fault=='job':bad_child['loggerProvenance']['jobId']='foreign-job'
+                else:bad_context['assignmentPin']['sha256']='0'*64
+                with self.assertRaises(Exception):runtime_entry.failed_prepared_terminal(bad,child_start,bad_child,bad_context,parent,old_grant)
+            self.assertFalse(os.path.lexists('/run/opemos-vfio-'+nonce))
             # Complete actual renderer -> installed libvirt schema. The paths
             # and media content are explicitly MODELED; no domain is created.
             tool=shutil.which('virt-xml-validate')

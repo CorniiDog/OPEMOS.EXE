@@ -200,6 +200,99 @@ def main(context_ref):
  with peer.RootFiles(receipt_root)as f,f.lock(True):terminal=producer.put(f,'terminal-index.json',{'result':result,'orderedRecords':sequence,'allOwnedFDsClosed':fdsClosed,'processLifetimeEventDriver':driver,'processLifetimeClosureRequiresOriginalRootReap':True,'actor':{k:peer.process(os.getpid())[k]for k in('pid','start','uid')},'atUnix':time.time()})
  print(peer.canon({'terminal':terminal,'accepted':result['accepted'],'leaseHeld':result['leaseMustRemainHeld']}).decode(),flush=True);return 0 if operational_complete(result,fdsClosed)else 1
 
+def failed_prepared_terminal(terminal,child_start,child_result,context,parent,grant):
+ """Validate the original failed writer, never reinterpret it as successful."""
+ r=terminal['result'];c=context['candidate'];request=json.loads(held(context['assignmentPin'],1048576))['request']
+ peer.need(r['MODEL_ONLY']is False and r['accepted']is False and r['runtimeAuthorized']is True and r['launches']==0 and r['leaseMustRemainHeld']is True,'failed actual precreate terminal, no success or replay')
+ peer.need(r['first']['reason']=='current exact XML installed schema before domain create'and r['first']['type']=='Refused','original installed-schema failure before managedVFIO/createXML')
+ closure=r['closure'];peer.need(closure['known']is False and closure['logicalLeaseClosed']is False and closure['FDsClosed']is True and closure['leaseHeld']is True,'original unknown logical closure remains historical')
+ peer.need(terminal['allOwnedFDsClosed']is True and r['entryFDClosure']['known']is True and r['entryFDClosure']['ownedAnchorClosed']is True,'original entry descriptor/anchor closure')
+ peer.need({x['role']for x in r['secondary']}=={'DAC-FD-before-close','DAC-FD-after-current-closure','DAC-FD-after-ACL-restore'}and len(r['secondary'])==3 and all(x['reason']=='exact source12/parent-manifest/current-queue/new-scope capture binding'for x in r['secondary']),'only demonstrated source-graph capture failure is recoverable here')
+ peer.need(child_result['childNumericExit']==1 and child_result['childReaped']is True and child_result['pipeEOF']is True and child_result['outputLimit']is False and child_result['childPID']==child_start['pid']and child_result['loggerProvenance']==child_start['loggerProvenance'],'actual original failed child/EOF/reap, not current VM acceptance')
+ provenance=child_result['loggerProvenance'];peer.need(provenance['jobId']==request['jobId']==parent['jobId']==grant['jobId']and provenance['invocation']==request['invocation']and provenance['sourceSHA256']==parent['queuePrograms'][1]['sha256'],'original normal logger/job/invocation/source binding')
+ peer.need(provenance['command']==__import__('postqueue_issuer').expected_spec(parent,context['parentPin'])['command'],'original actual immutable child argv')
+ peer.need(set(terminal['actor'])=={'pid','start','uid'}and terminal['actor']['uid']==0,'original recorded Root actor identity')
+ peer.need(request['leaseNonce']==c['nonce']==parent['nonce']and c['hostBoot']==parent['bootID']==grant['bootID']and context['candidate']==parent['candidate'],'original same request/candidate/boot, no current source relabel')
+ return request
+
+def recover_failed_prepared(profile_ref,definition_ref):
+ """One same-boot logical completion. No ACL, VM, driver, signal or SQL effects."""
+ import fcntl
+ import libvirt_access as access
+ import postqueue_issuer as issuer
+ import run_current_media as entry
+ import source_contract
+ peer.need(os.getuid()==os.geteuid()==0,'Root metadata recovery only')
+ cfg=issuer.protected(profile_ref);peer.need(set(cfg)=={'kind','apply','contextPin','terminalPin','childStartPin','childResultPin','workerLockPin','notBeforeUnix','notAfterUnix'},'closed recovery operands, no executable or grant input')
+ peer.need(cfg['kind']=='ROOT_FAILED_UNLAUNCHED_PREPARED_COMPLETION_V1'and type(cfg['apply'])is bool,'metadata-only completion purpose')
+ peer.need(type(cfg['notBeforeUnix'])in(int,float)and type(cfg['notAfterUnix'])in(int,float)and cfg['notBeforeUnix']<=time.time()<cfg['notAfterUnix']<=cfg['notBeforeUnix']+300,'finite new metadata completion, never old VM authority')
+ definition=source_contract.read_definition(definition_ref);source_contract.validate(definition['sourceRoles'],definition['queuePrograms'],definition_ref)
+ peer.need(definition['sourceRoles']['runtime_entry']['path']==str(Path(__file__).absolute()),'actual reviewed recovery executable, separate original source data')
+ context=issuer.protected(cfg['contextPin']);parent=issuer.protected(context['parentPin'],0o444);grant=issuer.protected(context['grantPin'])
+ peer.need(context['kind']=='ROOT_LIBVIRT_R4_RUNTIME_CONTEXT'and context['runtimeAuthorized']is True and context['MODEL_ONLY']is False and parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['RootIssued']is True and parent['runtimeAuthorized']is True and parent['MODEL_ONLY']is False and grant['kind']=='ROOT_EXACT_LIBVIRT_TWO_BOOT_AUTHORITY_R2'and grant['RootIssued']is True and grant['runtimeAuthorized']is True and grant['MODEL_ONLY']is False,'original real typed context/parent/grant, DATA not new runtime authority')
+ source_contract.bind_scope(peer,parent)
+ peer.need(context['sourceRoles']==parent['sourceRoles']and context['candidate']==parent['candidate']and context['sourcePlacementPin']==parent['sourcePlacementPin']and context['placementQualificationPin']==parent['placementQualificationPin'],'entire original protected context/parent/source/placement')
+ c=context['candidate'];peer.need(c['hostBoot']==Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'same actual host boot; reboot recovery is separate')
+ terminal=issuer.protected(cfg['terminalPin']);start=json.loads(held(cfg['childStartPin'],1048576));child=json.loads(held(cfg['childResultPin'],1048576))
+ peer.need(cfg['childStartPin']['identity']['st_uid']==cfg['childResultPin']['identity']['st_uid']==1000 and child['startRecordSHA256']==cfg['childStartPin']['sha256'],'pinned original normal UID1000 child records')
+ request=failed_prepared_terminal(terminal,start,child,context,parent,grant)
+ peer.need(grant['parentPin']==context['parentPin']and grant['queuePrograms']==parent['queuePrograms']and grant['producerPin']==context['sourceRoles']['libvirt_producer']and grant['peerPin']==context['sourceRoles']['libvirt_peer']and grant['assignmentPin']==context['assignmentPin']and grant['normalizedSpecSHA256']==request['specSHA256']and grant['preparedAccessPin']==parent['preparedAccessPin']and grant['preparedDiskPins']==parent['preparedDiskPins']and grant['sourcePlacementPin']==context['sourcePlacementPin']and grant['placementQualificationPin']==context['placementQualificationPin'],'entire old grant/assignment/prepared lineage as DATA only')
+ def absent(actor):
+  try:now=peer.process_snapshot(actor['pid'])
+  except(FileNotFoundError,ProcessLookupError):return True
+  return now['start']!=actor['start']
+ peer.need(absent(terminal['actor'])and absent({'pid':start['pid'],'start':start['startTicks']}),'original Root/sudo actors actually gone, no signal')
+ queue_root=Path(parent['queueStateRoot']);lock=queue_root/'worker.lock';peer.need(str(lock)==cfg['workerLockPin']['path'],'original named worker lock only')
+ fd=os.open(lock,os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC)
+ try:
+  lock_initial=peer.ident(os.fstat(fd));peer.need(lock_initial==cfg['workerLockPin']['identity']==peer.ident(os.lstat(lock))and lock_initial['st_uid']==lock_initial['st_gid']==1000 and stat.S_ISREG(lock_initial['st_mode'])and stat.S_IMODE(lock_initial['st_mode'])==0o600 and lock_initial['st_nlink']==1 and lock_initial['st_size']==0,'same original worker lock custody')
+  fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+  heavy=entry.heavy_custody(parent['queuePrograms'][2]);stage=access.prepared_lineage(c,grant['preparedAccessPin'],grant['preparedDiskPins'])
+  peer.need(peer.SOURCE_PLACEMENT_PIN is None or peer.SOURCE_PLACEMENT_PIN==context['sourcePlacementPin'],'no different source placement binding')
+  peer.SOURCE_PLACEMENT_PIN=context['sourcePlacementPin']
+  qroot='/run/opemos-libvirt-queue-'+request['jobToken'];lroot='/run/opemos-vfio-'+request['leaseNonce'];end=time.monotonic()+20
+  with peer.RootFiles(qroot)as files,files.lock(True,end),peer.RootFiles(lroot)as lf,lf.lock(True,end):
+   raw,intent_pin=files.read('intent.json');intent=json.loads(raw);peer.need(intent['request']==request and intent['grantPin']==context['grantPin']and intent['originalPin']==c['original']and intent['workingPin']==c['working']and intent['endpoints']==c['hostdev']and len(intent['endpoints'])==4 and intent['qemuPin']==c['qemu']and intent['nativeTools']==grant['nativeTools']and intent['bootID']==c['hostBoot'],'exact original intent, never reopen domain')
+   actor=intent['entry'];chain=actor['ancestry'];peer.need({k:actor[k]for k in('pid','start','uid')}==terminal['actor']and actor['argvSHA256']==hashlib.sha256(peer.canon(grant['controllerArgv'])).hexdigest()and actor['managerMainPID']==start['loggerProvenance']['pid']and chain[-1]['pid']==start['loggerProvenance']['pid']and chain[-1]['start']==start['loggerProvenance']['startTicks']and chain[-1]['uid']==1000 and chain[-1]['cgroup'].strip()==start['loggerProvenance']['cgroup'].strip()==peer.POOL+'/'+request['unit']and parent['issuedUnix']<=terminal['atUnix']<=child['finished']and any(x['pid']==start['pid']and x['start']==start['startTicks']for x in chain)and all(absent(x)for x in chain),'authenticated original Root/sudo/logger ancestry and current absence')
+   phase_raw,phase_head=files.read('phase-head.json');h=json.loads(phase_raw);phase_raw,phase_pin=files.read(h['record']);phase=json.loads(phase_raw)
+   peer.need(h=={'record':'phase-00.json','sha256':phase_pin['sha256']}and phase['phase']=='PREPARED'and phase['bootID']==c['hostBoot']and phase['leader']is None and phase['scope']is None and phase['requestSHA256']==hashlib.sha256(peer.canon(request)).hexdigest(),'only original unactivated PREPARED phase, no ACTIVE history')
+   state,binding,lease_raw=peer.read_lease(lf,request,c['hostBoot']);peer.need(state['revision']==0 and state['closed']is False and state['restored']is True and state['changed']==[]and state['event']=='PREPARED'and state.get('domain')is None,'initial unchanged PREPARED lease, never closed rearm')
+   restored=[]
+   for row in stage['rows']:
+    before,bp=files.read('acl-before-'+row['role']+'.json');rb,rp=files.read('acl-restored-'+row['role']+'.json');value=json.loads(rb)
+    peer.need(json.loads(before)==row,'exact original prepared and restoration journals')
+    with access.held_row(row)as obj:
+     now=obj.check();acl=access.ACL().get(obj.fd);peer.need(access.closed_restoration(row,value,now,acl),'actual exact already-restored custody, no ACL replay')
+     if not row['role'].endswith('parent'):
+      if row['role']=='working':access.closed_working_content_epoch(now,value,grant['preparedDiskPins']['working'],rp,row)
+      else:peer.need(access.hashfd(obj.fd)==(value['bytes'],value['sha256']),'restored mutable leaf actual whole bytes/hash')
+     elif row['role']in('runtime-parent','output-parent'):peer.need(sorted(os.listdir(obj.fd))==(['OVMF_VARS_4M.fd']if row['role']=='runtime-parent'else['serial.raw']),'no VNC socket or foreign output consumer')
+    restored.append({'role':row['role'],'beforePin':bp,'restorePin':rp,'currentIdentity':now,'ACL':acl})
+   with access.held_disk(c,'original',c['original'])as original:peer.need(access.hashfd(original.fd)==(c['original']['bytes'],c['original']['sha256'])and original.check()==c['original']['identity'],'current original whole hash/full9, no original writes')
+   reader=peer.NativeOps();primary=None
+   try:
+    peer.need(reader.domains()==[],'actual no domain, even paused');reader.entry(intent,'CLOSED');reader.budget(request,'CLOSED',None);reader.restoration(intent)
+    intel=Path('/sys/bus/pci/devices/0000:00:02.0');peer.need((intel/'boot_vga').read_text().strip()=='1'and os.path.basename(os.readlink(intel/'driver'))=='i915','physical host remains Intel')
+   except BaseException as error:primary=error;raise
+   finally:
+    try:reader.close()
+    except BaseException as error:
+     if primary is None:raise
+     primary.add_note('Recovery readonly closure failed: '+repr(error))
+   peer.need(absent(terminal['actor'])and absent({'pid':start['pid'],'start':start['startTicks']})and peer.ident(os.fstat(fd))==lock_initial==peer.ident(os.lstat(lock))and all(entry.heavy_custody(parent['queuePrograms'][2])[k]==heavy[k]for k in('owner','OFD','lockCore')),'same original absence/locks before logical write')
+   peer.need(issuer.protected(cfg['terminalPin'])==terminal and issuer.protected(cfg['contextPin'])==context and peer.read_lease(lf,request,c['hostBoot'])[2]==lease_raw and files.read('phase-head.json')[1]==phase_head,'original terminal/context/lease/phase held epochs unchanged')
+   current={'known':True,'domainAbsent':True,'originalPIDStartAbsent':True,'cgroupEmpty':True,'VFIOFDsAbsent':True,'hostRestored':True,'ACLRestored':True,'originalFullHashVerified':True,'unknown':[],'historicalQMPClosed':None,'qemuExitStatus':None,'controllerWaitpidClaimed':False,'currentDispositionOnly':True}
+   final={'known':True,'FDsClosed':True,'leaseHeld':False,'closure':current,'originalTerminalPin':cfg['terminalPin'],'originalChildResultPin':cfg['childResultPin'],'newRecoverySourceDefinitionPin':definition_ref,'restorationReadback':restored,'originalCaptureErrorsUnchanged':terminal['result']['secondary'],'originalFDLifetimeRecreated':False,'newCurrentObservationOnly':True}
+   details={'first':terminal['result']['first'],'secondary':terminal['result']['secondary'],'currentClosure':final,'historicalQMPClosed':None,'noHistoricalCloseFabrication':True}
+   result={'kind':'ROOT_FAILED_PREPARED_CURRENT_COMPLETION_V1','jobId':request['jobId'],'request':request,'originalTerminalPin':cfg['terminalPin'],'currentClosure':final,'apply':cfg['apply'],'SQLOrHardwareEffects':[]}
+   if cfg['apply']:
+    peer.need(time.time()<cfg['notAfterUnix'],'original metadata completion deadline before logical write')
+    producer.append_lease(lf,request,c['hostBoot'],'FAILED_KNOWN_CURRENT_DISPOSITION',{'closed':True,'restored':True,'changed':[],'domain':None,'currentDisposition':details});producer.commit_phase(files,request,c['hostBoot'],1,'CLOSED',details=details)
+    closed,closed_binding,_=peer.read_lease(lf,request,c['hostBoot']);peer.need(closed['closed']and closed['restored']and closed['changed']==[]and closed['currentDisposition']==details,'actual truthful original logical closure readback');result['lease']=closed_binding;result['phaseHeadPin']=files.read('phase-head.json')[1]
+   return result
+ finally:os.close(fd)
+
+
 if __name__=='__main__':
  if len(sys.argv)!=3 or sys.argv[1]not in('--context-pin-json','--parent-pin-json'):raise ValueError('exact protected context or independent parent pin argv only')
  ref=json.loads(sys.argv[2]);sys.exit(main(await_root_context(ref)if sys.argv[1]=='--parent-pin-json'else ref))
