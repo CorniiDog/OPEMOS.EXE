@@ -595,9 +595,33 @@ class RetainedMediaContract(unittest.TestCase):
                     'installedSourceContractPin':installed['sourceContractPin'],'queuePrograms':installed['queuePrograms'],
                     'preparedAccessPin':stagepin,'preparedDiskPins':disks,'splitDiskCapturePins':captures,
                     'sourcePlacementPin':storagepin,'placementQualificationPin':qualifiedpin,'prequeuePreflightPin':prepin,
+                    'postqueueDelegation':'ROOT_EXACT_CANONICAL_BINDING_ONLY_R5',
+                    'noNIC':True,'noInstall':True,'maxBoots':1,
+                    'failureControl':'LIBVIRT_AUTODESTROY_CONTROLLER_CONNECTION',
                     'TEST_SCOPE':'Structural/source/ACL/readonly observer only; no real media qualification or grant'}
             parent_ref=installer.put(public_parent,installer.canon(parent),0o444)
             parent_identity=parent_ref['identity']
+            # Fresh actual installed Root issuer process, with no network and no
+            # mocked validator. Tiny media is deliberately INVALID: it must get
+            # past authenticated per-attempt scope binding, then refuse genuine
+            # media qualification before NativeIssueOps/grant/hardware.
+            fresh_code = '''import sys,json
+sys.path.insert(0,sys.argv[1])
+import libvirt_peer as peer,postqueue_issuer as issuer
+initial=peer.SOURCE_PLACEMENT_NONCE
+try:
+ issuer.issue(json.loads(sys.argv[2]))
+ raise AssertionError("modeled media unexpectedly admitted")
+except peer.Refused as error:
+ print(json.dumps({'initialNonce':initial,'boundNonce':peer.SOURCE_PLACEMENT_NONCE,'type':type(error).__name__,'reason':str(error)}))
+'''
+            fresh=subprocess.run(['/usr/bin/python3','-I','-B','-c',fresh_code,str(source_root),json.dumps(parent_ref)],
+                                 capture_output=True,timeout=15,preexec_fn=deny_connect)
+            self.assertEqual(fresh.returncode,0,fresh.stderr.decode())
+            fresh_value=json.loads(fresh.stdout)
+            self.assertNotEqual(fresh_value['initialNonce'],attempt)
+            self.assertEqual(fresh_value['boundNonce'],attempt)
+            self.assertEqual(fresh_value['reason'],'closed purpose-bound carrier/raw/current-custody firstboot schema')
             actual_spec=adapter.parent_spec(parent,parent_ref)
             request={'leaseNonce':nonce,'domainName':domain['name'],'domainUUID':domain['uuid'],
                      'observer':observer,'jobId':spec['id'],

@@ -323,10 +323,12 @@ def bind_current_preflight(g,parent,parent_ref,observed,proof_pin,assignment_pin
 
 def _issue(parent_ref,ops=None):
  """Runs inside the exact Root queue entry; does not enqueue or touch hardware."""
- parent=protected(parent_ref,0o444);__import__('guest_firmware_probe').require_firstboot_only(parent['candidate']);root=__import__('source_contract').parent_paths(parent)['runtimeRoot'];before=set(os.listdir('/proc/self/fd'));first=None;secondary=[];outputs=[]
+ parent=protected(parent_ref,0o444);root=__import__('source_contract').parent_paths(parent)['runtimeRoot'];before=set(os.listdir('/proc/self/fd'));first=None;secondary=[];outputs=[]
  p.need(parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['RootIssued']is True and parent['postqueueDelegation']=='ROOT_EXACT_CANONICAL_BINDING_ONLY_R5','separate immutable Root delegation')
  p.need(parent_ref['path']==__import__('source_contract').parent_paths(parent)['parentPath']and parent['contextPath']==root+'/context.json','exact parent/runtime names')
- __import__('source_contract').validate(parent['sourceRoles'],parent['queuePrograms'],parent['installedSourceContractPin'])
+ if 'operationContext'in parent['candidate']:__import__('source_contract').bind_scope(p,parent)
+ else:__import__('source_contract').validate(parent['sourceRoles'],parent['queuePrograms'],parent['installedSourceContractPin'])
+ __import__('guest_firmware_probe').require_firstboot_only(parent['candidate'])
  p.need(set(parent['sourceRoles'])==ROLES and all(Path(ref['path']).name==role+'.py'for role,ref in parent['sourceRoles'].items()),'closed twelve-role reviewed source graph')
  p.need(parent['noNIC']is True and parent['noInstall']is True and parent['maxBoots']==1 and parent['failureControl']=='LIBVIRT_AUTODESTROY_CONTROLLER_CONNECTION','unchanged narrow scope')
  ops=ops or NativeIssueOps(parent,root);now=ops.now();p.need(os.getuid()==0 and parent['bootID']==ops.boot()and parent['issuedUnix']<=now<parent['startBeforeUnix']<=parent['issuedUnix']+300,'Root same boot finite actual authority')

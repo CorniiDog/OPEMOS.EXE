@@ -5270,3 +5270,24 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   contextless historical paths retain their exact old source check. No per-run
   executable generation, static current nonce/root allowlist or source waiver.
   This joins the preceding final-stage schema consumer fix before any deployment.
+
+- Actual approved14ff/fresh8656 reached canonical queued/submitted and real normal
+  worker. Canonical job steamos-firstboot-...-e8656e73b93924b4f failed/CLOSED,
+  finished1793828037.9379478/reservationRetainedfalse; normal finalizers prove
+  phaseNOT_PREPARED/no intent/lease/domain, empty manager/pool, source/media
+  retained and ordinary unmount/detach/timerrestore. Submission succeeded; outer
+  generic native-sudo failure was the subsequent worker, corrected explicitly.
+- Actual child stderr first: _issue requires installer_contract before current
+  bind_scope, so fresh Root process compares attempt8656 against historical
+  SOURCE_PLACEMENT_NONCE default. Runtime capsule onlylock, no grant/hardware.
+  Minimal correction authenticates protected parent/header/names and existing
+  V2 source definition/current context via bind_scope BEFORE firstboot nonce/
+  geometry validation; no arbitrary nonce assignment, historical source relabel,
+  grant/clock/GPU/queue/source waiver or old8656 replay.
+- SAME two-deployment/attempt installed-entry fixture now launches actual fresh
+  installed issuer process with kernel connect denied. Byte-sized media remains
+  explicit INVALID model: verifies historical initialnonce -> exact authenticated
+  attempt bound, then exact genuine media-schema refusal BEFORE native ops/grant.
+  Existing actual namespace/ACL/UID/issuer/submission/finalqueue tests retained.
+  Current automatic CI + exact Core source/caller/effects review before changed
+  deployment or fresh run. Existing EXE sole implementation/runtime owner.
