@@ -158,8 +158,8 @@ def record(platform, source, artifact_id, artifact_name, artifact_sha, output):
              "artifact_id": artifact_id, "artifact_name": artifact_name, "artifact_archive_sha256": artifact_sha,
              "package_name": packaged["name"], "package_sha256": packaged["sha256"], "package_bytes": packaged["bytes"],
              "executable_name": binary["name"], "executable_sha256": binary["sha256"], "executable_bytes": binary["bytes"]}
-    # PR builds may retain provenance. The acceptance consumer rejects their
-    # event/ref, so recording a diagnostic does not admit PR code to SSH.
+    # Candidate identity is data for the reviewed controller. Recording it never
+    # admits candidate code to privileged host/SSH execution.
     output = Path(output)
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     with (output / "executable-producer.json").open("x", encoding="utf-8") as stream:

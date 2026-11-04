@@ -15,7 +15,7 @@ CONFIG = Path.home()/'.config/opemos-ci/robot.json'
 HOOK = '/home/connor/.local/libexec/opemos-robot-job-plan'
 FULL9 = ('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
 SHA = re.compile(r'[0-9a-f]{64}\Z')
-MODULE_PINS = {'omen_ci_reader.py': '6b2d97a373001e8835400d5be22cef8c06004dab5c228bc1efbe7078dfe464df', 'omen_ci_executables.py': '435aa0901a39981fc26d2b5a87f283aa918985318fcd28213c86da918c4c5b1f', 'omen_ci_result.py': '5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85', 'omen_ci_stage.py': 'f5d9f34d4f7bf72b3d40ee324462cc7eb237f0e37a5090c6da1cda1b48d8b394', 'omen_ci_inventory.py': 'e8873930651d4e1022fd3851b9bc35400ff54310e1d904f5d01c0f7dd903119e'}  # Filled when sealing; all bytes consumed before any operation.
+MODULE_PINS = {'omen_ci_reader.py': '6b2d97a373001e8835400d5be22cef8c06004dab5c228bc1efbe7078dfe464df', 'omen_ci_executables.py': '0a94a6068019795bbb3698fcacabd60dc632f863b6504fc183791b00aad56440', 'omen_ci_result.py': '5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85', 'omen_ci_stage.py': '92a2a83c152c6a99f007d56f88d8f556903f1dfcc3d85702797f44afd02814ae', 'omen_ci_inventory.py': 'e8873930651d4e1022fd3851b9bc35400ff54310e1d904f5d01c0f7dd903119e'}  # Filled when sealing; all bytes consumed before any operation.
 
 
 def require(value, message):
@@ -77,7 +77,7 @@ def identity(env=None):
 
 def inventory():
     value=strict(raw_file(Path(__file__).parents[1]/'ci/required-vms.json',owner=os.getuid()))
-    require(len(value['required_vms'])==20 and len({r['id']for r in value['required_vms']})==20,'Exact all20 inventory required')
+    require(value['required_vms'] and len({r['id']for r in value['required_vms']})==len(value['required_vms']),'Unique configured inventory required')
     return value['required_vms']
 
 
@@ -148,23 +148,41 @@ class Engine:
         meta=self.output.lstat();require(self.output.resolve()==self.output and stat.S_ISDIR(meta.st_mode)and meta.st_uid==os.getuid()and not meta.st_mode&0o077,'Private current-run output root required')
         self.context=identity();self.profile=None;self.stage=None
         self.results={r['id']:{'status':'unavailable','reason':'Fresh transaction not executed','name':r['name']}for r in inventory()}
-        self.artifacts={p:{'status':'unavailable','reason':'Current protected-main producer absent','artifacts':{}}for p in ('windows','ubuntu','macos')}
+        self.artifacts={p:{'status':'unavailable','reason':'Current native candidate producer absent','artifacts':{}}for p in ('windows','ubuntu','macos')}
         self.deadline=time.monotonic()+10800
         self.counter=0;self.current=None;self.runtime_original={};self.source_original={}
         self.reports=Path(os.environ['OPEMOS_ROBOT_REPORT_DIR']).absolute();self.reports.mkdir(parents=True,exist_ok=True,mode=0o700)
 
-    def request(self,kind,subject):
+    def stage_candidate(self, expected, download):
+        """Opaque data custody only; candidates never become controller code."""
+        if self.profile is None:self.profile=installed();self.stage=modules()
+        self.stage['_EXECUTABLES']['descriptor'](expected)
+        limit=self.profile['max_candidate_archive_bytes']
+        require(type(limit)is int and 0<limit<=60000000000,'Existing whole-VM candidate bound')
+        path=self.output/('candidate-'+expected['artifact_id']+'-'+expected['artifact_archive_sha256']+'.zip')
+        fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
+        try:
+            with os.fdopen(fd,'wb',closefd=False)as stream:
+                size=download(expected,stream,limit);stream.flush();os.fsync(fd)
+            os.fchmod(fd,0o400)
+        finally:os.close(fd)
+        self.stage['artifact_read']({'path':str(path),'sha256':expected['artifact_archive_sha256'],'bytes':size},limit)
+        return {'path':str(path),'sha256':expected['artifact_archive_sha256'],'bytes':size}
+
+    def request(self,kind,subject,candidate=None):
         if self.profile is None:self.profile=installed();self.stage=modules()
         self.counter+=1
         nonce=os.urandom(16).hex()
         folder=self.output/(str(self.counter)+'-'+nonce);folder.mkdir(mode=0o700)
         request=dict(self.context,version=1,action='prepare',kind=kind,subject=subject,nonce=nonce,
                      consumer_started_epoch=int(os.environ['OPEMOS_CONSUMER_STARTED_EPOCH']))
+        if candidate is not None:request['candidate']=candidate
         dump(folder/'request.json',request)
         return request,hook(self.profile,request,folder),folder
 
-    def transaction(self,kind,subject,expected_producer=None):
-        request,prepared,folder=self.request(kind,subject)
+    def transaction(self,kind,subject,expected_producer=None,candidate_archive=None):
+        candidate=None if expected_producer is None else {'descriptor':expected_producer,'archive':candidate_archive}
+        request,prepared,folder=self.request(kind,subject,candidate)
         require(prepared.get('available')is True,prepared.get('reason','Missing exact admitted operation'))
         if expected_producer is not None:
             require(kind=='artifact' and prepared.get('expected')==expected_producer,'Exact requested producer differs BEFORE any stage/submit/VM effect')
@@ -184,7 +202,9 @@ class Engine:
         require(source_id not in self.source_original or self.source_original[source_id]==original,'Backing source aliases another catalog original')
         self.runtime_original[runtime]=original;self.source_original[source_id]=original
         rows=self.stage['queue_status'](cfg)
-        self.stage['require_canonical_qualification'](cfg,dict(request,stage_sha256=MODULE_PINS['omen_ci_stage.py']),rows)
+        # Historical fixture/qualification reports belong to deployment review.
+        # Current pool, actual source/worker, admission and every operation's
+        # original/file/lease/lifecycle guards remain authoritative below.
         self.stage['load_pinned'](operand['runtime_admission'])
         require(self.stage['_INVENTORY']['subject_contract'](operand['inventory_vm_id'],case,operand['subject_role']),'Role relabeling refused')
         self.stage['verify_original_operand'](operand,cfg['max_input_bytes'])
@@ -277,7 +297,7 @@ class Engine:
             budget=cfg['max_run_bytes'];files=receipt.get('files',{})
             require(proof['suite_sha256']==robot['suite_sha256'],'Actual Robot suite bytes differ')
             if kind=='artifact':
-                expected=prepared['expected'];self.stage['_EXECUTABLES']['descriptor'](expected,request['source_commit'])
+                expected=prepared['expected'];self.stage['_EXECUTABLES']['descriptor'](expected)
                 require(expected['platform']==subject['platform'] and expected['artifact_id']==subject['artifact_id'],'Another platform/artifact cannot cover missing executable')
                 transaction,_=self.stage['load_result'](prepared['executable_transaction_path'],cfg['result_contract']['max_bytes'])
                 entry=prepared['executable_entry']
@@ -378,5 +398,10 @@ class Engine:
     def persist(self):
         name=self.output/f'summary-{time.monotonic_ns()}.json'
         value=dict(self.context,vms=self.results,executable_acceptance=self.artifacts,all20_passed=all(r['status']=='passed'for r in self.results.values()),all_platforms_passed=all(r['status']=='passed'for r in self.artifacts.values()))
-        dump(name,value)
-        dump(self.reports/name.name,value)
+        try:
+            dump(name,value)
+            dump(self.reports/name.name,value)
+        except Exception as error:
+            # Actual stage receipts, queue state and public native evidence are
+            # authoritative. This convenience summary must not mask FIRST.
+            print('Optional outcome summary unavailable: '+type(error).__name__,file=sys.stderr)

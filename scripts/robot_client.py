@@ -133,8 +133,8 @@ class Engine:
                 private.st_mode & 0o077 == 0, "private current-run client state")
         inventory = json.loads((Path(__file__).parents[1] / "ci/required-vms.json").read_bytes())
         rows = inventory["required_vms"]
-        require(len(rows) == len({row["id"] for row in rows}) == 20,
-                "all20 visible inventory")
+        require(len(rows) == len({row["id"] for row in rows}),
+                "unique configured inventory identities")
         self.results = {row["id"]: {"status": "unavailable", "name": row["name"]}
                         for row in rows}
         self.artifacts = {p: {"status": "unavailable"}

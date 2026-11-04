@@ -9,7 +9,7 @@
     "opemos-omen-robot"
   ],
   "root_owned_installation": {
-    "job_guard": "ACTIONS_RUNNER_HOOK_JOB_STARTED external fixed current protected-Main guard",
+    "job_guard": "External fixed protected-workflow/current installed-controller API and kernel peer guard; candidate SHA/ref remains data",
     "profile": "/home/connor/.config/opemos-ci/robot.json",
     "hook": "/home/connor/.local/libexec/opemos-robot-job-plan",
     "rf_version": "7.5",
@@ -28,13 +28,15 @@
       "sha256": "EXACT_INSTALLED_HASH"
     },
     "stage": {
-      "sha256": "f5d9f34d4f7bf72b3d40ee324462cc7eb237f0e37a5090c6da1cda1b48d8b394"
+      "sha256": "92a2a83c152c6a99f007d56f88d8f556903f1dfcc3d85702797f44afd02814ae"
     },
     "robotframework": {
       "version": "7.5",
       "wheel_sha256": "5a194db36524604fafa1da89adebc837db9a95adf15ffd746e09ce98251e6c68"
     },
-    "result_contract": "existing omen_ci_result.policy mandatory finite composition; no example null/cap relaxation"
+    "result_contract": "existing omen_ci_result.policy mandatory finite composition; no example null/cap relaxation",
+    "operation_root": "Private existing broker-owned directory; create-only run/attempt/nonce JSON data only",
+    "max_candidate_archive_bytes": "Finite installed bound within unchanged whole-VM 60000000000 byte limit"
   },
   "request_fields": [
     "version",
@@ -67,7 +69,7 @@
   "artifacts_response": {
     "identity": "exact request subset",
     "available": true,
-    "expected_executables": "ALL exact current-source platform descriptors from official protected workflow/run/attempt/artifact APIs and archive/member hashes. Missing platform independent; no PR/fork/oldsource artifact."
+    "expected_executables": "Exact candidate platform descriptors from canonical same-repository workflow/run-attempt/passed native package JOB/API artifacts; candidate source is distinct from installed controller source"
   },
   "operation_response": {
     "identity": "exact request subset",
@@ -148,21 +150,21 @@
     "max60,000,000,000 complete bytes per VM",
     "32GiB shared RAM/swap0/CPU0-9 plus overhead",
     "exact admitted original/runtime lineage",
-    "source canonical qualification must be genuine current-head, not relabeled old CI11 receipt",
     "shared GPU lease and loaded/render old-new kernel same-target evidence plus four-function restoration/closure",
     "strict exact4h dedicated CI copies only; active/unknown kept",
     "mandatory actual GUI/USB/full readback/SteamOS install boot/recovery per exact artifact",
     "missing/failed independent cases remain red",
-    "Fresh complete additional build/heal jobs are all owned, approved and joined before per-artifact pass; exact actual generated transaction is read after closure"
+    "Fresh complete additional build/heal jobs are all owned, approved and joined before per-artifact pass; exact actual generated transaction is read after closure",
+    "Exact installed authenticated executable graph/current source and normal live admission; historical fixture qualification is deployment review evidence, not per-run grant authority"
   ],
   "actual_deployment_dependencies": [
     "Root-reviewed fixed job guard/runner registration/service/RF installation and heartbeat",
-    "Root-reviewed fixed planner/profile with real normal per-role operands and current-source canonical qualification",
+    "Root-reviewed fixed planner/profile and real normal per-role operation data, source/worker/original-base/lease/GPU admission; no per-nonce LLM packet",
     "current exact private driver copies/native observer APIs and package/Input manifests",
     "current requested OMEN-only macOS producer/native sender (independent; no hosted substitute)",
     "independently admitted existing shared GPU lease and render/recovery operands"
   ],
-  "qualification": "New Robot glue UNRUN. Existing CI11 modules copied byte-identically; historical126 actual passes are preserved, do not transfer to Robot glue/new head. Batch source+Robot fault tests and current normal pipeline in admitted OMEN lanes after primary review.",
+  "qualification": "New automatic lane requires admitted CI/source/effects review and actual non-Main push->normal job/domain/CPU/guest evidence/closure. Historical passes remain historical; none substitutes for actual current coverage.",
   "confined_client": {
     "protocol": 2,
     "socket": "/run/opemos-ci/control/control.sock",
@@ -186,20 +188,30 @@
         "artifact_id",
         "descriptor_sha256"
       ],
-      "authority": "selection only; Root re-fetches exact protected-Main API/run-attempt/passed native package job/uploaded metadata+artifact archive digest before any transaction and after closure; no caller argv/path/admission"
+      "authority": "Selection only. Root authenticates same-repo candidate API/run-attempt/passed native package JOB and exact artifact/archive twice; installed controller identity remains lease-bound; no caller command/path/admission"
     }
   },
   "required_producer_join": {
-    "workflow_unchanged_trust_boundary": ".github/workflows/omen-robot.yml@refs/heads/main; workflow_dispatch current protected Main; unchanged Root ACTIONS_RUNNER_HOOK_JOB_STARTED validates before checkout",
-    "deadlock_correction": "Native package JOB completes and artifacts upload; separate hosted producer required job dispatches04 directly once and waits exact nonce/run/attempt.04 does not wait parent workflow completion. Parent workflow_run-completed remains independent full all20 inventory and cannot cover scoped required job.",
-    "trusted_root_broker_branch": "After existing peer/current-job/source/action authentication: required_omen.broker_execute_produced(actualEngine,request,existingAuthenticatedAPIReader,existingBoundedMetadataDownload). Publish returned exports through existing read-only public exchange/closed response; add required_acceptance only from returned actual verified transaction. Missing branch/profile stage case => failed unavailable, no alternate route.",
-    "before_effect": "Engine.transaction(kind artifact, subject exact platform/artifact, expected_producer exact API descriptor) requires prepared.expected equality BEFORE staging/submission/VM. No descriptor or runtime fallback.",
+    "workflow_unchanged_trust_boundary": "Protected Main workflow authenticates consumer workflow_source_commit; installed source_commit authenticated independently by Root lease and full Engine source pins; any same-repo candidate branch is DATA",
+    "deadlock_correction": "Native package JOB/artifacts complete; automatic every-branch push parent invokes04 once and waits unique correlation/run-attempt. No parent workflow conclusion or downstream OMEN success prerequisite; no duplicate workflow_run trigger",
+    "trusted_root_broker_branch": "Existing peer/current-job/installed-source/action authentication; required_omen.broker_execute_produced with real API/metadata/archive transport and actual Engine. Exact candidate acceptance returned only by normal transaction and its independent consumers",
+    "before_effect": "Root re-fetches native candidate identity, streams whole opaque archive and verifies hash; Engine passes descriptor/archive to installed planner and checks prepared.expected before staging/submit",
     "normal_execution": "Existing strict transaction validates actual source/package/archive/executable, actual Robot five chooser/Build/USB actions, complete generated image+manifest/fullhash, full virtualUSB readback, installedx86SteamOStarget, same-targetkernel/NVIDIA/render/recovery, queue/GPU restoration and all closed receipts.",
     "failure": "Use existing engine.failure_exports read-only for same operation on exception, keep first cause/closureUNKNOWN, Root publishes bounded explicitly-public native records. No retry/cleanup or synthesized pass.",
     "requires_Root_source_install": "Root-owned broker routing branch/profile/source graph must be independently updated/reviewed to the exact owning-EXE merged source before dispatch; this source proposal neither modifies installed Root code nor claims the action exists today.",
-    "per_platform_independence": "Only exact selected descriptor transaction required for that producer; other VM/platform rows remain represented unavailable in summaries, not fabricated. Full-stack gate still requires unskipped actual-robot-transactions all20/allplatform job.",
+    "per_platform_independence": "Only the selected candidate artifact transaction covers its parent commit check. Other catalog/platform rows remain unavailable; they do not veto selected scope or supply substituted coverage",
     "source_only_not_runtime_authority": true,
     "reply_constructor": "After actual existing _publish returns its exact bounded descriptors, call required_omen.required_broker_reply(request, result, actual_current_summary, actual_published_descriptors); no direct client proof or private Root paths. Do not replace existing auth/nonce/prior-job guard.",
-    "fixed_planner_boundary": "Existing pure prepare must return exact expected producer from authenticated passed native package JOB/in-progress workflow, or fail unavailable. No completed-workflow-only planner fallback and no guessed approvals or plan. Matching actual planner/Root routing is a remaining independent integration requirement."
+    "fixed_planner_boundary": "Pinned installed per-platform automatic_operation JSON recipe plus per-run validated identity/candidate/archive data; no nonce-specific LLM response or generated executable. Actual operation/current Root policy and guest-delivery profile must be authenticated at safe deployment checkpoint; no guessed native facts/grants/results"
+  },
+  "optional_request_fields": {
+    "candidate": "Root API-verified descriptor plus opaque held archive path/hash/bytes; never a client-selected host executable"
+  },
+  "automatic_operation_data": {
+    "schema": 1,
+    "documents": "Ordered unique JSON-only normal operands; held SHA/full9 and create-only run/attempt/nonce",
+    "prepare": "Complete existing operation_response ABI; no identity/available relabel by recipe",
+    "collect": "Read-only same-operation actual files; actual normal consumer checks queue/native/source/closure facts",
+    "runtime_prerequisites": "Current source, worker/PID/start/UID/argv/FD/FLOCK, pool, exclusive GPU, disks/USB/scanout, admission and cleanup; optional summary/catalog cardinality or historical qualification report is not grant authority"
   }
 }

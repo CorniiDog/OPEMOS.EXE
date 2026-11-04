@@ -43,9 +43,13 @@ def descriptor(value, source=None):
     require(isinstance(value, dict) and set(value) == FIELDS and value["schema"] == 1 and
             value["repository"] == REPOSITORY and COMMIT.fullmatch(value["source_commit"]) and
             (source is None or source == value["source_commit"]), "Exact executable producer descriptor/source required")
-    require(value["platform"] in PRODUCERS and value["workflow"] == PRODUCERS[value["platform"]]["workflow"] and
-            value["event"] in ("push", "workflow_dispatch") and value["ref"] == "refs/heads/main",
-            "Only reviewed protected-main executable producer workflows are accepted; PR/fork artifacts refused")
+    require(value["platform"] in PRODUCERS and value["workflow"] == PRODUCERS[value["platform"]]["workflow"],
+            "Canonical executable producer workflow required")
+    ref = value["ref"]
+    require(type(ref) is str and not any(c in ref for c in ("\0", "\r", "\n")) and
+            ((value["event"] in ("push", "workflow_dispatch") and ref.startswith("refs/heads/") and len(ref) > 11) or
+             (value["event"] == "pull_request" and re.fullmatch(r"refs/pull/[1-9][0-9]*/(?:head|merge)", ref))),
+            "Exact candidate branch or pull-request ref required; not controller authority")
     for key in ("producer_run_id", "producer_attempt", "artifact_id"):
         require(isinstance(value[key], str) and NUMBER.fullmatch(value[key]), "Exact producer numeric identity missing")
     for key in ("artifact_archive_sha256", "package_sha256", "executable_sha256"):
@@ -106,12 +110,12 @@ def expectations(source, selections, api, download):
             run_id, attempt = match.groups()
             run = api(f"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}")
             require(str(run.get("id")) == run_id and str(run.get("run_attempt")) == attempt and
-                    run.get("head_sha") == source and run.get("head_branch") == "main" and
-                    run.get("path") == PRODUCERS[platform]["workflow"] and run.get("event") in ("push", "workflow_dispatch") and
+                    run.get("head_sha") == source and type(run.get("head_branch")) is str and bool(run["head_branch"]) and
+                    run.get("path") == PRODUCERS[platform]["workflow"] and run.get("event") in ("push", "workflow_dispatch", "pull_request") and
                     run.get("status") == "completed" and run.get("conclusion") == "success" and
                     run.get("repository", {}).get("full_name") == REPOSITORY and
                     run.get("head_repository", {}).get("id") == run.get("repository", {}).get("id"),
-                    platform + ": producer workflow/run/attempt/source/main repository did not pass")
+                    platform + ": exact completed candidate producer identity did not pass")
             artifacts = []
             for page in range(1, 11):
                 response = api(f"repos/{REPOSITORY}/actions/runs/{run_id}/artifacts?per_page=100&page={page}")

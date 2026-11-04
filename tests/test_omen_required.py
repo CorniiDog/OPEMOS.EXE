@@ -47,6 +47,58 @@ class Metadata:
  def verify(self):return gate.producer_ready(SOURCE,self.value['platform'],'10','2',self.read,self.download)
 
 class RequiredProducerTests(unittest.TestCase):
+ def test_actual_dispatch_pages_past_lifetime_history_for_fresh_non_main_candidate(self):
+  """Real issuer/result verifier, modeled GitHub/native result, no VM claim."""
+  m=Metadata();m.run['head_branch']='work/dev';m.value['ref']='refs/heads/work/dev'
+  m.raw=encoded_zip('executable-producer.json',m.value);m.artifacts[1]['digest']='sha256:'+hashlib.sha256(m.raw).hexdigest()
+  state={};pages=[];controller='e'*40;workflow='d'*40
+  class Response:
+   status=204
+   def __enter__(self):return self
+   def __exit__(self,*args):pass
+   def read(self,n):return b''
+  class Opener:
+   def open(self,req,timeout):
+    nonce=json.loads(req.data)['inputs']['correlation_nonce'];state['title']='04 SteamOS required ubuntu 10/2 '+nonce
+    acceptance={'status':'passed','executable':m.value,'source_commit':controller,'run_id':'50','attempt':'1','actual_receipt_verified':True,'active':False,'operation_nonce':'f'*32}
+    for field in('build_receipt_sha256','heal_receipt_sha256','install_receipt_sha256','image_sha256','image_manifest_sha256','usb_readback_sha256'):acceptance[field]='a'*64
+    for field in('output_identity','target_generation','target_id','target_disk_identity','baseline_boot_id','installed_root_uuid','installed_efi_uuid','imaging_host_id'):acceptance[field]='synthetic-native-fact-'+field
+    proof={'schema':1,'verified':True,'source_commit':controller,'run_id':'50','attempt':'1','operation_nonce':'f'*32,'executable':m.value,'sender_sha256':'b'*64,'actions':[]}
+    for i,name in enumerate(('chooser-open','chooser-confirm-exact-input','Build','virtualUSB-select-and-review','virtualUSB-Write-confirmation'),1):
+     action={'action':name,'action_id':format(i,'032x')}
+     for field in('record_sha256','transition_sha256','sender_lifecycle_sha256','target_observation_sha256'):action[field]='c'*64
+     for side,j in(('before',i*2),('after',i*2+1)):action[side]={'capture_id':format(j,'032x'),'frame_sha256':'d'*64,'capture_receipt_sha256':'a'*64}
+     proof['actions'].append(action)
+    proof['proof_sha256']=gate.digest(proof);acceptance['pointer_acceptance']=proof
+    result={'kind':'OMEN_REQUIRED_PRODUCER_RESULT_V1','context':{'repository':gate.REPO,'source_commit':controller,'workflow_source_commit':workflow,'candidate_source_commit':SOURCE,'target':gate.target(m.value),'nonce':nonce},'producer':m.value,'consumer':{'run_id':'50','attempt':'1'},'status':'passed','diagnostic_only':False,'required_acceptance':acceptance}
+    state['zip']=encoded_zip('required-result.json',result)
+    return Response()
+  def read(path):
+   if path.startswith('actions/workflows/omen-robot.yml/runs?'):
+    query=gate.parse.parse_qs(gate.parse.urlsplit(path).query);self.assertIn('created',query)
+    page=int(query['page'][0]);pages.append(page)
+    if page==1:return {'total_count':101,'workflow_runs':[{'id':100+i,'display_title':'unrelated old dispatch'}for i in range(100)]}
+    return {'total_count':101,'workflow_runs':[{'id':50,'run_attempt':1,'display_title':state['title'],'head_sha':workflow,'head_branch':'main','event':'workflow_dispatch','repository':{'full_name':gate.REPO},'status':'completed'}]}
+   if path.startswith('actions/runs/50/attempts/1/jobs?'):return {'total_count':2,'jobs':[{'name':name,'status':'completed','conclusion':'success'}for name in('required-platform-robot','required-platform-result')]}
+   if path.startswith('actions/runs/50/artifacts?'):return {'total_count':1,'artifacts':[{'id':60,'name':'omen-required-result-50-1','expired':False,'digest':'sha256:'+hashlib.sha256(state['zip']).hexdigest()}]}
+   if path=='actions/runs/50':return {'run_attempt':1,'status':'completed','conclusion':'success'}
+   return m.read(path)
+  def download(path):return state['zip']if path=='actions/artifacts/60/zip'else m.download(path)
+  with tempfile.TemporaryDirectory()as temp:
+   prior=os.getcwd();os.chdir(temp)
+   try:
+    env={'GITHUB_REPOSITORY':gate.REPO,'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/heads/work/dev','GITHUB_SHA':SOURCE,'GITHUB_TOKEN':'synthetic-token','GITHUB_RUN_ID':'10','GITHUB_RUN_ATTEMPT':'2'}
+    with patch.dict(os.environ,env),patch.object(gate,'api_reader',return_value=read),patch.object(gate,'metadata_download',side_effect=download),patch.object(gate.request,'build_opener',return_value=Opener()):
+     self.assertEqual(gate.main_dispatch('ubuntu'),0)
+    result=json.loads(Path('required-omen-results/required-result.json').read_bytes());self.assertEqual(result['context']['source_commit'],controller);self.assertEqual(pages,[1,2])
+   finally:os.chdir(prior)
+ def test_duplicate_correlation_across_pages_and_expired_discovery_refuse(self):
+  def read(path):
+   page=int(gate.parse.parse_qs(gate.parse.urlsplit(path).query)['page'][0])
+   rows=[{'id':i+1,'display_title':'target'if i==0 else'old'}for i in range(100)]if page==1 else[{'id':200,'display_title':'target'}]
+   return {'total_count':101,'workflow_runs':rows}
+  with self.assertRaisesRegex(gate.Refusal,'ambiguous'):gate.correlated_dispatch(read,'target','2026-11-04T00:00:00Z',gate.time.monotonic()+10)
+  with self.assertRaisesRegex(gate.Refusal,'deadline'):gate.correlated_dispatch(read,'target','2026-11-04T00:00:00Z',0)
  def parent_failed_result(self, temp, stale=False, collision=False):
   m=Metadata();state={}
   failure={'kind':'OPEMOS_BROKER_FAILURE_V1','code':'ACTIONS_TOKEN_REQUIRED','reason':gate.PUBLIC_FAILURES['ACTIONS_TOKEN_REQUIRED'],'error_type':'ValueError','private_recorded':True,'secondary':[]}
@@ -59,7 +111,7 @@ class RequiredProducerTests(unittest.TestCase):
    def open(self,req,timeout):
     inputs=json.loads(req.data)['inputs'];nonce=inputs['correlation_nonce']
     state['title']='04 SteamOS required ubuntu 10/2 '+nonce
-    context={'repository':gate.REPO,'source_commit':SOURCE,'target':gate.target(m.value),'nonce':nonce}
+    context={'repository':gate.REPO,'source_commit':SOURCE,'workflow_source_commit':SOURCE,'candidate_source_commit':SOURCE,'target':gate.target(m.value),'nonce':nonce}
     if stale:context['nonce']='0'*32
     value={'kind':'OMEN_REQUIRED_PRODUCER_RESULT_V1','status':'failed','diagnostic_only':True,'actualGUIAccepted':False,'context':context,'producer':m.value,'consumer':{'run_id':'50','attempt':'1'},'broker_failure':failure}
     state['raw']=encoded_zip('required-result.json',value)
@@ -104,19 +156,17 @@ class RequiredProducerTests(unittest.TestCase):
    self.assertLess(section.index('job_guard.py --bind-job-token'),section.index(' -m robot '))
    self.assertIn('GITHUB_TOKEN: ${{ github.token }}',section)
    self.assertNotIn('--bind-job-token $',section)
- def test_dispatch_write_token_is_only_in_main_job_and_pr_diagnostics_are_read_only(self):
+ def test_every_branch_push_dispatches_with_no_artificial_non_main_failure(self):
   root=Path(__file__).parents[1]
   for name in('ubuntu-executable.yml','windows-portable.yml'):
    workflow=(root/'.github/workflows'/name).read_text()
-   main,untrusted=workflow.split('\n  omen-required:\n',1)[1].split('\n  omen-required-untrusted:\n',1)
-   self.assertIn("github.ref == 'refs/heads/main' && github.ref_protected",main)
+   main=workflow.split('\n  omen-required:\n',1)[1]
+   self.assertNotIn('omen-required-untrusted:',workflow)
+   self.assertIn('branches: ["**"]',workflow)
+   self.assertNotIn("github.ref == 'refs/heads/main' && github.ref_protected",main)
    self.assertIn('actions: write',main)
    self.assertIn('ref: ${{ github.sha }}',main)
-   self.assertIn('actions: read',untrusted)
-   self.assertNotIn('actions: write',untrusted)
-   self.assertNotIn('dispatch-and-wait',untrusted)
-   self.assertIn(' diagnostics --directory required-omen-results ',untrusted)
-   self.assertIn('exit 1',untrusted)
+   self.assertIn('dispatch-and-wait',main)
  def test_in_progress_parent_with_passed_package_is_eligible(self):
   m=Metadata();self.assertEqual(m.verify(),m.value)
  def test_windows_independent_of_ubuntu_mac_readiness(self):
@@ -133,9 +183,19 @@ class RequiredProducerTests(unittest.TestCase):
  def test_fork_producer_refuses(self):
   m=Metadata();m.run['head_repository']['id']=2
   with self.assertRaises(gate.Refusal):m.verify()
- def test_pull_request_refuses(self):
+ def test_inconsistent_pull_request_metadata_refuses(self):
   m=Metadata();m.run['event']='pull_request'
   with self.assertRaises(gate.Refusal):m.verify()
+ def test_non_main_package_passes_even_when_old_artificial_downstream_failed(self):
+  m=Metadata();m.run.update(head_branch='work/dev',status='completed',conclusion='failure')
+  m.value['ref']='refs/heads/work/dev';m.raw=encoded_zip('executable-producer.json',m.value)
+  m.artifacts[1]['digest']='sha256:'+hashlib.sha256(m.raw).hexdigest()
+  self.assertEqual(m.verify(),m.value)
+ def test_api_bound_same_repo_pr_head_is_eligible(self):
+  m=Metadata();m.run.update(event='pull_request',head_branch='work/dev',pull_requests=[{'number':218}])
+  m.value.update(event='pull_request',ref='refs/pull/218/merge');m.raw=encoded_zip('executable-producer.json',m.value)
+  m.artifacts[1]['digest']='sha256:'+hashlib.sha256(m.raw).hexdigest()
+  self.assertEqual(m.verify(),m.value)
  def test_wrong_source_refuses(self):
   m=Metadata();m.run['head_sha']='e'*40
   with self.assertRaises(gate.Refusal):m.verify()
@@ -229,9 +289,10 @@ class RequiredProducerTests(unittest.TestCase):
   class Engine:
    context={k:req[k]for k in('repository','source_commit','run_id','attempt')};artifacts={'ubuntu':{'status':'unavailable'}};current=None
    def transaction(self,*args,**kw):raise gate.Refusal('first actual transaction failure')
+   def stage_candidate(self,*args):return {'path':'external-transport-model','sha256':'b'*64,'bytes':1}
    def failure_exports(self):return{'status':'failed','closure':'UNKNOWN','exports':[],'secondary_collection_error':{'type':'FixtureCaptureFailure'}}
    def persist(self):raise OSError('secondary persistence')
-  value=gate.broker_execute_produced(Engine(),req,m.read,m.download)
+  value=gate.broker_execute_produced(Engine(),req,m.read,m.download,lambda *a:None)
   self.assertEqual(value['status'],'failed');self.assertEqual(value['first_error']['reason'],'first actual transaction failure');self.assertEqual(value['closure'],'UNKNOWN');self.assertIn('secondary_collection_error',value['failure_collection']);self.assertEqual(value['secondary_errors'][0]['phase'],'persist')
  def test_root_normal_uses_exact_expected_and_real_result_consumer(self):
   m=Metadata();req=dict(version=2,action='execute-produced-platform',subject=gate.target(m.value),repository=gate.REPO,source_commit=SOURCE,run_id='50',attempt='1',nonce='f'*32,consumer_started_epoch=1);calls=[]
@@ -254,11 +315,12 @@ class RequiredProducerTests(unittest.TestCase):
   proof['proof_sha256']=gate.digest(proof);acceptance['pointer_acceptance']=proof
   class Engine:
    context={k:req[k]for k in('repository','source_commit','run_id','attempt')};artifacts={'ubuntu':{'status':'unavailable'}};current=None
-   def transaction(self,kind,subject,expected_producer=None):
+   def stage_candidate(self,*args):return {'path':'external-transport-model','sha256':'b'*64,'bytes':1}
+   def transaction(self,kind,subject,expected_producer=None,candidate_archive=None):
     calls.append((kind,subject,expected_producer));return{'status':'passed','expected':m.value,'active':False,'closure_verified':True,'steam_os_transaction':acceptance,'exports':[]}
    def persist(self):calls.append('persist')
    def failure_exports(self):return{'exports':[]}
-  value=gate.broker_execute_produced(Engine(),req,m.read,m.download)
+  value=gate.broker_execute_produced(Engine(),req,m.read,m.download,lambda *a:None)
   self.assertEqual(value['status'],'passed');self.assertEqual(calls[0],('artifact',{'platform':'ubuntu','artifact_id':'30'},m.value))
   self.assertEqual(value['required_acceptance'],acceptance)
   changed=copy.deepcopy(acceptance);changed['image_sha256']='b'*64
