@@ -11,15 +11,15 @@ LABELS=['self-hosted','Linux','X64','opemos-omen-robot']
 PRODUCERS={'.github/workflows/windows-portable.yml','.github/workflows/ubuntu-executable.yml','.github/workflows/macos-arm64.yml'}
 # Only these fields authorize routing to the ordinary runner admission path.
 # Recovery provenance and optional diagnostics may evolve independently.
-RUNNER_STATE_FIELDS={'version','repository','source_commit','checked_at',
-                     'expires_at','ready','runner_id','runner_name','labels'}
+RUNNER_STATE_FIELDS={'version','repository','source_commit',
+                     'runner_id','runner_name','labels'}
 
 def main():
     # The route is authorized by authenticated event/runner facts below. A
     # report catalog, directory or optional summary cannot authorize or veto it.
     report=Path('robot-preflight')
     value={'status':'failed','vms':{},'executable_acceptance':{p:{'status':'unavailable','reason':'Fresh transaction not executed'}for p in ('windows','ubuntu','macos')}}
-    ready=False;source='';stage='canonical repository'
+    ready=False;queueable=False;source='';stage='canonical repository'
     try:
         assert os.environ['GITHUB_REPOSITORY']==REPO
         stage='complete event metadata'
@@ -55,13 +55,22 @@ def main():
         source=state['source_commit']
         assert type(source)is str and len(source)==40 and all(x in '0123456789abcdef'for x in source)
         now=int(time.time())
-        stage='runner heartbeat clock/180-second freshness'
-        assert type(state['checked_at'])is int and type(state['expires_at'])is int and state['expires_at']==state['checked_at']+180 and state['checked_at']<=now<state['expires_at']
         stage='runner exact labels/name/id'
         assert state['labels']==LABELS and state['runner_name']=='opemos-omen-robot'and type(state['runner_id'])is int and state['runner_id']>0
-        stage='runner heartbeat explicitly ready=true'
-        assert state['ready']is True
-        ready=True;value.update(status='ready-for-ordinary-admission',source_commit=source,runner_id=state['runner_id'])
+        # Availability telemetry affects the display, never the right to wait.
+        checked=state.get('checked_at');expires=state.get('expires_at')
+        ready=(state.get('ready') is True and type(checked)is int and
+               type(expires)is int and expires==checked+180 and checked<=now<expires)
+        # This authorizes only waiting for GitHub's registered runner. A stale
+        # heartbeat/offline host must not discard a queued push. The installed
+        # job-start hook still verifies its actual source, lease, namespace and
+        # broker before checkout; VM/GPU admission stays in the normal queue.
+        queueable=True
+        value.update(status='ready-for-ordinary-admission' if ready else 'waiting-for-runner',
+                     source_commit=source,runner_id=state['runner_id'])
+        if not ready:
+            value['reason']='Runner unavailable or heartbeat stale; waiting in the native self-hosted queue'
+            print('::notice::'+value['reason'])
         for row in value['vms'].values():row['reason']='Runner route online; actual VM case remains unverified'
     except Exception as error:
         value['reason']='Trusted route refused at '+stage+': '+type(error).__name__
@@ -77,13 +86,13 @@ def main():
         except Exception as error:
             print('::warning::Optional runner report unavailable: '+type(error).__name__)
         # GITHUB_OUTPUT carries the actual route to the next job, not a report.
-        with open(os.environ['GITHUB_OUTPUT'],'a')as stream:stream.write('ready='+str(ready).lower()+'\nsource='+source+'\n')
+        with open(os.environ['GITHUB_OUTPUT'],'a')as stream:stream.write('ready='+str(ready).lower()+'\nqueueable='+str(queueable).lower()+'\nsource='+source+'\n')
         try:
             with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as stream:
-                stream.write('Installed controller: `'+source+'`. Candidate execution remains unverified.\n')
+                stream.write('Last reported installed controller: `'+source+'`. Candidate execution remains unverified.\n')
                 stream.write('No domain, CPU resume, installer or NVIDIA pass is inferred from runner availability.\n')
         except Exception as error:
             print('::warning::Optional step summary unavailable: '+type(error).__name__)
-    return 0 if ready else 1
+    return 0 if queueable else 1
 
 if __name__=='__main__':raise SystemExit(main())

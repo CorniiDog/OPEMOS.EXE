@@ -29,12 +29,20 @@ permissions:
   contents: read
   actions: read
 
+# One OMEN transaction at a time across every push/platform, including reports.
+# Preserve pending pushes instead of the default single pending replacement.
+concurrency:
+  group: opemos-omen-robot
+  queue: max
+  cancel-in-progress: false
+
 jobs:
   trusted-runner-route:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
       ready: ${{ steps.guard.outputs.ready }}
+      queueable: ${{ steps.guard.outputs.queueable }}
       source: ${{ steps.guard.outputs.source }}
       producer: ${{ steps.scope.outputs.producer }}
     steps:
@@ -43,26 +51,26 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - id: guard
-        name: Verify protected controller workflow and fresh installed-controller heartbeat
+        name: Verify protected controller identity and queue the installed runner route
         env:
           GITHUB_TOKEN: ${{ github.token }}
           OPEMOS_OMEN_ROBOT_RUNNER_STATE: ${{ vars.OPEMOS_OMEN_ROBOT_RUNNER_STATE }}
         run: python3 scripts/omen_robot_gate.py
       - name: Load the exact installed reviewed controller reader
-        if: steps.guard.outputs.ready == 'true'
+        if: steps.guard.outputs.queueable == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ steps.guard.outputs.source }}
           persist-credentials: false
       - id: scope
         name: Bind exact artifact from passed native package JOB before OMEN
-        if: steps.guard.outputs.ready == 'true' && inputs.required_platform != ''
+        if: steps.guard.outputs.queueable == 'true' && inputs.required_platform != ''
         env:
           GITHUB_TOKEN: ${{ github.token }}
           OPEMOS_SOURCE_SHA: ${{ steps.guard.outputs.source }}
         run: python3 scripts/required_omen.py scope-guard
       - name: Always provide unavailable reports when trusted route or scope failed
-        if: always() && (steps.guard.outputs.ready != 'true' || steps.scope.outcome == 'failure')
+        if: always() && (steps.guard.outputs.queueable != 'true' || steps.scope.outcome == 'failure')
         run: python3 scripts/required_omen.py diagnostics --directory robot-preflight --reason 'Trusted current route/producer artifact unavailable; no OMEN pass'
       - name: Retain optional preflight diagnostics
         if: always()
@@ -76,7 +84,7 @@ jobs:
 
   actual-robot-transactions:
     needs: trusted-runner-route
-    if: needs.trusted-runner-route.outputs.ready == 'true' && inputs.required_platform == ''
+    if: needs.trusted-runner-route.outputs.queueable == 'true' && inputs.required_platform == ''
     runs-on: [self-hosted, Linux, X64, opemos-omen-robot]
     timeout-minutes: 240
     env:

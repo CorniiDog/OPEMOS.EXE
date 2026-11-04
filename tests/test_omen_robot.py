@@ -72,6 +72,21 @@ class IndependentOutcomes(unittest.TestCase):
                 with self.assertRaises(FileNotFoundError):self.engine.platform(platform)
         self.assertEqual(called,['macos','windows'])
 
+class WorkflowQueueWiring(unittest.TestCase):
+    def test_main_workflow_consumes_queueable_without_readiness_veto(self):
+        workflow=(ROOT/'.github/workflows/omen-robot.yml').read_text()
+        self.assertIn('group: opemos-omen-robot',workflow)
+        self.assertIn('queue: max',workflow)
+        self.assertIn('cancel-in-progress: false',workflow)
+        self.assertIn("queueable: ${{ steps.guard.outputs.queueable }}",workflow)
+        self.assertNotIn("outputs.ready == 'true'",workflow)
+        self.assertIn("if: steps.guard.outputs.queueable == 'true'",workflow)
+        self.assertIn("needs.trusted-runner-route.outputs.queueable == 'true'",workflow)
+        required=workflow.split('  required-platform-robot:',1)[1].split('  required-platform-result:',1)[0]
+        self.assertIn("needs.trusted-runner-route.result == 'success'",required)
+        self.assertIn('job_guard.py --bind-job-token',required)
+        self.assertIn('runs-on: [self-hosted, Linux, X64, opemos-omen-robot]',required)
+
 class HostedRunnerGuard(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);self.previous=Path.cwd();os.chdir(self.root)
@@ -101,23 +116,28 @@ class HostedRunnerGuard(unittest.TestCase):
         del self.state['reason']
         self.state['telemetry']={'generation':2,'notes':['listener recovered']}
         self.assertEqual(self.run_gate(),0)
-    def test_recovery_metadata_does_not_authorize_stale_or_malformed_source(self):
+    def test_recovery_metadata_queues_stale_but_refuses_malformed_source(self):
         self.state.update(queue_source_sha256='c'*64,recovery_nonce='d'*32)
-        self.assertEqual(self.run_gate(now=1180),1)
+        self.assertEqual(self.run_gate(now=1180),0)
+        self.assertIn('queueable=true',(self.root/'output').read_text())
         self.state['source_commit']='not-an-installed-commit'
         self.assertEqual(self.run_gate(),1)
     def test_missing_authoritative_runner_identity_still_refuses(self):
         del self.state['runner_id']
         self.state['telemetry']={'runner_id':1}
         self.assertEqual(self.run_gate(),1)
-    def test_boolean_schema_version_and_float_expiry_do_not_authorize(self):
+    def test_boolean_schema_version_refuses_but_bad_expiry_only_waits(self):
         self.state['version']=True
         self.assertEqual(self.run_gate(),1)
         self.state['version']=1;self.state['expires_at']=1180.0
-        self.assertEqual(self.run_gate(),1)
-    def test_stale_heartbeat_fails_before_self_hosted_queue(self):
-        self.assertEqual(self.run_gate(now=1180),1)
+        self.assertEqual(self.run_gate(),0)
         self.assertIn('ready=false',(self.root/'output').read_text())
+        self.assertIn('queueable=true',(self.root/'output').read_text())
+    def test_stale_heartbeat_yields_to_native_self_hosted_queue(self):
+        self.assertEqual(self.run_gate(now=1180),0)
+        output=(self.root/'output').read_text()
+        self.assertIn('ready=false',output);self.assertIn('queueable=true',output)
+        self.assertEqual(json.loads(Path('robot-preflight/all20.json').read_text())['status'],'waiting-for-runner')
     def test_installed_controller_is_distinct_from_workflow_and_candidate(self):
         self.state['source_commit']='b'*40;self.assertEqual(self.run_gate(),0)
         self.assertIn('source='+'b'*40,(self.root/'output').read_text())
@@ -134,12 +154,25 @@ class HostedRunnerGuard(unittest.TestCase):
     def test_absent_runner_fails_with_all20(self):
         self.state['runner_id']=None;self.state['ready']=False;self.assertEqual(self.run_gate(),1)
         self.assertEqual(len(json.loads(Path('robot-preflight/all20.json').read_text())['vms']),20)
-    def test_explicit_offline_state_names_failed_check_without_promoting_rows(self):
+    def test_explicit_offline_state_queues_without_promoting_rows(self):
         self.state['ready']=False
-        self.assertEqual(self.run_gate(),1)
+        self.assertEqual(self.run_gate(),0)
         value=json.loads(Path('robot-preflight/all20.json').read_text())
-        self.assertEqual(value['failed_check'],'runner heartbeat explicitly ready=true')
-        self.assertTrue(all(r['status']=='unavailable' and 'explicitly ready=true' in r['reason'] for r in value['vms'].values()))
+        self.assertEqual(value['status'],'waiting-for-runner')
+        self.assertIn('queueable=true',(self.root/'output').read_text())
+        self.assertTrue(all(r['status']=='unavailable' for r in value['vms'].values()))
+    def test_future_clock_and_untyped_readiness_wait_without_claiming_online(self):
+        self.assertEqual(self.run_gate(now=999),0)
+        self.assertIn('ready=false',(self.root/'output').read_text())
+        self.state['ready']='false'
+        self.assertEqual(self.run_gate(),0)
+        self.assertIn('queueable=true',(self.root/'output').read_text())
+    def test_missing_optional_availability_telemetry_does_not_discard_push(self):
+        for key in ('ready','checked_at','expires_at'):del self.state[key]
+        self.assertEqual(self.run_gate(),0)
+        self.assertIn('queueable=true',(self.root/'output').read_text())
+        self.assertIn('ready=false',(self.root/'output').read_text())
+
 
 class PointerKeywordCustody(unittest.TestCase):
     """Synthetic fault-only keyword wiring; never actual mouse acceptance."""

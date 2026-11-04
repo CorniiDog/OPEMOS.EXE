@@ -309,7 +309,7 @@ def main_dispatch(platform):
    if selected:
     require(re.fullmatch('[0-9a-f]{40}',selected['head_sha']or'')and selected['head_branch']=='main'and selected['event']=='workflow_dispatch'and selected['repository']['full_name']==REPO,'reviewed controller workflow run identity')
     if selected['status']=='completed':break
-   time.sleep(10)
+   time.sleep(15)
   require(selected is not None and selected['status']=='completed','OMEN result unavailable/timed out; no retry or old receipt')
   rid=str(selected['id']);attempt=str(selected['run_attempt']);jobs=items(read,f'actions/runs/{rid}/attempts/{attempt}/jobs','jobs')
   bad_jobs=[]

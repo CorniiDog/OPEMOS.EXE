@@ -326,4 +326,42 @@ class RequiredProducerTests(unittest.TestCase):
   changed=copy.deepcopy(acceptance);changed['image_sha256']='b'*64
   with self.assertRaises(gate.Refusal):gate.verify_acceptance(changed,m.value,req)
 
+class QueuedDispatch(unittest.TestCase):
+ def test_existing_dispatch_waits_15_seconds_without_resubmitting_queued_work(self):
+  m=Metadata();calls=[]
+  class Response:
+   status=204
+   def __enter__(self):return self
+   def __exit__(self,*a):pass
+   def read(self,*a):return b''
+  class Opener:
+   def open(self,req,timeout):calls.append(req);return Response()
+  def read(path):
+   if path=='branches/main':return {'protected':True}
+   if '/jobs' in path:return {'total_count':0,'jobs':[]}
+   if '/artifacts' in path:return {'total_count':0,'artifacts':[]}
+   raise AssertionError(path)
+  selected={'id':99,'run_attempt':1,'head_sha':SOURCE,'head_branch':'main',
+            'event':'workflow_dispatch','repository':{'full_name':gate.REPO}}
+  states=[dict(selected,status=x) for x in ('queued','in_progress','completed')]
+  env={'GITHUB_REPOSITORY':gate.REPO,'GITHUB_EVENT_NAME':'push','GITHUB_SHA':SOURCE,
+       'GITHUB_RUN_ID':'10','GITHUB_RUN_ATTEMPT':'2','GITHUB_REF':'refs/heads/main',
+       'GITHUB_TOKEN':'synthetic-token','OPEMOS_CANDIDATE_SHA':SOURCE}
+  with tempfile.TemporaryDirectory() as temp:
+   previous=os.getcwd();os.chdir(temp)
+   try:
+    with patch.dict(os.environ,env),patch.object(gate,'api_reader',return_value=read), \
+         patch.object(gate,'producer_ready',return_value=m.value), \
+         patch.object(gate.request,'build_opener',return_value=Opener()), \
+         patch.object(gate,'correlated_dispatch',side_effect=states), \
+         patch.object(gate.time,'sleep') as sleep:
+     # Deliberately missing actual result: this validates waiting, never a pass.
+     self.assertEqual(gate.main_dispatch('ubuntu'),1)
+     self.assertEqual([x.args for x in sleep.call_args_list],[(15,),(15,)])
+     self.assertEqual(len(calls),1)
+     self.assertEqual(calls[0].get_method(),'POST')
+     failure=json.loads(Path('required-omen-results/required-failure.json').read_bytes())
+     self.assertEqual(failure['consumer']['run_id'],99)
+   finally:os.chdir(previous)
+
 if __name__=='__main__':unittest.main()
