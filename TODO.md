@@ -5139,3 +5139,23 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   hardware test claim. Necessary EXE fast-forward push to the existing origin
   topic supplies immutable source for remote-only CI and exact Core review;
   every push must start Actions. No new PR under the aggregate cap TWO.
+
+## R122 retained-media ancestor custody join — 2026-11-04
+
+- Actual c8/7bd9 normal deployment/drain/media entry passed the whole-history
+  chunk join, then refused retained-media full9/name stability before queue
+  submission. The old error did not identify which path drifted: shared ancestor
+  churn is a demonstrated source-defect class, not retrospectively proved as
+  the exact changed path. Original FIRST/native/logs remain preserved; ordinary
+  unmount/detach/retained-media closure and timer restoration completed.
+- Keep exact full9 for the declared media endpoint/parent, raw hashes, ACL and
+  readonly mount/loop guards. Root ancestors now retain object/type/mode/owner
+  identity and exact held/fresh-named kernel mount/namespace, rather than using
+  directory-content timestamps/link counts as startup authority. Failure
+  evidence records each actual path, before/held/named identities and mounts.
+- Existing Root component tests exercise real shared-directory sibling churn,
+  endpoint drift, symlink/hardlink/foreign owner/escape and actual bind-mount
+  replacement where admitted. No new harness or hardware/VM success claim. AST
+  and diff checks pass; tests await automatic admitted CI after necessary owning
+  fast-forward push for exact source/effects review. No new PR under cap TWO;
+  c8 Debian cancellation/artifact-delivery merge hold remains separate.

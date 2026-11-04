@@ -177,6 +177,61 @@ class RetainedMediaContract(unittest.TestCase):
                 subprocess.run([tools['losetup'], '--detach', device], check=True)
             self.assertFalse(media.owned_mount(mount, device))
 
+    @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'admitted Linux Root only')
+    def test_media_ancestor_churn_keeps_endpoint_and_mount_custody(self):
+        """Real files/mount IDs; no media hash, device or VM acceptance modeled as pass."""
+        import install_media_controller as installer
+        root = Path('/run/opemos-media-path-' + uuid.uuid4().hex)
+        peer = Path('/run/opemos-media-peer-' + uuid.uuid4().hex)
+        root.mkdir(mode=0o700); parent = root/'parent'; parent.mkdir(mode=0o710)
+        leaf = parent/'working.raw'; leaf.write_bytes(b'owned readonly-media fixture')
+        leaf.chmod(0o640); os.chown(leaf, 64055, 993)
+        initial = set(os.listdir('/proc/self/fd'))
+        try:
+            ref = installer.pin(leaf)
+            for path, declared in ((leaf, ref), (parent, None)):
+                with media.held_path(path, declared):
+                    peer.mkdir(mode=0o700); peer.rmdir()
+                    sibling = root/'unrelated'; sibling.mkdir(); sibling.rmdir()
+            with self.assertRaisesRegex(ValueError, 'media endpoint full9') as changed:
+                with media.held_path(leaf, ref): leaf.write_bytes(b'changed media fixture')
+            self.assertEqual(changed.exception.evidence['path'], str(leaf))
+            self.assertTrue(changed.exception.evidence['checks'])
+            with self.assertRaisesRegex(ValueError, 'media endpoint full9'):
+                with media.held_path(parent): (parent/'unexpected').write_bytes(b'x')
+            (parent/'unexpected').unlink()
+            ref = installer.pin(leaf)
+            with self.assertRaises(OSError):
+                with media.held_path(leaf, ref):
+                    leaf.rename(parent/'saved'); leaf.symlink_to('saved')
+            leaf.unlink(); (parent/'saved').rename(leaf)
+            ref = installer.pin(leaf)
+            os.link(leaf, parent/'alias')
+            with self.assertRaisesRegex(ValueError, 'exact adopted leaf'):
+                with media.held_path(leaf, ref): pass
+            (parent/'alias').unlink()
+            os.chown(parent, 1000, 1000)
+            with self.assertRaisesRegex(ValueError, 'Root media ancestry'):
+                with media.held_path(leaf, installer.pin(leaf)): pass
+            os.chown(parent, 0, 0)
+            with self.assertRaisesRegex(ValueError, 'absolute media path'):
+                with media.held_path(parent/'..'/'parent'): pass
+            caps = int(next(x.split()[1] for x in Path('/proc/self/status').read_text().splitlines()
+                            if x.startswith('CapEff:')), 16)
+            if caps & (1 << 21) and shutil.which('mount') and shutil.which('umount'):
+                mounted = False
+                try:
+                    with self.assertRaisesRegex(ValueError, 'same held/named media mount'):
+                        with media.held_path(parent):
+                            subprocess.run(['mount','--bind',str(parent),str(parent)],check=True,timeout=10)
+                            mounted = True
+                finally:
+                    if mounted: subprocess.run(['umount',str(parent)],check=True,timeout=10)
+            self.assertEqual(initial, set(os.listdir('/proc/self/fd')))
+        finally:
+            if peer.exists(): peer.rmdir()
+            shutil.rmtree(root)
+
     def test_normal_worker_transport_outlives_short_helper_without_resetting_deadline(self):
         """Real owned child transport; child models the normal worker boundary only."""
         import libvirt_native as native

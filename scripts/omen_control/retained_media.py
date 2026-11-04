@@ -90,27 +90,52 @@ def _mount(fd):
 
 @contextlib.contextmanager
 def held_path(path, leaf=None):
-    """Nofollow Root ancestry; only the exact declared media leaf may be QEMU-owned."""
+    """Root ancestry is object/mount custody; the declared endpoint is full9."""
     path = Path(path)
     need(path.is_absolute() and '..' not in path.parts, 'absolute media path')
-    fds, names, before = [], [], []
+    fds, names, before, mounts, checks = [], [], [], [], []
+    namespace = os.readlink('/proc/self/ns/mnt')
+    core = ('st_dev', 'st_ino', 'st_mode', 'st_uid', 'st_gid')
     try:
         fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
         fds.append(fd); names.append(Path('/')); before.append(identity(os.fstat(fd)))
         for part in path.parts[1:]:
             fd = os.open(part, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
             fds.append(fd); names.append(names[-1] / part); before.append(identity(os.fstat(fd)))
+        mounts = [_mount(fd) for fd in fds]
         for n, f, old in zip(names, fds, before):
-            need(old == identity(os.lstat(n)), 'held/named media ancestry')
+            named = identity(os.lstat(n))
+            keys = tuple(old) if n == path else core
+            need(all(old[k] == named[k] for k in keys), 'held/named media ancestry ' + str(n))
             if n == path and leaf is not None:
                 need(old == leaf['identity'] and str(n) == leaf['path'], 'exact adopted leaf')
             else:
                 need(old['st_uid'] == old['st_gid'] == 0, 'Root media ancestry')
                 need(not old['st_mode'] & 0o022, 'no writable foreign media ancestor')
         yield fd
-        for n, f, old in zip(names, fds, before):
-            need(identity(os.fstat(f)) == identity(os.lstat(n)) == old,
-                 'media full9/name stable throughout use')
+        for n, f, old, mount in zip(names, fds, before, mounts):
+            held = identity(os.fstat(f)); named = identity(os.lstat(n))
+            row = {'path': str(n), 'before': old, 'held': held, 'named': named,
+                   'mountBefore': mount, 'mountHeld': _mount(f)}
+            checks.append(row)
+            current = os.open(n, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                row['openedNamed'] = identity(os.fstat(current))
+                row['mountNamed'] = _mount(current)
+            finally:
+                os.close(current)
+            keys = tuple(old) if n == path else core
+            need(all(old[k] == held[k] == named[k] == row['openedNamed'][k] for k in keys),
+                 'media endpoint full9 or ancestor object/name stable ' + str(n))
+            need(row['mountHeld'] == row['mountNamed'] == mount
+                 and os.readlink('/proc/self/ns/mnt') == namespace,
+                 'same held/named media mount namespace ' + str(n))
+    except BaseException as error:
+        if getattr(error, 'evidence', None) is None:
+            error.evidence = {'kind': 'RETAINED_MEDIA_PATH_CUSTODY_REFUSAL', 'path': str(path),
+                              'namespace': namespace, 'before': list(zip(map(str, names), before)),
+                              'checks': checks}
+        raise
     finally:
         for fd in reversed(fds):
             os.close(fd)
