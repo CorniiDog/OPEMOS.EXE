@@ -215,12 +215,31 @@ def writer(db):
         except BaseException as secondary:first.add_note('Queue rollback also failed: '+repr(secondary))
         raise
 
-def reconcile(db,job,capture,history):
+class LockFence:
+    """Same kernel lock objects throughout this finite normal owner API."""
+    def __init__(self,worker,worker_path,heavy,heavy_path,uid):
+        self.rows=[(worker,Path(worker_path)),(heavy,Path(heavy_path))];self.uid=uid
+        self.original=[tuple(getattr(os.fstat(fd),k)for k in FIELDS[:6])for fd,_ in self.rows]
+    def check(self):
+        for (fd,path),before in zip(self.rows,self.original):
+            held=os.fstat(fd);named=path.lstat()
+            need(tuple(getattr(held,k)for k in FIELDS[:6])==before==tuple(getattr(named,k)for k in FIELDS[:6])and
+                 stat.S_ISREG(held.st_mode)and held.st_uid==self.uid and held.st_nlink==1,'normal lock inode/owner changed')
+        # Lock-file timestamps are not ownership: unsuccessful normal contenders
+        # can truncate that same empty file before their flock fails.
+        heavy=self.rows[1][0]
+        try:fcntl.flock(heavy,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:return
+        fcntl.flock(heavy,fcntl.LOCK_UN)
+        raise ValueError('normal heavy owner no longer holds its lock')
+
+def reconcile(db,job,capture,history,locks):
     """One failed-only normal writer transaction; native capture is external I/O.
 
     Runtime supplies only the pinned installed Root capture below. Tests model
     that external native boundary; those fixtures are not native acceptance.
     """
+    need(isinstance(locks,LockFence),'real normal lock fence required');locks.check()
     before=ledger(db);row,binding,spec=selected(before,job)
     first=capture(job);validate_observation(first,before,job)
     proof=preserve(history/'before-native.json',first)
@@ -229,6 +248,7 @@ def reconcile(db,job,capture,history):
         pending={'kind':'HOST_REBOOT_INTERRUPTED','historicalRowPin':old,'originalBinding':binding,'currentBoot':first['currentBoot'],'oldBoot':first['oldBoot'],'beforeNativePin':proof,'historicalQMPClosed':None,'historicalChildExit':None,'historicalLeaseClosed':None,'historicalACLRestored':None,'automaticRetryAuthorized':False,'terminalLifecycle':{'phase':'REBOOT_DISPOSITION_PENDING','intendedState':'failed','reservationRetained':True}}
         with writer(db):
             need(ledger(db)==before,'original whole ledger drift before retained commit')
+            locks.check()
             db.execute('UPDATE jobs SET state=?,result=? WHERE id=? AND state=? AND finished IS NULL',('terminal_cleanup',canonical(pending),job,'running'))
             need(db.execute('SELECT changes()').fetchone()[0]==1,'one original retained interrupted job')
     else:
@@ -260,6 +280,7 @@ def reconcile(db,job,capture,history):
     with writer(db):
         need(ledger(db)==current,'whole canonical epoch changed before failed disposition')
         need(0<=time.monotonic()-second['observedMonotonic']<=5,'final native boundary expired')
+        locks.check()
         db.execute('UPDATE jobs SET state=?,finished=?,result=? WHERE id=? AND state=? AND result=?',('failed',time.time(),canonical(final),job,'terminal_cleanup',canonical(pending)))
         need(db.execute('SELECT changes()').fetchone()[0]==1,'one failed-only current resource disposition')
     after=ledger(db)
@@ -287,24 +308,22 @@ def main():
             heavy=os.open(Path(os.environ.get('XDG_RUNTIME_DIR','/run/user/1000'))/'opemos-heavy.lock',os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC)
             with closing(lambda:os.close(heavy)):
                 need(stat.S_ISREG(os.fstat(heavy).st_mode)and os.fstat(heavy).st_uid==1000,'normal heavy lock custody')
-                try:fcntl.flock(heavy,fcntl.LOCK_EX|fcntl.LOCK_NB)
-                except BlockingIOError:pass
-                else:raise ValueError('heavy owner lock not held')
-            history=root/'logs'/args.job/('reboot-reconciliation-'+uuid.uuid4().hex);history.mkdir(mode=0o700);sync_directory(history.parent)
-            helper=module(profile['capture'],'installed_owned_capture');index=0
-            def capture(job):
-                nonlocal index
-                index+=1;argv=['sudo','-n','/usr/bin/python3','-I','-B',str(Path(__file__).resolve()),'observe',str(args.profile),job]
-                output=[history/(str(index)+'-stdout.raw'),history/(str(index)+'-stderr.raw')]
-                record=helper.run_owned_command(argv,b'',180,output,stream_limit=1048576)
-                ok=(record['numericExit']==0 and record['lifecycleClosed']and record['fd']['restored']and record['childSetRestored']and not record['errors']and not record['signals'])
-                try:preserve(history/(str(index)+'-native.json'),record)
-                except OSError as diagnostic:
-                    print('Optional duplicate native report failed: '+type(diagnostic).__name__,file=sys.stderr)
-                need(ok,'complete actual Root readonly capture; original raw failure retained')
-                need(not output[1].read_bytes(),'Root readonly failure retained')
-                read_pin(pin,1048576,0,0o444)
-                return json.loads(output[0].read_bytes())
-            print(canonical(reconcile(db,args.job,capture,history)))
+                locks=LockFence(worker,root/'worker.lock',heavy,Path(os.environ.get('XDG_RUNTIME_DIR','/run/user/1000'))/'opemos-heavy.lock',1000);locks.check()
+                history=root/'logs'/args.job/('reboot-reconciliation-'+uuid.uuid4().hex);history.mkdir(mode=0o700);sync_directory(history.parent)
+                helper=module(profile['capture'],'installed_owned_capture');index=0
+                def capture(job):
+                    nonlocal index
+                    index+=1;argv=['sudo','-n','/usr/bin/python3','-I','-B',str(Path(__file__).resolve()),'observe',str(args.profile),job]
+                    output=[history/(str(index)+'-stdout.raw'),history/(str(index)+'-stderr.raw')]
+                    record=helper.run_owned_command(argv,b'',180,output,stream_limit=1048576)
+                    ok=(record['numericExit']==0 and record['lifecycleClosed']and record['fd']['restored']and record['childSetRestored']and not record['errors']and not record['signals'])
+                    try:preserve(history/(str(index)+'-native.json'),record)
+                    except OSError as diagnostic:
+                        print('Optional duplicate native report failed: '+type(diagnostic).__name__,file=sys.stderr)
+                    need(ok,'complete actual Root readonly capture; original raw failure retained')
+                    need(not output[1].read_bytes(),'Root readonly failure retained')
+                    read_pin(pin,1048576,0,0o444)
+                    return json.loads(output[0].read_bytes())
+                print(canonical(reconcile(db,args.job,capture,history,locks)))
 
 if __name__=='__main__':main()
