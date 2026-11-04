@@ -92,3 +92,14 @@ of the measured existing `/usr/bin/kmod` at
 `/var/lib/opemos-vfio-idle-d3/modprobe`, retaining its recognized multicall name.
 The exact whole body and original system binary provenance are pinned before
 use; no candidate executable or changed tool interpreter is substituted.
+
+Core's R119 findings are retained: the kernel acquisition PID from external
+`flock` can exit while Bash retains its inherited OFD; the fence now authenticates
+the live pinned wrapper's actual fdinfo FLOCK record and named inode, without
+pretending the dead acquisition PID is the owner. The original create clock is
+rechecked immediately after module preparation and before createXML. Module
+state is separately attempted/proven/restored. Only proven same-inode unused
+modules use exact single-name `rmmod`; recursive modprobe removal is forbidden
+and pre-existing vfio/irqbypass remain. Unknown partial state preserves FIRST
+and the resource hold. A protected pre-effect ownership record is retained;
+optional later duplicate publications cannot mask actual init/cleanup results.

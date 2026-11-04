@@ -369,6 +369,7 @@ class NativeTransactionOps:
    import types
    ref=self.g['nativeTools']['/var/lib/opemos-vfio-idle-d3/managed_vfio.py'];raw=held(ref,65536);self.vfioPolicy=types.ModuleType('managed_vfio');exec(compile(raw,ref['path'],'exec'),self.vfioPolicy.__dict__)
   self.vfioPolicy.prepare(self,peer,native_child)
+  self.effect_clock('create')  # fresh immediately after module preparation/scans
   return self.conn.createXML(xml,libvirt.VIR_DOMAIN_START_PAUSED|libvirt.VIR_DOMAIN_START_AUTODESTROY)
  def pump_events(self):
   import libvirt

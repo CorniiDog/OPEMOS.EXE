@@ -242,16 +242,34 @@ class LockFence:
     def __init__(self,worker,worker_path,heavy,heavy_path,uid,heavy_source=None):
         self.rows=[(worker,Path(worker_path)),(heavy,Path(heavy_path))];self.uid=uid
         self.original=[tuple(getattr(os.fstat(fd),k)for k in FIELDS[:6])for fd,_ in self.rows]
-        holders=kernel_holders(os.fstat(heavy));need(len(holders)==1,'one actual heavy owner')
-        self.holder=process(holders[0]);self.source=heavy_source
-        self.chain=[];pid=os.getpid()
+        self.source=heavy_source;self.chain=[];pid=os.getpid()
         for _ in range(32):
             actor=process(pid);self.chain.append(actor)
-            if actor['pid']==self.holder['pid']:break
+            if heavy_source is None or (actor['exe']=='/usr/bin/bash'and len(actor['argv'])>1 and actor['argv'][1]==heavy_source['path']):break
             need(actor['ppid']>1 and actor['ppid']!=pid,'heavy owner must be caller ancestor, not unrelated work')
             pid=actor['ppid']
-        need(self.chain[-1]==self.holder and all(x['uid']==uid for x in self.chain),'same admitted caller/heavy ancestry')
+        self.holder=self.chain[-1]
+        need(all(x['uid']==uid for x in self.chain),'same admitted caller/heavy ancestry')
+        if heavy_source is not None:
+            need(self.holder['exe']=='/usr/bin/bash'and len(self.holder['argv'])>1 and self.holder['argv'][1]==heavy_source['path'],
+                 'pinned live Bash heavy wrapper ancestor')
+        self.heavy_fd,self.heavy_record=self.inherited_lock()
         self.check()
+    def inherited_lock(self):
+        matches=[];st=os.fstat(self.rows[1][0])
+        for path in (Path('/proc')/str(self.holder['pid'])/'fd').iterdir():
+            try:
+                held=path.stat()
+                if(held.st_dev,held.st_ino)!=(st.st_dev,st.st_ino):continue
+                records=[x.split('lock:',1)[1].strip()for x in (path.parent.parent/'fdinfo'/path.name).read_text().splitlines()if x.startswith('lock:')]
+            except FileNotFoundError:continue
+            for record in records:
+                fields=record.split()
+                if len(fields)>=8 and fields[1]=='FLOCK'and fields[3]=='WRITE':
+                    major,minor,inode=fields[5].split(':')
+                    if(int(major,16),int(minor,16),int(inode))==(os.major(st.st_dev),os.minor(st.st_dev),st.st_ino):matches.append((int(path.name),record))
+        need(len(matches)==1,'one actual admitted heavy owner inherited OFD FLOCK descriptor')
+        return matches[0]
     def check(self):
         for (fd,path),before in zip(self.rows,self.original):
             held=os.fstat(fd);named=path.lstat()
@@ -260,18 +278,12 @@ class LockFence:
         # Failed normal contenders may truncate this empty file: timestamps are
         # not lock authority. Kernel FLOCK PID plus held inode and ancestry are.
         need(kernel_holders(os.fstat(self.rows[0][0]))==[os.getpid()],'own actual canonical worker FLOCK')
-        need(kernel_holders(os.fstat(self.rows[1][0]))==[self.holder['pid']],'normal heavy owner no longer holds its lock')
+        need(self.inherited_lock()==(self.heavy_fd,self.heavy_record),'normal heavy owner no longer holds its lock')
         need(all(process(x['pid'])==x for x in self.chain),'admitted caller/holder PID-start-UID-argv-exe drift')
         if self.source is not None:
             read_pin(self.source,1048576,self.uid)
             need(self.holder['exe']=='/usr/bin/bash'and self.holder['argv'][1]==self.source['path'],
                  'actual normal heavy wrapper source and interpreter')
-        held=[]
-        for path in (Path('/proc')/str(self.holder['pid'])/'fd').iterdir():
-            try:st=path.stat()
-            except FileNotFoundError:continue
-            if(st.st_dev,st.st_ino)==self.original[1][:2]:held.append(path.name)
-        need(held,'actual heavy holder descriptor remains open')
 
 def valid_job(job):
     need(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*',job)is not None and len(job)<=200,'confined normal job identifier')

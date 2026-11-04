@@ -162,7 +162,7 @@ class RebootReconciliationTests(unittest.TestCase):
             str(self.root/'heavy.lock')],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
         try:
             self.assertEqual(child.stdout.readline(),b'held\n')
-            with self.assertRaisesRegex(ValueError,'ancestor'):
+            with self.assertRaisesRegex(ValueError,'heavy owner'):
                 R.LockFence(self.worker,self.root/'worker.lock',self.heavy_probe,self.root/'heavy.lock',os.getuid())
             self.assertEqual(R.ledger(self.db),self.before)
         finally:child.communicate(b'',timeout=5)
@@ -174,5 +174,30 @@ class RebootReconciliationTests(unittest.TestCase):
             with self.subTest(job=job),self.assertRaises(ValueError):R.create_history(self.root,job)
         other=self.root/'logs'/'foreign';other.symlink_to(parent,target_is_directory=True)
         with self.assertRaises(ValueError):R.create_history(self.root,'foreign')
+
+    def test_real_external_flock_wrapper_preserves_inherited_ofd_owner(self):
+        wrapper=self.root/'normal-heavy.sh'
+        wrapper.write_text('#!/bin/bash\nset -euo pipefail\nexec 9>"$1"\nshift\nflock -n 9\n"$@"\n');wrapper.chmod(0o700)
+        raw=wrapper.read_bytes();pin={'path':str(wrapper),'bytes':len(raw),'sha256':R.sha(raw),'identity':R.identity(wrapper.lstat())}
+        fcntl.flock(self.heavy_owner,fcntl.LOCK_UN)
+        code="""import importlib.util,json,os,fcntl,sys
+from pathlib import Path
+sp=importlib.util.spec_from_file_location('recovery',sys.argv[1]);r=importlib.util.module_from_spec(sp);sp.loader.exec_module(r)
+w=os.open(sys.argv[2],os.O_RDWR);h=os.open(sys.argv[3],os.O_RDWR)
+try:
+ fcntl.flock(w,fcntl.LOCK_EX|fcntl.LOCK_NB)
+ x=r.LockFence(w,sys.argv[2],h,sys.argv[3],os.getuid(),json.loads(sys.argv[4]));x.check()
+ print(json.dumps({'holder':x.holder['pid'],'acquisitionPID':int(x.heavy_record.split()[4]),'freshRealOFD':True}))
+finally:os.close(w);os.close(h)
+"""
+        # The parent fixture releases its worker lock: the actual child owns it.
+        fcntl.flock(self.worker,fcntl.LOCK_UN)
+        result=subprocess.run([str(wrapper),str(self.root/'heavy.lock'),sys.executable,'-c',code,
+            R.__file__,str(self.root/'worker.lock'),str(self.root/'heavy.lock'),json.dumps(pin)],
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=5)
+        self.assertEqual(result.returncode,0,result.stderr.decode())
+        value=json.loads(result.stdout);self.assertTrue(value['freshRealOFD'])
+        self.assertNotEqual(value['holder'],value['acquisitionPID'])
+        fcntl.flock(self.worker,fcntl.LOCK_EX|fcntl.LOCK_NB)
 
 if __name__=='__main__':unittest.main()

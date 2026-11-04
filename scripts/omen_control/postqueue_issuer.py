@@ -119,7 +119,7 @@ class NativeIssueOps:
   c=parent['candidate'];before=set(os.listdir('/proc/self/fd'));old=protected(parent['prequeuePreflightPin']);now=self.now()
   p.need(parent['installedSchemaReceiptPin']is not None and parent['sudoPin']is not None and parent['nativeTools']is not None,'actual installed schema/sudo/native tool operands before grant')
   protected(parent['installedSchemaReceiptPin']);pre.measured(parent['sudoPin'],33554432)
-  expected_tools={'/usr/bin/virt-xml-validate','/usr/bin/xmllint','/usr/sbin/losetup','/usr/bin/mount','/usr/bin/umount','/var/lib/opemos-vfio-idle-d3/modprobe','/var/lib/opemos-vfio-idle-d3/managed_vfio.py'}
+  expected_tools={'/usr/bin/virt-xml-validate','/usr/bin/xmllint','/usr/sbin/losetup','/usr/bin/mount','/usr/bin/umount','/var/lib/opemos-vfio-idle-d3/modprobe','/var/lib/opemos-vfio-idle-d3/rmmod','/var/lib/opemos-vfio-idle-d3/managed_vfio.py'}
   p.need(set(parent['nativeTools'])==expected_tools,'closed exact native tool role set')
   for path,ref in parent['nativeTools'].items():p.need(ref['path']==path,'exact native tool path');pre.measured(ref,33554432)
   g.update(installedSchemaReceiptPin=parent['installedSchemaReceiptPin'],sudoPin=parent['sudoPin'],nativeTools=parent['nativeTools'])
