@@ -13,7 +13,7 @@ ORIGINAL_PEER_SHA='7e1663f8351247b9643b7c14419119449b0bd0722a46b80ae0f8ea34a9f98
 SOURCE_ROOT=None
 SOURCE_CONTRACT_SHA='4cb604515bbb577e6448283a7b785249929c73216e890a06ca5c531e25bd6e5d'
 CURRENT_DEFINITION=None
-ACCESS_SHA='abe97839a242fd58cc1ab88920dc3b2d6d6d207644372750ca730992d627c274';ACCESS_BYTES=35752
+ACCESS_SHA='b20d291ca7676e0e37c9f80c973c26222e0f241fec2196fba3b6023e4f9edba2';ACCESS_BYTES=36742
 ORIGINAL_ACCESS_SHA='ee32a4e84df796d6932062ded9e1049ce5e82cbbf01315d8c74da96b9e03aa9e';ORIGINAL_ACCESS_BYTES=33928
 ROLES={'libvirt_peer','libvirt_access','libvirt_native','libvirt_preflight','libvirt_producer','queue_assignment','runtime_entry','guest_delta','guest_firmware_probe','held_history_reader','two_boot_contract','postqueue_issuer','libvirt_storage','retained_media','source_contract'}
 def placement_root(candidate):

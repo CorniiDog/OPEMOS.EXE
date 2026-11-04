@@ -5211,3 +5211,10 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   exact Core source/caller/effects review. Cap2 prevents another PR; no force/
   branchprotection/merge waiver. Current Main e8b0 preserved, no installed source
   overwritten. No host/GPU/trust/governance/Core source or media mutation.
+
+- First2e9c automatic Linux126861652332/Checks41911980280 failed the existing
+  actual normal-queue/current-access equality check, before Root stage regression:
+  access body changed but adapter and embedded final queue still pinned oldabe978.
+  Preserved full raw first. Coherent successor updates exact current adapter
+  access bytes/SHA and final queue embedded adapter + access pin together; original
+  ee32/7e source identities remain unchanged historical data. No validator bypass.
