@@ -59,6 +59,27 @@ def github(p,m):
             'actionsInProgress':assigned,'actionsQueued':queued,'heartbeatCurrent':current,'heartbeatNonce':nonce}
 
 
+
+class RunnerStatusTransition(RuntimeError):
+    """A zero-assigned-work API status transition needs a fresh machine cut."""
+    def __init__(self, before, after):
+        super().__init__('idle runner online/offline transition during probe')
+        keys = ('runnerOnline', 'runnerBusy', 'actionsInProgress')
+        self.before = {key: before[key] for key in keys}
+        self.after = {key: after[key] for key in keys}
+
+
+def require_stable_assignment(before, after):
+    for key in ('runnerBusy', 'actionsInProgress'):
+        if before[key] != after[key]:
+            raise RuntimeError('actual assigned-work transition during probe')
+    if before['runnerOnline'] != after['runnerOnline']:
+        if all(value['runnerBusy'] is False and type(value['actionsInProgress']) is int
+               and value['actionsInProgress'] == 0 for value in (before, after)):
+            raise RunnerStatusTransition(before, after)
+        raise RuntimeError('actual assigned-work transition during probe')
+
+
 def observe(inputs):
     p=json.loads(read(inputs['policyPin']));ref=inputs['normalProbePin'];source=read(ref)
     if ref['sha256']!=p['normalProbeSHA256']:raise RuntimeError('exact installed normal source')
@@ -71,8 +92,7 @@ def observe(inputs):
                           capture_output=True,timeout=25)
     if result.returncode!=0 or result.stderr or len(result.stdout)>1048576:raise RuntimeError('actual readonly normal peer failure: '+result.stderr.decode(errors='replace')[:2048])
     value=json.loads(result.stdout);after=github(p,m)
-    for key in('runnerOnline','runnerBusy','actionsInProgress'):
-        if before[key]!=after[key]:raise RuntimeError('actual assigned-work transition during probe')
+    require_stable_assignment(before, after)
     if value['kind']!='ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1'or value['effects']!=[]or not 0<=time.time()-value['atUnix']<=15:
         raise RuntimeError('fresh normal source/native observation')
     for key in('runnerManifestSHA256','queueSourceSHA256','queueLoggerSHA256','jobStartedSHA256','jobGuardSHA256',

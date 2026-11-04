@@ -5091,3 +5091,6 @@ current and their repository ownership is unambiguous.
   The latest optional-telemetry/installed-probe wiring needs its exact head CI
   and Core source/PR/effects review. No new installation or VM run yet; current
   normal Runner21 work remains owned and is not inferred absent from old cuts.
+
+
+2026-11-04 EXE R121: R120 merged e8b0fcbb source installed; actual ab684663 normal idle listener bd0e retired through normal API, failed/CLOSED/released and both locks free. GitHub online->offline change inside the following probe was rejected before media submission. Preserve actual FIRST/raw/native59.51s EOF/reap/FD/childset and timer restoration in exe-r120-fresh-normal-media-20261103/actual-first-status-transition-outcome.json SHA56a80ee5. Bound only post-drain zero-assigned-work online/offline convergence by fresh full cuts within the existing20s; busy/assignment/source/unknown and pre-drain transitions still refuse. No stale carrier mutation, repeat signal, timeout expansion, original namespace/ACL/grant replay or runtime acceptance. Admitted CI and exact Core source/PR/effects review required before owning squash and fresh attempt; reuse unchanged R120 controller/media code and full9, create-only new window profile.

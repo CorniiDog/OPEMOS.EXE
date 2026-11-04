@@ -346,6 +346,55 @@ class RetainedMediaContract(unittest.TestCase):
             for path in (installer.SOURCE_ROOT,queue_root,drain_root,*reversed(created)):
                 if path.exists(): shutil.rmtree(path)
 
+    def test_idle_offline_transition_requires_fresh_post_drain_cut(self):
+        """Actual producer predicate and consumer; API/peer facts are explicit modeled inputs."""
+        import time
+        online = {'runnerOnline':True, 'runnerBusy':False, 'actionsInProgress':0}
+        offline = dict(online, runnerOnline=False)
+        calls = []
+        final = dict(offline, networkReachable=True, sourceOwnerBusy=False, queueKnown=True,
+                     otherActiveJobs=[], unknownReservations=[], guestActive=False,
+                     gpuLeaseActive=False, hostGraphics='INTEL_HOST_NVIDIA_GUEST_ONLY',
+                     workerLockFree=True, control={'state':'passed', 'terminalLifecycle':'CLOSED',
+                                                   'reservationRetained':False})
+        def modeled_external_observation(inputs):
+            calls.append(inputs)
+            if len(calls) == 1: media_probe.require_stable_assignment(online, offline)
+            media_probe.require_stable_assignment(offline, offline)
+            return final
+        probe = types.SimpleNamespace(observe=modeled_external_observation,
+                                      RunnerStatusTransition=media_probe.RunnerStatusTransition)
+        cuts = []
+        result = media_window.observe_after_drain(probe, {'modeledAPI':True}, time.monotonic()+3, cuts)
+        self.assertIs(result, final)
+        self.assertEqual(len(calls),2)
+        self.assertEqual(cuts,[{'runnerStatusTransition':{'before':online,'after':offline}}])
+        media_window.admitted_media(result)
+        with self.assertRaises(media_probe.RunnerStatusTransition):
+            media_probe.require_stable_assignment(online, offline)  # no pre-drain retry/acceptance
+        with self.assertRaisesRegex(RuntimeError,'bounded runner status'):
+            media_window.observe_after_drain(types.SimpleNamespace(
+                observe=lambda inputs:media_probe.require_stable_assignment(online,offline),
+                RunnerStatusTransition=media_probe.RunnerStatusTransition), {}, time.monotonic()-1, [])
+
+    def test_assigned_busy_and_unknown_probe_failures_remain_final(self):
+        import time
+        idle={'runnerOnline':True,'runnerBusy':False,'actionsInProgress':0}
+        for after in (dict(idle,runnerBusy=True),dict(idle,actionsInProgress=1),
+                      dict(idle,runnerOnline=False,actionsInProgress=1)):
+            calls=[]
+            def external(inputs):
+                calls.append(inputs);media_probe.require_stable_assignment(idle,after)
+            probe=types.SimpleNamespace(observe=external,RunnerStatusTransition=media_probe.RunnerStatusTransition)
+            with self.assertRaises(RuntimeError) as caught:
+                media_window.observe_after_drain(probe,{},time.monotonic()+3,[])
+            self.assertNotIsInstance(caught.exception,media_probe.RunnerStatusTransition)
+            self.assertEqual(len(calls),1)
+        def unknown(inputs):raise RuntimeError('actual source drift')
+        with self.assertRaisesRegex(RuntimeError,'actual source drift'):
+            media_window.observe_after_drain(types.SimpleNamespace(
+                observe=unknown,RunnerStatusTransition=media_probe.RunnerStatusTransition),{},time.monotonic()+3,[])
+
     def test_repository_queue_and_heartbeat_are_not_media_permission(self):
         for queued in (None, 0, 100):
             value = {'networkReachable':True,'runnerBusy':False,'actionsInProgress':0,
