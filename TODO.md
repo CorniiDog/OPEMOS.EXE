@@ -5047,3 +5047,12 @@ current and their repository ownership is unambiguous.
   unresolved R118 owner. Actual installed operation data reconciliation and fresh
   heartbeat require its safe machine checkpoint. Automatic non-Main job/domain,
   CPU/console/installer/GPU and normal-closure acceptance remain unverified.
+  Core exact expanded-head review `b574b79e` withheld one four-finding bundle:
+  obsolete Windows workflow validator/cardinality, probe busy-owner conflation,
+  heartbeat/first-hook lease mismatch and global dispatch-history count gate.
+  Same-stream successor repairs the actual validator/tests, classifies known
+  busy units through canonical/kernel invocation bindings separately from source
+  writers/unknown actors, preserves the real 19000-second hook window, and uses
+  fresh correlated API pagination. Prior failures and the frozen reviewed head
+  remain intact. New exact source/effects review and admitted CI are required;
+  actual R118/installed owner and the TWO cap remain held.

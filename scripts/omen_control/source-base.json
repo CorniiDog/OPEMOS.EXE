@@ -13,6 +13,9 @@
     },
     "planner.py": {
       "installed_predecessor_sha256": "d292db204ab5b65738e94be874ed64f2d647b3cfbf91267676789c926be7c8ef"
+    },
+    "normal_probe.py": {
+      "installed_predecessor_sha256": "93094a173988a3243c8fdb09a111189e7ccfe7c4d6befa6be60db187f8dd2199"
     }
   },
   "job_guard_predecessor_authenticated_by": "actual R118 machine source observation before media entry",

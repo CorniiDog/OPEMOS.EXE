@@ -63,9 +63,11 @@ def state_from_current(probe,policy,now,nonce):
          control['workerAlive'] is True and
          control['ownUnitBound'] is True and
          control['leaseExpiresUnix'] is not None and
-         control['leaseExpiresUnix']>now+180 and
-         not probe['sourceOwnerBusy'] and
-         not probe['unknownReservations'],
+         type(control['leaseExpiresUnix']) is int and
+         control['leaseExpiresUnix']>now+19000 and
+         probe['sourceWritersBusy'] is False and
+         probe['unclassifiedRuntimeActors']==[] and
+         probe['unknownReservations']==[],
          'actual current same-source runner/control/listener not jointly proven')
     return {'version':1,'repository':REPO,
             'source_commit':policy['mainCommit'],'checked_at':now,
@@ -112,7 +114,7 @@ def main():
          'fixed Root heartbeat source entry')
     source,policy=load_probe()
     need(source.root_policy()==policy,'current Root policy changed during heartbeat source load')
-    probe=source.observe()
+    probe=source.observe(route_only=True)
     now=int(time.time())
     control=probe['control']
     prefix='root-github-robot-control-'

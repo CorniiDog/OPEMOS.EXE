@@ -179,6 +179,11 @@ def github(path, token=None):
     return json.loads(raw)
 
 
+def job_window_valid(not_before,expires_at,now):
+    """The real first-hook four-hour job plus cleanup/backoff predicate."""
+    return (type(not_before) is int and type(expires_at) is int and
+            type(now) is int and not_before<=now and expires_at-now>19000)
+
 def remaining_job_window(lease, peer, now):
     """First hook attestation only; the token binding retains its birth epoch.
 
@@ -200,9 +205,7 @@ def remaining_job_window(lease, peer, now):
     need(policy.get("kind") == "ROOT_FIXED_SCOPED_CONNECTION_POLICY_V1" and
          policy.get("sourceCommit") == lease["engine_source_commit"] and
          policy.get("queueSourceSHA256") == lease["connection_queue_sha256"] and
-         type(policy.get("expiresAt")) is int and
-         type(policy.get("notBefore")) is int and
-         policy["notBefore"] <= now and policy["expiresAt"] - now > 19000,
+         job_window_valid(policy.get("notBefore"),policy.get("expiresAt"),now),
          "finite 240-minute job plus cleanup/poll/backoff admission window")
     group = peer["namespace"]["cgroup"]
     units = re.findall(r"opemos-testq-[0-9a-f-]+\.service", group)

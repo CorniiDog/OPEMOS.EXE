@@ -11,7 +11,7 @@ import json
 import os
 from pathlib import Path
 import stat
-from datetime import datetime
+from datetime import datetime,timezone
 import re
 import secrets
 import sys
@@ -261,6 +261,29 @@ def candidate_context(value, expected, nonce, workflow_source):
  require(value['workflow_source_commit']==workflow_source and re.fullmatch('[0-9a-f]{40}',value['source_commit']or''),'exact authenticated controller workflow and installed source')
  return value
 
+def correlated_dispatch(read,title,created_after,deadline):
+ """Look only in this dispatch's fresh API interval, across actual pages.
+
+ Lifetime workflow history is not a launch quota. Package job/artifact reads
+ retain their separate complete-inventory checks; this is discovery only.
+ """
+ query=parse.urlencode({'event':'workflow_dispatch','created':'>='+created_after,'per_page':100})
+ page=1;seen={};matches={}
+ while True:
+  require(time.monotonic()<deadline,'finite current dispatch discovery deadline')
+  value=read('actions/workflows/omen-robot.yml/runs?'+query+'&page='+str(page))
+  rows=value.get('workflow_runs');total=value.get('total_count')
+  require(type(total)is int and total>=0 and type(rows)is list and len(rows)<=min(total,100),'typed current dispatch page')
+  for run in rows:
+   require(type(run)is dict and type(run.get('id'))is int and run['id']>0,'authenticated dispatch run identity')
+   if run.get('display_title')==title:matches[run['id']]=run
+   seen[run['id']]=True
+  require(len(matches)<=1,'ambiguous dispatch correlation; no second dispatch')
+  if len(seen)>=total:break
+  require(len(rows)==100,'fresh dispatch interval enumeration incomplete')
+  page+=1
+ return next(iter(matches.values()))if matches else None
+
 def main_dispatch(platform):
  directory=Path('required-omen-results');context=None;selected=None
  try:
@@ -273,6 +296,7 @@ def main_dispatch(platform):
   except Exception as secondary:print('Optional request diagnostic unavailable: '+type(secondary).__name__,file=sys.stderr)
   inputs={'required_platform':platform,'producer_run':expected['producer_run_id'],'producer_attempt':expected['producer_attempt'],'artifact_id':expected['artifact_id'],'source_sha':source,'correlation_nonce':nonce}
   body=json.dumps({'ref':'main','inputs':inputs}).encode();opener=request.build_opener(NoRedirect)
+  created_after=datetime.fromtimestamp(time.time()-60,timezone.utc).isoformat(timespec='seconds').replace('+00:00','Z')
   try:
    with opener.open(request.Request('https://api.github.com/repos/'+REPO+'/actions/workflows/omen-robot.yml/dispatches',data=body,headers=token_headers(),method='POST'),timeout=20)as response:require(response.status==204 and response.read(1)==b'','one dispatch acknowledgement')
   except error.HTTPError as refused:
@@ -281,10 +305,9 @@ def main_dispatch(platform):
   deadline=time.monotonic()+14400;selected=None
   title=f'04 SteamOS required {platform} {expected["producer_run_id"]}/{expected["producer_attempt"]} {nonce}'
   while time.monotonic()<deadline:
-   runs=items(read,'actions/workflows/omen-robot.yml/runs?event=workflow_dispatch','workflow_runs');matches=[r for r in runs if r.get('display_title')==title]
-   require(len(matches)<=1,'ambiguous dispatch correlation; no second dispatch')
-   if matches:
-    selected=matches[0];require(re.fullmatch('[0-9a-f]{40}',selected['head_sha']or'')and selected['head_branch']=='main'and selected['event']=='workflow_dispatch'and selected['repository']['full_name']==REPO,'reviewed controller workflow run identity')
+   selected=correlated_dispatch(read,title,created_after,deadline)
+   if selected:
+    require(re.fullmatch('[0-9a-f]{40}',selected['head_sha']or'')and selected['head_branch']=='main'and selected['event']=='workflow_dispatch'and selected['repository']['full_name']==REPO,'reviewed controller workflow run identity')
     if selected['status']=='completed':break
    time.sleep(10)
   require(selected is not None and selected['status']=='completed','OMEN result unavailable/timed out; no retry or old receipt')

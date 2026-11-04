@@ -47,6 +47,58 @@ class Metadata:
  def verify(self):return gate.producer_ready(SOURCE,self.value['platform'],'10','2',self.read,self.download)
 
 class RequiredProducerTests(unittest.TestCase):
+ def test_actual_dispatch_pages_past_lifetime_history_for_fresh_non_main_candidate(self):
+  """Real issuer/result verifier, modeled GitHub/native result, no VM claim."""
+  m=Metadata();m.run['head_branch']='work/dev';m.value['ref']='refs/heads/work/dev'
+  m.raw=encoded_zip('executable-producer.json',m.value);m.artifacts[1]['digest']='sha256:'+hashlib.sha256(m.raw).hexdigest()
+  state={};pages=[];controller='e'*40;workflow='d'*40
+  class Response:
+   status=204
+   def __enter__(self):return self
+   def __exit__(self,*args):pass
+   def read(self,n):return b''
+  class Opener:
+   def open(self,req,timeout):
+    nonce=json.loads(req.data)['inputs']['correlation_nonce'];state['title']='04 SteamOS required ubuntu 10/2 '+nonce
+    acceptance={'status':'passed','executable':m.value,'source_commit':controller,'run_id':'50','attempt':'1','actual_receipt_verified':True,'active':False,'operation_nonce':'f'*32}
+    for field in('build_receipt_sha256','heal_receipt_sha256','install_receipt_sha256','image_sha256','image_manifest_sha256','usb_readback_sha256'):acceptance[field]='a'*64
+    for field in('output_identity','target_generation','target_id','target_disk_identity','baseline_boot_id','installed_root_uuid','installed_efi_uuid','imaging_host_id'):acceptance[field]='synthetic-native-fact-'+field
+    proof={'schema':1,'verified':True,'source_commit':controller,'run_id':'50','attempt':'1','operation_nonce':'f'*32,'executable':m.value,'sender_sha256':'b'*64,'actions':[]}
+    for i,name in enumerate(('chooser-open','chooser-confirm-exact-input','Build','virtualUSB-select-and-review','virtualUSB-Write-confirmation'),1):
+     action={'action':name,'action_id':format(i,'032x')}
+     for field in('record_sha256','transition_sha256','sender_lifecycle_sha256','target_observation_sha256'):action[field]='c'*64
+     for side,j in(('before',i*2),('after',i*2+1)):action[side]={'capture_id':format(j,'032x'),'frame_sha256':'d'*64,'capture_receipt_sha256':'a'*64}
+     proof['actions'].append(action)
+    proof['proof_sha256']=gate.digest(proof);acceptance['pointer_acceptance']=proof
+    result={'kind':'OMEN_REQUIRED_PRODUCER_RESULT_V1','context':{'repository':gate.REPO,'source_commit':controller,'workflow_source_commit':workflow,'candidate_source_commit':SOURCE,'target':gate.target(m.value),'nonce':nonce},'producer':m.value,'consumer':{'run_id':'50','attempt':'1'},'status':'passed','diagnostic_only':False,'required_acceptance':acceptance}
+    state['zip']=encoded_zip('required-result.json',result)
+    return Response()
+  def read(path):
+   if path.startswith('actions/workflows/omen-robot.yml/runs?'):
+    query=gate.parse.parse_qs(gate.parse.urlsplit(path).query);self.assertIn('created',query)
+    page=int(query['page'][0]);pages.append(page)
+    if page==1:return {'total_count':101,'workflow_runs':[{'id':100+i,'display_title':'unrelated old dispatch'}for i in range(100)]}
+    return {'total_count':101,'workflow_runs':[{'id':50,'run_attempt':1,'display_title':state['title'],'head_sha':workflow,'head_branch':'main','event':'workflow_dispatch','repository':{'full_name':gate.REPO},'status':'completed'}]}
+   if path.startswith('actions/runs/50/attempts/1/jobs?'):return {'total_count':2,'jobs':[{'name':name,'status':'completed','conclusion':'success'}for name in('required-platform-robot','required-platform-result')]}
+   if path.startswith('actions/runs/50/artifacts?'):return {'total_count':1,'artifacts':[{'id':60,'name':'omen-required-result-50-1','expired':False,'digest':'sha256:'+hashlib.sha256(state['zip']).hexdigest()}]}
+   if path=='actions/runs/50':return {'run_attempt':1,'status':'completed','conclusion':'success'}
+   return m.read(path)
+  def download(path):return state['zip']if path=='actions/artifacts/60/zip'else m.download(path)
+  with tempfile.TemporaryDirectory()as temp:
+   prior=os.getcwd();os.chdir(temp)
+   try:
+    env={'GITHUB_REPOSITORY':gate.REPO,'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/heads/work/dev','GITHUB_SHA':SOURCE,'GITHUB_TOKEN':'synthetic-token','GITHUB_RUN_ID':'10','GITHUB_RUN_ATTEMPT':'2'}
+    with patch.dict(os.environ,env),patch.object(gate,'api_reader',return_value=read),patch.object(gate,'metadata_download',side_effect=download),patch.object(gate.request,'build_opener',return_value=Opener()):
+     self.assertEqual(gate.main_dispatch('ubuntu'),0)
+    result=json.loads(Path('required-omen-results/required-result.json').read_bytes());self.assertEqual(result['context']['source_commit'],controller);self.assertEqual(pages,[1,2])
+   finally:os.chdir(prior)
+ def test_duplicate_correlation_across_pages_and_expired_discovery_refuse(self):
+  def read(path):
+   page=int(gate.parse.parse_qs(gate.parse.urlsplit(path).query)['page'][0])
+   rows=[{'id':i+1,'display_title':'target'if i==0 else'old'}for i in range(100)]if page==1 else[{'id':200,'display_title':'target'}]
+   return {'total_count':101,'workflow_runs':rows}
+  with self.assertRaisesRegex(gate.Refusal,'ambiguous'):gate.correlated_dispatch(read,'target','2026-11-04T00:00:00Z',gate.time.monotonic()+10)
+  with self.assertRaisesRegex(gate.Refusal,'deadline'):gate.correlated_dispatch(read,'target','2026-11-04T00:00:00Z',0)
  def parent_failed_result(self, temp, stale=False, collision=False):
   m=Metadata();state={}
   failure={'kind':'OPEMOS_BROKER_FAILURE_V1','code':'ACTIONS_TOKEN_REQUIRED','reason':gate.PUBLIC_FAILURES['ACTIONS_TOKEN_REQUIRED'],'error_type':'ValueError','private_recorded':True,'secondary':[]}

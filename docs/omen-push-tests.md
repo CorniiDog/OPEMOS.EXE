@@ -74,6 +74,19 @@ queue supplies serialization and pool admission. Source/worker/unknown-reservati
 and finite lease faults still refuse. Freshness remains 180 seconds. A later Main
 merge does not silently relabel an older installed controller as new source.
 
+The heartbeat uses the real probe's read-only route view: the registered Runner21
+API record, exact installed sources, current canonical/kernel pool bindings,
+actual source writers and unclassified runtime actors. Known admitted other
+units may be busy; unbound actors, changed invocations or source writers refuse.
+The effect-bearing recovery probe keeps its stricter existing behavior. Routing
+and the real first hook both retain the 19,000-second execution/cleanup window;
+the first hook revalidates after queue delay and never renews an old lease.
+
+Dispatch lookup uses the API creation-time interval and pagination to find the
+fresh correlation nonce. Repository lifetime dispatch count is not a launch
+quota. Duplicate correlation, missing/incomplete current data, changed attempts
+and the existing finite deadline still refuse.
+
 ## Evidence and current limits
 
 Optional preflight catalogs, summary paths and diagnostic uploads cannot authorize

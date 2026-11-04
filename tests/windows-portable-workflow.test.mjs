@@ -9,8 +9,8 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workflow = await readFile(path.join(repo, ".github", "workflows", "windows-portable.yml"), "utf8");
 
 function injectUntrustedWriteToken(text) {
-  const changed = text.replace(/  omen-required-untrusted:\r?\n/, "  omen-required-untrusted:\n    permissions:\n      actions: write\n");
-  assert.notEqual(changed, text, "untrusted write-token fault must actually be injected");
+  const changed = text.replace(/  build:\r?\n/, "  build:\n    permissions:\n      actions: write\n");
+  assert.notEqual(changed, text, "native build write-token fault must actually be injected");
   return changed;
 }
 
@@ -32,8 +32,10 @@ test("Windows portable workflow accepts CRLF checkout line endings", () => {
 
 for (const [name, mutate, expected] of [
   ["untrusted write token", injectUntrustedWriteToken, /isolate its sole write token/],
-  ["untrusted dispatch", text => text.replace(" diagnostics --directory required-omen-results ", " dispatch-and-wait --platform windows "), /unavailable outcome reports/],
-  ["mutable Main gate checkout", text => text.replace("ref: ${{ github.sha }}", "ref: refs/heads/main"), /immutable Main gate checkout/],
+  ["Main-only candidate dispatch", text => text.replace("if: github.repository == 'CorniiDog/OPEMOS.EXE' && (github.event_name == 'push'", "if: github.repository == 'CorniiDog/OPEMOS.EXE' && github.ref == 'refs/heads/main' && (github.event_name == 'push'"), /automatic same-repository push/],
+  ["mutable candidate gate checkout", text => text.replace("ref: ${{ github.sha }}", "ref: refs/heads/main"), /immutable candidate gate checkout/],
+  ["Main-only native trigger", text => text.replace('branches: ["**"]', 'branches: [main]'), /automatic every-branch push/],
+  ["missing native package dependency", text => text.replace('needs: build', 'needs: []'), /passed native package dependency/],
   ["unbounded diagnostic dispatch", text => text.replace("if: github.event_name == 'workflow_dispatch' && inputs.producer-metadata-diagnostic", "if: always()"), /manual-only finite diagnostic/],
   ["diagnostic starts expensive seed", text => text.replace("if: ${{ !inputs.producer-metadata-diagnostic }}", "if: always()"), /no expensive source seed/],
   ["diagnostic bypasses native producer", text => text.replace("run: python scripts/diagnose_windows_producer_metadata.py", "run: echo skipped"), /actual native metadata producer/],

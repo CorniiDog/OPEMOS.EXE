@@ -18,6 +18,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).parents[1]/'scripts'))
+sys.path.insert(0,str(Path(__file__).parents[1]/'scripts/omen_control'))
 import required_omen as gate
 from test_omen_required import Metadata, encoded_zip
 
@@ -27,7 +28,7 @@ def load(name):
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     return module
 
-P=load('planner');H=load('normal_heartbeat')
+P=load('planner');H=load('normal_heartbeat');N=load('normal_probe');C=load('control')
 
 class AutomaticCandidateData(unittest.TestCase):
     def setUp(self):
@@ -146,18 +147,62 @@ class RouteHeartbeat(unittest.TestCase):
     def state(self):
         policy={'mainCommit':'e'*40,'queueSourceSHA256':'c'*64,'controlBrokerSHA256':'b'*64}
         probe={'networkReachable':True,'protectedMain':True,'mainCommit':'d'*40,'runnerOnline':True,
-            'runnerBusy':True,'actionsInProgress':4,'controlBrokerSHA256':'b'*64,'sourceOwnerBusy':False,
-            'unknownReservations':False,'otherActiveJobs':True,'guestActive':True,'gpuLeaseActive':True,
+            'runnerBusy':True,'actionsInProgress':4,'controlBrokerSHA256':'b'*64,'sourceOwnerBusy':True,'sourceWritersBusy':False,
+            'unknownReservations':[],'unclassifiedRuntimeActors':[],'otherActiveJobs':True,'guestActive':True,'gpuLeaseActive':True,
             'control':{'state':'running','sourceCommit':'e'*40,'queueSourceSHA256':'c'*64,
-                'listenerAlive':True,'controllerAlive':True,'workerAlive':True,'ownUnitBound':True,'leaseExpiresUnix':1300}}
+                'listenerAlive':True,'controllerAlive':True,'workerAlive':True,'ownUnitBound':True,'leaseExpiresUnix':22000}}
         return probe,policy
     def test_busy_real_runner_and_gpu_are_queueing_facts_not_route_vetoes(self):
         probe,policy=self.state();result=H.state_from_current(probe,policy,1000,'f'*32)
         self.assertEqual(result['source_commit'],'e'*40);self.assertEqual(result['expires_at'],1180)
         self.assertNotIn('gpu_admitted',result)
     def test_actual_source_worker_or_expiry_fault_still_refuses(self):
-        for key,value in [('listenerAlive',False),('workerAlive',False),('sourceCommit','a'*40),('leaseExpiresUnix',1180)]:
+        for key,value in [('listenerAlive',False),('workerAlive',False),('sourceCommit','a'*40),('leaseExpiresUnix',20000)]:
             probe,policy=self.state();probe['control'][key]=value
             with self.assertRaises(RuntimeError):H.state_from_current(probe,policy,1000,'f'*32)
+    def test_source_writer_still_refuses_busy_route(self):
+        probe,policy=self.state();probe['sourceWritersBusy']=True
+        with self.assertRaises(RuntimeError):H.state_from_current(probe,policy,1000,'f'*32)
+    def test_actual_probe_busy_actor_classification_to_heartbeat(self):
+        own='opemos-testq-'+('a'*12)+'-'+('b'*32)+'.service'
+        vm='opemos-testq-'+('a'*12)+'-'+('c'*32)+'.service'
+        rows=[{'id':'controller','state':'running','unit':own},{'id':'admitted-vm','state':'running','unit':vm}]
+        bindings=[{'job_id':r['id'],'value':json.dumps({'unit':r['unit'],'invocation':str(i)*32})}for i,r in enumerate(rows,1)]
+        pool={'admitted':True,'unknownReservationsRetained':[],'knownInvocations':{own:'1'*32,vm:'2'*32}}
+        actors=[{'pid':100,'start':123,'uid':1000,'argv':['/installed/queue_job.py'],'cgroup':'0::/opemos.slice/'+vm}]
+        probe,policy=self.state()
+        probe['unclassifiedRuntimeActors']=N.unclassified_route_actors(actors,own,rows,bindings,pool)
+        self.assertTrue(H.state_from_current(probe,policy,1000,'f'*32)['ready'])
+        actors[0]['cgroup']='0::/unbound-foreign.service'
+        probe['unclassifiedRuntimeActors']=N.unclassified_route_actors(actors,own,rows,bindings,pool)
+        with self.assertRaises(RuntimeError):H.state_from_current(probe,policy,1000,'f'*32)
+        pool['knownInvocations'][vm]='3'*32
+        with self.assertRaises(RuntimeError):N.unclassified_route_actors(actors,own,rows,bindings,pool)
+    def test_heartbeat_and_actual_first_hook_clock_predicate_agree(self):
+        for expiry in (1300,20000,20001,22000):
+            probe,policy=self.state();probe['control']['leaseExpiresUnix']=expiry
+            expected=C.job_window_valid(0,expiry,1000)
+            if expected:self.assertTrue(H.state_from_current(probe,policy,1000,'f'*32)['ready'])
+            else:
+                with self.assertRaises(RuntimeError):H.state_from_current(probe,policy,1000,'f'*32)
+        # A queued delay never renews the original lease or waives first-hook
+        # revalidation. Existing normal idle-only renewal supplies a new owner.
+        self.assertFalse(C.job_window_valid(0,22000,4000))
+        probe,policy=self.state()
+        with self.assertRaises(RuntimeError):H.state_from_current(probe,policy,4000,'f'*32)
+    def test_real_route_metadata_uses_runner21_not_repository_job_frontier(self):
+        calls=[]
+        def github(path,timeout=10):
+            calls.append(path)
+            if path.endswith('/branches/main'):return {'protected':True,'commit':{'sha':'d'*40}}
+            if path.endswith('/actions/runners/21'):
+                return {'id':21,'name':'opemos-omen-robot','labels':[{'name':'opemos-omen-robot'}], 'status':'online','busy':True}
+            if '/actions/variables/' in path:raise RuntimeError('old heartbeat unavailable')
+            raise AssertionError('unrelated repository job inventory must not be requested: '+path)
+        with patch.object(N,'gh_json',side_effect=github):
+            value=N.current_github({'mainCommit':'e'*40,'queueSourceSHA256':'c'*64},route_only=True)
+        self.assertTrue(value['runnerOnline']);self.assertTrue(value['runnerBusy'])
+        self.assertEqual(value['mainCommit'],'d'*40);self.assertIsNone(value['actionsInProgress'])
+        self.assertFalse(any('/actions/runs?' in p for p in calls))
 
 if __name__=='__main__':unittest.main()
