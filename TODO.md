@@ -5248,3 +5248,16 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   Extend SAME installed-entry/fullconsumer fixture with wrong current queue and
   source refusals. No new manifest/framework, source relabel, hash waiver or
   control policy/source change. Retain b1 full raw/failed checks and5cd history.
+
+- Actuala638 Linux126870135491 progressed current paired queue normalization and
+  final normal observer, then exact stage-key schema rejected new ioAncestor.
+  Preserve first; no runtime deployment. Final queue now consumes this field
+  ONLY for authenticated current operationContext, requires exact shared path/
+  Root0711 identity, independently opens O_PATH nofollow held/named ancestry and
+  same inode/owner/mode without listing rights; all descriptors close in finally.
+  Legacy contextless stages retain their exact old keyset; stage producer emits
+  ioAncestor only for actual current context. Current access/adapter/embeddedqueue
+  bodies/pins rebound together, original pair intact. Existing real two-identity
+  UID fixture also invokes actual final queue ancestor consumer with owner/mode
+  refusals and FD closure. Complete installed normal observer is still the CI
+  acceptance path, not a helper-only success. Same data/device/queue/GPU guards.

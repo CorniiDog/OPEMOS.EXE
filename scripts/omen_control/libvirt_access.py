@@ -223,7 +223,8 @@ def stage_io(c,grant_pin,persist):
   row=(__import__('retained_media').access_row(c,path,ref,role)if __import__('retained_media').is_adopted(c)and role in('working','working-parent')else plan(path,ref,role,verified_content=(c['working']if role=='working'else None),readonly_media=(c.get('installer')is not None and role=='working')));rows.append(row);after.append(apply(row,persist,defer_working_hash=True))
  ancestor=io_ancestor(c)
  probe(rows,c['original']['path'],persist)
- result={'kind':'LIBVIRT_R7_ACCESS_STAGE_PENDING_FULL_HASH','nonce':c['nonce'],'bootID':g['bootID'],'candidate':c,'grantPin':grant_pin,'rows':rows,'after':after,'original':c['original'],'workingBefore':c['working'],'pendingFullContentProof':True,'runtimeAuthorized':False,'ioAncestor':ancestor}
+ result={'kind':'LIBVIRT_R7_ACCESS_STAGE_PENDING_FULL_HASH','nonce':c['nonce'],'bootID':g['bootID'],'candidate':c,'grantPin':grant_pin,'rows':rows,'after':after,'original':c['original'],'workingBefore':c['working'],'pendingFullContentProof':True,'runtimeAuthorized':False}
+ if ancestor is not None:result['ioAncestor']=ancestor
  persist('access-stage-pending',result);return result
 
 def prepared_lineage(c,ref,disk_pins):

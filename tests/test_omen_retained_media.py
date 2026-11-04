@@ -224,7 +224,14 @@ class RetainedMediaContract(unittest.TestCase):
                 ref=run.record('access-stage-pending',pending)
                 disks={'original':c['original'],'working':entry.pin(working)}
                 access.verify_prepared(c,ref,disks)
+                import test_queue as queue_consumer
+                queue_consumer.validate_current_io_ancestor(c,pending['ioAncestor'])
+                bad=copy.deepcopy(pending['ioAncestor']);bad['identity']['st_uid']=1000
+                with self.assertRaisesRegex(ValueError,'Root traverse-only'):
+                    queue_consumer.validate_current_io_ancestor(c,bad)
                 io_root.chmod(0o700)
+                with self.assertRaisesRegex(ValueError,'same current IO ancestor'):
+                    queue_consumer.validate_current_io_ancestor(c,pending['ioAncestor'])
                 with self.assertRaisesRegex(RuntimeError,'traverse-only IO ancestor'):
                     access.verify_prepared(c,ref,disks)
                 with self.assertRaisesRegex(RuntimeError,'effective UID working IO access')as caught:
