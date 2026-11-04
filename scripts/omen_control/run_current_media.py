@@ -14,8 +14,6 @@ import re
 import stat
 import sys
 import time
-import zlib
-import base64
 
 # Isolated Python omits the script directory. Only the installed, immutable
 # Root tree may become an import root; never a candidate/developer checkout.
@@ -325,7 +323,7 @@ class Run:
         captures = {k: self.capture_disk(self.c[k], k) for k in ('original', 'working')}
         captures.update({k: self.capture_disk(self.c['installer'][field], k)
                          for k, field in [('carrier', 'carrierSource'), ('retainedR66', 'retainedR66')]})
-        codec = self.record('prior-history-codec', {'value': {'data': base64.b64encode(zlib.compress(p.canon(values))).decode()}})
+        codec = producer.record_prior_history(values, self.record)
         state = Path(self.profile['queueStateRoot']); lock = pin(state / 'worker.lock')
         now = time.time()
         e = {'kind': 'ROOT_LIBVIRT_R4_PREFLIGHT_EXPECTATION', 'RootAdopted': True,

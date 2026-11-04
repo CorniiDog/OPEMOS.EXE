@@ -59,6 +59,45 @@ def operand():
 
 
 class RetainedMediaContract(unittest.TestCase):
+    @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'admitted Linux Root only')
+    def test_whole_history_normal_record_to_real_issuer_beyond_metadata_leaf(self):
+        import libvirt_producer as producer
+        import libvirt_peer as peer
+        import postqueue_issuer as issuer
+        import run_current_media as entry
+        root = Path('/run/opemos-history-chunks-' + uuid.uuid4().hex)
+        producer.create_root(str(root))
+        try:
+            run = object.__new__(entry.Run)
+            run.root = root; run.placement_root = root; run.sequence = 0
+            value = {'rows': [{'result': os.urandom(1500000).hex()}], 'bindings': [], 'config': []}
+            raw = peer.canon(value)
+            expected = {'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
+                        'counts': {k: len(v) for k, v in value.items()}}
+            ref = producer.record_prior_history(value, run.record)
+            parent = {'priorHistoryCodecPin': ref, 'priorHistory': expected}
+            self.assertEqual(issuer.adopted_history(parent), value)
+            codec = issuer.protected(ref)['value']
+            self.assertGreater(codec['bytes'], 1048576)
+            self.assertGreater(len(codec['chunks']), 1)
+            self.assertTrue(all(x['bytes'] <= 1048576 for x in codec['chunks']))
+            bad = copy.deepcopy(codec); bad['chunks'].reverse()
+            badref = run.record('wrong-order', {'value': bad})
+            with self.assertRaises(peer.Refused):
+                issuer.adopted_history(dict(parent, priorHistoryCodecPin=badref))
+            bad = copy.deepcopy(codec); bad['chunks'].pop()
+            badref = run.record('missing-part', {'value': bad})
+            with self.assertRaises(peer.Refused):
+                issuer.adopted_history(dict(parent, priorHistoryCodecPin=badref))
+            wrong = dict(expected, sha256='0' * 64)
+            with self.assertRaises(peer.Refused):
+                issuer.adopted_history(dict(parent, priorHistory=wrong))
+            leaf = Path(codec['chunks'][0]['path']); leaf.chmod(0o600)
+            leaf.write_bytes(b'{}'); leaf.chmod(0o400)
+            with self.assertRaises(peer.Refused): issuer.adopted_history(parent)
+        finally:
+            shutil.rmtree(root)
+
     def test_attempt_bound_placement_preserves_failed_namespace(self):
         c = {'nonce': 'a' * 32, 'jobId': 'fixture-e' + 'b' * 16, 'run': '/run/opemos-libvirt-io-' + 'a' * 32 + '-' + 'b' * 32 + '/run',
              'output': '/run/opemos-libvirt-io-' + 'a' * 32 + '-' + 'b' * 32 + '/output'}

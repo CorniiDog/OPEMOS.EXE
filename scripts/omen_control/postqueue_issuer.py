@@ -21,6 +21,26 @@ def protected(ref,mode=0o400,cap=1048576):
   raw=held(ref,cap);p.need(h.check()==i,'protected ancestry/final full9')
  return json.loads(raw)
 
+def adopted_history(parent):
+ """Authenticate every history leaf and the complete prior value before grant."""
+ import base64,zlib
+ ref=parent['priorHistoryCodecPin'];codec=protected(ref,cap=8388608)['value'];expected=parent['priorHistory']
+ p.need(type(expected['bytes'])is int and 0<expected['bytes']<=64*1024**2,'unchanged whole history64MiB')
+ if 'data'in codec:  # Immutable historical parents retain their original ABI.
+  compressed=base64.b64decode(codec['data'],validate=True)
+ else:
+  p.need(set(codec)=={'kind','bytes','sha256','chunks'}and codec['kind']=='ROOT_PRIOR_HISTORY_CHUNKS_V1','typed complete history chunks')
+  p.need(type(codec['bytes'])is int and 0<codec['bytes']<=expected['bytes']+65536 and type(codec['chunks'])is list and len(codec['chunks'])==(codec['bytes']+524287)//524288,'complete finite compressed history')
+  parts=[];offset=0;names=set()
+  for chunkref in codec['chunks']:
+   path=Path(chunkref['path']);p.need(path.parent==Path(ref['path']).parent and path.name not in names,'same protected history namespace, unique leaves');names.add(path.name)
+   part=protected(chunkref);p.need(set(part)=={'offset','data'}and type(part['offset'])is int and part['offset']==offset,'ordered complete history spans')
+   data=base64.b64decode(part['data'],validate=True);p.need(len(data)==min(524288,codec['bytes']-offset),'complete history chunk length');parts.append(data);offset+=len(data)
+  compressed=b''.join(parts);p.need(offset==codec['bytes']and hashlib.sha256(compressed).hexdigest()==codec['sha256'],'whole compressed history hash')
+ decoder=zlib.decompressobj();raw=decoder.decompress(compressed,expected['bytes']+1)
+ p.need(decoder.eof and not decoder.unused_data and not decoder.unconsumed_tail and len(raw)==expected['bytes']and hashlib.sha256(raw).hexdigest()==expected['sha256'],'exact full adopted prior history bytes')
+ prior=json.loads(raw);p.need({k:len(v)for k,v in prior.items()}==expected['counts'],'exact adopted prior counts');return prior
+
 def load(ref,name,cap):
  raw=held(ref,cap);m=types.ModuleType(name);m.__file__=ref['path'];sys.modules[name]=m
  try:exec(compile(raw,ref['path'],'exec'),m.__dict__)
@@ -332,9 +352,7 @@ def _issue(parent_ref,ops=None):
   p.need(not os.path.lexists(root+'/context.json')and not os.path.lexists(root+'/child-grant.json'),'one-use context/grant absent')
   save('issuer-start',{'actor':p.process(os.getpid()),'startedUnix':now,'parentPin':parent_ref,'hardwareEffects':[]})
   # Full immutable accepted prior bytes; counts are data-derived, not37/33.
-  import base64,zlib
-  ref=parent['priorHistoryCodecPin'];codec=json.loads(held(ref,8388608))['value'];raw=zlib.decompress(base64.b64decode(codec['data'],validate=True));expected=parent['priorHistory'];p.need(len(raw)==expected['bytes']and hashlib.sha256(raw).hexdigest()==expected['sha256'],'exact full adopted prior history bytes')
-  prior=json.loads(raw);p.need({k:len(v)for k,v in prior.items()}==expected['counts'],'exact adopted prior counts')
+  expected=parent['priorHistory'];prior=adopted_history(parent)
   import queue_assignment
   queue=queue_assignment.load_queue(parent['queuePrograms'][0]);digest=hashlib.sha256(queue.canonical(spec).encode()).hexdigest();g=copy.deepcopy(parent['childGrantTemplate']);c=parent['candidate']
   g.update(installerContract=c.get('installer'),sourcePlacementPin=parent['sourcePlacementPin'],placementQualificationPin=parent['placementQualificationPin'],jobId=parent['jobId'],domainName=c['name'],domainUUID=c['guestUUID'],leaseNonce=c['nonce'],bootID=parent['bootID'],normalizedSpecSHA256=digest,observerPin=spec['libvirt_domain']['observer'],originalPin=c['original'],workingPin=c['working'],guestUUID=c['guestUUID'],firmwareCodePin=c['firmwareCode'],producerPin=parent['sourceRoles']['libvirt_producer'],peerPin=parent['sourceRoles']['libvirt_peer'],accessPin=parent['sourceRoles']['libvirt_access'],nativePin=parent['sourceRoles']['libvirt_native'],historyReaderPin=parent['sourceRoles']['held_history_reader'],queuePrograms=parent['queuePrograms'],priorHistorySHA256=expected['sha256'],priorHistoryBytes=expected['bytes'],priorHistoryCounts=expected['counts'])

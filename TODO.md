@@ -5119,3 +5119,23 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
 - Existing connected actual installed-entry/issuer/entry/Root-adapter/public-queue fixture now runs two arbitrary future deployment identities and two distinct attempts without source edits, with wrong definition hash/owner/path escape and wrong attempt/job/old-path refusals. Real file/FD/ACL/source checks remain actual; media/native external facts remain explicit models, not full hardware success. Root real loop/mount/FD-leak cleanup regression is retained.
 - AST and diff checks only on controller; tests await actual push CI. No original sources, VM data, Core repo, governance, hardware budgets, PM/host settings or live services changed. Existing active/frozen media/Core inputs remain untouched; this isolated successor needs exact new Core source/caller/effects review and tier checks before deployment/run. No new PR while capTWO; pending221 and unique213 preserved. Necessary owning-lead normal fast-forward push is solely to obtain automatic CI/exact review, remote https://github.com/CorniiDog/OPEMOS.EXE.git, branch work/exe-r122-shared-deployment-context-20261104. No skipci/non-Main exclusion, force push or source-pinning relabel.
 - Core exact6e review7ecc495e was read/hash-verified and consumed: generic paths and two-deployment/two-attempt consumer fixture meet scope; ONE deterministic full-stage root declaration duplicated identical source/placement operands. Production root declaration now preserves first occurrence of each exact path via dict.fromkeys BEFORE the unchanged strict inode walker. All distinct roots/history/public records remain charged; no realpath/inode coalescing, alias waiver or budget change. The existing real connected fixture now invokes that same storage root producer -> actual metadata walker, verifies complete inode/block charge and FD closure, and demonstrates both the walker's duplicate rejection and real distinct-path bind-mount alias refusal. No new harness; native/media geometry remains explicitly modeled in this metadata-join case. Preserve6e and prior failures; no unchanged6e runtime.
+
+## R122 whole-history leaf repair — 2026-11-04
+
+- Actual b0 installation, normal current-control drain and owned66 nonlazy
+  unmount/autoclear/full-backing preservation completed. Fresh c50 normal media
+  preparation captured all four media inputs, then refused before submission
+  because the compressed whole prior history exceeded the generic 1MiB leaf.
+  Normal c50 cleanup unmounted/detached; native exit1 retained EOF/reap/FD and
+  child-set closure. No queue submission/domain/CPU/installer/GPU claim.
+- Preserve complete history as ordered pinned chunks, each under the unchanged
+  metadata-leaf limit. The actual issuer authenticates every protected chunk,
+  ordered spans, aggregate compressed hash, bounded decompression, complete raw
+  hash/counts. Original codec parents remain readable. Whole64MiB input and
+  existing whole-VM/metadata/storage budgets remain unchanged.
+- Added the real normal record-writer -> issuer-reader regression over a
+  multi-leaf history, plus missing/order/hash/full9 tamper refusals. Tests await
+  admitted hosted Linux Root CI; AST and diff checks passed, no local app or
+  hardware test claim. Necessary EXE fast-forward push to the existing origin
+  topic supplies immutable source for remote-only CI and exact Core review;
+  every push must start Actions. No new PR under the aggregate cap TWO.

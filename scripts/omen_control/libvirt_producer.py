@@ -19,6 +19,16 @@ def put(files,name,value,mode=0o400):
  finally:os.close(fd)
  os.fsync(files.fd);return files.read(name,mode)[1]
 
+def record_prior_history(values, record):
+ """Whole accepted history as bounded leaves, not one metadata-sized blob."""
+ import base64,zlib
+ raw=peer.canon(values);peer.need(len(raw)<=64*1024**2,'unchanged whole history64MiB')
+ compressed=zlib.compress(raw)
+ chunks=[]
+ for offset in range(0,len(compressed),524288):
+  chunks.append(record('prior-history-part',{'offset':offset,'data':base64.b64encode(compressed[offset:offset+524288]).decode()}))
+ return record('prior-history-codec',{'value':{'kind':'ROOT_PRIOR_HISTORY_CHUNKS_V1','bytes':len(compressed),'sha256':hashlib.sha256(compressed).hexdigest(),'chunks':chunks}})
+
 def head(files,name,value):
  # Only the tiny owned head is replaced; every full phase/state/audit is O_EXCL.
  temporary=name+'.new';pin=put(files,temporary,value)
