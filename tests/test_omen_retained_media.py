@@ -83,18 +83,18 @@ class RetainedMediaContract(unittest.TestCase):
             self.assertTrue(all(x['bytes'] <= 1048576 for x in codec['chunks']))
             bad = copy.deepcopy(codec); bad['chunks'].reverse()
             badref = run.record('wrong-order', {'value': bad})
-            with self.assertRaises(peer.Refused):
+            with self.assertRaisesRegex(RuntimeError, 'ordered complete history spans'):
                 issuer.adopted_history(dict(parent, priorHistoryCodecPin=badref))
             bad = copy.deepcopy(codec); bad['chunks'].pop()
             badref = run.record('missing-part', {'value': bad})
-            with self.assertRaises(peer.Refused):
+            with self.assertRaisesRegex(RuntimeError, 'complete finite compressed history'):
                 issuer.adopted_history(dict(parent, priorHistoryCodecPin=badref))
             wrong = dict(expected, sha256='0' * 64)
-            with self.assertRaises(peer.Refused):
+            with self.assertRaisesRegex(RuntimeError, 'exact full adopted prior history bytes'):
                 issuer.adopted_history(dict(parent, priorHistory=wrong))
             leaf = Path(codec['chunks'][0]['path']); leaf.chmod(0o600)
             leaf.write_bytes(b'{}'); leaf.chmod(0o400)
-            with self.assertRaises(peer.Refused): issuer.adopted_history(parent)
+            with self.assertRaisesRegex(RuntimeError, 'protected ancestry/initial full9|held full9/name/EOF/SHA'): issuer.adopted_history(parent)
         finally:
             shutil.rmtree(root)
 
