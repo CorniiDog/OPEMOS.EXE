@@ -5056,3 +5056,11 @@ current and their repository ownership is unambiguous.
   fresh correlated API pagination. Prior failures and the frozen reviewed head
   remain intact. New exact source/effects review and admitted CI are required;
   actual R118/installed owner and the TWO cap remain held.
+
+
+## 2026-11-03 EXE R118 new-boot interrupted-job recovery (same VM stream)
+
+- [x] PR218 automatic-push controller/candidate source squash verified: ce3cc45097f078ceb8417bfdfd6aa927c18be1d9; exact cafe415a/tree42d73a97, Core f3e2a15c plus repository-only cc33909c amendment, all11 required source/package checks. Actual merge receipt191ce6f3; one open PR remains (#213). Installed controller/Root policy unchanged; no VM claim.
+- [x] Current newboot7cd5198f passive original-driver/whole-hostVFIO-FD cuts and full20GiB original hash/full9 passed; trusted journal joins oldboot3b85/unitf6f8/invocation0346. Core fe03c435 consumes actuald3c9c546. Original e8947 row remains running/reserved; old lease/QMP/ACL/exit unknown, no forced SQL/release or old scope replay.
+- [ ] This source adds a stable failed-after-reboot normal API, real private-SQLite regressions and a pinned Root observer boundary. AST/diff checked only; project tests must run in admitted CI. No candidate privileged execution or deployment before exact Core source/PR/effects review.
+- [ ] After review/merge, install exact immutable code/data at the safe checkpoint, run actual readonly producer and one normal retained-then-failed transaction with whole readback. Then repair the separately demonstrated managed-PCI power transition using matching old38/new42 kernel facts before a fresh normal SteamOS virtualUSB/NVIDIA attempt. No guessed PM flag, reset, competing VM or new watcher.
